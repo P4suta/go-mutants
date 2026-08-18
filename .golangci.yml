@@ -1,0 +1,27 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Deliberately modest: the standard set plus the two analyzers this project
+# leans on hardest. Exotic linters are not added speculatively; a linter earns
+# its place by catching a class of defect the engine has actually shipped.
+version: "2"
+
+linters:
+  # standard = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  settings:
+    govet:
+      enable:
+        - shadow
+    staticcheck:
+      checks:
+        - all
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

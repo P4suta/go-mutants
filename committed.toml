@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Commit-message policy enforced by `committed` (the lefthook commit-msg hook
+# and the CI lint job). Aim for subjects of at most 72 characters; 80 is the
+# hard ceiling. Conventional-commit prefixes are not required here.
+subject_length = 80
+line_length = 100
+style = "none"
+merge_commit = false

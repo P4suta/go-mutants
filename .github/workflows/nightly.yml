@@ -1,0 +1,48 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Nightly fuzz and property
+
+"on":
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  # Target shape for the fuzz job: the strict TOML decoder, internal/glob,
+  # stable-ID determinism, and the statement flattener each get a `go test
+  # -fuzz` corpus. Those targets do not exist yet, and `-fuzz` without a
+  # target is an error, so the job runs the ordinary suite until the pure-core
+  # and instrumentation phases add them.
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          install: true
+          cache: true
+      - run: mise run test
+
+  # Target shape for the property job: the pgregory.net/rapid suites, above
+  # all `parse(flattened) ≡ parse(patched original)` for the flattener. Same
+  # placeholder until those suites exist.
+  property:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          install: true
+          cache: true
+      - run: mise run test

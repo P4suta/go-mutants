@@ -1,0 +1,95 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref: a newer push supersedes the older run instead of queueing
+# behind it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Everything a contributor runs locally as `mise run check`, plus the
+  # commit-message gate, which needs the history a shallow clone omits.
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          install: true
+          cache: true
+      - run: mise run check
+      - name: committed (pull request range)
+        if: github.event_name == 'pull_request'
+        run: >-
+          committed ${{ github.event.pull_request.base.sha }}..${{
+          github.event.pull_request.head.sha }}
+      - name: committed (pushed head)
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          if git rev-parse -q --verify 'HEAD~' > /dev/null; then
+            committed HEAD~..HEAD
+          else
+            committed HEAD
+          fi
+
+  # The engine drives the real Go toolchain, kills process trees, and takes
+  # long-path and file-locking hazards seriously, so every tier-1 OS runs the
+  # suites rather than trusting a single Linux job.
+  platform-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          install: true
+          cache: true
+      - run: mise run build
+      - run: mise run test
+      - run: mise run test-integration
+
+  # `mise run package` is a placeholder until the goreleaser configuration
+  # lands; the job exists now so packaging can never be added untested.
+  artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          install: true
+          cache: true
+      - run: mise run package
+
+  # Self-mutation. Also a placeholder until the engine can run against itself.
+  dogfood:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          install: true
+          cache: true
+      - run: mise run dogfood

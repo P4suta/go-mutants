@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Licensing for the files that cannot carry an inline SPDX header: the
+# machine-rewritten module files (the Go tool would drop or move a comment)
+# and the verbatim license texts.
+
+version = 1
+
+[[annotations]]
+path = ["go.mod", "go.sum"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = ["LICENSE-MIT", "LICENSES/MIT.txt"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["LICENSE-APACHE", "LICENSES/Apache-2.0.txt"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "The Apache Software Foundation"
+SPDX-License-Identifier = "Apache-2.0"

@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Generated run reports. The report directory is configurable; this is the
+# default and is also excluded from snapshot manifests and cache identity.
+reports/mutation/
+
+# Release artifacts, the locally built CLI, and compiled test binaries.
+dist/
+bin/
+/go-mutants
+*.test
+*.exe
+
+# Go toolchain and coverage scratch output.
+*.out
+*.prof
+
+# Failing cases persisted by pgregory.net/rapid. These are development scratch,
+# not a curated corpus: rapid replays every file it finds here on the next run,
+# so committing one silently pins an arbitrary shrunk case and reports it as a
+# stale failure once the code under test moves on. A seed worth keeping is
+# promoted by hand to a named table case next to the property test instead.
+# The leading **/ is load-bearing: a pattern with an inner slash would anchor to
+# the repository root and miss every internal/<pkg>/testdata/rapid/.
+**/testdata/rapid/
+
+# Linter caches.
+.rumdl_cache/

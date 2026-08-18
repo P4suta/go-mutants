@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[files]
+extend-exclude = [
+  "bin",
+  "dist",
+  "fixtures",
+  "go.sum",
+  "LICENSE-*",
+  "LICENSES",
+  "reports/mutation",
+  "vendor-assets",
+]
+
+[default.extend-words]
+# Go spelling that the dictionary would otherwise correct.
+iota = "iota"
+
+[default.extend-identifiers]
+# Go toolchain and standard-library identifiers used verbatim in docs.
+covdata = "covdata"
+gocoverdir = "gocoverdir"

@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# go-mutants dogfooding itself. `mise run dogfood` uses this file once the
+# engine exists; until then it documents the full v1 configuration surface.
+# Every key below is decoded strictly: an unknown key is an error carrying the
+# line and column where it was found, never a silently ignored typo.
+
+version = 1
+
+[mutation]
+# Tiers are monotonically inclusive: balanced ⊂ strong ⊂ all.
+profile = "balanced"
+include = ["cmd/**/*.go", "internal/**/*.go"]
+exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
+# `operators` is intentionally omitted: the profile decides the families, which
+# keeps this file honest when a new family lands. Uncomment to narrow.
+# operators = ["comparison", "error-swallowing"]
+
+# Declared equivalent mutants. An expectation is evidence to check, not a skip
+# list: the mutant still runs, survival fulfills it, a kill is exit 2, and an
+# ID that no longer exists in the catalog is stale and also exit 2.
+# [[mutation.expect]]
+# id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+# reason = "Equivalent: the branch is unreachable for all valid inputs."
+
+[test]
+# An argv vector, never a shell string.
+command = ["go", "test", "./..."]
+# Omit to derive max(10s, slowest baseline × 5) instead.
+timeout = "60s"
+baseline_runs = 3
+
+[execution]
+# Omit to default to min(NumCPU, 8).
+jobs = 8
+
+[cache]
+# auto reuses proven outcomes keyed by tool version, executable digest,
+# workspace digest, catalog IDs, command, timeout, and environment.
+mode = "auto"
+# directory = "team-cache"
+
+[policy]
+# The build is not failed unless asked: strict is opt-in, here and in CI.
+strict = false
+minimum_score = 0
+require_mutants = true
+
+[report]
+directory = "reports/mutation"
+formats = ["json", "html"]
+# HTML colouring thresholds only; they are independent of [policy].
+high = 80
+low = 60

@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Byte-exact checkouts everywhere. Mutant identities hash exact source bytes
+# and the golden instrumentation fixtures compare bytes, so Git must never
+# rewrite line endings (a CRLF checkout changes every source digest).
+* -text

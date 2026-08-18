@@ -1,0 +1,24 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Fast gates only. The slow ones (build, tests, golangci-lint, gitleaks) stay
+# in `mise run check` and CI so a commit never waits on a full compile.
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      run: mise run fmt
+    typos:
+      run: typos
+    toml:
+      glob: "*.toml"
+      run: taplo check {staged_files}
+    workflows:
+      glob: ".github/workflows/*.yml"
+      run: actionlint
+
+commit-msg:
+  commands:
+    committed:
+      run: committed --commit-file {1}
