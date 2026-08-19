@@ -37,8 +37,12 @@ at.
 | --- | --- | --- |
 | `simple/` | `fixture.example/simple` | The happy path: one package, three small functions, a fast passing test. Baseline succeeds, the timeout is derived, the run completes. |
 | `failing-baseline/` | `fixture.example/failingbaseline` | A workspace that compiles but whose test fails. Proves the baseline gate: the run must stop with a typed baseline error carrying the tail of the test output, not proceed to mutate a red suite. |
+| `discovery/` | `fixture.example/discovery` | Five packages holding one live candidate next to every context discovery refuses to mutate: all six comparisons and both boolean literals, a package that shadows `true`, const blocks, an array length, switch and type-switch and select labels against their bodies, package-level initialisers, a `//go:embed` variable, a generated file, and generic type parameters against a generic body. `list` asserts the exact catalogue and the exact skip counts against it. |
+
+The discovery fixture is the one module in the corpus with no test files, which
+is deliberate: `list` builds nothing and runs nothing, so a test here would add
+time to the suite without being able to fail for a reason `list` could cause.
 
 Later phases add fixtures for the cases the instrumentation has to get right:
-multiple packages, `go.work`, generated files, build tags, CRLF sources, a
-package with no tests, a test that writes into its own directory, and a
-declaration whose type cannot be named.
+`go.work`, build tags, CRLF sources, a package with no tests, a test that
+writes into its own directory, and a declaration whose type cannot be named.

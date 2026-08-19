@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://go-mutants.invalid/schema/catalog-v1.schema.json",
+  "title": "go-mutants catalog output v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document_type", "schema_version", "tool_version", "workspace", "selection", "mutants", "skips"],
+  "properties": {
+    "document_type": { "const": "go-mutants/catalog" },
+    "schema_version": { "const": 1 },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "workspace": { "$ref": "#/$defs/workspace" },
+    "selection": { "$ref": "#/$defs/selection" },
+    "mutants": { "type": "array", "items": { "$ref": "#/$defs/mutant" } },
+    "skips": { "type": "array", "items": { "$ref": "#/$defs/skip" } }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module_path", "go_version", "workspace_digest", "platform"],
+      "properties": {
+        "module_path": { "type": "string", "minLength": 1 },
+        "go_version": { "type": "string", "minLength": 1 },
+        "workspace_digest": { "$ref": "#/$defs/digest" },
+        "platform": { "$ref": "#/$defs/platform" }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "operators", "include", "exclude"],
+      "properties": {
+        "profile": { "enum": ["balanced", "strong", "all"] },
+        "operators": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "include": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "exclude": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "mutant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "display_id", "path", "package", "family", "rule", "rule_version", "line", "column", "start_byte", "end_byte", "original", "replacement"],
+      "properties": {
+        "id": { "$ref": "#/$defs/digest" },
+        "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "path": { "type": "string", "minLength": 1 },
+        "package": { "type": "string", "minLength": 1 },
+        "family": { "type": "string", "minLength": 1 },
+        "rule": { "type": "string", "minLength": 1 },
+        "rule_version": { "type": "integer", "minimum": 1 },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "end_byte": { "type": "integer", "minimum": 0 },
+        "original": { "type": "string" },
+        "replacement": { "type": "string" }
+      }
+    },
+    "skip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "reason", "count"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

@@ -5,14 +5,18 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Architecture
 
-**Status: this repository is a scaffold.** The design below is decided and is
-what the implementation phases build; almost none of it exists in code yet.
-Each section marks what is implemented today. Nothing here should be read as a
+**Status: partially implemented.** The pure packages, the strict
+configuration decoder, the snapshot, the baseline execution layer, discovery
+for two operator families, and the `list` command exist. Instrumentation,
+mutant execution, coverage selection, the cache, and reports do not. Each
+section below marks which of the two it is; nothing here should be read as a
 description of working software until its status says so.
 
 ## Invariants
 
-Four invariants shape every decision:
+Four invariants shape every decision. They describe what the design holds
+itself to, not what every phase already does: invariant 2 is what
+instrumentation will be built to satisfy, and no instrumentation exists yet.
 
 1. **The target workspace is read-only.** Discovery reads it; every build,
    edit, and test happens inside a disposable snapshot that excludes `.git`,
@@ -57,14 +61,19 @@ worker pool over one snapshot     (per-process activation, tree kill)
 outcome cache + RunReport v1      (JSON, HTML, history, exit policy)
 ```
 
+`Discovered → Snapshotted → BaselinePassed` is what `run` performs today, and
+discovery on its own is what `list` prints. Everything from `Validated`
+onwards — batch compilation, instrumentation, the worker pool over mutants, the
+cache, and `RunReport v1` — is planned.
+
 Each arrow is a phase transition with its own type. `runner.Execute(m
 Validated)` cannot be called with a raw candidate; that is the compile-time
 version of the rule "only validated mutants run".
 
 ## Instrumentation: guard-based rewriting
 
-Status: planned. This is the hardest component and the reason for most of the
-other decisions.
+Status: planned; no code exists for this yet. This is the hardest component
+and the reason for most of the other decisions.
 
 A generic helper (`__gm.Arith(id, OpAdd, a, b)`) was rejected: it breaks on
 untyped constants, shift operands, and named types. Instead both branches are
@@ -114,7 +123,7 @@ rewritten statements, not to the number of mutants times file size.
 
 ## Generated runtime package
 
-Status: planned. The runtime lives inside the snapshot at
+Status: planned. The runtime will live inside the snapshot at
 `<module>/gomutants_rt/`. It cannot live in a `_`- or `.`-prefixed directory,
 because the Go tool ignores those. A name collision bumps a suffix.
 
@@ -129,7 +138,11 @@ dispatch is a plain array load and the race detector stays quiet.
 
 ## Execution
 
-Status: planned.
+Status: partially implemented. The snapshot, the baseline build and test runs,
+timeout derivation, and process-tree supervision exist and are what
+`go-mutants run` performs today; the run stops after the baseline rather than
+reporting a score it has not measured. Per-mutant activation, coverage-guided
+selection, `--changed`, and `--shard` are planned.
 
 - **One build.** Each package with tests is compiled once with
   `go test -c -cover -coverpkg=<module>/...`. `--race`, when requested, applies
@@ -164,7 +177,7 @@ Status: planned.
 
 ## Stable identity
 
-Status: planned. A mutant ID is a SHA-256 over length-prefixed fields: the
+Status: implemented. A mutant ID is a SHA-256 over length-prefixed fields: the
 normalized relative path, the versioned rule name, the byte span, the source
 digest, and the digests of the original and replacement bytes. Absolute paths
 and snapshot locations never participate. The CLI shows a collision-checked
@@ -172,7 +185,9 @@ and snapshot locations never participate. The CLI shows a collision-checked
 
 ## Score and exit policy
 
-Status: planned.
+Status: partially implemented. The score function and the exit-code mapping
+live in `internal/mutation` and are tested; nothing feeds them yet, because no
+mutant runs.
 
 ```text
 score = (killed + confirmed_timeouts) / denominator
@@ -185,7 +200,10 @@ about the tests. Exit codes are 0, 1 (opt-in policy failure only), 2
 
 ## Reporting and the event stream
 
-Status: planned. The engine never draws. It publishes to a single
+Status: partially implemented. The event stream and the plain-line console
+renderer exist and carry the baseline today; the bubbletea dashboard,
+`RunReport v1`, and the report writers are planned. The engine never draws. It
+publishes to a single
 `chan engine.Event` (a sealed interface): `RunPlanned`, `PhaseChanged`,
 `BaselineProgress`, `MutantStarted`, `MutantFinished`, `CacheHit`, `Warning`,
 `SkipRecorded`, `ReportPublished` (only after the atomic rename), and a
@@ -204,22 +222,24 @@ HTML report are one-way, deterministic derivations of it. See
 
 | Package | Responsibility | Status |
 | --- | --- | --- |
-| `cmd/go-mutants` | Thin main | stub |
-| `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | planned |
-| `internal/config` | Strict TOML decode and precedence merge | planned |
-| `internal/mutation` | Pure: spans, stable IDs, rules, catalog, score | planned |
-| `internal/interval` | Pure: interval forest | planned |
-| `internal/glob` | Pure: `**` glob semantics, fuzzed | planned |
-| `internal/discover` | `packages.Load`, types walk, candidates, skips | planned |
+| `cmd/go-mutants` | Thin main | implemented |
+| `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | `run`, `list` |
+| `internal/config` | Strict TOML decode and precedence merge | implemented |
+| `internal/mutation` | Pure: spans, stable IDs, rules, catalog, score | implemented |
+| `internal/interval` | Pure: interval forest | implemented |
+| `internal/glob` | Pure: `**` glob semantics, fuzzed | implemented |
+| `internal/discover` | `packages.Load`, types walk, candidates, skips | 2 families |
 | `internal/instrument` | Forms S/C/D, flattener, runtime codegen, splicer | planned |
-| `internal/snapshot` | Manifest, digests, link rejection, cleanup | planned |
-| `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | planned |
-| `internal/runner` | Worker pool, timeout retry, process supervisors | planned |
+| `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
+| `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
+| `internal/runner` | Worker pool, timeout retry, process supervisors | supervisors |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping | planned |
 | `internal/cache` | Outcome cache | planned |
 | `internal/report` | RunReport, projections, HTML, history, merge | planned |
-| `internal/engine` | Orchestration, typestate pipeline, events | planned |
-| `internal/tui`, `internal/console` | The two renderers | planned |
+| `internal/engine` | Orchestration, typestate pipeline, events | baseline |
+| `internal/console` | Deterministic plain-line renderer | implemented |
+| `internal/tui` | The bubbletea dashboard | planned |
+| `internal/schemas` | Embedded JSON Schemas, test-time validation | catalog v1 |
 
 Pure packages have no filesystem or process access, which is what makes the
 golden ID vectors and property tests meaningful.

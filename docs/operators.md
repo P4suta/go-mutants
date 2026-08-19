@@ -5,11 +5,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Mutation operators
 
-**Status: planned.** No operator is implemented yet. This page is the agreed
-v1 catalogue that the discovery and instrumentation phases build against; it
-is written down first so that rule names, versions, and profile tiers are
-decided before any mutant ID is minted. When a family lands, its row gains an
-implemented marker and the fixtures that prove it.
+**Status: discovery only, two families.** `comparison` and `boolean-literal`
+are discovered today — `go-mutants list` enumerates their mutants with stable
+IDs and coordinates — and no other family is. Discovered is not executed: no
+mutant of any family is instrumented or run yet, so a row marked *discovered*
+means its IDs exist and are reviewable, not that it kills anything.
+
+The rest of this page is the agreed v1 catalogue that the remaining discovery
+and instrumentation work builds against; it is written down first so that rule
+names, versions, and profile tiers are decided before any mutant ID is minted.
+When a family lands, its row gains a marker and the fixtures that prove it.
 
 Every rule is versioned (`add-to-sub@1`). The version participates in the
 stable mutant ID, so changing what a rule emits changes the identity of its
@@ -20,25 +25,24 @@ of the selected profile.
 
 ## Catalogue
 
-| Family | Rules | Tier |
-| --- | --- | --- |
-| `boolean-literal` | `true-to-false`, `false-to-true` | balanced |
-| `condition-negation` | `negate-condition`, `negate-loop-condition`, `remove-negation` | balanced |
-| `boolean-connective` | `and-to-or`, `or-to-and` | balanced |
-| `comparison` | `eq-to-neq`, `neq-to-eq`, `lt-to-le`, `le-to-lt`, `gt-to-ge`, `ge-to-gt` | balanced |
-| `integer-arithmetic` | `add-to-sub`, `sub-to-add`, `mul-to-div`, `div-to-mul`, `rem-to-mul` | balanced |
-| `float-arithmetic` | `fadd-to-fsub`, `fsub-to-fadd`, `fmul-to-fdiv`, `fdiv-to-fmul` | balanced |
-| `return-replacement` | `return-zero-numeric`, `return-empty-string`, `return-true`, `return-false`, `return-nil` | balanced |
-| `error-swallowing` | `return-err-to-nil`, `nil-error-branch` | balanced |
-| `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl`, `andnot-to-band` | strong |
-| `arithmetic-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `incr-to-decr`, `decr-to-incr` | strong |
-| `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-incdec` | all |
+| Family | Rules | Tier | Status |
+| --- | --- | --- | --- |
+| `boolean-literal` | `true-to-false`, `false-to-true` | balanced | discovered |
+| `condition-negation` | `negate-condition`, `negate-loop-condition`, `remove-negation` | balanced | planned |
+| `boolean-connective` | `and-to-or`, `or-to-and` | balanced | planned |
+| `comparison` | `eq-to-neq`, `neq-to-eq`, `lt-to-le`, `le-to-lt`, `gt-to-ge`, `ge-to-gt` | balanced | discovered |
+| `integer-arithmetic` | `add-to-sub`, `sub-to-add`, `mul-to-div`, `div-to-mul`, `rem-to-mul` | balanced | planned |
+| `float-arithmetic` | `fadd-to-fsub`, `fsub-to-fadd`, `fmul-to-fdiv`, `fdiv-to-fmul` | balanced | planned |
+| `return-replacement` | `return-zero-numeric`, `return-empty-string`, `return-true`, `return-false`, `return-nil` | balanced | planned |
+| `error-swallowing` | `return-err-to-nil`, `nil-error-branch` | balanced | planned |
+| `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl`, `andnot-to-band` | strong | planned |
+| `arithmetic-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `incr-to-decr`, `decr-to-incr` | strong | planned |
+| `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-incdec` | all | planned |
 
-That is 11 families and 42 enumerated rules. The design plan's headline says
-43; the enumeration in the same plan lists 42. The registry phase owns the
-reconciliation — either a named 43rd rule is added deliberately or the
-headline is corrected — and the catalogue schema will assert the count so the
-two can never drift again.
+That is 11 families and 42 enumerated rules. The design plan's headline said
+43 while its own table listed 42; the registry has settled it in favour of the
+table. `mutation.CanonicalRuleCount` is 42 and the canonical registry tests
+assert it, so the count cannot drift again without a test failing.
 
 ## Type conditions
 
@@ -83,22 +87,28 @@ source.
 
 ## Documented exclusions
 
-These are recorded as skips with a reason and surfaced by `--explain`; they
-are never silently dropped:
+These are recorded as skips with a reason and never silently dropped.
+`go-mutants list` already prints the breakdown, and `--json` carries every
+skip with its reason; `--explain` is the planned per-skip detail view:
+
+The reason strings below are the exact identifiers `internal/discover` emits
+(they appear verbatim in `list` output and in catalog/report JSON):
 
 | Reason | Why |
 | --- | --- |
-| `const-decl`, `iota-expr` | Constant expressions must stay constant |
-| `array-length`, `struct-tag` | Not runtime-evaluated expressions |
-| `type-param-list`, `type-arg` | Generic constraints are not value code |
-| `switch-case`, `select-case` | v1 limitation; planned for v2 |
-| `package-level-var-init` | Initialization order hazards; v1 limitation |
-| `go-embed-decl` | `//go:embed` declarations must stay literal |
-| `label-or-goto` | Control-flow labels are not expressions |
-| `cgo-package` | cgo packages are excluded wholesale |
-| `generated-file` | Matches `^// Code generated .* DO NOT EDIT\.$` |
-| `test-file` | `_test.go` files are built and run, never mutated |
-| `unnameable-decl-type` | Form D cannot name the declared type |
+| `const-decl` | Constant expressions must stay constant (covers `iota`) |
+| `array-length` | `[N]T` lengths are not runtime-evaluated expressions |
+| `type-param` | Type parameter lists, constraints, and type arguments are not value code |
+| `case-label` | `switch`/`select` label expressions; v1 limitation, planned for v2 |
+| `package-var-init` | Initialization order hazards; covers `//go:embed` vars; v1 limitation |
+| `cgo` | cgo packages are excluded wholesale |
+| `generated` | Matches `^// Code generated .* DO NOT EDIT\.$` |
+| `excluded` | The file matched a configured `mutation.exclude` pattern |
+
+Reserved reasons that later phases emit: `struct-tag`, `label-or-goto`, and
+`unnameable-decl-type` (Form D cannot name the declared type). `_test.go`
+files are built and run but never mutated; that is inherent, not a recorded
+skip.
 
 ## Planned for v2
 

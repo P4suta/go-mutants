@@ -268,6 +268,48 @@ func TestRenderErrorLiftsTheCodeOutOfEveryLine(t *testing.T) {
 	}
 }
 
+// TestRenderErrorCodesAContinuationLine covers the shape the all-lines-coded
+// test above cannot reach: a single error whose message carries a newline.
+//
+// internal/discover folds a multi-line loader blob before it gets here, so this
+// is the second line of defence rather than the first. It is still a line
+// go-mutants must never print, because a line with no "error GOM####: " on it is
+// a line `grep '^error '` and every CI log parser drop on the floor — and the
+// half of a compile failure that names the file and the column is exactly the
+// half that would go missing.
+func TestRenderErrorCodesAContinuationLine(t *testing.T) {
+	var b bytes.Buffer
+	RenderError(&b, errors.New("GOM4111: discovery needs a tree that compiles, and 1 package error stopped it: "+
+		"scratch.example/broken: # scratch.example/broken\r\n\n.\\broken.go:3:39: undefined: undefinedThing"))
+	want := "error GOM4111: discovery needs a tree that compiles, and 1 package error stopped it: " +
+		"scratch.example/broken: # scratch.example/broken\n" +
+		"error GOM4111: .\\broken.go:3:39: undefined: undefinedThing\n"
+	got := b.String()
+	if got != want {
+		t.Errorf("RenderError:\n got %q\nwant %q", got, want)
+	}
+	// The property the two lines above are one instance of: nothing this
+	// function writes may stand on its own.
+	for _, line := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
+		if !strings.HasPrefix(line, "error GOM") {
+			t.Errorf("line %q is not greppable as an error", line)
+		}
+	}
+}
+
+// TestRenderErrorKeepsAnUncodedErrorGreppableToo is the same property on the
+// other branch. cobra and pflag produce one line, so this cannot happen through
+// the command line; the loop exists so that it cannot happen at all.
+func TestRenderErrorKeepsAnUncodedErrorGreppableToo(t *testing.T) {
+	var b bytes.Buffer
+	RenderError(&b, errors.New("unknown flag: --nope\ndid you mean --note?"))
+	want := "error GOM1001: unknown flag: --nope\n" +
+		"error GOM1001: did you mean --note?\n"
+	if got := b.String(); got != want {
+		t.Errorf("RenderError:\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestRenderErrorIndentsACommandTail(t *testing.T) {
 	var b bytes.Buffer
 	RenderError(&b, &engine.Error{

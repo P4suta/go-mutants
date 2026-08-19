@@ -2,13 +2,22 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Licensing for the files that cannot carry an inline SPDX header: the
-# machine-rewritten module files (the Go tool would drop or move a comment)
-# and the verbatim license texts.
+# machine-rewritten module files (the Go tool would drop or move a comment),
+# the published JSON schemas (JSON has no comment syntax at all), and the
+# verbatim license texts.
 
 version = 1
 
 [[annotations]]
 path = ["go.mod", "go.sum"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The first-party schemas in schema/. A vendored third-party schema arrives
+# with its own license and gets its own entry rather than joining this one.
+[[annotations]]
+path = ["schema/catalog-v1.schema.json"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"

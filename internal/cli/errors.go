@@ -36,6 +36,32 @@ const (
 	// The workspace root is the directory go-mutants was invoked in, so there
 	// is nothing to run against when this fails.
 	CodeWorkingDirectory Code = "GOM1003"
+	// CodeConflictingFlags reports two flags that contradict each other, such
+	// as `--json` with `--quiet`. It is separate from [CodeUsage] because
+	// neither flag is wrong on its own: the remedy is to drop one, not to fix
+	// a value.
+	CodeConflictingFlags Code = "GOM1004"
+	// CodeInvalidMutantPrefix reports a `--mutant` value that is not a mutant
+	// id prefix at all — the wrong alphabet, or too short to mean anything.
+	// A well-formed prefix that matches no mutant is not this: `--mutant` is a
+	// filter, and an empty listing is an answer.
+	CodeInvalidMutantPrefix Code = "GOM1005"
+	// CodeUnimplementedOperators reports a selection that names only operators
+	// this pre-release build cannot discover yet. It is a warning rather than
+	// an error — the listing is genuinely empty — and it exists so that the
+	// emptiness is never mistaken for a statement about the user's code.
+	CodeUnimplementedOperators Code = "GOM1006"
+	// CodeCatalogMismatch reports a catalogued mutant that discovery did not
+	// report as a candidate. It is an internal invariant violation and always a
+	// bug: the alternative is a listing whose coordinates point at nothing.
+	CodeCatalogMismatch Code = "GOM1007"
+	// CodeInertProfile reports a `--profile` that decided nothing because the
+	// configuration file names operators, which take precedence over any tier.
+	// It is a warning rather than an error — the listing is a real listing, of
+	// the operators the file asked for — and it exists because the alternative
+	// is a flag typed for this invocation losing to a file with no diagnostic,
+	// which is the opposite of the precedence the help text promises.
+	CodeInertProfile Code = "GOM1008"
 )
 
 // String returns the code as it is printed.
@@ -43,7 +69,16 @@ func (c Code) String() string { return string(c) }
 
 // codes is every code this package can emit, in numeric order. The package
 // tests assert that the list is complete, unique, and inside the GOM10xx block.
-var codes = []Code{CodeUsage, CodeTestArgv, CodeWorkingDirectory}
+var codes = []Code{
+	CodeUsage,
+	CodeTestArgv,
+	CodeWorkingDirectory,
+	CodeConflictingFlags,
+	CodeInvalidMutantPrefix,
+	CodeUnimplementedOperators,
+	CodeCatalogMismatch,
+	CodeInertProfile,
+}
 
 // Codes returns every diagnostic code this package can report, in numeric
 // order.
@@ -125,7 +160,16 @@ func ExitCode(err error) mutation.ExitCode {
 // separately so that all of them stay greppable. A failed child process carries
 // a tail of its own output, which is indented underneath rather than folded
 // into the message, because it is the only part of an error that is not ours to
-// word.
+// word — that tail is deliberately left uncoded and indented, since it is the
+// child's words and not a diagnostic of ours.
+//
+// A line inside a coded error that carries no code of its own inherits the code
+// above it. Nothing go-mutants writes should produce one — a message is a
+// single line, and internal/discover folds a multi-line loader blob before it
+// gets here — but "every line is greppable" is the promise, and inheriting is
+// the only repair that keeps a continuation attached to the error it belongs to
+// instead of inventing a code for it. Blank lines are dropped rather than
+// rendered as a code with nothing after it.
 //
 // The whole report is composed in memory and written once. A half-printed error
 // is worse than an unprinted one, and there is nothing useful to do about a
@@ -138,16 +182,29 @@ func RenderError(w io.Writer, err error) {
 	var b strings.Builder
 	text := strings.TrimRight(err.Error(), "\n")
 	if _, _, coded := splitCode(firstLine(text)); coded {
-		for _, line := range strings.Split(text, "\n") {
-			code, rest, ok := splitCode(line)
-			if !ok {
-				b.WriteString(line + "\n")
+		// current is the code the next uncoded line inherits. The branch is only
+		// entered when the first line carries one, so the seed is never printed.
+		current := string(CodeUsage)
+		for _, raw := range strings.Split(text, "\n") {
+			line := strings.TrimRight(raw, "\r")
+			if strings.TrimSpace(line) == "" {
 				continue
 			}
+			code, rest, ok := splitCode(line)
+			if !ok {
+				code, rest = current, line
+			}
+			current = code
 			fmt.Fprintf(&b, "error %s: %s\n", code, rest)
 		}
 	} else {
-		fmt.Fprintf(&b, "error %s: %s\n", CodeUsage, text)
+		// An error with no code at all is cobra's or pflag's, which is always one
+		// line. It is still split, so that the one shape this function must never
+		// produce — a line standing on its own with no "error " in front of it —
+		// is unreachable rather than merely unlikely.
+		for _, raw := range strings.Split(text, "\n") {
+			fmt.Fprintf(&b, "error %s: %s\n", CodeUsage, strings.TrimRight(raw, "\r"))
+		}
 	}
 
 	var cliErr *Error

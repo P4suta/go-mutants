@@ -86,6 +86,7 @@ func NewRootCommand() *cobra.Command {
 	root.SetHelpTemplate(root.HelpTemplate() + exitCodeHelp)
 	root.SetVersionTemplate("go-mutants {{.Version}}\n")
 	root.AddCommand(newRunCommand())
+	root.AddCommand(newListCommand())
 	return root
 }
 

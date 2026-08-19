@@ -20,16 +20,24 @@ a live TUI dashboard instead of a silent wait, coverage-guided selection,
 stable mutant IDs, and a lossless JSON report with a Stryker-ecosystem HTML
 projection.
 
-## Status: pre-release scaffold
+## Status: pre-release, no mutant runs yet
 
-**This repository currently contains the project scaffold and nothing else.**
-`cmd/go-mutants` prints its version; there is no mutation engine yet. The
-design is settled and written down under [`docs/`](docs/), every page marks
-what is implemented versus planned, and the toolchain, gates, and CI are real
-and green.
+Two commands exist. `go-mutants run` snapshots the workspace, builds it, and
+runs your test command three times to prove the baseline — then stops and warns
+that it did, rather than reporting a mutation score it has not measured.
+`go-mutants list` enumerates the mutants a run would execute, for the
+`comparison` and `boolean-literal` families, as text or as a schema-validated
+JSON catalogue.
 
-Do not describe go-mutants as production-ready, and do not expect the CLI
-described below to work yet. Nothing is published, tagged, or released.
+Nothing is instrumented or mutated yet: instrumentation, mutant execution,
+coverage-guided selection, the outcome cache, policy enforcement, and reports
+are still to come, and the `init`, `doctor`, `report`, and `cache` commands do
+not exist. The design is settled and written down under [`docs/`](docs/), every
+page marks what is implemented versus planned, and the toolchain, gates, and CI
+are real and green.
+
+Do not describe go-mutants as production-ready. Nothing is published, tagged,
+or released.
 
 ## Requirements
 
@@ -41,24 +49,25 @@ described below to work yet. Nothing is published, tagged, or released.
 
 ## Quick start
 
-Once the engine lands, the intended flow is:
+What works today:
 
 ```console
 go install github.com/P4suta/go-mutants/cmd/go-mutants@latest
-go-mutants init
-go-mutants doctor
+go-mutants list
+go-mutants list --operator comparison --json
 go-mutants run
 ```
 
-With no arguments, help is printed; mutation starts only with `run`. The
-command tree is `run`, `list`, `doctor`, `init`,
-`report list|latest|validate|clean|merge`, and `cache status|gc|clean`.
+With no arguments, help is printed. The intended v1 command tree is `run`,
+`list`, `doctor`, `init`, `report list|latest|validate|clean|merge`, and
+`cache status|gc|clean`; only `run` and `list` are built.
+
+Once the engine lands, the intended flow adds:
 
 ```console
 go-mutants run --profile strong --jobs 8
 go-mutants run --changed origin/main
 go-mutants run --shard 1/4 --report json
-go-mutants list --operator comparison --json
 go-mutants run --include './internal/**' --strict -- go test -run TestFast ./...
 ```
 

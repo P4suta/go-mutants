@@ -5,9 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Configuration
 
-**Status: planned.** The decoder is not implemented yet. This page is the
-agreed v1 surface, and `.go-mutants.toml` in the repository root is the working
-example of it.
+**Status: the decoder is implemented.** Every key on this page is decoded,
+validated, and merged with the CLI flags today. Not every key yet changes
+behaviour, because the subsystems some of them configure do not exist; those
+sections say so individually below. `.go-mutants.toml` in the repository root
+is the working example of the surface.
 
 Configuration lives in its own file, `.go-mutants.toml`, next to `go.mod`. It
 is never merged into `go.mod`, and there is no environment-variable
@@ -74,7 +76,9 @@ low = 60
   non-empty `reason`. An expectation is evidence to check, not a skip list. The
   mutant still runs on every invocation and never uses a cached outcome:
   survival fulfills it, a kill or confirmed timeout is exit 2, and an ID that
-  has disappeared from the catalog is stale and also exit 2.
+  has disappeared from the catalog is stale and also exit 2. The rows are
+  decoded and checked for shape and uniqueness today; the checking of the
+  evidence arrives with mutant execution.
 
 ### `[test]`
 
@@ -91,6 +95,9 @@ low = 60
 
 ### `[cache]`
 
+The keys decode and validate; there is no outcome cache yet, so nothing is
+stored or reused whatever the mode says.
+
 - `mode`: `"auto"` (default), `"on"`, or `"off"`. The key covers the tool
   version, the executable digest, the workspace digest, the catalog ID set, the
   test command, the timeout, and the environment. Errors, cancellations,
@@ -101,6 +108,9 @@ low = 60
 
 ### `[policy]`
 
+The keys decode and validate, including their ranges; no policy is enforced
+yet, because no run has produced a score to compare against.
+
 - `strict`: default `false`. **go-mutants does not fail a build unless asked**,
   in a TTY, a pipe, and CI alike.
 - `minimum_score`: percentage that `strict` compares against. Exit 1 is
@@ -109,6 +119,10 @@ low = 60
   all is a configuration problem, not a perfect score.
 
 ### `[report]`
+
+The keys decode and validate — an out-of-range `high` or `low` is a positioned
+error today — but no report is written yet. `list --json` writes its catalogue
+document to standard output and never to this directory.
 
 - `directory`: default `reports/mutation`. Excluded from the snapshot manifest
   and from cache identity.
@@ -129,6 +143,9 @@ pattern containing a comma is one pattern, not two.
 outside the configured `operators` and rules outside the selected profile.
 
 Contradictory flags are rejected before any work starts, through
-`MarkFlagsMutuallyExclusive` plus semantic validation, with a stable `GOM####`
-error code. `--dry-run` and `--check` let `init` describe or verify a
-configuration without writing one; `init` never overwrites an existing file.
+`MarkFlagsMutuallyExclusive` plus semantic validation, with a stable `GOM10xx`
+error code.
+
+The command tree today is `run` and `list`. `init` is planned, along with its
+`--dry-run` and `--check` flags, which will let it describe or verify a
+configuration without writing one; it will never overwrite an existing file.
