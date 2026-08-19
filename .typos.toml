@@ -16,6 +16,8 @@ extend-exclude = [
 [default.extend-words]
 # Go spelling that the dictionary would otherwise correct.
 iota = "iota"
+# Deliberate non-word in the glob contract table ("a*b*c" must not match "abd").
+abd = "abd"
 
 [default.extend-identifiers]
 # Go toolchain and standard-library identifiers used verbatim in docs.

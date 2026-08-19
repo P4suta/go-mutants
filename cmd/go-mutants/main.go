@@ -3,16 +3,18 @@
 
 // Command go-mutants is the mutation testing CLI for Go modules.
 //
-// This entry point is intentionally a stub: the real command tree lives in
-// internal/cli and arrives with the CLI phase. main stays thin forever, so
-// that exit-code policy and flag validation remain unit-testable.
+// This entry point is deliberately two lines. Everything worth testing — the
+// command tree, flag validation, error rendering, and the exit code mapping —
+// lives in internal/cli, where a test can drive it in process with its own
+// streams. main's only job is to be the one place the process ends.
 package main
 
-import "fmt"
+import (
+	"os"
 
-// version is the development version string. Releases stamp it at link time.
-const version = "0.1.0-dev"
+	"github.com/P4suta/go-mutants/internal/cli"
+)
 
 func main() {
-	fmt.Println("go-mutants " + version)
+	os.Exit(cli.Execute())
 }
