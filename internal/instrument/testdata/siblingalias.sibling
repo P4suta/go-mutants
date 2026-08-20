@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// This file is the other half of the siblingalias fixture, and is never
+// instrumented: it holds no candidate and comes back byte for byte. It exists
+// to bind two names in the package block, which the file beside it must not
+// import the generated runtime under. A package-level declaration is not
+// shadowed by a file-scoped import alias the way a local variable is — Go
+// rejects the redeclaration outright — so an alias chosen by looking at one
+// file alone would compile everywhere except here.
+package sample
+
+// __gm collides with the alias the instrumenter reaches for first.
+var __gm = "taken"
+
+// __gm1 collides with the first bumped alias, from the other declaration form
+// the package block takes.
+func __gm1() {}

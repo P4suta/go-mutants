@@ -1,0 +1,14 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: comparisons of comparisons, so that one
+// rewrite site encloses others and a boolean literal sits inside a third.
+package sample
+
+// Match reports whether two comparisons agree.
+func Match(a, b, c, d int, flag bool) bool {
+	if (a > b) == (c > d) {
+		return flag == true
+	}
+	return false
+}

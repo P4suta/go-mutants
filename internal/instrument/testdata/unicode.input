@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: multi-byte text before the operator, so
+// that byte offsets and rune counts disagree everywhere that matters.
+package sample
+
+// Größe reports whether größe exceeds grenze.
+func Größe(größe, grenze int) bool {
+	return größe > grenze
+}
+
+// Japanisch reports whether s names the language.
+func Japanisch(s string) bool {
+	return "日本語" == s
+}

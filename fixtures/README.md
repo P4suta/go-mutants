@@ -38,10 +38,20 @@ at.
 | `simple/` | `fixture.example/simple` | The happy path: one package, three small functions, a fast passing test. Baseline succeeds, the timeout is derived, the run completes. |
 | `failing-baseline/` | `fixture.example/failingbaseline` | A workspace that compiles but whose test fails. Proves the baseline gate: the run must stop with a typed baseline error carrying the tail of the test output, not proceed to mutate a red suite. |
 | `discovery/` | `fixture.example/discovery` | Five packages holding one live candidate next to every context discovery refuses to mutate: all six comparisons and both boolean literals, a package that shadows `true`, const blocks, an array length, switch and type-switch and select labels against their bodies, package-level initialisers, a `//go:embed` variable, a generated file, and generic type parameters against a generic body. `list` asserts the exact catalogue and the exact skip counts against it. |
+| `killable/` | `fixture.example/killable` | The end-to-end kill. Four mutants with predetermined fates: two boundary mutants in `Clamp` and one boolean literal in `IsReady` that the tests kill, and one in `Untested` that survives because nothing calls it. One function per file and no repeated operator, so a mutant can be named by path and rule alone. |
 
 The discovery fixture is the one module in the corpus with no test files, which
 is deliberate: `list` builds nothing and runs nothing, so a test here would add
 time to the suite without being able to fail for a reason `list` could cause.
+
+The killable fixture is the one whose *behaviour* is load-bearing rather than
+only its shape. `Clamp` takes an open range — a value at or below `lo` becomes
+`lo+1`, one at or above `hi` becomes `hi-1` — because a clamp with inclusive
+bounds returns the bound itself at the bound, which makes `<` and `<=` agree on
+every input and turns the boundary mutants into equivalent ones that no test can
+kill. Its doc comment says so; changing the bounds back to the inclusive ones a
+reader expects would leave the fixture compiling, its own tests passing, and the
+integration test waiting for a failure that can no longer happen.
 
 Later phases add fixtures for the cases the instrumentation has to get right:
 `go.work`, build tags, CRLF sources, a package with no tests, a test that

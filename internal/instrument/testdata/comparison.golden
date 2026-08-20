@@ -1,0 +1,19 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: one comparison in ordinary statement
+// context, in a file whose imports are a parenthesized block.
+package sample
+
+import (__gm "example.com/mini/gomutants_rt";
+	"fmt"
+	"strings"
+)
+
+// Describe renders something about two sizes.
+func Describe(a, b int) string {
+	if (__gm.M[0] && (a>=b) || !(__gm.M[0]) && (a > b)) {
+		return fmt.Sprint(strings.Repeat("!", a))
+	}
+	return "no"
+}

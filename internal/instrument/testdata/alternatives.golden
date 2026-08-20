@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: one operator carrying every alternative
+// the catalogue can hold for it, in a file with no imports at all.
+package sample; import __gm "example.com/mini/gomutants_rt"
+
+// Less reports whether a is less than b.
+func Less(a, b int) bool {
+	return (__gm.M[0] && (a!=b) || __gm.M[1] && (a==b) || __gm.M[2] && (a<=b) || __gm.M[3] && (a>=b) || __gm.M[4] && (a>b) || !(__gm.M[0] || __gm.M[1] || __gm.M[2] || __gm.M[3] || __gm.M[4]) && (a < b))
+}

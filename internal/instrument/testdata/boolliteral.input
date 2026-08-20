@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: boolean literals in return position, in
+// a file whose only import is unparenthesized.
+package sample
+
+import "strings"
+
+// Enabled reports whether name opts in.
+func Enabled(name string) bool {
+	if strings.HasPrefix(name, "x") {
+		return true
+	}
+	return false
+}

@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is half of a golden fixture: nothing in this file binds the
+// alias the instrumenter reaches for, and two names in the file beside it do.
+package sample
+
+// Less reports whether a is below b.
+func Less(a, b int) bool {
+	return a < b
+}

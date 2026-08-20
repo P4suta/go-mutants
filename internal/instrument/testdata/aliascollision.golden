@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: the alias the instrumenter reaches for
+// first is already bound in this file, and so is the first bumped one.
+package sample; import __gm2 "example.com/mini/gomutants_rt"
+
+// __gm is a file-scope name that collides with the preferred alias.
+var __gm = "taken"
+
+// Use binds __gm1 locally, which collides with the first bump even though it
+// is not a file-scope declaration.
+func Use(a, b int) bool {
+	__gm1 := a
+	return (__gm2.M[0] && (__gm1>=b) || !(__gm2.M[0]) && (__gm1 > b)) && (__gm2.M[1] && (__gm=="") || !(__gm2.M[1]) && (__gm != ""))
+}

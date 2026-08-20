@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: comparisons written across lines, one of
+// them with a comment inside the expression.
+package sample
+
+// Reach reports whether x has reached one below the limit, written across
+// three lines so that the rewrite site itself spans lines.
+func Reach(x, limit int) bool {
+	return x >=
+		limit-
+			1
+}
+
+// Inclusive reports whether x is within the limit, with a line comment inside
+// the comparison that the flattened copy cannot keep.
+func Inclusive(x, limit int) bool {
+	return x <= // the limit is inclusive
+		limit
+}

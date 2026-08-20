@@ -1,0 +1,11 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: one operator carrying every alternative
+// the catalogue can hold for it, in a file with no imports at all.
+package sample
+
+// Less reports whether a is less than b.
+func Less(a, b int) bool {
+	return a < b
+}
