@@ -43,7 +43,8 @@ It copies your workspace into a disposable snapshot, proves the unmutated tests
 pass there, rewrites the copy, and measures how many of those rewrites your
 tests notice. Your own tree is only ever read.
 
-This is a pre-release build: a run stops after the baseline and says so.`
+This is a pre-release build: it discovers comparison and boolean-literal
+mutants, and the rest of the v1 operator catalogue is still landing.`
 
 // NewRootCommand builds the command tree.
 //

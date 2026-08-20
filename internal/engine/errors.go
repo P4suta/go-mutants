@@ -6,6 +6,7 @@ package engine
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -59,12 +60,32 @@ const (
 	// inside [BaselineCap]. The cap is generous and fixed, because there is no
 	// measurement to derive one from yet.
 	CodeBaselineTimedOut Code = "GOM4012"
+	// CodeInstrumentedBaselineFailed reports the semantic preservation gate:
+	// the instrumented snapshot, with no mutant activated, no longer passes the
+	// tests the pristine one passed a moment earlier. Every guard is supposed
+	// to take the branch holding the original bytes when nothing is active, so
+	// a red suite here is go-mutants having changed the program's meaning — and
+	// every outcome measured afterwards would be a statement about that change
+	// rather than about a mutant.
+	CodeInstrumentedBaselineFailed Code = "GOM4013"
+	// CodeWorkspaceDrift reports a snapshot that stopped matching its manifest
+	// in a way instrumentation did not cause. Every worker shares one snapshot,
+	// so a test that writes into its own package directory corrupts the tree
+	// each later mutant is measured against; the run stops and names the files
+	// rather than reporting outcomes nobody could reproduce.
+	CodeWorkspaceDrift Code = "GOM4014"
 
 	// CodeTimeoutTooSmall reports an explicit `test.timeout` that is not above
 	// the slowest baseline run. Such a timeout would expire during ordinary
 	// work, so every mutant would be reported as a timeout and the run would
 	// measure nothing.
 	CodeTimeoutTooSmall Code = "GOM4020"
+	// CodeUnknownOperator reports a `mutation.operators` entry that names
+	// neither an operator family nor a rule in the v1 catalogue. internal/config
+	// refuses one wherever it was written, so it is unreachable from the command
+	// line; it is reported rather than assumed away because a Config can also be
+	// built in process, and an unknown name must never quietly select nothing.
+	CodeUnknownOperator Code = "GOM4021"
 
 	// CodeInterrupted reports a run stopped by a cancelled context, which in
 	// practice means Ctrl-C or SIGTERM. It is an error so that the sequence
@@ -75,17 +96,13 @@ const (
 
 // Warning codes this package emits. They live in the same block as the errors
 // because they are the same kind of promise to the user.
+//
+// GOM0001 is retired and is deliberately not redefined. It reported a run that
+// ended after the baseline because the mutation phases were not implemented,
+// and its own documentation said it would disappear, code and all, when they
+// landed. They have. The number stays spent, because a code means one thing
+// forever.
 const (
-	// CodeMutationPhasesPending reports that a run ended after the baseline
-	// because the mutation phases are not implemented yet.
-	//
-	// It is deliberately GOM0001 rather than a GOM40xx code: it is not a
-	// property of the orchestration, it is a property of this pre-release
-	// build, and it disappears — code and all — when the mutation phases land.
-	// Giving it a number inside an allocated block would leave a permanent
-	// hole there for a condition that is meant to be temporary.
-	CodeMutationPhasesPending = "GOM0001"
-
 	// CodeSnapshotNotRemoved reports a snapshot directory that survived
 	// cleanup. It is a warning rather than an error: the run's results are
 	// unaffected, and the remedy is to delete a directory in the temporary
@@ -94,6 +111,32 @@ const (
 	// CodeScratchNotRemoved reports the same for the per-run scratch
 	// directory.
 	CodeScratchNotRemoved Code = "GOM4041"
+	// CodeReportNotPublished reports a run whose results could not be written
+	// to the history store. It is a warning rather than an error on the
+	// interrupted path only: a partial run that could not be filed has still
+	// told the user everything it learned on the console, and turning a failed
+	// write into the reason the run failed would bury the interruption that
+	// actually ended it.
+	CodeReportNotPublished Code = "GOM4042"
+	// CodeSelectedMutantRejected reports a `--mutant` prefix that resolved
+	// against the catalogue but named a mutant compile validation had refused.
+	//
+	// Nothing is executed in that case, and every other silence is working as
+	// designed: the catalogue is whole, so `policy.require_mutants` is satisfied;
+	// the denominator is empty, so `minimum_score` cannot be missed; there are no
+	// survivors, so `strict` has nothing to fail on. The run therefore exits 0
+	// having measured nothing, which is exactly the shape
+	// [mutation.Policy.RequireMutants] calls the most dangerous kind of green —
+	// and the user who wrote the flag asked a direct question ("why did this one
+	// survive?") that deserves a direct answer.
+	//
+	// It stays a warning rather than becoming an error because a rejection is
+	// data and not a failure: the mutant does not compile once guarded, which is
+	// a true and reportable fact about the catalogue, and it is the same fact a
+	// whole-catalogue run states in `rejected[]` without failing. What was
+	// missing was somebody saying it out loud when it is the only thing the run
+	// had to say.
+	CodeSelectedMutantRejected Code = "GOM4043"
 )
 
 // String returns the code as it is printed.
@@ -109,10 +152,15 @@ var codes = []Code{
 	CodeBaselineBuildFailed,
 	CodeBaselineTestFailed,
 	CodeBaselineTimedOut,
+	CodeInstrumentedBaselineFailed,
+	CodeWorkspaceDrift,
 	CodeTimeoutTooSmall,
+	CodeUnknownOperator,
 	CodeInterrupted,
 	CodeSnapshotNotRemoved,
 	CodeScratchNotRemoved,
+	CodeReportNotPublished,
+	CodeSelectedMutantRejected,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric
@@ -175,6 +223,37 @@ func CodeOf(err error) Code {
 	}
 	return ""
 }
+
+// A SelectionError reports a `--mutant` prefix that did not resolve to exactly
+// one catalogued mutant: the wrong alphabet, nothing matching, or several
+// matching.
+//
+// It is the one error this package raises that carries no GOM code, and the
+// omission is deliberate rather than an oversight. The mistake is in how the
+// run was invoked, not in the orchestration, and the catalogue it has to be
+// checked against only exists half way through a run — so the engine reports
+// the fact and internal/cli, which owns the invocation vocabulary, codes it in
+// its own GOM10xx block. Giving it a GOM40xx code as well would mean two
+// identifiers for one condition and a user searching for the wrong one.
+//
+// The internal/mutation sentinel stays reachable through errors.Is, so a caller
+// can tell "no such mutant" from "several such mutants" without parsing text.
+type SelectionError struct {
+	// Prefix is the value the user wrote.
+	Prefix string
+	// Err is the underlying [mutation.ErrInvalidPrefix],
+	// [mutation.ErrMutantNotFound], or [mutation.ErrAmbiguousPrefix], with the
+	// catalogue's own explanation attached.
+	Err error
+}
+
+// Error renders the prefix and what the catalogue said about it.
+func (e *SelectionError) Error() string {
+	return "--mutant " + strconv.Quote(e.Prefix) + " did not select one mutant: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *SelectionError) Unwrap() error { return e.Err }
 
 // OutputOf returns the retained command output carried by err, or "" when
 // there is none. It saves the renderer an errors.As dance for the one field it

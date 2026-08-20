@@ -1,0 +1,265 @@
+{
+  "document_type": "go-mutants/run-report",
+  "schema_version": 1,
+  "tool_version": "0.0.0-test",
+  "run_id": "20260218T091500Z-3f9c",
+  "status": "completed",
+  "started_at": "2026-02-18T09:15:00Z",
+  "finished_at": "2026-02-18T09:15:42Z",
+  "duration_ms": 42000,
+  "workspace": {
+    "module_path": "example.com/m",
+    "go_version": "1.26",
+    "workspace_digest": "abababababababababababababababababababababababababababababababab",
+    "platform": {
+      "os": "linux",
+      "arch": "amd64"
+    }
+  },
+  "selection": {
+    "mode": "all",
+    "profile": "balanced",
+    "operators": [],
+    "include": [
+      "**/*.go"
+    ],
+    "exclude": [],
+    "candidates": 8,
+    "rejected": 1,
+    "selected": 7
+  },
+  "test": {
+    "command": [
+      "go",
+      "test",
+      "./..."
+    ],
+    "baseline": {
+      "runs": 3,
+      "durations_ms": [
+        1200,
+        1500,
+        1350
+      ],
+      "slowest_ms": 1500
+    },
+    "timeout_ms": 10000,
+    "timeout_source": "derived"
+  },
+  "coverage": {
+    "mode": "off"
+  },
+  "summary": {
+    "total": 7,
+    "killed": 1,
+    "survived": 2,
+    "timed_out": 1,
+    "inconclusive": 1,
+    "errored": 1,
+    "not_run": 1,
+    "score_percent": 66.66666666666666,
+    "policy": {
+      "strict": false,
+      "minimum_score": 0,
+      "require_mutants": true,
+      "failure": "errored-mutants"
+    }
+  },
+  "mutants": [
+    {
+      "id": "58fc538b5969e0cd072209c49c183e0dd604c84649e27b672dff074924e4c281",
+      "display_id": "58fc538b5969e0cd0722",
+      "path": "internal/alpha/alpha.go",
+      "package": "example.com/m/internal/alpha",
+      "family": "comparison",
+      "rule": "eq-to-neq",
+      "rule_version": 1,
+      "line": 12,
+      "column": 9,
+      "start_byte": 100,
+      "end_byte": 102,
+      "original": "==",
+      "replacement": "!=",
+      "outcome": "killed",
+      "duration_ms": 120,
+      "killed_by": "example.com/m/internal/alpha",
+      "attempts": 1,
+      "output_tail": "--- FAIL: TestAdd (0.00s)"
+    },
+    {
+      "id": "a06714632cde3231c059f95e5b8e179e012ee84e1891818e06f7daa3e7d401eb",
+      "display_id": "a06714632cde3231c059",
+      "path": "internal/alpha/alpha.go",
+      "package": "example.com/m/internal/alpha",
+      "family": "boolean-literal",
+      "rule": "true-to-false",
+      "rule_version": 1,
+      "line": 18,
+      "column": 16,
+      "start_byte": 140,
+      "end_byte": 144,
+      "original": "true",
+      "replacement": "false",
+      "outcome": "survived",
+      "duration_ms": 95,
+      "killed_by": null,
+      "attempts": 1,
+      "output_tail": null
+    },
+    {
+      "id": "9724fb752b7cc40b3bd33e5ade95e2f572967645b23bce7cfa6df50b584ba2aa",
+      "display_id": "9724fb752b7cc40b3bd3",
+      "path": "internal/alpha/alpha.go",
+      "package": "example.com/m/internal/alpha",
+      "family": "comparison",
+      "rule": "lt-to-le",
+      "rule_version": 1,
+      "line": 24,
+      "column": 7,
+      "start_byte": 200,
+      "end_byte": 201,
+      "original": "<",
+      "replacement": "<=",
+      "outcome": "timed-out",
+      "duration_ms": 20000,
+      "killed_by": "example.com/m/internal/alpha",
+      "attempts": 2,
+      "output_tail": "panic: test timed out after 10s"
+    },
+    {
+      "id": "d81cd2fc648c9ffeb87f20085ded136996aa478d3de41d58e0ff53f3d51f1427",
+      "display_id": "d81cd2fc648c9ffeb87f",
+      "path": "internal/alpha/alpha.go",
+      "package": "example.com/m/internal/alpha",
+      "family": "comparison",
+      "rule": "ge-to-gt",
+      "rule_version": 1,
+      "line": 31,
+      "column": 12,
+      "start_byte": 260,
+      "end_byte": 262,
+      "original": ">=",
+      "replacement": ">",
+      "outcome": "inconclusive",
+      "duration_ms": 11000,
+      "killed_by": null,
+      "attempts": 2,
+      "output_tail": null
+    },
+    {
+      "id": "7ab6b0e36045f5fb1d185aa6b9fd2b466ac6e8366d3dbb4c9f241d4e6ec3e663",
+      "display_id": "7ab6b0e36045f5fb1d18",
+      "path": "internal/beta/beta.go",
+      "package": "example.com/m/internal/beta",
+      "family": "comparison",
+      "rule": "neq-to-eq",
+      "rule_version": 1,
+      "line": 5,
+      "column": 6,
+      "start_byte": 42,
+      "end_byte": 44,
+      "original": "!=",
+      "replacement": "==",
+      "outcome": "survived",
+      "duration_ms": 80,
+      "killed_by": null,
+      "attempts": 1,
+      "output_tail": null
+    },
+    {
+      "id": "913ccbf4d18332fa846278fa3047c8f60aed1946c92c8fc8a84a7923d2730619",
+      "display_id": "913ccbf4d18332fa8462",
+      "path": "internal/beta/beta.go",
+      "package": "example.com/m/internal/beta",
+      "family": "boolean-literal",
+      "rule": "false-to-true",
+      "rule_version": 1,
+      "line": 9,
+      "column": 20,
+      "start_byte": 77,
+      "end_byte": 82,
+      "original": "false",
+      "replacement": "true",
+      "outcome": "errored",
+      "duration_ms": 4,
+      "killed_by": null,
+      "attempts": 1,
+      "output_tail": "exec: the test binary could not be started"
+    },
+    {
+      "id": "1b51e4b15731329a718d3601ce992c27be77253f5cfc3e35193b515c2a6a85dd",
+      "display_id": "1b51e4b15731329a718d",
+      "path": "internal/beta/beta.go",
+      "package": "example.com/m/internal/beta",
+      "family": "comparison",
+      "rule": "le-to-lt",
+      "rule_version": 1,
+      "line": 14,
+      "column": 8,
+      "start_byte": 120,
+      "end_byte": 122,
+      "original": "<=",
+      "replacement": "<",
+      "outcome": "not-run",
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "output_tail": null
+    }
+  ],
+  "rejected": [
+    {
+      "id": "e3a94c45b9164fde02f92dc31883f14f57db9cca85529626eccbd64382b06291",
+      "display_id": "e3a94c45b9164fde02f9",
+      "path": "internal/beta/beta.go",
+      "line": 19,
+      "column": 11,
+      "rule": "eq-to-neq",
+      "diagnostic": "internal/beta/beta.go:19:11: invalid operation: mismatched types"
+    }
+  ],
+  "skips": [
+    {
+      "path": "internal/alpha/alpha.go",
+      "reason": "array-length",
+      "count": 1
+    },
+    {
+      "path": "internal/alpha/alpha.go",
+      "reason": "const-decl",
+      "count": 4
+    },
+    {
+      "path": "internal/gamma/gamma.go",
+      "reason": "excluded",
+      "count": 1
+    }
+  ],
+  "expectations": [
+    {
+      "id": "a06714632cde3231c059f95e5b8e179e012ee84e1891818e06f7daa3e7d401eb",
+      "reason": "the flag is only read by the debug logger",
+      "state": "fulfilled"
+    },
+    {
+      "id": "58fc538b5969e0cd072209c49c183e0dd604c84649e27b672dff074924e4c281",
+      "reason": "the boundary is checked by the caller",
+      "state": "unfulfilled"
+    },
+    {
+      "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "reason": "kept to prove a stale row is reported",
+      "state": "stale"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "GOM4040",
+      "message": "the snapshot directory could not be removed: access is denied"
+    },
+    {
+      "code": "GOM0001",
+      "message": "coverage-guided selection is not implemented yet"
+    }
+  ]
+}

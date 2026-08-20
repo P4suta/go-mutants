@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
@@ -333,8 +334,8 @@ func TestDisplayTextKeepsTheListingOneLinePerMutant(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := displayText(test.text); got != test.want {
-				t.Errorf("displayText(%q) = %q, want %q", test.text, got, test.want)
+			if got := console.FormatText(test.text); got != test.want {
+				t.Errorf("console.FormatText(%q) = %q, want %q", test.text, got, test.want)
 			}
 		})
 	}

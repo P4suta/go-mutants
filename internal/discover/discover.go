@@ -119,19 +119,42 @@ const (
 	SkipTypeParam SkipReason = "type-param"
 )
 
-// reasonRank is the tie-break order for two suppressed regions that cover
-// exactly the same bytes. It is the declaration order above, frozen so that
-// the same collision resolves the same way on every machine.
-var reasonRank = map[SkipReason]int{
-	SkipGenerated:      0,
-	SkipCgo:            1,
-	SkipExcluded:       2,
-	SkipConstDecl:      3,
-	SkipArrayLength:    4,
-	SkipCaseLabel:      5,
-	SkipPackageVarInit: 6,
-	SkipTypeParam:      7,
+// AllSkipReasons returns every reason discovery can emit, in the declaration
+// order of the constants above. The slice is freshly allocated, so a caller
+// may sort or filter it without disturbing anyone else.
+//
+// This list MUST name every [SkipReason] this package emits. It is the
+// canonical enumeration the rest of the tree checks itself against: the
+// package's own tests parse these sources and fail when a Skip* constant is
+// declared without being listed here, and the tests of internal/report check
+// the `reason` enumeration of the run report schema against it. A reason
+// missing from this list is a reason nothing guards.
+func AllSkipReasons() []SkipReason {
+	return []SkipReason{
+		SkipGenerated,
+		SkipCgo,
+		SkipExcluded,
+		SkipConstDecl,
+		SkipArrayLength,
+		SkipCaseLabel,
+		SkipPackageVarInit,
+		SkipTypeParam,
+	}
 }
+
+// reasonRank is the tie-break order for two suppressed regions that cover
+// exactly the same bytes. It is the order of [AllSkipReasons] — the
+// declaration order above — frozen so that the same collision resolves the
+// same way on every machine, and derived rather than retyped so that a new
+// reason cannot arrive without a rank of its own.
+var reasonRank = func() map[SkipReason]int {
+	reasons := AllSkipReasons()
+	ranks := make(map[SkipReason]int, len(reasons))
+	for rank, reason := range reasons {
+		ranks[reason] = rank
+	}
+	return ranks
+}()
 
 // A Skip is one recorded reason, aggregated per file.
 //

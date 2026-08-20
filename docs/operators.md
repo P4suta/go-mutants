@@ -5,11 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Mutation operators
 
-**Status: discovery only, two families.** `comparison` and `boolean-literal`
-are discovered today — `go-mutants list` enumerates their mutants with stable
-IDs and coordinates — and no other family is. Discovered is not executed: no
-mutant of any family is instrumented or run yet, so a row marked *discovered*
-means its IDs exist and are reviewable, not that it kills anything.
+**Status: two families, discovered and executed.** `comparison` and
+`boolean-literal` are discovered by `go-mutants list` with stable IDs and
+coordinates, and `go-mutants run` instruments, validates, and executes them for
+a real score. No other family is discovered, so a row below without a marker
+means its rule names and versions are agreed and nothing mints their IDs yet.
 
 The rest of this page is the agreed v1 catalogue that the remaining discovery
 and instrumentation work builds against; it is written down first so that rule

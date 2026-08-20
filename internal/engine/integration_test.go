@@ -3,12 +3,13 @@
 
 //go:build integration
 
-// The toolchain-backed half of the engine's tests. It runs a real `go build`
-// and a real `go test` against the fixture corpus, which is the only way to
-// prove that the baseline pipeline works: everything interesting about it —
-// process supervision, the snapshot, the environment the children get, the
-// timeout derived from what was actually measured — is exactly what a mock
-// would have to invent.
+// The toolchain-backed half of the engine's tests. It runs a real `go build`,
+// a real `go test`, a real instrumentation pass and real mutant processes
+// against the fixture corpus, which is the only way to prove the pipeline
+// works: everything interesting about it — process supervision, the snapshot,
+// the environment the children get, the timeout derived from what was actually
+// measured, whether activating a mutant turns a passing suite red — is exactly
+// what a mock would have to invent.
 //
 // Run it with `mise run test-integration`, or:
 //
@@ -17,6 +18,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,12 +26,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/schemas"
 )
+
+// testToolVersion is the version string the engine records in a test report.
+// The document requires a non-empty one, and a fixed value keeps the golden
+// parts of a report independent of what internal/cli currently says.
+const testToolVersion = "0.0.0-test"
 
 // fixture returns the absolute path of a corpus module.
 func fixture(t *testing.T, name string) string {
@@ -44,6 +55,32 @@ func fixture(t *testing.T, name string) string {
 	return path
 }
 
+// options returns the engine options for one fixture run: one baseline
+// observation, one worker, and a history store of the test's own.
+//
+// Both numbers are about the tests rather than about the engine. One baseline
+// run is all a fixture needs to prove its suite is green, and the derived
+// timeout is generous whatever it measures; one worker makes the order of the
+// result events deterministic, which is what lets a test assert the sequence
+// rather than a set.
+//
+// The history root is the load-bearing one. Every run files a report, and the
+// default store is the developer's own operating system cache directory: a test
+// suite that wrote there would leave a directory per fixture behind on every
+// machine that ever ran it.
+func options(t *testing.T, name string) Options {
+	t.Helper()
+	cfg := config.Defaults()
+	cfg.Test.BaselineRuns = 1
+	cfg.Execution.Jobs = 1
+	return Options{
+		Config:        cfg,
+		WorkspaceRoot: fixture(t, name),
+		ToolVersion:   testToolVersion,
+		HistoryRoot:   t.TempDir(),
+	}
+}
+
 // collect runs the engine with a drained event channel and returns everything
 // that was published.
 //
@@ -53,11 +90,25 @@ func fixture(t *testing.T, name string) string {
 // miss the terminal event.
 func collect(t *testing.T, ctx context.Context, opts Options) (RunOutcome, []Event, error) {
 	t.Helper()
+	return watch(t, ctx, opts, nil)
+}
+
+// watch is [collect] with a hook that sees each event as it arrives, so that a
+// test can act on the run — cancel it, for instance — at a point the run itself
+// defines rather than after a sleep.
+//
+// The hook runs on the collector's goroutine and the engine's sends block, so a
+// hook that cancels has cancelled before the engine publishes anything else.
+func watch(t *testing.T, ctx context.Context, opts Options, saw func(Event)) (RunOutcome, []Event, error) {
+	t.Helper()
 	events := make(chan Event, 64)
 	done := make(chan []Event, 1)
 	go func() {
 		var seen []Event
 		for e := range events {
+			if saw != nil {
+				saw(e)
+			}
 			seen = append(seen, e)
 		}
 		done <- seen
@@ -74,6 +125,19 @@ func kinds(events []Event) []string {
 		names = append(names, fmt.Sprintf("%T", e))
 	}
 	return names
+}
+
+// results renders every settled mutant as "outcome path:line rule", in the
+// order the run reported them.
+func results(events []Event) []string {
+	var out []string
+	for _, e := range events {
+		if finished, ok := e.(MutantFinished); ok {
+			m := finished.Result
+			out = append(out, fmt.Sprintf("%s %s:%d %s", m.Outcome, m.Path, m.Line, m.Rule))
+		}
+	}
+	return out
 }
 
 // privateTempDir points this process's temporary directory at a fresh one for
@@ -111,13 +175,11 @@ func entries(t *testing.T, dir string) []string {
 }
 
 func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
-	root := fixture(t, "simple")
 	tempRoot := privateTempDir(t)
+	opts := options(t, "simple")
+	opts.Config.Test.BaselineRuns = 2
 
-	cfg := config.Defaults()
-	cfg.Test.BaselineRuns = 2
-
-	outcome, events, err := collect(t, t.Context(), Options{Config: cfg, WorkspaceRoot: root})
+	outcome, events, err := collect(t, t.Context(), opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -125,8 +187,8 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	if outcome.Status != StatusOK {
 		t.Errorf("status = %s, want %s", outcome.Status, StatusOK)
 	}
-	if len(outcome.BaselineRuns) != cfg.Test.BaselineRuns {
-		t.Fatalf("measured %d baseline runs, want %d", len(outcome.BaselineRuns), cfg.Test.BaselineRuns)
+	if len(outcome.BaselineRuns) != 2 {
+		t.Fatalf("measured %d baseline runs, want 2", len(outcome.BaselineRuns))
 	}
 	for i, d := range outcome.BaselineRuns {
 		if d <= 0 {
@@ -163,33 +225,46 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		t.Errorf("toolchain = %+v, want a located one", outcome.Toolchain)
 	}
 
+	// The whole sequence, pinned. With one worker the mutants settle in
+	// catalogue order, so this is a fact about the pipeline rather than about
+	// the machine — and it is the only assertion that would notice a phase
+	// quietly dropping out of the run.
 	wantKinds := []string{
 		"engine.RunPlanned",
-		"engine.PhaseChanged",
-		"engine.PhaseChanged",
+		"engine.PhaseChanged", // discover
+		"engine.PhaseChanged", // baseline
 		"engine.BaselineProgress",
 		"engine.BaselineProgress",
 		"engine.BaselineCompleted",
-		"engine.Warning",
+		"engine.PhaseChanged", // mutate
+		"engine.Discovered",
+		"engine.Validated",
+		"engine.BaselineProgress", // the instrumented baseline
+		"engine.MutantStarted", "engine.MutantFinished",
+		"engine.MutantStarted", "engine.MutantFinished",
+		"engine.MutantStarted", "engine.MutantFinished",
+		"engine.MutantStarted", "engine.MutantFinished",
+		"engine.PhaseChanged", // report
+		"engine.ReportPublished",
 		"engine.RunCompleted",
 	}
 	if got := kinds(events); !slices.Equal(got, wantKinds) {
-		t.Fatalf("event sequence = %v, want %v", got, wantKinds)
+		t.Fatalf("event sequence =\n\t%s\nwant\n\t%s",
+			strings.Join(got, "\n\t"), strings.Join(wantKinds, "\n\t"))
 	}
 
-	if planned := events[0].(RunPlanned); planned.RunID != outcome.RunID || planned.Workers != cfg.Execution.Jobs {
-		t.Errorf("RunPlanned = %+v, want run %s and %d workers", planned, outcome.RunID, cfg.Execution.Jobs)
+	if planned := events[0].(RunPlanned); planned.RunID != outcome.RunID || planned.Workers != 1 {
+		t.Errorf("RunPlanned = %+v, want run %s and 1 worker", planned, outcome.RunID)
 	}
-	if phase := events[1].(PhaseChanged); phase.Phase != PhaseDiscover || phase.Detail == "" {
-		t.Errorf("first phase = %+v, want a described %s", phase, PhaseDiscover)
-	}
-	if phase := events[2].(PhaseChanged); phase.Phase != PhaseBaseline || phase.Detail == "" {
-		t.Errorf("second phase = %+v, want a described %s", phase, PhaseBaseline)
+	for i, phase := range []Phase{PhaseDiscover, PhaseBaseline} {
+		if got := events[1+i].(PhaseChanged); got.Phase != phase || got.Detail == "" {
+			t.Errorf("phase %d = %+v, want a described %s", i, got, phase)
+		}
 	}
 	for i, index := range []int{3, 4} {
 		progress := events[index].(BaselineProgress)
-		if progress.Run != i+1 || progress.Of != cfg.Test.BaselineRuns {
-			t.Errorf("progress %d = %+v, want run %d of %d", index, progress, i+1, cfg.Test.BaselineRuns)
+		if progress.Run != i+1 || progress.Of != 2 {
+			t.Errorf("progress %d = %+v, want run %d of 2", index, progress, i+1)
 		}
 		if progress.Duration != outcome.BaselineRuns[i] {
 			t.Errorf("progress %d reported %s, outcome recorded %s", index, progress.Duration, outcome.BaselineRuns[i])
@@ -202,21 +277,21 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	if !slices.Equal(completed.Runs, outcome.BaselineRuns) {
 		t.Errorf("BaselineCompleted.Runs = %v, want %v", completed.Runs, outcome.BaselineRuns)
 	}
-	warning := events[6].(Warning)
-	if warning.Code != CodeMutationPhasesPending {
-		t.Errorf("warning code = %s, want %s", warning.Code, CodeMutationPhasesPending)
+	// The instrumented baseline is the sole `1 of 1`, and it is what proves the
+	// rewrite preserved meaning: the suite passed with every guard in the tree
+	// and nothing activated.
+	if instrumented := events[9].(BaselineProgress); instrumented.Run != 1 || instrumented.Of != 1 {
+		t.Errorf("the instrumented baseline reported %+v, want run 1 of 1", instrumented)
 	}
-	if !strings.Contains(warning.Message, "not yet implemented") {
-		t.Errorf("warning message = %q, want the pre-release notice", warning.Message)
+	if final := events[len(events)-1].(RunCompleted); final.Status != StatusOK || final.Run == nil {
+		t.Errorf("RunCompleted = %+v, want an ok run carrying its summary", final)
 	}
-	if final := events[7].(RunCompleted); final.Status != StatusOK || final.Summary == "" {
-		t.Errorf("RunCompleted = %+v, want a described ok", final)
-	}
-	if !slices.Equal(outcome.Warnings, []Warning{warning}) {
-		t.Errorf("outcome warnings = %v, want the published one", outcome.Warnings)
+	if len(outcome.Warnings) != 0 {
+		t.Errorf("a clean run published %v", outcome.Warnings)
 	}
 
-	// The snapshot is gone, and so is the scratch directory beside it.
+	// The snapshot is gone, and so is the scratch directory beside it — the
+	// compiled test binaries and the per-worker temporary directories included.
 	if filepath.Dir(outcome.SnapshotRoot) != tempRoot {
 		t.Errorf("the snapshot was created in %s, want it under the redirected temporary directory %s",
 			filepath.Dir(outcome.SnapshotRoot), tempRoot)
@@ -229,13 +304,512 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	}
 }
 
+// TestKillableRunReachesTheFixturesPredeterminedFates is the whole pipeline
+// judged against a fixture built to have exactly one answer.
+//
+// The killable corpus is laid out so that a mutant can be named by file and
+// rule alone, and its documentation states which three die and which one lives.
+// This asserts that claim as a tally: the run has to find four mutants, kill
+// the three the tests cover, and leave the one nothing calls alive. A run where
+// everything died would be a tree that stopped compiling, and one where
+// everything lived would be activation that never happened.
+func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
+	privateTempDir(t)
+	outcome, events, err := collect(t, t.Context(), options(t, "killable"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
+	}
+
+	// The catalogue is four mutants even under the whole balanced profile,
+	// because discovery implements comparison and boolean-literal so far.
+	// Asserting it rather than assuming it is what makes the tally below a
+	// statement about the fixture instead of about which families have landed.
+	want := []string{
+		"killed clamp.go:41 lt-to-le",
+		"killed clamp.go:42 gt-to-ge",
+		"killed ready.go:14 true-to-false",
+		"survived untested.go:14 neq-to-eq",
+	}
+	got := results(events)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("results =\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
+	}
+
+	summary := outcome.Report.Summary
+	if summary.Total != 4 || summary.Killed != 3 || summary.Survived != 1 {
+		t.Errorf("summary = %+v, want 4 mutants, 3 killed, 1 survived", summary)
+	}
+	if summary.NotRun != 0 || summary.Errored != 0 || summary.Inconclusive != 0 || summary.TimedOut != 0 {
+		t.Errorf("summary = %+v, want every mutant settled as killed or survived", summary)
+	}
+	if summary.ScorePercent == nil || *summary.ScorePercent != 75 {
+		t.Errorf("score = %v, want 75", summary.ScorePercent)
+	}
+	if len(outcome.Report.Rejected) != 0 {
+		t.Errorf("rejected = %+v, want none: every guard in this fixture compiles", outcome.Report.Rejected)
+	}
+
+	// Not strict, so a survivor is a finding rather than a failure. That is the
+	// default on purpose: go-mutants does not fail a build unless it was asked
+	// to.
+	if outcome.Verdict.Code != mutation.ExitOK {
+		t.Errorf("verdict = %+v, want exit 0 without --strict", outcome.Verdict)
+	}
+
+	// The report is on disk, under the history root this test owns, and it is
+	// the same document the outcome carries.
+	if _, err := os.Stat(outcome.RunPath); err != nil {
+		t.Errorf("the run report at %s cannot be opened: %v", outcome.RunPath, err)
+	}
+	if _, err := os.Stat(outcome.LatestPath); err != nil {
+		t.Errorf("the latest pointer at %s cannot be opened: %v", outcome.LatestPath, err)
+	}
+	published := published(t, events)
+	if published.RunPath != outcome.RunPath || published.LatestPath != outcome.LatestPath {
+		t.Errorf("ReportPublished = %+v, want the outcome's paths %s and %s",
+			published, outcome.RunPath, outcome.LatestPath)
+	}
+}
+
+// TestParallelWorkersReachTheSameTally is the one test that runs the mutants
+// concurrently.
+//
+// Every other test here pins Jobs to 1 so that the event order is a fact about
+// the pipeline; this one gives up that order deliberately, because the workers
+// are the only place in go-mutants where several goroutines publish on the
+// event channel and the only place a result could be written twice. What has to
+// survive parallelism is the answer, not the sequence — so the results are
+// sorted before they are compared, and the summary is checked against the same
+// tally the serial run produces.
+//
+// Run it under `-race` when a C toolchain is available: the invariants it
+// leans on are that the display index is written before Schedule and only read
+// after, that each worker writes only its own result slot, and that no hook
+// touches the warning list.
+func TestParallelWorkersReachTheSameTally(t *testing.T) {
+	privateTempDir(t)
+	opts := options(t, "killable")
+	opts.Config.Execution.Jobs = 4
+
+	outcome, events, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := []string{
+		"killed clamp.go:41 lt-to-le",
+		"killed clamp.go:42 gt-to-ge",
+		"killed ready.go:14 true-to-false",
+		"survived untested.go:14 neq-to-eq",
+	}
+	got := results(events)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("four workers reached\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
+	}
+	summary := outcome.Report.Summary
+	if summary.Total != 4 || summary.Killed != 3 || summary.Survived != 1 {
+		t.Errorf("summary = %+v, want the same 4/3/1 the serial run produces", summary)
+	}
+	// Exactly one settled result per mutant, whatever order they finished in: a
+	// mutant reported twice would leave another one silently unaccounted for.
+	if len(got) != 4 {
+		t.Errorf("the run published %d results for 4 mutants", len(got))
+	}
+}
+
+// TestStrictFailsOnTheSurvivorItWasNotToldAbout is the same run with the one
+// gate this fixture can trip.
+func TestStrictFailsOnTheSurvivorItWasNotToldAbout(t *testing.T) {
+	privateTempDir(t)
+	opts := options(t, "killable")
+	opts.Config.Policy.Strict = true
+
+	outcome, _, err := collect(t, t.Context(), opts)
+	// A policy failure is not an error. The run did everything right; what it
+	// found is what the user asked to be told about, and conflating the two
+	// would make "go-mutants could not do its job" and "your tests missed
+	// something" the same event.
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Verdict.Code != mutation.ExitPolicyFailure {
+		t.Fatalf("verdict = %+v, want exit 1 under --strict", outcome.Verdict)
+	}
+	if !outcome.Verdict.Has(mutation.ReasonUnexpectedSurvivors) {
+		t.Errorf("verdict reasons = %v, want the unexpected survivor", outcome.Verdict.Reasons())
+	}
+	if failure := outcome.Report.Summary.Policy.Failure; failure == nil ||
+		*failure != string(mutation.ReasonUnexpectedSurvivors) {
+		t.Errorf("the report names %v as the policy failure, want %s", failure, mutation.ReasonUnexpectedSurvivors)
+	}
+}
+
+// TestMutantSelectsExactlyOne pins the difference between `run --mutant` and
+// `list --mutant`: a run must narrow to one mutant, and everything else is
+// still catalogued and reported as not-run.
+func TestMutantSelectsExactlyOne(t *testing.T) {
+	privateTempDir(t)
+
+	// The id comes from a run rather than from a constant: a mutant's identity
+	// is a digest over the fixture's bytes, so a hard-coded one would turn every
+	// edit to a comment in the fixture into a failure here.
+	first, _, err := collect(t, t.Context(), options(t, "killable"))
+	if err != nil {
+		t.Fatalf("the run that sources the id: %v", err)
+	}
+	survivor := survivorOf(t, first.Report)
+
+	opts := options(t, "killable")
+	opts.MutantPrefix = survivor.DisplayID
+	outcome, events, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run --mutant %s: %v", survivor.DisplayID, err)
+	}
+
+	if got := results(events); len(got) != 1 || !strings.HasPrefix(got[0], "survived untested.go") {
+		t.Fatalf("executed %v, want only the survivor in untested.go", got)
+	}
+	summary := outcome.Report.Summary
+	if summary.Total != 4 || summary.Survived != 1 || summary.NotRun != 3 {
+		t.Errorf("summary = %+v, want 4 catalogued, 1 measured, 3 not run", summary)
+	}
+	if mode := outcome.Report.Selection.Mode; mode != report.ModeMutant {
+		t.Errorf("selection mode = %s, want %s", mode, report.ModeMutant)
+	}
+	if selected := outcome.Report.Selection.Selected; selected != 1 {
+		t.Errorf("selected = %d, want 1", selected)
+	}
+	// The catalogue is still whole, which is what keeps policy.require_mutants
+	// honest about the difference between "nothing to find" and "not looked at
+	// this time".
+	if candidates := outcome.Report.Selection.Candidates; candidates != 4 {
+		t.Errorf("candidates = %d, want the whole catalogue of 4", candidates)
+	}
+}
+
+func TestMutantThatSelectsNothingIsRefused(t *testing.T) {
+	privateTempDir(t)
+	opts := options(t, "killable")
+	// Well formed and not a prefix of any digest of this fixture.
+	opts.MutantPrefix = strings.Repeat("0", 32)
+
+	_, _, err := collect(t, t.Context(), opts)
+	var selection *SelectionError
+	if !errors.As(err, &selection) {
+		t.Fatalf("Run = %v, want a SelectionError", err)
+	}
+	if !errors.Is(err, mutation.ErrMutantNotFound) {
+		t.Errorf("error = %v, want the catalogue's own sentinel in the chain", err)
+	}
+	// No GOM code, deliberately: the mistake is in how the run was invoked, and
+	// internal/cli codes it in its own block rather than there being two
+	// identifiers for one condition.
+	if code := CodeOf(err); code != "" {
+		t.Errorf("the selection error carries code %s, want none", code)
+	}
+}
+
+// TestExpectedSurvivorLeavesAStrictRunGreen is the expectations ledger doing
+// the job it exists for: a survivor somebody has looked at, explained, and
+// signed off stops being a reason to fail.
+func TestExpectedSurvivorLeavesAStrictRunGreen(t *testing.T) {
+	privateTempDir(t)
+	first, _, err := collect(t, t.Context(), options(t, "killable"))
+	if err != nil {
+		t.Fatalf("the run that sources the id: %v", err)
+	}
+	survivor := survivorOf(t, first.Report)
+
+	opts := options(t, "killable")
+	opts.Config.Policy.Strict = true
+	opts.Config.Mutation.Expect = []config.Expectation{{
+		ID:     survivor.ID,
+		Reason: "Untested is deliberately uncovered; it is the fixture's survivor",
+	}}
+
+	outcome, _, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Verdict.Code != mutation.ExitOK {
+		t.Fatalf("verdict = %+v, want exit 0: the one survivor is accounted for", outcome.Verdict)
+	}
+	if len(outcome.Report.Expectations) != 1 || outcome.Report.Expectations[0].State != report.StateFulfilled {
+		t.Fatalf("expectations = %+v, want one fulfilled row", outcome.Report.Expectations)
+	}
+	// A fulfilled expectation leaves the score alone in both directions: it is
+	// neither a detection to be proud of nor a survivor to be nagged about.
+	if score := outcome.Report.Summary.ScorePercent; score == nil || *score != 100 {
+		t.Errorf("score = %v, want 100: the expected survivor is out of the denominator", score)
+	}
+}
+
+// TestExpectingAKilledMutantIsAContractFailure is the other half of the ledger.
+// A row that says "known survivor" about something the tests now catch is lying
+// to whoever reads it, and a stale ledger is worse than none — so it escalates
+// past the opt-in gates to exit 2.
+func TestExpectingAKilledMutantIsAContractFailure(t *testing.T) {
+	privateTempDir(t)
+	first, _, err := collect(t, t.Context(), options(t, "killable"))
+	if err != nil {
+		t.Fatalf("the run that sources the id: %v", err)
+	}
+	killed := killedOf(t, first.Report)
+
+	opts := options(t, "killable")
+	opts.Config.Mutation.Expect = []config.Expectation{{
+		ID:     killed.ID,
+		Reason: "out of date: this mutant is caught now",
+	}}
+
+	outcome, events, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Verdict.Code != mutation.ExitInfrastructure {
+		t.Fatalf("verdict = %+v, want exit 2 for a ledger that stopped describing reality", outcome.Verdict)
+	}
+	if !outcome.Verdict.Has(mutation.ReasonExpectationFailure) {
+		t.Errorf("verdict reasons = %v, want the expectation failure", outcome.Verdict.Reasons())
+	}
+	if len(outcome.Report.Expectations) != 1 || outcome.Report.Expectations[0].State != report.StateUnfulfilled {
+		t.Errorf("expectations = %+v, want one unfulfilled row", outcome.Report.Expectations)
+	}
+	// The gate has to be named somewhere a person can read it. Nothing else in
+	// the closing block says why this run exited 2 — the counts and the score
+	// are the same as a green run's — and a policy failure is deliberately not
+	// printed to standard error.
+	final := events[len(events)-1].(RunCompleted)
+	if final.Run == nil || final.Run.Failure.Reason != mutation.ReasonExpectationFailure {
+		t.Fatalf("the closing summary = %+v, want it to name the expectation failure", final.Run)
+	}
+	if final.Run.Failure.Detail == "" {
+		t.Error("the named gate carries no explanation")
+	}
+}
+
+// TestCancellationMidRunStillPublishesAPartialReport is the interruption
+// contract, taken at the one point where there is something to lose: after the
+// catalogue exists and some mutants have been measured.
+//
+// The cancellation is triggered off the event stream rather than after a sleep.
+// The engine's sends block, so cancelling inside the collector means the run is
+// already cancelled by the time it publishes anything else — which makes this a
+// test of the drain-and-publish path rather than a race with a timer.
+func TestCancellationMidRunStillPublishesAPartialReport(t *testing.T) {
+	privateTempDir(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	opts := options(t, "killable")
+	outcome, events, err := watch(t, ctx, opts, func(e Event) {
+		if _, ok := e.(MutantFinished); ok {
+			cancel()
+		}
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v, want context.Canceled in the chain", err)
+	}
+	if outcome.Status != StatusInterrupted {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusInterrupted)
+	}
+	if outcome.Report == nil {
+		t.Fatal("an interrupted run published no report, so everything it measured was thrown away")
+	}
+	if outcome.Report.Status != report.StatusInterrupted {
+		t.Errorf("report status = %s, want %s", outcome.Report.Status, report.StatusInterrupted)
+	}
+	summary := outcome.Report.Summary
+	if summary.Total != 4 {
+		t.Errorf("summary total = %d, want the whole catalogue of 4", summary.Total)
+	}
+	if summary.NotRun == 0 {
+		t.Errorf("summary = %+v, want the mutants the signal cut short recorded as not-run", summary)
+	}
+	if _, err := os.Stat(outcome.RunPath); err != nil {
+		t.Errorf("the partial report at %s cannot be opened: %v", outcome.RunPath, err)
+	}
+
+	names := kinds(events)
+	if len(names) == 0 || names[len(names)-1] != "engine.RunCompleted" {
+		t.Fatalf("event sequence = %v, want it to end with RunCompleted", names)
+	}
+	if !slices.Contains(names, "engine.ReportPublished") {
+		t.Error("the interrupted run never announced its report")
+	}
+	if final := events[len(events)-1].(RunCompleted); final.Run == nil {
+		t.Error("the terminal event carries no summary, so a renderer has nothing to close with")
+	}
+	// The snapshot is still removed: an interrupted run has to leave the
+	// machine as it found it.
+	if _, err := os.Stat(outcome.SnapshotRoot); !os.IsNotExist(err) {
+		t.Errorf("the snapshot at %s survived an interrupted run (stat error %v)", outcome.SnapshotRoot, err)
+	}
+}
+
+// TestRejectableRunReportsWhatWillNotCompile is compile validation end to end.
+//
+// The rejectable fixture holds three candidates whose guard evaluates to plain
+// `bool` where the context wants the named type `Flag`, next to six healthy
+// ones sharing the same two files. A phase that rejected a file rather than a
+// candidate would take the healthy ones with it, which is what the counts here
+// would catch.
+func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
+	privateTempDir(t)
+	outcome, events, err := collect(t, t.Context(), options(t, "rejectable"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s: a rejection is data, not a failure", outcome.Status, StatusOK)
+	}
+
+	if got := len(outcome.Report.Rejected); got != 3 {
+		t.Fatalf("rejected %d mutants, want the fixture's 3 traps: %+v", got, outcome.Report.Rejected)
+	}
+	for _, rejection := range outcome.Report.Rejected {
+		// A rejection with no explanation is the silence the whole phase exists
+		// to avoid, and the document requires one on every row.
+		if strings.TrimSpace(rejection.Diagnostic) == "" {
+			t.Errorf("rejected mutant %s carries no diagnostic", rejection.DisplayID)
+		}
+		if rejection.Line <= 0 || rejection.Path == "" {
+			t.Errorf("rejected mutant %s has no coordinates: %+v", rejection.DisplayID, rejection)
+		}
+	}
+
+	summary := outcome.Report.Summary
+	if summary.Total != 6 {
+		t.Errorf("summary total = %d, want the 6 candidates that compile", summary.Total)
+	}
+	// The rejected three are out of the score entirely: a mutant that cannot
+	// exist must never sit in a denominator.
+	if summary.ScorePercent == nil || *summary.ScorePercent != 100 {
+		t.Errorf("score = %v, want 100 over the six that compile", summary.ScorePercent)
+	}
+	if len(outcome.Report.Mutants) != 6 {
+		t.Errorf("the report holds %d executed mutants, want 6", len(outcome.Report.Mutants))
+	}
+
+	validated := validatedOf(t, events)
+	if validated.Accepted != 6 || validated.Rejected != 3 {
+		t.Errorf("Validated = %+v, want 6 accepted and 3 rejected", validated)
+	}
+}
+
+// TestMutantThatWasRejectedSaysSo is the other half of `run --mutant`.
+//
+// `list` does not validate, so every id it prints can be handed to `run
+// --mutant` — including one compile validation will refuse. That selects
+// nothing, and every gate that might have noticed is working as designed: the
+// catalogue is whole so `require_mutants` is satisfied, the denominator is empty
+// so `minimum_score` cannot be missed, and there are no survivors for `strict`.
+// The run exits 0 having measured nothing, which is the shape
+// policy.require_mutants' own documentation calls the most dangerous kind of
+// green.
+//
+// What stops it from being silent is one warning naming the mutant and quoting
+// what the compiler said. The exit code is deliberately still 0 and is asserted
+// as such: a rejection is data rather than a failure — the same fixture's
+// whole-catalogue run reports three of them and stays green — so the fix is to
+// say the thing out loud, not to invent a gate for it.
+func TestMutantThatWasRejectedSaysSo(t *testing.T) {
+	privateTempDir(t)
+
+	// The id comes from a run for the reason survivorOf gives: a mutant's
+	// identity is a digest over the fixture's bytes.
+	first, _, err := collect(t, t.Context(), options(t, "rejectable"))
+	if err != nil {
+		t.Fatalf("the run that sources the id: %v", err)
+	}
+	if len(first.Report.Rejected) == 0 {
+		t.Fatal("the rejectable fixture rejected nothing, so this cannot be exercised")
+	}
+	target := first.Report.Rejected[0]
+
+	opts := options(t, "rejectable")
+	opts.MutantPrefix = target.DisplayID
+	outcome, events, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run --mutant %s: %v", target.DisplayID, err)
+	}
+
+	warning, found := warningWith(events, CodeSelectedMutantRejected)
+	if !found {
+		t.Fatalf("no %s warning; the run selected a rejected mutant in silence. warnings: %+v",
+			CodeSelectedMutantRejected, warningsOf(events))
+	}
+	// The mutant by name, where it is, and the compiler's own words. Without the
+	// last of these the message says only what the user can already infer from
+	// nothing having run.
+	for _, needle := range []string{
+		strconv.Quote(target.DisplayID),
+		target.Path + ":" + strconv.Itoa(target.Line) + ":" + strconv.Itoa(target.Column),
+		target.Rule,
+		firstLine(strings.TrimSpace(target.Diagnostic)),
+	} {
+		if needle == "" {
+			t.Fatalf("the fixture's rejection is missing a field this asserts on: %+v", target)
+		}
+		if !strings.Contains(warning.Message, needle) {
+			t.Errorf("the warning does not mention %q:\n%s", needle, warning.Message)
+		}
+	}
+	// One line, because that is what a warning is: the plain renderer writes it
+	// after a "warning GOM4043: " prefix, and the report stores it as one string.
+	if strings.ContainsAny(warning.Message, "\n\r") {
+		t.Errorf("the warning is not one line: %q", warning.Message)
+	}
+
+	// A renderer that was not listening must not lose it either.
+	filed := false
+	for _, w := range outcome.Report.Warnings {
+		if w.Code == string(CodeSelectedMutantRejected) && w.Message == warning.Message {
+			filed = true
+		}
+	}
+	if !filed {
+		t.Errorf("the warning is not in the filed report: %+v", outcome.Report.Warnings)
+	}
+	// A new code is a new value in a published document, so the document is held
+	// against the shipped schema here rather than only where a run has no
+	// warnings to carry.
+	document, err := os.ReadFile(published(t, events).RunPath)
+	if err != nil {
+		t.Fatalf("reading the filed report: %v", err)
+	}
+	validateDocument(t, document)
+
+	// The rest of the run is unchanged, and pinned so that a later reader can
+	// tell the deliberate parts from the accident.
+	if outcome.Status != StatusOK || outcome.Verdict.Code != mutation.ExitOK {
+		t.Errorf("status %s verdict %+v, want an ok run: a rejection is data, not a failure",
+			outcome.Status, outcome.Verdict)
+	}
+	if got := results(events); len(got) != 0 {
+		t.Errorf("executed %v, want nothing: the one mutant asked about cannot be built", got)
+	}
+	selection := outcome.Report.Selection
+	if selection.Mode != report.ModeMutant || selection.Selected != 0 {
+		t.Errorf("selection = %+v, want mode %s and 0 selected", selection, report.ModeMutant)
+	}
+	// The catalogue is still whole, which is exactly why require_mutants stayed
+	// quiet and why the warning had to be the thing that spoke.
+	if summary := outcome.Report.Summary; summary.Total != 6 || summary.NotRun != 6 {
+		t.Errorf("summary = %+v, want the 6 that compile, all not-run", summary)
+	}
+	if score := outcome.Report.Summary.ScorePercent; score != nil {
+		t.Errorf("score = %v, want none: nothing was measured", *score)
+	}
+}
+
 func TestRunStopsOnAFailingBaseline(t *testing.T) {
-	root := fixture(t, "failing-baseline")
-
-	cfg := config.Defaults()
-	cfg.Test.BaselineRuns = 1
-
-	outcome, events, err := collect(t, t.Context(), Options{Config: cfg, WorkspaceRoot: root})
+	outcome, events, err := collect(t, t.Context(), options(t, "failing-baseline"))
 	if err == nil {
 		t.Fatal("Run succeeded against a workspace whose tests fail")
 	}
@@ -244,6 +818,9 @@ func TestRunStopsOnAFailingBaseline(t *testing.T) {
 	}
 	if outcome.Status != StatusFailed {
 		t.Errorf("status = %s, want %s", outcome.Status, StatusFailed)
+	}
+	if outcome.Report != nil {
+		t.Error("a run that never catalogued anything published a report claiming the workspace holds no mutants")
 	}
 
 	// The failure has to quote the test output, or the user is left with an
@@ -294,23 +871,18 @@ func TestRunStopsOnAFailingBaseline(t *testing.T) {
 // the same number of different files — and it is here to name the invariant
 // phases 9 and 10 will depend on, where the file count alone would not say why.
 func TestMutationExcludeChangesNeitherTheSnapshotNorItsDigest(t *testing.T) {
-	root := fixture(t, "simple")
 	privateTempDir(t)
-
-	cfg := config.Defaults()
-	cfg.Test.BaselineRuns = 1
-
-	plain, _, err := collect(t, t.Context(), Options{Config: cfg, WorkspaceRoot: root})
+	plain, _, err := collect(t, t.Context(), options(t, "simple"))
 	if err != nil {
 		t.Fatalf("Run with no excludes: %v", err)
 	}
 
 	// Every file in the fixture is named by one of these patterns, so a walk
 	// that honoured them would copy nothing but go.mod.
-	excluded := cfg
-	excluded.Mutation.Exclude = []string{"**/*_test.go", "**/simple.go", "**/testdata/**"}
+	excluded := options(t, "simple")
+	excluded.Config.Mutation.Exclude = []string{"**/*_test.go", "**/simple.go", "**/testdata/**"}
 
-	selective, _, err := collect(t, t.Context(), Options{Config: excluded, WorkspaceRoot: root})
+	selective, _, err := collect(t, t.Context(), excluded)
 	if err != nil {
 		t.Fatalf("Run with mutation.exclude set: %v", err)
 	}
@@ -323,19 +895,21 @@ func TestMutationExcludeChangesNeitherTheSnapshotNorItsDigest(t *testing.T) {
 		t.Errorf("mutation.exclude changed the workspace digest from %s to %s: the digest describes the code, not the selection",
 			plain.WorkspaceDigest, selective.WorkspaceDigest)
 	}
+	// It does decide the catalogue, which is the job it actually has: with
+	// simple.go excluded there is nothing left to mutate.
+	if got := len(selective.Report.Mutants); got != 0 {
+		t.Errorf("mutation.exclude left %d mutants, want none: the only mutable file was excluded", got)
+	}
 }
 
 // TestMutationExcludeCannotHideAFailingBaseline is the same contract stated as
 // the consequence a user meets: a red suite stays red however the mutation
 // candidates are selected.
 func TestMutationExcludeCannotHideAFailingBaseline(t *testing.T) {
-	root := fixture(t, "failing-baseline")
+	opts := options(t, "failing-baseline")
+	opts.Config.Mutation.Exclude = []string{"**/*_test.go"}
 
-	cfg := config.Defaults()
-	cfg.Test.BaselineRuns = 1
-	cfg.Mutation.Exclude = []string{"**/*_test.go"}
-
-	outcome, _, err := collect(t, t.Context(), Options{Config: cfg, WorkspaceRoot: root})
+	outcome, _, err := collect(t, t.Context(), opts)
 	if err == nil {
 		t.Fatal("Run succeeded against a red suite that mutation.exclude named: the baseline gate ran no tests")
 	}
@@ -353,36 +927,31 @@ func TestMutationExcludeCannotHideAFailingBaseline(t *testing.T) {
 }
 
 func TestExplicitTimeoutBelowTheBaselineIsRefused(t *testing.T) {
-	root := fixture(t, "simple")
-
-	cfg := config.Defaults()
-	cfg.Test.BaselineRuns = 1
+	opts := options(t, "simple")
 	// One nanosecond is below any real measurement, so the rejection cannot
 	// depend on how fast this machine is.
-	cfg.Test.Timeout = time.Nanosecond
-
+	opts.Config.Test.Timeout = time.Nanosecond
 	// The `--` passthrough travels here, and this is the run that proves it
 	// reaches the child rather than being quietly ignored.
-	argv := []string{"go", "test", "-count=1", "./..."}
+	opts.TestArgv = []string{"go", "test", "-count=1", "./..."}
 
-	outcome, _, err := collect(t, t.Context(), Options{Config: cfg, WorkspaceRoot: root, TestArgv: argv})
+	outcome, _, err := collect(t, t.Context(), opts)
 	if got := CodeOf(err); got != CodeTimeoutTooSmall {
 		t.Fatalf("error code = %s, want %s (error: %v)", got, CodeTimeoutTooSmall, err)
 	}
-	if !slices.Equal(outcome.TestCommand, argv) {
-		t.Errorf("test command = %q, want the passthrough %q", outcome.TestCommand, argv)
+	if !slices.Equal(outcome.TestCommand, opts.TestArgv) {
+		t.Errorf("test command = %q, want the passthrough %q", outcome.TestCommand, opts.TestArgv)
 	}
 	if len(outcome.BaselineRuns) != 1 {
 		t.Errorf("measured %d baseline runs, want 1 before the rejection", len(outcome.BaselineRuns))
 	}
 }
 
-func TestCancellationEndsTheRunAsAnInterrupt(t *testing.T) {
-	root := fixture(t, "simple")
+func TestCancellationBeforeAnythingIsCataloguedPublishesNothing(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	outcome, events, err := collect(t, ctx, Options{Config: config.Defaults(), WorkspaceRoot: root})
+	outcome, events, err := collect(t, ctx, options(t, "simple"))
 	if err == nil {
 		t.Fatal("Run succeeded with an already cancelled context")
 	}
@@ -396,6 +965,9 @@ func TestCancellationEndsTheRunAsAnInterrupt(t *testing.T) {
 	if outcome.Status != StatusInterrupted {
 		t.Errorf("status = %s, want %s", outcome.Status, StatusInterrupted)
 	}
+	if outcome.Report != nil {
+		t.Error("a run cancelled before discovery filed a report claiming the workspace holds no mutants")
+	}
 	names := kinds(events)
 	if len(names) == 0 || names[len(names)-1] != "engine.RunCompleted" {
 		t.Fatalf("event sequence = %v, want it to end with RunCompleted", names)
@@ -405,6 +977,11 @@ func TestCancellationEndsTheRunAsAnInterrupt(t *testing.T) {
 // TestCommandLineEndToEnd compiles cmd/go-mutants and runs it, which is the
 // only test that covers the wiring between the command tree, the renderer, and
 // the engine as a user meets it.
+//
+// It runs against the killable fixture with --strict, so it is also the one
+// place the exit status a CI job branches on is read off a real process rather
+// than off a Verdict: a survivor exists, --strict was asked for, and the answer
+// has to be 1.
 func TestCommandLineEndToEnd(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -437,22 +1014,26 @@ func TestCommandLineEndToEnd(t *testing.T) {
 		t.Fatalf("--version printed %q, want a `go-mutants <version>` line", version)
 	}
 
-	run := exec.CommandContext(t.Context(), binary, "run")
-	run.Dir = fixture(t, "simple")
+	run := exec.CommandContext(t.Context(), binary, "run", "--strict")
+	run.Dir = fixture(t, "killable")
 	// Hermetic here means "nothing of go-mutants' own leaks in", not "an empty
 	// environment": the child has to find the same `go`, the same module cache,
 	// and on Windows the same SystemRoot this process did, or it fails for
-	// reasons that have nothing to do with what is being tested.
-	run.Env = append(childEnv(t.TempDir()), "NO_COLOR=1")
+	// reasons that have nothing to do with what is being tested. The cache
+	// variables are redirected because the run files a report in the operating
+	// system's cache directory, and a test must not write to the developer's.
+	cache := t.TempDir()
+	run.Env = append(childEnv(t.TempDir()),
+		"NO_COLOR=1", "LOCALAPPDATA="+cache, "XDG_CACHE_HOME="+cache, "HOME="+cache)
 
 	var stdout, stderr strings.Builder
 	run.Stdout = &stdout
 	run.Stderr = &stderr
-	if err := run.Run(); err != nil {
-		t.Fatalf("go-mutants run: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
-	}
-	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("exit = %d, want 0", code)
+	runErr := run.Run()
+	code := run.ProcessState.ExitCode()
+	if code != int(mutation.ExitPolicyFailure) {
+		t.Fatalf("exit = %d (%v), want %d for a survivor under --strict\nstdout:\n%s\nstderr:\n%s",
+			code, runErr, mutation.ExitPolicyFailure, stdout.String(), stderr.String())
 	}
 
 	out := stdout.String()
@@ -461,10 +1042,24 @@ func TestCommandLineEndToEnd(t *testing.T) {
 		"phase discover:",
 		"phase baseline:",
 		"baseline ok: avg ",
-		"timeout ",
 		"(derived)",
-		"warning " + CodeMutationPhasesPending + ":",
-		"run ok:",
+		"phase mutate:",
+		"discovered 4 candidates",
+		"validated 4 mutants, 0 rejections",
+		"phase report:",
+		"report run: ",
+		"report latest: ",
+		// The survivor, its coordinates, and the diff a reader acts on.
+		"SURVIVED   ",
+		"untested.go:14:11  neq-to-eq  != -> ==",
+		"    - !=",
+		"    + ==",
+		"mutants 4  killed 3  survived 1",
+		"score 75.00%",
+		// The gate is named on the console and nowhere else: a policy failure
+		// is deliberately not printed to standard error.
+		"failed unexpected-survivors: policy.strict is set and 1 mutant survived unexpectedly",
+		"  exit 1",
 	} {
 		if !strings.Contains(out, needle) {
 			t.Errorf("stdout does not contain %q:\n%s", needle, out)
@@ -473,7 +1068,179 @@ func TestCommandLineEndToEnd(t *testing.T) {
 	if strings.Contains(out, "\x1b") {
 		t.Error("stdout carries escape sequences with NO_COLOR set")
 	}
+	// A failed policy gate says everything it has to say in the summary block.
+	// Repeating a shortened version of it on standard error would dress a
+	// measurement the run made correctly up as something having gone wrong.
 	if stderr.String() != "" {
-		t.Errorf("stderr = %q, want nothing on a successful run", stderr.String())
+		t.Errorf("stderr = %q, want nothing: a policy failure is not an error", stderr.String())
 	}
+}
+
+// TestJSONWritesTheDocumentAloneOnStandardOutput is the machine-readable half
+// of the same wiring, checked against the shipped schema.
+func TestJSONWritesTheDocumentAloneOnStandardOutput(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skipf("no go executable on PATH: %v", err)
+	}
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolving the repository root: %v", err)
+	}
+	binary := filepath.Join(t.TempDir(), "go-mutants")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), goBin, "build", "-o", binary, "./cmd/go-mutants")
+	build.Dir = repo
+	if out, buildErr := build.CombinedOutput(); buildErr != nil {
+		t.Fatalf("building cmd/go-mutants: %v\n%s", buildErr, out)
+	}
+
+	run := exec.CommandContext(t.Context(), binary, "run", "--json")
+	run.Dir = fixture(t, "killable")
+	cache := t.TempDir()
+	run.Env = append(childEnv(t.TempDir()),
+		"NO_COLOR=1", "LOCALAPPDATA="+cache, "XDG_CACHE_HOME="+cache, "HOME="+cache)
+
+	var stdout, stderr strings.Builder
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	if err := run.Run(); err != nil {
+		t.Fatalf("go-mutants run --json: %v\nstderr:\n%s", err, stderr.String())
+	}
+
+	document := []byte(stdout.String())
+	// Nothing but the document: a stray progress line would make this fail to
+	// decode, which is the whole point of routing the renderer at standard
+	// error under --json.
+	var decoded map[string]any
+	if err := json.Unmarshal(document, &decoded); err != nil {
+		t.Fatalf("standard output is not one JSON document: %v\n%s", err, stdout.String())
+	}
+	if decoded["document_type"] != report.DocumentType {
+		t.Fatalf("document_type = %v, want %q", decoded["document_type"], report.DocumentType)
+	}
+	// The progress the console would have printed went to standard error
+	// instead of being dropped, so a user watching a --json run still sees one.
+	if !strings.Contains(stderr.String(), "phase mutate:") {
+		t.Errorf("stderr carries no progress:\n%s", stderr.String())
+	}
+	validateDocument(t, document)
+
+	// The summary is the tally, not a second opinion about it: recounting the
+	// mutants[] array has to reproduce it.
+	var parsed report.Report
+	if err := json.Unmarshal(document, &parsed); err != nil {
+		t.Fatalf("decoding the document into a report: %v", err)
+	}
+	tally, err := parsed.Tally()
+	if err != nil {
+		t.Fatalf("recounting the report: %v", err)
+	}
+	summary := parsed.Summary
+	if tally.Total() != summary.Total || tally.Killed != summary.Killed || tally.Survived() != summary.Survived {
+		t.Errorf("the recounted tally %+v disagrees with the summary %+v", tally, summary)
+	}
+	if summary.Total != 4 || summary.Killed != 3 || summary.Survived != 1 {
+		t.Errorf("summary = %+v, want 4 mutants, 3 killed, 1 survived", summary)
+	}
+}
+
+// validateDocument holds the published report against the schema go-mutants
+// ships.
+//
+// The validator is a test-only dependency on purpose: it is what proves the
+// document internal/report writes is the document the schema describes, and
+// linking a JSON Schema engine into the shipped binary to assert that at run
+// time would be paying for the check on every run of every user.
+func validateDocument(t *testing.T, document []byte) {
+	t.Helper()
+	if err := schemas.Validate(schemas.RunReportV1, document); err != nil {
+		t.Fatalf("the published report does not satisfy run-report-v1: %v", err)
+	}
+}
+
+// published returns the one ReportPublished event of a run.
+func published(t *testing.T, events []Event) ReportPublished {
+	t.Helper()
+	for _, e := range events {
+		if got, ok := e.(ReportPublished); ok {
+			return got
+		}
+	}
+	t.Fatal("the run published no report")
+	return ReportPublished{}
+}
+
+// validatedOf returns the one Validated event of a run.
+func validatedOf(t *testing.T, events []Event) Validated {
+	t.Helper()
+	for _, e := range events {
+		if got, ok := e.(Validated); ok {
+			return got
+		}
+	}
+	t.Fatal("the run published no Validated event")
+	return Validated{}
+}
+
+// warningsOf returns every warning a run published, in order.
+func warningsOf(events []Event) []Warning {
+	var out []Warning
+	for _, e := range events {
+		if got, ok := e.(Warning); ok {
+			out = append(out, got)
+		}
+	}
+	return out
+}
+
+// warningWith returns the first warning carrying a code, and whether there was
+// one.
+func warningWith(events []Event, code Code) (Warning, bool) {
+	for _, w := range warningsOf(events) {
+		if w.Code == string(code) {
+			return w, true
+		}
+	}
+	return Warning{}, false
+}
+
+// survivorOf returns the report's one survivor, and killedOf one of its kills.
+//
+// They exist because a mutant's identity is a digest over the fixture's bytes:
+// a test that needs an id has to read it from a run rather than hard-code one,
+// or every edit to a comment in the fixture becomes a failure here.
+func survivorOf(t *testing.T, r *report.Report) report.Mutant {
+	t.Helper()
+	return oneWith(t, r, report.OutcomeSurvived)
+}
+
+func killedOf(t *testing.T, r *report.Report) report.Mutant {
+	t.Helper()
+	for _, m := range r.Mutants {
+		if m.Outcome == report.OutcomeKilled {
+			return m
+		}
+	}
+	t.Fatal("the report holds no killed mutant")
+	return report.Mutant{}
+}
+
+// oneWith returns the report's only mutant with an outcome, and fails when
+// there is not exactly one: a test that means "the survivor" must not silently
+// start meaning "whichever survivor came first".
+func oneWith(t *testing.T, r *report.Report, outcome report.Outcome) report.Mutant {
+	t.Helper()
+	var found []report.Mutant
+	for _, m := range r.Mutants {
+		if m.Outcome == outcome {
+			found = append(found, m)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the report holds %d %s mutants, want exactly 1", len(found), outcome)
+	}
+	return found[0]
 }

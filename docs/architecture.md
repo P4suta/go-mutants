@@ -7,16 +7,19 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: partially implemented.** The pure packages, the strict
 configuration decoder, the snapshot, the baseline execution layer, discovery
-for two operator families, and the `list` command exist. Instrumentation,
-mutant execution, coverage selection, the cache, and reports do not. Each
-section below marks which of the two it is; nothing here should be read as a
-description of working software until its status says so.
+for two operator families, guard-based instrumentation with its generated
+runtime, compile validation, mutant execution, `RunReport v1` with its history
+store, and the `list` and `run` commands exist. Coverage-guided selection, the
+outcome cache, `--changed`, `--shard`, the HTML report, the Stryker projection,
+and the TUI do not. Each section below marks which of the two it is; nothing
+here should be read as a description of working software until its status says
+so.
 
 ## Invariants
 
 Four invariants shape every decision. They describe what the design holds
-itself to, not what every phase already does: invariant 2 is what
-instrumentation will be built to satisfy, and no instrumentation exists yet.
+itself to, not what every phase already does; all four are load-bearing in
+every run today.
 
 1. **The target workspace is read-only.** Discovery reads it; every build,
    edit, and test happens inside a disposable snapshot that excludes `.git`,
@@ -61,10 +64,11 @@ worker pool over one snapshot     (per-process activation, tree kill)
 outcome cache + RunReport v1      (JSON, HTML, history, exit policy)
 ```
 
-`Discovered → Snapshotted → BaselinePassed` is what `run` performs today, and
-discovery on its own is what `list` prints. Everything from `Validated`
-onwards — batch compilation, instrumentation, the worker pool over mutants, the
-cache, and `RunReport v1` — is planned.
+Every transition on this line is what `run` performs today, and discovery on
+its own is what `list` prints. Three annotations above are still promises: no
+coverage profile is collected at the baseline, no outcome cache reuses anything
+between runs, and the HTML report does not exist — so every catalogued mutant
+is executed against every test binary, every time.
 
 Each arrow is a phase transition with its own type. `runner.Execute(m
 Validated)` cannot be called with a raw candidate; that is the compile-time
@@ -72,8 +76,10 @@ version of the rule "only validated mutants run".
 
 ## Instrumentation: guard-based rewriting
 
-Status: planned; no code exists for this yet. This is the hardest component
-and the reason for most of the other decisions.
+Status: implemented in `internal/instrument`. This is the hardest component and
+the reason for most of the other decisions. Which of the spliced mutants
+actually compile is not decided here; see
+[Compile validation](#compile-validation).
 
 A generic helper (`__gm.Arith(id, OpAdd, a, b)`) was rejected: it breaks on
 untyped constants, shift operands, and named types. Instead both branches are
@@ -123,7 +129,7 @@ rewritten statements, not to the number of mutants times file size.
 
 ## Generated runtime package
 
-Status: planned. The runtime will live inside the snapshot at
+Status: implemented. The runtime lives inside the snapshot at
 `<module>/gomutants_rt/`. It cannot live in a `_`- or `.`-prefixed directory,
 because the Go tool ignores those. A name collision bumps a suffix.
 
@@ -136,17 +142,49 @@ first-party, no `go.mod` edit is needed and vendor mode is undisturbed. Writes
 to `M` happen only during `init`, which happens-before test code, so the
 dispatch is a plain array load and the race detector stays quiet.
 
+## Compile validation
+
+Status: implemented in `internal/validate`. Instrumentation is a byte rewrite
+that leaves typing to the compiler, so a few guarded sites cannot compile —
+Form C evaluates to `bool`, and a site whose context wanted a named boolean
+type is a type error the moment it is guarded. The compiler is this phase's
+oracle, and the phase's job is to ask it precisely enough that one bad
+candidate costs one candidate rather than a file or a run.
+
+- **The fast path is one build.** Every catalogued mutant is spliced in at
+  once and `go build ./...` accepts the lot. That is the ordinary case, and
+  making it ordinary is the whole point of the schemata design.
+- **A red build starts a bisection.** Every catalogued file is restored to its
+  pristine bytes and rebuilt first: a failure there is not mutant-induced and
+  stops the run rather than blaming whichever candidate was tested first. The
+  files the compiler named are then searched one at a time — halving while
+  halving is cheaper than scanning, verifying every join, and falling back to
+  a scan when a join fails, so a pair of candidates that only fail together is
+  an ordinary case rather than a wrong answer.
+- **The generated runtime is never regenerated.** Its activation array is
+  sized by the full catalog and every guard spells its own dense index, so a
+  runtime rebuilt from a subset would renumber flags that other files read.
+- **Rejections are data, not failures.** A candidate that will not compile
+  comes back as a `rejected[]` entry carrying its identity, its coordinates,
+  and the compiler's own words, captured at the moment of rejection — by the
+  time the phase finishes the tree compiles and that message exists nowhere
+  else. Dropping such a candidate silently would quietly shrink the catalog
+  between runs with no record of what left it.
+
 ## Execution
 
-Status: partially implemented. The snapshot, the baseline build and test runs,
-timeout derivation, and process-tree supervision exist and are what
-`go-mutants run` performs today; the run stops after the baseline rather than
-reporting a score it has not measured. Per-mutant activation, coverage-guided
-selection, `--changed`, and `--shard` are planned.
+Status: partially implemented. The whole pipeline runs — snapshot, baseline,
+discovery, compile validation, the instrumented baseline, the drift gate,
+per-mutant activation, the report, and the exit code — so `go-mutants run`
+measures a real mutation score today. What is still missing is the rest of the
+operator catalog (discovery implements comparison and boolean-literal),
+coverage-guided selection, `--changed`, and `--shard`.
 
-- **One build.** Each package with tests is compiled once with
-  `go test -c -cover -coverpkg=<module>/...`. `--race`, when requested, applies
-  to that build and to the baseline so the derived timeout stays consistent.
+- **One build.** Each package with tests is compiled once with `go test -c`;
+  packages with no test files are skipped. The `-cover -coverpkg=<module>/...`
+  flags arrive with coverage-guided selection. `--race`, when requested,
+  applies to that build and to the baseline so the derived timeout stays
+  consistent.
 - **Direct binary launch.** Test binaries are executed directly, bypassing the
   `go test` result cache entirely, with the working directory set to the
   package directory inside the snapshot so `testdata` paths behave.
@@ -155,8 +193,14 @@ selection, `--changed`, and `--shard` are planned.
   manifest after the instrumented baseline; drift is exit 2 with the offending
   files listed. `--isolate` is reserved as the per-worker escape hatch.
 - **Timeouts.** Explicit, or `max(10s, slowest baseline × 5)`. A first timeout
-  is retried serially: two in a row are a confirmed detection, a single one is
-  `inconclusive`. Process trees are killed through a Windows Job Object with
+  is not evidence: N test binaries on a loaded machine produce timeouts that
+  say nothing about the mutant, and counting one as a detection would inflate
+  the score exactly when the run is least able to notice. So every timed-out
+  mutant is held back and retried **serially** after the queue drains, with
+  nothing else running. Two in a row are a confirmed detection; a retry that
+  finishes — pass or fail — is `inconclusive`, which counts in neither
+  direction. Both attempts are kept in the report. Process trees are killed
+  through a Windows Job Object with
   `KILL_ON_JOB_CLOSE` (fail-closed if ownership cannot be established) or a
   POSIX process group `TERM` then `KILL`.
 - **Coverage-guided selection.** The baseline runs with `-test.gocoverdir`, and
@@ -185,9 +229,9 @@ and snapshot locations never participate. The CLI shows a collision-checked
 
 ## Score and exit policy
 
-Status: partially implemented. The score function and the exit-code mapping
-live in `internal/mutation` and are tested; nothing feeds them yet, because no
-mutant runs.
+Status: implemented. The score function and the exit-code mapping live in
+`internal/mutation`, and the run feeds them from the report it just wrote, so
+the number a user reads and the gate that failed cannot disagree.
 
 ```text
 score = (killed + confirmed_timeouts) / denominator
@@ -195,14 +239,18 @@ score = (killed + confirmed_timeouts) / denominator
 
 The denominator excludes expected survivors, inconclusive results, errors, and
 not-run mutants — every category that is a signal about the run rather than
-about the tests. Exit codes are 0, 1 (opt-in policy failure only), 2
+about the tests. It is `null`, printed as `score N/A`, when that denominator is
+zero: both plausible sentinels are lies, since 0 reads as "your tests caught
+nothing" and 100 as "your tests caught everything" when the truth is that
+nothing was measured. Exit codes are 0, 1 (opt-in policy failure only), 2
 (infrastructure, config, baseline, stale expectation), 130, and 143.
 
 ## Reporting and the event stream
 
-Status: partially implemented. The event stream and the plain-line console
-renderer exist and carry the baseline today; the bubbletea dashboard,
-`RunReport v1`, and the report writers are planned. The engine never draws. It
+Status: partially implemented. The event stream, the plain-line console
+renderer, `RunReport v1`, and its history store exist and carry a whole run
+today; the bubbletea dashboard, the HTML report, the Stryker projection, and
+`report merge` are planned. The engine never draws. It
 publishes to a single
 `chan engine.Event` (a sealed interface): `RunPlanned`, `PhaseChanged`,
 `BaselineProgress`, `MutantStarted`, `MutantFinished`, `CacheHit`, `Warning`,
@@ -214,7 +262,14 @@ when the output is a TTY and CI, `NO_COLOR`, `--quiet`, `--json`, and
 between the two.
 
 `RunReport v1` is the lossless source of truth; the Stryker projection and the
-HTML report are one-way, deterministic derivations of it. See
+HTML report are one-way, deterministic derivations of it. History is kept
+outside the workspace, under the OS cache directory at
+`<cache>/go-mutants/workspaces/<key>/runs/<run-id>.json`, with `latest.json`
+holding a whole copy of the newest rather than a name that could dangle — a
+mutation run must not add files to the tree it is measuring, and
+`runs/` then holds nothing but immutable per-run documents. Every write is
+temp-file plus atomic rename, and `ReportPublished` is emitted only after the
+rename succeeds. See
 [JSON contracts](json-schema.md) and
 [Stryker compatibility](stryker-compatibility.md).
 
@@ -229,17 +284,19 @@ HTML report are one-way, deterministic derivations of it. See
 | `internal/interval` | Pure: interval forest | implemented |
 | `internal/glob` | Pure: `**` glob semantics, fuzzed | implemented |
 | `internal/discover` | `packages.Load`, types walk, candidates, skips | 2 families |
-| `internal/instrument` | Forms S/C/D, flattener, runtime codegen, splicer | planned |
+| `internal/instrument` | Forms S/C/D, flattener, runtime codegen, splicer | implemented |
 | `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
 | `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
-| `internal/runner` | Worker pool, timeout retry, process supervisors | supervisors |
+| `internal/runner` | One process, timed and supervised; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping | planned |
 | `internal/cache` | Outcome cache | planned |
-| `internal/report` | RunReport, projections, HTML, history, merge | planned |
-| `internal/engine` | Orchestration, typestate pipeline, events | baseline |
+| `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
+| `internal/execute` | Test-binary build, scheduling, timeout retry | implemented |
+| `internal/report` | RunReport, projections, HTML, history, merge | v1, history |
+| `internal/engine` | Orchestration, typestate pipeline, events | implemented |
 | `internal/console` | Deterministic plain-line renderer | implemented |
 | `internal/tui` | The bubbletea dashboard | planned |
-| `internal/schemas` | Embedded JSON Schemas, test-time validation | catalog v1 |
+| `internal/schemas` | Embedded JSON Schemas, test-time validation | catalog, run report |
 
 Pure packages have no filesystem or process access, which is what makes the
 golden ID vectors and property tests meaningful.

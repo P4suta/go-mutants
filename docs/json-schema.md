@@ -5,9 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON contracts
 
-**Status: planned.** No schema file exists yet. This page fixes the shape of
-the documents before anything writes one, because these are the compatibility
-surfaces users script against.
+**Status: two schemas shipped.** `schema/catalog-v1.schema.json` and
+`schema/run-report-v1.schema.json` exist, are embedded in `internal/schemas`,
+and every document the CLI writes is validated against them in the tests. The
+`go-mutants/doctor` document and the Stryker projection are still planned, and
+say so below.
 
 go-mutants publishes three native document types and one lossy projection for
 the Stryker report ecosystem. Every native document is discriminated by two
@@ -19,64 +21,184 @@ fields that a consumer must check before decoding:
 
 Schemas live in `schema/`, are written in JSON Schema draft 2020-12 with
 `additionalProperties: false`, and are validated in tests with
-`santhosh-tekuri/jsonschema/v6` against both fixtures and real CLI output.
+`santhosh-tekuri/jsonschema/v6` against both fixtures and real CLI output. The
+validator is deliberately not linked into the shipped binary: a schema
+violation is a bug in this repository for a test to catch before a release, not
+a run-time condition to recover from.
 
 ## `go-mutants/run-report` v1
 
-The authoritative, lossless record of a run. Produced by `run --json` and by
-`report latest --json`, and written to `reports/mutation/mutation.json`.
+The authoritative, lossless record of a run. Produced by `run --json` on
+standard output, and written to the history store described below. Every
+catalogued mutant appears exactly once — in `mutants[]` with what happened to
+it, or in `rejected[]` with the compiler's reason it could not exist — so the
+console summary, the exit code, and every later projection are views of this
+document rather than second opinions.
 
 | Field | Contents |
 | --- | --- |
-| `run_id`, `status` | Identity and completed/interrupted/failed status |
-| `workspace` | Module path, Go version, workspace digest, platform, VCS |
-| `selection` | Include/exclude, operators, profile, changed-ref, mutants |
-| `shard` | Present only for `--shard k/n` runs |
-| `test` | Command, baseline observations, timeout with its source |
-| `coverage` | Mode, per-package mapping outcome, fail-open reason if any |
-| `cache` | Mode, key inputs, hits and misses |
-| `summary` | Counters, `score_percent`, and the applied policy |
-| `mutants[]` | See below |
+| `document_type`, `schema_version` | `go-mutants/run-report`, `1` |
+| `tool_version` | The build that wrote the document |
+| `run_id` | `YYYYMMDDThhmmssZ-xxxx`, also the history file name |
+| `status` | `completed`, `interrupted`, or `failed` |
+| `started_at`, `finished_at`, `duration_ms` | RFC 3339 UTC to the second, and the elapsed milliseconds |
+| `workspace` | `module_path`, `go_version`, `workspace_digest`, `platform.{os,arch}` |
+| `selection` | `mode`, `profile`, `operators`, `include`, `exclude`, `candidates`, `rejected`, `selected` |
+| `test` | `command` argv, `baseline`, `timeout_ms`, `timeout_source` |
+| `coverage` | `mode`; `off` is the only value this build writes |
+| `summary` | The counters, `score_percent`, and `policy` |
+| `mutants[]` | One entry per executed or not-run mutant; see below |
 | `rejected[]` | Candidates the compiler refused, with diagnostics |
-| `not_run[]` | Not-run mutants and why (uncovered, other shard, interrupt) |
-| `expectations[]` | Fulfilled, unfulfilled, stale, not-evaluated |
-| `warnings[]`, `skips[]` | Non-fatal notes and reason-coded static skips |
+| `skips[]` | Reason-coded static skips, aggregated per file |
+| `expectations[]` | Each `[[mutation.expect]]` row, evaluated |
+| `warnings[]` | `GOMnnnn` code plus message |
 
-Each entry of `mutants[]` carries the full `id` and the 20-hex `display_id`,
-file/line/column coordinates, the versioned operator, the original and
-replacement text, the outcome, `duration_ms`, whether it was a cache hit, the
-covering test packages, and the per-stage timings including a timeout retry as
-a separate attempt.
+`selection.mode` is `all` or `mutant`; `candidates` equals `rejected` plus the
+length of `mutants[]`, and `selected` is how many the run set out to execute.
+`test.baseline` carries every unmutated observation — `runs`, `durations_ms`,
+`slowest_ms` — not just the summary of them, because the derived timeout is a
+function of the slowest run and a reader deserves the numbers it came from.
+`test.timeout_source` is `derived` for `max(10s, slowest baseline × 5)` or
+`explicit` for a configured `test.timeout` or `--timeout`.
 
-`summary.score_percent` is `100 × (killed + confirmed_timeouts) / denominator`,
-where the denominator excludes expected survivors, inconclusive results,
-errors, and not-run mutants. It is `null` when that denominator is zero.
+`coverage` is an object with a single `mode` field rather than a bare string so
+that coverage-guided selection can arrive as `mode: "package"` without every
+consumer having to learn a new top-level shape.
 
-History is kept outside the workspace, under the OS cache directory at
-`<os-cache>/go-mutants/<workspace-key>/runs/<run_id>.json` with a `latest.json`
-pointer. Every write is temp-file plus atomic rename, and `ReportPublished` is
-emitted only after the rename succeeds.
+### `mutants[]`
+
+Each entry carries the full 64-hex `id` and the 20-hex `display_id`, `path`,
+`package`, `family`, `rule`, `rule_version`, `line`, `column`, `start_byte`,
+`end_byte`, `original`, `replacement`, `outcome`, `duration_ms`, `killed_by`,
+`attempts`, and `output_tail`.
+
+`killed_by` names the test binary that detected the mutant — the one that
+failed, or the one it hung — and is `null` for an outcome that detected
+nothing, and for a detection whose output named no binary. `attempts` is 0 for
+a mutant the run never reached, 1 for an outcome settled first time, and 2 for
+a confirmed timeout.
+
+The `outcome` enum:
+
+| Value | Meaning |
+| --- | --- |
+| `killed` | At least one test failed with the mutant active |
+| `survived` | The whole suite passed with the mutant active |
+| `timed-out` | A *confirmed* timeout: timed out, retried serially, timed out again. Counts as a detection |
+| `inconclusive` | Undecidable — including a single timeout whose serial retry finished. Counts in neither direction |
+| `errored` | The harness itself failed for this mutant |
+| `not-run` | Never executed |
+
+The values are hyphenated while the summary keys are snake_case (`timed_out`,
+`not_run`). That is deliberate and must not be unified by anybody tidying up:
+the keys are field names, the values are a published enum, and renaming one
+breaks somebody's `jq` expression.
+
+### The score, and when it is null
+
+```text
+score_percent = 100 × (killed + timed_out) / (killed + timed_out + survivors)
+```
+
+where *survivors* counts only the unexpected ones. `summary.survived` counts
+every survivor; the split is recovered by joining `expectations[]`, since a
+survivor with a `fulfilled` expectation is an expected survivor. Inconclusive
+results, errors, and not-run mutants are in neither the numerator nor the
+denominator.
+
+`score_percent` is `null` — never a number — exactly when that denominator is
+zero. Both plausible sentinels are lies: 0 reads as "your tests caught nothing"
+and 100 as "your tests caught everything", when the truth is that nothing was
+measured. The console prints `score N/A` for it.
+
+`summary.policy` records the gates as configured (`strict`, `minimum_score`,
+`require_mutants`) and `failure`, the first gate that failed, or `null`.
+Naming one loses nothing: every gate is a function of the counts in the same
+object, so a consumer that cares about the second can recompute it.
+
+### `rejected[]` and `skips[]`
+
+A `rejected` entry is a catalogued mutant that compile validation refused, with
+`id`, `display_id`, `path`, `line`, `column`, `rule`, and the compiler's own
+`diagnostic`. It has no outcome, duration, or attempt count, because it was
+never executed, and it is not counted in the summary — reporting it as errored
+or not-run would put a mutant that cannot exist into a denominator.
+
+A `skip` entry is one recorded reason a site was never turned into a candidate,
+aggregated per file: `path`, `reason`, and `count`. The `reason` enum is
+`const-decl`, `array-length`, `type-param`, `case-label`, `package-var-init`,
+`cgo`, `generated`, `excluded`, `struct-tag`, `label-or-goto`, and
+`unnameable-decl-type` — the identifiers documented in
+[Operators](operators.md), the last three emitted by instrumentation rather
+than by discovery.
+
+### `expectations[]`
+
+One row of the `[[mutation.expect]]` ledger checked against this run: `id`,
+`reason`, and a three-valued `state`.
+
+| State | Meaning |
+| --- | --- |
+| `fulfilled` | The mutant survived, as the ledger predicted |
+| `unfulfilled` | The predicted survival was not observed |
+| `stale` | The id is not in this catalog any more |
+
+`unfulfilled` covers two different situations on purpose, and the document
+carries what tells them apart: join `mutants[]` and `rejected[]` by `id` to see
+whether the tests caught the mutant — the ledger is lying, which is exit 2 —
+or whether it was simply never measured, which is not a failure of anything.
+
+### History
+
+History is kept outside the workspace, under the OS cache directory:
+
+```text
+<cache>/go-mutants/workspaces/<key>/latest.json
+<cache>/go-mutants/workspaces/<key>/runs/<run-id>.json
+```
+
+A mutation run must not add files to the tree it is measuring, so nothing lands
+in the workspace. `runs/` holds nothing but immutable per-run documents, which
+makes listing past runs a directory listing where every entry is a real run,
+and `latest.json` is a whole copy of the newest one rather than a pointer that
+could dangle. Every write is temp-file plus atomic rename, so a reader sees one
+complete document or the previous one, and `ReportPublished` is emitted only
+after the rename succeeds.
 
 ## `go-mutants/catalog` v1
 
-Produced only by `list --json`. A catalog is not a run report: it has no
-outcomes, no summary, no test output, and no run ID. It records the profile
-separately from the selection description so that two catalogs from the same
-tree can be compared byte-for-byte as a determinism gate.
+Produced only by `list --json`, and validated against
+`schema/catalog-v1.schema.json`.
+
+| Field | Contents |
+| --- | --- |
+| `document_type`, `schema_version` | `go-mutants/catalog`, `1` |
+| `tool_version` | The build that wrote the document |
+| `workspace` | Same shape as the run report's |
+| `selection` | `profile`, `operators`, `include`, `exclude` |
+| `mutants[]` | Identity and coordinates only — no outcome |
+| `skips[]` | The same `path`/`reason`/`count` shape |
+
+A catalog is not a run report: it has no outcomes, no summary, no test output,
+and no run ID, because nothing was executed to produce one. Its `mutants[]`
+entries stop at `replacement`, and it records the profile separately from the
+selection patterns so that two catalogs from the same tree can be compared
+byte-for-byte as a determinism gate.
 
 ## `go-mutants/doctor` v1
 
-Produced by `doctor --json`. Reports the discovered toolchain, module layout,
-git availability, cache directory, terminal capabilities, and every check's
-pass/fail with a remediation hint.
+**Planned; no schema file exists yet.** Will be produced by `doctor --json`,
+reporting the discovered toolchain, module layout, git availability, cache
+directory, terminal capabilities, and every check's pass/fail with a
+remediation hint.
 
 ## Stryker projection
 
-One-way, lossy, and deterministic; never read back as state. `inconclusive`
-maps to `Ignored` with a `statusReason`, and a confirmed timeout maps to
-`Timeout`. If the projection cannot be validated against the vendored schema,
-the run aborts rather than emitting a document that would look authoritative.
-See [Stryker compatibility](stryker-compatibility.md).
+**Planned.** One-way, lossy, and deterministic; never read back as state.
+`inconclusive` maps to `Ignored` with a `statusReason`, and a confirmed timeout
+maps to `Timeout`. If the projection cannot be validated against the vendored
+schema, the run aborts rather than emitting a document that would look
+authoritative. See [Stryker compatibility](stryker-compatibility.md).
 
 ## Compatibility rules
 
@@ -85,3 +207,5 @@ See [Stryker compatibility](stryker-compatibility.md).
   requires a version bump.
 - Unknown fields are rejected by the schemas on purpose: a typo in a generated
   document is a bug, not a forward-compatible extension.
+- Every array is `[]` when empty and never `null`. "No warnings" and "warnings
+  unknown" are not the same statement, and only one of them is ever true.

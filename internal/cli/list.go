@@ -353,63 +353,25 @@ func discoverCatalog(ctx context.Context, root string, cfg config.Config, stderr
 
 // selectRules resolves the configured selection into the rules discovery runs.
 //
-// The profile is a tier and selects monotonically; a named operator is looked
-// up in the whole registry instead, so a family outside the profile is honoured
-// rather than silently dropped. Saying "run the bitwise family" and being given
-// nothing because the profile is balanced would be the kind of quiet
-// disagreement between two settings that this tool refuses everywhere else.
-//
-// The result is in canonical registry order whatever order the names were
-// written in, because rule order is part of what makes a catalogue reproducible.
+// The resolution itself is [engine.SelectRules], and it lives there rather than
+// here for one reason: `run` has to select exactly what `list` selected. A
+// listing that showed a mutant a run would not execute — or the other way round
+// — would make the ids it prints unusable with `--mutant`, which is most of
+// what a listing is for. This is the local spelling, and the tests that pin the
+// tier and family semantics drive it.
 func selectRules(cfg config.Config) ([]mutation.Rule, error) {
-	registry := mutation.CanonicalRegistry()
-	if len(cfg.Mutation.Operators) == 0 {
-		return registry.SelectTier(cfg.Mutation.Profile), nil
-	}
-	selected := make(map[string]bool)
-	for _, name := range cfg.Mutation.Operators {
-		named, ok := operatorRules(registry, name)
-		if !ok {
-			// internal/config refuses an unknown operator wherever it was
-			// written, so this is unreachable through the command line. It is
-			// reported rather than assumed away because a Config can also be
-			// built in process, and an unknown name must never quietly select
-			// nothing.
-			return nil, &Error{
-				Code:    CodeUsage,
-				Message: fmt.Sprintf("unknown operator %q: expected an operator family or a rule name from the v1 catalogue", name),
-				Hint:    "run `go-mutants list --help` for what --operator accepts",
-			}
-		}
-		for _, rule := range named {
-			selected[rule.Name] = true
-		}
-	}
-	out := make([]mutation.Rule, 0, len(selected))
-	for _, rule := range registry.Rules() {
-		if selected[rule.Name] {
-			out = append(out, rule)
-		}
-	}
-	return out, nil
+	return engine.SelectRules(cfg)
 }
 
 // operatorRules resolves one `--operator` name to the rules it stands for: a
 // family name stands for the whole family, a rule name for itself.
 //
-// It exists so that the selection and the diagnostic about it read the same
-// catalogue the same way. The warning below has to answer "what did *this* name
-// select", which is a question [selectRules] used to answer only for all the
-// names at once — and answering it twice, in two places, is how a warning ends
-// up describing a selection nobody made.
+// It is [engine.OperatorRules] for the same reason, and it is reached through
+// here so that the warning below asks the catalogue exactly the question the
+// selection asked it. Answering "what did *this* name select" twice, in two
+// places, is how a warning ends up describing a selection nobody made.
 func operatorRules(registry *mutation.Registry, name string) ([]mutation.Rule, bool) {
-	if _, ok := registry.FamilyPosition(mutation.Family(name)); ok {
-		return registry.FamilyRules(mutation.Family(name)), true
-	}
-	if rule, ok := registry.Lookup(name); ok {
-		return []mutation.Rule{rule}, true
-	}
-	return nil, false
+	return engine.OperatorRules(registry, name)
 }
 
 // warnUnimplemented reports a selection this pre-release build cannot discover.
@@ -757,7 +719,7 @@ func (r *listRenderer) mutantLine(m catalogMutant) string {
 	return shortID(m.DisplayID) + "  " +
 		m.Path + ":" + strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
 		r.paint(styleListRule, m.Family+"/"+m.Rule) + "  " +
-		displayText(m.Original) + " -> " + displayText(m.Replacement)
+		console.FormatText(m.Original) + " -> " + console.FormatText(m.Replacement)
 }
 
 // printf appends to the buffer. The write error is deliberately dropped: a
@@ -787,23 +749,6 @@ func shortID(displayID string) string {
 		return displayID
 	}
 	return displayID[:listIDWidth]
-}
-
-// displayText renders an original or a replacement for a human.
-//
-// One-line text with no leading or trailing space is printed as it stands,
-// which is what makes `== -> !=` read like the edit it is. Anything else is
-// quoted, so that a multi-line statement deletion cannot break the
-// one-line-per-mutant shape the listing promises, and a deletion — an empty
-// replacement — prints as `""` rather than as nothing at all.
-func displayText(s string) string {
-	if s == "" {
-		return `""`
-	}
-	if strings.ContainsAny(s, "\n\r\t") || strings.TrimSpace(s) != s {
-		return strconv.Quote(s)
-	}
-	return s
 }
 
 // A reasonCount is one skip reason and how many candidates it accounted for

@@ -29,10 +29,14 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	if !slices.IsSortedFunc(Codes(), func(a, b Code) int { return strings.Compare(string(a), string(b)) }) {
 		t.Error("Codes() is not in numeric order")
 	}
-	// The pre-release warning is deliberately outside the block; see its
-	// documentation. Asserting it here keeps the exception visible.
-	if CodeMutationPhasesPending != "GOM0001" {
-		t.Errorf("CodeMutationPhasesPending = %q, want GOM0001", CodeMutationPhasesPending)
+	// GOM0001 was the pre-release warning that a run stopped after the
+	// baseline, and its own documentation promised it would disappear when the
+	// mutation phases landed. They have. A code means one thing forever, so the
+	// number stays spent rather than being reused for something else.
+	for _, code := range Codes() {
+		if code == "GOM0001" {
+			t.Error("GOM0001 is retired and must not be reused")
+		}
 	}
 }
 
@@ -326,18 +330,12 @@ func TestRunClosesTheEventChannelOnFailure(t *testing.T) {
 	}
 }
 
-func TestMeanAndDisplayDigest(t *testing.T) {
+func TestMean(t *testing.T) {
 	if got := mean(nil); got != 0 {
 		t.Errorf("mean(nil) = %s, want 0", got)
 	}
 	got := mean([]time.Duration{time.Second, 3 * time.Second})
 	if got != 2*time.Second {
 		t.Errorf("mean = %s, want 2s", got)
-	}
-	if got := displayDigest("abc"); got != "abc" {
-		t.Errorf("displayDigest of a short digest = %q, want it unchanged", got)
-	}
-	if got := displayDigest(strings.Repeat("a", 64)); len(got) != digestDisplay {
-		t.Errorf("displayDigest = %q, want %d characters", got, digestDisplay)
 	}
 }

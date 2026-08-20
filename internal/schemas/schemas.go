@@ -24,16 +24,22 @@ const (
 	// CatalogV1 is the `list --json` catalogue: mutants and static skips, with
 	// no outcomes and no run.
 	CatalogV1 = "go-mutants/catalog"
+
+	// RunReportV1 is the lossless record of one run: the catalogue again, plus
+	// what happened to every mutant, what the run was measured against, and what
+	// the policy made of it.
+	RunReportV1 = "go-mutants/run-report"
 )
 
 // registry maps a document type onto the schema file in [schema.FS] that
 // defines it.
 //
-// This is the whole extension point. Adding run-report-v1 or doctor-v1 is one
-// file in schema/ and one line here; nothing else in this package knows how
-// many schemas there are or what they contain.
+// This is the whole extension point. Adding doctor-v1 or a vendored Stryker
+// schema is one file in schema/ and one line here; nothing else in this package
+// knows how many schemas there are or what they contain.
 var registry = map[string]string{
-	CatalogV1: "catalog-v1.schema.json",
+	CatalogV1:   "catalog-v1.schema.json",
+	RunReportV1: "run-report-v1.schema.json",
 }
 
 // baseURL is the identity a schema gets when its file declares no "$id".

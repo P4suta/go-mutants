@@ -10,9 +10,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Mutation testing for Go modules that is fast enough to leave switched on.
 go-mutants instruments every compilable mutant **once** into a disposable
 snapshot of your module, then activates one mutant per test process through an
-environment variable. Your working tree is never modified, the toolchain builds
-essentially once instead of once per mutant, and coverage data decides which
-test binaries need to run at all.
+environment variable. Your working tree is never modified, and the toolchain
+builds essentially once instead of once per mutant. Coverage-guided selection —
+letting coverage data decide which test binaries need to run at all — is
+designed and not yet built.
 
 The design targets the things that make mutation testing painful in practice:
 a live TUI dashboard instead of a silent wait, coverage-guided selection,
@@ -20,21 +21,30 @@ a live TUI dashboard instead of a silent wait, coverage-guided selection,
 stable mutant IDs, and a lossless JSON report with a Stryker-ecosystem HTML
 projection.
 
-## Status: pre-release, no mutant runs yet
+## Status: pre-release, two operator families
 
-Two commands exist. `go-mutants run` snapshots the workspace, builds it, and
-runs your test command three times to prove the baseline — then stops and warns
-that it did, rather than reporting a mutation score it has not measured.
-`go-mutants list` enumerates the mutants a run would execute, for the
-`comparison` and `boolean-literal` families, as text or as a schema-validated
-JSON catalogue.
+Two commands exist. `go-mutants run` performs real mutation testing: it
+snapshots the workspace, proves the baseline, discovers candidates, validates
+that they compile, instruments the snapshot once, and measures one mutant per
+test process — then writes a `run-report-v1` document and reports a mutation
+score it actually measured. `go-mutants list` enumerates the same mutants
+without executing them, as text or as a schema-validated JSON catalogue.
 
-Nothing is instrumented or mutated yet: instrumentation, mutant execution,
-coverage-guided selection, the outcome cache, policy enforcement, and reports
-are still to come, and the `init`, `doctor`, `report`, and `cache` commands do
-not exist. The design is settled and written down under [`docs/`](docs/), every
-page marks what is implemented versus planned, and the toolchain, gates, and CI
-are real and green.
+The honest limits:
+
+- **Two of the eleven operator families**, `comparison` and `boolean-literal`.
+  A score from go-mutants today is a score against those rules, not against the
+  full catalogue.
+- **No coverage guidance.** Every mutant is measured against every test binary
+  of every package, which is slower and never wrong.
+- **No HTML report** and no Stryker projection yet; the JSON document and the
+  console summary are the output.
+- **No outcome cache, no `--changed`, no `--shard`,** and no TUI dashboard.
+- The `init`, `doctor`, `report`, and `cache` commands do not exist.
+
+The design is settled and written down under [`docs/`](docs/), every page marks
+what is implemented versus planned, and the toolchain, gates, and CI are real
+and green.
 
 Do not describe go-mutants as production-ready. Nothing is published, tagged,
 or released.
@@ -49,27 +59,50 @@ or released.
 
 ## Quick start
 
-What works today:
-
 ```console
 go install github.com/P4suta/go-mutants/cmd/go-mutants@latest
+cd your-module
 go-mutants list
-go-mutants list --operator comparison --json
 go-mutants run
+```
+
+A run prints its phases as it goes, then one line per mutant as it settles —
+survivors carrying their diff — then the summary. Abridged:
+
+```text
+baseline ok: avg 1.091s, slowest 2.166s, timeout 10.829s (derived)
+phase mutate: discovering candidates, validating them, then executing the mutants
+discovered 4 candidates, 0 skips
+validated 4 mutants, 0 rejections
+SURVIVED   bf513c0d  untested.go:14:11  neq-to-eq  != -> ==  (616ms)
+    - !=
+    + ==
+mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0
+    not-run 0  rejected 0
+score 75.00%
+run 20260820T175055Z-57bc  exit 0
+```
+
+The counters are one line on a real terminal; they are wrapped above to fit.
+
+`score N/A` is printed instead of a percentage when nothing scoreable was
+measured; there is no sentinel number for it. The full document goes to the
+history store under your OS cache directory, and `run --json` writes it to
+standard output instead.
+
+Other flags that work today:
+
+```console
+go-mutants run --jobs 8 --strict
+go-mutants run --include './internal/**' -- go test -run TestFast ./...
+go-mutants run --mutant bf513c0d
+go-mutants list --operator comparison --json
 ```
 
 With no arguments, help is printed. The intended v1 command tree is `run`,
 `list`, `doctor`, `init`, `report list|latest|validate|clean|merge`, and
-`cache status|gc|clean`; only `run` and `list` are built.
-
-Once the engine lands, the intended flow adds:
-
-```console
-go-mutants run --profile strong --jobs 8
-go-mutants run --changed origin/main
-go-mutants run --shard 1/4 --report json
-go-mutants run --include './internal/**' --strict -- go test -run TestFast ./...
-```
+`cache status|gc|clean`; only `run` and `list` are built. `--changed <ref>` and
+`--shard k/n` are designed and not yet accepted.
 
 Everything after `--` is captured verbatim as the test command's argv; it is
 never handed to a shell.
@@ -89,8 +122,10 @@ mise run check
   happens in a disposable snapshot built from a sorted manifest that excludes
   `.git`, caches, and the report directory, and that rejects symlinks,
   junctions, and special files.
-- **The only project writes are reports**, under `reports/mutation/`, written
-  temp-file-then-atomic-rename, and excluded from snapshot and cache identity.
+- **Run reports are written outside your tree**, into the OS cache directory,
+  temp-file-then-atomic-rename. `reports/mutation/` is reserved for the
+  in-project outputs the HTML report will add, and is already excluded from
+  snapshot and cache identity so that writing one cannot change a digest.
 - **Test commands are trusted project code.** They run inside the snapshot with
   a per-worker `TMPDIR`, but a snapshot is not an operating-system sandbox.
 - **Process trees are cleaned up.** Timeouts and interrupts kill the whole tree

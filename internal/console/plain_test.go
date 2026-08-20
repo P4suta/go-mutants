@@ -13,11 +13,58 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/engine"
+	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// stream is the event sequence of a successful pre-release run, in the order
-// the engine publishes it.
+// The two mutants the golden run measures. Their ids are longer than the eight
+// characters a result line prints, which is the point: the truncation is part
+// of the format and a test using short ids would not exercise it.
+var (
+	killed = engine.MutantResult{
+		ID:          strings.Repeat("1a2b3c4d", 8),
+		DisplayID:   "1a2b3c4d5e6f7a8b9c0d",
+		Path:        "clamp.go",
+		Line:        12,
+		Column:      9,
+		Rule:        "lt-to-le",
+		Original:    "<",
+		Replacement: "<=",
+		Outcome:     mutation.OutcomeKilled,
+		Duration:    181 * time.Millisecond,
+	}
+	survivor = engine.MutantResult{
+		ID:          strings.Repeat("9f8e7d6c", 8),
+		DisplayID:   "9f8e7d6c5b4a3928170f",
+		Path:        "untested.go",
+		Line:        9,
+		Column:      12,
+		Rule:        "neq-to-eq",
+		Original:    "!=",
+		Replacement: "==",
+		Outcome:     mutation.OutcomeSurvived,
+		Duration:    176 * time.Millisecond,
+	}
+)
+
+// summary is the closing block of the golden run.
+func summary() engine.RunSummary {
+	return engine.RunSummary{
+		RunID:    "20260819T101112Z-a1b2",
+		ExitCode: mutation.ExitOK,
+		Notable:  []engine.MutantResult{survivor},
+		Counts: engine.Counts{
+			Total: 4, Killed: 3, Survived: 1,
+		},
+		Score:    mutation.Score{Detected: 3, Denominator: 4},
+		Warnings: 1,
+		Skips:    []engine.SkipCount{{Reason: "const-decl", Count: 12}},
+	}
+}
+
+// stream is the event sequence of a successful run, in the order the engine
+// publishes it.
 func stream() []engine.Event {
+	block := summary()
 	return []engine.Event{
 		engine.RunPlanned{RunID: "20260819T101112Z-a1b2", Workers: 8},
 		engine.PhaseChanged{Phase: engine.PhaseDiscover, Detail: "locating the Go toolchain and copying the workspace"},
@@ -32,10 +79,37 @@ func stream() []engine.Event {
 			Timeout:       10 * time.Second,
 			TimeoutSource: engine.TimeoutDerived,
 		},
-		engine.Warning{Code: "GOM0001", Message: "mutation phases not yet implemented — run ends after baseline (pre-release)"},
-		engine.RunCompleted{Status: engine.StatusOK, Summary: "baseline only: 3 files snapshotted, workspace digest 260c7b0beff72d8c"},
+		engine.PhaseChanged{Phase: engine.PhaseMutate, Detail: "discovering candidates, validating them, then executing the mutants"},
+		engine.Discovered{Candidates: 4, Skips: 12},
+		engine.Validated{Accepted: 4, Rejected: 0},
+		engine.BaselineProgress{Run: 1, Of: 1, Duration: 168 * time.Millisecond},
+		engine.MutantStarted{ID: killed.ID, DisplayID: killed.DisplayID, Path: killed.Path, Line: killed.Line, Rule: killed.Rule},
+		engine.MutantFinished{Result: killed},
+		engine.MutantFinished{Result: survivor},
+		engine.Warning{Code: "GOM4040", Message: "the snapshot directory could not be removed: access denied"},
+		engine.PhaseChanged{Phase: engine.PhaseReport, Detail: "writing the run report"},
+		engine.ReportPublished{
+			RunPath:    "/cache/go-mutants/workspaces/1a2b/runs/20260819T101112Z-a1b2.json",
+			LatestPath: "/cache/go-mutants/workspaces/1a2b/latest.json",
+		},
+		engine.RunCompleted{Status: engine.StatusOK, Run: &block},
 	}
 }
+
+// closing is the summary block every golden below ends with. It is written once
+// because --quiet drops the live half of the output and keeps this half whole,
+// which is the property the two goldens exist to hold in place.
+const closing = "SURVIVED   9f8e7d6c  untested.go:9:12  neq-to-eq  != -> ==  (176ms)\n" +
+	"    - !=\n" +
+	"    + ==\n" +
+	"mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0  not-run 0  rejected 0\n" +
+	"score 75.00%\n" +
+	"warnings 1\n" +
+	"skip const-decl 12\n" +
+	"run 20260819T101112Z-a1b2  exit 0\n"
+
+const published = "report run: /cache/go-mutants/workspaces/1a2b/runs/20260819T101112Z-a1b2.json\n" +
+	"report latest: /cache/go-mutants/workspaces/1a2b/latest.json\n"
 
 // render feeds events through a renderer and returns what it wrote.
 func render(t *testing.T, r *PlainRenderer, events []engine.Event) string {
@@ -61,8 +135,18 @@ func TestPlainRendererIsByteExact(t *testing.T) {
 		"baseline run 2/3: 149ms\n" +
 		"baseline run 3/3: 210ms\n" +
 		"baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)\n" +
-		"warning GOM0001: mutation phases not yet implemented — run ends after baseline (pre-release)\n" +
-		"run ok: baseline only: 3 files snapshotted, workspace digest 260c7b0beff72d8c\n"
+		"phase mutate: discovering candidates, validating them, then executing the mutants\n" +
+		"discovered 4 candidates, 12 skips\n" +
+		"validated 4 mutants, 0 rejections\n" +
+		"baseline run 1/1: 168ms\n" +
+		"KILLED     1a2b3c4d  clamp.go:12:9  lt-to-le  < -> <=  (181ms)\n" +
+		"SURVIVED   9f8e7d6c  untested.go:9:12  neq-to-eq  != -> ==  (176ms)\n" +
+		"    - !=\n" +
+		"    + ==\n" +
+		"warning GOM4040: the snapshot directory could not be removed: access denied\n" +
+		"phase report: writing the run report\n" +
+		published +
+		closing
 
 	got := render(t, NewPlain(nil, "0.1.0-dev", false, false), stream())
 	if got != want {
@@ -74,9 +158,14 @@ func TestPlainRendererIsByteExact(t *testing.T) {
 }
 
 func TestQuietKeepsWhatMatters(t *testing.T) {
+	// The survivor and its diff survive --quiet, because they arrive again in
+	// the closing block. That is the whole reason the block repeats them: a
+	// user who asked for less output must not thereby lose the one thing a
+	// mutation run exists to tell them.
 	const want = "baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)\n" +
-		"warning GOM0001: mutation phases not yet implemented — run ends after baseline (pre-release)\n" +
-		"run ok: baseline only: 3 files snapshotted, workspace digest 260c7b0beff72d8c\n"
+		"warning GOM4040: the snapshot directory could not be removed: access denied\n" +
+		published +
+		closing
 
 	got := render(t, NewPlain(nil, "0.1.0-dev", false, true), stream())
 	if got != want {
@@ -94,18 +183,174 @@ func TestFailedRunRendersItsStatus(t *testing.T) {
 	}
 }
 
-func TestInterruptedRunRendersItsStatus(t *testing.T) {
+func TestInterruptedRunWithoutAReportRendersItsStatus(t *testing.T) {
 	events := []engine.Event{engine.RunCompleted{Status: engine.StatusInterrupted}}
 	if got := render(t, NewPlain(nil, "0.1.0-dev", false, false), events); got != "run interrupted:\n" {
 		t.Errorf("got %q, want %q", got, "run interrupted:\n")
 	}
 }
 
-func TestReportPublishedRenders(t *testing.T) {
-	events := []engine.Event{engine.ReportPublished{Format: "json", Path: "/w/reports/mutation/mutation.json", Bytes: 42}}
-	const want = "report json: /w/reports/mutation/mutation.json\n"
-	if got := render(t, NewPlain(nil, "0.1.0-dev", false, false), events); got != want {
+// TestInterruptedRunSaysSoRatherThanGuessingAnExitCode pins the one place the
+// summary block deliberately does not print a number: only the command line
+// knows whether a signal was 130 or 143, so the engine never claims to.
+func TestInterruptedRunSaysSoRatherThanGuessingAnExitCode(t *testing.T) {
+	block := summary()
+	block.Notable = nil
+	block.Counts = engine.Counts{Total: 4, Killed: 1, NotRun: 3}
+	block.Score = mutation.Score{Detected: 1, Denominator: 1}
+	block.Warnings = 0
+	block.Skips = nil
+
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.RunCompleted{Status: engine.StatusInterrupted, Run: &block}})
+	const want = "mutants 4  killed 1  survived 0  timeout 0  inconclusive 0  errored 0  not-run 3  rejected 0\n" +
+		"score 100.00%\n" +
+		"run 20260819T101112Z-a1b2  interrupted\n"
+	if got != want {
+		t.Errorf("interrupted summary mismatch:\n got: %q\nwant: %q", got, want)
+	}
+	if strings.Contains(got, "exit") {
+		t.Error("an interrupted run printed an exit code the engine could not have known")
+	}
+}
+
+func TestUndefinedScoreSaysSoRatherThanPrintingZero(t *testing.T) {
+	block := summary()
+	block.Notable = nil
+	block.Counts = engine.Counts{Total: 2, NotRun: 2}
+	block.Score = mutation.NoScore
+	block.Warnings = 0
+	block.Skips = nil
+	block.ExitCode = mutation.ExitPolicyFailure
+
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.RunCompleted{Status: engine.StatusOK, Run: &block}})
+	if !strings.Contains(got, "score N/A (0 valid mutants)\n") {
+		t.Errorf("an undefined score rendered as %q, want the explicit N/A", got)
+	}
+	if !strings.HasSuffix(got, "run 20260819T101112Z-a1b2  exit 1\n") {
+		t.Errorf("output = %q, want it to end with the run's identity and exit status", got)
+	}
+}
+
+// TestFailedGateIsNamedInTheBlock is the one line that makes the silent
+// standard error defensible.
+//
+// Three of the six gates leave no trace in the numbers above them — an empty
+// catalogue, a stale expectations ledger, a mutant the harness could not run —
+// so without this a user on exit 2 has a status code and nothing that names the
+// reason.
+func TestFailedGateIsNamedInTheBlock(t *testing.T) {
+	block := summary()
+	if got := renderBlock(t, block); strings.Contains(got, "failed ") {
+		t.Errorf("a passing run named a failed gate:\n%s", got)
+	}
+
+	block.Counts = engine.Counts{}
+	block.Notable = nil
+	block.Score = mutation.NoScore
+	block.ExitCode = mutation.ExitPolicyFailure
+	block.Failure = mutation.Failure{
+		Reason: mutation.ReasonNoMutants,
+		Detail: "policy.require_mutants is set and the run produced no mutants",
+	}
+
+	got := renderBlock(t, block)
+	const want = "failed no-mutants: policy.require_mutants is set and the run produced no mutants\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("the failed gate rendered as\n%s\nwant a line %q", got, want)
+	}
+	if !strings.HasSuffix(got, "run 20260819T101112Z-a1b2  exit 1\n") {
+		t.Errorf("output = %q, want the gate named directly above the exit status", got)
+	}
+	// An interrupted run drops it: nothing the gates are about finished being
+	// measured, and the exit status is the signal's rather than the verdict's.
+	interrupted := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.RunCompleted{Status: engine.StatusInterrupted, Run: &block}})
+	if strings.Contains(interrupted, "failed no-mutants") {
+		t.Errorf("an interrupted run named a gate it never finished judging:\n%s", interrupted)
+	}
+}
+
+// TestExpectationsLineAppearsOnlyWithALedger keeps the block from growing a
+// line of zeroes for the projects — most of them — that have no expectations.
+func TestExpectationsLineAppearsOnlyWithALedger(t *testing.T) {
+	block := summary()
+	if got := renderBlock(t, block); strings.Contains(got, "expectations") {
+		t.Errorf("an empty ledger produced an expectations line:\n%s", got)
+	}
+	block.Expectations = engine.ExpectationCounts{Fulfilled: 1, Unfulfilled: 2, Stale: 3}
+	if got := renderBlock(t, block); !strings.Contains(got, "expectations 1 fulfilled  2 unfulfilled  3 stale\n") {
+		t.Errorf("the ledger did not render:\n%s", got)
+	}
+}
+
+// renderBlock renders one closing summary on its own.
+func renderBlock(t *testing.T, block engine.RunSummary) string {
+	t.Helper()
+	return render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.RunCompleted{Status: engine.StatusOK, Run: &block}})
+}
+
+// TestNotRunMutantsGetNoResultLine pins the decision behind the five outcome
+// labels: a mutant the run reached and abandoned is a number in the counts, not
+// a line claiming a result it does not have.
+func TestNotRunMutantsGetNoResultLine(t *testing.T) {
+	abandoned := survivor
+	abandoned.Outcome = mutation.OutcomeNotRun
+
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.MutantFinished{Result: abandoned}})
+	if got != "" {
+		t.Errorf("a not-run mutant rendered %q, want nothing", got)
+	}
+	if OutcomeLabel(mutation.OutcomeNotRun) != "" {
+		t.Error("OutcomeLabel gave not-run a label, which would make a sixth outcome column")
+	}
+}
+
+func TestOutcomeLabelsFitTheColumn(t *testing.T) {
+	want := map[mutation.Outcome]string{
+		mutation.OutcomeKilled:       "KILLED",
+		mutation.OutcomeSurvived:     "SURVIVED",
+		mutation.OutcomeTimedOut:     "TIMEOUT",
+		mutation.OutcomeInconclusive: "INCONCL",
+		mutation.OutcomeErrored:      "ERROR",
+		mutation.OutcomeNotRun:       "",
+	}
+	for outcome, label := range want {
+		got := OutcomeLabel(outcome)
+		if got != label {
+			t.Errorf("OutcomeLabel(%s) = %q, want %q", outcome, got, label)
+		}
+		if len(got) > OutcomeWidth {
+			t.Errorf("OutcomeLabel(%s) = %q, which is wider than the %d column", outcome, got, OutcomeWidth)
+		}
+	}
+}
+
+// TestResultLineQuotesWhatWouldBreakTheLine covers the one place a mutant's own
+// bytes reach the output: a statement deletion whose original is several lines.
+func TestResultLineQuotesWhatWouldBreakTheLine(t *testing.T) {
+	deletion := engine.MutantResult{
+		DisplayID:   "abcdef0123456789abcd",
+		Path:        "run.go",
+		Line:        4,
+		Column:      2,
+		Rule:        "delete-call-statement",
+		Original:    "log.Print(\"x\")",
+		Replacement: "",
+		Outcome:     mutation.OutcomeKilled,
+		Duration:    time.Second,
+	}
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.MutantFinished{Result: deletion}})
+	const want = "KILLED     abcdef01  run.go:4:2  delete-call-statement  log.Print(\"x\") -> \"\"  (1s)\n"
+	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+	if strings.Count(got, "\n") != 1 {
+		t.Errorf("a killed mutant produced more than one line: %q", got)
 	}
 }
 
@@ -119,7 +364,7 @@ func TestColorOnlyChangesBytesWhenEnabled(t *testing.T) {
 		t.Log("colour produced identical bytes; lipgloss found no colour profile in this environment")
 	}
 	// Whatever styling did or did not happen, the information must survive.
-	for _, needle := range []string{"baseline ok:", "warning GOM0001:", "run ok:"} {
+	for _, needle := range []string{"baseline ok:", "warning GOM4040:", "untested.go:9:12", "run 20260819T101112Z-a1b2"} {
 		if !strings.Contains(colored, needle) {
 			t.Errorf("coloured output lost %q", needle)
 		}
@@ -203,7 +448,7 @@ func TestRunSurvivesACancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	got := renderWithContext(t, ctx, NewPlain(nil, "0.1.0-dev", false, false), stream())
-	if !strings.Contains(got, "run ok:") {
+	if !strings.Contains(got, "run 20260819T101112Z-a1b2  exit 0") {
 		t.Error("a cancelled context stopped the renderer before the terminal event")
 	}
 }
@@ -262,25 +507,38 @@ func TestColorEnabledRefusesNonFiles(t *testing.T) {
 	}
 }
 
-// TestEveryEventRenders is the guard against an event type that nothing
-// prints. The list below has to be extended by hand when the sealed interface
-// grows, which is the point: adding a case to the renderer and adding a line
+// TestEveryEventIsAccountedFor is the guard against an event type that nothing
+// decided about. The list has to be extended by hand when the sealed interface
+// grows, which is the point: adding a case to the renderer and adding a row
 // here are the same review.
-func TestEveryEventRenders(t *testing.T) {
-	all := []engine.Event{
-		engine.RunPlanned{},
-		engine.PhaseChanged{},
-		engine.BaselineProgress{},
-		engine.BaselineCompleted{},
-		engine.Warning{},
-		engine.ReportPublished{},
-		engine.RunCompleted{},
+//
+// Two rows say "prints nothing", and each is a decision rather than an
+// omission — see [PlainRenderer.line] for both.
+func TestEveryEventIsAccountedFor(t *testing.T) {
+	block := summary()
+	rows := []struct {
+		event engine.Event
+		lines bool
+	}{
+		{engine.RunPlanned{}, true},
+		{engine.PhaseChanged{}, true},
+		{engine.BaselineProgress{}, true},
+		{engine.BaselineCompleted{}, true},
+		{engine.Discovered{}, true},
+		{engine.Validated{}, true},
+		{engine.MutantStarted{}, false},
+		{engine.MutantFinished{Result: killed}, true},
+		{engine.MutantFinished{}, false},
+		{engine.Warning{}, true},
+		{engine.ReportPublished{}, true},
+		{engine.RunCompleted{}, true},
+		{engine.RunCompleted{Run: &block}, true},
 	}
 	r := NewPlain(nil, "0.1.0-dev", false, false)
 	r.Out = &bytes.Buffer{}
-	for _, e := range all {
-		if _, ok := r.line(e); !ok {
-			t.Errorf("%T renders nothing", e)
+	for _, row := range rows {
+		if _, ok := r.line(row.event); ok != row.lines {
+			t.Errorf("%T rendered = %t, want %t", row.event, ok, row.lines)
 		}
 	}
 }

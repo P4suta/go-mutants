@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -41,17 +43,42 @@ through a shell, so no element is word-split, glob-expanded, or substituted:
 
   go-mutants run -- go test -run TestParser ./internal/...
 
-This is a pre-release build: the run stops after the baseline and warns that it
-did, rather than reporting a mutation score it has not measured.`
+Your own tree is only ever read. The run works in a disposable snapshot: it
+builds it, proves its tests pass unmutated, rewrites it so that every mutant is
+present at once behind a guard, proves the rewritten tree still passes with
+nothing activated, and then measures one mutant per test process.
+
+--mutant is a selector here, not the filter it is in ` + "`list`" + `: it must name
+exactly one mutant, because "why did this one survive" is not a question two
+mutants can answer. Everything else is still catalogued and still reported, as
+not-run. ` + "`list`" + ` does not compile what it prints, so a prefix from it can name a
+mutant that turns out not to build; the run then executes nothing and warns,
+quoting the compiler, rather than exiting 0 in silence.
+
+--json writes the run-report-v1 document to standard output and nothing else;
+the progress lines, warnings, and errors go to standard error, so the document
+can be piped straight into a validator.
+
+A completed run exits 0 unless a policy gate the user opted into failed. Nothing
+here fails a build by default: --strict and policy.minimum_score are how you ask
+for one.`
 
 // runOptions holds the flag destinations for one `run` invocation. It is a
 // struct rather than closure variables so that the command can be built more
 // than once in one process, which is what the tests do.
 type runOptions struct {
-	jobs    int
-	timeout time.Duration
-	quiet   bool
-	noColor bool
+	include   []string
+	exclude   []string
+	operators []string
+	profile   string
+	mutant    string
+	jobs      int
+	timeout   time.Duration
+	strict    bool
+	noStrict  bool
+	json      bool
+	quiet     bool
+	noColor   bool
 }
 
 // newRunCommand builds the `run` command.
@@ -68,6 +95,19 @@ func newRunCommand() *cobra.Command {
 		RunE: o.execute,
 	}
 	flags := cmd.Flags()
+	// StringArrayVar, never StringSliceVar: a pattern is a single opaque value.
+	// Splitting on commas would make `--include "a,b/**"` mean something the
+	// user did not write, and the glob language has no way to escape a comma.
+	flags.StringArrayVar(&o.include, "include", nil,
+		"`GLOB` a file must match to be mutated; repeat for more (default: mutation.include, or **/*.go)")
+	flags.StringArrayVar(&o.exclude, "exclude", nil,
+		"`GLOB` that removes a file again; repeat for more (default: mutation.exclude)")
+	flags.StringArrayVar(&o.operators, "operator", nil,
+		"`NAME` of an operator family or rule, from the whole catalogue rather than from the profile; repeat for more")
+	flags.StringVar(&o.profile, "profile", "",
+		"operator tier `NAME`: balanced, strong, or all (default: mutation.profile, or balanced)")
+	flags.StringVar(&o.mutant, "mutant", "",
+		"run only the mutant whose id starts with `ID_PREFIX`; it must select exactly one")
 	// The pflag default is zero and the real one is described in the usage
 	// text. Printing config.DefaultJobs() as the default would make `--help`
 	// say 8 on a laptop and 4 on a CI runner, and help output that depends on
@@ -79,10 +119,20 @@ func newRunCommand() *cobra.Command {
 		"mutants to execute concurrently (default: execution.jobs, or min(CPUs, 8))")
 	flags.DurationVar(&o.timeout, "timeout", 0,
 		"per-mutant timeout; unset derives max(10s, slowest baseline x 5)")
+	flags.BoolVar(&o.strict, "strict", false,
+		"exit 1 when any mutant survives unexpectedly (default: policy.strict)")
+	flags.BoolVar(&o.noStrict, "no-strict", false,
+		"never exit 1 for survivors, overriding policy.strict")
+	flags.BoolVar(&o.json, "json", false,
+		"write the run-report-v1 document to standard output and nothing else")
 	flags.BoolVarP(&o.quiet, "quiet", "q", false,
-		"print only the baseline summary, warnings, and the closing line")
+		"print only the baseline summary, warnings, and the closing summary block")
 	flags.BoolVar(&o.noColor, "no-color", false,
 		"never colourise output, even on a terminal")
+	// Neither is wrong on its own and each is a complete answer, so the pair is
+	// refused rather than resolved: silently letting one win would make the
+	// meaning of a command line depend on a rule nobody wrote down.
+	cmd.MarkFlagsMutuallyExclusive("strict", "no-strict")
 	return cmd
 }
 
@@ -90,6 +140,20 @@ func newRunCommand() *cobra.Command {
 func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	testArgv, err := passthrough(cmd, args)
 	if err != nil {
+		return err
+	}
+	if o.json && o.quiet {
+		return &Error{
+			Code: CodeConflictingFlags,
+			Message: "--json and --quiet cannot be combined: the run report is the whole of what --json writes, " +
+				"and there is no shorter version of it",
+			Hint: "drop --quiet for the document, or drop --json for the shortened text output",
+		}
+	}
+	// Checked before a workspace is copied and a baseline is measured. A prefix
+	// of the wrong shape can never name a mutant, and finding that out after
+	// several minutes of work would be a poor way to learn it.
+	if err = checkMutantPrefix(o.mutant); err != nil {
 		return err
 	}
 
@@ -102,13 +166,25 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	cfg, err := config.Load(filepath.Join(root, config.FileName), overlay(cmd, o))
+	overlay, err := runOverlay(cmd, o)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(filepath.Join(root, config.FileName), overlay)
 	if err != nil {
 		return err
 	}
 
+	// Under --json the document owns standard output, so everything the
+	// renderer writes goes to standard error — the same split `list --json`
+	// makes. The renderer is never simply dropped: the engine's sends block, so
+	// something has to drain them whatever the user asked to see.
 	out := cmd.OutOrStdout()
-	renderer := console.NewPlain(out, Version, console.ColorEnabled(out, o.noColor), o.quiet)
+	rendered := out
+	if o.json {
+		rendered = cmd.ErrOrStderr()
+	}
+	renderer := console.NewPlain(rendered, Version, console.ColorEnabled(rendered, o.noColor), o.quiet)
 
 	ctx, watch, stop := watchSignals(cmd.Context())
 	defer stop()
@@ -127,37 +203,116 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		renderErr = renderer.Run(ctx, events)
 	}()
 
-	_, runErr := engine.Run(ctx, engine.Options{
+	outcome, runErr := engine.Run(ctx, engine.Options{
 		Config:        cfg,
 		WorkspaceRoot: root,
 		TestArgv:      testArgv,
+		ToolVersion:   Version,
+		MutantPrefix:  o.mutant,
 		Events:        events,
 	})
 	wg.Wait()
 
+	// The document is written whenever there is one, the interrupted path
+	// included: a partial report is still the record of what the run measured,
+	// and a consumer that asked for JSON should not have to parse a console to
+	// find out that it exists.
+	if o.json && outcome.Report != nil {
+		if err := writeReportJSON(out, outcome.Report); err != nil {
+			return err
+		}
+	}
+
 	if runErr != nil {
 		return interpret(runErr, watch.Signal())
 	}
-	return renderErr
+	if renderErr != nil {
+		return renderErr
+	}
+	return policyFailure(outcome.Verdict)
 }
 
-// overlay turns the flags the user actually typed into a configuration layer.
+// runOverlay turns the flags the user actually typed into a configuration
+// layer.
 //
 // Only changed flags are carried. A flag's default is not an opinion: `--jobs`
 // left alone must lose to `execution.jobs` in the file, and the only way to
 // know the difference is pflag's Changed.
 //
-// The `--` passthrough is deliberately not overlaid here even though
-// config.Overlay has a TestCommand field. It travels to the engine as
-// [engine.Options.TestArgv] instead, so that the override has exactly one path;
-// setting both would apply the same value twice and leave two places to look
-// when it is wrong.
-func overlay(cmd *cobra.Command, o *runOptions) config.Overlay {
+// Two things travel outside it, each for its own reason. The `--` passthrough
+// goes to the engine as [engine.Options.TestArgv], so that the override has
+// exactly one path; setting both would apply the same value twice and leave two
+// places to look when it is wrong. `--mutant` is not a configuration setting at
+// all — it narrows one invocation and is never written in a file.
+func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 	flags := cmd.Flags()
-	return config.Overlay{
-		Jobs:    config.When(flags.Changed("jobs"), o.jobs),
-		Timeout: config.When(flags.Changed("timeout"), o.timeout),
+	overlay := config.Overlay{
+		Include:   config.When(flags.Changed("include"), o.include),
+		Exclude:   config.When(flags.Changed("exclude"), o.exclude),
+		Operators: config.When(flags.Changed("operator"), o.operators),
+		Jobs:      config.When(flags.Changed("jobs"), o.jobs),
+		Timeout:   config.When(flags.Changed("timeout"), o.timeout),
 	}
+	// The two spellings are mutually exclusive, so at most one is Changed. Each
+	// carries its own flag's value rather than a constant, so that the explicit
+	// `--strict=false` a script may generate means what it says.
+	switch {
+	case flags.Changed("strict"):
+		overlay.Strict = config.Explicit(o.strict)
+	case flags.Changed("no-strict"):
+		overlay.Strict = config.Explicit(!o.noStrict)
+	}
+	// The profile is the one flag parsed here rather than in the configuration
+	// layer, because the overlay carries a tier and the command line carries a
+	// name. Everything else — every glob, every operator name — is validated by
+	// internal/config against the same rules the file is held to, so a bad value
+	// is reported as the flag the user typed and not as the TOML key they never
+	// wrote.
+	if flags.Changed("profile") {
+		tier, err := config.ParseProfile(o.profile)
+		if err != nil {
+			return config.Overlay{}, err
+		}
+		overlay.Profile = config.Explicit(tier)
+	}
+	return overlay, nil
+}
+
+// checkMutantPrefix rejects a `--mutant` value that could never name a mutant.
+//
+// Only the shape is checked here. Whether a well-formed prefix matches one
+// mutant, none, or several is a question about the catalogue, which does not
+// exist until the run has copied the workspace and discovered it; the engine
+// answers it and reports a [engine.SelectionError], which [interpret] turns
+// back into a usage error.
+func checkMutantPrefix(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) < mutation.MinPrefixLength || len(value) > mutation.IDHexLength || !isLowerHex(value) {
+		return &Error{
+			Code: CodeInvalidMutantPrefix,
+			Message: fmt.Sprintf("%q is not a mutant id prefix: expected between %d and %d lowercase hex characters",
+				value, mutation.MinPrefixLength, mutation.IDHexLength),
+			Hint: "copy the id from `go-mutants list` or from the JSON report; the short form printed in a listing is a prefix of the full one",
+		}
+	}
+	return nil
+}
+
+// writeReportJSON writes the run report and nothing else.
+//
+// The bytes are the report's own: [report.Report.Marshal] is what goes on disk,
+// so the document on standard output and the document in the history are the
+// same file. Re-encoding it here would be a second encoder to keep in step with
+// the schema.
+func writeReportJSON(w io.Writer, r interface{ Marshal() ([]byte, error) }) error {
+	data, err := r.Marshal()
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
 }
 
 // passthrough extracts the argv the user wrote after `--`.
@@ -194,6 +349,25 @@ func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 	return argv, nil
 }
 
+// policyFailure turns a completed run's verdict into the exit status, or nil
+// when nothing the user asked to gate on failed.
+//
+// The failure is deliberately silent: the reason is already in the summary
+// block the renderer wrote, and printing "error GOM....: 1 mutant survived
+// unexpectedly" underneath it would say the same thing twice and, worse, dress
+// a measurement the run made correctly up as something having gone wrong. What
+// the exit status means is documented in the help output's exit code table.
+func policyFailure(verdict mutation.Verdict) error {
+	if verdict.OK() {
+		return nil
+	}
+	detail := "a policy gate failed"
+	if len(verdict.Failures) > 0 {
+		detail = verdict.Failures[0].Detail
+	}
+	return &exitError{code: verdict.Code, err: errors.New(detail), silent: true}
+}
+
 // interpret decides what an engine failure means for the exit status.
 //
 // A cancelled run is not an infrastructure failure: the user asked for it, and
@@ -201,7 +375,26 @@ func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 // signal is what tells the two apart, and a cancellation with no signal behind
 // it — an embedding whose context was cancelled — is reported as an interrupt,
 // which is the closest true statement available.
+//
+// A `--mutant` that did not select one mutant is the other special case. The
+// engine reports it without a code, because the mistake is in how the run was
+// invoked rather than in the orchestration and only this package owns that
+// vocabulary; it comes out here as one GOM10xx usage error rather than as two
+// codes for one condition.
 func interpret(err error, sig os.Signal) error {
+	var selection *engine.SelectionError
+	if errors.As(err, &selection) {
+		// The cause is the catalogue's own sentinel rather than the engine's
+		// wrapper, whose text already contains it: an error that renders as
+		// "did not select one mutant: did not select one mutant: ..." is one
+		// nobody reads twice. The sentinel stays reachable through errors.Is.
+		return &Error{
+			Code:    CodeMutantUnresolved,
+			Message: "--mutant " + strconv.Quote(selection.Prefix) + " did not select one mutant",
+			Hint:    "run `go-mutants list --mutant " + selection.Prefix + "` to see what that prefix matches",
+			Err:     selection.Err,
+		}
+	}
 	if !errors.Is(err, context.Canceled) {
 		return err
 	}

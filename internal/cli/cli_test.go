@@ -199,7 +199,10 @@ func TestOverlayCarriesOnlyChangedFlags(t *testing.T) {
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
 		// The flag destinations belong to the command's own runOptions, so the
 		// overlay is read from the command rather than from o.
-		layer := overlay(c, o)
+		layer, err := runOverlay(c, o)
+		if err != nil {
+			return err
+		}
 		if layer.Jobs.IsSet() {
 			t.Error("jobs was carried without being typed")
 		}
@@ -220,7 +223,10 @@ func TestOverlayCarriesOnlyChangedFlags(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		layer := overlay(c, &runOptions{jobs: jobs})
+		layer, err := runOverlay(c, &runOptions{jobs: jobs})
+		if err != nil {
+			return err
+		}
 		got, ok := layer.Jobs.Get()
 		if !ok || got != 3 {
 			t.Errorf("jobs overlay = %v/%t, want 3/true", got, ok)

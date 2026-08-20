@@ -17,9 +17,15 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/discover"
+	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
+	"github.com/P4suta/go-mutants/internal/instrument"
+	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/validate"
 )
 
 // Fixed budgets and the timeout derivation constants.
@@ -51,14 +57,21 @@ const (
 	// under itself when the snapshot is cleaned up.
 	scratchPrefix = "go-mutants-tmp-"
 
+	// binDirName is the scratch subdirectory the compiled test binaries live
+	// in. It is inside the scratch directory and therefore outside the
+	// snapshot, which internal/execute requires and the drift gate depends on:
+	// a binary written into the tree would be indistinguishable from a test
+	// that wrote into it.
+	binDirName = "bin"
+
+	// workerDirName is the scratch subdirectory holding one temporary directory
+	// per execution worker.
+	workerDirName = "workers"
+
 	// envPrefix is the variable prefix a child process never inherits.
 	// Activation is the engine's to set; a GO_MUTANTS_ACTIVE left in a user's
 	// shell would otherwise silently turn a mutant on inside the baseline.
 	envPrefix = "GO_MUTANTS_"
-
-	// digestDisplay is how many hex characters of the workspace digest are
-	// shown. It is a display convenience only; reports carry the full digest.
-	digestDisplay = 16
 )
 
 // tempKeys are the environment variables redirected at the scratch directory.
@@ -84,6 +97,26 @@ type Options struct {
 	// also push it through a config.Overlay, because two paths for one value
 	// is one path too many. Empty means "use the configured command".
 	TestArgv []string
+
+	// ToolVersion is the go-mutants version the report records. internal/cli
+	// owns the string — it cannot be imported here without the dependency
+	// running backwards — so it travels in rather than being read.
+	ToolVersion string
+
+	// MutantPrefix narrows the run to the single mutant whose id starts with
+	// it, as `--mutant` does. Everything else is catalogued and reported as
+	// not-run, which is what keeps the score and `policy.require_mutants`
+	// honest about the difference between "nothing to find" and "not looked at
+	// this time". Empty runs every accepted mutant.
+	//
+	// A prefix matching no mutant, or more than one, is a [SelectionError]: the
+	// point of naming one mutant is to be sure which.
+	MutantPrefix string
+
+	// HistoryRoot overrides the directory the run history is written under.
+	// Empty is <os.UserCacheDir>/go-mutants, which is what every real run uses;
+	// the tests set it so that they never touch the developer's own cache.
+	HistoryRoot string
 
 	// Events receives every [Event]. The engine closes it on return. A nil
 	// channel publishes nothing and is not closed; see the package
@@ -134,6 +167,20 @@ type RunOutcome struct {
 	Timeout       time.Duration
 	TimeoutSource TimeoutSource
 
+	// Report is the published run report, or nil when the run stopped before
+	// there was anything to publish. It is the document on disk, so a caller
+	// deciding an exit code or writing `--json` is looking at exactly what the
+	// user can read in the file.
+	Report *report.Report
+	// RunPath and LatestPath are where the report was filed, as published in
+	// [ReportPublished].
+	RunPath    string
+	LatestPath string
+	// Verdict is what [mutation.Decide] made of the report. It is the zero
+	// value when no report was published, in which case the failure itself
+	// decides the exit status.
+	Verdict mutation.Verdict
+
 	// Warnings are the warnings published during the run, in order.
 	Warnings []Warning
 	// Summary is the closing line published in [RunCompleted].
@@ -142,14 +189,23 @@ type RunOutcome struct {
 
 // Run executes one mutation run.
 //
-// The pre-release pipeline is: locate the toolchain, snapshot the workspace,
-// build the snapshot, measure the baseline, derive the timeout, and stop —
-// with the [CodeMutationPhasesPending] warning saying so. The snapshot is
+// The pipeline is: locate the toolchain, snapshot the workspace, build it,
+// measure the unmutated tests, derive the per-mutant timeout, discover the
+// candidates, catalogue them, instrument and compile-validate the snapshot,
+// prove the instrumented tree still passes with nothing activated, check that
+// nothing but the instrumentation moved, build the test binaries once, execute
+// every accepted mutant against them, and publish the report. The snapshot is
 // removed on every path.
 //
 // The returned error is nil exactly when the run completed. It always carries a
-// stable GOM#### code, either this package's or that of the package that
-// failed, and the outcome is returned alongside it.
+// stable GOM#### code — either this package's or that of the package that
+// failed — except for a [SelectionError], which says why, and the outcome is
+// returned alongside it.
+//
+// A completed run is not necessarily a passing one: whether the score or the
+// survivors fail a policy gate is [RunOutcome.Verdict], and reporting that as
+// an error would conflate "go-mutants could not do its job" with "your tests
+// did not catch something".
 func Run(ctx context.Context, opts Options) (RunOutcome, error) {
 	started := time.Now()
 	s := &session{events: opts.Events}
@@ -181,8 +237,28 @@ func Run(ctx context.Context, opts Options) (RunOutcome, error) {
 	}
 	// Terminal on every path, including this one: a renderer that never sees
 	// RunCompleted cannot tell a finished run from a crashed one.
-	s.emit(RunCompleted{Status: out.Status, Summary: out.Summary})
+	s.emit(RunCompleted{Status: out.Status, Summary: out.Summary, Run: s.summary})
 	return out, err
+}
+
+// A state is what the mutation phases have established so far.
+//
+// It exists because the report is published from two places — the end of a
+// successful run, and the interruption path — and both need the same partial
+// picture. Threading a dozen values through would make the difference between
+// them a matter of remembering which ones; a struct makes it one call.
+type state struct {
+	found      discover.Result
+	catalog    *mutation.Catalog
+	mode       report.SelectionMode
+	selected   int
+	rejections []report.Rejection
+	// results holds one execution result per mutant the run reached, by full
+	// id. Everything catalogued, accepted, and absent from here is reported as
+	// not-run, which is the contract report.Build enforces.
+	results map[string]report.MutantResult
+	// display holds the render data for every catalogued mutant, by full id.
+	display map[string]MutantResult
 }
 
 // pipeline is the run proper, split out so that [Run] owns exactly two things:
@@ -266,6 +342,44 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	}()
 	env := childEnv(scratch)
 
+	if err := s.baseline(ctx, cfg, command, toolchain, snap.Root, env, out); err != nil {
+		return err
+	}
+
+	st := &state{
+		mode:    report.ModeAll,
+		results: make(map[string]report.MutantResult),
+		display: make(map[string]MutantResult),
+	}
+	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, out, st)
+	if mutateErr != nil {
+		// An interruption after the catalogue exists still has something true
+		// to say: which mutants there were, which of them were measured, and
+		// which the signal cut short. Anything earlier has nothing to publish,
+		// and inventing an empty report for it would file a document claiming
+		// the workspace holds no mutants.
+		if interrupted(mutateErr) && st.catalog != nil {
+			if pubErr := s.publish(opts, out, st, report.StatusInterrupted); pubErr != nil {
+				s.warn(CodeReportNotPublished,
+					"the interrupted run could not be filed in the history: "+pubErr.Error())
+			}
+		}
+		return mutateErr
+	}
+	return s.publish(opts, out, st, report.StatusCompleted)
+}
+
+// baseline builds the pristine snapshot, measures the unmutated tests, and
+// derives the per-mutant timeout from what it measured.
+func (s *session) baseline(
+	ctx context.Context,
+	cfg config.Config,
+	command []string,
+	toolchain gocmd.Toolchain,
+	root string,
+	env []string,
+	out *RunOutcome,
+) error {
 	runs := cfg.Test.BaselineRuns
 	s.emit(PhaseChanged{
 		Phase: PhaseBaseline,
@@ -274,7 +388,7 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	})
 
 	build := toolchain.Command("build", "./...")
-	build.Dir = snap.Root
+	build.Dir = root
 	build.Env = env
 	build.Timeout = BaselineCap
 	if buildErr := check(ctx, runner.Run(ctx, build), CodeBaselineBuildFailed,
@@ -291,7 +405,7 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	for i := 1; i <= runs; i++ {
 		result := runner.Run(ctx, runner.Spec{
 			Argv:    argv,
-			Dir:     snap.Root,
+			Dir:     root,
 			Env:     env,
 			Timeout: BaselineCap,
 		})
@@ -319,12 +433,675 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 		Timeout:       timeout,
 		TimeoutSource: source,
 	}.clone())
-
-	s.warn(CodeMutationPhasesPending,
-		"mutation phases not yet implemented — run ends after baseline (pre-release)")
-	out.Summary = fmt.Sprintf("baseline only: %s snapshotted, workspace digest %s",
-		countNoun(out.SnapshotFiles, "file"), displayDigest(out.WorkspaceDigest))
 	return nil
+}
+
+// mutate is everything between a proven baseline and a report: discovery, the
+// catalogue, validation, the semantic preservation gate, the drift gate, the
+// test binaries, and the execution.
+//
+// It fills in st as it goes rather than returning a result, because a run that
+// is cut short half way through still has to publish what it had established.
+func (s *session) mutate(
+	ctx context.Context,
+	opts Options,
+	toolchain gocmd.Toolchain,
+	snap *snapshot.Snapshot,
+	scratch string,
+	env []string,
+	out *RunOutcome,
+	st *state,
+) error {
+	cfg := opts.Config
+	s.emit(PhaseChanged{
+		Phase:  PhaseMutate,
+		Detail: "discovering candidates, validating them, then executing the mutants",
+	})
+
+	rules, err := SelectRules(cfg)
+	if err != nil {
+		return err
+	}
+	include, err := discover.CompilePatterns(cfg.Mutation.Include)
+	if err != nil {
+		return err
+	}
+	exclude, err := discover.CompilePatterns(cfg.Mutation.Exclude)
+	if err != nil {
+		return err
+	}
+
+	// The include and exclude patterns are applied here and never to the
+	// snapshot walk; see the long argument at the snapshot above.
+	found, err := discover.Discover(ctx, discover.Options{
+		SnapshotRoot: snap.Root,
+		Toolchain:    toolchain,
+		Rules:        rules,
+		Include:      include,
+		Exclude:      exclude,
+	})
+	if err != nil {
+		return err
+	}
+	st.found = found
+	s.emit(Discovered{Candidates: len(found.Candidates), Skips: skipTotal(found.Skips)})
+
+	catalog, err := discover.BuildCatalog(found)
+	if err != nil {
+		return err
+	}
+	st.catalog = catalog
+	st.display = displayIndex(catalog, found.Candidates)
+
+	validated, err := validate.Validate(ctx, validate.Options{
+		Snap:         snap,
+		Catalog:      catalog,
+		ModulePath:   found.ModulePath,
+		Toolchain:    toolchain,
+		Jobs:         cfg.Execution.Jobs,
+		BuildTimeout: BaselineCap,
+		Env:          env,
+	})
+	// The rejections are recorded whatever happened: they are what the phase
+	// established, and a run that was interrupted half way through the search
+	// should still report the candidates it had already condemned.
+	st.rejections = rejectionsOf(validated.Rejected)
+	if err != nil {
+		return err
+	}
+	s.emit(Validated{Accepted: len(validated.AcceptedIDs), Rejected: len(validated.Rejected)})
+
+	if err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, snap.Root, env); err != nil {
+		return err
+	}
+	if err = driftGate(snap, validated.Instrumented); err != nil {
+		return err
+	}
+
+	runs, err := s.selection(opts, catalog, validated.AcceptedIDs, out.Timeout, st)
+	if err != nil {
+		return err
+	}
+
+	execOpts := execute.Options{
+		Toolchain:    toolchain,
+		SnapshotRoot: snap.Root,
+		BinDir:       filepath.Join(scratch, binDirName),
+		ScratchDir:   filepath.Join(scratch, workerDirName),
+		Jobs:         cfg.Execution.Jobs,
+		Timeout:      BaselineCap,
+	}
+	bins, err := execute.BuildTestBinaries(ctx, execOpts)
+	if err != nil {
+		return err
+	}
+
+	results, err := execute.Schedule(ctx, execOpts, runs, bins, s.hooks(st))
+	// As with validation: whatever was measured is kept, because an interrupted
+	// run's report is exactly the record of what it got to.
+	for _, result := range results {
+		st.results[result.ID] = report.MutantResult{
+			ID:         result.ID,
+			Outcome:    result.Final,
+			Duration:   result.Duration,
+			KilledBy:   result.KilledBy,
+			Attempts:   len(result.Attempts),
+			OutputTail: result.OutputTail,
+		}
+	}
+	return err
+}
+
+// instrumentedBaseline is the semantic preservation gate.
+//
+// The whole test command is run once against the instrumented snapshot with
+// nothing activated, which is what every guard's `else` branch is for: with
+// [instrument.ActiveEnv] unset the tree holds the user's own bytes on every
+// path taken. A failure here means the rewrite changed the program, so every
+// outcome measured afterwards would describe that change rather than a mutant,
+// and the run stops instead.
+//
+// The environment is the run's own composed one, which has already had every
+// GO_MUTANTS_ variable stripped out of it — so this cannot accidentally be
+// measuring a mutant a developer's shell activated.
+func (s *session) instrumentedBaseline(
+	ctx context.Context,
+	command []string,
+	toolchain gocmd.Toolchain,
+	root string,
+	env []string,
+) error {
+	result := runner.Run(ctx, runner.Spec{
+		Argv:    resolveProgram(command, toolchain),
+		Dir:     root,
+		Env:     env,
+		Timeout: BaselineCap,
+	})
+	if err := check(ctx, result, CodeInstrumentedBaselineFailed,
+		"the instrumented snapshot does not pass its own tests with no mutant active"); err != nil {
+		return err
+	}
+	s.emit(BaselineProgress{Run: 1, Of: 1, Duration: result.Duration})
+	return nil
+}
+
+// driftGate proves that nothing but the instrumentation moved.
+//
+// Every worker shares one snapshot, so a test that writes into its own package
+// directory — a golden file it "updates", a database it creates in testdata —
+// corrupts the tree every later mutant is measured against, and the run's
+// results quietly stop being reproducible. This turns that into a named list of
+// files and an exit code.
+//
+// Exactly two kinds of drift are the run's own doing: the files validation left
+// carrying guards, and the generated runtime package. A file whose every
+// candidate was rejected is not among the first — internal/validate restored it
+// to its pristine bytes, so it does not drift at all — and the test binaries are
+// not among either, because internal/execute refuses a binary directory inside
+// the snapshot for precisely this reason.
+func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result) error {
+	drifts, err := snap.Redigest()
+	if err != nil {
+		return &Error{
+			Code:    CodeWorkspaceDrift,
+			Message: "the snapshot could not be checked for drift after the instrumented baseline",
+			Err:     err,
+		}
+	}
+	guarded := make(map[string]bool, len(instrumented.FilesInstrumented))
+	for _, path := range instrumented.FilesInstrumented {
+		guarded[path] = true
+	}
+	runtimePrefix := instrumented.RuntimeDir + "/"
+
+	var unexpected []string
+	for _, drift := range drifts {
+		switch {
+		case drift.Kind == snapshot.DriftChanged && guarded[drift.RelPath]:
+		case drift.Kind == snapshot.DriftAdded && strings.HasPrefix(drift.RelPath, runtimePrefix):
+		default:
+			unexpected = append(unexpected, drift.Kind.String()+" "+drift.RelPath)
+		}
+	}
+	if len(unexpected) == 0 {
+		return nil
+	}
+	return &Error{
+		Code: CodeWorkspaceDrift,
+		Message: countNoun(len(unexpected), "file") + " in the snapshot changed while the tests ran, " +
+			"so every mutant after the first would be measured against a different tree; " +
+			"the tests write into the package directory they run in",
+		Output: strings.Join(unexpected, "\n"),
+	}
+}
+
+// selection turns the accepted set into the mutants this run will execute, and
+// records what the report has to say about the choice.
+//
+// `--mutant` is a selector here and not a filter, which is the opposite of what
+// it means to `list`: naming one mutant is how a user asks "why did this one
+// survive", and answering with two of them would be answering a question nobody
+// asked. Everything not selected is still catalogued and still reported, as
+// not-run.
+//
+// A prefix that resolves to a mutant validation rejected selects nothing, and
+// that path warns rather than passing quietly. `list` does not validate, so
+// every id it printed is one this can be handed; without the warning the run
+// executes nothing, exits 0, and says so only in a `rejected[]` row nobody who
+// asked about one mutant is looking at. See [CodeSelectedMutantRejected].
+func (s *session) selection(
+	opts Options,
+	catalog *mutation.Catalog,
+	acceptedIDs []string,
+	timeout time.Duration,
+	st *state,
+) ([]execute.MutantRun, error) {
+	accepted := make(map[string]bool, len(acceptedIDs))
+	for _, id := range acceptedIDs {
+		accepted[id] = true
+	}
+
+	ids := acceptedIDs
+	if opts.MutantPrefix != "" {
+		st.mode = report.ModeMutant
+		chosen, err := catalog.ResolvePrefix(opts.MutantPrefix)
+		if err != nil {
+			return nil, &SelectionError{Prefix: opts.MutantPrefix, Err: err}
+		}
+		ids = nil
+		if accepted[chosen.ID] {
+			ids = []string{chosen.ID}
+		} else {
+			// st.rejections is already populated here — validation fills it
+			// before this phase can be reached, and an error out of validation
+			// returns before the selection is made — and the accepted and the
+			// rejected together are the whole catalogue, so the diagnostic that
+			// explains this one is there to quote.
+			s.warn(CodeSelectedMutantRejected, rejectedSelection(opts.MutantPrefix, chosen, st))
+		}
+	}
+
+	runs := make([]execute.MutantRun, 0, len(ids))
+	for _, id := range ids {
+		runs = append(runs, execute.MutantRun{ID: id, Timeout: timeout})
+	}
+	st.selected = len(runs)
+	return runs, nil
+}
+
+// rejectedSelection is what [CodeSelectedMutantRejected] says: which mutant the
+// prefix named, where it is, and what the compiler said about it.
+//
+// The compiler's own words are quoted rather than summarised. "It did not
+// compile" is the one thing the user can already infer from the fact that
+// nothing ran; which type mismatch, on which line, is the part that tells them
+// whether the rejection is a limit of the guard forms or a mutant that could
+// never have meant anything, and it costs nothing to carry it here — the
+// diagnostic is already in hand.
+func rejectedSelection(prefix string, chosen mutation.Mutant, st *state) string {
+	var b strings.Builder
+	b.WriteString("--mutant ")
+	b.WriteString(strconv.Quote(prefix))
+	b.WriteString(" selected ")
+	// The display id, unless the user typed it out in full. `list` prints a
+	// short form and a few characters of one is what usually arrives here, so
+	// saying which catalogued mutant those characters landed on is the point;
+	// echoing back a string the user has just written is not.
+	if prefix == chosen.DisplayID {
+		b.WriteString("the mutant")
+	} else {
+		b.WriteString(chosen.DisplayID)
+	}
+	// Coordinates when there are any. displayIndex documents a catalogued
+	// mutant with no candidate behind it as impossible and leaves it at zero
+	// rather than raising, so this reads what it finds instead of printing a
+	// ":0:0" that would look like a real location.
+	if where := st.display[chosen.ID]; where.Line > 0 {
+		b.WriteString(" at ")
+		b.WriteString(where.Path)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(where.Line))
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(where.Column))
+	}
+	b.WriteString(" (")
+	b.WriteString(chosen.Rule.Name)
+	b.WriteString("), which validation rejected because it does not compile, so this run executed nothing")
+	if diagnostic := foldLines(diagnosticFor(st.rejections, chosen.ID)); diagnostic != "" {
+		b.WriteString(": ")
+		b.WriteString(diagnostic)
+	}
+	return b.String()
+}
+
+// diagnosticFor returns what validation said about one rejected mutant, or ""
+// when the id is not among the rejections. The scan is linear because it
+// happens at most once per run, and a map built for one lookup would be a data
+// structure nobody reads twice.
+func diagnosticFor(rejections []report.Rejection, id string) string {
+	for _, rejection := range rejections {
+		if rejection.ID == id {
+			return rejection.Diagnostic
+		}
+	}
+	return ""
+}
+
+// foldLines collapses a multi-line compiler diagnostic onto the single line a
+// warning has to be. It is not [firstLine], which keeps only the first: nothing
+// here is dropped.
+//
+// A rejection can carry several messages about the same guard, joined with
+// newlines by internal/validate. A warning is one line by contract — the plain
+// renderer writes "warning GOM4043: " in front of it, and the report stores it
+// as one string — so the lines are joined with "; " rather than dropped: the
+// second message is often the one that names the type the guard could not be.
+func foldLines(diagnostic string) string {
+	lines := strings.Split(diagnostic, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			kept = append(kept, trimmed)
+		}
+	}
+	return strings.Join(kept, "; ")
+}
+
+// hooks forwards internal/execute's progress callbacks into the event stream.
+//
+// They are called from several worker goroutines at once, so they do nothing
+// but send: a channel send is safe from any goroutine, and the warning slice
+// [session.warn] appends to is not. The blocking send is what applies
+// back-pressure to the workers, which is the documented contract on both sides.
+func (s *session) hooks(st *state) execute.Hooks {
+	return execute.Hooks{
+		Started: func(id string, worker int) {
+			shown := st.display[id]
+			s.emit(MutantStarted{
+				ID:        id,
+				DisplayID: shown.DisplayID,
+				Path:      shown.Path,
+				Line:      shown.Line,
+				Rule:      shown.Rule,
+				Worker:    worker,
+			})
+		},
+		Finished: func(result execute.MutantResult) {
+			shown := st.display[result.ID]
+			shown.Outcome = result.Final
+			shown.Duration = result.Duration
+			s.emit(MutantFinished{Result: shown})
+		},
+	}
+}
+
+// publish builds the run report, files it in the history, and composes the
+// closing summary from it.
+//
+// Everything the summary states is read back out of the document rather than
+// counted beside it. That is the point: the exit code a user's CI branches on,
+// the score the console prints, and the numbers in the file are then the same
+// numbers by construction, and there is no second implementation of "what
+// counts as a detection" to drift.
+//
+// One class of warning is deliberately not in the document. The snapshot and
+// scratch cleanups run in deferred functions, which is to say after this, so
+// [CodeSnapshotNotRemoved] and [CodeScratchNotRemoved] reach the event stream
+// and [RunOutcome.Warnings] but never the filed report. Publishing the report
+// last instead would mean deleting the tree before the run had a record of what
+// it found, which is the worse trade: both warnings are about a directory left
+// in the temporary area, and neither says anything about the mutants.
+func (s *session) publish(opts Options, out *RunOutcome, st *state, status report.Status) error {
+	s.emit(PhaseChanged{Phase: PhaseReport, Detail: "writing the run report"})
+
+	rejected := make(map[string]bool, len(st.rejections))
+	for _, rejection := range st.rejections {
+		rejected[rejection.ID] = true
+	}
+	// One result per catalogued mutant that validation did not refuse,
+	// including an explicit not-run for everything the run did not reach. That
+	// is report.Build's contract, and it is what keeps a forgotten mutant from
+	// silently leaving the score's denominator.
+	results := make([]report.MutantResult, 0, st.catalog.Len())
+	for _, m := range st.catalog.Mutants() {
+		if rejected[m.ID] {
+			continue
+		}
+		result, measured := st.results[m.ID]
+		if !measured {
+			result = report.MutantResult{ID: m.ID, Outcome: mutation.OutcomeNotRun}
+		}
+		results = append(results, result)
+	}
+
+	finished := time.Now()
+	rep, err := report.Build(report.Options{
+		// "unknown" rather than the empty string a caller that forgot would
+		// pass. The document requires a non-empty version, and failing a whole
+		// run at the very last step over a display field would throw away
+		// everything it measured; an honest "unknown" says the same thing the
+		// workspace block says when it does not know its own Go version.
+		ToolVersion:     or(opts.ToolVersion, unknownValue),
+		RunID:           out.RunID,
+		Status:          status,
+		Started:         out.Started,
+		Finished:        finished,
+		Config:          opts.Config,
+		Mode:            st.mode,
+		Selected:        st.selected,
+		ModulePath:      st.found.ModulePath,
+		GoVersion:       goVersion(st.found.GoVersion, out.Toolchain.Version.Release),
+		WorkspaceDigest: out.WorkspaceDigest,
+		Catalog:         st.catalog,
+		Located:         st.found.Candidates,
+		Skips:           st.found.Skips,
+		Results:         results,
+		Rejections:      st.rejections,
+		TestCommand:     out.TestCommand,
+		Baseline:        out.BaselineRuns,
+		Timeout:         out.Timeout,
+		TimeoutSource:   reportTimeoutSource(out.TimeoutSource),
+		Warnings:        reportWarnings(s.warnings),
+	})
+	if err != nil {
+		return err
+	}
+
+	runPath, latestPath, err := report.History{Root: opts.HistoryRoot}.Write(rep)
+	if err != nil {
+		return err
+	}
+	out.Report = rep
+	out.RunPath = runPath
+	out.LatestPath = latestPath
+	s.emit(ReportPublished{RunPath: runPath, LatestPath: latestPath})
+
+	tally, err := rep.Tally()
+	if err != nil {
+		return err
+	}
+	out.Verdict = mutation.Decide(tally, opts.Config.Policy, mutation.Signals{
+		ExpectationFailure: rep.ExpectationFailure(),
+	})
+
+	summary := s.compose(out, st, tally, rep)
+	s.summary = &summary
+	return nil
+}
+
+// compose assembles the closing summary block.
+func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, rep *report.Report) RunSummary {
+	summary := RunSummary{
+		RunID:    out.RunID,
+		ExitCode: out.Verdict.Code,
+		Notable:  notable(st, rep),
+		Counts: Counts{
+			Total:        tally.Total(),
+			Killed:       tally.Killed,
+			Survived:     tally.Survived(),
+			TimedOut:     tally.TimedOut,
+			Inconclusive: tally.Inconclusive,
+			Errored:      tally.Errored,
+			NotRun:       tally.NotRun,
+			Rejected:     len(rep.Rejected),
+		},
+		Score:    mutation.ScoreOf(tally),
+		Warnings: len(s.warnings),
+		Skips:    skipCounts(st.found.Skips),
+	}
+	if len(out.Verdict.Failures) > 0 {
+		summary.Failure = out.Verdict.Failures[0]
+	}
+	for _, expectation := range rep.Expectations {
+		switch expectation.State {
+		case report.StateFulfilled:
+			summary.Expectations.Fulfilled++
+		case report.StateStale:
+			summary.Expectations.Stale++
+		default:
+			summary.Expectations.Unfulfilled++
+		}
+	}
+	return summary.clone()
+}
+
+// notableRank orders the outcomes a summary lists, worst first. Killed and
+// not-run mutants are absent on purpose: a summary that listed every kill would
+// bury the handful of lines that need acting on.
+var notableRank = map[mutation.Outcome]int{
+	mutation.OutcomeSurvived:     0,
+	mutation.OutcomeTimedOut:     1,
+	mutation.OutcomeInconclusive: 2,
+	mutation.OutcomeErrored:      3,
+}
+
+// notable returns the mutants worth looking at, worst first.
+//
+// The order inside a group is (path, line, column, rule, id), which is a total
+// order and not merely a tidy one: two rules can propose an edit on the same
+// line, and a summary block that changed shape between two runs of one
+// workspace would not be diffable.
+func notable(st *state, rep *report.Report) []MutantResult {
+	out := make([]MutantResult, 0, len(rep.Mutants))
+	for _, m := range rep.Mutants {
+		core, err := m.Outcome.Mutation()
+		if err != nil {
+			continue
+		}
+		if _, listed := notableRank[core]; !listed {
+			continue
+		}
+		shown := st.display[m.ID]
+		shown.Outcome = core
+		shown.Duration = time.Duration(m.DurationMS) * time.Millisecond
+		out = append(out, shown)
+	}
+	slices.SortFunc(out, func(x, y MutantResult) int {
+		if c := notableRank[x.Outcome] - notableRank[y.Outcome]; c != 0 {
+			return c
+		}
+		if c := strings.Compare(x.Path, y.Path); c != 0 {
+			return c
+		}
+		if c := x.Line - y.Line; c != 0 {
+			return c
+		}
+		if c := x.Column - y.Column; c != 0 {
+			return c
+		}
+		if c := strings.Compare(x.Rule, y.Rule); c != 0 {
+			return c
+		}
+		return strings.Compare(x.ID, y.ID)
+	})
+	return out
+}
+
+// displayIndex joins the catalogue to the coordinates discovery found it at, so
+// that an event can name a mutant without anybody downstream holding both.
+//
+// A catalogued mutant with no candidate behind it is impossible — the catalogue
+// is built from the candidates — and is left with zero coordinates rather than
+// reported, because this is display data: a report that has lost a mutant is
+// report.Build's failure to raise, and raising it twice would stop a run over a
+// line number.
+func displayIndex(catalog *mutation.Catalog, candidates []discover.Located) map[string]MutantResult {
+	type key struct {
+		path string
+		span mutation.Span
+		rule string
+	}
+	located := make(map[key]discover.Located, len(candidates))
+	for _, candidate := range candidates {
+		k := key{path: candidate.Path, span: candidate.Span, rule: candidate.Rule.Name}
+		if _, seen := located[k]; !seen {
+			located[k] = candidate
+		}
+	}
+
+	out := make(map[string]MutantResult, catalog.Len())
+	for _, m := range catalog.Mutants() {
+		where := located[key{path: m.Path, span: m.Span, rule: m.Rule.Name}]
+		out[m.ID] = MutantResult{
+			ID:          m.ID,
+			DisplayID:   m.DisplayID,
+			Path:        m.Path,
+			Line:        where.Line,
+			Column:      where.Column,
+			Rule:        m.Rule.Name,
+			Original:    m.Original,
+			Replacement: m.Replacement,
+		}
+	}
+	return out
+}
+
+// rejectionsOf reduces validation's rejections to what the report keeps. The
+// coordinates and the rule are recovered from the catalogue by report.Build, so
+// carrying them twice would be two chances to disagree.
+func rejectionsOf(rejected []validate.Rejection) []report.Rejection {
+	out := make([]report.Rejection, 0, len(rejected))
+	for _, rejection := range rejected {
+		out = append(out, report.Rejection{ID: rejection.ID, Diagnostic: rejection.Diagnostic})
+	}
+	return out
+}
+
+// reportWarnings renders the run's warnings in the report's vocabulary,
+// keeping publication order.
+func reportWarnings(warnings []Warning) []report.Warning {
+	out := make([]report.Warning, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, report.Warning{Code: warning.Code, Message: warning.Message})
+	}
+	return out
+}
+
+// reportTimeoutSource maps this package's spelling onto the document's. The two
+// enums are deliberately separate types — the report is a published format and
+// the event stream is not — and this is the one place they meet.
+func reportTimeoutSource(source TimeoutSource) report.TimeoutSource {
+	if source == TimeoutExplicit {
+		return report.TimeoutExplicit
+	}
+	return report.TimeoutDerived
+}
+
+// skipTotal is how many candidate sites discovery suppressed in all.
+func skipTotal(skips []discover.Skip) int {
+	total := 0
+	for _, skip := range skips {
+		total += skip.Count
+	}
+	return total
+}
+
+// skipCounts aggregates the per-file skips into per-reason totals, sorted by
+// reason.
+//
+// Per-file rows are what the report carries, because that is where a user goes
+// to look; per-reason totals are what a summary shows, because a file at a time
+// turns "this tree has four constant expressions in it" into forty lines nobody
+// reads.
+func skipCounts(skips []discover.Skip) []SkipCount {
+	totals := make(map[string]int, len(skips))
+	for _, skip := range skips {
+		totals[string(skip.Reason)] += skip.Count
+	}
+	out := make([]SkipCount, 0, len(totals))
+	for reason, count := range totals {
+		out = append(out, SkipCount{Reason: reason, Count: count})
+	}
+	slices.SortFunc(out, func(x, y SkipCount) int { return strings.Compare(x.Reason, y.Reason) })
+	return out
+}
+
+// unknownValue is what a report field says when the run genuinely does not
+// know it. It is the same word internal/report uses for the same question, and
+// it is preferred to an empty string, which would read as a fact rather than as
+// an absence.
+const unknownValue = "unknown"
+
+// or returns value, or fallback when value is empty.
+func or(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// goVersion picks what the report says the workspace's Go version is.
+//
+// The module's own `go` directive is the answer whenever there is one: it is
+// what decides the language semantics the sources are read with. A module old
+// enough to declare none falls back to the toolchain that loaded it, which is
+// the next most honest statement available, and report.Build fills in "unknown"
+// when even that is missing.
+func goVersion(module, toolchain string) string {
+	if module != "" {
+		return module
+	}
+	return toolchain
 }
 
 // A session owns the event channel for the length of one run.
@@ -332,6 +1109,10 @@ type session struct {
 	events   chan<- Event
 	warnings []Warning
 	closed   bool
+	// summary is the closing block, set by publish and read by Run. It is
+	// written from the run's own goroutine and read from it, after every worker
+	// has joined.
+	summary *RunSummary
 }
 
 // emit publishes one event. A nil channel is the documented "publish nothing"
@@ -347,6 +1128,9 @@ func (s *session) emit(e Event) {
 // warn records a warning and publishes it. Warnings are kept as well as sent so
 // that [RunOutcome] carries them into the report, where a renderer that was not
 // listening cannot lose them.
+//
+// It is called from the run's own goroutine only. The execution workers publish
+// through [session.hooks], which does nothing but send.
 func (s *session) warn(code Code, message string) {
 	w := Warning{Code: string(code), Message: message}
 	s.warnings = append(s.warnings, w)
@@ -542,15 +1326,6 @@ func mean(durations []time.Duration) time.Duration {
 		total += d
 	}
 	return total / time.Duration(len(durations))
-}
-
-// displayDigest shortens a digest for a one-line summary. The full digest is
-// what reports and cache keys carry; this is only for reading.
-func displayDigest(digest string) string {
-	if len(digest) <= digestDisplay {
-		return digest
-	}
-	return digest[:digestDisplay]
 }
 
 // countNoun renders "1 file" or "3 files".

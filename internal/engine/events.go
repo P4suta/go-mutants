@@ -6,6 +6,8 @@ package engine
 import (
 	"slices"
 	"time"
+
+	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
 // A Phase names one stage of a run. Phases are ordered, they are entered at
@@ -18,15 +20,17 @@ type Phase string
 
 // The phases, in the order a complete run enters them.
 const (
-	// PhaseDiscover locates the toolchain, copies the workspace, and — once
-	// discovery lands — builds the mutant catalogue.
+	// PhaseDiscover locates the toolchain and copies the workspace. Finding the
+	// candidates themselves belongs to PhaseMutate, because a catalogue is only
+	// worth building once the unmutated tests have been seen to pass.
 	PhaseDiscover Phase = "discover"
 	// PhaseBaseline builds the snapshot and measures the unmutated tests.
 	PhaseBaseline Phase = "baseline"
-	// PhaseMutate instruments the snapshot and executes the mutants. It is
-	// declared but not yet entered; see the package documentation.
+	// PhaseMutate discovers the candidates, catalogues them, instruments and
+	// validates the snapshot, proves the instrumented tree still passes, and
+	// executes the mutants.
 	PhaseMutate Phase = "mutate"
-	// PhaseReport writes the run report. It is declared but not yet entered.
+	// PhaseReport builds the run report and publishes it.
 	PhaseReport Phase = "report"
 )
 
@@ -48,7 +52,8 @@ type Status string
 const (
 	// StatusOK means the run finished everything it set out to do. It says
 	// nothing about the mutation score or about any policy gate — those are
-	// decided from the outcomes by internal/mutation, not here.
+	// decided from the outcomes by internal/mutation, and travel in
+	// [RunSummary.ExitCode].
 	StatusOK Status = "ok"
 	// StatusFailed means the run stopped on an error and its results, if any,
 	// cannot be trusted.
@@ -90,7 +95,14 @@ func (s TimeoutSource) String() string { return string(s) }
 // where the reviewers who care about the contract are looking.
 //
 // Events are values and are safe to keep: nothing the engine sends is mutated
-// afterwards, and the one slice-valued field is cloned before it is published.
+// afterwards, and every slice-valued field is cloned before it is published.
+//
+// [MutantStarted] and [MutantFinished] are published from the execution
+// workers, so several goroutines send on the channel at once and the order of
+// two mutants' events is whatever order the machine settled them in. Everything
+// a renderer must be able to reproduce byte for byte is therefore in
+// [RunCompleted], which is published from the run's own goroutine after every
+// worker has joined.
 type Event interface {
 	// event seals the interface. It has no behaviour.
 	event()
@@ -109,8 +121,8 @@ type RunPlanned struct {
 }
 
 // PhaseChanged reports that the run has entered a phase. It is emitted once per
-// phase, on entry, so the [Detail] describes what is about to happen rather
-// than what just did.
+// phase, on entry, so the [PhaseChanged.Detail] describes what is about to
+// happen rather than what just did.
 type PhaseChanged struct {
 	// Phase is the phase being entered.
 	Phase Phase
@@ -122,6 +134,14 @@ type PhaseChanged struct {
 }
 
 // BaselineProgress reports one completed baseline run.
+//
+// It is published twice over in a complete run: once per configured
+// observation while the pristine snapshot is being measured, and once more for
+// the single instrumented baseline that proves the rewrite preserved meaning.
+// The two are told apart by the phase they arrive in — the instrumented one is
+// the sole `1 of 1` inside [PhaseMutate] — rather than by a discriminator, so
+// that a renderer showing "the tests were run and took this long" needs one
+// case and not two.
 type BaselineProgress struct {
 	// Run is the one-based index of the run that just finished.
 	Run int
@@ -154,6 +174,102 @@ type BaselineCompleted struct {
 	TimeoutSource TimeoutSource
 }
 
+// Discovered reports what one discovery pass found.
+//
+// The two numbers are deliberately not the same kind of thing, and the field
+// documentation says which is which: candidates are proposed edits, and skips
+// are suppressed sites. A run that reports many skips and no candidates has
+// found something worth explaining, which is what `--explain` is for.
+type Discovered struct {
+	// Candidates is how many proposed edits discovery produced, before
+	// deduplication into the catalogue.
+	Candidates int
+	// Skips is how many candidate sites were suppressed, summed over every
+	// file and reason. It is the sum of the recorded counts rather than the
+	// number of (file, reason) rows, so it answers "how much was passed over"
+	// rather than "how many kinds of thing were passed over".
+	Skips int
+}
+
+// Validated reports what compiling the instrumented snapshot established.
+//
+// A rejection is an ordinary outcome rather than a failure — see
+// internal/validate — so both numbers are facts about the run and neither of
+// them stops it.
+type Validated struct {
+	// Accepted is how many catalogued mutants compile.
+	Accepted int
+	// Rejected is how many do not, and are reported in the run report's
+	// `rejected[]` with the compiler's own diagnostic.
+	Rejected int
+}
+
+// A MutantResult is one mutant's settled outcome, with everything a renderer
+// needs in order to describe it without holding the catalogue.
+//
+// It carries display data rather than references: a renderer that had to look a
+// mutant up would need the catalogue, the discovery result, and the join
+// between them, which is three things the engine already did once.
+type MutantResult struct {
+	// ID is the full 64 hex character activation identity.
+	ID string
+	// DisplayID is the collision-checked short form.
+	DisplayID string
+	// Path is the '/'-normalized module-relative source path.
+	Path string
+	// Line and Column are the 1-based coordinates discovery reported, with the
+	// column measured in bytes.
+	Line   int
+	Column int
+	// Rule is the operator that proposed the edit.
+	Rule string
+	// Original and Replacement are the bytes the mutant swapped. They are
+	// source text, not printable prose: a renderer quotes them rather than
+	// assuming they fit on a line.
+	Original    string
+	Replacement string
+	// Outcome is the settled verdict. It is never
+	// [mutation.OutcomeInconclusive] before the serial retry has run, because
+	// internal/execute only settles a timeout once it has tried to reproduce it.
+	Outcome mutation.Outcome
+	// Duration is the wall-clock time the mutant's child processes took, summed
+	// over every attempt.
+	Duration time.Duration
+	// Worker is the worker that settled the mutant. The serial retry pass
+	// reports worker 0, which is honest rather than arbitrary: it runs one
+	// mutant at a time with nothing else in flight.
+	Worker int
+}
+
+// MutantStarted reports that an attempt at one mutant has begun.
+//
+// It fires at the beginning of every attempt, the serial retry of a timed-out
+// mutant included, so a live dashboard can show that retry happening rather
+// than a worker apparently stuck. A mutant that timed out and was retried
+// therefore produces two of these and one [MutantFinished].
+type MutantStarted struct {
+	// ID is the full activation identity.
+	ID string
+	// DisplayID is the short form.
+	DisplayID string
+	// Path and Line locate the mutant for a progress line.
+	Path string
+	Line int
+	// Rule is the operator that proposed the edit.
+	Rule string
+	// Worker is the worker that claimed it.
+	Worker int
+}
+
+// MutantFinished reports one mutant's settled outcome. It fires exactly once
+// per mutant the run reached, including one whose outcome is
+// [mutation.OutcomeNotRun] because a signal arrived before its retry could
+// happen: the stream reports what became of every mutant it started.
+type MutantFinished struct {
+	// Result is the settled outcome and the data to render it with.
+	Result MutantResult
+}
+
 // Warning reports something the user should know that did not stop the run.
 //
 // Every warning carries a stable GOM#### code for the same reason every error
@@ -165,34 +281,141 @@ type Warning struct {
 	Message string
 }
 
-// ReportPublished reports that a report artefact is on disk and complete.
+// ReportPublished reports that the run report is on disk and complete.
 //
 // It is emitted only after the atomic rename, never before: a path that has
-// been announced has to be a path that can be opened. Nothing emits it yet —
-// the reporting phase arrives later — and it is declared now so that renderers
-// written against this contract do not have to change shape when it does.
+// been announced has to be a path that can be opened.
 type ReportPublished struct {
-	// Format is the artefact's format, matching a config.ReportFormat value.
-	Format string
-	// Path is the absolute path of the published file.
-	Path string
-	// Bytes is the file's size.
-	Bytes int64
+	// RunPath is the absolute path of this run's own immutable document.
+	RunPath string
+	// LatestPath is the absolute path of the copy that always names the newest
+	// run of this workspace. It is a copy rather than a pointer, so reading the
+	// newest run is one file open; see internal/report.
+	LatestPath string
+}
+
+// Counts is the counted breakdown of a run, as the closing summary states it.
+//
+// Survived is every survivor, expected and unexpected alike, because that is
+// what a reader counting mutants sees. The split the score is computed from
+// lives in [RunSummary.Score], whose denominator has already had the expected
+// survivors taken out of it.
+type Counts struct {
+	// Total is every catalogued mutant that was not rejected by validation.
+	Total int
+	// Killed, Survived, TimedOut, Inconclusive, Errored and NotRun partition
+	// Total.
+	Killed       int
+	Survived     int
+	TimedOut     int
+	Inconclusive int
+	Errored      int
+	NotRun       int
+	// Rejected is how many catalogued mutants validation refused. It is not
+	// part of Total: a mutant that does not compile was never executed and has
+	// no outcome to count.
+	Rejected int
+}
+
+// ExpectationCounts is the `[[mutation.expect]]` ledger, counted by state.
+type ExpectationCounts struct {
+	// Fulfilled is the number of rows whose mutant survived, as predicted.
+	Fulfilled int
+	// Unfulfilled is the number the run did not confirm: the tests caught the
+	// mutant, or it was never measured.
+	Unfulfilled int
+	// Stale is the number whose id is not in this catalogue any more.
+	Stale int
+}
+
+// Total is how many rows the ledger holds.
+func (e ExpectationCounts) Total() int { return e.Fulfilled + e.Unfulfilled + e.Stale }
+
+// A SkipCount is one suppression reason and how many candidate sites it
+// accounted for across the whole workspace.
+type SkipCount struct {
+	// Reason is discovery's own spelling of why the site was passed over.
+	Reason string
+	// Count is how many sites it suppressed.
+	Count int
+}
+
+// A RunSummary is everything the closing summary block states.
+//
+// It exists so that the summary is a fact the engine computed once rather than
+// a derivation each renderer performs: the score, the ordering, and the exit
+// code are decisions, and two implementations of a decision eventually disagree
+// in front of a user who is looking at both.
+type RunSummary struct {
+	// RunID is the identifier the report was filed under.
+	RunID string
+	// ExitCode is what [mutation.Decide] made of the published report. It is
+	// meaningful for a completed run; an interrupted one exits on its signal,
+	// which the engine does not know, so a renderer says "interrupted" rather
+	// than printing a number this field cannot honestly carry.
+	ExitCode mutation.ExitCode
+	// Failure is the first gate that failed, and the zero value when none did.
+	//
+	// It is carried rather than left to be inferred because half the gates are
+	// invisible in the numbers beside them. A strict run's survivors are on the
+	// screen and a low score is on the screen, but "the run produced no
+	// mutants", "an expectation is unfulfilled or stale", and "a mutant could
+	// not be executed by the harness" each leave a reader with an exit code and
+	// nothing that names the gate. [mutation.Failure.Detail] is documented to be
+	// deterministic and free of paths and timings, so it is safe in a block
+	// meant to be diffed.
+	Failure mutation.Failure
+	// Notable are the mutants worth looking at, worst first: survivors, then
+	// confirmed timeouts, then inconclusive results, then harness errors, each
+	// group ordered by path, line, column, rule, and id. Killed and not-run
+	// mutants are deliberately absent — they are in [RunSummary.Counts], and a
+	// summary that listed every kill would bury the four lines that need
+	// acting on.
+	Notable []MutantResult
+	// Counts is the counted breakdown.
+	Counts Counts
+	// Score is the mutation score, as the two integers it is derived from. It
+	// is undefined exactly when the denominator is zero; see [mutation.Score].
+	Score mutation.Score
+	// Expectations is the ledger counted by state.
+	Expectations ExpectationCounts
+	// Warnings is how many warnings the run published. The warnings themselves
+	// arrived as [Warning] events, so the summary states the count rather than
+	// repeating the text.
+	Warnings int
+	// Skips are discovery's suppressions, aggregated per reason and sorted by
+	// it.
+	Skips []SkipCount
+}
+
+// clone returns a copy that shares no slice with the receiver.
+func (s RunSummary) clone() RunSummary {
+	s.Notable = slices.Clone(s.Notable)
+	s.Skips = slices.Clone(s.Skips)
+	return s
 }
 
 // RunCompleted is the last event of every run, on every path.
 type RunCompleted struct {
 	// Status is how the run ended.
 	Status Status
-	// Summary is a one-line closing statement: what was accomplished when the
-	// run succeeded, and what stopped it when it did not.
+	// Summary is a one-line closing statement: what stopped the run when
+	// something did, and empty when [RunCompleted.Run] carries the real answer.
 	Summary string
+	// Run is the closing summary block, or nil when the run stopped before it
+	// had measured anything worth summarising. It is non-nil exactly when a
+	// report was published, which is the same boundary [ReportPublished] marks.
+	Run *RunSummary
 }
 
 func (RunPlanned) event()        {}
 func (PhaseChanged) event()      {}
 func (BaselineProgress) event()  {}
 func (BaselineCompleted) event() {}
+func (Discovered) event()        {}
+func (Validated) event()         {}
+func (MutantStarted) event()     {}
+func (MutantFinished) event()    {}
 func (Warning) event()           {}
 func (ReportPublished) event()   {}
 func (RunCompleted) event()      {}

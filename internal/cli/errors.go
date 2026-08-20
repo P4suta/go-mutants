@@ -62,6 +62,14 @@ const (
 	// is a flag typed for this invocation losing to a file with no diagnostic,
 	// which is the opposite of the precedence the help text promises.
 	CodeInertProfile Code = "GOM1008"
+	// CodeMutantUnresolved reports a `run --mutant` prefix that is well formed
+	// and did not select exactly one mutant: nothing matched, or several did.
+	// It is separate from [CodeInvalidMutantPrefix], which is a prefix that
+	// could never match anything, because the remedies are different — one is
+	// fixed by retyping the value and the other by looking at what it matched —
+	// and separate from `list`'s reading of the same flag, where a prefix
+	// matching several mutants lists all of them and is not an error at all.
+	CodeMutantUnresolved Code = "GOM1009"
 )
 
 // String returns the code as it is printed.
@@ -78,6 +86,7 @@ var codes = []Code{
 	CodeUnimplementedOperators,
 	CodeCatalogMismatch,
 	CodeInertProfile,
+	CodeMutantUnresolved,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric
@@ -120,11 +129,19 @@ func usagef(format string, args ...any) *Error {
 }
 
 // An exitError carries an exit status that has already been decided, for the
-// two conditions the error text alone cannot express: which signal ended the
-// run, and therefore whether the answer is 130 or 143.
+// conditions the error text alone cannot express: which signal ended the run,
+// and therefore whether the answer is 130 or 143, and a policy gate that failed
+// on a run which did everything right.
 type exitError struct {
 	code mutation.ExitCode
 	err  error
+	// silent suppresses the "error GOM....:" line [RenderError] would otherwise
+	// write. It is for the one failure the user has already been told about in
+	// full: a policy gate reports itself in the run's closing summary, naming
+	// the survivors and the score, and repeating a shortened version of that on
+	// standard error would both duplicate it and dress a correct measurement up
+	// as something having gone wrong.
+	silent bool
 }
 
 func (e *exitError) Error() string { return e.err.Error() }
@@ -171,12 +188,19 @@ func ExitCode(err error) mutation.ExitCode {
 // instead of inventing a code for it. Blank lines are dropped rather than
 // rendered as a code with nothing after it.
 //
+// One error renders as nothing at all: a failed policy gate, which has already
+// reported itself in the run's closing summary. See [exitError].
+//
 // The whole report is composed in memory and written once. A half-printed error
 // is worse than an unprinted one, and there is nothing useful to do about a
 // failure to write to standard error anyway, so the single write's result is
 // deliberately dropped rather than checked and ignored five times over.
 func RenderError(w io.Writer, err error) {
 	if err == nil {
+		return
+	}
+	var decided *exitError
+	if errors.As(err, &decided) && decided.silent {
 		return
 	}
 	var b strings.Builder

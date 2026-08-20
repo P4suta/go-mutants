@@ -80,6 +80,59 @@ Entries say *why* a change was made, not only what changed.
   be executed is deliberate: it makes ids, coordinates, and skip reasons
   reviewable — and diffable across changes — while the instrumentation phase is
   still being built.
+- Compile validation, `internal/validate`: the instrumented snapshot is built
+  once with every catalogued mutant spliced in, and a green build accepts the
+  whole catalogue — which is the entire point of the schemata design. A red one
+  starts a bisection that first restores every catalogued file to its pristine
+  bytes and rebuilds, so a tree that was already broken stops the run with
+  `GOM7420` instead of being blamed on whichever candidate was tested first,
+  then searches the files the compiler named one at a time: halving while
+  halving is cheaper than scanning, verifying every join, and falling back to a
+  scan when a join fails, so a pair of candidates that only fail together is an
+  ordinary case rather than a wrong answer. Instrumentation is a byte rewrite
+  that leaves typing to the compiler, so some guarded sites genuinely cannot
+  compile; the alternative to asking the compiler is type-checking every file
+  to answer a question it answers for free, or answering it conservatively and
+  dropping candidates that were fine. Every refusal is published as a
+  `rejected[]` entry carrying the identity, the coordinates, and the compiler's
+  own words, captured at the moment of rejection because by the time the phase
+  finishes the tree compiles and that message exists nowhere else. Silently
+  dropping them is what makes a catalogue shrink between runs with nobody able
+  to say what left it, and a mutant that cannot exist must never reach a score's
+  denominator.
+- The execution engine, `internal/execute`: `go test -c` builds each package
+  that has tests once, and every mutant afterwards starts those binaries
+  directly with `GO_MUTANTS_ACTIVE` set. Going through `go test` per mutant
+  would pay for a build-graph load and a staleness check in the inner loop, and
+  would consult a result cache that keys on inputs the mutant is invisible to.
+  A non-zero exit is a kill and the remaining binaries are skipped, because they
+  cannot change the answer; the generated runtime's exit 97 is not a kill but a
+  stale catalogue, reported as errored, since treating it as one would inflate
+  a score.
+- Timeouts are retried before they are believed. A first timeout is not
+  evidence: N test binaries on a loaded machine produce timeouts that say
+  nothing about the mutant, and counting one as a detection would flatter a
+  suite exactly when the run is least able to notice. Every timed-out mutant is
+  held back and retried serially after the queue drains — one at a time,
+  nothing else running, the same timeout. A second timeout is a confirmed
+  detection; a retry that finishes, pass or fail, is `inconclusive` and counts
+  in neither direction. Both attempts stay in the report, so the document shows
+  what happened rather than only the verdict.
+- `RunReport v1` and its history store, `internal/report`, with
+  `schema/run-report-v1.schema.json` and the `GOM51xx` codes. It is lossless by
+  construction — every catalogued mutant appears exactly once, in `mutants[]`
+  with an outcome or in `rejected[]` with a diagnostic — because the console
+  summary, the exit code, and every projection still to come are views of it,
+  and that is only safe if it holds everything they need. The exit decision is
+  made from the written document rather than beside it, so the number a user
+  reads and the gate that failed cannot disagree. `summary.score_percent` is
+  `null` rather than a number when the denominator is zero: 0 reads as "your
+  tests caught nothing" and 100 as "your tests caught everything", when the
+  truth is that nothing was measured. History is kept under the OS cache
+  directory at `<cache>/go-mutants/workspaces/<key>/`, not in the project, so a
+  mutation run adds no files to the tree it is measuring; every write is
+  temp-file plus atomic rename, and `ReportPublished` is emitted only after the
+  rename succeeds.
 - Licensing and policy files: dual `MIT OR Apache-2.0` with `LICENSES/` and
   `REUSE.toml` annotations for the files that cannot carry an inline SPDX
   header, plus `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md`, and
@@ -95,9 +148,12 @@ Entries say *why* a change was made, not only what changed.
   `mutation.CanonicalRuleCount` is 42, asserted by the canonical registry
   tests, so the headline was the loose count and no phantom 43rd rule was
   invented to match it.
-- `run` performs the baseline and stops; `list` enumerates two of the eleven
-  operator families. Instrumentation, execution of mutants, the outcome cache,
-  policy enforcement, and report writing do not exist yet, and no page in
-  `docs/` claims otherwise.
+- `run` now performs real mutation testing end to end, but only for the
+  `comparison` and `boolean-literal` families — two of the eleven — so a score
+  it reports is a score against those rules and not against the full
+  catalogue. The outcome cache, coverage-guided selection, `--changed`,
+  `--shard`, the HTML report, the Stryker projection, the TUI dashboard, and
+  the `init`, `doctor`, `report`, and `cache` commands do not exist yet, and no
+  page in `docs/` claims otherwise.
 
 [Unreleased]: https://github.com/P4suta/go-mutants/commits/main

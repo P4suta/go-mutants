@@ -9,6 +9,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
+
+	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
 // ColorEnabled decides whether output to w may carry ANSI styling.
@@ -58,4 +60,26 @@ var (
 	styleWarning = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	styleOK      = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	styleFailed  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleRule    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	styleScore   = lipgloss.NewStyle().Bold(true)
+	styleRemoved = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styleAdded   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 )
+
+// outcomeStyle is how a result line's outcome column is coloured.
+//
+// A kill is the good news and is green; a survivor is the finding the run
+// exists to produce and is red. The three that mean "the run could not say" —
+// a confirmed timeout aside, which is a detection — are yellow rather than red,
+// because they are not a verdict about the tests and colouring them like one
+// would make an inconclusive result read as a failure.
+func outcomeStyle(o mutation.Outcome) lipgloss.Style {
+	switch o {
+	case mutation.OutcomeKilled, mutation.OutcomeTimedOut:
+		return styleOK
+	case mutation.OutcomeSurvived:
+		return styleFailed
+	default:
+		return styleWarning
+	}
+}

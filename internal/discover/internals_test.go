@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -519,5 +520,152 @@ func TestNewMatchersIgnoresUnimplementedRules(t *testing.T) {
 	}
 	if !m.empty() {
 		t.Error("a rule this phase does not implement produced a matcher")
+	}
+}
+
+// skipReasonConstants returns the value of every SkipReason-typed constant
+// this package declares, keyed by the name of the constant.
+//
+// The set is read out of the package's own sources rather than from a list
+// typed into the test, because a list typed into the test is exactly the drift
+// this guard exists to catch: it would be written once, agreeing with the
+// constants of that day, and never looked at again.
+func skipReasonConstants(t *testing.T) map[string]SkipReason {
+	t.Helper()
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading the package directory: %v", err)
+	}
+	found := make(map[string]SkipReason)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, parseErr := parser.ParseFile(token.NewFileSet(), name, nil, parser.SkipObjectResolution)
+		if parseErr != nil {
+			t.Fatalf("parsing %s: %v", name, parseErr)
+		}
+		for _, decl := range file.Decls {
+			group, ok := decl.(*ast.GenDecl)
+			if !ok || group.Tok != token.CONST {
+				continue
+			}
+			collectSkipReasons(t, name, group, found)
+		}
+	}
+	if len(found) == 0 {
+		t.Fatal("no SkipReason constant was found in the package sources, so this guard is guarding nothing")
+	}
+	return found
+}
+
+// collectSkipReasons adds the SkipReason constants of one `const` group to
+// found. A constant typed SkipReason that this cannot read is a fatal failure
+// rather than a quiet skip: a constant the guard cannot see is a constant the
+// guard does not guard.
+func collectSkipReasons(t *testing.T, file string, group *ast.GenDecl, found map[string]SkipReason) {
+	t.Helper()
+
+	// Within a group, a spec with neither a type nor a value repeats the one
+	// before it, so the declared type carries over. A spec with a value but no
+	// type does not: its type comes from the value.
+	declared := ""
+	for _, spec := range group.Specs {
+		value, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		switch {
+		case value.Type != nil:
+			declared = ""
+			if ident, isIdent := value.Type.(*ast.Ident); isIdent {
+				declared = ident.Name
+			}
+		case len(value.Values) > 0:
+			declared = ""
+		}
+		if declared != "SkipReason" {
+			// A constant named like a reason but written in a form this cannot
+			// read — `SkipNinth = SkipReason("ninth")`, say — would slip past
+			// the guard silently, which is the very failure this test exists to
+			// end. Stop loudly instead.
+			for _, name := range value.Names {
+				if strings.HasPrefix(name.Name, "Skip") {
+					t.Fatalf("%s declares %s, which reads as a skip reason but is not a SkipReason-typed constant this guard can see; teach this guard to read it", file, name.Name)
+				}
+			}
+			continue
+		}
+		for i, name := range value.Names {
+			if name.Name == "_" {
+				continue
+			}
+			if i >= len(value.Values) {
+				t.Fatalf("%s declares the SkipReason %s without a value of its own; teach this guard to read it", file, name.Name)
+			}
+			literal, isLiteral := value.Values[i].(*ast.BasicLit)
+			if !isLiteral || literal.Kind != token.STRING {
+				t.Fatalf("%s declares the SkipReason %s from something other than a string literal; teach this guard to read it", file, name.Name)
+			}
+			text, unquoteErr := strconv.Unquote(literal.Value)
+			if unquoteErr != nil {
+				t.Fatalf("%s: unquoting the value of %s: %v", file, name.Name, unquoteErr)
+			}
+			if previous, clash := found[name.Name]; clash {
+				t.Fatalf("%s declares %s twice, as %q and %q", file, name.Name, previous, text)
+			}
+			found[name.Name] = SkipReason(text)
+		}
+	}
+}
+
+// TestAllSkipReasonsListsEverySkipReasonConstant is the drift guard on
+// [AllSkipReasons], and through it on everything derived from that list: the
+// tie-break ranks here, and the `reason` enumeration of the run report schema
+// over in internal/report.
+//
+// The list is compared against the constants the package really declares, read
+// out of these sources, so a ninth Skip* constant fails this test in the commit
+// that adds it rather than in the first run that emits it.
+func TestAllSkipReasonsListsEverySkipReasonConstant(t *testing.T) {
+	declared := skipReasonConstants(t)
+	listed := AllSkipReasons()
+	if len(listed) == 0 {
+		t.Fatal("AllSkipReasons is empty")
+	}
+
+	names := make(map[SkipReason]string, len(declared))
+	for name, reason := range declared {
+		if clash, duplicate := names[reason]; duplicate {
+			t.Errorf("the constants %s and %s are both %q", clash, name, reason)
+		}
+		names[reason] = name
+	}
+	seen := make(map[SkipReason]bool, len(listed))
+	for _, reason := range listed {
+		if reason == "" {
+			t.Error("AllSkipReasons lists the empty reason")
+			continue
+		}
+		if seen[reason] {
+			t.Errorf("AllSkipReasons lists %q twice", reason)
+		}
+		seen[reason] = true
+		if _, ok := names[reason]; !ok {
+			t.Errorf("AllSkipReasons lists %q, which no constant in this package declares", reason)
+		}
+	}
+	for name, reason := range declared {
+		if !seen[reason] {
+			t.Errorf("the constant %s (%q) is missing from AllSkipReasons, so nothing checks that the report schema accepts it", name, reason)
+		}
+	}
+	if len(listed) != len(declared) {
+		t.Errorf("AllSkipReasons has %d entries, but the package declares %d SkipReason constants", len(listed), len(declared))
+	}
+	if fresh := AllSkipReasons(); &fresh[0] == &listed[0] {
+		t.Error("AllSkipReasons hands out one shared slice, which a caller could reorder out from under everyone else")
 	}
 }
