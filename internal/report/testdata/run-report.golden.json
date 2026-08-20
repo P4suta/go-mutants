@@ -84,7 +84,9 @@
       "duration_ms": 120,
       "killed_by": "example.com/m/internal/alpha",
       "attempts": 1,
-      "output_tail": "--- FAIL: TestAdd (0.00s)"
+      "output_tail": "--- FAIL: TestAdd (0.00s)",
+      "covering_test_packages": [],
+      "uncovered": false
     },
     {
       "id": "a06714632cde3231c059f95e5b8e179e012ee84e1891818e06f7daa3e7d401eb",
@@ -104,7 +106,9 @@
       "duration_ms": 95,
       "killed_by": null,
       "attempts": 1,
-      "output_tail": null
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": false
     },
     {
       "id": "9724fb752b7cc40b3bd33e5ade95e2f572967645b23bce7cfa6df50b584ba2aa",
@@ -124,7 +128,9 @@
       "duration_ms": 20000,
       "killed_by": "example.com/m/internal/alpha",
       "attempts": 2,
-      "output_tail": "panic: test timed out after 10s"
+      "output_tail": "panic: test timed out after 10s",
+      "covering_test_packages": [],
+      "uncovered": false
     },
     {
       "id": "d81cd2fc648c9ffeb87f20085ded136996aa478d3de41d58e0ff53f3d51f1427",
@@ -144,7 +150,9 @@
       "duration_ms": 11000,
       "killed_by": null,
       "attempts": 2,
-      "output_tail": null
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": false
     },
     {
       "id": "7ab6b0e36045f5fb1d185aa6b9fd2b466ac6e8366d3dbb4c9f241d4e6ec3e663",
@@ -164,7 +172,9 @@
       "duration_ms": 80,
       "killed_by": null,
       "attempts": 1,
-      "output_tail": null
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": false
     },
     {
       "id": "913ccbf4d18332fa846278fa3047c8f60aed1946c92c8fc8a84a7923d2730619",
@@ -184,7 +194,9 @@
       "duration_ms": 4,
       "killed_by": null,
       "attempts": 1,
-      "output_tail": "exec: the test binary could not be started"
+      "output_tail": "exec: the test binary could not be started",
+      "covering_test_packages": [],
+      "uncovered": false
     },
     {
       "id": "1b51e4b15731329a718d3601ce992c27be77253f5cfc3e35193b515c2a6a85dd",
@@ -204,7 +216,9 @@
       "duration_ms": 0,
       "killed_by": null,
       "attempts": 0,
-      "output_tail": null
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": false
     }
   ],
   "rejected": [
@@ -258,8 +272,8 @@
       "message": "the snapshot directory could not be removed: access is denied"
     },
     {
-      "code": "GOM0001",
-      "message": "coverage-guided selection is not implemented yet"
+      "code": "GOM7601",
+      "message": "coverage-guided selection is off: test.command is not the built-in `go test ./...`"
     }
   ]
 }

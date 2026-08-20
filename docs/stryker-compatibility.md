@@ -53,7 +53,7 @@ Status mapping is fixed:
 | --- | --- |
 | `killed` | `Killed` |
 | `survived` | `Survived` |
-| `survived (uncovered)` | `NoCoverage` |
+| `survived (uncovered)` — `outcome: "survived"` with `uncovered: true` | `NoCoverage` |
 | confirmed `timeout` | `Timeout` |
 | `inconclusive` | `Ignored`, with a `statusReason` |
 | `error` | `CompileError` or `RuntimeError` as recorded |

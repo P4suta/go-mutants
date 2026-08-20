@@ -377,3 +377,84 @@ func mutantAt(t *testing.T, catalog *mutation.Catalog, path, rule string) mutati
 	}
 	return found[0]
 }
+
+// TestCoveragePassLeavesNoTraceInTheSnapshot is the drift gate's verification
+// for the phase that was added after it.
+//
+// The gate allowlists exactly two kinds of change — the files validation left
+// carrying guards, and the generated runtime package — and coverage-guided
+// selection deliberately needed no third entry. This asserts why: the raw
+// coverage data goes into a directory the caller places outside the snapshot,
+// and the `-cover` binaries' own temporary files follow TMPDIR to the
+// per-worker scratch directory, so a full profiling pass plus a full schedule
+// drifts the tree by exactly what instrumentation drifted it by.
+//
+// It is the same assertion [TestOnlyTheInstrumentedFilesDriftedDuringExecution]
+// makes, with coverage turned on — which is the configuration a default run now
+// uses, and therefore the one the gate has to hold for.
+func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
+	toolchain := locateToolchain(t)
+	snap := snapshotFixture(t, "killable")
+	catalog := instrumentFixture(t, toolchain, snap)
+
+	work := t.TempDir()
+	opts := execute.Options{
+		Toolchain:    toolchain,
+		SnapshotRoot: snap.Root,
+		BinDir:       filepath.Join(work, "bin"),
+		ScratchDir:   filepath.Join(work, "workers"),
+		CoverPkg:     killableModule + "/...",
+		Jobs:         2,
+		Timeout:      buildTimeout,
+	}
+	bins, err := execute.BuildTestBinaries(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("building the fixture's instrumented test binaries: %v\n%s", err, execute.OutputOf(err))
+	}
+
+	collected, err := execute.CollectCoverage(t.Context(), opts, bins, filepath.Join(work, "coverage"))
+	if err != nil {
+		t.Fatalf("the coverage pass: %v\n%s", err, execute.OutputOf(err))
+	}
+	if len(collected) != len(bins) {
+		t.Fatalf("collected %d profiles for %d binaries", len(collected), len(bins))
+	}
+	// The data really was written, or this would be asserting that a pass which
+	// did nothing left no trace.
+	for _, data := range collected {
+		entries, readErr := os.ReadDir(data.Dir)
+		if readErr != nil {
+			t.Fatalf("reading %s: %v", data.Dir, readErr)
+		}
+		if len(entries) == 0 {
+			t.Fatalf("the coverage pass over %s wrote nothing into %s", data.ImportPath, data.Dir)
+		}
+	}
+
+	queue := make([]execute.MutantRun, 0, catalog.Len())
+	for _, m := range catalog.Mutants() {
+		queue = append(queue, execute.MutantRun{ID: m.ID, Timeout: runTimeout})
+	}
+	if _, err := execute.Schedule(t.Context(), opts, queue, bins, execute.Hooks{}); err != nil {
+		t.Fatalf("scheduling every mutant against the instrumented binaries: %v", err)
+	}
+
+	drifts, redigestErr := snap.Redigest()
+	if redigestErr != nil {
+		t.Fatalf("re-digesting the snapshot: %v", redigestErr)
+	}
+	want := []string{
+		"changed clamp.go",
+		"added gomutants_rt/gomutants_rt.go",
+		"changed ready.go",
+		"changed untested.go",
+	}
+	got := make([]string, 0, len(drifts))
+	for _, drift := range drifts {
+		got = append(got, drift.Kind.String()+" "+drift.RelPath)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the snapshot drifted as\n\t%s\nwant\n\t%s",
+			strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
+	}
+}

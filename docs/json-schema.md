@@ -45,7 +45,7 @@ document rather than second opinions.
 | `workspace` | `module_path`, `go_version`, `workspace_digest`, `platform.{os,arch}` |
 | `selection` | `mode`, `profile`, `operators`, `include`, `exclude`, `candidates`, `rejected`, `selected` |
 | `test` | `command` argv, `baseline`, `timeout_ms`, `timeout_source` |
-| `coverage` | `mode`; `off` is the only value this build writes |
+| `coverage` | `mode`, and in `package` mode `binaries` and `mutants_uncovered` |
 | `summary` | The counters, `score_percent`, and `policy` |
 | `mutants[]` | One entry per executed or not-run mutant; see below |
 | `rejected[]` | Candidates the compiler refused, with diagnostics |
@@ -61,22 +61,58 @@ function of the slowest run and a reader deserves the numbers it came from.
 `test.timeout_source` is `derived` for `max(10s, slowest baseline × 5)` or
 `explicit` for a configured `test.timeout` or `--timeout`.
 
-`coverage` is an object with a single `mode` field rather than a bare string so
-that coverage-guided selection can arrive as `mode: "package"` without every
-consumer having to learn a new top-level shape.
+### `coverage`
+
+`coverage` is an object rather than a bare string, which is what let
+coverage-guided selection arrive as `mode: "package"` without any consumer
+having to learn a new top-level shape.
+
+| Field | Contents |
+| --- | --- |
+| `mode` | `off` or `package` |
+| `binaries` | How many test binaries were profiled. Present only in `package` mode |
+| `mutants_uncovered` | How many entries in `mutants[]` carry `uncovered: true`. Present only in `package` mode |
+
+`off` means every selected mutant was measured against every test binary.
+`package` means each test binary was profiled once and every mutant was
+measured only against the binaries whose profile reaches its lines.
+
+The two numbers are absent — not zero — outside `package` mode, and the schema
+refuses them there. An `off` run carrying `binaries: 0` would be stating a
+measurement it never made, and a reader cannot tell a real zero from a default
+one. `mutants_uncovered` is derived from `mutants[]` when the document is built,
+so the summary and the rows underneath it cannot disagree.
+
+`mode` is `package` exactly when the effective `test.command` is the built-in
+`go test ./...` **and** the coverage pass succeeded. A custom command turns it
+off with a `GOM7601` warning, because the mapping is from a test binary to the
+lines it reached and there is no honest way to attribute an opaque command's
+coverage to go-mutants' own per-package binaries. Any failure of the pass itself
+turns it off with a `GOM7602` warning and runs every mutant against every
+binary; see [Architecture](architecture.md).
 
 ### `mutants[]`
 
 Each entry carries the full 64-hex `id` and the 20-hex `display_id`, `path`,
 `package`, `family`, `rule`, `rule_version`, `line`, `column`, `start_byte`,
 `end_byte`, `original`, `replacement`, `outcome`, `duration_ms`, `killed_by`,
-`attempts`, and `output_tail`.
+`attempts`, `output_tail`, `covering_test_packages`, and `uncovered`.
 
 `killed_by` names the test binary that detected the mutant — the one that
 failed, or the one it hung — and is `null` for an outcome that detected
 nothing, and for a detection whose output named no binary. `attempts` is 0 for
 a mutant the run never reached, 1 for an outcome settled first time, and 2 for
 a confirmed timeout.
+
+`covering_test_packages` is the sorted import paths of the test binaries whose
+coverage profile reaches the mutant's lines, and `uncovered` says the run
+established that none does. Both are always present, and an empty
+`covering_test_packages` means two different things depending on
+`coverage.mode`: with `off` nobody asked, and with `package` nothing covers it —
+in which case `uncovered` is `true`. An uncovered mutant is always `survived`
+with `attempts: 0` and `duration_ms: 0`: no test runs the line, so no test could
+have caught the edit, and the run does not spend a process finding that out. It
+still counts as a survivor in the score, because it is one.
 
 The `outcome` enum:
 

@@ -22,6 +22,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/tui"
 )
 
 // eventBuffer is how many events the channel between the engine and the
@@ -79,6 +80,7 @@ type runOptions struct {
 	json      bool
 	quiet     bool
 	noColor   bool
+	noTUI     bool
 }
 
 // newRunCommand builds the `run` command.
@@ -128,7 +130,9 @@ func newRunCommand() *cobra.Command {
 	flags.BoolVarP(&o.quiet, "quiet", "q", false,
 		"print only the baseline summary, warnings, and the closing summary block")
 	flags.BoolVar(&o.noColor, "no-color", false,
-		"never colourise output, even on a terminal")
+		"never colourise output, even on a terminal; implies --no-tui")
+	flags.BoolVar(&o.noTUI, "no-tui", false,
+		"never draw the live dashboard; print the plain lines even on a terminal")
 	// Neither is wrong on its own and each is a complete answer, so the pair is
 	// refused rather than resolved: silently letting one win would make the
 	// meaning of a command line depend on a rule nobody wrote down.
@@ -184,10 +188,33 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	if o.json {
 		rendered = cmd.ErrOrStderr()
 	}
-	renderer := console.NewPlain(rendered, Version, console.ColorEnabled(rendered, o.noColor), o.quiet)
+	color := console.ColorEnabled(rendered, o.noColor)
 
 	ctx, watch, stop := watchSignals(cmd.Context())
 	defer stop()
+	// A second cancellation, downstream of the signal handler's, so that the
+	// dashboard's Ctrl-C key can stop the run without owning the signal
+	// handling. Both paths end in the same place — this context, cancelled,
+	// with the engine unwinding and publishing its partial report — which is
+	// what makes the two renderers agree about what interrupting a run means.
+	// A keystroke leaves no signal behind, so [interpret] reports it as an
+	// interrupt and the process exits 130, exactly as Ctrl-C in plain mode does.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// The dashboard is the default on a terminal and is never the only copy of
+	// anything: what it draws is erased when it exits, and what it kept is
+	// printed underneath by [replayFinal].
+	var (
+		renderer  console.Renderer
+		dashboard *tui.Renderer
+	)
+	if wantsDashboard(rendered, o, detectTerminal) {
+		dashboard = tui.New(rendered, dashboardInput(cmd.InOrStdin()), Version, cancel)
+		renderer = dashboard
+	} else {
+		renderer = console.NewPlain(rendered, Version, color, o.quiet)
+	}
 
 	// The renderer starts first and is joined last: the engine's sends block,
 	// so a consumer that is not already running is a deadlock, and a consumer
@@ -212,6 +239,14 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		Events:        events,
 	})
 	wg.Wait()
+
+	// Once the alternate screen is gone, the scrollback gets what was on it
+	// that still matters. A plain run has already printed all of this.
+	var replay func() error
+	if dashboard != nil {
+		replay = func() error { return replayFinal(rendered, Version, color, dashboard.Final()) }
+	}
+	renderErr = finishRendering(cmd.ErrOrStderr(), renderErr, replay)
 
 	// The document is written whenever there is one, the interrupted path
 	// included: a partial report is still the record of what the run measured,
@@ -366,6 +401,56 @@ func policyFailure(verdict mutation.Verdict) error {
 		detail = verdict.Failures[0].Detail
 	}
 	return &exitError{code: verdict.Code, err: errors.New(detail), silent: true}
+}
+
+// finishRendering closes the rendering half of a run and returns the one error
+// the exit status should be decided from.
+//
+// It reports a dashboard failure and then replays the closing block, in that
+// order, and the order is the point. Both steps can fail, only one error
+// survives, and the two failures are not worth the same: a dashboard that could
+// not take the terminal cost the user a picture, while a replay that could not
+// write cost them the answer. Reporting the dashboard first is what empties the
+// slot, so a replay failure lands in it rather than being dropped behind a
+// cosmetic error that had already claimed it.
+//
+// replay is nil for a plain run, which has printed its closing block as it went
+// and has nothing to put back on the screen.
+func finishRendering(w io.Writer, renderErr error, replay func() error) error {
+	renderErr = reportDashboardFailure(w, renderErr)
+	if replay == nil {
+		return renderErr
+	}
+	if err := replay(); err != nil && renderErr == nil {
+		renderErr = err
+	}
+	return renderErr
+}
+
+// reportDashboardFailure writes a dashboard failure to w and returns the error
+// the exit status should be decided from, which is no longer that one.
+//
+// The live dashboard is decoration over a run that has already done its work.
+// By the time one of its failures is in hand the engine has executed, the
+// renderer has drained the stream to the end, the report has been written, and
+// the closing summary has been replayed to standard output by [replayFinal] —
+// so the user has everything a plain run would have given them, minus the
+// picture. Letting that decide the exit status would be wrong twice over: it
+// would report an exit 2 infrastructure failure for a run that succeeded, and
+// it would hide a policy gate that really did fail, because a returned error
+// short-circuits [policyFailure] and a CI job would read "the tool broke" where
+// the truth is "your score is below the threshold you set".
+//
+// Every other renderer error is returned unchanged. When the plain renderer's
+// writes fail the user got no output at all, which is a failure of the one job
+// a run has beyond measuring, and exit 2 is the honest answer to it.
+func reportDashboardFailure(w io.Writer, renderErr error) error {
+	var dashboardErr *tui.Error
+	if !errors.As(renderErr, &dashboardErr) {
+		return renderErr
+	}
+	RenderError(w, renderErr)
+	return nil
 }
 
 // interpret decides what an engine failure means for the exit status.

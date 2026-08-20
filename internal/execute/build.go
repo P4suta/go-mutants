@@ -110,10 +110,40 @@ type Options struct {
 	// a caller that forgot to say.
 	Jobs int
 
+	// CoverPkg turns coverage instrumentation on for the build and names the
+	// packages it is collected for: a non-empty value compiles every test
+	// binary with `-cover -coverpkg=<CoverPkg>`, and an empty one — the
+	// default — compiles them plainly. A run doing coverage-guided selection
+	// passes `<module>/...`, so that a binary's profile carries every package it
+	// links rather than only the one it tests.
+	//
+	// One build serves both purposes, which is the whole reason coverage is a
+	// build option rather than a second set of binaries: the same instrumented
+	// binaries are profiled once with [CollectCoverage] and then run thousands
+	// of times with a mutant active. That is not free, and the plan's original
+	// claim that it is deserves correcting rather than repeating. A test binary
+	// built with `-cover` runs its coverage teardown on *every* exit whatever
+	// `-test.gocoverdir` says: with no directory named, testing's coverTearDown
+	// writes the data into an os.MkdirTemp directory, reads it back, prints the
+	// percentage, and removes it. Measured on go1.26.5/windows: about 6 ms per
+	// run on a three-file fixture, and 8-16 ms on go-mutants' own
+	// internal/mutation binary with `-coverpkg` over the whole module. The
+	// temporary directory is a worker's own, since TMP, TEMP and TMPDIR are
+	// redirected there, so nothing lands in the snapshot.
+	//
+	// The teardown can also fail, and a failure is not silent: testing's
+	// coverReport exits 2, which [RunOne] reads as a killed mutant like any
+	// other non-zero status. It cannot be special-cased — `go test` exits 2 for
+	// real failures too — so the mitigation is that the directory it writes into
+	// is the same per-worker one every other part of a mutant run already
+	// depends on being writable.
+	CoverPkg string
+
 	// Timeout bounds each *toolchain* command — one `go list`, one
-	// `go test -c` — and nothing else. A mutant's budget is a different number
-	// derived from a different measurement and travels with the mutant, in
-	// [MutantRun.Timeout]. Zero means no bound.
+	// `go test -c` — and each [CollectCoverage] profiling run, and nothing
+	// else. A mutant's budget is a different number derived from a different
+	// measurement and travels with the mutant, in [MutantRun.Timeout]. Zero
+	// means no bound.
 	Timeout time.Duration
 
 	// run is the process runner, injected by the package's own tests. Nil means
@@ -397,7 +427,13 @@ func uniqueName(importPath string, taken map[string]bool) string {
 
 // compile builds one package's test binary.
 func compile(ctx context.Context, opts Options, bin TestBinary) error {
-	spec := opts.Toolchain.Command("test", "-c", "-o", bin.BinPath, bin.ImportPath)
+	args := []string{"test", "-c"}
+	if opts.CoverPkg != "" {
+		args = append(args, "-cover", "-coverpkg="+opts.CoverPkg)
+	}
+	args = append(args, "-o", bin.BinPath, bin.ImportPath)
+
+	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
 	spec.Env = toolchainEnv(opts.Toolchain, "")
 	spec.Timeout = opts.Timeout

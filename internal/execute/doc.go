@@ -24,9 +24,20 @@
 // build graph load, and a package staleness check from the inner loop that runs
 // once per mutant per package.
 //
-// Nothing here decides *which* binaries a mutant needs. Coverage-guided
-// selection arrives in a later phase; until it does, every mutant is measured
-// against every binary, which is slower and never wrong.
+// Nothing here decides *which* binaries a mutant needs, and that is a boundary
+// rather than a gap. internal/coverage decides it, from the profiles
+// [CollectCoverage] produces, and hands the answer down as
+// [MutantRun.Binaries]: a subset of indices for a mutant whose lines only some
+// binaries reach, and nil — every binary — for a run with no coverage
+// information, which is slower and never wrong.
+//
+// Coverage costs one extra build option and one extra pass. [Options.CoverPkg]
+// compiles the binaries with `-cover -coverpkg=<module>/...`, and
+// [CollectCoverage] runs each of them once with nothing activated to find out
+// which lines the unmutated suite reaches. The same binaries then run the
+// mutants: there is no second, non-cover build, because two builds of one tree
+// is a price paid on every run to save a few milliseconds on each mutant. What
+// that trade really costs is measured and written down on [Options.CoverPkg].
 //
 // # What an exit status means
 //

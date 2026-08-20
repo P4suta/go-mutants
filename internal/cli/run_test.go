@@ -14,6 +14,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/tui"
 )
 
 // runWith executes the `run` command with args and returns the error, without
@@ -217,6 +218,94 @@ func TestPolicyFailureIsSilentAndCarriesItsCode(t *testing.T) {
 	loud := policyFailure(infrastructure)
 	if got := ExitCode(loud); got != mutation.ExitInfrastructure {
 		t.Errorf("ExitCode = %d, want %d", got, mutation.ExitInfrastructure)
+	}
+}
+
+// TestADashboardFailureDoesNotDecideTheExitStatus pins the asymmetry between
+// the two renderers. The dashboard is decoration over a run that has already
+// measured everything and already printed its summary, so a terminal it could
+// not drive is news and nothing more; the plain renderer's writes are the
+// output itself, and losing them is a failure of the run.
+func TestADashboardFailureDoesNotDecideTheExitStatus(t *testing.T) {
+	var reported bytes.Buffer
+	dashboard := &tui.Error{
+		Code:    tui.CodeProgram,
+		Message: "the live dashboard stopped before the run did",
+		Err:     errors.New("raw mode refused"),
+	}
+	if got := reportDashboardFailure(&reported, dashboard); got != nil {
+		t.Errorf("reportDashboardFailure returned %v, want nil so that the run's own verdict decides", got)
+	}
+	// Nothing else would ever tell the user, so it is not simply dropped.
+	for _, want := range []string{"GOM7701", "raw mode refused"} {
+		if !strings.Contains(reported.String(), want) {
+			t.Errorf("the failure was not reported on standard error: %q does not contain %q", reported.String(), want)
+		}
+	}
+	// The exit status a run with a broken dashboard and a failing gate reports
+	// is the gate's, which is the whole point of not returning the first one.
+	verdict := mutation.Decide(
+		mutation.Tally{Killed: 1, UnexpectedSurvivors: 1},
+		mutation.Policy{Strict: true, RequireMutants: true},
+		mutation.Signals{},
+	)
+	if got := ExitCode(policyFailure(verdict)); got != mutation.ExitPolicyFailure {
+		t.Errorf("ExitCode = %d, want the policy failure's %d", got, mutation.ExitPolicyFailure)
+	}
+
+	// Every other renderer failure is returned untouched and unprinted: it is
+	// reported once, by the caller that returns it.
+	var quiet bytes.Buffer
+	other := errors.New("write /dev/stdout: broken pipe")
+	if got := reportDashboardFailure(&quiet, other); !errors.Is(got, other) {
+		t.Errorf("reportDashboardFailure(%v) = %v, want it returned unchanged", other, got)
+	}
+	if quiet.Len() != 0 {
+		t.Errorf("a plain-renderer failure was printed early: %q", quiet.String())
+	}
+	if got := reportDashboardFailure(&quiet, nil); got != nil {
+		t.Errorf("reportDashboardFailure(nil) = %v, want nil", got)
+	}
+}
+
+// TestALostClosingBlockOutranksALostDashboard is the ordering half of the same
+// decision. Both halves of the rendering can fail at once, and the one that
+// survives has to be the one that cost the user something: a dashboard failure
+// costs a picture over a summary that was still printed, and a replay failure
+// costs the summary itself.
+func TestALostClosingBlockOutranksALostDashboard(t *testing.T) {
+	var reported bytes.Buffer
+	dashboard := &tui.Error{Code: tui.CodeProgram, Message: "the live dashboard stopped before the run did"}
+	lost := errors.New("write /dev/stdout: broken pipe")
+
+	err := finishRendering(&reported, dashboard, func() error { return lost })
+	if !errors.Is(err, lost) {
+		t.Fatalf("finishRendering = %v, want the replay failure %v", err, lost)
+	}
+	if got := ExitCode(err); got != mutation.ExitInfrastructure {
+		t.Errorf("ExitCode = %d, want %d: the closing block never reached the user", got, mutation.ExitInfrastructure)
+	}
+	// The dashboard failure is still news, and is still reported.
+	if !strings.Contains(reported.String(), string(tui.CodeProgram)) {
+		t.Errorf("the dashboard failure was dropped rather than reported: %q", reported.String())
+	}
+
+	// A replay that worked leaves nothing behind, whatever the dashboard did.
+	reported.Reset()
+	replayed := 0
+	if err := finishRendering(&reported, dashboard, func() error { replayed++; return nil }); err != nil {
+		t.Errorf("finishRendering = %v after a successful replay, want nil", err)
+	}
+	if replayed != 1 {
+		t.Errorf("the closing block was replayed %d times, want once", replayed)
+	}
+
+	// A plain run has no block to put back and is asked to replay nothing.
+	if err := finishRendering(&reported, nil, nil); err != nil {
+		t.Errorf("finishRendering = %v for a plain run that rendered cleanly, want nil", err)
+	}
+	if err := finishRendering(&reported, lost, nil); !errors.Is(err, lost) {
+		t.Errorf("finishRendering = %v, want a plain renderer's own failure kept", err)
 	}
 }
 

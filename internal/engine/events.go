@@ -87,6 +87,32 @@ const (
 // String returns the source as it is printed.
 func (s TimeoutSource) String() string { return string(s) }
 
+// A CoverageMode says how coverage narrowed the run.
+//
+// It is this package's own spelling of the same two facts internal/report
+// publishes, for the same reason [TimeoutSource] is: a report is a published
+// format and an event stream is not, and one enum serving both would make a
+// rename of a console label a breaking change to somebody's jq expression. The
+// mapping is one function in the engine.
+type CoverageMode string
+
+// The coverage modes.
+const (
+	// CoverageOff means every mutant was measured against every test binary.
+	// It is what a custom `test.command` produces — see
+	// [coverage.CodeCustomTestCommand] — and what a run whose coverage pass
+	// failed falls back to.
+	CoverageOff CoverageMode = "off"
+	// CoveragePackage means each test binary was profiled once and every mutant
+	// was measured only against the binaries whose profile reaches its lines.
+	// The mutants no binary reaches were not executed at all; they are
+	// survivors with [MutantResult.Uncovered] set.
+	CoveragePackage CoverageMode = "package"
+)
+
+// String returns the mode as it is printed.
+func (m CoverageMode) String() string { return string(m) }
+
 // An Event is one thing the engine has to say while a run is in flight.
 //
 // The interface is sealed: the marker method is unexported, so every event is
@@ -204,6 +230,24 @@ type Validated struct {
 	Rejected int
 }
 
+// CoverageMapped reports what the coverage pass established, and is published
+// only by a run that did one: a run with coverage off publishes a [Warning]
+// saying why instead, and never this.
+//
+// It arrives after the test binaries have been profiled and before the first
+// mutant is executed, which is the moment a user learns how much of the run is
+// about to be skipped — the single most useful number a coverage-guided run
+// has to offer.
+type CoverageMapped struct {
+	// Binaries is how many test binaries were profiled.
+	Binaries int
+	// Covered and Uncovered partition the selected mutants: Covered are the
+	// ones at least one binary reaches, and Uncovered the ones none does, which
+	// are reported as survivors without being executed.
+	Covered   int
+	Uncovered int
+}
+
 // A MutantResult is one mutant's settled outcome, with everything a renderer
 // needs in order to describe it without holding the catalogue.
 //
@@ -233,12 +277,22 @@ type MutantResult struct {
 	// internal/execute only settles a timeout once it has tried to reproduce it.
 	Outcome mutation.Outcome
 	// Duration is the wall-clock time the mutant's child processes took, summed
-	// over every attempt.
+	// over every attempt. It is zero for an uncovered mutant, which had none.
 	Duration time.Duration
 	// Worker is the worker that settled the mutant. The serial retry pass
 	// reports worker 0, which is honest rather than arbitrary: it runs one
 	// mutant at a time with nothing else in flight.
 	Worker int
+	// Uncovered says no test binary reaches this mutant's lines, so the run did
+	// not execute it. It is only ever set alongside
+	// [mutation.OutcomeSurvived] — nothing ran, so nothing could have caught
+	// it — and only in [CoveragePackage] mode.
+	//
+	// A renderer that ignores it is not wrong, only less informative: the
+	// mutant really did survive. A renderer that shows it is telling the user
+	// something more actionable than "your test missed this", namely "no test
+	// runs this line at all".
+	Uncovered bool
 }
 
 // MutantStarted reports that an attempt at one mutant has begun.
@@ -265,6 +319,15 @@ type MutantStarted struct {
 // per mutant the run reached, including one whose outcome is
 // [mutation.OutcomeNotRun] because a signal arrived before its retry could
 // happen: the stream reports what became of every mutant it started.
+//
+// One kind of mutant produces a MutantFinished with **no preceding
+// [MutantStarted]**, and a renderer that pairs the two has to allow for it: an
+// uncovered mutant, published with [MutantResult.Uncovered] set. Nothing
+// started, so announcing a start would be inventing one — there is no worker
+// and no attempt — but the mutant does have a settled outcome, and a stream
+// that stayed silent about it would leave every renderer's counts short of the
+// report's. These arrive from the run's own goroutine, all together, before the
+// first [MutantStarted] of the execution phase.
 type MutantFinished struct {
 	// Result is the settled outcome and the data to render it with.
 	Result MutantResult
@@ -315,6 +378,13 @@ type Counts struct {
 	// part of Total: a mutant that does not compile was never executed and has
 	// no outcome to count.
 	Rejected int
+	// Uncovered is how many of Survived were survivors because no test binary
+	// reaches their lines. It is a *subset* of Survived rather than a seventh
+	// bucket, and adding it to the partition would double-count them: an
+	// uncovered mutant is a survivor, and the reason it survived is the extra
+	// fact this number carries. It is zero unless the run was
+	// [CoveragePackage].
+	Uncovered int
 }
 
 // ExpectationCounts is the `[[mutation.expect]]` ledger, counted by state.
@@ -374,6 +444,10 @@ type RunSummary struct {
 	Notable []MutantResult
 	// Counts is the counted breakdown.
 	Counts Counts
+	// Coverage is how coverage narrowed the run. A renderer needs it to decide
+	// whether "uncovered 0" is a measurement worth printing or a number nobody
+	// went looking for; see [Counts.Uncovered].
+	Coverage CoverageMode
 	// Score is the mutation score, as the two integers it is derived from. It
 	// is undefined exactly when the denominator is zero; see [mutation.Score].
 	Score mutation.Score
@@ -414,6 +488,7 @@ func (BaselineProgress) event()  {}
 func (BaselineCompleted) event() {}
 func (Discovered) event()        {}
 func (Validated) event()         {}
+func (CoverageMapped) event()    {}
 func (MutantStarted) event()     {}
 func (MutantFinished) event()    {}
 func (Warning) event()           {}

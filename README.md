@@ -11,15 +11,15 @@ Mutation testing for Go modules that is fast enough to leave switched on.
 go-mutants instruments every compilable mutant **once** into a disposable
 snapshot of your module, then activates one mutant per test process through an
 environment variable. Your working tree is never modified, and the toolchain
-builds essentially once instead of once per mutant. Coverage-guided selection —
-letting coverage data decide which test binaries need to run at all — is
-designed and not yet built.
+builds essentially once instead of once per mutant. Coverage data then decides
+which test binaries a mutant needs to run against at all, and a mutant no test
+reaches is reported without being executed.
 
-The design targets the things that make mutation testing painful in practice:
-a live TUI dashboard instead of a silent wait, coverage-guided selection,
-`--changed` for pull requests, `--shard k/n` for CI fan-out, deterministic
-stable mutant IDs, and a lossless JSON report with a Stryker-ecosystem HTML
-projection.
+The design targets the things that make mutation testing painful in practice.
+A live TUI dashboard instead of a silent wait, coverage-guided selection,
+deterministic stable mutant IDs, and a lossless JSON report are built today;
+`--changed` for pull requests, `--shard k/n` for CI fan-out, and the
+Stryker-ecosystem HTML projection are designed and not yet.
 
 ## Status: pre-release, two operator families
 
@@ -30,16 +30,34 @@ test process — then writes a `run-report-v1` document and reports a mutation
 score it actually measured. `go-mutants list` enumerates the same mutants
 without executing them, as text or as a schema-validated JSON catalogue.
 
+Coverage guidance is automatic and needs no flag: a run with the default test
+command profiles each test binary once, then measures a mutant only against the
+binaries that reach its lines, and reports one no binary reaches without
+executing it at all.
+
+On a terminal that can do better than ASCII, `run` draws a live dashboard — the
+phase, a score gauge, one row per worker, and a scrolling survivor feed — and
+prints the closing summary into the scrollback once the screen is restored.
+Everywhere else it prints deterministic plain lines instead: into a pipe or a
+file, on a dumb terminal, under `--no-tui`, `--json`, `--quiet`, or
+`--no-color`, and whenever `NO_COLOR` or `CI` is set. The summary block is
+byte-identical either way, because a dashboard run replays it through the plain
+renderer rather than formatting its own.
+
 The honest limits:
 
 - **Two of the eleven operator families**, `comparison` and `boolean-literal`.
   A score from go-mutants today is a score against those rules, not against the
   full catalogue.
-- **No coverage guidance.** Every mutant is measured against every test binary
-  of every package, which is slower and never wrong.
+- **Coverage guidance is on only for the default test command.** A
+  `test.command` other than `go test ./...` cannot be attributed to
+  go-mutants' own per-package test binaries, so such a run measures every
+  mutant against every binary and says so with a `GOM7601` warning. Any failure
+  of the coverage pass itself does the same with `GOM7602`: the optimisation
+  can never fail a run.
 - **No HTML report** and no Stryker projection yet; the JSON document and the
   console summary are the output.
-- **No outcome cache, no `--changed`, no `--shard`,** and no TUI dashboard.
+- **No outcome cache, no `--changed`, and no `--shard`.**
 - The `init`, `doctor`, `report`, and `cache` commands do not exist.
 
 The design is settled and written down under [`docs/`](docs/), every page marks
@@ -66,24 +84,32 @@ go-mutants list
 go-mutants run
 ```
 
-A run prints its phases as it goes, then one line per mutant as it settles —
-survivors carrying their diff — then the summary. Abridged:
+On a terminal the run draws the dashboard. Into a pipe, in CI, or under
+`--no-tui`, it prints its phases as it goes, then one line per mutant as it
+settles — survivors carrying their diff — then the summary. Abridged:
 
 ```text
-baseline ok: avg 1.091s, slowest 2.166s, timeout 10.829s (derived)
+baseline ok: avg 1.011s, slowest 1.969s, timeout 10s (derived)
 phase mutate: discovering candidates, validating them, then executing the mutants
 discovered 4 candidates, 0 skips
 validated 4 mutants, 0 rejections
-SURVIVED   bf513c0d  untested.go:14:11  neq-to-eq  != -> ==  (616ms)
+coverage: 1 test binary, 3 of 4 mutants covered, 1 uncovered
+SURVIVED (uncovered)  bf513c0d  untested.go:14:11  neq-to-eq  != -> ==  (0s)
     - !=
     + ==
 mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0
-    not-run 0  rejected 0
+    not-run 0  rejected 0  uncovered 1
 score 75.00%
-run 20260820T175055Z-57bc  exit 0
+run 20260820T221649Z-67af  exit 0
 ```
 
 The counters are one line on a real terminal; they are wrapped above to fit.
+
+`SURVIVED (uncovered)` and the `uncovered 1` column are coverage's own finding:
+no test binary reaches that line, so the mutant was never executed and the run
+knows why it survived. The column appears only in a coverage-guided run, and
+`uncovered` is a subset of `survived` rather than a seventh bucket — the
+columns still add up to `mutants`.
 
 `score N/A` is printed instead of a percentage when nothing scoreable was
 measured; there is no sentinel number for it. The full document goes to the
@@ -96,8 +122,14 @@ Other flags that work today:
 go-mutants run --jobs 8 --strict
 go-mutants run --include './internal/**' -- go test -run TestFast ./...
 go-mutants run --mutant bf513c0d
+go-mutants run --no-tui
 go-mutants list --operator comparison --json
 ```
+
+`--no-tui` is the escape hatch for a terminal you would rather read as lines —
+a `script` session, a recorded demo. It changes nothing about what the run
+measures. An editor's output pane needs no flag: it is a pipe rather than a
+terminal, so it already gets the plain lines.
 
 With no arguments, help is printed. The intended v1 command tree is `run`,
 `list`, `doctor`, `init`, `report list|latest|validate|clean|merge`, and
@@ -105,7 +137,10 @@ With no arguments, help is printed. The intended v1 command tree is `run`,
 `--shard k/n` are designed and not yet accepted.
 
 Everything after `--` is captured verbatim as the test command's argv; it is
-never handed to a shell.
+never handed to a shell. It replaces `test.command`, so anything other than the
+built-in `go test ./...` turns coverage-guided selection off with a `GOM7601`
+warning. The comparison is against the resulting command and not against where
+it was written, so a passthrough that spells the default out is the default.
 
 Working on this repository instead:
 

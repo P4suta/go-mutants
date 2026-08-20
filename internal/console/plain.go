@@ -20,13 +20,26 @@ import (
 
 // OutcomeWidth is the column width of the outcome in a result line.
 //
-// It is nine because SURVIVED is the longest label and one trailing space
-// separates it from the two that follow, which keeps every id, path, and rule
-// in the same column whatever the outcome. It is a constant rather than a
-// width computed from the data on purpose: a column that grew because one
-// outcome appeared would shift every other line the day it stopped appearing,
-// and this output is meant to be diffed between two runs.
+// It is nine because SURVIVED is the longest of the six outcome labels and one
+// trailing space separates it from the two that follow, which keeps every id,
+// path, and rule in the same column across those six. It is a constant rather
+// than a width computed from the data on purpose: a column that grew because
+// one outcome appeared would shift every other line the day it stopped
+// appearing, and this output is meant to be diffed between two runs.
+//
+// One label is wider than the column and overflows it: "SURVIVED (uncovered)",
+// which shifts the rest of *its own* line eleven characters right and leaves
+// every other line alone. That is the deliberate trade. Widening the column to
+// twenty would spend eleven characters of every line on a qualifier most lines
+// do not carry, and putting the qualifier at the end of the line would bury the
+// most actionable thing a run can say — "no test runs this line at all" —
+// behind the duration. Uncovered survivors are also grouped together by
+// [engine.RunSummary.Notable], so the overflow is a block that lines up with
+// itself rather than a stutter through the list.
 const OutcomeWidth = 9
+
+// uncoveredSuffix marks a survivor no test binary reaches.
+const uncoveredSuffix = " (uncovered)"
 
 // resultIDWidth is how many hex characters of a mutant's display id a result
 // line prints. It matches `list`, so the id under a survivor is the id a
@@ -171,6 +184,18 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 		return r.paint(styleDetail, fmt.Sprintf("validated %s, %s",
 			countNoun(e.Accepted, "mutant"), countNoun(e.Rejected, "rejection"))), true
 
+	case engine.CoverageMapped:
+		if r.Quiet {
+			return "", false
+		}
+		// The number that matters is how many mutants are about to be skipped,
+		// so it is stated as a count and not only as the remainder: "3 of 4
+		// covered" leaves the reader doing the subtraction that is the whole
+		// point of the phase.
+		return r.paint(styleDetail, fmt.Sprintf("coverage: %d test %s, %d of %d mutants covered, %d uncovered",
+			e.Binaries, plural(e.Binaries, "binary", "binaries"),
+			e.Covered, e.Covered+e.Uncovered, e.Uncovered)), true
+
 	case engine.MutantStarted:
 		return "", false
 
@@ -203,7 +228,7 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 // them. A rule that depended on where the line was printed would leave a quiet
 // run, which prints no live results, showing survivors with nothing to act on.
 func (r *PlainRenderer) result(m engine.MutantResult) (string, bool) {
-	label := OutcomeLabel(m.Outcome)
+	label := ResultLabel(m.Outcome, m.Uncovered)
 	if label == "" {
 		return "", false
 	}
@@ -257,8 +282,18 @@ func (r *PlainRenderer) summary(s engine.RunSummary, status engine.Status) strin
 	}
 
 	c := s.Counts
-	fmt.Fprintf(&b, "mutants %d  killed %d  survived %d  timeout %d  inconclusive %d  errored %d  not-run %d  rejected %d\n",
+	fmt.Fprintf(&b, "mutants %d  killed %d  survived %d  timeout %d  inconclusive %d  errored %d  not-run %d  rejected %d",
 		c.Total, c.Killed, c.Survived, c.TimedOut, c.Inconclusive, c.Errored, c.NotRun, c.Rejected)
+	// Appended rather than slotted in beside `survived`, because it is not a
+	// seventh bucket: uncovered mutants are already inside `survived`, and a
+	// reader adding the columns up has to still get `mutants`. It appears only
+	// in a coverage-guided run — including as "uncovered 0", which is a
+	// measurement worth stating — and never in one that did not ask, where the
+	// number would be a zero nobody went looking for.
+	if s.Coverage == engine.CoveragePackage {
+		fmt.Fprintf(&b, "  uncovered %d", c.Uncovered)
+	}
+	b.WriteByte('\n')
 
 	// "n/a" rather than a percentage, and the reason beside it. Both plausible
 	// sentinels are lies: 0 reads as "your tests caught nothing" and 100 as
@@ -310,6 +345,26 @@ func (r *PlainRenderer) summary(s engine.RunSummary, status engine.Status) strin
 	}
 	b.WriteString(r.paint(style, "run "+s.RunID+"  exit "+s.ExitCode.String()))
 	return b.String()
+}
+
+// ResultLabel returns the label a result line prints for one settled mutant.
+//
+// It is [OutcomeLabel] plus the one qualifier a label can carry: a survivor no
+// test binary reaches prints "SURVIVED (uncovered)", because the two say
+// different things to the person reading them. A covered survivor means a test
+// runs the line and did not notice the edit, which is a test to sharpen. An
+// uncovered one means nothing runs the line at all, which is a test to write —
+// and the run did not even execute the mutant to find out.
+//
+// The qualifier is only ever attached to a survivor, which is the only outcome
+// an uncovered mutant can have: nothing ran, so nothing could have caught it.
+// An unexpected combination prints the plain label rather than a contradiction.
+func ResultLabel(o mutation.Outcome, uncovered bool) string {
+	label := OutcomeLabel(o)
+	if uncovered && o == mutation.OutcomeSurvived {
+		return label + uncoveredSuffix
+	}
+	return label
 }
 
 // OutcomeLabel returns the fixed, uppercase name a result line prints for an
@@ -368,6 +423,15 @@ func countNoun(n int, noun string) string {
 		return "1 " + noun
 	}
 	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+// plural picks between two spellings of a noun, for the ones an "s" does not
+// make plural.
+func plural(n int, singular, many string) string {
+	if n == 1 {
+		return singular
+	}
+	return many
 }
 
 // paint applies a style, or does not.

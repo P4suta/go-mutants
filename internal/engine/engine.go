@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
@@ -256,9 +257,18 @@ type state struct {
 	// results holds one execution result per mutant the run reached, by full
 	// id. Everything catalogued, accepted, and absent from here is reported as
 	// not-run, which is the contract report.Build enforces.
+	//
+	// A mutant no test binary covers is in here too, as a survivor that was
+	// never executed: coverage established its outcome without running it, and
+	// leaving it out would report it as not-run and quietly take it out of the
+	// score's denominator.
 	results map[string]report.MutantResult
 	// display holds the render data for every catalogued mutant, by full id.
 	display map[string]MutantResult
+	// coverage is what the coverage phase decided. The zero value is a run with
+	// coverage off, which is what every path that never reached the phase — an
+	// early failure, a custom test command, nothing to execute — leaves behind.
+	coverage coverageResult
 }
 
 // pipeline is the run proper, split out so that [Run] owns exactly two things:
@@ -531,9 +541,26 @@ func (s *session) mutate(
 		Jobs:         cfg.Execution.Jobs,
 		Timeout:      BaselineCap,
 	}
-	bins, err := execute.BuildTestBinaries(ctx, execOpts)
+	// Coverage instrumentation is decided before the build because it is a
+	// build option: one set of binaries serves both the profiling pass and the
+	// mutant runs, and building twice to save a few milliseconds per mutant
+	// would cost more than it saved on every run.
+	if coverageEnabled(out.TestCommand) {
+		execOpts.CoverPkg = found.ModulePath + coverPkgSuffix
+	} else {
+		s.warnCode(string(coverage.CodeCustomTestCommand), customTestCommand(out.TestCommand))
+	}
+
+	bins, err := s.buildTestBinaries(ctx, &execOpts)
 	if err != nil {
 		return err
+	}
+
+	if execOpts.CoverPkg != "" {
+		runs, st.coverage, err = s.coveragePhase(ctx, execOpts, scratch, found.ModulePath, bins, runs, st)
+		if err != nil {
+			return err
+		}
 	}
 
 	results, err := execute.Schedule(ctx, execOpts, runs, bins, s.hooks(st))
@@ -541,15 +568,52 @@ func (s *session) mutate(
 	// run's report is exactly the record of what it got to.
 	for _, result := range results {
 		st.results[result.ID] = report.MutantResult{
-			ID:         result.ID,
-			Outcome:    result.Final,
-			Duration:   result.Duration,
-			KilledBy:   result.KilledBy,
-			Attempts:   len(result.Attempts),
-			OutputTail: result.OutputTail,
+			ID:                   result.ID,
+			Outcome:              result.Final,
+			Duration:             result.Duration,
+			KilledBy:             result.KilledBy,
+			Attempts:             len(result.Attempts),
+			OutputTail:           result.OutputTail,
+			CoveringTestPackages: st.coverage.covering[result.ID],
 		}
 	}
 	return err
+}
+
+// buildTestBinaries compiles the test binaries, and falls back to a plain build
+// if the coverage-instrumented one will not compile.
+//
+// The fallback exists because coverage is on by default and was never asked
+// for. A `-cover -coverpkg=<module>/...` build reaches packages an ordinary
+// `go test -c` of one package does not, so it can fail where the plain build
+// would have succeeded — and [execute.CodeTestBuildFailed] is a hard failure
+// whose own documentation reads it as a go-mutants bug in the instrumented
+// rewrite. Turning a run that would have worked into a red one, for the sake of
+// an optimisation the user never requested, is the wrong trade in every
+// direction; so the run says what happened, gives up the optimisation, and
+// builds again without it.
+//
+// The second build is only ever paid for on the failure path, and a failure
+// there is worth one wasted build.
+func (s *session) buildTestBinaries(ctx context.Context, opts *execute.Options) ([]execute.TestBinary, error) {
+	bins, err := execute.BuildTestBinaries(ctx, *opts)
+	if err == nil || opts.CoverPkg == "" || interrupted(err) {
+		return bins, err
+	}
+	s.unavailable("the test binaries do not compile with coverage instrumentation (" +
+		firstLine(err.Error()) + ")")
+	opts.CoverPkg = ""
+	return execute.BuildTestBinaries(ctx, *opts)
+}
+
+// customTestCommand is what [coverage.CodeCustomTestCommand] says: which
+// command was configured, and why it cannot be mapped.
+func customTestCommand(command []string) string {
+	return "coverage-guided selection is off because test.command is " +
+		strconv.Quote(strings.Join(command, " ")) + " rather than the built-in " +
+		strconv.Quote(strings.Join(config.DefaultTestCommand(), " ")) +
+		"; go-mutants cannot tell which of its per-package test binaries a custom command's coverage belongs to, " +
+		"so every mutant will be measured against every one of them"
 }
 
 // instrumentedBaseline is the semantic preservation gate.
@@ -841,27 +905,29 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		// run at the very last step over a display field would throw away
 		// everything it measured; an honest "unknown" says the same thing the
 		// workspace block says when it does not know its own Go version.
-		ToolVersion:     or(opts.ToolVersion, unknownValue),
-		RunID:           out.RunID,
-		Status:          status,
-		Started:         out.Started,
-		Finished:        finished,
-		Config:          opts.Config,
-		Mode:            st.mode,
-		Selected:        st.selected,
-		ModulePath:      st.found.ModulePath,
-		GoVersion:       goVersion(st.found.GoVersion, out.Toolchain.Version.Release),
-		WorkspaceDigest: out.WorkspaceDigest,
-		Catalog:         st.catalog,
-		Located:         st.found.Candidates,
-		Skips:           st.found.Skips,
-		Results:         results,
-		Rejections:      st.rejections,
-		TestCommand:     out.TestCommand,
-		Baseline:        out.BaselineRuns,
-		Timeout:         out.Timeout,
-		TimeoutSource:   reportTimeoutSource(out.TimeoutSource),
-		Warnings:        reportWarnings(s.warnings),
+		ToolVersion:      or(opts.ToolVersion, unknownValue),
+		RunID:            out.RunID,
+		Status:           status,
+		Started:          out.Started,
+		Finished:         finished,
+		Config:           opts.Config,
+		Mode:             st.mode,
+		Selected:         st.selected,
+		ModulePath:       st.found.ModulePath,
+		GoVersion:        goVersion(st.found.GoVersion, out.Toolchain.Version.Release),
+		WorkspaceDigest:  out.WorkspaceDigest,
+		Catalog:          st.catalog,
+		Located:          st.found.Candidates,
+		Skips:            st.found.Skips,
+		Results:          results,
+		Rejections:       st.rejections,
+		TestCommand:      out.TestCommand,
+		Baseline:         out.BaselineRuns,
+		Timeout:          out.Timeout,
+		TimeoutSource:    reportTimeoutSource(out.TimeoutSource),
+		CoverageMode:     reportCoverageMode(st.coverage.Mode()),
+		CoverageBinaries: st.coverage.binaries,
+		Warnings:         reportWarnings(s.warnings),
 	})
 	if err != nil {
 		return err
@@ -904,7 +970,11 @@ func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, rep 
 			Errored:      tally.Errored,
 			NotRun:       tally.NotRun,
 			Rejected:     len(rep.Rejected),
+			// Read out of the document rather than counted beside it, exactly
+			// as every other number in this block is.
+			Uncovered: uncoveredOf(rep),
 		},
+		Coverage: st.coverage.Mode(),
 		Score:    mutation.ScoreOf(tally),
 		Warnings: len(s.warnings),
 		Skips:    skipCounts(st.found.Skips),
@@ -941,6 +1011,13 @@ var notableRank = map[mutation.Outcome]int{
 // order and not merely a tidy one: two rules can propose an edit on the same
 // line, and a summary block that changed shape between two runs of one
 // workspace would not be diffable.
+//
+// Survivors are split once more before that, covered ones first. Both are
+// survivors and neither outranks the other as a finding, but they call for
+// different work — sharpen an existing test, or write one for a line nothing
+// runs — and a reader scanning the block gets the two kinds in two runs rather
+// than interleaved. It is a sub-order within one rank rather than a rank of its
+// own, so a covered survivor still comes before every timeout.
 func notable(st *state, rep *report.Report) []MutantResult {
 	out := make([]MutantResult, 0, len(rep.Mutants))
 	for _, m := range rep.Mutants {
@@ -954,10 +1031,14 @@ func notable(st *state, rep *report.Report) []MutantResult {
 		shown := st.display[m.ID]
 		shown.Outcome = core
 		shown.Duration = time.Duration(m.DurationMS) * time.Millisecond
+		shown.Uncovered = m.Uncovered
 		out = append(out, shown)
 	}
 	slices.SortFunc(out, func(x, y MutantResult) int {
 		if c := notableRank[x.Outcome] - notableRank[y.Outcome]; c != 0 {
+			return c
+		}
+		if c := boolRank(x.Uncovered) - boolRank(y.Uncovered); c != 0 {
 			return c
 		}
 		if c := strings.Compare(x.Path, y.Path); c != 0 {
@@ -975,6 +1056,28 @@ func notable(st *state, rep *report.Report) []MutantResult {
 		return strings.Compare(x.ID, y.ID)
 	})
 	return out
+}
+
+// boolRank orders false before true, so that a sort key can be written the same
+// way as every other one in [notable].
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// uncoveredOf counts the mutants the run reported as uncovered, read out of the
+// published document rather than counted beside it — the same discipline every
+// other number in the closing summary follows.
+func uncoveredOf(rep *report.Report) int {
+	count := 0
+	for _, m := range rep.Mutants {
+		if m.Uncovered {
+			count++
+		}
+	}
+	return count
 }
 
 // displayIndex joins the catalogue to the coordinates discovery found it at, so
@@ -1132,7 +1235,18 @@ func (s *session) emit(e Event) {
 // It is called from the run's own goroutine only. The execution workers publish
 // through [session.hooks], which does nothing but send.
 func (s *session) warn(code Code, message string) {
-	w := Warning{Code: string(code), Message: message}
+	s.warnCode(string(code), message)
+}
+
+// warnCode is [session.warn] for a code from another package's block.
+//
+// The coverage warnings are the reason it exists. GOM7601 and GOM7602 name
+// conditions about coverage, so internal/coverage defines them next to the
+// rules they are about; publishing them through a [Code] conversion would put
+// two identifiers on one condition and put a GOM76xx value in a type documented
+// to hold GOM40xx ones. The event and the report carry a string either way.
+func (s *session) warnCode(code, message string) {
+	w := Warning{Code: code, Message: message}
 	s.warnings = append(s.warnings, w)
 	s.emit(w)
 }

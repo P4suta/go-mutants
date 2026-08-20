@@ -107,12 +107,26 @@
       }
     },
     "coverage": {
-      "description": "How coverage narrowed the run. It is an object rather than a flag so that mode can gain \"package\" — coverage-guided selection — without every consumer of this document having to learn a new top-level shape.",
+      "description": "How coverage narrowed the run. off: every selected mutant was executed against every test binary, which is what a custom test.command and a failed coverage pass both fall back to. package: each test binary was profiled once, and every mutant was executed only against the binaries whose profile reaches its lines. binaries and mutants_uncovered are present exactly in package mode — an off run states no number rather than a zero it never measured — and mutants_uncovered equals the number of entries in mutants[] with uncovered true.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mode"],
       "properties": {
-        "mode": { "enum": ["off"] }
+        "mode": { "enum": ["off", "package"] },
+        "binaries": { "$ref": "#/$defs/count" },
+        "mutants_uncovered": { "$ref": "#/$defs/count" }
+      },
+      "if": {
+        "type": "object",
+        "required": ["mode"],
+        "properties": { "mode": { "const": "package" } }
+      },
+      "then": { "required": ["binaries", "mutants_uncovered"] },
+      "else": {
+        "properties": {
+          "binaries": false,
+          "mutants_uncovered": false
+        }
       }
     },
     "summary": {
@@ -147,7 +161,7 @@
     "mutant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "display_id", "path", "package", "family", "rule", "rule_version", "line", "column", "start_byte", "end_byte", "original", "replacement", "outcome", "duration_ms", "killed_by", "attempts", "output_tail"],
+      "required": ["id", "display_id", "path", "package", "family", "rule", "rule_version", "line", "column", "start_byte", "end_byte", "original", "replacement", "outcome", "duration_ms", "killed_by", "attempts", "output_tail", "covering_test_packages", "uncovered"],
       "properties": {
         "id": { "$ref": "#/$defs/digest" },
         "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
@@ -176,7 +190,16 @@
           "description": "How many times this mutant was executed. Zero for a mutant the run never reached, one for an outcome settled first time, and two for a confirmed timeout. A not_run mutant is usually zero, but a mutant that timed out once and was interrupted before the retry could repeat it reports the one attempt it did make.",
           "$ref": "#/$defs/count"
         },
-        "output_tail": { "type": ["string", "null"], "minLength": 1 }
+        "output_tail": { "type": ["string", "null"], "minLength": 1 },
+        "covering_test_packages": {
+          "description": "The import paths of the test binaries whose coverage profile reaches this mutant's lines, sorted. Empty is legal and means two different things: with coverage.mode off nobody asked, and with mode package nothing covers it — in which case uncovered is true.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "uncovered": {
+          "description": "The run established that no test binary reaches this mutant's lines and did not execute it. Such a mutant is always survived with attempts 0: no test runs the line, so no test could have caught the edit. False whenever coverage.mode is off.",
+          "type": "boolean"
+        }
       }
     },
     "rejected": {

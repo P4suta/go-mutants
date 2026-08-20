@@ -30,11 +30,58 @@
 //     package are the only things allowed to have moved; anything else is a
 //     test writing into the tree every later mutant is measured against, and
 //     [CodeWorkspaceDrift] names the files.
-//  7. Build each test package's binary once, then execute every accepted mutant
-//     against them, activating one per process.
+//  7. Build each test package's binary once, profile them if coverage-guided
+//     selection is on, then execute every accepted mutant against the binaries
+//     it needs, activating one per process.
 //  8. Build the run report from the catalogue and the outcomes, file it in the
 //     history store, and decide the exit status from the document that was
 //     published rather than from a second tally beside it.
+//
+// # Coverage-guided selection
+//
+// Most of a mutation run's wall-clock time is spent proving that mutants no
+// test reaches survive. Step 7 therefore runs each test binary once with
+// coverage collection on, maps the lines each one reached onto the catalogue
+// with internal/coverage, and then measures every mutant only against the
+// binaries that reach it. A mutant no binary reaches is not executed at all: it
+// is reported as a survivor with `uncovered` set, which is both true — nothing
+// runs the line, so nothing could have caught the edit — and more actionable
+// than the bare "survived" a full run would have spent a process to reach.
+//
+// Two rules decide whether this happens, and both are documented where the code
+// that applies them lives:
+//
+//   - **Auto-on, and only for the built-in test command.** Coverage narrowing is
+//     on whenever the effective `test.command` is `go test ./...`, and off with
+//     a [coverage.CodeCustomTestCommand] warning for anything else. There is no
+//     setting, because there is nothing to choose between: the mapping is from a
+//     *test binary* to the lines it reached, and it is sound only because
+//     go-mutants compiled those binaries itself and knows what each one is. A
+//     custom command is an opaque program whose coverage cannot be attributed to
+//     them, and a wrong attribution does not cost time — it skips a mutant a
+//     test does cover, which is a kill lost and a score inflated.
+//   - **Fail open, always.** Every way the pass can fail — the
+//     coverage-instrumented build not compiling, a profiling run failing,
+//     `go tool covdata` missing or erroring, a profile that will not parse, a
+//     profile set with no blocks in it, a module path the profiles do not line
+//     up with — publishes a [coverage.CodeUnavailable] warning and continues
+//     with every mutant measured against every binary. None of them can fail a
+//     run. Coverage-guided selection is an optimisation: without it the run does
+//     strictly more work and reaches exactly the same verdicts, and trading a
+//     correct slow answer for no answer would be the wrong way round.
+//
+// The drift gate needs no coverage entry in its allowlist, and that is a
+// property of where the data is written rather than an omission. The
+// GOCOVERDIR-equivalent directories and the rendered textfmt profiles live
+// under the run's scratch directory, which os.MkdirTemp creates *beside* the
+// snapshot; [snapshot.Snapshot.Redigest] walks the snapshot manifest, so
+// nothing outside the snapshot root can appear as drift. The gate also runs
+// before the coverage pass does, so it could not have seen it either way. What
+// is worth stating plainly is the other half: the profiling pass runs the test
+// binaries with their working directory inside the snapshot, *after* the gate,
+// so a test that writes into its own package directory during that pass is not
+// detected — exactly as it is not during mutant execution, which is the hazard
+// `--isolate` is reserved for.
 //
 // # The event contract
 //
@@ -59,6 +106,11 @@
 //     the mutants in. Everything a renderer has to be able to reproduce byte
 //     for byte is in [RunCompleted.Run], which is composed on the run's own
 //     goroutine after every worker has joined.
+//   - The two are *not* paired one to one. A mutant coverage excluded from
+//     execution publishes [MutantFinished] with no preceding [MutantStarted],
+//     because nothing started: there is no worker and no attempt, and inventing
+//     a start would be inventing a process. A renderer that tracks worker slots
+//     has to allow for it; see [MutantFinished] for the full contract.
 //
 // # Interruption
 //

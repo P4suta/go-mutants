@@ -139,6 +139,19 @@ func TestCodesAreReachable(t *testing.T) {
 		mutants(mutantTimeout, "a"), testBins("example.com/a"), execute.Hooks{})
 	record(err)
 
+	// GOM7530: a coverage directory inside the snapshot, which the drift gate
+	// would otherwise report as a test writing into the tree.
+	covering, _ := coverOptions(t, &fake{respond: func(context.Context, call) runner.Result { return passed() }})
+	_, err = execute.CollectCoverage(t.Context(), covering,
+		testBins("example.com/a"), filepath.Join(covering.SnapshotRoot, "coverage"))
+	record(err)
+
+	// GOM7531: a test binary that does not pass during the coverage pass.
+	redSuite := &fake{respond: func(context.Context, call) runner.Result { return failed("--- FAIL\n") }}
+	coverFailing, coverDir := coverOptions(t, redSuite)
+	_, err = execute.CollectCoverage(t.Context(), coverFailing, testBins("example.com/a"), coverDir)
+	record(err)
+
 	for _, code := range execute.Codes() {
 		if !produced[code] {
 			t.Errorf("no path in these tests produces %s; it is either unreachable or untested", code)

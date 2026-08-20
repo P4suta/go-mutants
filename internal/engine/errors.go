@@ -74,6 +74,13 @@ const (
 	// each later mutant is measured against; the run stops and names the files
 	// rather than reporting outcomes nobody could reproduce.
 	CodeWorkspaceDrift Code = "GOM4014"
+	// CodeCoverageRender reports a `go tool covdata textfmt` that would not run,
+	// or whose output could not be read back. It is the engine's own code
+	// because the engine is what issues the command — internal/coverage is pure
+	// and never starts a process — and it never reaches a user as an error: the
+	// coverage phase turns it into internal/coverage's GOM7602 warning and
+	// measures every mutant against every binary instead.
+	CodeCoverageRender Code = "GOM4015"
 
 	// CodeTimeoutTooSmall reports an explicit `test.timeout` that is not above
 	// the slowest baseline run. Such a timeout would expire during ordinary
@@ -154,6 +161,7 @@ var codes = []Code{
 	CodeBaselineTimedOut,
 	CodeInstrumentedBaselineFailed,
 	CodeWorkspaceDrift,
+	CodeCoverageRender,
 	CodeTimeoutTooSmall,
 	CodeUnknownOperator,
 	CodeInterrupted,

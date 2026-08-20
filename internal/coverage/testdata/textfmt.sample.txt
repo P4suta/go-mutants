@@ -1,0 +1,7 @@
+mode: set
+cov.example/exp/a/a.go:3.31,4.12 1 1
+cov.example/exp/a/a.go:4.12,5.13 1 1
+cov.example/exp/a/a.go:5.13,7.4 1 1
+cov.example/exp/a/a.go:8.3,8.16 1 0
+cov.example/exp/a/a.go:10.2,10.15 1 0
+cov.example/exp/a/a.go:13.30,15.2 1 0

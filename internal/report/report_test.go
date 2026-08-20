@@ -28,6 +28,10 @@ var updateGolden = flag.Bool("update", false, "rewrite the golden run report")
 // for byte.
 var goldenPath = filepath.Join("testdata", "run-report.golden.json")
 
+// coverageGoldenPath is the same for a coverage-guided run, which publishes two
+// fields an `off` run leaves out entirely.
+var coverageGoldenPath = filepath.Join("testdata", "run-report-coverage.golden.json")
+
 // TestGoldenReport pins every byte of a complete run report.
 //
 // A byte-exact fixture is the right assertion here rather than a field-by-field
@@ -68,6 +72,176 @@ func TestGoldenReportValidates(t *testing.T) {
 	}
 	if err := schemas.Validate(schemas.RunReportV1, doc); err != nil {
 		t.Fatalf("the golden report does not satisfy its own schema: %v", err)
+	}
+}
+
+// TestGoldenCoverageReport pins the second shape of the document: the one a
+// coverage-guided run publishes.
+//
+// It is a golden of its own rather than a field-by-field check for the reason
+// [TestGoldenReport] is: `coverage.binaries` and `coverage.mutants_uncovered`
+// are *absent* from an off-mode document and present here, and the difference
+// between an absent key and a zero-valued one is exactly what a consumer's
+// decoder sees and exactly what no equality assertion would notice.
+func TestGoldenCoverageReport(t *testing.T) {
+	t.Parallel()
+
+	got, err := buildCoverageFixture(t).Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if *updateGolden {
+		if writeErr := os.WriteFile(coverageGoldenPath, got, 0o644); writeErr != nil {
+			t.Fatalf("rewriting %s: %v", coverageGoldenPath, writeErr)
+		}
+	}
+	want, err := os.ReadFile(coverageGoldenPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", coverageGoldenPath, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("the marshalled report does not match %s\n--- got ---\n%s\n--- want ---\n%s",
+			coverageGoldenPath, got, want)
+	}
+	if err := schemas.Validate(schemas.RunReportV1, want); err != nil {
+		t.Fatalf("the golden coverage report does not satisfy its own schema: %v", err)
+	}
+}
+
+// TestCoverageBlockDescribesTheMutantsUnderneathIt reads the two summary
+// numbers back out of the document and checks them against the rows they
+// summarise.
+//
+// `mutants_uncovered` is counted by the builder rather than passed in, which is
+// what makes this checkable at all: the assertion is that the number a consumer
+// would branch on and the rows a consumer would count agree, which is the one
+// way a summary can quietly stop being one.
+func TestCoverageBlockDescribesTheMutantsUnderneathIt(t *testing.T) {
+	t.Parallel()
+
+	r := buildCoverageFixture(t)
+	if r.Coverage.Mode != report.CoveragePackage {
+		t.Fatalf("coverage mode = %q, want %q", r.Coverage.Mode, report.CoveragePackage)
+	}
+	if r.Coverage.Binaries == nil || *r.Coverage.Binaries != coverageBinaries {
+		t.Errorf("coverage.binaries = %v, want %d", r.Coverage.Binaries, coverageBinaries)
+	}
+
+	counted := 0
+	for _, m := range r.Mutants {
+		if !m.Uncovered {
+			if len(m.CoveringTestPackages) == 0 {
+				t.Errorf("mutant %s is covered by nothing and is not marked uncovered", m.DisplayID)
+			}
+			continue
+		}
+		counted++
+		// The three things `uncovered` claims, each of which the builder
+		// refuses to publish without.
+		if m.Outcome != report.OutcomeSurvived {
+			t.Errorf("uncovered mutant %s is %s, want %s", m.DisplayID, m.Outcome, report.OutcomeSurvived)
+		}
+		if m.Attempts != 0 || m.DurationMS != 0 {
+			t.Errorf("uncovered mutant %s reports %d attempts in %dms, want none of either",
+				m.DisplayID, m.Attempts, m.DurationMS)
+		}
+		if len(m.CoveringTestPackages) != 0 {
+			t.Errorf("uncovered mutant %s lists %v as covering it", m.DisplayID, m.CoveringTestPackages)
+		}
+	}
+	if r.Coverage.MutantsUncovered == nil || *r.Coverage.MutantsUncovered != counted {
+		t.Errorf("coverage.mutants_uncovered = %v, but %d rows carry the flag", r.Coverage.MutantsUncovered, counted)
+	}
+	if counted == 0 {
+		t.Fatal("the coverage fixture has no uncovered mutant, so this checks nothing")
+	}
+}
+
+// TestCoverageOffStatesNoNumbersItDidNotMeasure is the other half of the same
+// contract, in Go rather than in JSON Schema.
+func TestCoverageOffStatesNoNumbersItDidNotMeasure(t *testing.T) {
+	t.Parallel()
+
+	r := buildFixture(t)
+	if r.Coverage.Mode != report.CoverageOff {
+		t.Fatalf("coverage mode = %q, want %q", r.Coverage.Mode, report.CoverageOff)
+	}
+	if r.Coverage.Binaries != nil || r.Coverage.MutantsUncovered != nil {
+		t.Errorf("a run that narrowed nothing reports %+v", r.Coverage)
+	}
+	for _, m := range r.Mutants {
+		if m.Uncovered {
+			t.Errorf("mutant %s is marked uncovered in a run with coverage off", m.DisplayID)
+		}
+		if m.CoveringTestPackages == nil {
+			t.Errorf("mutant %s carries a null covering list, not an empty one", m.DisplayID)
+		}
+	}
+}
+
+// TestBuildRefusesACoverageBlockTheMutantsContradict walks the combinations the
+// builder must never publish.
+func TestBuildRefusesACoverageBlockTheMutantsContradict(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		mutate func(opts *report.Options)
+	}{
+		{
+			name: "unknown mode",
+			mutate: func(opts *report.Options) {
+				opts.CoverageMode = report.CoverageMode("line")
+			},
+		},
+		{
+			name: "uncovered with coverage off",
+			mutate: func(opts *report.Options) {
+				opts.CoverageMode = report.CoverageOff
+			},
+		},
+		{
+			name: "uncovered mutant that was executed",
+			mutate: func(opts *report.Options) {
+				for i := range opts.Results {
+					if opts.Results[i].Uncovered {
+						opts.Results[i].Attempts = 1
+					}
+				}
+			},
+		},
+		{
+			name: "uncovered mutant that was killed",
+			mutate: func(opts *report.Options) {
+				for i := range opts.Results {
+					if opts.Results[i].Uncovered {
+						opts.Results[i].Outcome = mutation.OutcomeKilled
+					}
+				}
+			},
+		},
+		{
+			name: "negative binary count",
+			mutate: func(opts *report.Options) {
+				opts.CoverageBinaries = -1
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := coverageOptions(t)
+			c.mutate(&opts)
+			_, err := report.Build(opts)
+			if err == nil {
+				t.Fatal("Build published a document whose coverage block contradicts its mutants")
+			}
+			if code := report.CodeOf(err); code != report.CodeInvalidCoverage {
+				t.Errorf("code = %q, want %q (%v)", code, report.CodeInvalidCoverage, err)
+			}
+		})
 	}
 }
 
@@ -422,7 +596,35 @@ func TestSchemaRejects(t *testing.T) {
 		{
 			name:    "unknown coverage mode",
 			pointer: "/coverage/mode",
-			mutate:  func(doc map[string]any) { object(doc, "coverage")["mode"] = "package" },
+			mutate:  func(doc map[string]any) { object(doc, "coverage")["mode"] = "line" },
+		},
+		{
+			// The `else` half of the conditional: a run that narrowed nothing
+			// must not carry the numbers that describe narrowing, because a
+			// reader cannot tell a measured zero from a default one.
+			name:    "coverage off carrying a binary count",
+			pointer: "/coverage/binaries",
+			mutate:  func(doc map[string]any) { object(doc, "coverage")["binaries"] = 2.0 },
+		},
+		{
+			name:    "coverage off carrying an uncovered count",
+			pointer: "/coverage/mutants_uncovered",
+			mutate:  func(doc map[string]any) { object(doc, "coverage")["mutants_uncovered"] = 0.0 },
+		},
+		{
+			name:    "mutant with no covering list",
+			pointer: "/mutants/0/covering_test_packages",
+			mutate:  func(doc map[string]any) { delete(mutant(doc, 0), "covering_test_packages") },
+		},
+		{
+			name:    "covering list is not an array",
+			pointer: "/mutants/0/covering_test_packages",
+			mutate:  func(doc map[string]any) { mutant(doc, 0)["covering_test_packages"] = "example.com/m" },
+		},
+		{
+			name:    "uncovered is not a boolean",
+			pointer: "/mutants/0/uncovered",
+			mutate:  func(doc map[string]any) { mutant(doc, 0)["uncovered"] = "no" },
 		},
 		{
 			name:    "score above 100",

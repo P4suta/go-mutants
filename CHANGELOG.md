@@ -133,6 +133,74 @@ Entries say *why* a change was made, not only what changed.
   mutation run adds no files to the tree it is measuring; every write is
   temp-file plus atomic rename, and `ReportPublished` is emitted only after the
   rename succeeds.
+- The live dashboard, `internal/tui`: a second renderer over the same
+  `chan engine.Event` the plain lines come from, drawn with bubbletea on the
+  alternate screen. It shows the phase and what the baseline established, a
+  score gauge over what has settled, the outcome counters, a worker-slot table
+  fixed at `RunPlanned.Workers` rows so that nothing reorders itself while it
+  is being read, a scrolling survivor feed carrying the same
+  `- original` / `+ replacement` diff the plain output prints, an EWMA estimate
+  of what is left, and an elapsed clock. The engine is unchanged and unaware:
+  both renderers consume one stream, and neither computes a number the engine
+  did not publish.
+- `internal/cli` picks the dashboard only when standard output is a terminal
+  that can do better than ASCII and nothing has asked for something else.
+  `--json`, `--quiet`, `--no-color`, `NO_COLOR`, `CI`, and the new `--no-tui`
+  each fall back to the plain renderer, and the terminal detection is
+  charmbracelet's own — `x/term` and `colorprofile`, the libraries bubbletea
+  itself decides with — rather than a hand-rolled escape-sequence probe. Only a
+  terminal is handed over as input: a redirected standard input is somebody's
+  data, not a keyboard.
+- Ctrl-C in the dashboard cancels the run's context and does nothing else. The
+  engine then unwinds exactly as it does for a signal in plain mode — marking
+  what it never reached as not-run, publishing the partial report, emitting
+  `RunCompleted` — and only then does the screen come down, so the alternate
+  screen can never be torn away before the report exists. A second Ctrl-C is
+  the documented escape hatch and quits at once; the run keeps unwinding and
+  the renderer keeps draining it, because abandoning the stream would deadlock
+  the cleanup that removes the snapshot. Once the screen is restored, the
+  warnings and the closing summary are printed underneath it by the plain
+  renderer itself — the same code, fed the events it would have rendered
+  anyway — so the block left in the scrollback is byte for byte the block a
+  plain run prints, and a warning the alternate screen erased is not lost.
+- Coverage-guided selection, `internal/coverage`. Each test binary is built
+  with `-cover -coverpkg=<module>/...`, run once with nothing activated, and
+  rendered through `go tool covdata textfmt`; a mutant is then measured only
+  against the binaries whose profile reaches its lines, and one no binary
+  reaches is not executed at all. Most of a mutation run's wall-clock time goes
+  on proving that mutants no test touches survive, and that is a fact the
+  profiles already know. The mapping is by **line interval only**, never by
+  column: the profile is collected from the instrumented snapshot, where the
+  guard rewrite preserves line numbers by design and moves columns by
+  construction, so lines are the coordinates the two documents agree on.
+  Over-approximating costs a wasted execution; under-approximating would cost a
+  kill, so the boundaries are inclusive and a mutant a covered block merely
+  touches is treated as covered.
+- A mutant nothing covers is reported as `survived` with `uncovered: true` and
+  zero attempts, rather than as `not-run`. It really did survive — no test runs
+  the line, so no test could have caught the edit — and taking it out of the
+  score's denominator would let a workspace raise its mutation score by
+  deleting tests. What `uncovered` adds is the more actionable half of the
+  finding: write a test for this line, rather than sharpen the test you have.
+  The console prints `SURVIVED (uncovered)`, lists those survivors after the
+  covered ones, and adds an `uncovered N` column to the counts line.
+- Two rules decide whether any of that happens, and both fail safe.
+  Coverage-guided selection is **auto-on only for the built-in
+  `go test ./...`** and off with a `GOM7601` warning for any other
+  `test.command`: the mapping is from a *test binary* to the lines it reached,
+  and there is no honest way to attribute an opaque command's coverage to
+  go-mutants' own per-package binaries. And every failure of the pass —
+  the instrumented build not compiling, a profiling run failing, `covdata`
+  missing, a profile that will not parse, a profile set with no blocks, a
+  module path the profiles do not line up with — publishes a `GOM7602` warning
+  and runs every mutant against every binary. None of them can fail a run:
+  without the optimisation the run does strictly more work and reaches exactly
+  the same verdicts.
+- `run-report-v1` gains `coverage.binaries` and `coverage.mutants_uncovered`
+  in the new `package` mode, and `covering_test_packages` and `uncovered` on
+  every entry of `mutants[]`. The two summary numbers are absent rather than
+  zero outside `package` mode, and the schema refuses them there: a run that
+  narrowed nothing must not state a measurement it never made.
 - Licensing and policy files: dual `MIT OR Apache-2.0` with `LICENSES/` and
   `REUSE.toml` annotations for the files that cannot carry an inline SPDX
   header, plus `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md`, and
@@ -140,6 +208,21 @@ Entries say *why* a change was made, not only what changed.
 
 ### Notes
 
+- The dashboard draws with ASCII glyphs only, its score gauge included.
+  bubbletea enables virtual-terminal processing on Windows but does not touch
+  the console output code page, so a ConHost on a legacy OEM code page renders
+  multi-byte UTF-8 as mojibake — and a progress bar is the one element that is
+  read by its shape. The gauge is drawn here rather than with `bubbles/progress`
+  for a second reason: that component's value is a spring animation, which
+  needs `charmbracelet/harmonica`, a module this project does not depend on, to
+  interpolate through values the score never actually had.
+- The dashboard's counters are `killed`, `survived`, `timeout`, `inconclusive`,
+  `errored`, and `not-run`. There is deliberately no `uncovered` counter:
+  `mutation.Outcome` has no such outcome, and a mutant that coverage showed no
+  test reaches is a *survivor*, which is where it is counted. The plain
+  renderer's closing block states the split separately, as `uncovered N`
+  alongside the six, precisely because it is a subset of `survived` and not a
+  seventh bucket.
 - `dogfood` and `package` are honest placeholders that echo and exit 0. They
   exist as named tasks and as CI jobs so that self-mutation and packaging can
   never be bolted on without a gate; they become real in the later phases.
@@ -151,9 +234,8 @@ Entries say *why* a change was made, not only what changed.
 - `run` now performs real mutation testing end to end, but only for the
   `comparison` and `boolean-literal` families — two of the eleven — so a score
   it reports is a score against those rules and not against the full
-  catalogue. The outcome cache, coverage-guided selection, `--changed`,
-  `--shard`, the HTML report, the Stryker projection, the TUI dashboard, and
-  the `init`, `doctor`, `report`, and `cache` commands do not exist yet, and no
-  page in `docs/` claims otherwise.
+  catalogue. The outcome cache, `--changed`, `--shard`, the HTML report, the
+  Stryker projection, and the `init`, `doctor`, `report`, and `cache` commands
+  do not exist yet, and no page in `docs/` claims otherwise.
 
 [Unreleased]: https://github.com/P4suta/go-mutants/commits/main

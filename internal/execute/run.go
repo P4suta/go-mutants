@@ -38,6 +38,29 @@ type MutantRun struct {
 	// with no budget is refused rather than run unbounded, because a run that
 	// never ends is worse than a mutant reported wrongly.
 	Timeout time.Duration
+
+	// Binaries narrows the measurement to a subset of the test binaries, as
+	// indices into the `bins` slice given to [RunOne] or [Schedule]. It is how
+	// coverage-guided selection reaches this package: internal/coverage decides
+	// which test packages reach a mutant's lines, and only those binaries are
+	// started for it.
+	//
+	// Nil — the zero value — means every binary, which is what a run with no
+	// coverage information does and what every caller before coverage-guided
+	// selection existed was doing implicitly.
+	//
+	// A non-nil but *empty* subset is refused with [CodeMutantInvalid] rather
+	// than obeyed. Walking zero binaries would report the mutant as survived
+	// having started nothing, which is the same flattering green
+	// [CodeNoTestBinaries] refuses for a whole run: a mutant no binary covers is
+	// not executed at all and is recorded by the engine, not handed here with an
+	// empty list. An index outside the slice is refused for the same reason —
+	// it can only mean the caller's binaries and this one's have drifted apart.
+	//
+	// The order the indices are given in is the order the binaries are tried,
+	// and duplicates are not removed: this package runs what it is told to run,
+	// and a caller that wants each binary once passes each index once.
+	Binaries []int
 }
 
 // An Attempt is one pass over the test binaries with one mutant active.
@@ -80,6 +103,11 @@ type Attempt struct {
 // running the remaining binaries could not change that while costing the run
 // the very time mutation testing is short of.
 //
+// Which binaries "the test binaries" means is [MutantRun.Binaries]: every one
+// of them by default, and the coverage-selected subset when the caller narrowed
+// it. Narrowing changes the cost of a run and not its meaning — a binary that
+// never reaches the mutant's lines can only report that it survived.
+//
 // The environment is composed rather than inherited — see [mutantEnv] — and the
 // working directory is each binary's own package directory, because a Go test
 // resolves testdata relative to where it runs. That working directory is inside
@@ -106,6 +134,11 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		})
 	}
 
+	selected, err := selectBinaries(m, bins)
+	if err != nil {
+		return errored(err)
+	}
+
 	scratch, err := workerScratch(opts.ScratchDir)
 	if err != nil {
 		return errored(err)
@@ -118,7 +151,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 	deadline := "-test.timeout=" + (InProcessTimeoutFactor * m.Timeout).String()
 
 	attempt := Attempt{Outcome: mutation.OutcomeSurvived}
-	for _, bin := range bins {
+	for _, bin := range selected {
 		// Asked before each binary rather than only after one answers, so a
 		// cancelled run stops instead of starting the rest of the queue just to
 		// have internal/runner refuse each one in turn.
@@ -188,6 +221,37 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		}
 	}
 	return attempt
+}
+
+// selectBinaries resolves [MutantRun.Binaries] against the binaries this run
+// was given.
+//
+// The nil case returns the slice itself rather than a copy: the caller owns it,
+// nothing here writes to it, and copying every binary list once per mutant would
+// be a per-mutant allocation bought with nothing.
+func selectBinaries(m MutantRun, bins []TestBinary) ([]TestBinary, error) {
+	if m.Binaries == nil {
+		return bins, nil
+	}
+	if len(m.Binaries) == 0 {
+		return nil, &Error{
+			Code: CodeMutantInvalid,
+			Message: "the mutant " + display(m.ID) +
+				" was given an empty set of test binaries to be measured against; a mutant no binary covers is not executed at all, and running none of them would report it as survived having started nothing",
+		}
+	}
+	selected := make([]TestBinary, 0, len(m.Binaries))
+	for _, index := range m.Binaries {
+		if index < 0 || index >= len(bins) {
+			return nil, &Error{
+				Code: CodeMutantInvalid,
+				Message: "the mutant " + display(m.ID) + " names test binary " + strconv.Itoa(index) +
+					" of " + strconv.Itoa(len(bins)) + "; the caller's binaries and this run's have drifted apart",
+			}
+		}
+		selected = append(selected, bins[index])
+	}
+	return selected, nil
 }
 
 // workerScratch resolves a worker's temporary directory, makes sure it exists,

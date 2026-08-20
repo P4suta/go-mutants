@@ -116,9 +116,24 @@ type CoverageMode string
 // The v1 coverage modes.
 const (
 	// CoverageOff means every selected mutant was executed against every test
-	// binary of its package. It is the only mode this build implements.
+	// binary. It is what a run with a custom `test.command` does, and what a run
+	// whose coverage pass failed falls back to.
 	CoverageOff CoverageMode = "off"
+	// CoveragePackage means the run profiled each test binary once and executed
+	// every mutant only against the binaries whose profile shows a covered
+	// statement on the mutant's lines. Mutants no binary covers were not
+	// executed at all and carry `uncovered`.
+	CoveragePackage CoverageMode = "package"
 )
+
+// CoverageModes returns every mode in document order.
+func CoverageModes() []CoverageMode { return []CoverageMode{CoverageOff, CoveragePackage} }
+
+// Valid reports whether m is one of the defined modes.
+func (m CoverageMode) Valid() bool { return slices.Contains(CoverageModes(), m) }
+
+// String returns the mode as it appears in the document.
+func (m CoverageMode) String() string { return string(m) }
 
 // An Outcome is what happened to one mutant, in this document's spelling.
 //
@@ -286,12 +301,24 @@ type Baseline struct {
 
 // Coverage is how coverage narrowed the run.
 //
-// It is an object with one field rather than a bare string, so that
-// coverage-guided selection can arrive as `mode: "package"` plus whatever it
-// needs to explain itself, instead of forcing every consumer to learn a new
-// top-level shape.
+// It is an object rather than a bare string, and this is the change it was
+// designed for: `mode: "package"` arrives with the two numbers that explain
+// what it did, and no consumer had to learn a new top-level shape.
+//
+// The two numbers are present exactly when the mode is `package`, which is why
+// they are pointers. An `off` run carrying `binaries: 0` would be stating a
+// measurement it never made — it profiled no binaries because it profiled
+// nothing — and a reader cannot tell a real zero from a default. The schema
+// refuses them outside `package` mode for the same reason.
 type Coverage struct {
 	Mode CoverageMode `json:"mode"`
+	// Binaries is how many test binaries the coverage pass profiled.
+	Binaries *int `json:"binaries,omitempty"`
+	// MutantsUncovered is how many mutants no binary covered, and so were
+	// reported as survivors without being executed. It is counted from
+	// `mutants[]` by [Build] rather than passed in, so the summary line and the
+	// rows underneath it cannot disagree.
+	MutantsUncovered *int `json:"mutants_uncovered,omitempty"`
 }
 
 // Summary is the counted breakdown and what the policy made of it.
@@ -329,6 +356,14 @@ type PolicyResult struct {
 // one it hung — so a confirmed timeout carries it too. It is nil for an outcome
 // that detected nothing, and nil for a detection the harness could not
 // attribute.
+//
+// CoveringTestPackages and Uncovered are always present, whatever the coverage
+// mode, and they are two different statements. An `off` run carries an empty
+// list and false: it did not ask which packages cover the mutant, and it
+// executed the mutant against everything. A `package` run carries the binaries
+// the profile named, and Uncovered is true for every mutant coverage
+// established nothing reaches — which are also the only ones the run did not
+// execute.
 type Mutant struct {
 	ID          string  `json:"id"`
 	DisplayID   string  `json:"display_id"`
@@ -348,6 +383,15 @@ type Mutant struct {
 	KilledBy    *string `json:"killed_by"`
 	Attempts    int     `json:"attempts"`
 	OutputTail  *string `json:"output_tail"`
+	// CoveringTestPackages are the import paths of the test binaries whose
+	// coverage profile reaches this mutant's lines, sorted. Empty is legal and
+	// means two different things depending on `coverage.mode`; see the type
+	// documentation.
+	CoveringTestPackages []string `json:"covering_test_packages"`
+	// Uncovered says the run established that no test binary reaches this
+	// mutant's lines and therefore did not execute it. Such a mutant is a
+	// survivor — no test could have caught it — with zero attempts.
+	Uncovered bool `json:"uncovered"`
 }
 
 // A Rejected is a catalogued mutant validation refused, with the compiler's

@@ -60,6 +60,14 @@ const (
 	// inside the last step of a run.
 	CodeNoReport Code = "GOM5107"
 
+	// CodeInvalidCoverage reports a coverage block that does not describe the
+	// mutants underneath it: an unknown mode, a negative binary count, or a
+	// mutant marked uncovered that the run nonetheless has a measurement for.
+	// The last is the one worth having: `uncovered` means "not executed", so a
+	// killed or retried mutant carrying it is a document claiming a detection
+	// nothing performed.
+	CodeInvalidCoverage Code = "GOM5108"
+
 	// CodeNoCatalog reports a build with no catalogue at all. Every run has one,
 	// even an empty one, and a nil catalogue means the caller lost it rather
 	// than that the run found nothing.
@@ -125,6 +133,7 @@ var codes = []Code{
 	CodeInvalidSelection,
 	CodeInvalidTestCommand,
 	CodeNoReport,
+	CodeInvalidCoverage,
 	CodeNoCatalog,
 	CodeUnknownMutant,
 	CodeDuplicateEntry,

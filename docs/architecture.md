@@ -8,12 +8,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: partially implemented.** The pure packages, the strict
 configuration decoder, the snapshot, the baseline execution layer, discovery
 for two operator families, guard-based instrumentation with its generated
-runtime, compile validation, mutant execution, `RunReport v1` with its history
-store, and the `list` and `run` commands exist. Coverage-guided selection, the
-outcome cache, `--changed`, `--shard`, the HTML report, the Stryker projection,
-and the TUI do not. Each section below marks which of the two it is; nothing
-here should be read as a description of working software until its status says
-so.
+runtime, compile validation, mutant execution, coverage-guided selection,
+`RunReport v1` with its history store, the live TUI dashboard, and the `list`
+and `run` commands exist. The outcome cache, `--changed`, `--shard`, the HTML
+report, and the Stryker projection do not. Each section below marks which of
+the two it is; nothing here should be read as a description of working
+software until its status says so.
 
 ## Invariants
 
@@ -49,13 +49,16 @@ packages.Load + types walk        (candidates, skips with reasons)
 sorted snapshot + manifest digest (symlink/junction rejected)
             |
             v
-baseline build + test             (timeout derivation, coverage profile)
+baseline build + test             (timeout derivation)
             |
             v
 batch compile + delta debugging   (rejected[] with diagnostics)
             |
             v
 instrumented baseline             (no mutant active: meaning preserved)
+            |
+            v
+profile each test binary once     (coverage-guided selection)
             |
             v
 worker pool over one snapshot     (per-process activation, tree kill)
@@ -65,10 +68,8 @@ outcome cache + RunReport v1      (JSON, HTML, history, exit policy)
 ```
 
 Every transition on this line is what `run` performs today, and discovery on
-its own is what `list` prints. Three annotations above are still promises: no
-coverage profile is collected at the baseline, no outcome cache reuses anything
-between runs, and the HTML report does not exist — so every catalogued mutant
-is executed against every test binary, every time.
+its own is what `list` prints. Two annotations above are still promises: no
+outcome cache reuses anything between runs, and the HTML report does not exist.
 
 Each arrow is a phase transition with its own type. `runner.Execute(m
 Validated)` cannot be called with a raw candidate; that is the compile-time
@@ -176,15 +177,20 @@ candidate costs one candidate rather than a file or a run.
 Status: partially implemented. The whole pipeline runs — snapshot, baseline,
 discovery, compile validation, the instrumented baseline, the drift gate,
 per-mutant activation, the report, and the exit code — so `go-mutants run`
-measures a real mutation score today. What is still missing is the rest of the
-operator catalog (discovery implements comparison and boolean-literal),
-coverage-guided selection, `--changed`, and `--shard`.
+measures a real mutation score today, narrowed by coverage. What is still
+missing is the rest of the operator catalog (discovery implements comparison
+and boolean-literal), `--changed`, and `--shard`.
 
 - **One build.** Each package with tests is compiled once with `go test -c`;
-  packages with no test files are skipped. The `-cover -coverpkg=<module>/...`
-  flags arrive with coverage-guided selection. `--race`, when requested,
-  applies to that build and to the baseline so the derived timeout stays
-  consistent.
+  packages with no test files are skipped. `-cover -coverpkg=<module>/...` is
+  added whenever coverage-guided selection is on, and the same binaries serve
+  both the profiling pass and every mutant — there is no second, non-cover
+  build. That is not free: a `-cover` test binary runs its coverage teardown on
+  every exit whatever `-test.gocoverdir` says, which measured at roughly 6 ms
+  per run on a three-file fixture and 8-16 ms on this repository's own
+  `internal/mutation` binary. Two builds of one tree would cost more.
+  `--race`, when requested, applies to that build and to the baseline so the
+  derived timeout stays consistent.
 - **Direct binary launch.** Test binaries are executed directly, bypassing the
   `go test` result cache entirely, with the working directory set to the
   package directory inside the snapshot so `testdata` paths behave.
@@ -203,16 +209,26 @@ coverage-guided selection, `--changed`, and `--shard`.
   through a Windows Job Object with
   `KILL_ON_JOB_CLOSE` (fail-closed if ownership cannot be established) or a
   POSIX process group `TERM` then `KILL`.
-- **Coverage-guided selection.** The baseline runs with `-test.gocoverdir`, and
-  `go tool covdata textfmt` blocks are mapped to mutants by line-interval
-  overlap only. Columns are not preserved in that format, so they are not used;
-  the over-approximation errs toward running a binary rather than missing a
-  kill. Test packages that cover nothing relevant are not executed and their
-  mutants are reported as `survived (uncovered)`. If coverage cannot be parsed
-  the engine fails open and runs everything.
-- **`--changed <ref>`** intersects candidates with `git diff -U0` line sets
-  from `git merge-base`, while discovery and validation still run over the
-  whole module so IDs and `rejected[]` match a full run.
+- **Coverage-guided selection.** *Implemented.* The test binaries are built
+  with `-cover -coverpkg=<module>/...` and each is then run once with nothing
+  activated and `-test.gocoverdir` pointed at a directory of its own — the
+  flag, never the `GOCOVERDIR` environment variable, which a *test* binary does
+  not read. `go tool covdata textfmt` blocks are mapped to mutants by
+  line-interval overlap only: columns describe the instrumented text while a
+  mutant's span was measured against the user's own bytes, and only the lines
+  agree. The over-approximation errs toward running a binary rather than
+  missing a kill. A mutant no binary reaches is not executed at all and is
+  reported as `survived (uncovered)`.
+
+  Two rules bound it. Narrowing is auto-on only for the built-in
+  `go test ./...` and off with a `GOM7601` warning for any other
+  `test.command`, because an opaque command's coverage cannot be attributed to
+  go-mutants' own per-package binaries. And every failure of the pass —
+  including a `-cover` build that will not compile — publishes a `GOM7602`
+  warning and runs everything, so the optimisation can never fail a run.
+- **`--changed <ref>`** *(planned)* intersects candidates with `git diff -U0`
+  line sets from `git merge-base`, while discovery and validation still run
+  over the whole module so IDs and `rejected[]` match a full run.
 - **`--shard k/n`** assigns by `sha256(ID)[:8] % n`, so adding or removing
   mutants elsewhere does not reshuffle a shard. Each shard emits a complete
   report with other shards marked `not-run (other-shard)`, and `report merge`
@@ -247,19 +263,24 @@ nothing was measured. Exit codes are 0, 1 (opt-in policy failure only), 2
 
 ## Reporting and the event stream
 
-Status: partially implemented. The event stream, the plain-line console
-renderer, `RunReport v1`, and its history store exist and carry a whole run
-today; the bubbletea dashboard, the HTML report, the Stryker projection, and
-`report merge` are planned. The engine never draws. It
-publishes to a single
-`chan engine.Event` (a sealed interface): `RunPlanned`, `PhaseChanged`,
-`BaselineProgress`, `MutantStarted`, `MutantFinished`, `CacheHit`, `Warning`,
-`SkipRecorded`, `ReportPublished` (only after the atomic rename), and a
-terminating `RunCompleted`. A `Renderer` interface has two implementations: the
-bubbletea dashboard and deterministic plain lines. The TUI is selected only
-when the output is a TTY and CI, `NO_COLOR`, `--quiet`, `--json`, and
-`--log-format json` all say otherwise. The final summary is byte-identical
-between the two.
+Status: partially implemented. The event stream, both console renderers,
+`RunReport v1`, and its history store exist and carry a whole run today; the
+HTML report, the Stryker projection, and `report merge` are planned. The
+engine never draws. It publishes to a single `chan engine.Event` (a sealed
+interface): `RunPlanned`, `PhaseChanged`, `BaselineProgress`,
+`BaselineCompleted`, `Discovered`, `Validated`, `CoverageMapped`,
+`MutantStarted`, `MutantFinished`, `Warning`, `ReportPublished` (only after the
+atomic rename), and a terminating `RunCompleted`. `CoverageMapped` is published
+only by a run that narrowed itself; one with coverage off publishes the
+`GOM76xx` `Warning` saying why instead. `CacheHit` arrives with the outcome
+cache and does not exist yet. A `Renderer` interface has two implementations:
+the bubbletea dashboard and deterministic plain lines. The TUI is selected only
+when standard output is a terminal that can do better than ASCII and
+`--no-tui`, `--json`, `--quiet`, `--no-color`, `NO_COLOR`, and `CI` all say
+otherwise; anything else gets the plain lines. The final summary is
+byte-identical between the two: a dashboard run replays its warnings and its
+closing block through the plain renderer itself, once the alternate screen has
+been restored.
 
 `RunReport v1` is the lossless source of truth; the Stryker projection and the
 HTML report are one-way, deterministic derivations of it. History is kept
@@ -288,14 +309,14 @@ rename succeeds. See
 | `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
 | `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
 | `internal/runner` | One process, timed and supervised; tree kill | implemented |
-| `internal/coverage` | covdata textfmt parsing, line overlap mapping | planned |
+| `internal/coverage` | covdata textfmt parsing, line overlap mapping | implemented |
 | `internal/cache` | Outcome cache | planned |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
 | `internal/execute` | Test-binary build, scheduling, timeout retry | implemented |
 | `internal/report` | RunReport, projections, HTML, history, merge | v1, history |
 | `internal/engine` | Orchestration, typestate pipeline, events | implemented |
 | `internal/console` | Deterministic plain-line renderer | implemented |
-| `internal/tui` | The bubbletea dashboard | planned |
+| `internal/tui` | The bubbletea dashboard | implemented |
 | `internal/schemas` | Embedded JSON Schemas, test-time validation | catalog, run report |
 
 Pure packages have no filesystem or process access, which is what makes the

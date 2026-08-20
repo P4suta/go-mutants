@@ -57,6 +57,12 @@ type candidate struct {
 	attempts int
 	duration time.Duration
 	tail     string
+	// covering are the test binaries a coverage-guided run found reaching this
+	// mutant's lines, and uncovered marks the one nothing reaches. Both are
+	// zero for the coverage-off fixture, which is what a run that never asked
+	// carries.
+	covering  []string
+	uncovered bool
 }
 
 // fixtureCandidates covers every outcome the document can carry, plus a
@@ -123,18 +129,30 @@ var fixtureSkips = []discover.Skip{
 }
 
 // fixtureWarnings are in publication order and stay that way.
+//
+// The second is the reason this fixture's coverage mode is `off`: a run with a
+// custom test command cannot map a test binary onto the lines it reached, so it
+// says so and measures every mutant against every binary. The coverage-guided
+// shape of the document is pinned by its own golden; see [coverageOptions].
 var fixtureWarnings = []report.Warning{
 	{Code: "GOM4040", Message: "the snapshot directory could not be removed: access is denied"},
-	{Code: "GOM0001", Message: "coverage-guided selection is not implemented yet"},
+	{Code: "GOM7601", Message: "coverage-guided selection is off: test.command is not the built-in `go test ./...`"},
 }
 
-// locatedFixtures turns the fixture candidates into discovery output and the
-// catalogue built from it.
+// locatedFixtures turns the main fixture's candidates into discovery output and
+// the catalogue built from it.
 func locatedFixtures(t *testing.T) ([]discover.Located, *mutation.Catalog) {
 	t.Helper()
+	return located(t, fixtureCandidates)
+}
+
+// located turns any list of candidates into discovery output and the catalogue
+// built from it.
+func located(t *testing.T, candidates []candidate) ([]discover.Located, *mutation.Catalog) {
+	t.Helper()
 	registry := mutation.CanonicalRegistry()
-	located := make([]discover.Located, 0, len(fixtureCandidates))
-	for _, c := range fixtureCandidates {
+	rows := make([]discover.Located, 0, len(candidates))
+	for _, c := range candidates {
 		rule, ok := registry.Lookup(c.rule)
 		if !ok {
 			t.Fatalf("the canonical registry has no rule %q", c.rule)
@@ -143,7 +161,7 @@ func locatedFixtures(t *testing.T) ([]discover.Located, *mutation.Catalog) {
 		if err != nil {
 			t.Fatalf("span for %s: %v", c.rule, err)
 		}
-		located = append(located, discover.Located{
+		rows = append(rows, discover.Located{
 			Candidate: mutation.Candidate{
 				Path:         c.path,
 				Rule:         rule,
@@ -157,7 +175,7 @@ func locatedFixtures(t *testing.T) ([]discover.Located, *mutation.Catalog) {
 			Package: c.pkg,
 		})
 	}
-	catalog, err := discover.BuildCatalog(discover.Result{Candidates: located})
+	catalog, err := discover.BuildCatalog(discover.Result{Candidates: rows})
 	if err != nil {
 		t.Fatalf("BuildCatalog: %v", err)
 	}
@@ -168,17 +186,17 @@ func locatedFixtures(t *testing.T) ([]discover.Located, *mutation.Catalog) {
 	// silently attaches the wrong outcome to the wrong mutant would make every
 	// golden below meaningless.
 	mutants := catalog.Mutants()
-	if len(mutants) != len(fixtureCandidates) {
-		t.Fatalf("catalogue holds %d mutants, want %d", len(mutants), len(fixtureCandidates))
+	if len(mutants) != len(candidates) {
+		t.Fatalf("catalogue holds %d mutants, want %d", len(mutants), len(candidates))
 	}
 	for i, m := range mutants {
-		want := fixtureCandidates[i]
+		want := candidates[i]
 		if m.Path != want.path || m.Span.StartByte != want.start || m.Rule.Name != want.rule {
 			t.Fatalf("catalogue position %d is %s %s %s, want %s %d %s",
 				i, m.Path, m.Span, m.Rule.Name, want.path, want.start, want.rule)
 		}
 	}
-	return located, catalog
+	return rows, catalog
 }
 
 // fixtureOptions is one complete, believable run: every outcome, a rejection,
@@ -253,6 +271,108 @@ func fixtureOptions(t *testing.T) report.Options {
 func buildFixture(t *testing.T) *report.Report {
 	t.Helper()
 	r, err := report.Build(fixtureOptions(t))
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	return r
+}
+
+// The coverage-guided fixture, which is a second, smaller run rather than a
+// variation of the one above.
+//
+// It has to be its own run because `uncovered` is only meaningful next to the
+// mutant it describes: an uncovered mutant is a survivor with no attempts, and
+// [report.Build] refuses every other combination. Bolting a flag onto the
+// candidates of the main fixture would either state that contradiction or leave
+// the interesting row untested, so this one is built to say the three things
+// that matter and nothing else — a mutant two binaries cover, a mutant one
+// covers, and a mutant nothing covers.
+const (
+	coverageRunID     = "20260218T094500Z-5b1d"
+	coreFile          = "internal/core/core.go"
+	edgeFile          = "internal/edge/edge.go"
+	corePackage       = "example.com/m/internal/core"
+	edgePackage       = "example.com/m/internal/edge"
+	coverageBinaries  = 2
+	coverageStartedAt = "2026-02-18T09:45:00Z"
+)
+
+// coverageCandidates are written in catalogue order, as [fixtureCandidates] are.
+var coverageCandidates = []candidate{
+	{
+		path: coreFile, pkg: corePackage, rule: "lt-to-le",
+		start: 64, original: "<", replacement: "<=", line: 9, column: 5,
+		outcome: mutation.OutcomeKilled, killedBy: corePackage, attempts: 1,
+		duration: 140 * time.Millisecond, tail: "--- FAIL: TestClamp (0.00s)",
+		covering: []string{corePackage, edgePackage},
+	},
+	{
+		path: coreFile, pkg: corePackage, rule: "neq-to-eq",
+		start: 120, original: "!=", replacement: "==", line: 15, column: 9,
+		outcome: mutation.OutcomeSurvived, attempts: 1, duration: 90 * time.Millisecond,
+		covering: []string{edgePackage},
+	},
+	{
+		path: edgeFile, pkg: edgePackage, rule: "true-to-false",
+		start: 30, original: "true", replacement: "false", line: 7, column: 9,
+		outcome: mutation.OutcomeSurvived, uncovered: true,
+	},
+}
+
+// coverageOptions is one complete coverage-guided run.
+func coverageOptions(t *testing.T) report.Options {
+	t.Helper()
+	located, catalog := located(t, coverageCandidates)
+	mutants := catalog.Mutants()
+
+	results := make([]report.MutantResult, 0, len(mutants))
+	for i, m := range mutants {
+		c := coverageCandidates[i]
+		results = append(results, report.MutantResult{
+			ID:                   m.ID,
+			Outcome:              c.outcome,
+			Duration:             c.duration,
+			KilledBy:             c.killedBy,
+			Attempts:             c.attempts,
+			OutputTail:           c.tail,
+			CoveringTestPackages: c.covering,
+			Uncovered:            c.uncovered,
+		})
+	}
+
+	started, err := time.Parse(time.RFC3339, coverageStartedAt)
+	if err != nil {
+		t.Fatalf("parsing the fixture clock: %v", err)
+	}
+	return report.Options{
+		ToolVersion:      fixtureToolVersion,
+		RunID:            coverageRunID,
+		Status:           report.StatusCompleted,
+		Started:          started,
+		Finished:         started.Add(fixtureDuration),
+		Config:           config.Defaults(),
+		Mode:             report.ModeAll,
+		Selected:         len(results),
+		ModulePath:       fixtureModulePath,
+		GoVersion:        fixtureGoVersion,
+		WorkspaceDigest:  fixtureDigest,
+		Platform:         report.Platform{OS: "linux", Arch: "amd64"},
+		Catalog:          catalog,
+		Located:          located,
+		Results:          results,
+		TestCommand:      []string{"go", "test", "./..."},
+		Baseline:         []time.Duration{900 * time.Millisecond},
+		Timeout:          10 * time.Second,
+		TimeoutSource:    report.TimeoutDerived,
+		CoverageMode:     report.CoveragePackage,
+		CoverageBinaries: coverageBinaries,
+	}
+}
+
+// buildCoverageFixture builds the coverage-guided fixture report.
+func buildCoverageFixture(t *testing.T) *report.Report {
+	t.Helper()
+	r, err := report.Build(coverageOptions(t))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

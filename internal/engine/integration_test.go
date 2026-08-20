@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
@@ -240,6 +241,7 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		"engine.Discovered",
 		"engine.Validated",
 		"engine.BaselineProgress", // the instrumented baseline
+		"engine.CoverageMapped",   // every mutant in this fixture is covered
 		"engine.MutantStarted", "engine.MutantFinished",
 		"engine.MutantStarted", "engine.MutantFinished",
 		"engine.MutantStarted", "engine.MutantFinished",
@@ -282,6 +284,14 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	// and nothing activated.
 	if instrumented := events[9].(BaselineProgress); instrumented.Run != 1 || instrumented.Of != 1 {
 		t.Errorf("the instrumented baseline reported %+v, want run 1 of 1", instrumented)
+	}
+	// Coverage is on by default — the test command is the built-in one — and
+	// this fixture's every function is exercised, so nothing is skipped.
+	if mapped := events[10].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != 4 || mapped.Uncovered != 0 {
+		t.Errorf("CoverageMapped = %+v, want 1 binary covering all 4 mutants", mapped)
+	}
+	if mode := outcome.Report.Coverage.Mode; mode != report.CoveragePackage {
+		t.Errorf("coverage mode = %q, want %q with the built-in test command", mode, report.CoveragePackage)
 	}
 	if final := events[len(events)-1].(RunCompleted); final.Status != StatusOK || final.Run == nil {
 		t.Errorf("RunCompleted = %+v, want an ok run carrying its summary", final)
@@ -351,6 +361,27 @@ func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
 	}
 	if len(outcome.Report.Rejected) != 0 {
 		t.Errorf("rejected = %+v, want none: every guard in this fixture compiles", outcome.Report.Rejected)
+	}
+
+	// The survivor is the one in untested.go, and with coverage on the run
+	// establishes *why* it survived without executing it: nothing in the module
+	// calls Untested, so no test binary reaches the line. The other three are
+	// covered by the fixture's single test binary.
+	if got := outcome.Report.Coverage.MutantsUncovered; got == nil || *got != 1 {
+		t.Errorf("coverage.mutants_uncovered = %v, want 1", got)
+	}
+	survivor := survivorOf(t, outcome.Report)
+	if !survivor.Uncovered {
+		t.Errorf("the survivor in %s is not marked uncovered", survivor.Path)
+	}
+	if survivor.Attempts != 0 {
+		t.Errorf("the uncovered survivor was executed %d times", survivor.Attempts)
+	}
+	for _, m := range outcome.Report.Mutants {
+		if m.Uncovered == (len(m.CoveringTestPackages) > 0) {
+			t.Errorf("mutant %s: uncovered = %t with covering packages %v",
+				m.DisplayID, m.Uncovered, m.CoveringTestPackages)
+		}
 	}
 
 	// Not strict, so a survivor is a finding rather than a failure. That is the
@@ -606,8 +637,15 @@ func TestCancellationMidRunStillPublishesAPartialReport(t *testing.T) {
 	defer cancel()
 
 	opts := options(t, "killable")
+	// On the first *executed* mutant, and deliberately not on the first
+	// MutantFinished. Coverage-guided selection settles this fixture's uncovered
+	// survivor from the run's own goroutine before the execution phase starts,
+	// and cancelling there would cancel before a single mutant process had run —
+	// which is a different path, already covered by the test that cancels before
+	// discovery. What this one is for is the drain-and-publish path *during*
+	// execution.
 	outcome, events, err := watch(t, ctx, opts, func(e Event) {
-		if _, ok := e.(MutantFinished); ok {
+		if finished, ok := e.(MutantFinished); ok && !finished.Result.Uncovered {
 			cancel()
 		}
 	})
@@ -630,6 +668,12 @@ func TestCancellationMidRunStillPublishesAPartialReport(t *testing.T) {
 	}
 	if summary.NotRun == 0 {
 		t.Errorf("summary = %+v, want the mutants the signal cut short recorded as not-run", summary)
+	}
+	// Something really was measured before the signal, which is what makes this
+	// the interruption-during-execution case rather than one more cancellation
+	// before any process started.
+	if summary.Killed+summary.TimedOut+summary.Inconclusive+summary.Errored == 0 {
+		t.Errorf("summary = %+v, want at least the one executed mutant that triggered the cancellation", summary)
 	}
 	if _, err := os.Stat(outcome.RunPath); err != nil {
 		t.Errorf("the partial report at %s cannot be opened: %v", outcome.RunPath, err)
@@ -1050,11 +1094,15 @@ func TestCommandLineEndToEnd(t *testing.T) {
 		"report run: ",
 		"report latest: ",
 		// The survivor, its coordinates, and the diff a reader acts on.
-		"SURVIVED   ",
+		// Coverage is on by default and this fixture's survivor is uncovered:
+		// nothing calls Untested, so the label carries the reason.
+		"SURVIVED (uncovered)  ",
 		"untested.go:14:11  neq-to-eq  != -> ==",
 		"    - !=",
 		"    + ==",
 		"mutants 4  killed 3  survived 1",
+		"  uncovered 1",
+		"coverage: 1 test binary, 3 of 4 mutants covered, 1 uncovered",
 		"score 75.00%",
 		// The gate is named on the console and nowhere else: a policy failure
 		// is deliberately not printed to standard error.
@@ -1241,6 +1289,260 @@ func oneWith(t *testing.T, r *report.Report, outcome report.Outcome) report.Muta
 	}
 	if len(found) != 1 {
 		t.Fatalf("the report holds %d %s mutants, want exactly 1", len(found), outcome)
+	}
+	return found[0]
+}
+
+// TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach is coverage-guided
+// selection end to end, against a fixture built to have three different
+// answers.
+//
+// The corpus module has two test binaries and three mutants in one package, and
+// its documentation states which binary reaches which: `AboveZero` is reached
+// only by its own package's tests, `Differs` only by the caller package's, and
+// `Orphan` by nothing at all. This asserts all three, which is what makes the
+// run's narrowing a fact about coverage rather than a coincidence of the
+// catalogue.
+func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
+	privateTempDir(t)
+	outcome, events, err := collect(t, t.Context(), options(t, "coverage"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
+	}
+
+	block := outcome.Report.Coverage
+	if block.Mode != report.CoveragePackage {
+		t.Fatalf("coverage mode = %q, want %q", block.Mode, report.CoveragePackage)
+	}
+	if block.Binaries == nil || *block.Binaries != 2 {
+		t.Errorf("coverage.binaries = %v, want the fixture's 2", block.Binaries)
+	}
+	if block.MutantsUncovered == nil || *block.MutantsUncovered != 1 {
+		t.Errorf("coverage.mutants_uncovered = %v, want 1", block.MutantsUncovered)
+	}
+
+	const (
+		corePackage   = "fixture.example/coverage/core"
+		callerPackage = "fixture.example/coverage/caller"
+	)
+	// Each mutant, the binaries the profiles say reach it, and what became of
+	// it. The middle row is the one the whole feature is for: a mutant that
+	// lives in `core` and is reachable only from `caller`.
+	want := map[string]struct {
+		covering []string
+		outcome  report.Outcome
+		killedBy string
+	}{
+		"gt-to-ge":  {covering: []string{corePackage}, outcome: report.OutcomeKilled, killedBy: corePackage},
+		"neq-to-eq": {covering: []string{callerPackage}, outcome: report.OutcomeKilled, killedBy: callerPackage},
+		"lt-to-le":  {covering: []string{}, outcome: report.OutcomeSurvived},
+	}
+	if len(outcome.Report.Mutants) != len(want) {
+		t.Fatalf("the catalogue holds %d mutants, want %d: %+v",
+			len(outcome.Report.Mutants), len(want), outcome.Report.Mutants)
+	}
+	for _, m := range outcome.Report.Mutants {
+		expected, known := want[m.Rule]
+		if !known {
+			t.Errorf("unexpected mutant %s (%s)", m.DisplayID, m.Rule)
+			continue
+		}
+		if !slices.Equal(m.CoveringTestPackages, expected.covering) {
+			t.Errorf("%s is covered by %v, want %v", m.Rule, m.CoveringTestPackages, expected.covering)
+		}
+		if m.Outcome != expected.outcome {
+			t.Errorf("%s is %s, want %s", m.Rule, m.Outcome, expected.outcome)
+		}
+		if m.Uncovered != (len(expected.covering) == 0) {
+			t.Errorf("%s: uncovered = %t with covering %v", m.Rule, m.Uncovered, m.CoveringTestPackages)
+		}
+		// The kill has to come from the binary the profile named, which is the
+		// observable proof that the narrowing did not merely skip work but
+		// skipped the right work: a mutant measured against the wrong binary
+		// would have survived.
+		killedBy := ""
+		if m.KilledBy != nil {
+			killedBy = *m.KilledBy
+		}
+		if killedBy != expected.killedBy {
+			t.Errorf("%s was killed by %q, want %q", m.Rule, killedBy, expected.killedBy)
+		}
+	}
+
+	uncovered := ruleOf(t, outcome.Report, "lt-to-le")
+	// Never executed, asserted through the hooks rather than inferred from the
+	// duration: internal/execute publishes MutantStarted at the beginning of
+	// every attempt, so the absence of one is the absence of a process.
+	for _, e := range events {
+		if started, ok := e.(MutantStarted); ok && started.ID == uncovered.ID {
+			t.Errorf("the uncovered mutant %s was started on worker %d", started.DisplayID, started.Worker)
+		}
+	}
+	if uncovered.Attempts != 0 || uncovered.DurationMS != 0 {
+		t.Errorf("the uncovered mutant reports %d attempts in %dms, want none of either",
+			uncovered.Attempts, uncovered.DurationMS)
+	}
+	// It is still announced, so a renderer's counts and the report's agree.
+	finished := false
+	for _, e := range events {
+		if done, ok := e.(MutantFinished); ok && done.Result.ID == uncovered.ID {
+			finished = true
+			if !done.Result.Uncovered || done.Result.Outcome != mutation.OutcomeSurvived {
+				t.Errorf("the uncovered mutant was published as %+v", done.Result)
+			}
+		}
+	}
+	if !finished {
+		t.Error("the uncovered mutant was never published, so a renderer would be a mutant short of the report")
+	}
+
+	mapped, found := coverageMappedOf(events)
+	if !found {
+		t.Fatal("the run published no CoverageMapped event")
+	}
+	if mapped.Binaries != 2 || mapped.Covered != 2 || mapped.Uncovered != 1 {
+		t.Errorf("CoverageMapped = %+v, want 2 binaries, 2 covered, 1 uncovered", mapped)
+	}
+	// And it comes first. The summary of what is about to be skipped has to
+	// arrive before the first thing that was skipped, or a reader watching the
+	// run sees it backwards. Nothing else in the sequence pins this: a fixture
+	// with no uncovered mutants would pass either way, which is why the
+	// assertion lives here and not in the `simple` sequence test.
+	if got := kinds(events); slices.Index(got, "engine.CoverageMapped") > slices.Index(got, "engine.MutantFinished") {
+		t.Errorf("the coverage summary arrives after the first settled mutant:\n\t%s",
+			strings.Join(got, "\n\t"))
+	}
+
+	// A run whose only survivor is an uncovered one still scores it against the
+	// suite, because it is a survivor: no test runs the line, so no test caught
+	// the edit.
+	if score := outcome.Report.Summary.ScorePercent; score == nil || *score < 66 || *score > 67 {
+		t.Errorf("score = %v, want 2 of 3", score)
+	}
+
+	document, err := os.ReadFile(published(t, events).RunPath)
+	if err != nil {
+		t.Fatalf("reading the filed report: %v", err)
+	}
+	validateDocument(t, document)
+}
+
+// TestCustomTestCommandTurnsCoverageOffAndSaysSo is the other rule.
+//
+// A custom command cannot be attributed to go-mutants' own per-package test
+// binaries, so the run gives the optimisation up rather than guessing — and it
+// has to say so, because the alternative is a user wondering why their run got
+// slower when they changed `test.command`. The same fixture then executes every
+// mutant, including the one nothing covers, and reaches the same verdicts.
+func TestCustomTestCommandTurnsCoverageOffAndSaysSo(t *testing.T) {
+	privateTempDir(t)
+	opts := options(t, "coverage")
+	// Verbatim `go test ./...` with one flag added, which is exactly the shape
+	// of a real project's reason for setting the command at all.
+	opts.TestArgv = []string{"go", "test", "-count=1", "./..."}
+
+	outcome, events, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
+	}
+
+	warning, found := warningWith(events, Code(coverage.CodeCustomTestCommand))
+	if !found {
+		t.Fatalf("no %s warning; the run gave up coverage in silence. warnings: %+v",
+			coverage.CodeCustomTestCommand, warningsOf(events))
+	}
+	for _, needle := range []string{"go test -count=1 ./...", "go test ./..."} {
+		if !strings.Contains(warning.Message, needle) {
+			t.Errorf("the warning does not mention %q:\n%s", needle, warning.Message)
+		}
+	}
+	if strings.ContainsAny(warning.Message, "\n\r") {
+		t.Errorf("the warning is not one line: %q", warning.Message)
+	}
+	// A renderer that was not listening must not lose it either.
+	filed := false
+	for _, w := range outcome.Report.Warnings {
+		if w.Code == string(coverage.CodeCustomTestCommand) && w.Message == warning.Message {
+			filed = true
+		}
+	}
+	if !filed {
+		t.Errorf("the warning is not in the filed report: %+v", outcome.Report.Warnings)
+	}
+
+	if mode := outcome.Report.Coverage.Mode; mode != report.CoverageOff {
+		t.Fatalf("coverage mode = %q, want %q", mode, report.CoverageOff)
+	}
+	if outcome.Report.Coverage.Binaries != nil || outcome.Report.Coverage.MutantsUncovered != nil {
+		t.Errorf("a run that narrowed nothing reports %+v", outcome.Report.Coverage)
+	}
+	if _, mapped := coverageMappedOf(events); mapped {
+		t.Error("a run with coverage off published a CoverageMapped event")
+	}
+
+	// Every mutant executed, and the verdicts unchanged: giving up the
+	// optimisation costs time and nothing else.
+	started := 0
+	for _, e := range events {
+		if _, ok := e.(MutantStarted); ok {
+			started++
+		}
+	}
+	if started != 3 {
+		t.Errorf("started %d mutants, want all 3", started)
+	}
+	for _, m := range outcome.Report.Mutants {
+		if m.Uncovered {
+			t.Errorf("mutant %s is marked uncovered in a run with coverage off", m.DisplayID)
+		}
+		if len(m.CoveringTestPackages) != 0 {
+			t.Errorf("mutant %s names %v as covering it in a run that never looked", m.DisplayID, m.CoveringTestPackages)
+		}
+		if m.Attempts == 0 {
+			t.Errorf("mutant %s was not executed", m.DisplayID)
+		}
+	}
+	if summary := outcome.Report.Summary; summary.Total != 3 || summary.Killed != 2 || summary.Survived != 1 {
+		t.Errorf("summary = %+v, want the same 3/2/1 the coverage-guided run reaches", summary)
+	}
+
+	document, err := os.ReadFile(published(t, events).RunPath)
+	if err != nil {
+		t.Fatalf("reading the filed report: %v", err)
+	}
+	validateDocument(t, document)
+}
+
+// coverageMappedOf returns the one CoverageMapped event of a run, and whether
+// there was one.
+func coverageMappedOf(events []Event) (CoverageMapped, bool) {
+	for _, e := range events {
+		if got, ok := e.(CoverageMapped); ok {
+			return got, true
+		}
+	}
+	return CoverageMapped{}, false
+}
+
+// ruleOf returns the report's only mutant produced by a rule, and fails when
+// there is not exactly one: a test that means "the uncovered one" must not
+// silently start meaning "whichever came first".
+func ruleOf(t *testing.T, r *report.Report, rule string) report.Mutant {
+	t.Helper()
+	var found []report.Mutant
+	for _, m := range r.Mutants {
+		if m.Rule == rule {
+			found = append(found, m)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the report holds %d %s mutants, want exactly 1", len(found), rule)
 	}
 	return found[0]
 }

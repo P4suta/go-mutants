@@ -82,6 +82,22 @@ const (
 	CodeInterrupted Code = "GOM7520"
 )
 
+// The coverage-collection codes.
+const (
+	// CodeCoverageDir reports a directory for one test binary's raw coverage
+	// data that could not be resolved or created, or that sits inside the
+	// snapshot. The last case is refused for the reason [Options.BinDir] is:
+	// bytes written into the tree are indistinguishable from a test writing
+	// into it, and the drift gate would report go-mutants' own coverage pass as
+	// the hazard it exists to catch.
+	CodeCoverageDir Code = "GOM7530"
+	// CodeCoverageFailed reports a test binary that would not run, or did not
+	// pass, during the coverage pass. It is never a fatal condition for a run:
+	// internal/engine warns with internal/coverage's GOM7602 and measures every
+	// mutant against every binary, which is slower and never wrong.
+	CodeCoverageFailed Code = "GOM7531"
+)
+
 // String returns the code as it is printed.
 func (c Code) String() string { return string(c) }
 
@@ -100,6 +116,8 @@ var codes = []Code{
 	CodeMutantStart,
 	CodeStaleCatalog,
 	CodeInterrupted,
+	CodeCoverageDir,
+	CodeCoverageFailed,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

@@ -526,6 +526,7 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 		{engine.BaselineCompleted{}, true},
 		{engine.Discovered{}, true},
 		{engine.Validated{}, true},
+		{engine.CoverageMapped{}, true},
 		{engine.MutantStarted{}, false},
 		{engine.MutantFinished{Result: killed}, true},
 		{engine.MutantFinished{}, false},
@@ -540,5 +541,167 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 		if _, ok := r.line(row.event); ok != row.lines {
 			t.Errorf("%T rendered = %t, want %t", row.event, ok, row.lines)
 		}
+	}
+}
+
+// uncoveredSurvivor is the fixture's survivor with the reason attached: no test
+// binary reaches its line, so the run never executed it.
+func uncoveredSurvivor() engine.MutantResult {
+	m := survivor
+	m.ID = strings.Repeat("0c1d2e3f", 8)
+	m.DisplayID = "0c1d2e3f4a5b6c7d8e9f"
+	m.Path = "orphan.go"
+	m.Uncovered = true
+	m.Duration = 0
+	return m
+}
+
+// TestUncoveredSurvivorSaysWhyItSurvived pins the label, which is the one place
+// the two kinds of survivor are told apart in the live output.
+//
+// A covered survivor means a test runs the line and did not notice the edit,
+// which is a test to sharpen. An uncovered one means nothing runs the line at
+// all, which is a test to write — and it is worth eleven characters of overflow
+// to say which, because the two call for different work.
+func TestUncoveredSurvivorSaysWhyItSurvived(t *testing.T) {
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.MutantFinished{Result: uncoveredSurvivor()}})
+
+	const want = "SURVIVED (uncovered)  0c1d2e3f  orphan.go:9:12  neq-to-eq  != -> ==  (0s)\n" +
+		"    - !=\n" +
+		"    + ==\n"
+	if got != want {
+		t.Errorf("rendered\n%q\nwant\n%q", got, want)
+	}
+	// The diff is still there. An uncovered mutant is still an edit somebody has
+	// to look at, and dropping the two lines under it because nothing ran would
+	// take away the only part of the block that says what the edit was.
+	if !strings.Contains(got, "    - !=") {
+		t.Error("the uncovered survivor lost its diff")
+	}
+}
+
+// TestResultLabelOnlyQualifiesASurvivor keeps the qualifier attached to the one
+// outcome it can honestly describe.
+//
+// An uncovered mutant is never executed, so survived is the only outcome it can
+// have. A killed one carrying the flag would be a contradiction, and printing
+// "KILLED (uncovered)" would put that contradiction in front of a user rather
+// than in front of a maintainer.
+func TestResultLabelOnlyQualifiesASurvivor(t *testing.T) {
+	if got, want := ResultLabel(mutation.OutcomeSurvived, true), "SURVIVED (uncovered)"; got != want {
+		t.Errorf("ResultLabel(survived, true) = %q, want %q", got, want)
+	}
+	if got, want := ResultLabel(mutation.OutcomeSurvived, false), "SURVIVED"; got != want {
+		t.Errorf("ResultLabel(survived, false) = %q, want %q", got, want)
+	}
+	for _, outcome := range []mutation.Outcome{
+		mutation.OutcomeKilled,
+		mutation.OutcomeTimedOut,
+		mutation.OutcomeInconclusive,
+		mutation.OutcomeErrored,
+		mutation.OutcomeNotRun,
+	} {
+		if got, want := ResultLabel(outcome, true), OutcomeLabel(outcome); got != want {
+			t.Errorf("ResultLabel(%s, true) = %q, want the plain %q", outcome, got, want)
+		}
+	}
+}
+
+// TestCountsLineStatesUncoveredOnlyWhenItWasMeasured is the difference between
+// a number and a zero nobody went looking for.
+func TestCountsLineStatesUncoveredOnlyWhenItWasMeasured(t *testing.T) {
+	tests := []struct {
+		name      string
+		coverage  engine.CoverageMode
+		uncovered int
+		want      string
+	}{
+		{
+			name:     "coverage off says nothing",
+			coverage: engine.CoverageOff,
+			want:     "mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0  not-run 0  rejected 0\n",
+		},
+		{
+			name:      "a coverage-guided run states the count",
+			coverage:  engine.CoveragePackage,
+			uncovered: 1,
+			want:      "mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0  not-run 0  rejected 0  uncovered 1\n",
+		},
+		{
+			// Zero is a measurement here: it says the run profiled the binaries
+			// and found every mutant reachable, which is a different statement
+			// from having never asked.
+			name:      "a coverage-guided run with nothing to skip still states it",
+			coverage:  engine.CoveragePackage,
+			uncovered: 0,
+			want:      "mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0  not-run 0  rejected 0  uncovered 0\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			block := summary()
+			block.Notable = nil
+			block.Coverage = test.coverage
+			block.Counts.Uncovered = test.uncovered
+
+			got := renderBlock(t, block)
+			if !strings.Contains(got, test.want) {
+				t.Errorf("the block does not carry\n%q\ngot\n%s", test.want, got)
+			}
+		})
+	}
+}
+
+// TestCoverageMappedLineNamesWhatWillBeSkipped pins the one line the coverage
+// phase prints, which is where a user learns how much of the run is about to
+// not happen.
+func TestCoverageMappedLineNamesWhatWillBeSkipped(t *testing.T) {
+	tests := []struct {
+		event engine.CoverageMapped
+		want  string
+	}{
+		{
+			event: engine.CoverageMapped{Binaries: 2, Covered: 2, Uncovered: 1},
+			want:  "coverage: 2 test binaries, 2 of 3 mutants covered, 1 uncovered\n",
+		},
+		{
+			event: engine.CoverageMapped{Binaries: 1, Covered: 4, Uncovered: 0},
+			want:  "coverage: 1 test binary, 4 of 4 mutants covered, 0 uncovered\n",
+		},
+	}
+	for _, test := range tests {
+		got := render(t, NewPlain(nil, "0.1.0-dev", false, false), []engine.Event{test.event})
+		if got != test.want {
+			t.Errorf("rendered %q, want %q", got, test.want)
+		}
+	}
+	// Quiet drops it with the other progress lines: the counts line keeps the
+	// number, so nothing actionable is lost.
+	quiet := render(t, NewPlain(nil, "0.1.0-dev", false, true),
+		[]engine.Event{engine.CoverageMapped{Binaries: 2, Covered: 2, Uncovered: 1}})
+	if quiet != "" {
+		t.Errorf("--quiet rendered %q for a progress line", quiet)
+	}
+}
+
+// TestUncoveredSurvivorsSortAfterCoveredOnesInTheBlock is the renderer's half of
+// an ordering the engine decides: the summary lists what it is given, in order,
+// so this asserts that the two kinds arrive as two runs rather than interleaved.
+func TestUncoveredSurvivorsSortAfterCoveredOnesInTheBlock(t *testing.T) {
+	block := summary()
+	block.Coverage = engine.CoveragePackage
+	block.Counts.Uncovered = 1
+	block.Notable = []engine.MutantResult{survivor, uncoveredSurvivor()}
+
+	got := renderBlock(t, block)
+	covered := strings.Index(got, "SURVIVED   9f8e7d6c")
+	uncovered := strings.Index(got, "SURVIVED (uncovered)  0c1d2e3f")
+	switch {
+	case covered < 0 || uncovered < 0:
+		t.Fatalf("the block is missing one of the survivors:\n%s", got)
+	case uncovered < covered:
+		t.Errorf("the uncovered survivor comes first:\n%s", got)
 	}
 }

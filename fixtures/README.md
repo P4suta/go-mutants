@@ -40,6 +40,7 @@ at.
 | `discovery/` | `fixture.example/discovery` | Five packages holding one live candidate next to every context discovery refuses to mutate: all six comparisons and both boolean literals, a package that shadows `true`, const blocks, an array length, switch and type-switch and select labels against their bodies, package-level initialisers, a `//go:embed` variable, a generated file, and generic type parameters against a generic body. `list` asserts the exact catalogue and the exact skip counts against it. |
 | `killable/` | `fixture.example/killable` | The end-to-end kill. Four mutants with predetermined fates: two boundary mutants in `Clamp` and one boolean literal in `IsReady` that the tests kill, and one in `Untested` that survives because nothing calls it. One function per file and no repeated operator, so a mutant can be named by path and rule alone. |
 | `rejectable/` | `fixture.example/rejectable` | Compile validation's oracle. Nine candidates over two files, three of which cannot compile once guarded: a comparison and a boolean literal returned as the named boolean type `Flag`, whose guard evaluates to plain `bool`. The other six are healthy and share both files with the traps, so a phase that rejected a file rather than a candidate would be caught. |
+| `coverage/` | `fixture.example/coverage` | Coverage-guided selection. Two packages, two test binaries, and three comparisons in one file with three different coverage fates: `AboveZero` is reached only by its own package's tests, `Differs` only by the caller package's, and `Orphan` by nothing at all. It is the one fixture where the *right* answer and the *fast* answer differ, so a mutant measured against the wrong binary would survive rather than merely cost time. |
 
 The discovery fixture is the one module in the corpus with no test files, which
 is deliberate: `list` builds nothing and runs nothing, so a test here would add
@@ -64,13 +65,24 @@ integration test waiting for a failure that can no longer happen.
 
 `internal/engine`'s integration suite runs the whole pipeline — snapshot,
 baseline, discovery, compile validation, the instrumented baseline, the drift
-gate, execution, and the report — against `simple/`, `killable/`,
-`rejectable/`, and `failing-baseline/`. It asserts the exact tally each of them
-produces, so the numbers in those tests are the fixtures' documented claims
-about themselves stated as data: `killable/` is 3 killed and 1 survived,
-`rejectable/` is 6 accepted and 3 rejected, and `simple/` is a green run whose
-event sequence is pinned whole. A fixture edited without its test is a fixture
-whose claim quietly stopped being true.
+gate, the coverage pass, execution, and the report — against `simple/`,
+`killable/`, `rejectable/`, `coverage/`, and `failing-baseline/`. It asserts the
+exact tally each of them produces, so the numbers in those tests are the
+fixtures' documented claims about themselves stated as data: `killable/` is 3
+killed and 1 survived, `rejectable/` is 6 accepted and 3 rejected, `coverage/`
+is 2 killed and 1 uncovered survivor across 2 test binaries, and `simple/` is a
+green run whose event sequence is pinned whole. A fixture edited without its
+test is a fixture whose claim quietly stopped being true.
+
+The coverage fixture's *absences* are load-bearing in the way the killable
+fixture's bounds are. Nothing may call `Orphan`, and nothing in package `core`
+may call `Differs`: adding either call leaves the module compiling, every test
+passing, and the fixture silently proving something weaker — that coverage
+narrowing did not break anything, rather than that it narrowed to the one binary
+that could kill the mutant. `TestAboveZero`'s zero row is the same kind of
+detail: it is the only input at which `>` and `>=` disagree, so deleting it
+turns the fixture's first claim from "killed by the binary that covers it" into
+"survived".
 
 Later phases add fixtures for the cases the instrumentation has to get right:
 `go.work`, build tags, CRLF sources, a package with no tests, a test that

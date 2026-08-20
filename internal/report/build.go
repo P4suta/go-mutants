@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,16 @@ type MutantResult struct {
 	// OutputTail is the tail of the test output kept for a human. Empty becomes
 	// null.
 	OutputTail string
+	// CoveringTestPackages are the import paths of the test binaries whose
+	// coverage profile reaches this mutant's lines. Nil becomes the empty list,
+	// which is what a run with coverage off carries for every mutant.
+	CoveringTestPackages []string
+	// Uncovered says the run established that no test binary reaches this
+	// mutant's lines and therefore did not execute it. Such a result is a
+	// survivor with no attempts; [Build] refuses any other combination, because
+	// a document that recorded a killed mutant as uncovered would be describing
+	// a detection nothing performed.
+	Uncovered bool
 }
 
 // A Rejection is a catalogued mutant validation refused, with the compiler
@@ -133,6 +144,15 @@ type Options struct {
 	Timeout       time.Duration
 	TimeoutSource TimeoutSource
 
+	// CoverageMode is how coverage narrowed the run. The zero value is
+	// [CoverageOff], which is what a run with a custom test command or a failed
+	// coverage pass reports.
+	CoverageMode CoverageMode
+	// CoverageBinaries is how many test binaries the coverage pass profiled. It
+	// is recorded only in [CoveragePackage] mode; an `off` run states no number
+	// rather than a zero it never measured.
+	CoverageBinaries int
+
 	// Warnings are the warnings the run published, in publication order.
 	Warnings []Warning
 
@@ -186,6 +206,10 @@ func Build(opts Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	coverage, err := coverageOf(opts, mutants)
+	if err != nil {
+		return nil, err
+	}
 
 	r := &Report{
 		DocumentType:  DocumentType,
@@ -209,7 +233,7 @@ func Build(opts Options) (*Report, error) {
 			TimeoutMS:     milliseconds(opts.Timeout),
 			TimeoutSource: timeoutSource(opts),
 		},
-		Coverage:     Coverage{Mode: CoverageOff},
+		Coverage:     coverage,
 		Summary:      summaryOf(tally, opts.Config.Policy, opts.InfrastructureError, expectations, mutants),
 		Mutants:      mutants,
 		Rejected:     rejected,
@@ -371,8 +395,10 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			// bug, and quietly rewriting it to zero would hide the bug behind a
 			// document that looks fine; the schema refuses it, which is where a
 			// value this package cannot interpret belongs.
-			Attempts:   result.Attempts,
-			OutputTail: text(result.OutputTail),
+			Attempts:             result.Attempts,
+			OutputTail:           text(result.OutputTail),
+			CoveringTestPackages: stringList(result.CoveringTestPackages),
+			Uncovered:            result.Uncovered,
 		})
 	}
 	if err := checkAccountedFor(opts, len(mutants), len(rejected)); err != nil {
@@ -517,6 +543,79 @@ func selectionOf(opts Options, candidates, rejected int) (Selection, error) {
 		Rejected:   rejected,
 		Selected:   opts.Selected,
 	}, nil
+}
+
+// coverageOf assembles the coverage block and checks that the mutants agree
+// with it.
+//
+// Two things are checked rather than trusted, and both are conditions a
+// document must never be able to state. An uncovered mutant that is not a
+// survivor with zero attempts would be claiming a measurement the run refused
+// to make — the whole point of `uncovered` is that nothing was executed — and
+// an uncovered mutant in a run with coverage off would be claiming a fact
+// nobody went looking for. Either is a caller bug, and a report is the artefact
+// every other output is derived from: it is worth failing at the last step
+// rather than publishing a document that quietly contradicts itself.
+//
+// `mutants_uncovered` is counted here from the rows above rather than passed
+// in, so the number in the summary and the rows a reader would count by hand
+// are the same number by construction.
+func coverageOf(opts Options, mutants []Mutant) (Coverage, error) {
+	mode := opts.CoverageMode
+	if mode == "" {
+		mode = CoverageOff
+	}
+	if !mode.Valid() {
+		return Coverage{}, &Error{
+			Code:    CodeInvalidCoverage,
+			Message: fmt.Sprintf("%q is not a coverage mode: expected off or package", string(opts.CoverageMode)),
+		}
+	}
+
+	uncovered := 0
+	for _, m := range mutants {
+		if !m.Uncovered {
+			continue
+		}
+		switch {
+		case mode != CoveragePackage:
+			return Coverage{}, &Error{
+				Code: CodeInvalidCoverage,
+				Message: fmt.Sprintf("mutant %s is marked uncovered in a run whose coverage mode is %q: only a coverage-guided run knows what covers a mutant",
+					m.DisplayID, string(mode)),
+			}
+		case m.Outcome != OutcomeSurvived || m.Attempts != 0:
+			return Coverage{}, &Error{
+				Code: CodeInvalidCoverage,
+				Message: fmt.Sprintf("mutant %s is marked uncovered but is %s after %s: an uncovered mutant is a survivor the run never executed",
+					m.DisplayID, m.Outcome, countNoun(m.Attempts, "attempt")),
+			}
+		}
+		uncovered++
+	}
+
+	coverage := Coverage{Mode: mode}
+	if mode != CoveragePackage {
+		return coverage, nil
+	}
+	if opts.CoverageBinaries < 0 {
+		return Coverage{}, &Error{
+			Code:    CodeInvalidCoverage,
+			Message: fmt.Sprintf("the coverage pass reports %d test binaries", opts.CoverageBinaries),
+		}
+	}
+	binaries := opts.CoverageBinaries
+	coverage.Binaries = &binaries
+	coverage.MutantsUncovered = &uncovered
+	return coverage, nil
+}
+
+// countNoun renders "1 attempt" or "3 attempts".
+func countNoun(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
 }
 
 // summaryOf counts the run and asks the policy what it makes of it.

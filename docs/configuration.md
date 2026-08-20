@@ -84,6 +84,18 @@ low = 60
 
 - `command`: an argv vector, never a shell string. Defaults to
   `["go", "test", "./..."]`.
+
+  Setting it to anything else has one consequence worth knowing before you do:
+  it turns coverage-guided selection off, with a `GOM7601` warning naming both
+  commands. The narrowing maps a *test binary* onto the lines it reached, and
+  that is only sound because go-mutants compiled those binaries itself and
+  knows which package each one is. A custom command is an opaque program — it
+  may run a subset, a superset, several suites, or not be `go test` at all —
+  and guessing which of go-mutants' own binaries its coverage belongs to would
+  skip mutants a test does cover, which loses a kill rather than costing time.
+  The run is slower and its verdicts are unchanged. The same applies to a
+  `-- <test argv>` passthrough, since what matters is what the command does
+  rather than where it was written.
 - `timeout`: a duration string such as `"60s"` or `"2m"`. Omitted derives
   `max(10s, slowest baseline × 5)`.
 - `baseline_runs`: positive integer, default 3. Every observation is retained
