@@ -7,11 +7,13 @@ import "slices"
 
 // A Code is a stable, user-facing diagnostic code.
 //
-// This package owns the GOM77xx block. It has very few codes because it has
+// This package holds GOM7701 and nothing else. It has one code because it has
 // very little that can go wrong on its own: a dashboard reports what the engine
 // says, and every failure of the run itself already has a code from the package
 // that noticed it.
 //
+// The rest of the GOM77xx block belongs to internal/gitdiff, which starts at
+// GOM7710 — git is the other thing that can fail without being the run's fault.
 // GOM76xx belongs to internal/coverage, which spends three codes in it. A
 // diagnostic code is a user-facing identity — it is what a person searches for
 // and what a script matches on — so one number can only ever mean one thing,

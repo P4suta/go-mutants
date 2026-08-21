@@ -107,21 +107,79 @@ low = 60
 
 ### `[cache]`
 
-The keys decode and validate; there is no outcome cache yet, so nothing is
-stored or reused whatever the mode says.
+**Status: implemented.** A run may answer a mutant from an outcome it has
+proven before, so a second run over unchanged code measures only what has
+moved.
 
-- `mode`: `"auto"` (default), `"on"`, or `"off"`. The key covers the tool
-  version, the executable digest, the workspace digest, the catalog ID set, the
-  test command, the timeout, and the environment. Errors, cancellations,
-  inconclusive outcomes, unconfirmed timeouts, and expected mutants are never
-  stored as reusable outcomes.
+- `mode`: `"auto"` (default), `"on"`, or `"off"`, overridden by `--cache`.
+
+  `auto` reuses outcomes only when `test.command` is the built-in
+  `go test ./...`, and does nothing at all otherwise, with a `GOM7901` warning
+  naming the command. go-mutants knows what `go test ./...` does; it knows
+  nothing about a command you wrote, which may consult a clock, a database, or a
+  network — and none of those can be in the key. Set `mode = "on"` to promise
+  that your command is reproducible and get the cache anyway. `off` never reads
+  and never writes.
+
+  Turning off, rather than degrading to read-only, is the same judgment: a
+  read-only cache over a command go-mutants cannot reason about would still be
+  adopting outcomes it cannot justify.
+
 - `directory`: optional. Relative paths resolve under the OS cache root, never
-  under the workspace.
+  under the workspace. It replaces the `go-mutants` element, so
+  `directory = "team-cache"` puts the store at `<os cache>/team-cache`.
+
+The key covers the tool version, the running executable's digest, the Go
+toolchain's own release, the workspace digest, the catalog digest, the test
+command, the timeout **as configured**, and `CGO_ENABLED`, `GOARCH`, `GODEBUG`,
+`GOEXPERIMENT`, `GOFLAGS` and `GOOS` — with an unset variable hashing
+differently from one set to nothing. Entries are filed under that key, so
+nothing is ever invalidated: editing a file moves the key, and the old entries
+become unreachable rather than wrong.
+
+The toolchain's release is there because nothing else in the key carries it. The
+test command is hashed as you wrote it, so `go test ./...` hashes the literal
+word `go` and not the toolchain it resolves to, and `go.mod` pins a language
+version like `go 1.26` rather than a patch release — without this field a
+1.26.5→1.26.6 upgrade would keep every outcome the old compiler measured
+reachable. The environment names are on the list for one reason each: all six
+change what your tests compile to or how they are run. `CGO_ENABLED` is the one
+worth watching, because its *default* depends on whether a C toolchain is
+installed, so two CI images identical in every other respect can compile
+different programs.
+
+The configured timeout rather than the derived one is deliberate. A derived
+timeout is `max(10s, slowest baseline × 5)`, a wall-clock measurement that moves
+on every run, so hashing it would silently switch the cache off for exactly the
+projects worth caching. Each entry records the bound it was measured under
+instead, and a run adopts it only if its own bound could have produced the same
+answer: a kill or a survival is reusable when the measurement fits inside this
+run's bound, and a confirmed timeout when this run's bound is no larger than the
+one it already blew.
+
+Killed, survived, and **confirmed** timed-out are the only outcomes stored.
+Inconclusive results, harness errors, interruptions, mutants no test covers, and
+every mutant named in `[[mutation.expect]]` are measured on every invocation.
+Inconclusive is the one worth spelling out: it means two attempts disagreed, and
+a cache that froze a disagreement would make a flake permanent.
+
+Nothing about the cache can change a verdict or fail a run. A cache that cannot
+be opened, an entry that cannot be read, an outcome that cannot be written: each
+is a `GOM79xx` warning and a run that measures more than it had to.
+
+`go-mutants cache status` prints where the store is and what is in it,
+`cache gc --days N` (default 30) removes outcomes written more than N days ago —
+age is the modification time, and reading an entry does not refresh it, so this
+removes what is old and not what is unpopular — and `cache clean` removes them
+all. All three refuse a directory in the OS cache
+that does not carry go-mutants' own ownership marker, and none of them touches
+the run history filed beside the outcomes.
 
 ### `[policy]`
 
-The keys decode and validate, including their ranges; no policy is enforced
-yet, because no run has produced a score to compare against.
+**Status: implemented.** The keys decode and validate, including their ranges,
+and a run enforces them against the score it measured: exit 1 is a policy
+failure and nothing else.
 
 - `strict`: default `false`. **go-mutants does not fail a build unless asked**,
   in a TTY, a pipe, and CI alike.
@@ -133,8 +191,11 @@ yet, because no run has produced a score to compare against.
 ### `[report]`
 
 The keys decode and validate — an out-of-range `high` or `low` is a positioned
-error today — but no report is written yet. `list --json` writes its catalogue
-document to standard output and never to this directory.
+error today. A run publishes its `RunReport v1` to the history store under the
+OS cache directory, and `run --json` writes it to standard output; nothing is
+written into this directory yet, because the in-project outputs it names wait
+on the HTML report. `list --json` writes its catalogue document to standard
+output and never to this directory either.
 
 - `directory`: default `reports/mutation`. Excluded from the snapshot manifest
   and from cache identity.
@@ -158,6 +219,8 @@ Contradictory flags are rejected before any work starts, through
 `MarkFlagsMutuallyExclusive` plus semantic validation, with a stable `GOM10xx`
 error code.
 
-The command tree today is `run` and `list`. `init` is planned, along with its
+The command tree today is `run`, `list`, `report merge|validate`, and
+`cache status|gc|clean`. `doctor` and `report list|latest|clean` are planned,
+and so is `init`, along with its
 `--dry-run` and `--check` flags, which will let it describe or verify a
 configuration without writing one; it will never overwrite an existing file.

@@ -137,13 +137,15 @@ func (r *PlainRenderer) Run(ctx context.Context, events <-chan engine.Event) err
 // the sealed interface later shows up here as the default case and prints
 // nothing rather than a Go struct dump.
 //
-// Two events deliberately print nothing in this renderer.
+// Three events deliberately print nothing in this renderer.
 // [engine.MutantStarted] exists so that a dashboard can show a worker slot
 // filling; a plain log that printed it would say everything twice, once when a
-// mutant began and once when it settled. A [engine.MutantFinished] whose
-// outcome is not-run is the same judgement in the other direction: the mutant
-// was reached and abandoned when the run was cut short, which the closing
-// counts state once rather than a line at a time.
+// mutant began and once when it settled. [engine.CacheHit] is the same
+// judgement: the [engine.MutantFinished] that follows it carries the outcome
+// and marks it cached, and a line for each would print every reused mutant
+// twice. A [engine.MutantFinished] whose outcome is not-run is the judgement in
+// the other direction: the mutant was reached and abandoned when the run was
+// cut short, which the closing counts state once rather than a line at a time.
 func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 	switch e := event.(type) {
 	case engine.RunPlanned:
@@ -184,6 +186,15 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 		return r.paint(styleDetail, fmt.Sprintf("validated %s, %s",
 			countNoun(e.Accepted, "mutant"), countNoun(e.Rejected, "rejection"))), true
 
+	case engine.SelectionNarrowed:
+		if r.Quiet {
+			return "", false
+		}
+		// Dropped under --quiet like the discovery and coverage lines above,
+		// and for the same reason: it is progress rather than a finding, and
+		// the selection it describes is written down in the report either way.
+		return r.paint(styleDetail, narrowedLine(e)), true
+
 	case engine.CoverageMapped:
 		if r.Quiet {
 			return "", false
@@ -197,6 +208,9 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 			e.Covered, e.Covered+e.Uncovered, e.Uncovered)), true
 
 	case engine.MutantStarted:
+		return "", false
+
+	case engine.CacheHit:
 		return "", false
 
 	case engine.MutantFinished:
@@ -237,13 +251,28 @@ func (r *PlainRenderer) result(m engine.MutantResult) (string, bool) {
 		m.Path + ":" + strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
 		r.paint(styleRule, m.Rule) + "  " +
 		FormatText(m.Original) + " -> " + FormatText(m.Replacement) + "  " +
-		r.paint(styleDetail, "("+FormatDuration(m.Duration)+")")
+		r.paint(styleDetail, "("+FormatDuration(m.Duration)+cachedSuffix(m)+")")
 	if m.Outcome != mutation.OutcomeSurvived {
 		return line, true
 	}
 	return line + "\n" +
 		diffIndent + r.paint(styleRemoved, "- "+FormatText(m.Original)) + "\n" +
 		diffIndent + r.paint(styleAdded, "+ "+FormatText(m.Replacement)), true
+}
+
+// cachedSuffix marks a result this run adopted rather than measured.
+//
+// It goes inside the duration's own parentheses because the two facts belong
+// together: "(120ms cached)" says that the number is real and that it was
+// measured by an earlier run, which is exactly what a reader wondering how a
+// thousand mutants finished in four seconds needs to know. Putting it in a
+// column of its own would have moved every result line for a feature that is
+// off in most runs.
+func cachedSuffix(m engine.MutantResult) string {
+	if !m.Cached {
+		return ""
+	}
+	return " cached"
 }
 
 // completed renders the last block of the run: the closing summary when there
@@ -292,6 +321,14 @@ func (r *PlainRenderer) summary(s engine.RunSummary, status engine.Status) strin
 	// number would be a zero nobody went looking for.
 	if s.Coverage == engine.CoveragePackage {
 		fmt.Fprintf(&b, "  uncovered %d", c.Uncovered)
+	}
+	// Appended on the same terms and for the same reason: a cached mutant is
+	// already inside one of the buckets, so it is stated beside them rather than
+	// among them. "cached 0" from a run whose cache was on is a real
+	// measurement — the cache is cold, or the code has moved on — and a run with
+	// the cache off says nothing rather than a zero nobody went looking for.
+	if s.Cache == engine.CacheOn {
+		fmt.Fprintf(&b, "  cached %d", c.Cached)
 	}
 	b.WriteByte('\n')
 
@@ -415,6 +452,25 @@ func shortID(displayID string) string {
 		return displayID
 	}
 	return displayID[:resultIDWidth]
+}
+
+// narrowedLine words one [engine.SelectionNarrowed] for a human: what the run
+// narrowed itself by, and how much of the catalogue is left.
+//
+// Both narrowings are named when both applied, in the order they were applied,
+// because a shard of a changed run that executes three mutants has two reasons
+// for the number and a reader who is told only one of them will go looking for
+// the wrong mistake.
+func narrowedLine(e engine.SelectionNarrowed) string {
+	var reasons []string
+	if e.ChangedRef != "" {
+		reasons = append(reasons, "lines changed since "+e.ChangedRef)
+	}
+	if e.Shards > 0 {
+		reasons = append(reasons, fmt.Sprintf("shard %d of %d", e.Shard, e.Shards))
+	}
+	return fmt.Sprintf("selection: %d of %s selected by %s",
+		e.Selected, countNoun(e.Of, "mutant"), strings.Join(reasons, " and "))
 }
 
 // countNoun renders "1 candidate" or "3 candidates".

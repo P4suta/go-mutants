@@ -37,7 +37,10 @@ jobs = 8
 
 [cache]
 # auto reuses proven outcomes keyed by tool version, executable digest,
-# workspace digest, catalog IDs, command, timeout, and environment.
+# workspace digest, catalog digest, command, the timeout as configured, and
+# GOFLAGS/GOOS/GOARCH -- and reuses nothing at all when test.command is not the
+# built-in `go test ./...`, because go-mutants cannot reason about a command it
+# did not write. Set it to "on" to promise that yours is reproducible.
 mode = "auto"
 # directory = "team-cache"
 

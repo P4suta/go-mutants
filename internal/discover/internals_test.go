@@ -777,6 +777,39 @@ func TestAllSkipReasonsListsEverySkipReasonConstant(t *testing.T) {
 	}
 }
 
+// TestEverySkipReasonExplainsItself is the drift guard on [SkipReason.Explanation],
+// which is what `--explain` prints under each reason.
+//
+// Without it a reason added here would come out of `list --explain` as a
+// heading with a blank line under it — the one place a user goes to find out
+// what a suppression means, silently saying nothing. The list comes from
+// [AllSkipReasons] rather than from a table typed out here, so the guard covers
+// whatever this package declares today.
+func TestEverySkipReasonExplainsItself(t *testing.T) {
+	t.Parallel()
+
+	reasons := AllSkipReasons()
+	if len(reasons) == 0 {
+		t.Fatal("this package reports no skip reasons, so this guard is checking nothing")
+	}
+	for _, reason := range reasons {
+		explanation := reason.Explanation()
+		switch {
+		case explanation == "":
+			t.Errorf("the skip reason %q has no explanation, so --explain prints a heading with nothing under it", reason)
+		case strings.Contains(explanation, "\n"):
+			t.Errorf("the explanation of %q spans more than one line: %q", reason, explanation)
+		}
+	}
+	// A reason from another build — the ones the schema reserves for
+	// instrumentation, say — is a row worth printing with its counts and no
+	// sentence, rather than a failure. `--explain` reads reasons out of
+	// documents, which this build did not necessarily write.
+	if got := SkipReason("struct-tag").Explanation(); got != "" {
+		t.Errorf("a reason this build does not define explained itself: %q", got)
+	}
+}
+
 // typedFixture type-checks one self-contained file and hands back the guard
 // resolver for it.
 //

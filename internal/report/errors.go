@@ -19,6 +19,16 @@ import (
 // halves of the GOM50xx schema-and-report range are deliberately kept apart so
 // that "the report could not be assembled" and "the report does not match its
 // own schema" can never be confused for one another.
+//
+// It also owns the GOM78xx block, which is sharding: the `--shard K/N`
+// specification, the `shard` block of the document, and every way `report
+// merge` can refuse a set of shard reports. They are a block of their own
+// rather than more GOM51xx numbers because they are one feature with one
+// remedy — look at how the run was split — and a user reading a refusal should
+// see at a glance that all of it is about sharding. They live in this package
+// because the document block and the merge are both this package's business,
+// and splitting a feature across two packages to keep one number range tidy
+// would be the tail wagging the dog.
 type Code string
 
 // The report diagnostic codes.
@@ -67,6 +77,14 @@ const (
 	// killed or retried mutant carrying it is a document claiming a detection
 	// nothing performed.
 	CodeInvalidCoverage Code = "GOM5108"
+
+	// CodeInvalidCache reports a cache block that does not describe the mutants
+	// underneath it: an unknown mode, a negative or impossible counter, or a
+	// mutant marked cached that the block says could not have been. The last is
+	// the one worth having: a run with the cache off that reports a reused
+	// outcome, or a cached mutant that is also uncovered, would be a document
+	// contradicting itself about where a verdict came from.
+	CodeInvalidCache Code = "GOM5109"
 
 	// CodeNoCatalog reports a build with no catalogue at all. Every run has one,
 	// even an empty one, and a nil catalogue means the caller lost it rather
@@ -118,6 +136,56 @@ const (
 	// workspace. See [History] for why a shared cache root is worth being
 	// paranoid about.
 	CodeForeignWorkspace Code = "GOM5133"
+
+	// CodeInvalidNotRunReason reports a result whose not-run reason and outcome
+	// contradict each other: a measured mutant that says why it was not
+	// measured, or a not-run mutant that does not. The pairing is what makes
+	// `not_run_reason` worth reading at all, so it is checked rather than
+	// trusted; see [NotRunReason].
+	CodeInvalidNotRunReason Code = "GOM5116"
+	// CodeMalformedDocument reports a file that cannot be read back as a run
+	// report: not JSON, the wrong document type, a schema version this build
+	// does not know, or a field nothing here declares. It is separate from
+	// internal/schemas' GOM5003, which is a document that parsed and then failed
+	// the published schema: this one never got that far.
+	CodeMalformedDocument Code = "GOM5117"
+)
+
+// The sharding diagnostic codes, which are the GOM78xx block this package also
+// owns. See [Code].
+const (
+	// CodeInvalidShardSpec reports a `--shard` value that is not a shard
+	// specification: not `K/N`, not two numbers, or a K outside 1..N.
+	CodeInvalidShardSpec Code = "GOM7801"
+	// CodeInvalidShard reports a shard block a document cannot state — an index
+	// above its own total, or an assignment function this build does not
+	// implement. The assignment is checked because it is a promise to a
+	// consumer that the partition can be recomputed, and a document naming a
+	// function nobody has is a promise nobody can keep.
+	CodeInvalidShard Code = "GOM7802"
+
+	// CodeNoShardReports reports a merge that was given nothing to merge.
+	CodeNoShardReports Code = "GOM7810"
+	// CodeNotAShardReport reports a document handed to `report merge` that no
+	// shard wrote. Merging an unsharded run into anything is meaningless: it
+	// already is the whole run.
+	CodeNotAShardReport Code = "GOM7811"
+	// CodeIncongruentShards reports two documents that do not describe one run:
+	// different tool versions, workspace digests, shard totals, assignment
+	// functions, changed refs, or catalogues. Merging them would produce a
+	// document whose numbers describe no run that ever happened, so the first
+	// discrepancy is named and nothing is written.
+	CodeIncongruentShards Code = "GOM7812"
+	// CodeIncompleteShardSet reports a set of documents that is not every shard
+	// exactly once: an index missing, or one supplied twice. A merge of a
+	// subset would silently report the mutants of the missing shards as not-run
+	// and flatter the score.
+	CodeIncompleteShardSet Code = "GOM7813"
+	// CodeShardOwnershipMismatch reports a shard whose rows disagree with the
+	// assignment function: it measured a mutant belonging to another shard, or
+	// disclaimed one of its own. Either way two shards' rows would collide or a
+	// mutant would fall through the gap between them.
+	CodeShardOwnershipMismatch Code = "GOM7814"
 )
 
 // String returns the code as it is printed.
@@ -134,17 +202,27 @@ var codes = []Code{
 	CodeInvalidTestCommand,
 	CodeNoReport,
 	CodeInvalidCoverage,
+	CodeInvalidCache,
 	CodeNoCatalog,
 	CodeUnknownMutant,
 	CodeDuplicateEntry,
 	CodeMissingResult,
 	CodeMissingLocation,
 	CodeInvalidOutcome,
+	CodeInvalidNotRunReason,
+	CodeMalformedDocument,
 	CodeEncodeFailed,
 	CodeCacheUnavailable,
 	CodeHistoryDirectory,
 	CodeHistoryWrite,
 	CodeForeignWorkspace,
+	CodeInvalidShardSpec,
+	CodeInvalidShard,
+	CodeNoShardReports,
+	CodeNotAShardReport,
+	CodeIncongruentShards,
+	CodeIncompleteShardSet,
+	CodeShardOwnershipMismatch,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

@@ -5,7 +5,12 @@
   "description": "The lossless record of one mutation run. Everything the console, the HTML report, and the Stryker projection say is derived from this document; nothing is said anywhere that is not written down here.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["document_type", "schema_version", "tool_version", "run_id", "status", "started_at", "finished_at", "duration_ms", "workspace", "selection", "test", "coverage", "summary", "mutants", "rejected", "skips", "expectations", "warnings"],
+  "required": ["document_type", "schema_version", "tool_version", "run_id", "status", "started_at", "finished_at", "duration_ms", "workspace", "selection", "shard", "test", "coverage", "cache", "summary", "mutants", "rejected", "skips", "expectations", "warnings"],
+  "if": { "required": ["merge"] },
+  "then": {
+    "description": "A merged document is the union of a run that was split, so it describes no single shard. The two blocks are therefore exclusive: a document that named both would be claiming to be one shard and all of them at once.",
+    "properties": { "shard": { "type": "null" } }
+  },
   "properties": {
     "document_type": { "const": "go-mutants/run-report" },
     "schema_version": { "const": 1 },
@@ -24,8 +29,11 @@
     "duration_ms": { "$ref": "#/$defs/milliseconds" },
     "workspace": { "$ref": "#/$defs/workspace" },
     "selection": { "$ref": "#/$defs/selection" },
+    "shard": { "$ref": "#/$defs/shard" },
+    "merge": { "$ref": "#/$defs/merge" },
     "test": { "$ref": "#/$defs/test" },
     "coverage": { "$ref": "#/$defs/coverage" },
+    "cache": { "$ref": "#/$defs/cache" },
     "summary": { "$ref": "#/$defs/summary" },
     "mutants": { "type": "array", "items": { "$ref": "#/$defs/mutant" } },
     "rejected": { "type": "array", "items": { "$ref": "#/$defs/rejected" } },
@@ -67,9 +75,17 @@
       "description": "What was asked for, as the user asked for it, and the arithmetic of what it produced: candidates = rejected + the length of mutants[], and selected is how many of those the run set out to execute.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "profile", "operators", "include", "exclude", "candidates", "rejected", "selected"],
+      "required": ["mode", "changed_ref", "profile", "operators", "include", "exclude", "candidates", "rejected", "selected"],
       "properties": {
-        "mode": { "enum": ["all", "mutant"] },
+        "mode": {
+          "description": "all: every accepted mutant. mutant: the one --mutant named. changed: the mutants whose lines the git diff against changed_ref touches. shard: the mutants this shard owns, which a --changed shard narrows further. A merged document reports all, or changed when its shards were changed runs.",
+          "enum": ["all", "mutant", "changed", "shard"]
+        },
+        "changed_ref": {
+          "description": "The git ref the changed-line set was taken against — the merge base of it and HEAD is what was diffed — or null for a run that did not narrow by the diff. It is independent of mode, because a shard of a changed run narrows by both.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
         "profile": { "enum": ["balanced", "strong", "all"] },
         "operators": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "include": { "type": "array", "items": { "type": "string", "minLength": 1 } },
@@ -77,6 +93,26 @@
         "candidates": { "$ref": "#/$defs/count" },
         "rejected": { "$ref": "#/$defs/count" },
         "selected": { "$ref": "#/$defs/count" }
+      }
+    },
+    "shard": {
+      "description": "Which shard of a split run this document is, or null when the run was not split. Every shard discovers and validates the whole catalogue and executes only the mutants assigned to it; the rest carry outcome not-run with not_run_reason other-shard. index is 1-based and never exceeds total. assignment names the function that decides which shard owns a mutant, so that a consumer can recompute the partition: id-hash-v1 is the first eight bytes of the SHA-256 of the full mutant id, read big-endian, modulo total, plus one. The null is admitted here rather than through a oneOf so that a shard block with a bad field is reported against that field, instead of as a failure to be null.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["index", "total", "assignment"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 1 },
+        "total": { "type": "integer", "minimum": 1 },
+        "assignment": { "const": "id-hash-v1" }
+      }
+    },
+    "merge": {
+      "description": "Present only on a document `report merge` produced, and absent from every document a run wrote. shards is how many shard reports were merged into it, and they were proven congruent — one tool version, one workspace digest, one catalogue, one changed ref, and every index from 1 to shards exactly once — before anything was combined.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shards"],
+      "properties": {
+        "shards": { "type": "integer", "minimum": 1 }
       }
     },
     "test": {
@@ -129,6 +165,31 @@
         }
       }
     },
+    "cache": {
+      "description": "What the outcome cache did. mode is what the run did rather than what was configured: cache.mode auto resolves to on or off before any mutant runs — off for a test command go-mutants cannot reason about, off again when the cache directory cannot be opened — and a warning says which. hits were adopted from the cache and never executed, misses were looked up, not found, and executed, and writes is how many of those misses produced an outcome worth storing, so writes never exceeds misses. hits equals the number of entries in mutants[] with cached true, and every count is zero when the mode is off — which is what makes a cache that was off and a cache that was empty different statements.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "hits", "misses", "writes"],
+      "properties": {
+        "mode": { "enum": ["off", "on"] },
+        "hits": { "$ref": "#/$defs/count" },
+        "misses": { "$ref": "#/$defs/count" },
+        "writes": { "$ref": "#/$defs/count" }
+      },
+      "if": {
+        "type": "object",
+        "required": ["mode"],
+        "properties": { "mode": { "const": "off" } }
+      },
+      "then": {
+        "description": "A cache nobody consulted has no hits, no misses, and nothing stored.",
+        "properties": {
+          "hits": { "const": 0 },
+          "misses": { "const": 0 },
+          "writes": { "const": 0 }
+        }
+      }
+    },
     "summary": {
       "description": "The counts cover every mutant in mutants[], so total equals its length. score_percent is detections over detections plus unexpected survivors, where an unexpected survivor is a survivor with no fulfilled expectation; it is null exactly when that denominator is zero.",
       "type": "object",
@@ -161,7 +222,20 @@
     "mutant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "display_id", "path", "package", "family", "rule", "rule_version", "line", "column", "start_byte", "end_byte", "original", "replacement", "outcome", "duration_ms", "killed_by", "attempts", "output_tail", "covering_test_packages", "uncovered"],
+      "required": ["id", "display_id", "path", "package", "family", "rule", "rule_version", "line", "column", "start_byte", "end_byte", "original", "replacement", "outcome", "not_run_reason", "duration_ms", "killed_by", "attempts", "output_tail", "covering_test_packages", "uncovered", "cached"],
+      "if": {
+        "type": "object",
+        "required": ["outcome"],
+        "properties": { "outcome": { "const": "not-run" } }
+      },
+      "then": {
+        "description": "A mutant that was not executed always says why. There is no fourth reason: a mutant nothing selected, a mutant another shard owns, and a mutant a signal cut the run short of are the whole of it.",
+        "properties": { "not_run_reason": { "type": "string" } }
+      },
+      "else": {
+        "description": "Every other outcome is a measurement, so there is no reason for not having made one.",
+        "properties": { "not_run_reason": { "type": "null" } }
+      },
       "properties": {
         "id": { "$ref": "#/$defs/digest" },
         "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
@@ -179,6 +253,11 @@
         "outcome": {
           "description": "timed-out is a confirmed timeout — it timed out, was retried serially, and timed out again — and counts as a detection. A single timeout that did not reproduce is inconclusive.",
           "enum": ["killed", "survived", "timed-out", "inconclusive", "errored", "not-run"]
+        },
+        "not_run_reason": {
+          "description": "Why a not-run mutant was not run, and null for every mutant that was. out-of-selection: the run narrowed itself and this mutant was outside — --mutant named another, or --changed found no edited line on it. other-shard: --shard assigned it to a different shard, which is the one that measured it. interrupted: it was selected and a signal ended the run first.",
+          "type": ["string", "null"],
+          "enum": [null, "interrupted", "out-of-selection", "other-shard"]
         },
         "duration_ms": { "$ref": "#/$defs/milliseconds" },
         "killed_by": {
@@ -198,6 +277,10 @@
         },
         "uncovered": {
           "description": "The run established that no test binary reaches this mutant's lines and did not execute it. Such a mutant is always survived with attempts 0: no test runs the line, so no test could have caught the edit. False whenever coverage.mode is off.",
+          "type": "boolean"
+        },
+        "cached": {
+          "description": "This outcome was adopted from the outcome cache rather than measured by this run, so duration_ms, attempts, killed_by and output_tail are the ones the run that measured it recorded. It is only ever true of killed, survived and timed-out — the cache stores no other outcome — never of an uncovered mutant, and never in a run whose cache.mode is off.",
           "type": "boolean"
         }
       }

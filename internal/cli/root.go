@@ -43,8 +43,10 @@ It copies your workspace into a disposable snapshot, proves the unmutated tests
 pass there, rewrites the copy, and measures how many of those rewrites your
 tests notice. Your own tree is only ever read.
 
-This is a pre-release build: it discovers comparison and boolean-literal
-mutants, and the rest of the v1 operator catalogue is still landing.`
+This is a pre-release build. The whole v1 operator catalogue is discovered, a
+run can be narrowed to a git diff (--changed) or to one shard of a matrix
+(--shard), and outcomes it has proven are reused between runs (--cache); the
+HTML report is still landing.`
 
 // NewRootCommand builds the command tree.
 //
@@ -88,6 +90,8 @@ func NewRootCommand() *cobra.Command {
 	root.SetVersionTemplate("go-mutants {{.Version}}\n")
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newListCommand())
+	root.AddCommand(newReportCommand())
+	root.AddCommand(newCacheCommand())
 	return root
 }
 

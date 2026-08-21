@@ -14,12 +14,17 @@ import (
 	"github.com/P4suta/go-mutants/internal/schemas"
 )
 
-// TestCodesAreUniqueAndInBlock holds this package inside the range it owns.
+// TestCodesAreUniqueAndInBlock holds this package inside the ranges it owns.
 //
 // GOM5001 to GOM5009 belong to internal/schemas, which checks the documents
 // this package writes; overlapping the two would make a code ambiguous in
 // exactly the situation a user is trying to tell them apart — a report that was
 // written and a report that does not validate.
+//
+// GOM78xx is the second block, and it is sharding: the `--shard` specification,
+// the document's `shard` block, and every refusal `report merge` can make. It
+// is checked here rather than merely allowed, so that a shard code cannot drift
+// into the GOM51xx range or a reporting code into the shard one.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	t.Parallel()
 
@@ -27,14 +32,32 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	if len(codes) == 0 {
 		t.Fatal("this package reports no codes at all")
 	}
+	shardCodes := map[report.Code]bool{
+		report.CodeInvalidShardSpec:       true,
+		report.CodeInvalidShard:           true,
+		report.CodeNoShardReports:         true,
+		report.CodeNotAShardReport:        true,
+		report.CodeIncongruentShards:      true,
+		report.CodeIncompleteShardSet:     true,
+		report.CodeShardOwnershipMismatch: true,
+	}
 	seen := make(map[report.Code]bool, len(codes))
 	for _, code := range codes {
 		if seen[code] {
 			t.Errorf("code %s is defined twice", code)
 		}
 		seen[code] = true
-		if !strings.HasPrefix(string(code), "GOM51") || len(code) != len("GOM5101") {
-			t.Errorf("code %s is outside the GOM51xx block", code)
+		want := "GOM51"
+		if shardCodes[code] {
+			want = "GOM78"
+		}
+		if !strings.HasPrefix(string(code), want) || len(code) != len("GOM5101") {
+			t.Errorf("code %s is outside the %sxx block", code, want)
+		}
+	}
+	for code := range shardCodes {
+		if !seen[code] {
+			t.Errorf("the sharding code %s is not listed by Codes()", code)
 		}
 	}
 	if !slices.IsSortedFunc(codes, func(x, y report.Code) int { return strings.Compare(string(x), string(y)) }) {

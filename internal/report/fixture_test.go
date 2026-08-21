@@ -51,6 +51,9 @@ type candidate struct {
 	// outcome is what execution made of it, or the zero value when the
 	// candidate is the one validation rejected.
 	outcome mutation.Outcome
+	// notRun is why a not-run candidate was not run, and is empty for every
+	// other outcome — the pairing [report.Build] enforces in both directions.
+	notRun report.NotRunReason
 	// rejected marks the one candidate validation refused.
 	rejected bool
 	killedBy string
@@ -63,6 +66,10 @@ type candidate struct {
 	// carries.
 	covering  []string
 	uncovered bool
+	// cached marks an outcome this run adopted from the outcome cache instead
+	// of measuring. It is only ever set on a reusable outcome, which is the
+	// pairing [report.Build] enforces.
+	cached bool
 }
 
 // fixtureCandidates covers every outcome the document can carry, plus a
@@ -77,6 +84,9 @@ var fixtureCandidates = []candidate{
 		start: 100, original: "==", replacement: "!=", line: 12, column: 9,
 		outcome: mutation.OutcomeKilled, killedBy: alphaPackage, attempts: 1,
 		duration: 120 * time.Millisecond, tail: "--- FAIL: TestAdd (0.00s)",
+		// Adopted from the outcome cache, which is why the duration and the tail
+		// belong to the run that first measured it rather than to this one.
+		cached: true,
 	},
 	{
 		path: alphaFile, pkg: alphaPackage, rule: "true-to-false",
@@ -88,6 +98,9 @@ var fixtureCandidates = []candidate{
 		start: 200, original: "<", replacement: "<=", line: 24, column: 7,
 		outcome: mutation.OutcomeTimedOut, killedBy: alphaPackage, attempts: 2,
 		duration: 20 * time.Second, tail: "panic: test timed out after 10s",
+		// A confirmed timeout is reusable and this one was reused: two attempts
+		// agreed once, and the cache is entitled to remember that they did.
+		cached: true,
 	},
 	{
 		path: alphaFile, pkg: alphaPackage, rule: "ge-to-gt",
@@ -106,9 +119,12 @@ var fixtureCandidates = []candidate{
 		tail: "exec: the test binary could not be started",
 	},
 	{
+		// Selected — it is inside the `selected` count below — and never
+		// reached, which is what a not-run mutant is when nothing narrowed the
+		// run: the reason a document gives for one it meant to measure.
 		path: betaFile, pkg: betaPackage, rule: "le-to-lt",
 		start: 120, original: "<=", replacement: "<", line: 14, column: 8,
-		outcome: mutation.OutcomeNotRun,
+		outcome: mutation.OutcomeNotRun, notRun: report.NotRunInterrupted,
 	},
 	{
 		path: betaFile, pkg: betaPackage, rule: "eq-to-neq",
@@ -216,12 +232,14 @@ func fixtureOptions(t *testing.T) report.Options {
 			continue
 		}
 		results = append(results, report.MutantResult{
-			ID:         m.ID,
-			Outcome:    c.outcome,
-			Duration:   c.duration,
-			KilledBy:   c.killedBy,
-			Attempts:   c.attempts,
-			OutputTail: c.tail,
+			ID:           m.ID,
+			Outcome:      c.outcome,
+			NotRunReason: c.notRun,
+			Duration:     c.duration,
+			KilledBy:     c.killedBy,
+			Attempts:     c.attempts,
+			OutputTail:   c.tail,
+			Cached:       c.cached,
 		})
 	}
 
@@ -262,7 +280,15 @@ func fixtureOptions(t *testing.T) report.Options {
 		Baseline:        []time.Duration{1200 * time.Millisecond, 1500 * time.Millisecond, 1350 * time.Millisecond},
 		Timeout:         10 * time.Second,
 		TimeoutSource:   report.TimeoutDerived,
-		Warnings:        fixtureWarnings,
+		// Two of the seven executable mutants were adopted from the cache; the
+		// other five were looked up, not found, and measured. Two of those five
+		// outcomes were worth storing — the survivor and the other survivor —
+		// while the inconclusive, the errored and the interrupted one are not
+		// outcomes a later run may reuse. See [report.Cache].
+		CacheMode:   report.CacheOn,
+		CacheMisses: 5,
+		CacheWrites: 2,
+		Warnings:    fixtureWarnings,
 	}
 }
 
@@ -331,6 +357,7 @@ func coverageOptions(t *testing.T) report.Options {
 		results = append(results, report.MutantResult{
 			ID:                   m.ID,
 			Outcome:              c.outcome,
+			NotRunReason:         c.notRun,
 			Duration:             c.duration,
 			KilledBy:             c.killedBy,
 			Attempts:             c.attempts,

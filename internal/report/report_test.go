@@ -380,7 +380,11 @@ func TestScoreIsNullWhenNothingWasMeasured(t *testing.T) {
 
 	opts := fixtureOptions(t)
 	for i := range opts.Results {
-		opts.Results[i] = report.MutantResult{ID: opts.Results[i].ID, Outcome: mutation.OutcomeNotRun}
+		opts.Results[i] = report.MutantResult{
+			ID:           opts.Results[i].ID,
+			Outcome:      mutation.OutcomeNotRun,
+			NotRunReason: report.NotRunOutOfSelection,
+		}
 	}
 	opts.Selected = 0
 	r, err := report.Build(opts)
@@ -509,6 +513,56 @@ func TestEverySkipReasonIsInTheSchema(t *testing.T) {
 	}
 }
 
+// TestEveryEnumeratedValueIsInTheSchema is the same drift guard for the two
+// enumerations this package declares itself.
+//
+// [report.SelectionModes] and [report.NotRunReasons] are what the builder will
+// write, and the schema is what a consumer will branch on. A value added to one
+// and not the other is a document go-mutants writes and its own schema refuses,
+// which the run only finds out about at the very end — so it is found out about
+// here instead, in the commit that adds the value.
+//
+// The not-run reason is checked on the fixture's one not-run mutant rather than
+// on an invented row, because the schema only allows a reason there: the
+// biconditional is part of what is being checked.
+func TestEveryEnumeratedValueIsInTheSchema(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range report.SelectionModes() {
+		doc := decode(t, mustMarshal(t, buildFixture(t)))
+		selection := object(doc, "selection")
+		selection["mode"] = string(mode)
+		// The two modes that come with a fact attached carry it, since the
+		// schema is entitled to expect one.
+		if mode == report.ModeShard {
+			doc["shard"] = map[string]any{"index": 1.0, "total": 2.0, "assignment": mutation.ShardAssignment}
+		}
+		if mode == report.ModeChanged {
+			selection["changed_ref"] = "origin/main"
+		}
+		if err := schemas.Validate(schemas.RunReportV1, encode(t, doc)); err != nil {
+			t.Errorf("the schema rejects the selection mode %q this package writes: %v", mode, err)
+		}
+	}
+
+	notRun := -1
+	for i, m := range buildFixture(t).Mutants {
+		if m.Outcome == report.OutcomeNotRun {
+			notRun = i
+		}
+	}
+	if notRun < 0 {
+		t.Fatal("the fixture has no not-run mutant, so this guard is checking nothing")
+	}
+	for _, reason := range report.NotRunReasons() {
+		doc := decode(t, mustMarshal(t, buildFixture(t)))
+		object(doc, "mutants", notRun)["not_run_reason"] = string(reason)
+		if err := schemas.Validate(schemas.RunReportV1, encode(t, doc)); err != nil {
+			t.Errorf("the schema rejects the not-run reason %q this package writes: %v", reason, err)
+		}
+	}
+}
+
 // TestSchemaRejects walks one violation of each class through the validator and
 // checks that the failure is located where a person would look for it.
 //
@@ -581,7 +635,7 @@ func TestSchemaRejects(t *testing.T) {
 		{
 			name:    "unknown selection mode",
 			pointer: "/selection/mode",
-			mutate:  func(doc map[string]any) { object(doc, "selection")["mode"] = "changed" },
+			mutate:  func(doc map[string]any) { object(doc, "selection")["mode"] = "diffed" },
 		},
 		{
 			name:    "empty test command",
@@ -682,6 +736,48 @@ func TestSchemaRejects(t *testing.T) {
 			name:    "warning with no code",
 			pointer: "/warnings/0/code",
 			mutate:  func(doc map[string]any) { object(doc, "warnings", 0)["code"] = "4040" },
+		},
+		{
+			name:    "a measured mutant that says why it was not run",
+			pointer: "/mutants/0/not_run_reason",
+			mutate:  func(doc map[string]any) { object(doc, "mutants", 0)["not_run_reason"] = "interrupted" },
+		},
+		{
+			name:    "a not-run reason nobody defined",
+			pointer: "/mutants/6/not_run_reason",
+			mutate:  func(doc map[string]any) { object(doc, "mutants", 6)["not_run_reason"] = "shrugged" },
+		},
+		{
+			name:    "a changed ref that is not a ref",
+			pointer: "/selection/changed_ref",
+			mutate:  func(doc map[string]any) { object(doc, "selection")["changed_ref"] = "" },
+		},
+		{
+			name:    "a shard whose index is not a shard number",
+			pointer: "/shard/index",
+			mutate: func(doc map[string]any) {
+				doc["shard"] = map[string]any{"index": 0.0, "total": 2.0, "assignment": "id-hash-v1"}
+			},
+		},
+		{
+			name:    "a shard assigned by a function nobody has",
+			pointer: "/shard/assignment",
+			mutate: func(doc map[string]any) {
+				doc["shard"] = map[string]any{"index": 1.0, "total": 2.0, "assignment": "positional-v1"}
+			},
+		},
+		{
+			name:    "a document that is both a shard and a merge of them",
+			pointer: "/shard",
+			mutate: func(doc map[string]any) {
+				doc["shard"] = map[string]any{"index": 1.0, "total": 2.0, "assignment": "id-hash-v1"}
+				doc["merge"] = map[string]any{"shards": 2.0}
+			},
+		},
+		{
+			name:    "a merge of no shards",
+			pointer: "/merge/shards",
+			mutate:  func(doc map[string]any) { doc["merge"] = map[string]any{"shards": 0.0} },
 		},
 	}
 

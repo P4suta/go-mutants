@@ -217,8 +217,9 @@ func TestExpectationFailureDistinguishes(t *testing.T) {
 			if c.narrow {
 				for i := range opts.Results {
 					opts.Results[i] = report.MutantResult{
-						ID:      opts.Results[i].ID,
-						Outcome: mutation.OutcomeNotRun,
+						ID:           opts.Results[i].ID,
+						Outcome:      mutation.OutcomeNotRun,
+						NotRunReason: report.NotRunOutOfSelection,
 					}
 				}
 				opts.Selected = 1

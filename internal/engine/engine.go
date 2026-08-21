@@ -16,10 +16,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/cache"
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/execute"
+	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -114,10 +116,47 @@ type Options struct {
 	// point of naming one mutant is to be sure which.
 	MutantPrefix string
 
+	// Changed narrows execution to the mutants sitting on lines that have
+	// changed since ChangedRef, as `--changed` does. Everything else is
+	// discovered, catalogued, validated and reported exactly as in a full run —
+	// only the execution is narrowed — so the ids and the rejections of a
+	// changed run and of a whole one are the same, and the two documents can be
+	// compared mutant for mutant.
+	Changed bool
+	// ChangedRef is the git ref the diff is taken against; the merge base of it
+	// and HEAD is what is compared. Empty — or [gitdiff.UpstreamRef], which is
+	// the same request written out and is what the bare `--changed` flag
+	// carries — resolves the upstream branch of HEAD, and fails when there is
+	// none. It is read only when Changed is set.
+	ChangedRef string
+
+	// Shard narrows execution to one shard of the run, as `--shard K/N` does.
+	// The zero value is a run that was not split; a Total above zero is a shard,
+	// and everything the shard does not own is reported as not-run with
+	// [report.NotRunOtherShard] so that the document is a complete statement
+	// about the catalogue rather than a fragment of one.
+	//
+	// It composes with Changed: a shard of a changed run executes the mutants it
+	// owns that also sit on changed lines, which is what a CI matrix over a pull
+	// request asks for.
+	Shard report.Shard
+
 	// HistoryRoot overrides the directory the run history is written under.
 	// Empty is <os.UserCacheDir>/go-mutants, which is what every real run uses;
 	// the tests set it so that they never touch the developer's own cache.
 	HistoryRoot string
+
+	// CacheRoot overrides the directory the outcome cache is kept under. Empty
+	// falls back to HistoryRoot, and only then to <os.UserCacheDir> with
+	// `cache.directory` underneath it.
+	//
+	// The fallback is what makes the tests safe rather than a convenience. The
+	// two stores share a workspace directory in production, so a caller that
+	// redirected the history and left this empty plainly meant to redirect both;
+	// without the fallback such a caller would quietly write outcome entries
+	// into the developer's own cache directory, which is the one place a test
+	// must never touch.
+	CacheRoot string
 
 	// Events receives every [Event]. The engine closes it on return. A nil
 	// channel publishes nothing and is not closed; see the package
@@ -249,11 +288,23 @@ func Run(ctx context.Context, opts Options) (RunOutcome, error) {
 // picture. Threading a dozen values through would make the difference between
 // them a matter of remembering which ones; a struct makes it one call.
 type state struct {
-	found      discover.Result
-	catalog    *mutation.Catalog
-	mode       report.SelectionMode
+	found   discover.Result
+	catalog *mutation.Catalog
+	mode    report.SelectionMode
+	// changed is the changed-line set a `--changed` run narrowed itself by, or
+	// nil. It is resolved before anything is copied or built, so that a bad ref
+	// costs a second rather than a baseline.
+	changed *gitdiff.Changed
+	// shard is which shard of a split run this is, or nil.
+	shard      *report.Shard
 	selected   int
 	rejections []report.Rejection
+	// notRun records why each accepted mutant the selection left out was not
+	// executed. Everything accepted and absent from here was selected, so a
+	// mutant with no result and no entry is one the run did not reach —
+	// [report.NotRunInterrupted] — which is what makes the reason total without
+	// a fourth value for "we forgot".
+	notRun map[string]report.NotRunReason
 	// results holds one execution result per mutant the run reached, by full
 	// id. Everything catalogued, accepted, and absent from here is reported as
 	// not-run, which is the contract report.Build enforces.
@@ -269,6 +320,9 @@ type state struct {
 	// coverage off, which is what every path that never reached the phase — an
 	// early failure, a custom test command, nothing to execute — leaves behind.
 	coverage coverageResult
+	// cache is what the outcome cache did. The zero value is a run with the
+	// cache off; see [cacheState].
+	cache cacheState
 }
 
 // pipeline is the run proper, split out so that [Run] owns exactly two things:
@@ -288,6 +342,17 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	}
 	out.TestCommand = command
 	out.Workers = cfg.Execution.Jobs
+
+	// Resolved before the workspace is copied and the baseline is measured. A
+	// ref that does not exist, a directory that is not a repository, and a
+	// branch with no upstream are all mistakes about the invocation, and finding
+	// one out after several minutes of building and testing would be a poor way
+	// to learn it. It reads the user's own tree, which is the only place a
+	// repository is: see internal/gitdiff.
+	changed, err := s.changedLines(ctx, opts, root)
+	if err != nil {
+		return err
+	}
 
 	s.emit(RunPlanned{RunID: out.RunID, Workers: cfg.Execution.Jobs})
 	s.emit(PhaseChanged{
@@ -356,10 +421,17 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 		return err
 	}
 
+	// The selection is described before it is made, so that a run interrupted
+	// half way through still files a document saying how it had narrowed itself.
+	// A partial report claiming to have run everything would be the one claim
+	// nobody could check.
 	st := &state{
-		mode:    report.ModeAll,
+		mode:    selectionMode(opts),
+		changed: changed,
+		shard:   shardOf(opts),
 		results: make(map[string]report.MutantResult),
 		display: make(map[string]MutantResult),
+		notRun:  make(map[string]report.NotRunReason),
 	}
 	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, out, st)
 	if mutateErr != nil {
@@ -573,6 +645,10 @@ func (s *session) mutate(
 			return err
 		}
 	}
+	// Last of the narrowing stages and after coverage, which is the order the
+	// correctness argument in cache.go depends on: an uncovered mutant is
+	// settled before the cache is ever asked about it.
+	runs = s.cachePhase(opts, catalog.Digest(), out, runs, st)
 
 	results, err := execute.Schedule(ctx, execOpts, runs, bins, s.hooks(st))
 	// As with validation: whatever was measured is kept, because an interrupted
@@ -588,6 +664,11 @@ func (s *session) mutate(
 			CoveringTestPackages: st.coverage.covering[result.ID],
 		}
 	}
+	// Written back before the error is returned, interruption included: a mutant
+	// that settled before the signal arrived settled, and throwing its answer
+	// away would make a run somebody cancelled halfway through cost full price
+	// twice. See [session.storeOutcomes].
+	s.storeOutcomes(opts, results, st)
 	return err
 }
 
@@ -738,7 +819,6 @@ func (s *session) selection(
 
 	ids := acceptedIDs
 	if opts.MutantPrefix != "" {
-		st.mode = report.ModeMutant
 		chosen, err := catalog.ResolvePrefix(opts.MutantPrefix)
 		if err != nil {
 			return nil, &SelectionError{Prefix: opts.MutantPrefix, Err: err}
@@ -755,12 +835,14 @@ func (s *session) selection(
 			s.warn(CodeSelectedMutantRejected, rejectedSelection(opts.MutantPrefix, chosen, st))
 		}
 	}
+	ids = s.narrowSelection(ids, st)
 
 	runs := make([]execute.MutantRun, 0, len(ids))
 	for _, id := range ids {
 		runs = append(runs, execute.MutantRun{ID: id, Timeout: timeout})
 	}
 	st.selected = len(runs)
+	recordNotRun(acceptedIDs, runs, st)
 	return runs, nil
 }
 
@@ -903,8 +985,20 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 			continue
 		}
 		result, measured := st.results[m.ID]
-		if !measured {
-			result = report.MutantResult{ID: m.ID, Outcome: mutation.OutcomeNotRun}
+		switch {
+		case !measured:
+			result = report.MutantResult{
+				ID:           m.ID,
+				Outcome:      mutation.OutcomeNotRun,
+				NotRunReason: st.notRunReason(m.ID),
+			}
+		case result.Outcome == mutation.OutcomeNotRun && result.NotRunReason == "":
+			// Reached and not settled, which internal/execute produces for a
+			// cancelled run — including the mutant that timed out once and was
+			// interrupted before the serial retry. It was selected, so the
+			// selection has nothing to say about it; what happened to it is the
+			// interruption.
+			result.NotRunReason = report.NotRunInterrupted
 		}
 		results = append(results, result)
 	}
@@ -923,6 +1017,8 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		Finished:         finished,
 		Config:           opts.Config,
 		Mode:             st.mode,
+		ChangedRef:       changedRef(st),
+		Shard:            st.shard,
 		Selected:         st.selected,
 		ModulePath:       st.found.ModulePath,
 		GoVersion:        goVersion(st.found.GoVersion, out.Toolchain.Version.Release),
@@ -938,6 +1034,9 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		TimeoutSource:    reportTimeoutSource(out.TimeoutSource),
 		CoverageMode:     reportCoverageMode(st.coverage.Mode()),
 		CoverageBinaries: st.coverage.binaries,
+		CacheMode:        st.cache.Mode(),
+		CacheMisses:      st.cache.misses,
+		CacheWrites:      st.cache.writes,
 		Warnings:         reportWarnings(s.warnings),
 	})
 	if err != nil {
@@ -984,8 +1083,10 @@ func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, rep 
 			// Read out of the document rather than counted beside it, exactly
 			// as every other number in this block is.
 			Uncovered: uncoveredOf(rep),
+			Cached:    rep.Cache.Hits,
 		},
 		Coverage: st.coverage.Mode(),
+		Cache:    cacheMode(rep.Cache.Mode),
 		Score:    mutation.ScoreOf(tally),
 		Warnings: len(s.warnings),
 		Skips:    skipCounts(st.found.Skips),
@@ -1043,6 +1144,7 @@ func notable(st *state, rep *report.Report) []MutantResult {
 		shown.Outcome = core
 		shown.Duration = time.Duration(m.DurationMS) * time.Millisecond
 		shown.Uncovered = m.Uncovered
+		shown.Cached = m.Cached
 		out = append(out, shown)
 	}
 	slices.SortFunc(out, func(x, y MutantResult) int {
@@ -1128,6 +1230,19 @@ func displayIndex(catalog *mutation.Catalog, candidates []discover.Located) map[
 		}
 	}
 	return out
+}
+
+// changedRef is the ref a `--changed` run recorded, or "" for every other run.
+//
+// It is read back off the resolved diff rather than off the options, so that a
+// bare `--changed` records the upstream branch's own name — `origin/main` — and
+// not the `@{upstream}` notation that found it. A report should say what was
+// compared, not how it was looked up.
+func changedRef(st *state) string {
+	if st.changed == nil {
+		return ""
+	}
+	return st.changed.Ref
 }
 
 // rejectionsOf reduces validation's rejections to what the report keeps. The
@@ -1227,6 +1342,16 @@ type session struct {
 	// written from the run's own goroutine and read from it, after every worker
 	// has joined.
 	summary *RunSummary
+	// cache is the outcome store this run reads and writes, or nil when the
+	// cache is off. It is opened and used from the run's own goroutine only: the
+	// lookups happen before the workers start and the write-back after they have
+	// joined, which is what keeps the whole stage free of locks.
+	cache *cache.Cache
+	// cacheCorruptWarned and cacheWriteWarned hold the once-per-run warnings.
+	// One unreadable entry and one unwritable directory usually mean every other
+	// one is too, and a warning per mutant would bury the run's findings.
+	cacheCorruptWarned bool
+	cacheWriteWarned   bool
 }
 
 // emit publishes one event. A nil channel is the documented "publish nothing"

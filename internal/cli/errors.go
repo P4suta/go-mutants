@@ -70,6 +70,19 @@ const (
 	// and separate from `list`'s reading of the same flag, where a prefix
 	// matching several mutants lists all of them and is not an error at all.
 	CodeMutantUnresolved Code = "GOM1009"
+	// CodeUnreadableReport reports a file named on the command line that could
+	// not be read at all: a path that does not exist, a directory, a file
+	// without permission. It is a usage code rather than an infrastructure one
+	// because the mistake is in the command line and the remedy is to name a
+	// different path.
+	CodeUnreadableReport Code = "GOM1010"
+	// CodeInvalidReportDocument reports a file that was read and is not a run
+	// report this build can use: not JSON, the wrong document type, a schema
+	// version from another release, or a document the published schema refuses.
+	// The failure it carries keeps its own code — this package does not re-code
+	// what internal/report and internal/schemas decided — and this one names the
+	// file, which is what `report merge` over several of them needs.
+	CodeInvalidReportDocument Code = "GOM1011"
 )
 
 // String returns the code as it is printed.
@@ -87,6 +100,8 @@ var codes = []Code{
 	CodeCatalogMismatch,
 	CodeInertProfile,
 	CodeMutantUnresolved,
+	CodeUnreadableReport,
+	CodeInvalidReportDocument,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

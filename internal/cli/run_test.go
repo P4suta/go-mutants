@@ -6,6 +6,9 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +16,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/engine"
+	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/tui"
 )
@@ -148,6 +152,98 @@ func TestRepeatedPatternFlagsAreNotSplitOnCommas(t *testing.T) {
 	want := []string{"a,b/**", "c/**"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("include = %q, want %q", got, want)
+	}
+}
+
+// The identity the scripted repositories commit under, set through the
+// environment so that go-mutants' own git — which runs with this process's
+// environment — reads exactly what the test wrote.
+const (
+	gitTestAuthor    = "go-mutants tests"
+	gitTestEmail     = "tests@go-mutants.invalid"
+	gitTestTimestamp = "2026-02-18T09:15:00+00:00"
+)
+
+// gitCommand runs one git command in dir, failing the test if it does not
+// succeed.
+func gitCommand(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	argv := append([]string{"-C", dir, "-c", "commit.gpgsign=false"}, args...)
+	out, err := exec.Command("git", argv...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// neutralGitEnvironment points git at configuration files that do not exist and
+// pins the commit identity, so that a developer's own `~/.gitconfig` cannot
+// change what these tests observe. It is set for the process, because the
+// command under test runs git itself.
+func neutralGitEnvironment(t *testing.T) {
+	t.Helper()
+	absent := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(absent, "absent-global-config"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(absent, "absent-system-config"))
+	t.Setenv("GIT_AUTHOR_NAME", gitTestAuthor)
+	t.Setenv("GIT_AUTHOR_EMAIL", gitTestEmail)
+	t.Setenv("GIT_AUTHOR_DATE", gitTestTimestamp)
+	t.Setenv("GIT_COMMITTER_NAME", gitTestAuthor)
+	t.Setenv("GIT_COMMITTER_EMAIL", gitTestEmail)
+	t.Setenv("GIT_COMMITTER_DATE", gitTestTimestamp)
+}
+
+// TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone is the CLI-level
+// half of the upstream rule, and it exists because the package-level half
+// cannot reach this path.
+//
+// internal/gitdiff's own tests can ask for the upstream by passing an empty
+// ref, which is a value this command never produces: the bare flag carries
+// [gitdiff.UpstreamRef], and a resolver that took that notation for a ref would
+// look up no upstream at all. The branch with none would then fail at the merge
+// base — GOM7713, "the ref may not exist here" — about a ref nobody typed,
+// leaving GOM7712 unreachable from the command line and its remedy unread. So
+// the flag is driven for real, in a repository that really has no upstream,
+// which is the only arrangement that proves the value the flag produces means
+// what its help says.
+//
+// The run stops before a workspace is copied or a toolchain is located, because
+// the diff is resolved first on purpose; this needs git and nothing else.
+func TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone(t *testing.T) {
+	// No t.Parallel and no parallel subtests: t.Chdir refuses to run in one,
+	// and the working directory is where the command finds its workspace.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git is not on PATH, so --changed cannot be exercised here: %v", err)
+	}
+	// Both spellings of the same request, driven through one body: the bare
+	// flag, and the notation a user writes out longhand because the help says
+	// the value takes an equals sign.
+	for _, flag := range []string{"--changed", "--changed=" + gitdiff.UpstreamRef} {
+		t.Run(flag, func(t *testing.T) {
+			neutralGitEnvironment(t)
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "alpha.go"), []byte("package alpha\n"), 0o600); err != nil {
+				t.Fatalf("writing the fixture file: %v", err)
+			}
+			gitCommand(t, root, "init", "--quiet")
+			gitCommand(t, root, "add", "--all")
+			gitCommand(t, root, "commit", "--quiet", "--message", "a branch with nowhere to compare against")
+			t.Chdir(root)
+
+			code, _, stderr := execute(t, "run", flag, "--no-color", "--no-tui")
+			if code != int(mutation.ExitInfrastructure) {
+				t.Errorf("exit = %d, want %d\n%s", code, mutation.ExitInfrastructure, stderr)
+			}
+			if !strings.Contains(stderr, string(gitdiff.CodeNoUpstream)) {
+				t.Errorf("stderr = %q, want %s: the upstream was never looked up",
+					stderr, gitdiff.CodeNoUpstream)
+			}
+			// The remedy is the reason this code exists rather than the merge
+			// base's: it says what to do about a branch that tracks nothing.
+			if !strings.Contains(stderr, "--set-upstream-to") {
+				t.Errorf("stderr = %q, want the remedy for a branch with no upstream", stderr)
+			}
+		})
 	}
 }
 

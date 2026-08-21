@@ -17,23 +17,36 @@ reaches is reported without being executed.
 
 The design targets the things that make mutation testing painful in practice.
 A live TUI dashboard instead of a silent wait, coverage-guided selection,
-deterministic stable mutant IDs, and a lossless JSON report are built today;
-`--changed` for pull requests, `--shard k/n` for CI fan-out, and the
-Stryker-ecosystem HTML projection are designed and not yet.
+deterministic stable mutant IDs, a lossless JSON report, `--changed` for pull
+requests, `--shard K/N` for CI fan-out, and an outcome cache that keeps a second
+run from re-measuring what has not moved are built today; the
+Stryker-ecosystem HTML projection is designed and not yet.
 
 ## Status: pre-release, the whole operator catalogue
 
-Two commands exist. `go-mutants run` performs real mutation testing: it
+Three commands exist. `go-mutants run` performs real mutation testing: it
 snapshots the workspace, proves the baseline, discovers candidates, validates
 that they compile, instruments the snapshot once, and measures one mutant per
 test process — then writes a `run-report-v1` document and reports a mutation
 score it actually measured. `go-mutants list` enumerates the same mutants
 without executing them, as text or as a schema-validated JSON catalogue.
+`go-mutants report` reads those documents back: `merge` combines the reports of
+a sharded run into the whole run's report, and `validate` checks any report
+against the schema this build embeds. `go-mutants cache` works with the
+outcomes a run has proven: `status` says where they are and what is stored,
+`gc --days N` removes what was written more than N days ago, and `clean`
+removes them all.
 
 Coverage guidance is automatic and needs no flag: a run with the default test
 command profiles each test binary once, then measures a mutant only against the
 binaries that reach its lines, and reports one no binary reaches without
 executing it at all.
+
+The outcome cache needs no flag either. Outcomes go-mutants has proven are kept
+under your OS cache directory, keyed by everything that could change one — the
+build, the code, the catalogue, the command, the environment — so a second run
+over unchanged code measures only what has moved, and one over changed code
+finds nothing to reuse rather than reusing something stale.
 
 On a terminal that can do better than ASCII, `run` draws a live dashboard — the
 phase, a score gauge, one row per worker, and a scrolling survivor feed — and
@@ -73,8 +86,20 @@ The honest limits:
   can never fail a run.
 - **No HTML report** and no Stryker projection yet; the JSON document and the
   console summary are the output.
-- **No outcome cache, no `--changed`, and no `--shard`.**
-- The `init`, `doctor`, `report`, and `cache` commands do not exist.
+- **The outcome cache is on only for the default test command**, on the same
+  terms and for the same reason as coverage guidance: `cache.mode = "auto"`
+  reuses nothing for a command go-mutants cannot reason about and says so with
+  `GOM7901`. `cache.mode = "on"` is how you promise your own command is
+  reproducible. Inconclusive outcomes, harness errors, interruptions, uncovered
+  mutants, and every mutant named in `[[mutation.expect]]` are measured on
+  every invocation, and nothing the cache does can change a verdict or fail a
+  run.
+- **`--changed` needs git and a repository**, and fails rather than guessing
+  when it cannot read a diff: a narrowing that silently fell back to
+  "everything" or to "nothing" would be worse than not running at all. Rename
+  detection is off, so a renamed file selects every mutant in it.
+- The `init` and `doctor` commands do not exist, and `report` has only `merge`
+  and `validate`.
 
 The design is settled and written down under [`docs/`](docs/), every page marks
 what is implemented versus planned, and the toolchain, gates, and CI are real
@@ -139,8 +164,33 @@ go-mutants run --jobs 8 --strict
 go-mutants run --include './internal/**' -- go test -run TestFast ./...
 go-mutants run --mutant bf513c0d
 go-mutants run --no-tui
+go-mutants run --explain
+go-mutants run --changed=origin/main
+go-mutants run --shard 1/4
 go-mutants list --operator comparison --json
+go-mutants report merge shard-*.json --output mutation.json
+go-mutants report validate mutation.json
 ```
+
+`--changed` executes only the mutants sitting on lines you have changed since a
+ref — the merge base of it and `HEAD`, so a branch is measured against the
+commit it left rather than against whatever has landed on the target since.
+Bare `--changed` uses the upstream of `HEAD` and reports it by name. Its value
+needs an equals sign, because the ref is optional: `--changed=origin/main`, not
+`--changed origin/main`. What counts as changed is your working tree: edits you
+have not committed, and files you have not added either — every line of a file
+git has never seen is a new line.
+
+`--shard K/N` executes only its own share, assigned from the mutant id alone so
+that editing one file never reshuffles the rest. Every shard discovers,
+validates and reports the entire catalogue, so the N documents are directly
+comparable — and `report merge` proves they describe one run before combining
+them into the document an unsharded run would have written.
+
+`--explain` prints, underneath the usual output, every rejected mutant with the
+compiler's own words and every suppressed site by reason. It is the answer to
+"why is this smaller than I expected", and it cannot be combined with `--json`:
+everything it prints is already in the document.
 
 `--no-tui` is the escape hatch for a terminal you would rather read as lines —
 a `script` session, a recorded demo. It changes nothing about what the run
@@ -149,8 +199,8 @@ terminal, so it already gets the plain lines.
 
 With no arguments, help is printed. The intended v1 command tree is `run`,
 `list`, `doctor`, `init`, `report list|latest|validate|clean|merge`, and
-`cache status|gc|clean`; only `run` and `list` are built. `--changed <ref>` and
-`--shard k/n` are designed and not yet accepted.
+`cache status|gc|clean`; `run`, `list`, `cache`, `report merge` and
+`report validate` are built.
 
 Everything after `--` is captured verbatim as the test command's argv; it is
 never handed to a shell. It replaces `test.command`, so anything other than the
@@ -173,10 +223,17 @@ mise run check
   happens in a disposable snapshot built from a sorted manifest that excludes
   `.git`, caches, and the report directory, and that rejects symlinks,
   junctions, and special files.
-- **Run reports are written outside your tree**, into the OS cache directory,
-  temp-file-then-atomic-rename. `reports/mutation/` is reserved for the
-  in-project outputs the HTML report will add, and is already excluded from
-  snapshot and cache identity so that writing one cannot change a digest.
+- **Run reports and cached outcomes are written outside your tree**, into the
+  OS cache directory, temp-file-then-atomic-rename. `reports/mutation/` is
+  reserved for the in-project outputs the HTML report will add, and is already
+  excluded from snapshot and cache identity so that writing one cannot change a
+  digest.
+- **go-mutants proves a directory is its own before it deletes anything.**
+  Every workspace directory in the OS cache carries an ownership marker naming
+  the workspace it belongs to, and `cache gc` and `cache clean` refuse any
+  directory without one — so a truncated key collision, or somebody else's tool
+  keeping files under the same root, is a diagnosable skip rather than a
+  deletion.
 - **Test commands are trusted project code.** They run inside the snapshot with
   a per-worker `TMPDIR`, but a snapshot is not an operating-system sandbox.
 - **Process trees are cleaned up.** Timeouts and interrupts kill the whole tree

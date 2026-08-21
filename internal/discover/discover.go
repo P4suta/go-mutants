@@ -254,6 +254,33 @@ const (
 	SkipUnnameableDeclType SkipReason = "unnameable-decl-type"
 )
 
+// explanations is one sentence per reason, for `--explain`.
+//
+// They live here rather than in the command line package because they are
+// statements about what discovery decided, and a second copy of that prose
+// would go stale the first time a reason's meaning was sharpened. They are
+// deliberately shorter than the doc comments above: a listing prints one per
+// reason, and a paragraph each would bury the counts they annotate.
+var explanations = map[SkipReason]string{
+	SkipGenerated:          "the file says it is generated, so an edit here would measure the generator's tests and be overwritten by its next run",
+	SkipCgo:                "the package imports \"C\", and v1 does not put its rewrites through the cgo preprocessor",
+	SkipExcluded:           "mutation.include and mutation.exclude removed the file",
+	SkipConstDecl:          "the expression is inside a const declaration, where a constant has to stay constant and one edit can renumber a whole iota block",
+	SkipArrayLength:        "the expression is an array length, which is part of a type and is evaluated by the compiler rather than at run time",
+	SkipCaseLabel:          "the expression labels a switch case or a select clause, which v1 leaves alone; the bodies underneath them are mutated",
+	SkipPackageVarInit:     "the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1",
+	SkipTypeParam:          "the expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values",
+	SkipUnnameableDeclType: "none of the three guard forms can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports",
+}
+
+// Explanation is one sentence saying what a reason means, or "" for a reason
+// this build does not define.
+//
+// The empty answer is for a document rather than for a run: `--explain` reads
+// reasons out of a report, which may have been written by another version, and
+// a reason nobody here recognises is still a row worth printing with its counts.
+func (r SkipReason) Explanation() string { return explanations[r] }
+
 // AllSkipReasons returns every reason discovery can emit, in the declaration
 // order of the constants above. The slice is freshly allocated, so a caller
 // may sort or filter it without disturbing anyone else.

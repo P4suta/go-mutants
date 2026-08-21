@@ -209,16 +209,23 @@ func (id Identity) ID() (string, error) {
 		id.ReplacementDigest,
 	}
 	for _, f := range fields {
-		if err := writeLengthPrefixed(h, f); err != nil {
+		if err := WriteLengthPrefixed(h, f); err != nil {
 			return "", err
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// writeLengthPrefixed writes enc(s) to h: a 4-byte big-endian byte length
+// WriteLengthPrefixed writes enc(s) to h: a 4-byte big-endian byte length
 // followed by the raw bytes.
-func writeLengthPrefixed(h hash.Hash, s string) error {
+//
+// It is exported because the mutant identity is not the only thing go-mutants
+// hashes from a list of fields — the outcome cache key is another — and the
+// unambiguity argument above is the reason to have exactly one implementation
+// of the encoding rather than one per hash. Anything hashed this way is
+// described completely by the bytes on the wire and can be reimplemented
+// elsewhere from that description alone.
+func WriteLengthPrefixed(h hash.Hash, s string) error {
 	if uint64(len(s)) > math.MaxUint32 {
 		return fmt.Errorf("%w: %d bytes", ErrFieldTooLong, len(s))
 	}

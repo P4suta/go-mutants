@@ -21,10 +21,13 @@ fields that a consumer must check before decoding:
 
 Schemas live in `schema/`, are written in JSON Schema draft 2020-12 with
 `additionalProperties: false`, and are validated in tests with
-`santhosh-tekuri/jsonschema/v6` against both fixtures and real CLI output. The
-validator is deliberately not linked into the shipped binary: a schema
-violation is a bug in this repository for a test to catch before a release, not
-a run-time condition to recover from.
+`santhosh-tekuri/jsonschema/v6` against both fixtures and real CLI output. A
+schema violation in a document go-mutants wrote is a bug in this repository for
+a test to catch before a release, not a run-time condition to recover from — so
+nothing on the writing path validates. The validator is in the shipped binary
+all the same, because two commands read documents somebody else wrote:
+`go-mutants report validate FILE` checks one against the embedded schema, and
+`go-mutants report merge` checks every shard report before combining them.
 
 ## `go-mutants/run-report` v1
 
@@ -43,9 +46,12 @@ document rather than second opinions.
 | `status` | `completed`, `interrupted`, or `failed` |
 | `started_at`, `finished_at`, `duration_ms` | RFC 3339 UTC to the second, and the elapsed milliseconds |
 | `workspace` | `module_path`, `go_version`, `workspace_digest`, `platform.{os,arch}` |
-| `selection` | `mode`, `profile`, `operators`, `include`, `exclude`, `candidates`, `rejected`, `selected` |
+| `selection` | `mode`, `changed_ref`, `profile`, `operators`, `include`, `exclude`, `candidates`, `rejected`, `selected` |
+| `shard` | Which shard of a split run this is, or `null`; see below |
+| `merge` | Present only on a document `report merge` wrote; see below |
 | `test` | `command` argv, `baseline`, `timeout_ms`, `timeout_source` |
 | `coverage` | `mode`, and in `package` mode `binaries` and `mutants_uncovered` |
+| `cache` | `mode`, `hits`, `misses`, `writes`; see below |
 | `summary` | The counters, `score_percent`, and `policy` |
 | `mutants[]` | One entry per executed or not-run mutant; see below |
 | `rejected[]` | Candidates the compiler refused, with diagnostics |
@@ -53,13 +59,57 @@ document rather than second opinions.
 | `expectations[]` | Each `[[mutation.expect]]` row, evaluated |
 | `warnings[]` | `GOMnnnn` code plus message |
 
-`selection.mode` is `all` or `mutant`; `candidates` equals `rejected` plus the
-length of `mutants[]`, and `selected` is how many the run set out to execute.
+`selection.mode` is `all`, `mutant`, `changed`, or `shard`; `candidates` equals
+`rejected` plus the length of `mutants[]`, and `selected` is how many the run
+set out to execute.
 `test.baseline` carries every unmutated observation — `runs`, `durations_ms`,
 `slowest_ms` — not just the summary of them, because the derived timeout is a
 function of the slowest run and a reader deserves the numbers it came from.
 `test.timeout_source` is `derived` for `max(10s, slowest baseline × 5)` or
 `explicit` for a configured `test.timeout` or `--timeout`.
+
+### Narrowed runs: `selection.mode`, `changed_ref`, and `shard`
+
+Narrowing is a decision about *execution* and never about discovery. A
+`--changed` or `--shard` run discovers, catalogues and compile-validates the
+whole module exactly as a full run does, and executes a subset of it; so the ids
+in a narrowed report are the ids a full run would have minted, `rejected[]` and
+`skips[]` are identical, and two reports over one workspace can be compared
+mutant for mutant. Everything not executed is `outcome: "not-run"` with a
+`not_run_reason` saying which narrowing left it out.
+
+`selection.mode` is a label on that decision and not the whole of it, because
+the two narrowings compose: a shard of a pull request's diff reports `mode:
+"shard"` *and* a `changed_ref`. The mode names the outer narrowing — `shard`
+before `changed` before `mutant` — and the two facts underneath it are recorded
+independently:
+
+| Field | Contents |
+| --- | --- |
+| `selection.changed_ref` | The git ref the diff was taken against, or `null`. The merge base of it and `HEAD` is what was compared, so a branch is diffed against the commit it left rather than against the target's current tip |
+| `shard.index`, `shard.total` | Which shard of how many, 1-based |
+| `shard.assignment` | `id-hash-v1`: the first eight bytes of the SHA-256 of the full mutant id, read big-endian, modulo `total`, plus one |
+
+`shard` is `null` for a run that was not split, and `assignment` is named so
+that a consumer can recompute the partition rather than trust it. The function
+depends on nothing but the id and the total, which is the property sharding
+needs: adding or removing mutants elsewhere in the module never moves an
+existing one into another shard.
+
+`merge` is present only on a document `go-mutants report merge` produced, and
+absent — not `null` — from every document a run wrote. It carries `shards`, how
+many shard reports were combined, and a document that has it always has `shard:
+null`: the merged report describes the whole run and no single shard of it. Its
+`selection.mode` is `all`, or `changed` when the shards were diff runs, and its
+counts, score and expectations are recomputed from the merged rows rather than
+added up from the shards.
+
+Merging refuses anything that is not one run split cleanly: the shards must
+agree on tool version, workspace digest, module path, catalogue, changed ref,
+shard total and assignment; every index from 1 to `total` must be present
+exactly once; and every row must belong to the shard that reported it. The first
+discrepancy is named and nothing is written, because the whole point of a merged
+document is that somebody is going to trust it.
 
 ### `coverage`
 
@@ -91,12 +141,55 @@ coverage to go-mutants' own per-package binaries. Any failure of the pass itself
 turns it off with a `GOM7602` warning and runs every mutant against every
 binary; see [Architecture](architecture.md).
 
+### `cache`
+
+| Field | Contents |
+| --- | --- |
+| `mode` | `off` or `on` |
+| `hits` | Mutants answered from the outcome cache and never executed |
+| `misses` | Mutants looked up, not found, and executed |
+| `writes` | How many of those outcomes were stored for a later run |
+
+`mode` is what the run **did**, not what was configured. `cache.mode = "auto"`
+resolves to on or off before any mutant is executed — off for a test command
+go-mutants cannot reason about, off again when the cache directory cannot be
+opened — and this field records what it resolved to, with a `GOM79xx` warning
+saying why whenever it stood down. Recording `auto` would put the one value a
+reader cannot act on into a document whose job is to say what happened.
+
+`hits` equals the number of entries in `mutants[]` with `cached: true`, counted
+from the rows when the document is built so the two cannot disagree. `writes`
+never exceeds `misses`: an outcome is only stored for a mutant that was
+measured, and only when it is one a later run may reuse. Every count is zero
+when the mode is `off`, and the schema enforces it — which is what makes "the
+cache was off" and "the cache was empty" different statements.
+
+The gap between `hits + misses` and the number of mutants the run executed is
+the mutants the cache was never asked about: every id named in
+`[[mutation.expect]]`, which is measured on every invocation, and every mutant
+coverage settled without executing.
+
+A merged shard document sums `misses` and `writes` across the shards — the
+shards partition the work, so no mutant is counted twice — and reports `on` if
+any shard managed it. The cache changes no outcome, so a matrix where one runner
+ran with `--cache off` is still a congruent set and `report merge` does not
+refuse it.
+
 ### `mutants[]`
 
 Each entry carries the full 64-hex `id` and the 20-hex `display_id`, `path`,
 `package`, `family`, `rule`, `rule_version`, `line`, `column`, `start_byte`,
-`end_byte`, `original`, `replacement`, `outcome`, `duration_ms`, `killed_by`,
-`attempts`, `output_tail`, `covering_test_packages`, and `uncovered`.
+`end_byte`, `original`, `replacement`, `outcome`, `not_run_reason`,
+`duration_ms`, `killed_by`, `attempts`, `output_tail`,
+`covering_test_packages`, `uncovered`, and `cached`.
+
+`cached` says the outcome was adopted from the outcome cache rather than
+measured by this run, so `duration_ms`, `attempts`, `killed_by` and
+`output_tail` are the ones the run that measured it recorded — reported as they
+stand, because a survivor whose tail explains why it survived is worth exactly
+as much second-hand. It is only ever `true` of `killed`, `survived` and
+`timed-out`, never of an `uncovered` mutant, and never in a run whose
+`cache.mode` is `off`.
 
 `killed_by` names the test binary that detected the mutant — the one that
 failed, or the one it hung — and is `null` for an outcome that detected
@@ -124,6 +217,17 @@ The `outcome` enum:
 | `inconclusive` | Undecidable — including a single timeout whose serial retry finished. Counts in neither direction |
 | `errored` | The harness itself failed for this mutant |
 | `not-run` | Never executed |
+
+`not_run_reason` says why a `not-run` mutant was not run, and is `null` for
+every mutant that was measured — the pairing holds in both directions, and the
+schema enforces it. There is no fourth value, because there are only three ways
+a catalogued, compilable mutant goes unmeasured:
+
+| Value | Meaning |
+| --- | --- |
+| `out-of-selection` | The run narrowed itself and this mutant was outside: `--mutant` named another, or `--changed` found no edited line on it |
+| `other-shard` | `--shard` assigned it elsewhere, and that shard is the one that measured it. `report merge` replaces exactly these rows |
+| `interrupted` | It was selected and a signal ended the run first |
 
 The values are hyphenated while the summary keys are snake_case (`timed_out`,
 `not_run`). That is deliberate and must not be unified by anybody tidying up:
@@ -189,8 +293,10 @@ or whether it was simply never measured, which is not a failure of anything.
 History is kept outside the workspace, under the OS cache directory:
 
 ```text
+<cache>/go-mutants/workspaces/<key>/go-mutants.marker
 <cache>/go-mutants/workspaces/<key>/latest.json
 <cache>/go-mutants/workspaces/<key>/runs/<run-id>.json
+<cache>/go-mutants/workspaces/<key>/outcomes/<context>/<mutant-id>.json
 ```
 
 A mutation run must not add files to the tree it is measuring, so nothing lands
@@ -200,6 +306,17 @@ and `latest.json` is a whole copy of the newest one rather than a pointer that
 could dangle. Every write is temp-file plus atomic rename, so a reader sees one
 complete document or the previous one, and `ReportPublished` is emitted only
 after the rename succeeds.
+
+`outcomes/` is the [outcome cache](configuration.md#cache), one directory per
+cache key with one small JSON document per mutant, and `go-mutants.marker` is
+what governs the whole workspace directory: a two-line file naming the format
+and the full workspace digest. Both stores claim it before writing anything, and
+a directory with no marker or one naming another workspace is refused rather
+than written to — which turns the one failure a truncated `<key>` has, two
+workspaces landing on one name, into a diagnosable error instead of two
+projects' records quietly interleaving. It is also what makes `cache gc` and
+`cache clean` safe to delete anything at all in a directory the whole machine
+shares.
 
 ## `go-mutants/catalog` v1
 

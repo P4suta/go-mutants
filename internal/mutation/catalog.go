@@ -457,10 +457,10 @@ func catalogDigest(mutants []Mutant) string {
 	h := sha256.New()
 	// Errors are impossible here: every field is a short, fixed-width hex
 	// string, far below the 32-bit length prefix limit.
-	_ = writeLengthPrefixed(h, CatalogDomain)
-	_ = writeLengthPrefixed(h, strconv.Itoa(len(mutants)))
+	_ = WriteLengthPrefixed(h, CatalogDomain)
+	_ = WriteLengthPrefixed(h, strconv.Itoa(len(mutants)))
 	for _, m := range mutants {
-		_ = writeLengthPrefixed(h, m.ID)
+		_ = WriteLengthPrefixed(h, m.ID)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

@@ -150,6 +150,7 @@ func (m model) headLines(width, budget int) []string {
 		{m.phaseLine(width), 3},
 		{m.baseline, 4},
 		{m.discovery, 4},
+		{m.selection, 4},
 		{m.coverage, 4},
 		{m.scoreLine(width), 0},
 		{m.countersLine(width), 1},
@@ -451,6 +452,24 @@ func discoveredLine(e engine.Discovered) string {
 
 func validatedLine(e engine.Validated) string {
 	return fmt.Sprintf("validated %s, %s", countNoun(e.Accepted, "mutant"), countNoun(e.Rejected, "rejection"))
+}
+
+// narrowedLine is what the selection stage left to do, and why.
+//
+// It says the same thing internal/console's line says, in the same words, and
+// the duplication is the house rule for the two renderers: neither imports the
+// other, and a dashboard that worded a number differently from the plain output
+// would make the two impossible to compare in a bug report.
+func narrowedLine(e engine.SelectionNarrowed) string {
+	var reasons []string
+	if e.ChangedRef != "" {
+		reasons = append(reasons, "lines changed since "+e.ChangedRef)
+	}
+	if e.Shards > 0 {
+		reasons = append(reasons, fmt.Sprintf("shard %d of %d", e.Shard, e.Shards))
+	}
+	return fmt.Sprintf("selection: %d of %s selected by %s",
+		e.Selected, countNoun(e.Of, "mutant"), strings.Join(reasons, " and "))
 }
 
 // coverageLine is what the coverage pass established.

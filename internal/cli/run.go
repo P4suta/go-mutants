@@ -21,7 +21,9 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/engine"
+	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/tui"
 )
 
@@ -56,9 +58,33 @@ not-run. ` + "`list`" + ` does not compile what it prints, so a prefix from it c
 mutant that turns out not to build; the run then executes nothing and warns,
 quoting the compiler, rather than exiting 0 in silence.
 
+--changed and --shard narrow what is executed and nothing else: discovery,
+validation, and the report still cover the whole module, so the ids and the
+rejections match a full run's and two reports can be compared mutant for mutant.
+Everything left out is reported as not-run with the reason it was left out.
+
+  go-mutants run --changed=origin/main
+  go-mutants run --shard 2/4
+
+--changed diffs against the merge base of the ref and HEAD, so a branch is
+measured against the commit it left rather than against whatever has landed on
+the target since; bare --changed follows the upstream of HEAD and reports it by
+name. Its ref needs an equals sign, because the value is optional. What counts
+as changed is the working tree, uncommitted edits and never-added files alike.
+--shard assigns each mutant from its id alone, so editing one file never
+reshuffles the rest, and every shard reports the whole catalogue —
+` + "`go-mutants report merge`" + ` proves the shards describe one run and combines them.
+
+Outcomes go-mutants has already proven are reused between runs, so a second run
+over unchanged code measures only what has moved. --cache off turns that off and
+--cache on asks for it even for a test command go-mutants cannot reason about;
+` + "`go-mutants cache status`" + ` says what is stored.
+
 --json writes the run-report-v1 document to standard output and nothing else;
 the progress lines, warnings, and errors go to standard error, so the document
-can be piped straight into a validator.
+can be piped straight into a validator. --explain is the opposite half and the
+two are refused together: it prints, underneath the summary, every rejected
+mutant with the compiler's own words and every suppressed site by reason.
 
 A completed run exits 0 unless a policy gate the user opted into failed. Nothing
 here fails a build by default: --strict and policy.minimum_score are how you ask
@@ -73,11 +99,15 @@ type runOptions struct {
 	operators []string
 	profile   string
 	mutant    string
+	changed   string
+	shard     string
+	cache     string
 	jobs      int
 	timeout   time.Duration
 	strict    bool
 	noStrict  bool
 	json      bool
+	explain   bool
 	quiet     bool
 	noColor   bool
 	noTUI     bool
@@ -110,6 +140,25 @@ func newRunCommand() *cobra.Command {
 		"operator tier `NAME`: balanced, strong, or all (default: mutation.profile, or balanced)")
 	flags.StringVar(&o.mutant, "mutant", "",
 		"run only the mutant whose id starts with `ID_PREFIX`; it must select exactly one")
+	flags.StringVar(&o.changed, "changed", "",
+		"execute only the mutants on lines changed since `GIT_REF` (default: the upstream of HEAD); write it as --changed=REF")
+	// The value is optional, which pflag expresses with NoOptDefVal — and which
+	// also means `--changed REF` with a space is not the same thing as
+	// `--changed=REF`: pflag takes the bare form as the flag with its default
+	// and leaves REF as a positional argument. That is pflag's rule for every
+	// optional-value flag and cannot be turned off, so [passthrough] recognises
+	// the mistake and says how to write it instead.
+	//
+	// The default is git's own notation for the upstream branch, so that a user
+	// who writes it out longhand gets exactly what the bare flag does:
+	// [gitdiff.UpstreamRef] is a request to resolve the upstream by name rather
+	// than a ref to be diffed against, so both spellings record `origin/main`
+	// and both reach GOM7712 on a branch that tracks nothing.
+	flags.Lookup("changed").NoOptDefVal = gitdiff.UpstreamRef
+	flags.StringVar(&o.shard, "shard", "",
+		"execute only shard `K/N` of the mutants, 1-based; every shard reports the whole catalogue, and `go-mutants report merge` combines them")
+	flags.StringVar(&o.cache, "cache", "",
+		"outcome cache `MODE`: auto, on, or off (default: cache.mode, or auto — which reuses outcomes only for the built-in test command)")
 	// The pflag default is zero and the real one is described in the usage
 	// text. Printing config.DefaultJobs() as the default would make `--help`
 	// say 8 on a laptop and 4 on a CI runner, and help output that depends on
@@ -127,6 +176,8 @@ func newRunCommand() *cobra.Command {
 		"never exit 1 for survivors, overriding policy.strict")
 	flags.BoolVar(&o.json, "json", false,
 		"write the run-report-v1 document to standard output and nothing else")
+	flags.BoolVar(&o.explain, "explain", false,
+		"after the summary, print every rejected mutant with the compiler's own words, and the suppressed sites by reason")
 	flags.BoolVarP(&o.quiet, "quiet", "q", false,
 		"print only the baseline summary, warnings, and the closing summary block")
 	flags.BoolVar(&o.noColor, "no-color", false,
@@ -154,11 +205,27 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 			Hint: "drop --quiet for the document, or drop --json for the shortened text output",
 		}
 	}
+	if err = checkExplain(o.explain, o.json); err != nil {
+		return err
+	}
 	// Checked before a workspace is copied and a baseline is measured. A prefix
 	// of the wrong shape can never name a mutant, and finding that out after
 	// several minutes of work would be a poor way to learn it.
 	if err = checkMutantPrefix(o.mutant); err != nil {
 		return err
+	}
+	flags := cmd.Flags()
+	if err = checkSelectors(o.mutant, flags.Changed("changed"), o.shard); err != nil {
+		return err
+	}
+	// Parsed here rather than in the engine for the same reason: `--shard 3/2`
+	// is a mistake about the invocation, and it costs nothing to say so before
+	// the workspace is copied.
+	var shard report.Shard
+	if o.shard != "" {
+		if shard, err = report.ParseShard(o.shard); err != nil {
+			return err
+		}
 	}
 
 	root, err := os.Getwd()
@@ -236,6 +303,9 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		TestArgv:      testArgv,
 		ToolVersion:   Version,
 		MutantPrefix:  o.mutant,
+		Changed:       flags.Changed("changed"),
+		ChangedRef:    o.changed,
+		Shard:         shard,
 		Events:        events,
 	})
 	wg.Wait()
@@ -254,6 +324,14 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	// find out that it exists.
 	if o.json && outcome.Report != nil {
 		if err := writeReportJSON(out, outcome.Report); err != nil {
+			return err
+		}
+	}
+	// Underneath the closing summary, and only when there is a document to
+	// explain: a run that stopped before it had a report has nothing to say
+	// here, and the failure that stopped it has already been reported.
+	if o.explain && outcome.Report != nil {
+		if err := explainRun(rendered, color, outcome.Report); err != nil {
 			return err
 		}
 	}
@@ -310,6 +388,16 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 		}
 		overlay.Profile = config.Explicit(tier)
 	}
+	// `--cache` is parsed here for the same reason as `--profile`: the overlay
+	// carries a mode and the command line carries a name, and the diagnostic for
+	// a bad one should name the flag the user typed.
+	if flags.Changed("cache") {
+		mode, err := config.ParseCacheMode(o.cache)
+		if err != nil {
+			return config.Overlay{}, err
+		}
+		overlay.CacheMode = config.Explicit(mode)
+	}
 	return overlay, nil
 }
 
@@ -333,6 +421,57 @@ func checkMutantPrefix(value string) error {
 		}
 	}
 	return nil
+}
+
+// checkExplain refuses `--explain` alongside `--json`.
+//
+// It is a semantic check rather than cobra's MarkFlagsMutuallyExclusive, which
+// would render as a bare usage error: neither flag is wrong on its own, the
+// remedy is to drop one rather than to fix a value, and the reason is worth a
+// sentence. It is the same judgement, and the same code, as `--json` with
+// `--quiet`.
+func checkExplain(explain, asJSON bool) error {
+	if !explain || !asJSON {
+		return nil
+	}
+	return &Error{
+		Code: CodeConflictingFlags,
+		Message: "--explain and --json cannot be combined: everything --explain prints is already in the document, " +
+			"and mixing prose into it would make the output neither readable nor parsable",
+		Hint: "drop --explain and read `rejected[]` and `skips[]` out of the document, or drop --json for the prose",
+	}
+}
+
+// checkSelectors refuses `--mutant` alongside a narrowing flag.
+//
+// `--mutant` is a selector and not a filter: it names the one mutant the run is
+// about, and the question it exists to answer — "why did this one survive" —
+// has no smaller version. Combining it with `--changed` or `--shard` can only
+// take that mutant away, and the run would then execute nothing at all and exit
+// 0 having measured nothing, which is the most dangerous kind of green.
+//
+// `--changed` and `--shard` compose, and deliberately so: a shard of a pull
+// request's diff is what a CI matrix asks for, and each narrows a set rather
+// than naming a member of it.
+func checkSelectors(mutant string, changed bool, shard string) error {
+	if mutant == "" {
+		return nil
+	}
+	var other string
+	switch {
+	case changed:
+		other = "--changed"
+	case shard != "":
+		other = "--shard"
+	default:
+		return nil
+	}
+	return &Error{
+		Code: CodeConflictingFlags,
+		Message: "--mutant and " + other + " cannot be combined: --mutant names one mutant to measure, and " +
+			other + " can only take it away, leaving a run that executes nothing and exits 0",
+		Hint: "drop " + other + " to answer a question about the one mutant, or drop --mutant to narrow the whole run",
+	}
 }
 
 // writeReportJSON writes the run report and nothing else.
@@ -359,12 +498,13 @@ func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 	dash := cmd.ArgsLenAtDash()
 	if dash < 0 {
 		if len(args) > 0 {
-			return nil, usagef("run takes no positional arguments; write the test command after `--`, as in `go-mutants run -- go test ./...` (got %q)", args[0])
+			return nil, positional(cmd, args[0],
+				"run takes no positional arguments; write the test command after `--`, as in `go-mutants run -- go test ./...`")
 		}
 		return nil, nil
 	}
 	if dash > 0 {
-		return nil, usagef("run takes no positional arguments before `--` (got %q)", args[0])
+		return nil, positional(cmd, args[0], "run takes no positional arguments before `--`")
 	}
 	argv := args[dash:]
 	if len(argv) == 0 {
@@ -382,6 +522,23 @@ func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 		}
 	}
 	return argv, nil
+}
+
+// positional builds the refusal for an argument `run` cannot take, and
+// recognises the one way a correct-looking command line produces one.
+//
+// `--changed` takes an optional value, which pflag can only express as
+// `--changed=REF`: written with a space, the ref becomes a positional argument
+// and the run is narrowed by the upstream branch instead of by the ref the user
+// named — or refused here, which is the better of the two. Both branches of
+// [passthrough] can be reached that way, `--changed HEAD -- go test ./...`
+// landing in the one about the separator, so both ask this to word the message.
+func positional(cmd *cobra.Command, got, what string) error {
+	err := usagef("%s (got %q)", what, got)
+	if cmd.Flags().Changed("changed") {
+		err.Hint = "--changed takes its ref with an equals sign: write `--changed=" + got + "`, not `--changed " + got + "`"
+	}
+	return err
 }
 
 // policyFailure turns a completed run's verdict into the exit status, or nil

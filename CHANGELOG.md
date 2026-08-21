@@ -14,6 +14,169 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The outcome cache.** A run reuses an outcome it has already proven, so a
+  second run over unchanged code measures only what has moved. Entries live
+  beside the run history — `<os cache>/go-mutants/workspaces/<key>/outcomes/` —
+  under the same ownership marker, claimed through the same code, because a
+  second implementation of "prove this directory is ours" would be a second
+  place for the one property that makes deleting files in a shared cache
+  defensible to be wrong.
+
+  The key is a SHA-256 over length-prefixed fields: the tool version, the
+  running executable's own digest, the Go toolchain's own release, the
+  workspace digest, the catalogue digest, the test command, the timeout as
+  configured, and `CGO_ENABLED`, `GOARCH`, `GODEBUG`, `GOEXPERIMENT`, `GOFLAGS`
+  and `GOOS` — with an unset variable hashing differently from one set to
+  nothing, because they are different to the go command. Entries are *filed*
+  under that key rather than validated against it, which is what makes stale
+  data cost nothing: editing a file moves the key, so yesterday's entries are
+  unreachable rather than wrong, there is no invalidation pass to get wrong,
+  and no window in which a stale answer is still reachable. The executable
+  digest is what separates two development builds calling themselves the same
+  version, which is every build between two releases — exactly when the guard
+  forms and the rule set are changing.
+
+  The toolchain's release is in the key because nothing else carries it: the
+  test command is hashed as the user wrote it, so the default command hashes
+  the word `go` and never the compiler that word resolves to, and `go.mod` pins
+  a language version rather than a patch release. Without it a 1.26.5→1.26.6
+  upgrade would keep every outcome the old compiler measured reachable. The
+  environment list is the same standard applied to the same question: each of
+  those six names changes what the tests compile to or how they are run, and
+  `CGO_ENABLED` earns its place twice over because its *default* depends on
+  whether a C toolchain is installed, so two CI images that differ in nothing
+  else can compile different programs.
+
+  Each entry records the full 64-character key it was written under, not just
+  the 16 characters that name its directory. A truncated directory name is
+  short enough for a Windows path and long enough that a collision needs about
+  2³² contexts on one machine — but if one ever happened, two runs would share
+  a directory *and* agree about the truncation, so only the untruncated key can
+  tell them apart. A read that does not match it is a miss, never an adoption.
+
+  The timeout is the one field that is deliberately *not* keyed on as it is
+  applied. A derived timeout is `max(10s, slowest baseline × 5)`, a wall-clock
+  measurement that is a slightly different number on every run, so hashing it
+  would have given every run of any non-trivial project its own empty directory
+  — silently switching the cache off for exactly the projects worth caching
+  for. The configured value is hashed instead, and each entry records the bound
+  its measurement was made under, so a lookup can be more precise than a key:
+  a kill or a survival is reusable when the measurement fits inside this run's
+  bound, and a confirmed timeout when this run's bound is no larger than the one
+  it already blew.
+
+  Only killed, survived, and *confirmed* timed-out are stored. Inconclusive is
+  the one worth spelling out: it means two attempts disagreed, and a cache that
+  froze a disagreement would make a flake permanent — the run after the fix
+  would still report it. Harness errors and interruptions are not measurements;
+  a mutant no test covers is settled by coverage before the cache is consulted,
+  which matters because the coverage pass fails open and a cached
+  "survived (uncovered)" could otherwise be adopted by a run that would have
+  executed and killed it; and every mutant named in `[[mutation.expect]]` is
+  measured on every invocation, because an expectation is evidence to check and
+  evidence copied from yesterday's answer has not been checked.
+
+  `cache.mode = "auto"` — the default — reuses outcomes only when
+  `test.command` is the built-in `go test ./...`, and does nothing at all
+  otherwise, with a `GOM7901` warning naming the command. It is the coverage
+  rule, for the coverage reason: go-mutants knows what `go test ./...` does and
+  nothing about a command somebody wrote, which may consult a clock, a
+  database, or a network, none of which can be in the key. Standing down rather
+  than degrading to read-only is the same argument once more — a read-only
+  cache over such a command would still be adopting outcomes it cannot justify,
+  it would merely stop accumulating new ones. `--cache on` is how a project
+  promises its command is reproducible; `--cache off` is neither.
+
+  Nothing the cache does can fail a run. A cache that cannot be opened, an
+  entry that cannot be read, an outcome that cannot be written: each is a
+  `GOM79xx` warning and a run that measures more than it had to, which is the
+  same judgement `internal/coverage` makes and the opposite of the one
+  `--changed` gets. A corrupt entry is reported once per run rather than once
+  per entry, because a half-restored CI archive produces one for every mutant
+  and hundreds of copies of a sentence would bury the survivors.
+
+  The report gains `cache{mode, hits, misses, writes}` and `mutants[].cached`.
+  `mode` is what the run *did* rather than what was configured — `auto`
+  resolves to on or off before any mutant is executed, and recording `auto`
+  would put the one value a reader cannot act on into a document whose job is
+  to say what happened. `hits` is counted from the rows when the document is
+  built, so the summary and the rows underneath it cannot disagree, and a
+  document that claims the cache was off and reports a reused outcome is
+  refused with `GOM5109` rather than published.
+- `go-mutants cache status|gc|clean`. `status` prints the root, one line per
+  workspace, and what is stored; `gc --days N` (default 30) removes outcomes
+  written more than N days ago, since an entry is only ever readable by a run
+  whose whole context still matches and one a month old has almost certainly
+  outlived it — age is the modification time and reading an entry does not
+  refresh it, so this removes what is old and not what is unpopular; `clean`
+  removes them all. All three walk
+  only `<root>/workspaces/*/outcomes`, refuse any directory without go-mutants'
+  own ownership marker and say how many they skipped, and never touch the run
+  history filed beside the outcomes — that is `report clean`'s. A deletion that
+  fails is `GOM7911` and a non-zero exit: deleting is the whole of what these
+  commands do, so one that could not delete has not done its job.
+- `run --cache MODE`, overriding `cache.mode` for one invocation.
+- `run --changed [=GIT_REF]`, which executes only the mutants sitting on lines
+  that have changed since a ref — the merge base of it and `HEAD`, so a branch
+  is measured against the commit it left rather than against everything that
+  has landed on the target since. Bare `--changed` follows the upstream of
+  `HEAD` and reports it by name, and `--changed=@{upstream}` is the same
+  request written out: both record `origin/main` rather than the notation that
+  found it, because a report should say what was compared and not how it was
+  looked up. A branch that tracks nothing is told so — `GOM7712`, which names
+  the `git branch --set-upstream-to` remedy — rather than being sent after a
+  merge base it was never going to find. The changed set is the
+  working tree — uncommitted edits and files git has never been told about
+  alike. A file with no index entry produces no diff hunks however new it is,
+  so reading the diff alone would have selected every mutant on an edited line
+  and none at all in a file written from scratch; every line of such a file is
+  new, which is exactly what `git add` would make the diff say a moment later.
+  Ignored files stay out, since a repository that ignores a tree has said it is
+  not source. The new `internal/gitdiff` reads the *original* workspace,
+  because a snapshot deliberately excludes `.git`, and every failure is an
+  error rather than a fallback: a narrowing that quietly measured everything
+  would take twenty minutes where one was expected, and one that quietly
+  measured nothing would exit 0 having proved nothing. Rename detection is off
+  for v1 — a renamed file selects every mutant in it, which is the safe
+  direction to be wrong in. Only execution is narrowed: discovery and
+  validation still cover the whole module, so a `--changed` run mints the same
+  ids and the same `rejected[]` as a full one, and the two documents can be
+  compared mutant for mutant — which is what makes a pull request's report
+  readable next to the branch point's rather than a fragment nobody can line
+  up.
+- `run --shard K/N` and `go-mutants report merge`, for fanning one run out
+  across a CI matrix. A mutant's shard is `sha256(id)[:8] % N + 1`, published in
+  the document as `shard.assignment: "id-hash-v1"` so that a consumer can
+  recompute the partition. Assigning from the id alone is what makes sharding
+  worth having: editing one file never reshuffles the rest, so a shard's work
+  does not change shape on every commit — which a positional "every nth mutant"
+  split would. Every shard discovers, validates and reports the *whole*
+  catalogue and executes only its share, so the N documents are directly
+  comparable, and `report merge` proves they describe one run — one tool
+  version, one workspace digest, one catalogue, one changed ref, every index
+  exactly once, every row owned by the shard that reported it — before
+  combining them. Any mismatch is a refusal naming the first discrepancy,
+  because the whole point of a merged document is that somebody will trust it.
+- `go-mutants report validate FILE`, which checks a report against the schema
+  this build embeds. It is why the JSON Schema validator is now linked into the
+  shipped binary: nothing on the writing path validates, but two commands read
+  documents somebody else wrote.
+- `--explain` on `run` and `list`. `run --explain` prints every rejected mutant
+  with the compiler's own words — whole and indented, since the second line of a
+  diagnostic is usually the one that says whether the rewrite could ever have
+  worked — and both print the suppressed sites by reason, with a sentence
+  saying what each reason means. It refuses to combine with `--json`:
+  everything it prints is already in the document, and mixing prose into one
+  would make the output neither readable nor parsable.
+- `mutants[].not_run_reason` in run-report v1: `out-of-selection`,
+  `other-shard`, or `interrupted`, and `null` for every mutant that was
+  measured. "Not run" on its own is the one outcome a reader cannot act on, and
+  only one of the three reasons is a reason to run anything again. The pairing
+  is a biconditional the builder refuses to violate in either direction.
+- `selection.changed_ref` and the `shard` and `merge` blocks in run-report v1.
+  `changed_ref` is nullable and always present rather than keyed off
+  `selection.mode`, because the two narrowings compose: a shard of a pull
+  request's diff reports `mode: "shard"` and a `changed_ref` both.
 - The repository scaffold: module `github.com/P4suta/go-mutants` targeting
   Go 1.26, a stub `cmd/go-mutants` that prints its version, and the complete v1
   dependency set recorded in `go.mod` ahead of the packages that will import

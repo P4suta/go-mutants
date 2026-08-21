@@ -17,11 +17,13 @@ import (
 // The identity of the document this package writes.
 //
 // Both constants are spelled out here rather than imported from
-// internal/schemas, exactly as in internal/cli: importing them would link the
-// JSON Schema validator into the shipped binary for the sake of two strings.
-// The schema is a test-time contract — the package tests assert that a document
-// carrying these values is the document internal/schemas validates — so the two
-// cannot drift apart without a test failing.
+// internal/schemas, which this package does not import: the dependency would
+// run from the document to its validator, when the validator is what checks the
+// document. (`report validate` does link the validator in, from internal/cli,
+// which is where a command that validates a file belongs.) The package tests
+// assert that a document carrying these values is the document
+// internal/schemas validates, so the two cannot drift apart without a test
+// failing.
 const (
 	// DocumentType is the `document_type` every run report carries.
 	DocumentType = "go-mutants/run-report"
@@ -70,10 +72,15 @@ func (s Status) Valid() bool { return slices.Contains(Statuses(), s) }
 func (s Status) String() string { return string(s) }
 
 // A SelectionMode says how the run chose what to execute.
+//
+// It is a label on the selection block and not the whole of it: a shard of a
+// changed run narrows twice, and says so by reporting [ModeShard] with
+// [Selection.ChangedRef] filled in. Nothing branches on the mode that could not
+// equally read `shard` and `changed_ref`, which is why the two facts are
+// recorded separately rather than folded into a mode per combination.
 type SelectionMode string
 
-// The v1 selection modes. `--changed` and `--shard` add their own in a later
-// phase, together with the fields that describe them.
+// The v1 selection modes.
 const (
 	// ModeAll runs every catalogued mutant the profile and the patterns
 	// selected.
@@ -83,10 +90,22 @@ const (
 	// `policy.require_mutants` honest about the difference between "nothing to
 	// find" and "not looked at this time".
 	ModeMutant SelectionMode = "mutant"
+	// ModeChanged runs the mutants whose lines the diff against
+	// [Selection.ChangedRef] touches. Discovery and validation still cover the
+	// whole module, so the ids and the rejections are those of a full run and
+	// the two are comparable.
+	ModeChanged SelectionMode = "changed"
+	// ModeShard runs the mutants this shard owns; see [Shard]. It outranks
+	// [ModeChanged] as a label because the shard is the outer partition — a
+	// changed run split into shards is still one shard of it — and the diff
+	// half is not lost, because `changed_ref` is recorded whatever the mode is.
+	ModeShard SelectionMode = "shard"
 )
 
 // SelectionModes returns every mode in document order.
-func SelectionModes() []SelectionMode { return []SelectionMode{ModeAll, ModeMutant} }
+func SelectionModes() []SelectionMode {
+	return []SelectionMode{ModeAll, ModeMutant, ModeChanged, ModeShard}
+}
 
 // Valid reports whether m is one of the defined modes.
 func (m SelectionMode) Valid() bool { return slices.Contains(SelectionModes(), m) }
@@ -134,6 +153,38 @@ func (m CoverageMode) Valid() bool { return slices.Contains(CoverageModes(), m) 
 
 // String returns the mode as it appears in the document.
 func (m CoverageMode) String() string { return string(m) }
+
+// A CacheMode says whether this run reused outcomes it had proven before.
+//
+// It is what the run *did*, not what was configured. The configured
+// `cache.mode` has three values and the third one is a question rather than an
+// answer: `auto` resolves to on or off before any mutant is executed — off for
+// a test command go-mutants cannot reason about, off again when the cache
+// directory cannot be opened — and this field records what it resolved to.
+// Recording "auto" instead would put the one value a reader cannot act on into
+// a document whose whole job is to say what happened; a run that stood down
+// says so here and says why in `warnings[]`.
+type CacheMode string
+
+// The v1 cache modes.
+const (
+	// CacheOff means no outcome was read and none was stored. Its counters are
+	// all zero, which is the difference between a cache that was off and one
+	// that was on and cold.
+	CacheOff CacheMode = "off"
+	// CacheOn means the run looked every executable mutant up and stored every
+	// reusable outcome it measured.
+	CacheOn CacheMode = "on"
+)
+
+// CacheModes returns every mode in document order.
+func CacheModes() []CacheMode { return []CacheMode{CacheOff, CacheOn} }
+
+// Valid reports whether m is one of the defined modes.
+func (m CacheMode) Valid() bool { return slices.Contains(CacheModes(), m) }
+
+// String returns the mode as it appears in the document.
+func (m CacheMode) String() string { return string(m) }
 
 // An Outcome is what happened to one mutant, in this document's spelling.
 //
@@ -207,6 +258,44 @@ func (o Outcome) Mutation() (mutation.Outcome, error) {
 // String returns the outcome as it appears in the document.
 func (o Outcome) String() string { return string(o) }
 
+// A NotRunReason says why a mutant carries [OutcomeNotRun].
+//
+// The enum exists because "not run" on its own is the one outcome a reader
+// cannot act on: a mutant nobody selected, a mutant another shard measured, and
+// a mutant a signal cut the run short of are three different facts, and only
+// the last is a reason to run anything again. It is written exactly when the
+// outcome is not-run and null otherwise, which [Build] enforces in both
+// directions.
+type NotRunReason string
+
+// The v1 not-run reasons.
+const (
+	// NotRunInterrupted means the mutant was selected and the run ended before
+	// it was measured. It is also what a mutant that was started and could not
+	// be finished carries, which is why it can arrive with attempts already
+	// recorded.
+	NotRunInterrupted NotRunReason = "interrupted"
+	// NotRunOutOfSelection means the run narrowed itself and this mutant was
+	// outside the narrowing: `--mutant` named another one, or `--changed` found
+	// no edited line on it.
+	NotRunOutOfSelection NotRunReason = "out-of-selection"
+	// NotRunOtherShard means `--shard` assigned the mutant to a different
+	// shard, which is the run that measured it. `report merge` replaces exactly
+	// these rows with the owning shard's.
+	NotRunOtherShard NotRunReason = "other-shard"
+)
+
+// NotRunReasons returns every reason in document order.
+func NotRunReasons() []NotRunReason {
+	return []NotRunReason{NotRunInterrupted, NotRunOutOfSelection, NotRunOtherShard}
+}
+
+// Valid reports whether r is one of the defined reasons.
+func (r NotRunReason) Valid() bool { return slices.Contains(NotRunReasons(), r) }
+
+// String returns the reason as it appears in the document.
+func (r NotRunReason) String() string { return string(r) }
+
 // An ExpectationState is what one row of the `[[mutation.expect]]` ledger
 // turned out to be worth.
 type ExpectationState string
@@ -235,24 +324,37 @@ func (s ExpectationState) String() string { return string(s) }
 // `[]`, never `null`, because "no warnings" and "warnings unknown" are not the
 // same statement and only one of them is ever true.
 type Report struct {
-	DocumentType  string        `json:"document_type"`
-	SchemaVersion int           `json:"schema_version"`
-	ToolVersion   string        `json:"tool_version"`
-	RunID         string        `json:"run_id"`
-	Status        Status        `json:"status"`
-	StartedAt     string        `json:"started_at"`
-	FinishedAt    string        `json:"finished_at"`
-	DurationMS    int64         `json:"duration_ms"`
-	Workspace     Workspace     `json:"workspace"`
-	Selection     Selection     `json:"selection"`
-	Test          Test          `json:"test"`
-	Coverage      Coverage      `json:"coverage"`
-	Summary       Summary       `json:"summary"`
-	Mutants       []Mutant      `json:"mutants"`
-	Rejected      []Rejected    `json:"rejected"`
-	Skips         []Skip        `json:"skips"`
-	Expectations  []Expectation `json:"expectations"`
-	Warnings      []Warning     `json:"warnings"`
+	DocumentType  string    `json:"document_type"`
+	SchemaVersion int       `json:"schema_version"`
+	ToolVersion   string    `json:"tool_version"`
+	RunID         string    `json:"run_id"`
+	Status        Status    `json:"status"`
+	StartedAt     string    `json:"started_at"`
+	FinishedAt    string    `json:"finished_at"`
+	DurationMS    int64     `json:"duration_ms"`
+	Workspace     Workspace `json:"workspace"`
+	Selection     Selection `json:"selection"`
+	// Shard is which shard of a split run this document is, and nil — written
+	// as null — when the run was not split. It is always present, because "this
+	// run was not sharded" and "this document does not say" are different
+	// statements and only one of them is ever true of a document go-mutants
+	// wrote.
+	Shard *Shard `json:"shard"`
+	// Merge is present only on a document `report merge` produced, and is
+	// absent — not null — from every document a run wrote. Absence is the
+	// discriminator the schema keys its shard-must-be-null rule off, and a
+	// merged document is a different kind of thing rather than a run with a
+	// field filled in.
+	Merge        *Merge        `json:"merge,omitempty"`
+	Test         Test          `json:"test"`
+	Coverage     Coverage      `json:"coverage"`
+	Cache        Cache         `json:"cache"`
+	Summary      Summary       `json:"summary"`
+	Mutants      []Mutant      `json:"mutants"`
+	Rejected     []Rejected    `json:"rejected"`
+	Skips        []Skip        `json:"skips"`
+	Expectations []Expectation `json:"expectations"`
+	Warnings     []Warning     `json:"warnings"`
 }
 
 // Workspace names the tree the run read.
@@ -272,14 +374,56 @@ type Platform struct {
 
 // Selection is what was asked for, and the arithmetic of what it produced.
 type Selection struct {
-	Mode       SelectionMode `json:"mode"`
-	Profile    string        `json:"profile"`
-	Operators  []string      `json:"operators"`
-	Include    []string      `json:"include"`
-	Exclude    []string      `json:"exclude"`
-	Candidates int           `json:"candidates"`
-	Rejected   int           `json:"rejected"`
-	Selected   int           `json:"selected"`
+	Mode SelectionMode `json:"mode"`
+	// ChangedRef is the git ref the changed-line set was taken against — the
+	// merge base of it and HEAD is what was diffed — or nil for a run that did
+	// not narrow by a diff.
+	//
+	// It is independent of Mode rather than implied by it, because a shard of a
+	// changed run narrows twice and reports [ModeShard]; the ref is how the
+	// document still says which diff it was.
+	ChangedRef *string  `json:"changed_ref"`
+	Profile    string   `json:"profile"`
+	Operators  []string `json:"operators"`
+	Include    []string `json:"include"`
+	Exclude    []string `json:"exclude"`
+	Candidates int      `json:"candidates"`
+	Rejected   int      `json:"rejected"`
+	Selected   int      `json:"selected"`
+}
+
+// A Shard is which part of a split run one document describes.
+//
+// Every shard runs the whole of discovery and validation and executes only the
+// mutants it owns, so the ids, the rejections, and the skips are identical
+// across the set and the documents are directly comparable — which is what
+// `report merge` checks before it combines them. Everything a shard does not
+// own is reported as not-run with [NotRunOtherShard], so each document is a
+// complete statement about the catalogue rather than a fragment of one.
+type Shard struct {
+	// Index is 1-based and never exceeds Total.
+	Index int `json:"index"`
+	// Total is how many shards the run was split into.
+	Total int `json:"total"`
+	// Assignment names the function that decides which shard owns a mutant, so
+	// that a consumer can recompute the partition rather than trust it. It is
+	// [mutation.ShardAssignment]; [Build] refuses any other value.
+	Assignment string `json:"assignment"`
+}
+
+// Owns reports whether this shard is the one that should have executed the
+// mutant with the given id.
+func (s Shard) Owns(id string) bool {
+	return mutation.ShardIndex(id, s.Total) == s.Index
+}
+
+// A Merge records that a document is the union of several shard reports rather
+// than the record of one run.
+type Merge struct {
+	// Shards is how many shard documents were merged. Every index from 1 to
+	// Shards was present exactly once, which is what makes the union a complete
+	// run rather than a partial one.
+	Shards int `json:"shards"`
 }
 
 // Test is how the project's tests were run and measured.
@@ -319,6 +463,28 @@ type Coverage struct {
 	// `mutants[]` by [Build] rather than passed in, so the summary line and the
 	// rows underneath it cannot disagree.
 	MutantsUncovered *int `json:"mutants_uncovered,omitempty"`
+}
+
+// Cache is what the outcome cache did for this run.
+//
+// The three counters are a partition of the mutants the run was about to
+// execute, plus what it left behind: `hits` were adopted from the cache and
+// never executed, `misses` were looked up, not found, and executed, and
+// `writes` are how many of those misses produced an outcome worth storing.
+//
+// `writes` is therefore at most `misses`, and usually fewer: an inconclusive
+// outcome, an errored one, and a mutant an interruption cut short are all
+// measured and none of them is stored. Every count is zero when the mode is
+// off, which is what makes "the cache was off" and "the cache was empty"
+// different statements in this document.
+//
+// `hits` is counted from `mutants[]` rather than stated, so the number here and
+// the rows a reader would count by hand cannot disagree.
+type Cache struct {
+	Mode   CacheMode `json:"mode"`
+	Hits   int       `json:"hits"`
+	Misses int       `json:"misses"`
+	Writes int       `json:"writes"`
 }
 
 // Summary is the counted breakdown and what the policy made of it.
@@ -379,10 +545,13 @@ type Mutant struct {
 	Original    string  `json:"original"`
 	Replacement string  `json:"replacement"`
 	Outcome     Outcome `json:"outcome"`
-	DurationMS  int64   `json:"duration_ms"`
-	KilledBy    *string `json:"killed_by"`
-	Attempts    int     `json:"attempts"`
-	OutputTail  *string `json:"output_tail"`
+	// NotRunReason says why a not-run mutant was not run, and is nil for every
+	// mutant that was measured. See [NotRunReason].
+	NotRunReason *string `json:"not_run_reason"`
+	DurationMS   int64   `json:"duration_ms"`
+	KilledBy     *string `json:"killed_by"`
+	Attempts     int     `json:"attempts"`
+	OutputTail   *string `json:"output_tail"`
 	// CoveringTestPackages are the import paths of the test binaries whose
 	// coverage profile reaches this mutant's lines, sorted. Empty is legal and
 	// means two different things depending on `coverage.mode`; see the type
@@ -392,6 +561,15 @@ type Mutant struct {
 	// mutant's lines and therefore did not execute it. Such a mutant is a
 	// survivor — no test could have caught it — with zero attempts.
 	Uncovered bool `json:"uncovered"`
+	// Cached says this outcome was adopted from the outcome cache rather than
+	// measured by this run. The duration, the attempts, the killed_by and the
+	// output tail are then the ones the run that first measured it recorded, and
+	// they are reported as they stand rather than zeroed: a survivor whose tail
+	// explains why it survived is worth exactly as much second-hand.
+	//
+	// It is never true of an uncovered mutant, of a not-run one, or of an
+	// outcome the cache refuses to store; see internal/cache.
+	Cached bool `json:"cached"`
 }
 
 // A Rejected is a catalogued mutant validation refused, with the compiler's

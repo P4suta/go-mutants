@@ -113,6 +113,25 @@ const (
 // String returns the mode as it is printed.
 func (m CoverageMode) String() string { return string(m) }
 
+// A CacheMode says whether the run reused outcomes it had proven before.
+//
+// It is what the run did rather than what was configured: `cache.mode auto`
+// resolves to on or off before any mutant is executed, and this is what it
+// resolved to. See [report.CacheMode], whose spelling this mirrors.
+type CacheMode string
+
+// The cache modes.
+const (
+	// CacheOff means no outcome was read and none was stored.
+	CacheOff CacheMode = "off"
+	// CacheOn means every executable mutant was looked up and every reusable
+	// outcome was stored.
+	CacheOn CacheMode = "on"
+)
+
+// String returns the mode as it is reported.
+func (m CacheMode) String() string { return string(m) }
+
 // An Event is one thing the engine has to say while a run is in flight.
 //
 // The interface is sealed: the marker method is unexported, so every event is
@@ -230,6 +249,32 @@ type Validated struct {
 	Rejected int
 }
 
+// SelectionNarrowed reports that the run will execute less than the catalogue
+// it just validated, and why.
+//
+// It is published only by a run that narrowed itself with `--changed` or
+// `--shard`, between validation and the first mutant — the moment a user learns
+// how much of the run is about to not happen, which is the single most useful
+// number a narrowed run has to offer. A `--mutant` run publishes nothing here:
+// naming one mutant is its own announcement.
+//
+// The fields are the facts rather than a sentence, so that the two renderers
+// can word it their own way and neither has to parse the other's.
+type SelectionNarrowed struct {
+	// ChangedRef is the ref the diff was taken against, and is empty for a run
+	// that did not narrow by a diff.
+	ChangedRef string
+	// Shard and Shards are which shard of how many, and are both zero for a run
+	// that was not split.
+	Shard  int
+	Shards int
+	// Selected is how many mutants survived the narrowing, and Of how many
+	// there were to narrow — the accepted catalogue, not the whole of it, since
+	// a rejected mutant was never going to be executed by anybody.
+	Selected int
+	Of       int
+}
+
 // CoverageMapped reports what the coverage pass established, and is published
 // only by a run that did one: a run with coverage off publishes a [Warning]
 // saying why instead, and never this.
@@ -293,6 +338,11 @@ type MutantResult struct {
 	// something more actionable than "your test missed this", namely "no test
 	// runs this line at all".
 	Uncovered bool
+	// Cached says the outcome was adopted from the outcome cache rather than
+	// measured by this run, so the duration is the one the run that measured it
+	// recorded. It is only ever set on an outcome the cache stores — killed,
+	// survived, or a confirmed timeout — and never alongside Uncovered.
+	Cached bool
 }
 
 // MutantStarted reports that an attempt at one mutant has begun.
@@ -331,6 +381,27 @@ type MutantStarted struct {
 type MutantFinished struct {
 	// Result is the settled outcome and the data to render it with.
 	Result MutantResult
+}
+
+// CacheHit reports that one mutant's outcome was adopted from the outcome cache
+// instead of being measured.
+//
+// It is the accounting event and not the outcome: a [MutantFinished] carrying
+// the same id, with [MutantResult.Cached] set, follows it immediately. Both are
+// published for the same reason an uncovered mutant produces a MutantFinished
+// with no MutantStarted — a renderer's counts and the report's have to agree —
+// and separating them means a renderer that only wants the outcomes can ignore
+// this event entirely without its numbers going wrong.
+//
+// No [MutantStarted] precedes it. Nothing started: that is the point.
+type CacheHit struct {
+	// ID is the full activation identity.
+	ID string
+	// DisplayID is the short form.
+	DisplayID string
+	// Outcome is what the cache says happened, which is always one the cache
+	// stores: killed, survived, or a confirmed timeout.
+	Outcome mutation.Outcome
 }
 
 // Warning reports something the user should know that did not stop the run.
@@ -385,6 +456,12 @@ type Counts struct {
 	// fact this number carries. It is zero unless the run was
 	// [CoveragePackage].
 	Uncovered int
+	// Cached is how many of Total the run adopted from the outcome cache rather
+	// than measuring. It is a subset of the partition rather than a bucket of
+	// its own, exactly as Uncovered is: a cached mutant was killed, survived, or
+	// timed out, and the extra fact this number carries is where the answer came
+	// from. It is zero unless the run was [CacheOn].
+	Cached int
 }
 
 // ExpectationCounts is the `[[mutation.expect]]` ledger, counted by state.
@@ -448,6 +525,10 @@ type RunSummary struct {
 	// whether "uncovered 0" is a measurement worth printing or a number nobody
 	// went looking for; see [Counts.Uncovered].
 	Coverage CoverageMode
+	// Cache is what the outcome cache did, for the same reason Coverage is
+	// carried: a renderer needs it to tell "the cache was on and cold" from "the
+	// cache was off", which are the same zero in [Counts.Cached].
+	Cache CacheMode
 	// Score is the mutation score, as the two integers it is derived from. It
 	// is undefined exactly when the denominator is zero; see [mutation.Score].
 	Score mutation.Score
@@ -488,9 +569,11 @@ func (BaselineProgress) event()  {}
 func (BaselineCompleted) event() {}
 func (Discovered) event()        {}
 func (Validated) event()         {}
+func (SelectionNarrowed) event() {}
 func (CoverageMapped) event()    {}
 func (MutantStarted) event()     {}
 func (MutantFinished) event()    {}
+func (CacheHit) event()          {}
 func (Warning) event()           {}
 func (ReportPublished) event()   {}
 func (RunCompleted) event()      {}

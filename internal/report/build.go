@@ -33,6 +33,11 @@ type MutantResult struct {
 	ID string
 	// Outcome is what happened.
 	Outcome mutation.Outcome
+	// NotRunReason says why a not-run mutant was not run. It is required for
+	// [mutation.OutcomeNotRun] and refused for every other outcome: a
+	// measurement has no reason for not having been made, and a mutant that was
+	// not measured always has one. See [NotRunReason].
+	NotRunReason NotRunReason
 	// Duration is the wall-clock time the mutant's execution took, summed over
 	// every attempt.
 	Duration time.Duration
@@ -64,6 +69,10 @@ type MutantResult struct {
 	// a document that recorded a killed mutant as uncovered would be describing
 	// a detection nothing performed.
 	Uncovered bool
+	// Cached says the outcome was adopted from the outcome cache rather than
+	// measured by this run. The rest of the fields are then the ones the run
+	// that measured it recorded. See [Mutant.Cached] for what [Build] refuses.
+	Cached bool
 }
 
 // A Rejection is a catalogued mutant validation refused, with the compiler
@@ -97,6 +106,14 @@ type Options struct {
 	Config config.Config
 	// Mode is how the run chose what to execute. The zero value is [ModeAll].
 	Mode SelectionMode
+	// ChangedRef is the git ref a `--changed` run took its diff against. Empty
+	// is a run that did not narrow by a diff, and is written as null. A
+	// [ModeChanged] run must name one: the mode without the ref would be a
+	// document saying it looked at a diff without saying which.
+	ChangedRef string
+	// Shard is which shard of a split run this is, or nil when the run was not
+	// split. A non-nil shard implies [ModeShard]; see [Shard].
+	Shard *Shard
 	// Selected is how many catalogued mutants the run set out to execute. It is
 	// stated rather than counted, because "selected but never reached" — an
 	// interrupted run — is a real state that no count of results can express.
@@ -153,6 +170,19 @@ type Options struct {
 	// rather than a zero it never measured.
 	CoverageBinaries int
 
+	// CacheMode is the mode the outcome cache operated in. The zero value is
+	// [CacheOff], which is what a run with the cache configured off, a run that
+	// could not open the cache directory, and a run whose `auto` stood down for
+	// a custom test command all report.
+	CacheMode CacheMode
+	// CacheMisses is how many mutants were looked up, not found, and executed.
+	// CacheWrites is how many of those outcomes were stored for a later run.
+	//
+	// The hits are not here: they are counted from the results, so the summary
+	// and the rows underneath it cannot disagree. See [Cache].
+	CacheMisses int
+	CacheWrites int
+
 	// Warnings are the warnings the run published, in publication order.
 	Warnings []Warning
 
@@ -206,7 +236,15 @@ func Build(opts Options) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	shard, err := shardOf(opts)
+	if err != nil {
+		return nil, err
+	}
 	coverage, err := coverageOf(opts, mutants)
+	if err != nil {
+		return nil, err
+	}
+	cache, err := cacheBlock(opts.CacheMode, opts.CacheMisses, opts.CacheWrites, mutants)
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +265,7 @@ func Build(opts Options) (*Report, error) {
 			Platform:        platformOf(opts.Platform),
 		},
 		Selection: selection,
+		Shard:     shard,
 		Test: Test{
 			Command:       command,
 			Baseline:      baselineOf(opts.Baseline),
@@ -234,6 +273,7 @@ func Build(opts Options) (*Report, error) {
 			TimeoutSource: timeoutSource(opts),
 		},
 		Coverage:     coverage,
+		Cache:        cache,
 		Summary:      summaryOf(tally, opts.Config.Policy, opts.InfrastructureError, expectations, mutants),
 		Mutants:      mutants,
 		Rejected:     rejected,
@@ -374,23 +414,28 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 		if err != nil {
 			return nil, nil, err
 		}
+		reason, err := notRunReasonOf(m, result, outcome)
+		if err != nil {
+			return nil, nil, err
+		}
 		mutants = append(mutants, Mutant{
-			ID:          m.ID,
-			DisplayID:   m.DisplayID,
-			Path:        m.Path,
-			Package:     where.Package,
-			Family:      string(m.Rule.Family),
-			Rule:        m.Rule.Name,
-			RuleVersion: m.Rule.Version,
-			Line:        where.Line,
-			Column:      where.Column,
-			StartByte:   m.Span.StartByte,
-			EndByte:     m.Span.EndByte,
-			Original:    m.Original,
-			Replacement: m.Replacement,
-			Outcome:     outcome,
-			DurationMS:  milliseconds(result.Duration),
-			KilledBy:    text(result.KilledBy),
+			ID:           m.ID,
+			DisplayID:    m.DisplayID,
+			Path:         m.Path,
+			Package:      where.Package,
+			Family:       string(m.Rule.Family),
+			Rule:         m.Rule.Name,
+			RuleVersion:  m.Rule.Version,
+			Line:         where.Line,
+			Column:       where.Column,
+			StartByte:    m.Span.StartByte,
+			EndByte:      m.Span.EndByte,
+			Original:     m.Original,
+			Replacement:  m.Replacement,
+			Outcome:      outcome,
+			NotRunReason: reason,
+			DurationMS:   milliseconds(result.Duration),
+			KilledBy:     text(result.KilledBy),
 			// Copied rather than clamped. A negative attempt count is a caller
 			// bug, and quietly rewriting it to zero would hide the bug behind a
 			// document that looks fine; the schema refuses it, which is where a
@@ -399,12 +444,59 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			OutputTail:           text(result.OutputTail),
 			CoveringTestPackages: stringList(result.CoveringTestPackages),
 			Uncovered:            result.Uncovered,
+			Cached:               result.Cached,
 		})
 	}
 	if err := checkAccountedFor(opts, len(mutants), len(rejected)); err != nil {
 		return nil, nil, err
 	}
 	return mutants, rejected, nil
+}
+
+// notRunReasonOf checks one result's outcome against its not-run reason and
+// renders the reason for the document.
+//
+// The pairing is a biconditional and both halves are refused rather than
+// repaired. A not-run mutant with no reason would put the one outcome a reader
+// cannot act on into the document with nothing to act on it by — and the
+// commonest way to produce one is a new code path that forgot the field, which
+// is exactly what this catches. A measured mutant carrying a reason is the
+// mirror image: a document explaining why it did not do something it did.
+func notRunReasonOf(m mutation.Mutant, result MutantResult, outcome Outcome) (*string, error) {
+	reason := result.NotRunReason
+	switch {
+	case outcome != OutcomeNotRun && reason != "":
+		return nil, &Error{
+			Code: CodeInvalidNotRunReason,
+			Message: fmt.Sprintf("mutant %s is %s and carries the not-run reason %q: a mutant that was measured has no reason for not having been",
+				m.DisplayID, outcome, string(reason)),
+		}
+	case outcome != OutcomeNotRun:
+		return nil, nil
+	case reason == "":
+		return nil, &Error{
+			Code: CodeInvalidNotRunReason,
+			Message: fmt.Sprintf("mutant %s was not run and does not say why: pass one of %s",
+				m.DisplayID, joinReasons()),
+		}
+	case !reason.Valid():
+		return nil, &Error{
+			Code: CodeInvalidNotRunReason,
+			Message: fmt.Sprintf("%q is not a reason a mutant can be not-run for: expected one of %s",
+				string(reason), joinReasons()),
+		}
+	}
+	return text(string(reason)), nil
+}
+
+// joinReasons lists the not-run reasons for a message, so that the list in an
+// error and the enum in the schema cannot drift apart.
+func joinReasons() string {
+	names := make([]string, 0, len(NotRunReasons()))
+	for _, reason := range NotRunReasons() {
+		names = append(names, string(reason))
+	}
+	return strings.Join(names, ", ")
 }
 
 // checkAccountedFor proves that every result and every rejection was consumed
@@ -515,18 +607,42 @@ func tallyOf(mutants []Mutant, results map[string]MutantResult, expectations []E
 }
 
 // selectionOf assembles the selection block and checks its arithmetic.
+//
+// Two consistency rules are enforced here rather than left to the schema, which
+// cannot express either. A [ModeChanged] run must name the ref it diffed
+// against, because the mode without the ref is a document saying it looked at a
+// diff without saying which one; and a sharded run must report [ModeShard],
+// because a document carrying a `shard` block and claiming to have run
+// everything would be two contradictory statements about the same run.
 func selectionOf(opts Options, candidates, rejected int) (Selection, error) {
 	mode := opts.Mode
 	if mode == "" {
 		mode = ModeAll
 	}
-	if !mode.Valid() {
+	switch {
+	case !mode.Valid():
+		return Selection{}, &Error{
+			Code: CodeInvalidSelection,
+			Message: fmt.Sprintf("%q is not a selection mode: expected one of %s",
+				string(opts.Mode), joinModes()),
+		}
+	case mode == ModeChanged && opts.ChangedRef == "":
 		return Selection{}, &Error{
 			Code:    CodeInvalidSelection,
-			Message: fmt.Sprintf("%q is not a selection mode: expected all or mutant", string(opts.Mode)),
+			Message: "the run narrowed itself to the changed lines but names no ref it compared against",
 		}
-	}
-	if opts.Selected < 0 || opts.Selected > candidates {
+	case opts.Shard != nil && mode != ModeShard:
+		return Selection{}, &Error{
+			Code: CodeInvalidSelection,
+			Message: fmt.Sprintf("the run reports shard %d of %d and a selection mode of %q: a shard executes its own share, so its mode is %q",
+				opts.Shard.Index, opts.Shard.Total, string(mode), string(ModeShard)),
+		}
+	case mode == ModeShard && opts.Shard == nil:
+		return Selection{}, &Error{
+			Code:    CodeInvalidSelection,
+			Message: "the run reports a sharded selection without saying which shard it is",
+		}
+	case opts.Selected < 0 || opts.Selected > candidates:
 		return Selection{}, &Error{
 			Code: CodeInvalidSelection,
 			Message: fmt.Sprintf("the run reports %d of %d catalogued mutants as selected",
@@ -535,6 +651,7 @@ func selectionOf(opts Options, candidates, rejected int) (Selection, error) {
 	}
 	return Selection{
 		Mode:       mode,
+		ChangedRef: text(opts.ChangedRef),
 		Profile:    opts.Config.Mutation.Profile.String(),
 		Operators:  stringList(opts.Config.Mutation.Operators),
 		Include:    stringList(opts.Config.Mutation.Include),
@@ -543,6 +660,49 @@ func selectionOf(opts Options, candidates, rejected int) (Selection, error) {
 		Rejected:   rejected,
 		Selected:   opts.Selected,
 	}, nil
+}
+
+// joinModes lists the selection modes for a message, so that the list in an
+// error and the enum in the schema cannot drift apart.
+func joinModes() string {
+	names := make([]string, 0, len(SelectionModes()))
+	for _, mode := range SelectionModes() {
+		names = append(names, string(mode))
+	}
+	return strings.Join(names, ", ")
+}
+
+// shardOf assembles the shard block, filling in the assignment function this
+// build implements and refusing a shard it could not honestly describe.
+//
+// The assignment is defaulted rather than demanded, because there is exactly
+// one and a caller spelling it out again is a second place for it to be wrong.
+// A caller that names a different one is refused rather than corrected: the
+// value is a promise that a consumer can recompute the partition, and quietly
+// rewriting it would turn a caller's mistake into a document that lies.
+func shardOf(opts Options) (*Shard, error) {
+	if opts.Shard == nil {
+		return nil, nil
+	}
+	shard := *opts.Shard
+	if shard.Assignment == "" {
+		shard.Assignment = mutation.ShardAssignment
+	}
+	switch {
+	case shard.Total < 1 || shard.Index < 1 || shard.Index > shard.Total:
+		return nil, &Error{
+			Code: CodeInvalidShard,
+			Message: fmt.Sprintf("shard %d of %d is not a shard: the index is 1-based and never exceeds the total",
+				shard.Index, shard.Total),
+		}
+	case shard.Assignment != mutation.ShardAssignment:
+		return nil, &Error{
+			Code: CodeInvalidShard,
+			Message: fmt.Sprintf("this build assigns mutants to shards by %q and cannot write a report claiming %q",
+				mutation.ShardAssignment, shard.Assignment),
+		}
+	}
+	return &shard, nil
 }
 
 // coverageOf assembles the coverage block and checks that the mutants agree
@@ -561,14 +721,22 @@ func selectionOf(opts Options, candidates, rejected int) (Selection, error) {
 // in, so the number in the summary and the rows a reader would count by hand
 // are the same number by construction.
 func coverageOf(opts Options, mutants []Mutant) (Coverage, error) {
-	mode := opts.CoverageMode
+	return coverageBlock(opts.CoverageMode, opts.CoverageBinaries, mutants)
+}
+
+// coverageBlock is [coverageOf] over the two values rather than over the whole
+// options struct, so that `report merge` — which has rows and no options — can
+// recount `mutants_uncovered` through this one implementation instead of
+// growing a second opinion about what an uncovered mutant is.
+func coverageBlock(mode CoverageMode, binaryCount int, mutants []Mutant) (Coverage, error) {
+	stated := mode
 	if mode == "" {
 		mode = CoverageOff
 	}
 	if !mode.Valid() {
 		return Coverage{}, &Error{
 			Code:    CodeInvalidCoverage,
-			Message: fmt.Sprintf("%q is not a coverage mode: expected off or package", string(opts.CoverageMode)),
+			Message: fmt.Sprintf("%q is not a coverage mode: expected off or package", string(stated)),
 		}
 	}
 
@@ -598,16 +766,112 @@ func coverageOf(opts Options, mutants []Mutant) (Coverage, error) {
 	if mode != CoveragePackage {
 		return coverage, nil
 	}
-	if opts.CoverageBinaries < 0 {
+	if binaryCount < 0 {
 		return Coverage{}, &Error{
 			Code:    CodeInvalidCoverage,
-			Message: fmt.Sprintf("the coverage pass reports %d test binaries", opts.CoverageBinaries),
+			Message: fmt.Sprintf("the coverage pass reports %d test binaries", binaryCount),
 		}
 	}
-	binaries := opts.CoverageBinaries
+	binaries := binaryCount
 	coverage.Binaries = &binaries
 	coverage.MutantsUncovered = &uncovered
 	return coverage, nil
+}
+
+// cacheBlock assembles the cache block and checks that the mutants agree with
+// it.
+//
+// It is written over the three values rather than over the whole options
+// struct, exactly as [coverageBlock] is and for the same reason: `report merge`
+// has rows and no options, and one implementation of "what a cache hit is" is
+// the only way the merged document and the shard documents can be counted the
+// same way.
+//
+// Four things are refused rather than trusted, and every one of them is a
+// statement a document must never be able to make. A cached mutant carrying an
+// outcome the cache will not store — inconclusive, errored, not-run — would be
+// claiming an entry that cannot exist. A cached mutant that is also uncovered
+// would be claiming a measurement adopted for a mutant nothing ever executed.
+// A run with the cache off that reports a hit would be contradicting itself in
+// two adjacent lines. And more writes than misses would mean the run stored an
+// outcome it did not measure.
+func cacheBlock(mode CacheMode, misses, writes int, mutants []Mutant) (Cache, error) {
+	stated := mode
+	if mode == "" {
+		mode = CacheOff
+	}
+	if !mode.Valid() {
+		return Cache{}, &Error{
+			Code:    CodeInvalidCache,
+			Message: fmt.Sprintf("%q is not a cache mode: expected off or on", string(stated)),
+		}
+	}
+
+	hits := 0
+	for _, m := range mutants {
+		if !m.Cached {
+			continue
+		}
+		switch {
+		case mode != CacheOn:
+			return Cache{}, &Error{
+				Code: CodeInvalidCache,
+				Message: fmt.Sprintf("mutant %s is marked cached in a run whose cache mode is %q: an outcome nothing read cannot have been reused",
+					m.DisplayID, string(mode)),
+			}
+		case m.Uncovered:
+			return Cache{}, &Error{
+				Code: CodeInvalidCache,
+				Message: fmt.Sprintf("mutant %s is marked both cached and uncovered: coverage settles a mutant before the cache is asked about it",
+					m.DisplayID),
+			}
+		case !reusable(m.Outcome):
+			return Cache{}, &Error{
+				Code: CodeInvalidCache,
+				Message: fmt.Sprintf("mutant %s is marked cached and is %s, which is not an outcome the cache stores",
+					m.DisplayID, m.Outcome),
+			}
+		}
+		hits++
+	}
+
+	switch {
+	case misses < 0 || writes < 0:
+		return Cache{}, &Error{
+			Code:    CodeInvalidCache,
+			Message: fmt.Sprintf("the run reports %d cache misses and %d writes", misses, writes),
+		}
+	case writes > misses:
+		return Cache{}, &Error{
+			Code: CodeInvalidCache,
+			Message: fmt.Sprintf("the run stored %s from %s: an outcome is only stored for a mutant the cache did not already have",
+				countNoun(writes, "outcome"), countNoun(misses, "cache miss")),
+		}
+	case mode == CacheOff && (misses > 0 || writes > 0):
+		return Cache{}, &Error{
+			Code: CodeInvalidCache,
+			Message: fmt.Sprintf("the run reports the cache off and %s with %s: a cache that was not consulted has no misses",
+				countNoun(misses, "cache miss"), countNoun(writes, "write")),
+		}
+	}
+	return Cache{Mode: mode, Hits: hits, Misses: misses, Writes: writes}, nil
+}
+
+// reusable reports whether an outcome is one the cache stores, in this
+// document's spelling.
+//
+// It is deliberately a small duplicate of internal/cache's own rule rather than
+// a call into it: this package is the document, and a document validator that
+// imported the store it is validating would run the dependency the wrong way
+// round — internal/cache already reads [Mutant] the other way. The package
+// tests hold the two lists together.
+func reusable(o Outcome) bool {
+	switch o {
+	case OutcomeKilled, OutcomeSurvived, OutcomeTimedOut:
+		return true
+	default:
+		return false
+	}
 }
 
 // countNoun renders "1 attempt" or "3 attempts".

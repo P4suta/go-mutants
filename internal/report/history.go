@@ -11,24 +11,32 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
-// The layout of the history store, under the operating system's cache
+// The layout of the workspace directory, under the operating system's cache
 // directory:
 //
 //	<cache>/go-mutants/workspaces/<key>/go-mutants.marker
 //	<cache>/go-mutants/workspaces/<key>/latest.json
 //	<cache>/go-mutants/workspaces/<key>/runs/<run-id>.json
+//	<cache>/go-mutants/workspaces/<key>/outcomes/<context>/<mutant-id>.json
 //
 // `runs/` holds nothing but immutable per-run documents, so that listing past
 // runs is a directory listing and every entry in it is a real run. The pointer
 // to the newest and the ownership marker sit beside it rather than inside it,
 // for the same reason.
+//
+// `outcomes/` is internal/cache's, and this package neither writes nor reads
+// it. It is named here because one marker governs the whole directory: both
+// stores claim it through [History.Claim] before writing anything, and both
+// refuse a directory whose marker names another workspace. See [History] for
+// why that matters.
 const (
-	// DirName is go-mutants' own directory inside the OS cache directory. The
-	// outcome cache will live beside `workspaces/`, which is why the tool's
-	// directory and the history's are not the same thing.
+	// DirName is go-mutants' own directory inside the OS cache directory. It
+	// holds the run history and, unless `cache.directory` moves it, the outcome
+	// cache: the two share a workspace directory and an ownership marker.
 	DirName = "go-mutants"
 	// WorkspacesDirName holds one directory per workspace.
 	WorkspacesDirName = "workspaces"
@@ -155,22 +163,12 @@ func (h History) Write(r *Report) (runPath, latestPath string, err error) {
 		return "", "", err
 	}
 
-	dir, err := h.WorkspaceDir(r.Workspace.WorkspaceDigest)
-	if err != nil {
-		return "", "", err
-	}
-	if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
-		return "", "", &Error{
-			Code:    CodeHistoryDirectory,
-			Message: "the run history directory " + dir + " could not be created",
-			Err:     mkErr,
-		}
-	}
 	// Claimed before anything below it is created: a directory that turns out
 	// to belong to something else must be left exactly as it was found, and a
 	// stray empty `runs/` in somebody's cache is still a change to it.
-	if claimErr := claim(dir, r.Workspace.WorkspaceDigest); claimErr != nil {
-		return "", "", claimErr
+	dir, err := h.Claim(r.Workspace.WorkspaceDigest)
+	if err != nil {
+		return "", "", err
 	}
 	runs := filepath.Join(dir, RunsDirName)
 	if mkErr := os.MkdirAll(runs, 0o700); mkErr != nil {
@@ -195,6 +193,27 @@ func (h History) Write(r *Report) (runPath, latestPath string, err error) {
 	return runPath, latestPath, nil
 }
 
+// WriteFile writes a report to a path of the caller's choosing, atomically.
+//
+// It is the history store's own write without the store: the same
+// temporary-file-and-rename, so that a crash leaves either the previous file or
+// the new one and never a correctly named file full of nothing. `report merge
+// --output` is what it exists for — a document a CI job is about to publish
+// deserves the same care as one go-mutants files for itself.
+func WriteFile(path string, r *Report) error {
+	if r == nil {
+		return &Error{
+			Code:    CodeNoReport,
+			Message: "there is no report to write",
+		}
+	}
+	data, err := r.Marshal()
+	if err != nil {
+		return err
+	}
+	return writeAtomic(path, data)
+}
+
 // WorkspaceDir returns the directory one workspace's history lives in, without
 // creating it.
 func (h History) WorkspaceDir(workspaceDigest string) (string, error) {
@@ -203,6 +222,81 @@ func (h History) WorkspaceDir(workspaceDigest string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, WorkspacesDirName, WorkspaceKey(workspaceDigest)), nil
+}
+
+// Claim creates the workspace directory if it is not there, proves it is
+// go-mutants' own, and returns its path.
+//
+// It is exported because the run history is not the only thing filed under a
+// workspace directory: the outcome cache writes `outcomes/` beside `runs/`, and
+// the ownership argument in [History] is about the directory rather than about
+// either store. A second implementation of the marker dance would be a second
+// place for the one property that makes deleting files in somebody's cache
+// directory safe to be wrong. See [claim] for the race the marker settles.
+func (h History) Claim(workspaceDigest string) (string, error) {
+	if !digestPattern.MatchString(workspaceDigest) {
+		return "", &Error{
+			Code:    CodeInvalidWorkspaceDigest,
+			Message: "the workspace digest " + quote(workspaceDigest) + " cannot name a workspace directory",
+		}
+	}
+	dir, err := h.WorkspaceDir(workspaceDigest)
+	if err != nil {
+		return "", err
+	}
+	if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
+		return "", &Error{
+			Code:    CodeHistoryDirectory,
+			Message: "the workspace directory " + dir + " could not be created",
+			Err:     mkErr,
+		}
+	}
+	if claimErr := claim(dir, workspaceDigest); claimErr != nil {
+		return "", claimErr
+	}
+	return dir, nil
+}
+
+// ErrNoMarker reports a directory with no ownership marker at all.
+//
+// It is a sentinel rather than a coded [Error] because it is the one answer
+// [ReadMarker] gives that is not a diagnosis: a directory in somebody's cache
+// with no marker is a directory that is not go-mutants', which is a fact a
+// caller walking a tree acts on rather than reports.
+var ErrNoMarker = errors.New("the directory carries no go-mutants workspace marker")
+
+// ReadMarker returns the workspace digest the marker in dir names.
+//
+// It is the read-only half of [History.Claim], for the commands that walk the
+// cache root and must not create anything: `cache status`, `cache gc` and
+// `cache clean` each ask it about every directory they find, and act only on
+// the ones that answer. A directory with no marker reports [ErrNoMarker]; one
+// whose marker is not a marker this build wrote reports
+// [CodeForeignWorkspace], which is a refusal rather than a skip — a file called
+// `go-mutants.marker` that this build cannot read means something is there that
+// nobody should be deleting.
+func ReadMarker(dir string) (string, error) {
+	path := filepath.Join(dir, MarkerFileName)
+	data, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", ErrNoMarker
+	case err != nil:
+		return "", &Error{
+			Code:    CodeHistoryDirectory,
+			Message: "the workspace marker " + path + " could not be read",
+			Err:     err,
+		}
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if len(lines) < 2 || lines[0] != markerHeader || !digestPattern.MatchString(lines[1]) {
+		return "", &Error{
+			Code: CodeForeignWorkspace,
+			Message: "the marker " + path + " is not one this build of go-mutants wrote, " +
+				"so the directory holding it will not be written to or deleted",
+		}
+	}
+	return lines[1], nil
 }
 
 // root resolves the store's root directory.

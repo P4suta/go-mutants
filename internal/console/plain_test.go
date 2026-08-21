@@ -512,8 +512,8 @@ func TestColorEnabledRefusesNonFiles(t *testing.T) {
 // grows, which is the point: adding a case to the renderer and adding a row
 // here are the same review.
 //
-// Two rows say "prints nothing", and each is a decision rather than an
-// omission — see [PlainRenderer.line] for both.
+// Three rows say "prints nothing", and each is a decision rather than an
+// omission — see [PlainRenderer.line] for all three.
 func TestEveryEventIsAccountedFor(t *testing.T) {
 	block := summary()
 	rows := []struct {
@@ -530,6 +530,7 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 		{engine.MutantStarted{}, false},
 		{engine.MutantFinished{Result: killed}, true},
 		{engine.MutantFinished{}, false},
+		{engine.CacheHit{}, false},
 		{engine.Warning{}, true},
 		{engine.ReportPublished{}, true},
 		{engine.RunCompleted{}, true},
@@ -554,6 +555,55 @@ func uncoveredSurvivor() engine.MutantResult {
 	m.Uncovered = true
 	m.Duration = 0
 	return m
+}
+
+// TestACachedResultSaysSoBesideItsDuration.
+//
+// The marker goes inside the duration's parentheses because the two facts
+// belong together: "(181ms cached)" says that the number is real and that an
+// earlier run measured it, which is exactly what somebody wondering how a
+// thousand mutants finished in four seconds needs to know. A column of its own
+// would have moved every result line for a fact that is absent from most runs.
+func TestACachedResultSaysSoBesideItsDuration(t *testing.T) {
+	reused := killed
+	reused.Cached = true
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.MutantFinished{Result: reused}})
+
+	const want = "KILLED     1a2b3c4d  clamp.go:12:9  lt-to-le  < -> <=  (181ms cached)\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	// And a measured one is unchanged, which is what keeps the marker from being
+	// a format change for every run that does not use the cache.
+	plain := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.MutantFinished{Result: killed}})
+	if strings.Contains(plain, "cached") {
+		t.Errorf("a measured result claims to be cached: %q", plain)
+	}
+}
+
+// TestTheClosingBlockCountsReusedOutcomesOnlyWhenTheCacheWasOn. "cached 0" from
+// a run whose cache was on is a real measurement — the cache is cold, or the
+// code has moved on — while a run with the cache off states nothing rather than
+// a zero nobody went looking for. It is the treatment `uncovered` gets, for the
+// same reason.
+func TestTheClosingBlockCountsReusedOutcomesOnlyWhenTheCacheWasOn(t *testing.T) {
+	block := summary()
+	block.Cache = engine.CacheOn
+	block.Counts.Cached = 2
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.RunCompleted{Status: engine.StatusOK, Run: &block}})
+	if !strings.Contains(got, "cached 2") {
+		t.Errorf("the closing block does not count the reused outcomes:\n%s", got)
+	}
+
+	off := summary()
+	got = render(t, NewPlain(nil, "0.1.0-dev", false, false),
+		[]engine.Event{engine.RunCompleted{Status: engine.StatusOK, Run: &off}})
+	if strings.Contains(got, "cached") {
+		t.Errorf("a run with the cache off reported a cache number:\n%s", got)
+	}
 }
 
 // TestUncoveredSurvivorSaysWhyItSurvived pins the label, which is the one place

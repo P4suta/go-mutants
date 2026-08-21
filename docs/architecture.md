@@ -10,9 +10,10 @@ configuration decoder, the snapshot, the baseline execution layer, discovery
 for the whole eleven-family catalogue, guard-based instrumentation with its
 generated runtime in all three forms, compile validation, mutant execution,
 coverage-guided selection,
-`RunReport v1` with its history store, the live TUI dashboard, and the `list`
-and `run` commands exist. The outcome cache, `--changed`, `--shard`, the HTML
-report, and the Stryker projection do not. Each section below marks which of
+`RunReport v1` with its history store, the live TUI dashboard, `--changed`,
+`--shard` with `report merge`, `--explain`, the outcome cache, and the `list`,
+`run`, `report` and `cache` commands exist. The HTML report and the Stryker
+projection do not. Each section below marks which of
 the two it is; nothing here should be read as a description of working
 software until its status says so.
 
@@ -69,8 +70,8 @@ outcome cache + RunReport v1      (JSON, HTML, history, exit policy)
 ```
 
 Every transition on this line is what `run` performs today, and discovery on
-its own is what `list` prints. Two annotations above are still promises: no
-outcome cache reuses anything between runs, and the HTML report does not exist.
+its own is what `list` prints. One annotation above is still a promise: the HTML
+report does not exist.
 
 Each arrow is a phase transition with its own type. `runner.Execute(m
 Validated)` cannot be called with a raw candidate; that is the compile-time
@@ -179,12 +180,11 @@ one candidate rather than a file or a run.
 
 ## Execution
 
-Status: partially implemented. The whole pipeline runs — snapshot, baseline,
-discovery, compile validation, the instrumented baseline, the drift gate,
-per-mutant activation, the report, and the exit code — so `go-mutants run`
-measures a real mutation score today, narrowed by coverage. What is still
-missing is the rest of the operator catalog (discovery implements comparison
-and boolean-literal), `--changed`, and `--shard`.
+Status: implemented. The whole pipeline runs — snapshot, baseline, discovery,
+compile validation, the instrumented baseline, the drift gate, per-mutant
+activation, the report, and the exit code — so `go-mutants run` measures a real
+mutation score today, narrowed by coverage, by the selection stage below, and by
+the outcome cache.
 
 - **One build.** Each package with tests is compiled once with `go test -c`;
   packages with no test files are skipped. `-cover -coverpkg=<module>/...` is
@@ -231,14 +231,37 @@ and boolean-literal), `--changed`, and `--shard`.
   go-mutants' own per-package binaries. And every failure of the pass —
   including a `-cover` build that will not compile — publishes a `GOM7602`
   warning and runs everything, so the optimisation can never fail a run.
-- **`--changed <ref>`** *(planned)* intersects candidates with `git diff -U0`
-  line sets from `git merge-base`, while discovery and validation still run
-  over the whole module so IDs and `rejected[]` match a full run.
-- **`--shard k/n`** assigns by `sha256(ID)[:8] % n`, so adding or removing
-  mutants elsewhere does not reshuffle a shard. Each shard emits a complete
-  report with other shards marked `not-run (other-shard)`, and `report merge`
-  verifies congruence (tool version, workspace digest, catalog ID set, matching
-  `n`, disjoint and complete) before merging; a mismatch is exit 2.
+- **`--changed [=<ref>]`.** *Implemented.* It intersects candidates with the
+  `git diff -U0` line set taken against `git merge-base <ref> HEAD`, unioned
+  with every untracked, unignored file
+  (`git ls-files --others --exclude-standard`) as the whole of itself — a file
+  with no index entry has nothing to be diffed against, so the diff alone would
+  see an edited line and miss a file written from scratch. It
+  is read from the *original* workspace — a snapshot excludes `.git`, so there
+  is no repository in one. Bare `--changed`, and `--changed=@{upstream}` written
+  out longhand, both follow the upstream of `HEAD` and record it by name; a
+  branch with no upstream is `GOM7712` rather than a merge base that cannot
+  resolve. Discovery and validation still run over the whole module, so the IDs
+  and `rejected[]` match a full run's and the two documents can be compared
+  mutant for mutant. Unlike coverage guidance it fails closed: a diff that
+  cannot be read stops the run, because a narrowing that silently measured
+  everything or nothing is worse than not running at all.
+- **`--shard K/N`.** *Implemented.* It assigns by `sha256(ID)[:8] % N + 1`,
+  published as `shard.assignment: "id-hash-v1"`, so adding or removing mutants
+  elsewhere does not reshuffle a shard. Each shard emits a complete report with
+  the other shards' mutants marked `not-run` with
+  `not_run_reason: "other-shard"`, and
+  `report merge` verifies congruence (tool version, workspace digest, module
+  path, catalog ID sequence, changed ref, matching `N`, every index exactly
+  once, and every row owned by the shard that reported it) before merging; a
+  mismatch is exit 2 naming the first discrepancy. The two compose: a shard of a
+  `--changed` run narrows by both, reports `mode: "shard"` with a `changed_ref`,
+  and merges into a `changed` document.
+- **Everything not executed says why.** *Implemented.*
+  `mutants[].not_run_reason` is `out-of-selection`, `other-shard`, or
+  `interrupted`, and is `null` for every mutant that was measured — which is
+  what keeps a narrowed run's report a complete statement about the catalogue
+  rather than a fragment of one.
 
 ## Stable identity
 
@@ -269,16 +292,20 @@ nothing was measured. Exit codes are 0, 1 (opt-in policy failure only), 2
 ## Reporting and the event stream
 
 Status: partially implemented. The event stream, both console renderers,
-`RunReport v1`, and its history store exist and carry a whole run today; the
-HTML report, the Stryker projection, and `report merge` are planned. The
+`RunReport v1`, its history store, and `report merge` exist and carry a whole
+run today; the HTML report and the Stryker projection are planned. The
 engine never draws. It publishes to a single `chan engine.Event` (a sealed
 interface): `RunPlanned`, `PhaseChanged`, `BaselineProgress`,
 `BaselineCompleted`, `Discovered`, `Validated`, `CoverageMapped`,
-`MutantStarted`, `MutantFinished`, `Warning`, `ReportPublished` (only after the
-atomic rename), and a terminating `RunCompleted`. `CoverageMapped` is published
-only by a run that narrowed itself; one with coverage off publishes the
-`GOM76xx` `Warning` saying why instead. `CacheHit` arrives with the outcome
-cache and does not exist yet. A `Renderer` interface has two implementations:
+`MutantStarted`, `MutantFinished`, `CacheHit`, `Warning`, `ReportPublished`
+(only after the atomic rename), and a terminating `RunCompleted`.
+`CoverageMapped` is published only by a run that narrowed itself; one with
+coverage off publishes the `GOM76xx` `Warning` saying why instead. A `CacheHit`
+is the accounting for one mutant answered from the cache, and the
+`MutantFinished` carrying the outcome follows it immediately — with no
+`MutantStarted` before either, because nothing started. Publishing both is what
+keeps a renderer's counts and the report's in step, exactly as an uncovered
+mutant's lone `MutantFinished` does. A `Renderer` interface has two implementations:
 the bubbletea dashboard and deterministic plain lines. The TUI is selected only
 when standard output is a terminal that can do better than ASCII and
 `--no-tui`, `--json`, `--quiet`, `--no-color`, `NO_COLOR`, and `CI` all say
@@ -299,6 +326,46 @@ rename succeeds. See
 [JSON contracts](json-schema.md) and
 [Stryker compatibility](stryker-compatibility.md).
 
+## Outcome cache
+
+Status: implemented. `internal/cache` files one small JSON document per mutant
+under `<cache>/go-mutants/workspaces/<key>/outcomes/<context>/`, beside the run
+history and under the same ownership marker, claimed through
+`report.History.Claim` rather than through a second copy of the same dance.
+
+The `<context>` is a SHA-256 over length-prefixed fields — the tool version, the
+running executable's digest, the Go toolchain's own release, the workspace
+digest, the catalogue digest, the test command, the configured timeout, and
+`CGO_ENABLED`/`GOARCH`/`GODEBUG`/`GOEXPERIMENT`/`GOFLAGS`/`GOOS` — truncated to
+16 hex characters. Entries are *filed* under it rather than validated against
+it, which is why nothing is ever invalidated: an edit moves the key, so the old
+entries become unreachable rather than wrong, and every entry carries the id and
+the *full* key it was written under — not the truncation, which two colliding
+contexts would agree about — so a truncation collision is a refusal instead of
+an adoption.
+
+The toolchain's release is in the key because nothing else in that list carries
+it: the test command is hashed as the user wrote it, so the default command
+hashes the word `go` rather than the toolchain substituted for it at exec time,
+and `go.mod` pins a language version and not a patch release.
+
+Two decisions are worth stating. The effective timeout is judged rather than
+keyed on: a derived bound is `max(10s, slowest baseline × 5)`, a wall-clock
+measurement, so hashing it would have given every run of a non-trivial project
+its own empty directory; each entry records the bound it was measured under and
+a lookup refuses one that bound could not have produced. And the partition runs
+*after* coverage narrowing, so a mutant no test covers is settled before the
+cache is consulted — the coverage pass fails open, and a cached
+`survived (uncovered)` adopted by a run that would have executed the mutant
+would be a detection nobody performed.
+
+Only killed, survived, and confirmed timed-out are stored; inconclusive results,
+harness errors, interruptions, and every mutant named in `[[mutation.expect]]`
+are measured on every invocation. Every failure in the stage is a `GOM79xx`
+warning and a run that measures more than it had to, exactly as coverage fails
+open — the exception being `cache status|gc|clean`, where operating on the cache
+is the whole of what was asked for and a failure is an error.
+
 ## Package layout
 
 | Package | Responsibility | Status |
@@ -315,7 +382,7 @@ rename succeeds. See
 | `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
 | `internal/runner` | One process, timed and supervised; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping | implemented |
-| `internal/cache` | Outcome cache | planned |
+| `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
 | `internal/execute` | Test-binary build, scheduling, timeout retry | implemented |
 | `internal/report` | RunReport, projections, HTML, history, merge | v1, history |

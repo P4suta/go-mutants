@@ -201,8 +201,11 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 			t.Errorf("code %q is listed twice", c)
 		}
 		seen[c] = true
-		if !strings.HasPrefix(string(c), "GOM77") || len(c) != 7 {
-			t.Errorf("code %q is outside the GOM77xx block this package owns", c)
+		// GOM770x, not the whole of GOM77xx: internal/gitdiff shares the block
+		// from GOM7710 upwards, and the tens digit is what keeps the two
+		// allocations from ever meeting.
+		if !strings.HasPrefix(string(c), "GOM770") || len(c) != 7 {
+			t.Errorf("code %q is outside the GOM770x range this package holds", c)
 		}
 	}
 }

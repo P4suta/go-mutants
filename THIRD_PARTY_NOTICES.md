@@ -19,6 +19,7 @@ the authoritative versions and digests are `go.mod` and `go.sum`.
 | `github.com/charmbracelet/lipgloss` | TUI styling | MIT |
 | `golang.org/x/tools` | `go/packages` analysis | BSD-3-Clause |
 | `golang.org/x/sync` | `errgroup` worker coordination | BSD-3-Clause |
+| `github.com/santhosh-tekuri/jsonschema/v6` | Validate emitted JSON, and `report validate` | Apache-2.0 |
 
 Their transitive dependencies, mostly terminal and text-handling libraries
 pulled in by the Charm packages, are recorded in `go.mod` and `go.sum`.
@@ -27,7 +28,6 @@ pulled in by the Charm packages, are recorded in `go.mod` and `go.sum`.
 
 | Module | Purpose | License |
 | --- | --- | --- |
-| `github.com/santhosh-tekuri/jsonschema/v6` | Validate emitted JSON | Apache-2.0 |
 | `github.com/google/go-cmp` | Structural diffs in assertions | BSD-3-Clause |
 | `pgregory.net/rapid` | Property-based testing | MPL-2.0 |
 

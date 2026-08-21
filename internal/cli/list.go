@@ -31,11 +31,11 @@ import (
 // The identity of the document `list --json` writes.
 //
 // Both constants are spelled out here rather than imported from
-// internal/schemas, which would link the JSON Schema validator into the shipped
-// binary for the sake of two strings. The schema is a test-time contract: the
-// integration tests assert that a document carrying these values is the
-// document internal/schemas validates, so the two cannot drift apart without a
-// test failing.
+// internal/schemas, which is where `report validate` reaches for the validator.
+// Naming a document type is not the same act as checking one, and this command
+// only writes: the integration tests assert that a document carrying these
+// values is the document internal/schemas validates, so the two cannot drift
+// apart without a test failing.
 const (
 	catalogDocumentType  = "go-mutants/catalog"
 	catalogSchemaVersion = 1
@@ -75,7 +75,9 @@ pass, because a suppressed candidate never had an id to filter on.
 
 --json writes the catalog-v1 document to standard output and nothing else;
 warnings and errors go to standard error, so the document can be piped straight
-into a validator.`
+into a validator. --explain is the opposite half and the two are refused
+together: it expands the skip breakdown underneath the listing, saying what each
+reason means and which files it accounted for.`
 
 // listOptions holds the flag destinations for one `list` invocation. It is a
 // struct rather than closure variables so that the command can be built more
@@ -87,6 +89,7 @@ type listOptions struct {
 	profile   string
 	mutant    string
 	json      bool
+	explain   bool
 	quiet     bool
 	noColor   bool
 }
@@ -120,6 +123,8 @@ func newListCommand() *cobra.Command {
 		"list only mutants whose id starts with `ID_PREFIX`; a prefix matching several lists all of them")
 	flags.BoolVar(&o.json, "json", false,
 		"write the catalog-v1 document to standard output and nothing else")
+	flags.BoolVar(&o.explain, "explain", false,
+		"after the listing, expand the skip breakdown: what each reason means, and the files it accounted for")
 	flags.BoolVarP(&o.quiet, "quiet", "q", false,
 		"drop the header line; the mutants, the counts, and the skip breakdown are the listing itself")
 	flags.BoolVar(&o.noColor, "no-color", false,
@@ -139,6 +144,9 @@ func (o *listOptions) execute(cmd *cobra.Command, args []string) error {
 				"and there is no shorter version of it",
 			Hint: "drop --quiet for the document, or drop --json for the shortened text listing",
 		}
+	}
+	if err := checkExplain(o.explain, o.json); err != nil {
+		return err
 	}
 	prefix, err := listPrefix(o.mutant)
 	if err != nil {
@@ -659,15 +667,28 @@ func writeCatalogJSON(w io.Writer, doc catalogDocument) error {
 	return encoder.Encode(doc)
 }
 
-// writeListing writes the text listing.
+// writeListing writes the text listing, and the skip detail underneath it when
+// `--explain` asked for one.
+//
+// The detail is written after the listing has been flushed rather than into the
+// same buffer, so that a listing somebody is reading is on the screen before
+// the explanation of what it left out — and so that a failure to write the
+// explanation cannot lose the listing.
 func (o *listOptions) writeListing(w io.Writer, doc catalogDocument) error {
+	color := console.ColorEnabled(w, o.noColor)
 	r := &listRenderer{
 		out:   bufio.NewWriter(w),
-		color: console.ColorEnabled(w, o.noColor),
+		color: color,
 		quiet: o.quiet,
 	}
 	r.render(doc)
-	return r.out.Flush()
+	if err := r.out.Flush(); err != nil {
+		return err
+	}
+	if !o.explain {
+		return nil
+	}
+	return explainListing(w, color, doc.Skips)
 }
 
 // The listing styles. As in internal/console these are the eight ANSI colours

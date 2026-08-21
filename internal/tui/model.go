@@ -103,12 +103,14 @@ type model struct {
 	workers int
 	phase   engine.Phase
 	detail  string
-	// baseline, discovery, and coverage are the last line each of those phases
-	// published, kept so that a run that has moved on still shows what it
-	// established. coverage is empty for a run that did no coverage pass, which
-	// publishes a [engine.Warning] saying why instead.
+	// baseline, discovery, selection, and coverage are the last line each of
+	// those phases published, kept so that a run that has moved on still shows
+	// what it established. coverage is empty for a run that did no coverage
+	// pass, which publishes a [engine.Warning] saying why instead, and selection
+	// is empty for a run that executed everything it validated.
 	baseline  string
 	discovery string
+	selection string
 	coverage  string
 
 	// total is how many mutants will be executed, known from
@@ -263,6 +265,15 @@ func (m model) fold(event engine.Event) (tea.Model, tea.Cmd) {
 	case engine.Validated:
 		m.discovery = validatedLine(e)
 		m.total = e.Accepted
+
+	case engine.SelectionNarrowed:
+		// The total is corrected as well as described. [engine.Validated] said
+		// how many mutants compile, which is what a full run would execute; a
+		// narrowed run executes fewer, and a progress counter still counting
+		// towards the catalogue would sit at "12 of 380 done" for the whole of
+		// a two-minute run and read as a hang.
+		m.selection = narrowedLine(e)
+		m.total = e.Selected
 
 	case engine.CoverageMapped:
 		// Kept on its own line rather than folded into the discovery one: it is

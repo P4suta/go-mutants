@@ -18,6 +18,7 @@
   },
   "selection": {
     "mode": "all",
+    "changed_ref": null,
     "profile": "balanced",
     "operators": [],
     "include": [
@@ -28,6 +29,7 @@
     "rejected": 0,
     "selected": 3
   },
+  "shard": null,
   "test": {
     "command": [
       "go",
@@ -48,6 +50,12 @@
     "mode": "package",
     "binaries": 2,
     "mutants_uncovered": 1
+  },
+  "cache": {
+    "mode": "off",
+    "hits": 0,
+    "misses": 0,
+    "writes": 0
   },
   "summary": {
     "total": 3,
@@ -81,6 +89,7 @@
       "original": "<",
       "replacement": "<=",
       "outcome": "killed",
+      "not_run_reason": null,
       "duration_ms": 140,
       "killed_by": "example.com/m/internal/core",
       "attempts": 1,
@@ -89,7 +98,8 @@
         "example.com/m/internal/core",
         "example.com/m/internal/edge"
       ],
-      "uncovered": false
+      "uncovered": false,
+      "cached": false
     },
     {
       "id": "6bd678d5e97100f280463dc80789ceff1b339c6000c57ba763a55b5c2e06451c",
@@ -106,6 +116,7 @@
       "original": "!=",
       "replacement": "==",
       "outcome": "survived",
+      "not_run_reason": null,
       "duration_ms": 90,
       "killed_by": null,
       "attempts": 1,
@@ -113,7 +124,8 @@
       "covering_test_packages": [
         "example.com/m/internal/edge"
       ],
-      "uncovered": false
+      "uncovered": false,
+      "cached": false
     },
     {
       "id": "fbef4a53edb4d19d4961263cc4023cc21e3963a5ea61dace233e628f372d0847",
@@ -130,12 +142,14 @@
       "original": "true",
       "replacement": "false",
       "outcome": "survived",
+      "not_run_reason": null,
       "duration_ms": 0,
       "killed_by": null,
       "attempts": 0,
       "output_tail": null,
       "covering_test_packages": [],
-      "uncovered": true
+      "uncovered": true,
+      "cached": false
     }
   ],
   "rejected": [],
