@@ -1,0 +1,28 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: a named boolean type, whose comparisons
+// and literals are not the universe `bool` and so are not expression sites.
+//
+// The construct comes from fixtures/rejectable, where it exists to be rejected.
+// A Form C selector evaluates to a plain `bool`, which is not assignable to
+// [Flag], so an earlier version of this package guarded these two candidates
+// anyway and left the compiler to throw them out. The hint discovery now hands
+// down says Form S, and a statement guard around a `return` is well typed
+// whatever the function returns — including here, where every branch of the
+// chain returns, which makes the chain itself a terminating statement and keeps
+// the function's last statement a `return`.
+package sample; import __gm "example.com/mini/gomutants_rt"
+
+// Flag is a named boolean type: a distinct type whose underlying type is bool.
+type Flag bool
+
+// Above reports whether x is above y.
+func Above(x, y int) Flag {
+	if __gm.M[0] { return x>=y } else { return x > y }
+}
+
+// Ready reports whether the fixture is ready, which it always is.
+func Ready() Flag {
+	if __gm.M[1] { return false } else { return true }
+}

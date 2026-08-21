@@ -1,0 +1,57 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: the declaration guard, over a short
+// declaration of two names, one of a single name, one that throws half its
+// values away, a `var` that spells its type out, and a parenthesized `var`
+// block written across four lines.
+package sample
+
+// Split returns the two halves of n, from a short declaration whose two names
+// the guard has to hoist out of the block it wraps.
+func Split(n int) (int, int) {
+	lo, hi := n/2, n-n/2
+	return lo, hi
+}
+
+// Scale multiplies v, declaring the result with a `var` that names its type.
+func Scale(v int) int {
+	var scaled int = v * 3
+	return scaled
+}
+
+// Offset raises base by a step it declares on its own.
+func Offset(base int) int {
+	step := base + 1
+	return step * 2
+}
+
+// First returns the head of values and discards their count, so that a short
+// declaration holding a blank identifier keeps it: the guard declares the names
+// it was told about and assigns to the left-hand side the user wrote.
+func First(values []int) int {
+	head, _ := values[0], len(values)-1
+	return head
+}
+
+// Weigh prices the comparison of a and b.
+//
+// The comparison is an expression site inside the declaration site around it,
+// so the declaration guard's original branch has to carry the expression guard
+// while its own mutated copies carry none.
+func Weigh(a, b int, cost func(bool) int) int {
+	weight := cost(a > b) + 1
+	return weight
+}
+
+// Bounds returns the range the ends of values leave room for, from a
+// parenthesized `var` block: the keyword and the parentheses come out, which
+// leaves the specs inside as the list of assignments the guard needs, still on
+// the lines the author put them on.
+func Bounds(values []int) (int, int) {
+	var (
+		low  = values[0] - 1
+		high = values[len(values)-1] + 1
+	)
+	return low, high
+}

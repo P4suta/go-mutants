@@ -21,7 +21,7 @@ deterministic stable mutant IDs, and a lossless JSON report are built today;
 `--changed` for pull requests, `--shard k/n` for CI fan-out, and the
 Stryker-ecosystem HTML projection are designed and not yet.
 
-## Status: pre-release, two operator families
+## Status: pre-release, the whole operator catalogue
 
 Two commands exist. `go-mutants run` performs real mutation testing: it
 snapshots the workspace, proves the baseline, discovers candidates, validates
@@ -44,11 +44,27 @@ file, on a dumb terminal, under `--no-tui`, `--json`, `--quiet`, or
 byte-identical either way, because a dashboard run replays it through the plain
 renderer rather than formatting its own.
 
+All eleven operator families and all forty-two rules are discovered,
+instrumented, compile-validated, executed, and scored. A score from go-mutants
+is a score against the whole v1 catalogue, narrowed only by the profile you
+chose: `balanced` is the default and leaves out `bitwise`,
+`arithmetic-assignment`, and `statement-deletion`, which `strong` and `all` add
+back. [`docs/operators.md`](docs/operators.md) is the table.
+
 The honest limits:
 
-- **Two of the eleven operator families**, `comparison` and `boolean-literal`.
-  A score from go-mutants today is a score against those rules, not against the
-  full catalogue.
+- **No `switch`/`select` case mutation, and no `if`-branch replacement.** They
+  are v2: each needs a guard form or a neutral-value model the instrumenter
+  does not build. Package-level `var` initialisers, `const` declarations, array
+  lengths, and generic type parameter lists are excluded for reasons that are
+  not going to change, and cgo packages and generated files are excluded
+  wholesale. Every one of those is a recorded skip with a reason rather than a
+  silent omission.
+- **A rewrite site none of the three guard forms can express is skipped**, with
+  the reason `unnameable-decl-type`. The commonest are a `:=` that redeclares
+  rather than declares, a declared type the file cannot spell with the imports
+  it has, and a statement in a `for` post or an `if` initialiser, where a block
+  is not legal Go. `go-mutants list` prints the count.
 - **Coverage guidance is on only for the default test command.** A
   `test.command` other than `go test ./...` cannot be attributed to
   go-mutants' own per-package test binaries, so such a run measures every
@@ -91,21 +107,21 @@ settles — survivors carrying their diff — then the summary. Abridged:
 ```text
 baseline ok: avg 1.011s, slowest 1.969s, timeout 10s (derived)
 phase mutate: discovering candidates, validating them, then executing the mutants
-discovered 4 candidates, 0 skips
-validated 4 mutants, 0 rejections
-coverage: 1 test binary, 3 of 4 mutants covered, 1 uncovered
+discovered 14 candidates, 0 skips
+validated 13 mutants, 0 rejections
+coverage: 1 test binary, 10 of 13 mutants covered, 3 uncovered
 SURVIVED (uncovered)  bf513c0d  untested.go:14:11  neq-to-eq  != -> ==  (0s)
     - !=
     + ==
-mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0
-    not-run 0  rejected 0  uncovered 1
-score 75.00%
+mutants 13  killed 10  survived 3  timeout 0  inconclusive 0  errored 0
+    not-run 0  rejected 0  uncovered 3
+score 76.92%
 run 20260820T221649Z-67af  exit 0
 ```
 
 The counters are one line on a real terminal; they are wrapped above to fit.
 
-`SURVIVED (uncovered)` and the `uncovered 1` column are coverage's own finding:
+`SURVIVED (uncovered)` and the `uncovered 3` column are coverage's own finding:
 no test binary reaches that line, so the mutant was never executed and the run
 knows why it survived. The column appears only in a coverage-guided run, and
 `uncovered` is a subset of `survived` rather than a seventh bucket — the

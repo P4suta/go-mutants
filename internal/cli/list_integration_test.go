@@ -61,37 +61,79 @@ type listedMutant struct {
 // comparison catches both — a "contains" assertion would pass a discovery that
 // also mutated the const block next door.
 var wantMutants = []listedMutant{
-	// compare/compare.go is the control group: one live candidate per rule the
-	// phase implements, all of them in ordinary statement context.
+	// compare/compare.go is the control group: every rule that fires on an
+	// ordinary comparison and on the statement around it, in ordinary statement
+	// context. The condition-negation and return-replacement rows are here
+	// because the operator catalogue reaches further than the comparison family
+	// alone; the table is the whole of what discovery found, not a sample of it.
+	{"compare/compare.go", 16, 5, "condition-negation", "negate-condition", "a == b", "!(a == b)"},
 	{"compare/compare.go", 16, 7, "comparison", "eq-to-neq", "==", "!="},
+	{"compare/compare.go", 17, 10, "return-replacement", "return-empty-string", "\"eq\"", "\"\""},
+	{"compare/compare.go", 19, 5, "condition-negation", "negate-condition", "a != b", "!(a != b)"},
 	{"compare/compare.go", 19, 7, "comparison", "neq-to-eq", "!=", "=="},
+	{"compare/compare.go", 20, 10, "return-replacement", "return-empty-string", "\"ne\"", "\"\""},
+	{"compare/compare.go", 22, 5, "condition-negation", "negate-condition", "a < b", "!(a < b)"},
 	{"compare/compare.go", 22, 7, "comparison", "lt-to-le", "<", "<="},
+	{"compare/compare.go", 23, 10, "return-replacement", "return-empty-string", "\"lt\"", "\"\""},
+	{"compare/compare.go", 25, 5, "condition-negation", "negate-condition", "a <= b", "!(a <= b)"},
 	{"compare/compare.go", 25, 7, "comparison", "le-to-lt", "<=", "<"},
+	{"compare/compare.go", 26, 10, "return-replacement", "return-empty-string", "\"le\"", "\"\""},
+	{"compare/compare.go", 28, 5, "condition-negation", "negate-condition", "a > b", "!(a > b)"},
 	{"compare/compare.go", 28, 7, "comparison", "gt-to-ge", ">", ">="},
+	{"compare/compare.go", 29, 10, "return-replacement", "return-empty-string", "\"gt\"", "\"\""},
+	{"compare/compare.go", 31, 5, "condition-negation", "negate-condition", "a >= b", "!(a >= b)"},
 	{"compare/compare.go", 31, 7, "comparison", "ge-to-gt", ">=", ">"},
+	{"compare/compare.go", 32, 10, "return-replacement", "return-empty-string", "\"ge\"", "\"\""},
+	{"compare/compare.go", 34, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
 	{"compare/compare.go", 39, 8, "boolean-literal", "true-to-false", "true", "false"},
 	{"compare/compare.go", 40, 9, "boolean-literal", "false-to-true", "false", "true"},
-	// A boolean literal used as a map key is value code: the type-argument
-	// suppression must not reach an ordinary index expression.
+	{"compare/compare.go", 41, 9, "return-replacement", "return-true", "on", "true"},
+	{"compare/compare.go", 41, 9, "return-replacement", "return-false", "on", "false"},
+	{"compare/compare.go", 41, 13, "return-replacement", "return-true", "off", "true"},
+	{"compare/compare.go", 41, 13, "return-replacement", "return-false", "off", "false"},
+	{"compare/compare.go", 48, 9, "return-replacement", "return-zero-numeric", "m[true]", "0"},
 	{"compare/compare.go", 48, 11, "boolean-literal", "true-to-false", "true", "false"},
-
-	// The body of a generic function is ordinary code, however many type
-	// parameters and constraints surround it.
+	{"generics/generics.go", 16, 5, "condition-negation", "negate-condition", "a > b", "!(a > b)"},
 	{"generics/generics.go", 16, 7, "comparison", "gt-to-ge", ">", ">="},
-
-	// The universe `false` in a package that declares its own `true`. Every
-	// mention of the shadowing name is absent from this table, which is the
-	// whole point of the package.
+	{"generics/generics.go", 31, 9, "return-replacement", "return-zero-numeric", "sized[[len([1]bool{false})]byte](v)[0]", "0"},
+	{"generics/generics.go", 42, 44, "return-replacement", "return-zero-numeric", "b.v[0]", "0"},
+	{"generics/generics.go", 56, 9, "return-replacement", "return-zero-numeric", "len(p.key) + len(p.value)", "0"},
+	{"generics/generics.go", 56, 20, "integer-arithmetic", "add-to-sub", "+", "-"},
+	{"shadow/shadow.go", 23, 27, "return-replacement", "return-zero-numeric", "true", "0"},
+	{"shadow/shadow.go", 28, 12, "integer-arithmetic", "add-to-sub", "+", "-"},
+	{"shadow/shadow.go", 29, 9, "return-replacement", "return-zero-numeric", "true", "0"},
 	{"shadow/shadow.go", 34, 32, "boolean-literal", "false-to-true", "false", "true"},
-
-	// The live side of each suppressed context in suppressed.go: an expression
-	// switch's case body (76 is its label), a type switch's case body, and a
-	// select's case body (99 is its communication clause).
+	{"suppressed/suppressed.go", 36, 26, "return-replacement", "return-zero-numeric", "len(Buffer{})", "0"},
+	{"suppressed/suppressed.go", 59, 33, "return-replacement", "return-empty-string", "Data", "\"\""},
+	{"suppressed/suppressed.go", 66, 5, "condition-negation", "negate-condition", "limit", "!(limit)"},
+	{"suppressed/suppressed.go", 67, 10, "return-replacement", "return-zero-numeric", "a", "0"},
+	{"suppressed/suppressed.go", 77, 6, "condition-negation", "negate-condition", "ok == true", "!(ok == true)"},
 	{"suppressed/suppressed.go", 77, 9, "comparison", "eq-to-neq", "==", "!="},
 	{"suppressed/suppressed.go", 77, 12, "boolean-literal", "true-to-false", "true", "false"},
+	{"suppressed/suppressed.go", 78, 11, "return-replacement", "return-empty-string", "\"equal and ok\"", "\"\""},
+	{"suppressed/suppressed.go", 81, 10, "return-replacement", "return-empty-string", "\"not ok\"", "\"\""},
+	{"suppressed/suppressed.go", 85, 6, "condition-negation", "negate-condition", "v > b", "!(v > b)"},
 	{"suppressed/suppressed.go", 85, 8, "comparison", "gt-to-ge", ">", ">="},
+	{"suppressed/suppressed.go", 86, 11, "return-replacement", "return-empty-string", "\"greater\"", "\"\""},
+	{"suppressed/suppressed.go", 89, 10, "return-replacement", "return-empty-string", "v", "\"\""},
+	{"suppressed/suppressed.go", 91, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
+	{"suppressed/suppressed.go", 98, 10, "return-replacement", "return-empty-string", "\"sent\"", "\"\""},
+	{"suppressed/suppressed.go", 100, 6, "condition-negation", "negate-condition", "v == true", "!(v == true)"},
 	{"suppressed/suppressed.go", 100, 8, "comparison", "eq-to-neq", "==", "!="},
 	{"suppressed/suppressed.go", 100, 11, "boolean-literal", "true-to-false", "true", "false"},
+	{"suppressed/suppressed.go", 101, 11, "return-replacement", "return-empty-string", "\"received\"", "\"\""},
+	{"suppressed/suppressed.go", 104, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
+
+	// A boolean literal used as a map key is value code: the type-argument
+	// suppression must not reach an ordinary index expression — that is the
+	// `m[true]` row above. The body of a generic function is ordinary code too,
+	// however many type parameters and constraints surround it, which is the
+	// generics/generics.go block. The universe `false` in a package that
+	// declares its own `true` is the one shadow/shadow.go boolean row: every
+	// mention of the shadowing name is absent, which is the whole point of that
+	// package. And suppressed/suppressed.go contributes the live side of each
+	// suppressed context — an expression switch's case body, a type switch's,
+	// and a select's — while their labels contribute nothing.
 }
 
 // wantSkips is every reason discovery recorded, in (path, reason) order.
@@ -105,7 +147,7 @@ var wantSkips = []catalogSkip{
 	{Path: "suppressed/suppressed.go", Reason: "array-length", Count: 2},
 	{Path: "suppressed/suppressed.go", Reason: "case-label", Count: 4},
 	{Path: "suppressed/suppressed.go", Reason: "const-decl", Count: 4},
-	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 3},
+	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 5},
 }
 
 // inFixture points the process at the discovery fixture for the length of one
@@ -216,8 +258,13 @@ func TestListDiscoversExactlyTheFixtureCandidates(t *testing.T) {
 		if strings.HasPrefix(m.Path, "generated/") {
 			t.Errorf("%s:%d is a candidate in a generated file", m.Path, m.Line)
 		}
-		if m.Path == "shadow/shadow.go" && m.Line != 34 {
-			t.Errorf("shadow/shadow.go:%d is a candidate; only the universe `false` on line 34 may be one", m.Line)
+		// The shadowing package's own `true` is an int constant and a local
+		// variable, and the ordinary integer code around both is mutated like
+		// any other. What may never happen is a boolean-literal candidate on
+		// one of those names: the family is about the universe constants, and
+		// only the `false` on line 34 is one.
+		if m.Path == "shadow/shadow.go" && m.Family == "boolean-literal" && m.Line != 34 {
+			t.Errorf("shadow/shadow.go:%d is a boolean-literal candidate; only the universe `false` on line 34 may be one", m.Line)
 		}
 	}
 
@@ -381,26 +428,28 @@ func TestListNarrowsTheSelection(t *testing.T) {
 		}
 	})
 
-	t.Run("out of profile family", func(t *testing.T) {
-		// bitwise is a `strong` family and this phase does not discover it yet,
-		// so the honest answer is an empty listing plus a warning on standard
-		// error saying why — never a silent zero.
+	t.Run("a family the fixture has no operators of", func(t *testing.T) {
+		// This used to be the "not discovered yet" case: bitwise was a `strong`
+		// family the phase did not implement, so an empty listing came with a
+		// GOM1006 warning saying why. Every family in the registry is
+		// discovered now, so the empty listing here is a fact about the fixture
+		// — it holds no bitwise operators — and there is nothing to warn about.
+		// Saying so would be worse than silence: it would tell the user their
+		// build cannot find something it can.
 		stdout, stderr := list(t, "--json", "--operator", "bitwise")
 		doc := decodeCatalog(t, []byte(stdout))
 		if len(doc.Mutants) != 0 {
-			t.Errorf("--operator bitwise listed %d mutants, want none from a family this phase cannot discover", len(doc.Mutants))
+			t.Errorf("--operator bitwise listed %d mutants, want none: the fixture has no bitwise operators", len(doc.Mutants))
 		}
-		if !strings.Contains(stderr, string(CodeUnimplementedOperators)) {
-			t.Errorf("stderr = %q, want the %s warning", stderr, CodeUnimplementedOperators)
+		if stderr != "" {
+			t.Errorf("stderr = %q, want nothing: bitwise is discovered, the fixture simply has none", stderr)
 		}
 	})
 
-	t.Run("half a selection this build cannot discover", func(t *testing.T) {
-		// The partial case, which is the one a user actually types: one family
-		// this phase discovers and one it does not. The implemented half is
-		// listed and the dropped half is named — a listing of comparison
-		// mutants with nothing on standard error would read as "your code has
-		// no bitwise operators in it", which is false.
+	t.Run("two families, one of which the fixture has none of", func(t *testing.T) {
+		// The partial case, which is the one a user actually types. Both halves
+		// are discoverable, so what comes back is every comparison candidate
+		// and no diagnostic at all.
 		stdout, stderr := list(t, "--json", "--operator", "comparison", "--operator", "bitwise")
 		doc := decodeCatalog(t, []byte(stdout))
 		if len(doc.Mutants) == 0 {
@@ -411,10 +460,8 @@ func TestListNarrowsTheSelection(t *testing.T) {
 				t.Errorf("listed a %s mutant at %s:%d", m.Family, m.Path, m.Line)
 			}
 		}
-		lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-		if len(lines) != 1 || !strings.Contains(lines[0], string(CodeUnimplementedOperators)) ||
-			!strings.Contains(lines[0], `"bitwise"`) {
-			t.Errorf("stderr = %q, want exactly one %s warning naming bitwise", stderr, CodeUnimplementedOperators)
+		if stderr != "" {
+			t.Errorf("stderr = %q, want nothing: both families are discovered", stderr)
 		}
 	})
 
@@ -442,8 +489,8 @@ func TestListNarrowsTheSelection(t *testing.T) {
 	t.Run("include", func(t *testing.T) {
 		stdout, _ := list(t, "--json", "--include", "compare/**")
 		doc := decodeCatalog(t, []byte(stdout))
-		if len(doc.Mutants) != 9 {
-			t.Errorf("--include compare/** listed %d mutants, want the 9 in compare/compare.go", len(doc.Mutants))
+		if len(doc.Mutants) != 27 {
+			t.Errorf("--include compare/** listed %d mutants, want the 27 in compare/compare.go", len(doc.Mutants))
 		}
 		for _, m := range doc.Mutants {
 			if !strings.HasPrefix(m.Path, "compare/") {
@@ -585,12 +632,22 @@ func TestListReportsAProfileTheConfigurationFileMadeInert(t *testing.T) {
 }
 
 // TestListWarningsComeOutInOneOrder is the diffability contract for standard
-// error, now that one invocation can produce two families of warning.
+// error.
 //
 // The listing itself is deliberately unpadded and unsorted-by-data so that two
 // runs can be diffed; a diagnostic stream whose lines swap places between runs
-// would undo that. The order is also the order the decisions were made in: what
-// was asked for first, then what could be found of it.
+// would undo that.
+//
+// It used to assert two lines in one order — what was asked for, then what
+// could be found of it — and it cannot any more: the second family, GOM1006,
+// became unreachable through a real selection when the last operator family
+// landed in discovery, because every rule the registry names is now discovered.
+// Its wording is kept under test by
+// TestWarnUnimplementedStillSaysWhyAnEmptyListingIsEmpty, which drives the
+// writer directly. What survives here is the half that can still happen, and it
+// is asserted exactly: one line, the profile warning, and nothing else — a
+// second line appearing would mean a registry rule landed ahead of its
+// discovery, which is the situation the order was pinned for.
 func TestListWarningsComeOutInOneOrder(t *testing.T) {
 	scratchModule(t, map[string]string{
 		"go.mod":           "module scratch.example/ordered\n\ngo 1.24\n",
@@ -600,14 +657,11 @@ func TestListWarningsComeOutInOneOrder(t *testing.T) {
 
 	_, stderr := list(t, "--json", "--profile", "all")
 	lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("stderr = %q, want two warning lines", stderr)
+	if len(lines) != 1 {
+		t.Fatalf("stderr = %q, want exactly the one warning line that is still reachable", stderr)
 	}
 	if !strings.HasPrefix(lines[0], "warning "+string(CodeInertProfile)+": ") {
-		t.Errorf("first line = %q, want the %s warning about what was asked for", lines[0], CodeInertProfile)
-	}
-	if !strings.HasPrefix(lines[1], "warning "+string(CodeUnimplementedOperators)+": ") {
-		t.Errorf("second line = %q, want the %s warning about what could be found", lines[1], CodeUnimplementedOperators)
+		t.Errorf("the line = %q, want the %s warning about what was asked for", lines[0], CodeInertProfile)
 	}
 }
 

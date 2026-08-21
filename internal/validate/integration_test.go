@@ -8,12 +8,13 @@
 // The unit tests in this package prove the search and the parser against fakes,
 // which is the only way to cover them exhaustively — a table of "does this
 // subset compile" answers costs microseconds where a real build costs seconds.
-// What a fake cannot say is whether the real compiler agrees: whether a guarded
-// comparison really does fail against a named boolean type, whether the message
-// it prints really names the file the way this package normalizes paths,
-// whether the line it reports really is the line the catalogue recorded. That
-// is what this file is for, and it is why the fixture it drives is a module
-// whose traps are ordinary-looking Go.
+// What a fake cannot say is whether the real compiler agrees: whether a mutated
+// copy really does fail to compile, whether the message it prints really names
+// the file the way this package normalizes paths, whether the line it reports
+// really is the line the catalogue recorded — and, just as importantly, whether
+// a candidate this phase used to refuse now compiles. That is what this file is
+// for, and it is why the fixture it drives is a module whose traps are
+// ordinary-looking Go and whose control is the shape that used to be a trap.
 //
 // Run it with `mise run test-integration`, or:
 //
@@ -54,30 +55,63 @@ const (
 // wantCatalog is the fixture's whole catalogue, in catalogue order.
 //
 // It is written out rather than derived because every assertion below names a
-// mutant by its position in it. Nine candidates is small enough to read, and
+// mutant by its position in it. Nineteen candidates is small enough to read, and
 // pinning it means a change to the fixture that adds or moves a candidate fails
 // here — where the answer is "update the fixture's expectations" — instead of
 // silently shifting which mutant a later assertion is about.
+//
+// Catalogue order is by path first, which is why named.go's four sit at the end
+// and the positions [trapped] names are unaffected by them.
 var wantCatalog = []string{
+	"compare.go negate-condition v < lo -> !(v < lo)",
 	"compare.go lt-to-le < -> <=",
 	"compare.go false-to-true false -> true",
+	"compare.go negate-condition v > hi -> !(v > hi)",
 	"compare.go gt-to-ge > -> >=",
 	"compare.go false-to-true false -> true",
 	"compare.go true-to-false true -> false",
-	"compare.go eq-to-neq == -> !=",
-	"flag.go gt-to-ge > -> >=",
-	"flag.go true-to-false true -> false",
-	"flag.go neq-to-eq != -> ==",
+	"compare.go return-zero-numeric v*0 + 1 -> 0",
+	"compare.go mul-to-div * -> /",
+	"compare.go add-to-sub + -> -",
+	"limits.go return-zero-numeric 200 - 100 -> 0",
+	"limits.go sub-to-add - -> +",
+	"limits.go mul-to-div * -> /",
+	"limits.go return-zero-numeric scaled + 1 -> 0",
+	"limits.go add-to-sub + -> -",
+	"named.go return-true level >= 3 -> true",
+	"named.go return-false level >= 3 -> false",
+	"named.go ge-to-gt >= -> >",
+	"named.go true-to-false true -> false",
 }
 
-// trapped names the catalogue positions that cannot compile: the two shapes of
-// the [Flag] trap in flag.go and the one in compare.go. Everything else must
-// survive.
-var trapped = []int{5, 6, 7}
+// namedBool is the range of catalogue positions covering named.go, the file
+// whose candidates this phase used to reject and now accepts.
+//
+// It is a range rather than a set because what is asserted about them is
+// uniform: all four are healthy. Its own test says why they are in a fixture
+// named for rejection at all — they are the control that would fail if the
+// statement form ever stopped carrying an edit whose result type is a named
+// boolean, which is a regression no other fixture in the corpus would notice.
+var namedBool = []int{15, 16, 17, 18}
+
+// trapped names the catalogue positions that cannot compile, and the words the
+// compiler has to use about each. Everything else must survive.
+//
+// The two divisions and the overflow are the fixture's two trap shapes, and the
+// diagnostic is pinned per trap rather than as one shared substring because the
+// shapes are deliberately different: a phase that isolated one and not the other
+// would look like it worked. Each is a fact about the mutated program rather
+// than about the guard around it, which is what the fixture's previous traps —
+// a bool selector meeting a named boolean type — turned out not to be.
+var trapped = map[int]string{
+	8:  "division by zero",
+	11: "overflows",
+	12: "division by zero",
+}
 
 // TestValidateIsolatesTheTrappedCandidates runs discovery, instrumentation and
 // validation over the fixture and watches the three candidates that cannot
-// compile come out as rejections while the six that can stay in the tree.
+// compile come out as rejections while the twelve that can stay in the tree.
 //
 // Both halves are the claim, and neither is worth anything alone. Rejecting
 // everything would produce a green build too — an empty tree compiles — and
@@ -93,6 +127,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	result, err := validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
+		Hints:        fixtureHints(t, found),
 		ModulePath:   rejectableModule,
 		Toolchain:    toolchain,
 		Jobs:         2,
@@ -107,7 +142,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	t.Run("the trapped candidates are rejected and the healthy ones accepted", func(t *testing.T) {
 		var wantRejected, wantAccepted []string
 		for i, m := range mutants {
-			if slices.Contains(trapped, i) {
+			if _, isTrap := trapped[i]; isTrap {
 				wantRejected = append(wantRejected, m.ID)
 				continue
 			}
@@ -166,6 +201,10 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// candidate, which is also the end-to-end statement of line
 		// preservation — the compiler and the catalogue agreeing about where
 		// something is, with a guard spliced in between them.
+		position := make(map[string]int, len(mutants))
+		for i, m := range mutants {
+			position[m.ID] = i
+		}
 		for _, r := range result.Rejected {
 			what := r.DisplayID + " (" + r.Rule + " in " + r.Path + ")"
 			if r.Line <= 0 || r.Column <= 0 {
@@ -178,26 +217,41 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 			if !strings.Contains(normalized, ":"+strconv.Itoa(r.Line)+":") {
 				t.Errorf("the diagnostic of %s is not about line %d:\n%s", what, r.Line, r.Diagnostic)
 			}
-			// The fixture's traps all fail the same way, and saying so here is
-			// what distinguishes "the compiler refused this guard" from "the
-			// build failed for some other reason and this candidate was
-			// standing nearby".
-			if !strings.Contains(r.Diagnostic, "Flag") {
-				t.Errorf("the diagnostic of %s does not mention the named boolean type:\n%s", what, r.Diagnostic)
+			// Each trap fails in its own documented way, and saying which
+			// distinguishes "the compiler refused this mutant" from "the build
+			// failed for some other reason and this candidate was standing
+			// nearby". Two shapes means two expectations, looked up by the
+			// catalogue position the fixture's own table names.
+			want, known := trapped[position[r.ID]]
+			if !known {
+				t.Errorf("%s was rejected and is not one of the fixture's traps", what)
+				continue
+			}
+			if !strings.Contains(r.Diagnostic, want) {
+				t.Errorf("the diagnostic of %s does not say %q:\n%s", what, want, r.Diagnostic)
 			}
 		}
 	})
 
 	t.Run("the surviving guards are the ones that were accepted", func(t *testing.T) {
-		// Five of six in compare.go and one of three in flag.go: the counts of
-		// what is left, per file, which is the tree's own version of the
-		// accepted set. A file whose every candidate had been rejected would be
-		// absent from both, since a pristine file carries no guards at all.
-		want := map[string]int{"compare.go": 5, "flag.go": 1}
+		// Six sites in compare.go, two of three in limits.go, and both of
+		// named.go's: the counts of what is left, per file, which is the tree's
+		// own version of the accepted set. A guard is a site rather than a
+		// mutant, so compare.go keeps all six of its sites — the statement
+		// holding its trap holds two healthy candidates too — while limits.go
+		// loses the declaration site whose only candidate was a trap. A file
+		// whose every candidate had been rejected would be absent from both,
+		// since a pristine file carries no guards at all.
+		//
+		// named.go is the file that would once have been absent for the opposite
+		// reason: its four candidates were all rejected, so this phase restored
+		// it to its pristine bytes and it drifted not at all. Two guards there is
+		// the improvement stated as a count.
+		want := map[string]int{"compare.go": 6, "limits.go": 2, "named.go": 2}
 		if got := result.Instrumented.GuardsByFile; !maps.Equal(got, want) {
 			t.Errorf("guards by file = %v, want %v", got, want)
 		}
-		if want := []string{"compare.go", "flag.go"}; !slices.Equal(result.Instrumented.FilesInstrumented, want) {
+		if want := []string{"compare.go", "limits.go", "named.go"}; !slices.Equal(result.Instrumented.FilesInstrumented, want) {
 			t.Errorf("instrumented files = %v, want %v", result.Instrumented.FilesInstrumented, want)
 		}
 		if result.Builds < 2 {
@@ -222,7 +276,44 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		baseline := runSuite(t, toolchain, snap.Root, "")
 		requireExit(t, baseline, 0, "the instrumented baseline")
 		requireOutput(t, baseline, "the instrumented baseline",
-			"--- PASS: TestInRange", "--- PASS: TestEnabled", "--- PASS: TestMatches")
+			"--- PASS: TestInRange", "--- PASS: TestErased",
+			"--- PASS: TestLevel", "--- PASS: TestRatio",
+			"--- PASS: TestReady", "--- PASS: TestAlways")
+	})
+
+	t.Run("the named boolean type is instrumented rather than rejected", func(t *testing.T) {
+		// The improvement, stated where it can fail.
+		//
+		// These four candidates used to be this fixture's traps, and they were
+		// traps for a reason that had nothing to do with them: Form C composes a
+		// `bool` selector, `bool` is not assignable to `type Flag bool`, and the
+		// compiler refused the guard rather than the mutant. Routing an edit with
+		// no exactly-`bool` expression around it to the statement form made all
+		// four ordinary, and nothing else in the corpus would notice if that
+		// stopped being true — every other fixture returns a plain `bool`.
+		//
+		// Accepted is the weaker half and is asserted first; executed is the half
+		// that proves the statement guard really carried the edit, and it is
+		// asserted by activating each one and watching the suite go red. A guard
+		// that compiled but selected nothing would pass the first and fail the
+		// second.
+		accepted := make(map[string]bool, len(result.AcceptedIDs))
+		for _, id := range result.AcceptedIDs {
+			accepted[id] = true
+		}
+		for _, position := range namedBool {
+			mutant := mutants[position]
+			what := mutant.DisplayID + " (" + mutant.Rule.Name + " in " + mutant.Path + ")"
+			if !accepted[mutant.ID] {
+				t.Errorf("%s was not accepted; the named boolean type is being rejected again", what)
+				continue
+			}
+			red := runSuite(t, toolchain, snap.Root, mutant.ID)
+			requireExit(t, red, 1, "the suite with "+what+" active")
+		}
+		if guards := result.Instrumented.GuardsByFile["named.go"]; guards == 0 {
+			t.Error("named.go carries no guards, so its candidates were restored rather than instrumented")
+		}
 	})
 
 	t.Run("an accepted mutant is still activatable", func(t *testing.T) {
@@ -232,13 +323,13 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// the tree spells; a phase that regenerated it from the accepted subset
 		// would produce a tree that builds, a baseline that passes, and an
 		// activation that turns on the wrong mutant — or none. So one accepted
-		// mutant, in the file that lost two of its three candidates, is
+		// mutant, in the file that lost a whole rewrite site to a rejection, is
 		// activated and has to kill the test that covers it.
-		mutant := mutants[8]
+		mutant := mutants[14]
 		red := runSuite(t, toolchain, snap.Root, mutant.ID)
 		what := "the suite with " + mutant.DisplayID + " (" + mutant.Rule.Name + " in " + mutant.Path + ") active"
 		requireExit(t, red, 1, what)
-		requireOutput(t, red, what, "Enabled(1, 2) = false, want true", "--- FAIL: TestEnabled")
+		requireOutput(t, red, what, "Ratio(9) = -1, want 1", "--- FAIL: TestRatio")
 		if got := strings.Count(string(red.Output), "--- FAIL:"); got != 1 {
 			t.Errorf("%s reported %d failures, want exactly 1:\n%s", what, got, red.Output)
 		}
@@ -255,8 +346,9 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		}
 		want := []string{
 			"changed compare.go",
-			"changed flag.go",
 			"added gomutants_rt/gomutants_rt.go",
+			"changed limits.go",
+			"changed named.go",
 		}
 		got := make([]string, 0, len(drifts))
 		for _, drift := range drifts {
@@ -288,10 +380,11 @@ func TestValidateIsDeterministic(t *testing.T) {
 	}
 	run := func() pass {
 		snap := snapshotFixture(t, "rejectable")
-		_, catalog := catalogFixture(t, toolchain, snap)
+		found, catalog := catalogFixture(t, toolchain, snap)
 		result, err := validate.Validate(t.Context(), validate.Options{
 			Snap:         snap,
 			Catalog:      catalog,
+			Hints:        fixtureHints(t, found),
 			ModulePath:   rejectableModule,
 			Toolchain:    toolchain,
 			BuildTimeout: stepTimeout,
@@ -304,7 +397,7 @@ func TestValidateIsDeterministic(t *testing.T) {
 		for _, r := range result.Rejected {
 			out.rejected = append(out.rejected, r.ID+" "+r.Path+":"+strconv.Itoa(r.Line)+" "+r.Rule)
 		}
-		for _, name := range []string{"compare.go", "flag.go", "gomutants_rt/gomutants_rt.go"} {
+		for _, name := range []string{"compare.go", "limits.go", "named.go", "gomutants_rt/gomutants_rt.go"} {
 			src, readErr := os.ReadFile(filepath.Join(snap.Root, filepath.FromSlash(name)))
 			if readErr != nil {
 				t.Fatalf("reading %s from the validated snapshot: %v", name, readErr)
@@ -341,7 +434,7 @@ func TestValidateIsDeterministic(t *testing.T) {
 func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 	toolchain := locateToolchain(t)
 	snap := snapshotFixture(t, "rejectable")
-	_, catalog := catalogFixture(t, toolchain, snap)
+	found, catalog := catalogFixture(t, toolchain, snap)
 
 	// A second file in the same package, referring to something that does not
 	// exist. It holds no candidates, so nothing this phase could reject would
@@ -358,6 +451,7 @@ func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 	result, err := validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
+		Hints:        fixtureHints(t, found),
 		ModulePath:   rejectableModule,
 		Toolchain:    toolchain,
 		BuildTimeout: stepTimeout,
@@ -450,6 +544,7 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 	result, err := validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
+		Hints:        fixtureHints(t, found),
 		ModulePath:   found.ModulePath,
 		Toolchain:    toolchain,
 		BuildTimeout: stepTimeout,
@@ -585,6 +680,21 @@ func catalogFixture(t *testing.T, toolchain gocmd.Toolchain, snap *snapshot.Snap
 			strings.Join(got, "\n\t"), strings.Join(wantCatalog, "\n\t"))
 	}
 	return found, catalog
+}
+
+// fixtureHints indexes the guard hints of one discovery pass.
+//
+// Every validation needs them: the instrumenter is a byte rewriter and cannot
+// choose a rewrite form for itself, so the hints travel with the catalogue from
+// the pass that had the type checker.
+func fixtureHints(t *testing.T, found discover.Result) instrument.Hints {
+	t.Helper()
+
+	hints, err := instrument.HintsOf(found.Candidates)
+	if err != nil {
+		t.Fatalf("indexing the guard hints: %v", err)
+	}
+	return hints
 }
 
 // describe renders a list of mutant IDs in the terms the fixture is written in,

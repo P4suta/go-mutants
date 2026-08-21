@@ -226,6 +226,14 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		t.Errorf("toolchain = %+v, want a located one", outcome.Toolchain)
 	}
 
+	// The fixture's whole catalogue, as a number, so that the sequence below
+	// stays a claim about the pipeline rather than a restatement of whatever
+	// the run happened to do.
+	const simpleMutants = 13
+	if got := len(outcome.Report.Mutants); got != simpleMutants {
+		t.Fatalf("the simple fixture produced %d mutants, want %d", got, simpleMutants)
+	}
+
 	// The whole sequence, pinned. With one worker the mutants settle in
 	// catalogue order, so this is a fact about the pipeline rather than about
 	// the machine — and it is the only assertion that would notice a phase
@@ -242,14 +250,18 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		"engine.Validated",
 		"engine.BaselineProgress", // the instrumented baseline
 		"engine.CoverageMapped",   // every mutant in this fixture is covered
-		"engine.MutantStarted", "engine.MutantFinished",
-		"engine.MutantStarted", "engine.MutantFinished",
-		"engine.MutantStarted", "engine.MutantFinished",
-		"engine.MutantStarted", "engine.MutantFinished",
+	}
+	// One started/finished pair per mutant, back to back, because there is one
+	// worker: a second worker would interleave them and this would be a claim
+	// about scheduling rather than about the phases.
+	for range simpleMutants {
+		wantKinds = append(wantKinds, "engine.MutantStarted", "engine.MutantFinished")
+	}
+	wantKinds = append(wantKinds,
 		"engine.PhaseChanged", // report
 		"engine.ReportPublished",
 		"engine.RunCompleted",
-	}
+	)
 	if got := kinds(events); !slices.Equal(got, wantKinds) {
 		t.Fatalf("event sequence =\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(wantKinds, "\n\t"))
@@ -287,8 +299,8 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	}
 	// Coverage is on by default — the test command is the built-in one — and
 	// this fixture's every function is exercised, so nothing is skipped.
-	if mapped := events[10].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != 4 || mapped.Uncovered != 0 {
-		t.Errorf("CoverageMapped = %+v, want 1 binary covering all 4 mutants", mapped)
+	if mapped := events[10].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != simpleMutants || mapped.Uncovered != 0 {
+		t.Errorf("CoverageMapped = %+v, want 1 binary covering all %d mutants", mapped, simpleMutants)
 	}
 	if mode := outcome.Report.Coverage.Mode; mode != report.CoveragePackage {
 		t.Errorf("coverage mode = %q, want %q with the built-in test command", mode, report.CoveragePackage)
@@ -317,12 +329,13 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 // TestKillableRunReachesTheFixturesPredeterminedFates is the whole pipeline
 // judged against a fixture built to have exactly one answer.
 //
-// The killable corpus is laid out so that a mutant can be named by file and
-// rule alone, and its documentation states which three die and which one lives.
-// This asserts that claim as a tally: the run has to find four mutants, kill
-// the three the tests cover, and leave the one nothing calls alive. A run where
-// everything died would be a tree that stopped compiling, and one where
-// everything lived would be activation that never happened.
+// The killable corpus is laid out so that a mutant can be named by file, line
+// and rule alone, and its documentation states which functions are covered and
+// which one is not. This asserts that claim as a tally: every mutant in the two
+// functions the tests exercise has to die, and every mutant in the function
+// nothing calls has to live. A run where everything died would be a tree that
+// stopped compiling, and one where everything lived would be activation that
+// never happened.
 func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
 	privateTempDir(t)
 	outcome, events, err := collect(t, t.Context(), options(t, "killable"))
@@ -333,15 +346,25 @@ func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
 		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
 	}
 
-	// The catalogue is four mutants even under the whole balanced profile,
-	// because discovery implements comparison and boolean-literal so far.
-	// Asserting it rather than assuming it is what makes the tally below a
-	// statement about the fixture instead of about which families have landed.
+	// The catalogue in full, one line per mutant. Writing it out rather than
+	// counting is what makes the tally a statement about the fixture instead of
+	// about which operator families have landed: every mutant in Clamp and
+	// IsReady dies, every mutant in Untested lives, and a family that starts or
+	// stops firing here has to be looked at rather than absorbed.
 	want := []string{
 		"killed clamp.go:41 lt-to-le",
+		"killed clamp.go:41 negate-condition",
 		"killed clamp.go:42 gt-to-ge",
+		"killed clamp.go:42 negate-condition",
+		"killed clamp.go:43 return-zero-numeric",
+		"killed clamp.go:45 add-to-sub",
+		"killed clamp.go:45 return-zero-numeric",
+		"killed clamp.go:47 return-zero-numeric",
+		"killed clamp.go:47 sub-to-add",
 		"killed ready.go:14 true-to-false",
 		"survived untested.go:14 neq-to-eq",
+		"survived untested.go:14 return-false",
+		"survived untested.go:14 return-true",
 	}
 	got := results(events)
 	slices.Sort(got)
@@ -350,32 +373,33 @@ func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
 	}
 
 	summary := outcome.Report.Summary
-	if summary.Total != 4 || summary.Killed != 3 || summary.Survived != 1 {
-		t.Errorf("summary = %+v, want 4 mutants, 3 killed, 1 survived", summary)
+	if summary.Total != 13 || summary.Killed != 10 || summary.Survived != 3 {
+		t.Errorf("summary = %+v, want 13 mutants, 10 killed, 3 survived", summary)
 	}
 	if summary.NotRun != 0 || summary.Errored != 0 || summary.Inconclusive != 0 || summary.TimedOut != 0 {
 		t.Errorf("summary = %+v, want every mutant settled as killed or survived", summary)
 	}
-	if summary.ScorePercent == nil || *summary.ScorePercent != 75 {
-		t.Errorf("score = %v, want 75", summary.ScorePercent)
+	if want := float64(10) / float64(13) * 100; summary.ScorePercent == nil || *summary.ScorePercent != want {
+		t.Errorf("score = %v, want %v (10 of 13)", summary.ScorePercent, want)
 	}
 	if len(outcome.Report.Rejected) != 0 {
 		t.Errorf("rejected = %+v, want none: every guard in this fixture compiles", outcome.Report.Rejected)
 	}
 
-	// The survivor is the one in untested.go, and with coverage on the run
-	// establishes *why* it survived without executing it: nothing in the module
-	// calls Untested, so no test binary reaches the line. The other three are
-	// covered by the fixture's single test binary.
-	if got := outcome.Report.Coverage.MutantsUncovered; got == nil || *got != 1 {
-		t.Errorf("coverage.mutants_uncovered = %v, want 1", got)
+	// The survivors are the three in untested.go, and with coverage on the run
+	// establishes *why* they survived without executing any of them: nothing in
+	// the module calls Untested, so no test binary reaches the line. The other
+	// ten are covered by the fixture's single test binary.
+	if got := outcome.Report.Coverage.MutantsUncovered; got == nil || *got != 3 {
+		t.Errorf("coverage.mutants_uncovered = %v, want 3", got)
 	}
-	survivor := survivorOf(t, outcome.Report)
-	if !survivor.Uncovered {
-		t.Errorf("the survivor in %s is not marked uncovered", survivor.Path)
-	}
-	if survivor.Attempts != 0 {
-		t.Errorf("the uncovered survivor was executed %d times", survivor.Attempts)
+	for _, survivor := range survivorsOf(t, outcome.Report) {
+		if !survivor.Uncovered {
+			t.Errorf("the survivor %s in %s is not marked uncovered", survivor.DisplayID, survivor.Path)
+		}
+		if survivor.Attempts != 0 {
+			t.Errorf("the uncovered survivor %s was executed %d times", survivor.DisplayID, survivor.Attempts)
+		}
 	}
 	for _, m := range outcome.Report.Mutants {
 		if m.Uncovered == (len(m.CoveringTestPackages) > 0) {
@@ -432,9 +456,18 @@ func TestParallelWorkersReachTheSameTally(t *testing.T) {
 	}
 	want := []string{
 		"killed clamp.go:41 lt-to-le",
+		"killed clamp.go:41 negate-condition",
 		"killed clamp.go:42 gt-to-ge",
+		"killed clamp.go:42 negate-condition",
+		"killed clamp.go:43 return-zero-numeric",
+		"killed clamp.go:45 add-to-sub",
+		"killed clamp.go:45 return-zero-numeric",
+		"killed clamp.go:47 return-zero-numeric",
+		"killed clamp.go:47 sub-to-add",
 		"killed ready.go:14 true-to-false",
 		"survived untested.go:14 neq-to-eq",
+		"survived untested.go:14 return-false",
+		"survived untested.go:14 return-true",
 	}
 	got := results(events)
 	slices.Sort(got)
@@ -442,13 +475,13 @@ func TestParallelWorkersReachTheSameTally(t *testing.T) {
 		t.Errorf("four workers reached\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
 	summary := outcome.Report.Summary
-	if summary.Total != 4 || summary.Killed != 3 || summary.Survived != 1 {
-		t.Errorf("summary = %+v, want the same 4/3/1 the serial run produces", summary)
+	if summary.Total != 13 || summary.Killed != 10 || summary.Survived != 3 {
+		t.Errorf("summary = %+v, want the same 13/10/3 the serial run produces", summary)
 	}
 	// Exactly one settled result per mutant, whatever order they finished in: a
 	// mutant reported twice would leave another one silently unaccounted for.
-	if len(got) != 4 {
-		t.Errorf("the run published %d results for 4 mutants", len(got))
+	if len(got) != 13 {
+		t.Errorf("the run published %d results for 13 mutants", len(got))
 	}
 }
 
@@ -492,7 +525,7 @@ func TestMutantSelectsExactlyOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the run that sources the id: %v", err)
 	}
-	survivor := survivorOf(t, first.Report)
+	survivor := survivorOf(t, first.Report, "neq-to-eq")
 
 	opts := options(t, "killable")
 	opts.MutantPrefix = survivor.DisplayID
@@ -505,8 +538,8 @@ func TestMutantSelectsExactlyOne(t *testing.T) {
 		t.Fatalf("executed %v, want only the survivor in untested.go", got)
 	}
 	summary := outcome.Report.Summary
-	if summary.Total != 4 || summary.Survived != 1 || summary.NotRun != 3 {
-		t.Errorf("summary = %+v, want 4 catalogued, 1 measured, 3 not run", summary)
+	if summary.Total != 13 || summary.Survived != 1 || summary.NotRun != 12 {
+		t.Errorf("summary = %+v, want 13 catalogued, 1 measured, 12 not run", summary)
 	}
 	if mode := outcome.Report.Selection.Mode; mode != report.ModeMutant {
 		t.Errorf("selection mode = %s, want %s", mode, report.ModeMutant)
@@ -517,8 +550,8 @@ func TestMutantSelectsExactlyOne(t *testing.T) {
 	// The catalogue is still whole, which is what keeps policy.require_mutants
 	// honest about the difference between "nothing to find" and "not looked at
 	// this time".
-	if candidates := outcome.Report.Selection.Candidates; candidates != 4 {
-		t.Errorf("candidates = %d, want the whole catalogue of 4", candidates)
+	if candidates := outcome.Report.Selection.Candidates; candidates != 13 {
+		t.Errorf("candidates = %d, want the whole catalogue of 13", candidates)
 	}
 }
 
@@ -545,32 +578,45 @@ func TestMutantThatSelectsNothingIsRefused(t *testing.T) {
 }
 
 // TestExpectedSurvivorLeavesAStrictRunGreen is the expectations ledger doing
-// the job it exists for: a survivor somebody has looked at, explained, and
-// signed off stops being a reason to fail.
+// the job it exists for: survivors somebody has looked at, explained, and
+// signed off stop being a reason to fail.
 func TestExpectedSurvivorLeavesAStrictRunGreen(t *testing.T) {
 	privateTempDir(t)
 	first, _, err := collect(t, t.Context(), options(t, "killable"))
 	if err != nil {
 		t.Fatalf("the run that sources the id: %v", err)
 	}
-	survivor := survivorOf(t, first.Report)
+	// Every one of them, because strict fails on any survivor the ledger does
+	// not account for: a ledger covering some of a function's mutants and not
+	// the rest is exactly the half-done state this test would otherwise pass
+	// over.
+	survivors := survivorsOf(t, first.Report)
+	expect := make([]config.Expectation, 0, len(survivors))
+	for _, survivor := range survivors {
+		expect = append(expect, config.Expectation{
+			ID:     survivor.ID,
+			Reason: "Untested is deliberately uncovered; these are the fixture's survivors",
+		})
+	}
 
 	opts := options(t, "killable")
 	opts.Config.Policy.Strict = true
-	opts.Config.Mutation.Expect = []config.Expectation{{
-		ID:     survivor.ID,
-		Reason: "Untested is deliberately uncovered; it is the fixture's survivor",
-	}}
+	opts.Config.Mutation.Expect = expect
 
 	outcome, _, err := collect(t, t.Context(), opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if outcome.Verdict.Code != mutation.ExitOK {
-		t.Fatalf("verdict = %+v, want exit 0: the one survivor is accounted for", outcome.Verdict)
+		t.Fatalf("verdict = %+v, want exit 0: every survivor is accounted for", outcome.Verdict)
 	}
-	if len(outcome.Report.Expectations) != 1 || outcome.Report.Expectations[0].State != report.StateFulfilled {
-		t.Fatalf("expectations = %+v, want one fulfilled row", outcome.Report.Expectations)
+	if len(outcome.Report.Expectations) != len(expect) {
+		t.Fatalf("expectations = %+v, want %d rows", outcome.Report.Expectations, len(expect))
+	}
+	for _, row := range outcome.Report.Expectations {
+		if row.State != report.StateFulfilled {
+			t.Fatalf("expectation %+v is not fulfilled", row)
+		}
 	}
 	// A fulfilled expectation leaves the score alone in both directions: it is
 	// neither a detection to be proud of nor a survivor to be nagged about.
@@ -663,8 +709,8 @@ func TestCancellationMidRunStillPublishesAPartialReport(t *testing.T) {
 		t.Errorf("report status = %s, want %s", outcome.Report.Status, report.StatusInterrupted)
 	}
 	summary := outcome.Report.Summary
-	if summary.Total != 4 {
-		t.Errorf("summary total = %d, want the whole catalogue of 4", summary.Total)
+	if summary.Total != 13 {
+		t.Errorf("summary total = %d, want the whole catalogue of 13", summary.Total)
 	}
 	if summary.NotRun == 0 {
 		t.Errorf("summary = %+v, want the mutants the signal cut short recorded as not-run", summary)
@@ -698,11 +744,19 @@ func TestCancellationMidRunStillPublishesAPartialReport(t *testing.T) {
 
 // TestRejectableRunReportsWhatWillNotCompile is compile validation end to end.
 //
-// The rejectable fixture holds three candidates whose guard evaluates to plain
-// `bool` where the context wants the named type `Flag`, next to six healthy
-// ones sharing the same two files. A phase that rejected a file rather than a
-// candidate would take the healthy ones with it, which is what the counts here
-// would catch.
+// The rejectable fixture holds three candidates whose mutated copy is not a
+// program — two constant divisions by zero and a constant that overflows the
+// type it is returned as — next to sixteen healthy ones sharing the same files.
+// A phase that rejected a file rather than a candidate would take the healthy
+// ones with it, which is what the counts here would catch.
+//
+// Four of the sixteen are the fixture's control, in named.go: a comparison and a
+// boolean literal returned as a named boolean type. Those four were the module's
+// original traps, refused because Form C's selector is a plain `bool` and
+// `type Flag bool` will not take one. They are ordinary mutants now — the
+// statement guard carries them, they execute, and the fixture's tests kill them
+// — and their presence in the killed set rather than the rejected one is the
+// improvement asserted where it can fail.
 func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
 	privateTempDir(t)
 	outcome, events, err := collect(t, t.Context(), options(t, "rejectable"))
@@ -728,21 +782,54 @@ func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
 	}
 
 	summary := outcome.Report.Summary
-	if summary.Total != 6 {
-		t.Errorf("summary total = %d, want the 6 candidates that compile", summary.Total)
+	if summary.Total != 16 {
+		t.Errorf("summary total = %d, want the 16 candidates that compile", summary.Total)
 	}
 	// The rejected three are out of the score entirely: a mutant that cannot
-	// exist must never sit in a denominator.
+	// exist must never sit in a denominator. The sixteen that remain are all
+	// killed, which is the fixture's other claim about itself — a healthy
+	// mutant nothing killed would sit in the report as a survivor and read, at
+	// a glance, like a trap that slipped through.
 	if summary.ScorePercent == nil || *summary.ScorePercent != 100 {
-		t.Errorf("score = %v, want 100 over the six that compile", summary.ScorePercent)
+		t.Errorf("score = %v, want 100 over the sixteen that compile", summary.ScorePercent)
 	}
-	if len(outcome.Report.Mutants) != 6 {
-		t.Errorf("the report holds %d executed mutants, want 6", len(outcome.Report.Mutants))
+	if len(outcome.Report.Mutants) != 16 {
+		t.Errorf("the report holds %d executed mutants, want 16", len(outcome.Report.Mutants))
 	}
 
 	validated := validatedOf(t, events)
-	if validated.Accepted != 6 || validated.Rejected != 3 {
-		t.Errorf("Validated = %+v, want 6 accepted and 3 rejected", validated)
+	if validated.Accepted != 16 || validated.Rejected != 3 {
+		t.Errorf("Validated = %+v, want 16 accepted and 3 rejected", validated)
+	}
+
+	// The control, by name. Every candidate in named.go has to be executed and
+	// killed, and none of them may appear among the rejections: a run that
+	// refused them again would still report three traps and a score of 100 over
+	// whatever was left, so the count assertions above would not notice.
+	for _, rejection := range outcome.Report.Rejected {
+		if rejection.Path == "named.go" {
+			t.Errorf("the named boolean candidate %s (%s) was rejected again: %s",
+				rejection.DisplayID, rejection.Rule, firstLine(rejection.Diagnostic))
+		}
+	}
+	named := 0
+	for _, m := range outcome.Report.Mutants {
+		if m.Path != "named.go" {
+			continue
+		}
+		named++
+		if m.Outcome != report.OutcomeKilled {
+			t.Errorf("the named boolean mutant %s (%s) settled as %s, want killed",
+				m.DisplayID, m.Rule, m.Outcome)
+		}
+		// Accepted proves the guard compiled; executed proves the statement form
+		// really carried the edit into a running test process.
+		if m.Attempts == 0 {
+			t.Errorf("the named boolean mutant %s (%s) was never executed", m.DisplayID, m.Rule)
+		}
+	}
+	if named != 4 {
+		t.Errorf("the report holds %d mutants in named.go, want the fixture's 4", named)
 	}
 }
 
@@ -844,8 +931,8 @@ func TestMutantThatWasRejectedSaysSo(t *testing.T) {
 	}
 	// The catalogue is still whole, which is exactly why require_mutants stayed
 	// quiet and why the warning had to be the thing that spoke.
-	if summary := outcome.Report.Summary; summary.Total != 6 || summary.NotRun != 6 {
-		t.Errorf("summary = %+v, want the 6 that compile, all not-run", summary)
+	if summary := outcome.Report.Summary; summary.Total != 16 || summary.NotRun != 16 {
+		t.Errorf("summary = %+v, want the 16 that compile, all not-run", summary)
 	}
 	if score := outcome.Report.Summary.ScorePercent; score != nil {
 		t.Errorf("score = %v, want none: nothing was measured", *score)
@@ -1088,8 +1175,10 @@ func TestCommandLineEndToEnd(t *testing.T) {
 		"baseline ok: avg ",
 		"(derived)",
 		"phase mutate:",
-		"discovered 4 candidates",
-		"validated 4 mutants, 0 rejections",
+		// Fourteen candidates and thirteen mutants: `return true` in ready.go is
+		// proposed by two rules with the same edit, and the catalogue keeps one.
+		"discovered 14 candidates",
+		"validated 13 mutants, 0 rejections",
 		"phase report:",
 		"report run: ",
 		"report latest: ",
@@ -1100,13 +1189,13 @@ func TestCommandLineEndToEnd(t *testing.T) {
 		"untested.go:14:11  neq-to-eq  != -> ==",
 		"    - !=",
 		"    + ==",
-		"mutants 4  killed 3  survived 1",
-		"  uncovered 1",
-		"coverage: 1 test binary, 3 of 4 mutants covered, 1 uncovered",
-		"score 75.00%",
+		"mutants 13  killed 10  survived 3",
+		"  uncovered 3",
+		"coverage: 1 test binary, 10 of 13 mutants covered, 3 uncovered",
+		"score 76.92%",
 		// The gate is named on the console and nowhere else: a policy failure
 		// is deliberately not printed to standard error.
-		"failed unexpected-survivors: policy.strict is set and 1 mutant survived unexpectedly",
+		"failed unexpected-survivors: policy.strict is set and 3 mutants survived unexpectedly",
 		"  exit 1",
 	} {
 		if !strings.Contains(out, needle) {
@@ -1190,8 +1279,8 @@ func TestJSONWritesTheDocumentAloneOnStandardOutput(t *testing.T) {
 	if tally.Total() != summary.Total || tally.Killed != summary.Killed || tally.Survived() != summary.Survived {
 		t.Errorf("the recounted tally %+v disagrees with the summary %+v", tally, summary)
 	}
-	if summary.Total != 4 || summary.Killed != 3 || summary.Survived != 1 {
-		t.Errorf("summary = %+v, want 4 mutants, 3 killed, 1 survived", summary)
+	if summary.Total != 13 || summary.Killed != 10 || summary.Survived != 3 {
+		t.Errorf("summary = %+v, want 13 mutants, 10 killed, 3 survived", summary)
 	}
 }
 
@@ -1255,14 +1344,46 @@ func warningWith(events []Event, code Code) (Warning, bool) {
 	return Warning{}, false
 }
 
-// survivorOf returns the report's one survivor, and killedOf one of its kills.
+// survivorOf returns the report's one survivor of a rule, survivorsOf every
+// survivor it holds, and killedOf one of its kills.
 //
 // They exist because a mutant's identity is a digest over the fixture's bytes:
 // a test that needs an id has to read it from a run rather than hard-code one,
 // or every edit to a comment in the fixture becomes a failure here.
-func survivorOf(t *testing.T, r *report.Report) report.Mutant {
+//
+// survivorOf takes a rule name because the killable fixture's uncovered
+// function produces several survivors, one per rule that fires on it. A test
+// that means "the survivor" has to name which one, or it silently becomes a
+// test about whichever mutant the catalogue happens to order first.
+func survivorOf(t *testing.T, r *report.Report, rule string) report.Mutant {
 	t.Helper()
-	return oneWith(t, r, report.OutcomeSurvived)
+	var found []report.Mutant
+	for _, m := range r.Mutants {
+		if m.Outcome == report.OutcomeSurvived && m.Rule == rule {
+			found = append(found, m)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("the report holds %d survived %s mutants, want exactly 1", len(found), rule)
+	}
+	return found[0]
+}
+
+// survivorsOf returns every survivor, in report order, and fails when there are
+// none: a test written about survivors must not pass over a run that produced
+// no survivor at all.
+func survivorsOf(t *testing.T, r *report.Report) []report.Mutant {
+	t.Helper()
+	var found []report.Mutant
+	for _, m := range r.Mutants {
+		if m.Outcome == report.OutcomeSurvived {
+			found = append(found, m)
+		}
+	}
+	if len(found) == 0 {
+		t.Fatal("the report holds no survivor")
+	}
+	return found
 }
 
 func killedOf(t *testing.T, r *report.Report) report.Mutant {
@@ -1276,33 +1397,16 @@ func killedOf(t *testing.T, r *report.Report) report.Mutant {
 	return report.Mutant{}
 }
 
-// oneWith returns the report's only mutant with an outcome, and fails when
-// there is not exactly one: a test that means "the survivor" must not silently
-// start meaning "whichever survivor came first".
-func oneWith(t *testing.T, r *report.Report, outcome report.Outcome) report.Mutant {
-	t.Helper()
-	var found []report.Mutant
-	for _, m := range r.Mutants {
-		if m.Outcome == outcome {
-			found = append(found, m)
-		}
-	}
-	if len(found) != 1 {
-		t.Fatalf("the report holds %d %s mutants, want exactly 1", len(found), outcome)
-	}
-	return found[0]
-}
-
 // TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach is coverage-guided
 // selection end to end, against a fixture built to have three different
 // answers.
 //
-// The corpus module has two test binaries and three mutants in one package, and
-// its documentation states which binary reaches which: `AboveZero` is reached
-// only by its own package's tests, `Differs` only by the caller package's, and
-// `Orphan` by nothing at all. This asserts all three, which is what makes the
-// run's narrowing a fact about coverage rather than a coincidence of the
-// catalogue.
+// The corpus module has two test binaries and three functions whose mutants
+// have three different fates, and its documentation states which binary reaches
+// which: `AboveZero` is reached only by its own package's tests, `Differs` only
+// by the caller package's, and `Orphan` by nothing at all. This asserts every
+// mutant of all three, which is what makes the run's narrowing a fact about
+// coverage rather than a coincidence of the catalogue.
 func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 	privateTempDir(t)
 	outcome, events, err := collect(t, t.Context(), options(t, "coverage"))
@@ -1320,8 +1424,8 @@ func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 	if block.Binaries == nil || *block.Binaries != 2 {
 		t.Errorf("coverage.binaries = %v, want the fixture's 2", block.Binaries)
 	}
-	if block.MutantsUncovered == nil || *block.MutantsUncovered != 1 {
-		t.Errorf("coverage.mutants_uncovered = %v, want 1", block.MutantsUncovered)
+	if block.MutantsUncovered == nil || *block.MutantsUncovered != 3 {
+		t.Errorf("coverage.mutants_uncovered = %v, want 3", block.MutantsUncovered)
 	}
 
 	const (
@@ -1329,35 +1433,49 @@ func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 		callerPackage = "fixture.example/coverage/caller"
 	)
 	// Each mutant, the binaries the profiles say reach it, and what became of
-	// it. The middle row is the one the whole feature is for: a mutant that
-	// lives in `core` and is reachable only from `caller`.
+	// it. The `core.Differs` rows are the ones the whole feature is for: they
+	// live in `core` and are reachable only from `caller`.
+	//
+	// The key is the rule and the bytes it rewrites, because a rule alone no
+	// longer names one mutant: the return family fires on every one of these
+	// functions, so `return-true` is four different mutants in four different
+	// coverage situations.
 	want := map[string]struct {
 		covering []string
 		outcome  report.Outcome
 		killedBy string
 	}{
-		"gt-to-ge":  {covering: []string{corePackage}, outcome: report.OutcomeKilled, killedBy: corePackage},
-		"neq-to-eq": {covering: []string{callerPackage}, outcome: report.OutcomeKilled, killedBy: callerPackage},
-		"lt-to-le":  {covering: []string{}, outcome: report.OutcomeSurvived},
+		"return-true core.Differs(a, b)":  {covering: []string{callerPackage}, outcome: report.OutcomeKilled, killedBy: callerPackage},
+		"return-false core.Differs(a, b)": {covering: []string{callerPackage}, outcome: report.OutcomeKilled, killedBy: callerPackage},
+		"return-true v > 0":               {covering: []string{corePackage}, outcome: report.OutcomeKilled, killedBy: corePackage},
+		"return-false v > 0":              {covering: []string{corePackage}, outcome: report.OutcomeKilled, killedBy: corePackage},
+		"gt-to-ge >":                      {covering: []string{corePackage}, outcome: report.OutcomeKilled, killedBy: corePackage},
+		"return-true a != b":              {covering: []string{callerPackage}, outcome: report.OutcomeKilled, killedBy: callerPackage},
+		"return-false a != b":             {covering: []string{callerPackage}, outcome: report.OutcomeKilled, killedBy: callerPackage},
+		"neq-to-eq !=":                    {covering: []string{callerPackage}, outcome: report.OutcomeKilled, killedBy: callerPackage},
+		"return-true a < b":               {covering: []string{}, outcome: report.OutcomeSurvived},
+		"return-false a < b":              {covering: []string{}, outcome: report.OutcomeSurvived},
+		"lt-to-le <":                      {covering: []string{}, outcome: report.OutcomeSurvived},
 	}
 	if len(outcome.Report.Mutants) != len(want) {
 		t.Fatalf("the catalogue holds %d mutants, want %d: %+v",
 			len(outcome.Report.Mutants), len(want), outcome.Report.Mutants)
 	}
 	for _, m := range outcome.Report.Mutants {
-		expected, known := want[m.Rule]
+		name := m.Rule + " " + m.Original
+		expected, known := want[name]
 		if !known {
-			t.Errorf("unexpected mutant %s (%s)", m.DisplayID, m.Rule)
+			t.Errorf("unexpected mutant %s (%s)", m.DisplayID, name)
 			continue
 		}
 		if !slices.Equal(m.CoveringTestPackages, expected.covering) {
-			t.Errorf("%s is covered by %v, want %v", m.Rule, m.CoveringTestPackages, expected.covering)
+			t.Errorf("%s is covered by %v, want %v", name, m.CoveringTestPackages, expected.covering)
 		}
 		if m.Outcome != expected.outcome {
-			t.Errorf("%s is %s, want %s", m.Rule, m.Outcome, expected.outcome)
+			t.Errorf("%s is %s, want %s", name, m.Outcome, expected.outcome)
 		}
 		if m.Uncovered != (len(expected.covering) == 0) {
-			t.Errorf("%s: uncovered = %t with covering %v", m.Rule, m.Uncovered, m.CoveringTestPackages)
+			t.Errorf("%s: uncovered = %t with covering %v", name, m.Uncovered, m.CoveringTestPackages)
 		}
 		// The kill has to come from the binary the profile named, which is the
 		// observable proof that the narrowing did not merely skip work but
@@ -1368,7 +1486,7 @@ func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 			killedBy = *m.KilledBy
 		}
 		if killedBy != expected.killedBy {
-			t.Errorf("%s was killed by %q, want %q", m.Rule, killedBy, expected.killedBy)
+			t.Errorf("%s was killed by %q, want %q", name, killedBy, expected.killedBy)
 		}
 	}
 
@@ -1403,8 +1521,8 @@ func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 	if !found {
 		t.Fatal("the run published no CoverageMapped event")
 	}
-	if mapped.Binaries != 2 || mapped.Covered != 2 || mapped.Uncovered != 1 {
-		t.Errorf("CoverageMapped = %+v, want 2 binaries, 2 covered, 1 uncovered", mapped)
+	if mapped.Binaries != 2 || mapped.Covered != 8 || mapped.Uncovered != 3 {
+		t.Errorf("CoverageMapped = %+v, want 2 binaries, 8 covered, 3 uncovered", mapped)
 	}
 	// And it comes first. The summary of what is about to be skipped has to
 	// arrive before the first thing that was skipped, or a reader watching the
@@ -1416,11 +1534,11 @@ func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 			strings.Join(got, "\n\t"))
 	}
 
-	// A run whose only survivor is an uncovered one still scores it against the
-	// suite, because it is a survivor: no test runs the line, so no test caught
-	// the edit.
-	if score := outcome.Report.Summary.ScorePercent; score == nil || *score < 66 || *score > 67 {
-		t.Errorf("score = %v, want 2 of 3", score)
+	// A run whose only survivors are uncovered ones still scores them against
+	// the suite, because they are survivors: no test runs the line, so no test
+	// caught the edit.
+	if score := outcome.Report.Summary.ScorePercent; score == nil || *score < 72 || *score > 73 {
+		t.Errorf("score = %v, want 8 of 11", score)
 	}
 
 	document, err := os.ReadFile(published(t, events).RunPath)
@@ -1494,8 +1612,8 @@ func TestCustomTestCommandTurnsCoverageOffAndSaysSo(t *testing.T) {
 			started++
 		}
 	}
-	if started != 3 {
-		t.Errorf("started %d mutants, want all 3", started)
+	if started != 11 {
+		t.Errorf("started %d mutants, want all 11", started)
 	}
 	for _, m := range outcome.Report.Mutants {
 		if m.Uncovered {
@@ -1508,8 +1626,8 @@ func TestCustomTestCommandTurnsCoverageOffAndSaysSo(t *testing.T) {
 			t.Errorf("mutant %s was not executed", m.DisplayID)
 		}
 	}
-	if summary := outcome.Report.Summary; summary.Total != 3 || summary.Killed != 2 || summary.Survived != 1 {
-		t.Errorf("summary = %+v, want the same 3/2/1 the coverage-guided run reaches", summary)
+	if summary := outcome.Report.Summary; summary.Total != 11 || summary.Killed != 8 || summary.Survived != 3 {
+		t.Errorf("summary = %+v, want the same 11/8/3 the coverage-guided run reaches", summary)
 	}
 
 	document, err := os.ReadFile(published(t, events).RunPath)

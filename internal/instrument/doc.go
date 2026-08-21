@@ -15,42 +15,60 @@
 // foundation the guard forms are composed from, and each invariant below is
 // either enforced by one of them or asserted by them on behalf of a caller.
 //
-// # The guard form
+// # The three guard forms
 //
-// v1 emits one guard form, Form C, which rewrites a bool-valued expression into
-// a selector over its alternatives:
+// A rewrite site is a bool-valued expression, a statement, or a statement that
+// declares — and each has a form of its own. Which one a mutant gets is not
+// decided here: it is [Hints], the site hint internal/discover computes with
+// the type information this package deliberately does not have.
+//
+// Form C rewrites a bool-valued expression into a selector over its
+// alternatives:
 //
 //	(__gm.M[3] && (a >= b) || !(__gm.M[3]) && (a > b))
 //
-// Both branches are ordinary expressions in the site's own context, so the
-// compiler settles typing, evaluation order and short-circuiting, and exactly
-// one branch is ever evaluated. With every flag false — the instrumented
-// baseline — the branch that runs is the original bytes, byte for byte.
+// Form S wraps a statement in a branch chain, with the statement's own bytes in
+// the `else`:
+//
+//	if __gm.M[7] { n = a - b } else { n = a + b }
+//
+// Form D is Form S for a statement that declares. The declarations are hoisted
+// out in front of the guard, so that the names stay in the scope the rest of
+// the function reads them from, and both branches assign to them:
+//
+//	var n int; if __gm.M[9] { n = a - b } else { n = a + b }
+//
+// In every form both branches are ordinary code in the site's own context, so
+// the compiler settles typing, evaluation order and short-circuiting, and
+// exactly one of them is ever taken. With every flag false — the instrumented
+// baseline — what runs is the original bytes, byte for byte.
 //
 // A helper call taking the operands (`__gm.Cmp(3, a, b)`) would have been
 // shorter and is not usable: it breaks on untyped constants, on shifts, and on
-// named types, all of which the guard form leaves to the compiler.
+// named types, all of which the guard forms leave to the compiler.
 //
-// Several mutants of one expression are alternatives inside a single guard
-// rather than nested guards — mutants are mutually exclusive, and a chain says
-// so — while genuinely nested expressions become nested guards, composed
-// children first so that an enclosing site is rendered from text its children
-// have already finished. Each alternative is rendered from the pristine source
-// with that one candidate's edit applied and nothing else, because a mutant is
-// one edit to the program the user wrote; the branch that keeps the original is
-// the only one that carries the guards of the sites nested inside it.
+// Several mutants of one site are alternatives inside a single guard rather
+// than nested guards — mutants are mutually exclusive, and a chain says so —
+// whatever families they come from: an arithmetic swap and a deletion of the
+// statement it sits in are two branches of one chain. Genuinely nested sites
+// become nested guards, composed children first so that an enclosing site is
+// rendered from text its children have already finished. Each alternative is
+// rendered from the pristine source with that one candidate's edit applied and
+// nothing else, because a mutant is one edit to the program the user wrote; the
+// branch that keeps the original is the only one that carries the guards of the
+// sites nested inside it.
 //
-// The statement and declaration forms the design calls for — and with them the
-// families whose edits are not bool-valued expressions — are not in this
-// version. A catalogued mutant from such a family is refused by name
-// ([CodeUnsupportedFamily]) rather than guarded as something it is not.
+// A statement-deletion mutant is the branch chain's one degenerate case, and it
+// is not a special case at all: its edit replaces the whole statement with
+// nothing, so its branch renders empty — `if __gm.M[4] { } else { … }` — which
+// is exactly what "this statement does not run" has to mean.
 //
-// # Named boolean types are the validation phase's problem
+// # Whether the guard compiles is the validation phase's problem
 //
-// Form C evaluates to `bool`. Where the site's context wants a named boolean
-// type — `type Flag bool`, and a site that is one, initialises one, is assigned
-// to one, or is returned as one — the rewritten file does not compile, because
-// `bool` is not assignable to `Flag`.
+// Nothing here type-checks anything, and a mutated copy can still be a program
+// the compiler refuses: `x * 0` swapped into `x / 0` is a constant division by
+// zero, and an operator swap can push an untyped constant out of the range its
+// context allows.
 //
 // This package instruments those candidates anyway, deliberately. Deciding it
 // here would mean type-checking every file to ask a question the compiler is

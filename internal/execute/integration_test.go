@@ -348,10 +348,19 @@ func instrumentFixture(t *testing.T, toolchain gocmd.Toolchain, snap *snapshot.S
 	if catalogErr != nil {
 		t.Fatalf("building the catalogue: %v", catalogErr)
 	}
+	// The guard hints travel with the catalogue, from the pass that had the
+	// type checker to the one that rewrites bytes: internal/instrument cannot
+	// choose a rewrite form for itself, and a catalogued mutant with no hint is
+	// refused rather than guessed at.
+	hints, hintsErr := instrument.HintsOf(found.Candidates)
+	if hintsErr != nil {
+		t.Fatalf("indexing the guard hints: %v", hintsErr)
+	}
 	if _, instrumentErr := instrument.Instrument(instrument.Options{
 		SnapshotRoot: snap.Root,
 		ModulePath:   found.ModulePath,
 		Catalog:      catalog,
+		Hints:        hints,
 	}); instrumentErr != nil {
 		t.Fatalf("instrumenting the snapshot: %v", instrumentErr)
 	}

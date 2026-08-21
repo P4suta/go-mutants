@@ -35,6 +35,11 @@ type Options struct {
 	// so the catalogue instrumented here and the catalogue the runner activates
 	// against must be the same one.
 	Catalog *mutation.Catalog
+
+	// Hints are the rewrite sites discovery chose, one per catalogued mutant.
+	// A mutant with no hint is refused rather than guessed at; see [Hints] for
+	// why the choice is not this package's to make.
+	Hints Hints
 }
 
 // Result reports what one instrumentation pass did.
@@ -75,11 +80,14 @@ type Result struct {
 //
 // # What this phase does not do
 //
-// Nothing here checks that the rewritten tree compiles. Form C produces a
-// typed bool where the site may have needed a named boolean type, and that is
-// left to the compile validation and bisection that follow. See the package
-// documentation for why rejecting those candidates belongs to that phase and
-// not to this one.
+// Nothing here checks that the rewritten tree compiles. A guard is a byte
+// rewrite around bytes discovery said were mutable, and a mutated copy can
+// still be a program the compiler refuses — `x * 0` swapped into `x / 0` is a
+// constant division by zero, and an untyped constant can be swapped into one
+// that no longer fits its context. Those are left to the compile validation and
+// bisection that follow, which reject the individual candidate with the
+// compiler's own words. See the package documentation for why that belongs to
+// that phase and not to this one.
 func Instrument(opts Options) (Result, error) {
 	if err := opts.validate(); err != nil {
 		return Result{}, err
@@ -102,7 +110,7 @@ func Instrument(opts Options) (Result, error) {
 	// directory read and a quadratic one.
 	names := newPackageNames()
 	for _, group := range groupByPath(opts.Catalog) {
-		guards, err := instrumentFile(opts.SnapshotRoot, group.path, group.mutants, importPath, names)
+		guards, err := instrumentFile(opts.SnapshotRoot, group.path, group.mutants, opts.Hints, importPath, names)
 		if err != nil {
 			return Result{}, err
 		}
@@ -223,7 +231,13 @@ func groupByPath(catalog *mutation.Catalog) []fileGroup {
 // instrumentFile rewrites one snapshot file at its own path and reports how
 // many guards it received. The rewrite goes through [replaceFile] rather than
 // straight onto the file, for the reason set out there.
-func instrumentFile(root, srcPath string, mutants []mutation.Mutant, importPath string, names *packageNames) (int, error) {
+func instrumentFile(
+	root, srcPath string,
+	mutants []mutation.Mutant,
+	hints Hints,
+	importPath string,
+	names *packageNames,
+) (int, error) {
 	file := filepath.Join(root, filepath.FromSlash(srcPath))
 	info, err := os.Stat(file)
 	if err != nil {
@@ -248,7 +262,7 @@ func instrumentFile(root, srcPath string, mutants []mutation.Mutant, importPath 
 	dir := filepath.Dir(file)
 	reserved := func(pkg string) (map[string]bool, error) { return names.namesIn(dir, pkg) }
 
-	out, guards, err := instrumentSource(srcPath, src, mutants, importPath, reserved)
+	out, guards, err := instrumentSource(srcPath, src, mutants, hints, importPath, reserved)
 	if err != nil {
 		return 0, err
 	}
@@ -347,6 +361,7 @@ func instrumentSource(
 	srcPath string,
 	src []byte,
 	mutants []mutation.Mutant,
+	hints Hints,
 	importPath string,
 	reserved reservedNames,
 ) ([]byte, int, error) {
@@ -357,7 +372,7 @@ func instrumentSource(
 	if err != nil {
 		return nil, 0, err
 	}
-	forest, err := buildSites(newSiteIndex(tok, file), srcPath, mutants)
+	forest, sites, err := buildSites(newSiteIndex(tok, file, src), srcPath, mutants, hints)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -368,7 +383,7 @@ func instrumentSource(
 			return nil, 0, err
 		}
 	}
-	renderer := &guardRenderer{path: srcPath, src: src, alias: aliasFor(file, taken)}
+	renderer := &guardRenderer{path: srcPath, src: src, alias: aliasFor(file, taken), sites: sites}
 	splices, guards, err := renderer.render(forest)
 	if err != nil {
 		return nil, 0, err

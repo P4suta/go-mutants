@@ -201,10 +201,151 @@ Entries say *why* a change was made, not only what changed.
   every entry of `mutants[]`. The two summary numbers are absent rather than
   zero outside `package` mode, and the schema refuses them there: a run that
   narrowed nothing must not state a measurement it never made.
+- The remaining nine operator families in `internal/discover`, which completes
+  the 42-rule catalogue: condition negation, boolean connectives, integer and
+  float arithmetic, bitwise operators, arithmetic assignment, return
+  replacement, error swallowing, and statement deletion. Every gate is a
+  `go/types` question rather than a syntactic one, and reads through a named
+  type to its underlying one: `+` between strings is not integer arithmetic
+  because its operands are strings, `type Celsius float64` is mutated like the
+  float it is, and complex arithmetic is out of scope because the float gate
+  asks for a floating-point type. `error` is where the two nil rules divide —
+  `return err` is error swallowing, `return &myErr{}` from the same function is
+  the ordinary nillable replacement — and `panic` is the one call statement
+  deletion refuses, because removing a terminating panic manufactures a missing
+  return rather than a mutant.
+- Every candidate now carries a **guard site hint**: which of the Form S / Form
+  C / Form D rewrites the instrumenter has to use, the bytes it replaces, and —
+  for Form D — the source spelling of each type the site declares, rendered
+  through a qualifier built from the file's own imports. Discovery is the only
+  phase with type information and instrumentation deliberately has none, so
+  the choice is made once, here, and handed down as data; that is what keeps
+  the instrumenter a byte rewriter testable without a toolchain. A site none of
+  the three forms can express is a recorded `unnameable-decl-type` skip rather
+  than a catalogued mutant the next phase would have to hand back — a `switch`
+  tag, an `if` whose condition is a named boolean type, a statement in an
+  initialiser or `for` post where a block is not legal Go, a declared type the
+  file cannot spell, or a `:=` that redeclares instead of declaring.
+- **Form S and Form D in `internal/instrument`**, which makes every one of
+  those families instrumentable and retires the last hint-less path: the site
+  of a rewrite is now the hint discovery emitted, for all three forms, and the
+  instrumenter no longer works out where a comparison or a boolean literal
+  lives by looking for one. Form S wraps a statement in
+  `if __gm.M[i] { <flattened copy> } else { <original bytes> }`, with a
+  statement-deletion mutant rendering as the empty branch `if __gm.M[i] { }`
+  because that is the whole of what "this statement does not run" means; Form D
+  hoists the names a `:=` or a `var` declares out in front of the guard —
+  `var x T; if __gm.M[i] { x = … } else { x = … }` — so that the code after the
+  declaration still sees them. The declaring tokens are cut out in place rather
+  than the statement being re-rendered, so every other byte of it, line breaks
+  included, is still the user's own. Alternatives at one site chain regardless
+  of family, which is how an arithmetic swap and a deletion of the statement
+  around it end up as two branches of one guard; sites still nest, so an
+  expression guard inside a statement guard's original branch keeps working.
+- The named boolean type is no longer a candidate the run instruments and the
+  compiler throws out. A selector evaluates to `bool`, which is not assignable
+  to `type Flag bool` — so discovery hints those sites as Form S and a
+  statement guard around a `return` is well typed whatever the function
+  returns. `fixtures/rejectable`'s two traps are ordinary mutants now, and what
+  is left for compile validation is the mutant that is not a program at all,
+  such as `v * 0` swapped into `v / 0`.
+- `fixtures/families`, a corpus module carrying at least one live candidate for
+  each of the 42 rules, and the integration suite that drives it. Nothing else
+  in the corpus could have caught a family that quietly stopped reaching
+  execution: every other fixture proves one *mechanism* — the baseline gate,
+  compile validation, coverage narrowing — against whichever handful of
+  operators its code happens to contain, so a rule that disappeared would have
+  shown up, if at all, as a count that got smaller for no stated reason. The new
+  test holds the run against a per-family table of kills and survivors, names
+  every survivor by file and line, and fails when any of the 42 rules produces
+  no mutant at all.
+  The fixture's tests are part of the specimen rather than scaffolding around
+  it. Four of its functions are deliberately under-tested and one is never
+  called, because a fixture in which everything died would be
+  indistinguishable from a suite that is merely strong, and one in which
+  everything survived would be activation that never happened; `fixtures/README.md`
+  names each gap and says what its test leaves out. Its other invariant is that
+  every loop terminates under every mutant of it — `negate-loop-condition` and
+  `gt-to-ge` both turn an ordinary counter into one that never stops — because a
+  hung mutant is a ten-second timeout where a kill belongs, and reads as a flaky
+  suite rather than as the design bug it is.
+- A second integration test runs the same fixture once per profile and asserts
+  the tier contract end to end. `balanced ⊂ strong ⊂ all` is already unit tested
+  against the rule table; what this adds is that the property survives every
+  phase between the table and the report. The counts differing (59, 72, 76) is
+  the readable half — the load-bearing half is that the mutant *identities*
+  nest, and that the families each tier adds are exactly `bitwise` and
+  `arithmetic-assignment`, then `statement-deletion`. A count can move for any
+  reason; those three names are what a profile actually means.
 - Licensing and policy files: dual `MIT OR Apache-2.0` with `LICENSES/` and
   `REUSE.toml` annotations for the files that cannot carry an inline SPDX
   header, plus `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md`, and
   `RELEASE_NOTES.md`.
+
+### Fixed
+
+- A `var` inside a function body no longer ends a run with an internal error.
+  Form D rewrites a declaration by cutting its declaring tokens out in place,
+  and two of those cuts are as long as the source says: a spec with no
+  initialiser goes whole, and a spelled-out type goes with it. Written across
+  more than one line — which gofmt itself produces for a `func(` type — the cut
+  removed a line break, the rewrite stopped preserving line numbers, and the
+  instrumenter answered the only way it can, with `GOM7326` out of the whole
+  pass. One legal declaration anywhere in the tree took every mutant in it down.
+  The refusal now belongs to discovery, where a candidate can simply not be
+  emitted: the site is recorded as an `unnameable-decl-type` skip and the rest
+  of the file still runs. Padding the cut back to its own height is not an
+  alternative and the fixtures say why — `f func(\n…\n) int = mk(n)` padded
+  reads `f \n\n = mk(n)`, and the scanner ends the statement after `f`.
+- Form D no longer rebinds a declaration's own initialiser, which was producing
+  wrong verdicts in silence. Go begins a declared name's scope at the *end* of
+  its specification, so `total := total * 2` reads the `total` declared outside
+  the block and `err := fmt.Errorf("…: %w", err)` wraps the error that was
+  already there. Hoisting `var total int;` in front of the assignment put the
+  new name in scope first and read a zero out of it. The rewritten program
+  compiles — that was the danger — so the instrumented baseline passed, the run
+  scored, and mutants in the rewritten function were measured against a program
+  the user did not write; the `%w` shape reported a kill for a mutant that
+  really survives. Such a site is now refused at discovery. The test has to be
+  lexical rather than type-directed: go/types resolves the initialiser
+  correctly, to the outer object, so the object the hoist would create appears
+  in no `Uses` entry and comparing against it silently answers no. The names of
+  a whole `var` block are collected before any of its initialisers is weighed,
+  because the block is one site and one spec may name another's.
+- `fixtures/rejectable`'s traps are traps again. Its first ones were a
+  comparison and a boolean literal returned as a named boolean type, and they
+  were facts about a *rewrite form* — Form C's selector is a plain `bool` — so
+  routing named booleans to the statement form disarmed them: the module went on
+  compiling, its tests went on passing, and compile validation was left with
+  nothing to isolate while its expectations still said three. The replacements
+  are facts about the *mutated program*, which no rewrite can rescue: `v*0`
+  swapped to `v/0` is a constant division by zero, and `200 - 100` returned as a
+  `uint8` overflows when `sub-to-add` makes it 300. Both shapes are kept, in two
+  files, each still outnumbered by healthy candidates, so the bisection still
+  has to halve and every accepted mutant still has to come back intact.
+  The named boolean did not leave with the trap; it moved to `named.go` and
+  changed sides. Its four candidates are the fixture's control now — accepted,
+  instrumented through the statement guard, executed, and killed — because an
+  improvement is only an improvement if something fails when it is undone, and
+  every other fixture in the corpus returns a plain `bool`. The engine's suite
+  requires all four to be killed rather than merely accepted, and
+  `internal/validate`'s activates each one and requires the suite to go red:
+  accepted proves the guard compiled, killed proves it selected anything.
+  Synthesising an uncompilable candidate through the `validate` API was
+  considered for the rejection path and rejected as unnecessary — two natural Go
+  constructs fail reliably and are already in the tree, and a hand-built
+  candidate would have proved the phase against an input no discovery pass can
+  produce.
+- `internal/execute`'s integration harness instrumented without guard hints, so
+  all four of its tests died with `GOM7329` before doing any work. It now runs
+  discovery and passes `instrument.HintsOf(found.Candidates)`, the way
+  `internal/validate` and `internal/engine` already did.
+- The catalogue expectations across `internal/cli`, `internal/engine`,
+  `internal/instrument`, and `internal/validate` absorbed the operator
+  expansion. They had been written when discovery implemented two families of
+  the eleven, and every count in them was short; `list --operator bitwise` also
+  stopped being an "this build cannot discover it" case, because every rule the
+  registry names is discovered now.
 
 ### Notes
 
@@ -231,11 +372,22 @@ Entries say *why* a change was made, not only what changed.
   `mutation.CanonicalRuleCount` is 42, asserted by the canonical registry
   tests, so the headline was the loose count and no phantom 43rd rule was
   invented to match it.
-- `run` now performs real mutation testing end to end, but only for the
-  `comparison` and `boolean-literal` families — two of the eleven — so a score
-  it reports is a score against those rules and not against the full
-  catalogue. The outcome cache, `--changed`, `--shard`, the HTML report, the
-  Stryker projection, and the `init`, `doctor`, `report`, and `cache` commands
-  do not exist yet, and no page in `docs/` claims otherwise.
+- `run` now performs real mutation testing end to end, across all eleven
+  operator families: `discover.SupportedRules` covers every one of the 42 rules
+  the canonical registry names, so `GOM1006` — "this pre-release build does not
+  discover that operator" — can no longer be reached through any selection of a
+  registered operator. The message is kept, and kept under test at the unit
+  level, because it must not depend on that staying true. The outcome cache,
+  `--changed`, `--shard`, the HTML report, the Stryker projection, and the
+  `init`, `doctor`, `report`, and `cache` commands do not exist yet, and no page
+  in `docs/` claims otherwise.
+- The **Status** column is gone from `docs/operators.md` rather than filled in
+  with one repeated word. It recorded the gap between "the rule mints an ID" and
+  "`run` can score it", and with no rule left on the wrong side of it the column
+  said the same thing eleven times. The status is a sentence at the top of the
+  page instead, and `README.md`'s honest-limits list has been rewritten around
+  what is actually missing — v2's `switch`/`select` and `if`-branch mutation, the
+  documented exclusions, and the rewrite sites no guard form can express — in
+  place of the "two of the eleven families" bullet that expansion retired.
 
 [Unreleased]: https://github.com/P4suta/go-mutants/commits/main

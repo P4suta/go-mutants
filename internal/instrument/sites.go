@@ -10,70 +10,76 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"slices"
 	"strconv"
 
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/interval"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// comparisonOps are the operators whose [ast.BinaryExpr] is bool-valued, and
-// so the operators whose enclosing expression Form C may wrap.
+// A site is one rewrite site: the bytes a guard replaces, the form it takes,
+// and everything that form needs beyond those bytes.
 //
-// The set is spelled out here rather than derived from the rule table because
-// it answers a different question. internal/discover knows which operator each
-// rule rewrites; this package has to know which expressions are bool-valued,
-// and a future rule that rewrites "+" into "-" must not be wrapped in a boolean
-// guard just because it reached this file.
-var comparisonOps = map[token.Token]bool{
-	token.EQL: true,
-	token.NEQ: true,
-	token.LSS: true,
-	token.LEQ: true,
-	token.GTR: true,
-	token.GEQ: true,
+// It is what a [discover.Guard] becomes once it has been checked against the
+// file on disk. The hint says which shape to use and over which bytes; this
+// says which node those bytes turned out to be and, for a declaration, exactly
+// which splices turn it into the plain assignment a guard branch can hold.
+type site struct {
+	// form is the rewrite shape.
+	form discover.GuardForm
+	// span is the byte range the guard replaces, in file coordinates.
+	span mutation.Span
+	// declare are the names a Form D site hoists out in front of its guard,
+	// with the type each is declared as. Empty for the other two forms, and for
+	// a declaration whose every name is the blank identifier.
+	declare []discover.DeclType
+	// undeclare are the splices that turn a Form D site's own bytes into plain
+	// assignments — the `:=` downgraded to `=`, the `var` keyword, the
+	// parentheses and the declared types cut out — in site-relative
+	// coordinates against the pristine source. Empty for the other two forms.
+	//
+	// They are splices rather than a rendered string so that the original bytes
+	// survive: everything the declaration held that is not one of those tokens,
+	// line breaks included, stays exactly where the user wrote it, and [Apply]
+	// proves each cut covers the bytes it claims before anything is edited.
+	undeclare []Splice
 }
 
-// booleanLiterals are the two identifiers the boolean-literal family rewrites.
-//
-// Checking the name here is not redundant with the catalogue having said so.
-// Without type information this package cannot tell the predeclared constant
-// from a field of the same name — Go lets you declare one — and what it can
-// tell is that a candidate claiming to rewrite a boolean literal at a span
-// holding neither "true" nor "false" describes a different file than the one on
-// disk. That is a refusal, not a guess.
-var booleanLiterals = map[string]bool{"true": true, "false": true}
-
-// A siteIndex answers "which expression encloses this edit?" for one parsed
-// file.
+// A siteIndex answers "which node does this hint name?" for one parsed file.
 //
 // It is built by one walk over the syntax tree and then queried once per
 // candidate, so a file with a hundred mutants is still one parse and one walk.
-// Both maps are keyed by byte offset rather than by [token.Pos], because a
-// candidate arrives from the catalogue holding offsets and nothing else.
+// Both maps are keyed by byte span rather than by [token.Pos], because a hint
+// arrives from discovery holding byte offsets and nothing else.
+//
+// Statements and expressions are indexed apart because they collide: an
+// expression statement covers exactly the bytes of the call inside it, and a
+// Form S hint over `f()` means the statement while a Form C hint over the same
+// bytes would mean the expression. Where two nodes of one kind share a span the
+// outer one is kept — [ast.Inspect] visits it first — since it is the one an
+// enclosing rewrite would have to replace.
 type siteIndex struct {
-	// binary maps the offset of an operator token to the binary expression it
-	// belongs to. Operator positions are unique within a file, so the key
-	// identifies exactly one node.
-	binary map[uint32]*ast.BinaryExpr
-	// idents maps an identifier's whole span to the identifier.
-	idents map[mutation.Span]*ast.Ident
-	tok    *token.File
+	stmts map[mutation.Span]ast.Stmt
+	exprs map[mutation.Span]ast.Expr
+	// src is the pristine file, so that a cut can carry the bytes it removes.
+	src []byte
+	tok *token.File
 }
 
 // parseSnapshotFile parses pristine snapshot bytes, keeping every position
 // exact.
 //
-// Positions have to be exact because every span in the catalogue is a byte
-// offset into these same bytes: the parse is how this package finds the
-// expression enclosing an edit, and an approximate position would find the
-// wrong one. It is also why the file is re-parsed here instead of reusing
+// Positions have to be exact because every span in the catalogue and every span
+// in a hint is a byte offset into these same bytes: the parse is how this
+// package finds the node a hint names, and an approximate position would find
+// the wrong one. It is also why the file is re-parsed here instead of reusing
 // whatever discovery held — that tree belongs to another package's loader, and
 // a shared one would tie instrumentation to a go/packages load it does not
 // otherwise need.
 //
-// No type information is computed, and none is needed: see the package
-// documentation on named boolean types for what this package deliberately
-// leaves to the validation phase.
+// No type information is computed, and none is needed: the questions that need
+// it were answered by discovery and travel in the hint. See [Hints].
 func parseSnapshotFile(srcPath string, src []byte) (*ast.File, *token.File, error) {
 	file, tok, err := parseGo(srcPath, src)
 	if err != nil {
@@ -115,34 +121,24 @@ func parseGo(srcPath string, src []byte) (*ast.File, *token.File, error) {
 	return file, tok, nil
 }
 
-// newSiteIndex walks a parsed file once and records everything a candidate
-// could be anchored to.
-//
-// The identifier at the end of a selector is deliberately not recorded. `x.true`
-// is a field or method named "true", not the predeclared constant, and it is the
-// one shape where a boolean-literal span could land on an identifier that is not
-// a boolean literal at all. Leaving it out turns that into a [CodeSiteNotFound]
-// error instead of a guard wrapped around a field name.
-func newSiteIndex(tok *token.File, file *ast.File) *siteIndex {
+// newSiteIndex walks a parsed file once and records every node a hint could
+// name.
+func newSiteIndex(tok *token.File, file *ast.File, src []byte) *siteIndex {
 	x := &siteIndex{
-		binary: make(map[uint32]*ast.BinaryExpr),
-		idents: make(map[mutation.Span]*ast.Ident),
-		tok:    tok,
+		stmts: make(map[mutation.Span]ast.Stmt),
+		exprs: make(map[mutation.Span]ast.Expr),
+		src:   src,
+		tok:   tok,
 	}
-	// A selector's own identifier is marked on the way past its parent, which
-	// ast.Inspect always visits first, rather than by pruning the walk there:
-	// the expression a selector is taken of is ordinary code that can hold
-	// sites of its own, and pruning would lose them.
-	selectors := make(map[*ast.Ident]bool)
 	ast.Inspect(file, func(node ast.Node) bool {
 		switch n := node.(type) {
-		case *ast.BinaryExpr:
-			x.binary[x.offset(n.OpPos)] = n
-		case *ast.SelectorExpr:
-			selectors[n.Sel] = true
-		case *ast.Ident:
-			if !selectors[n] {
-				x.recordIdent(n)
+		case ast.Stmt:
+			if span := x.span(n); !x.hasStmt(span) {
+				x.stmts[span] = n
+			}
+		case ast.Expr:
+			if span := x.span(n); !x.hasExpr(span) {
+				x.exprs[span] = n
 			}
 		}
 		return true
@@ -150,18 +146,23 @@ func newSiteIndex(tok *token.File, file *ast.File) *siteIndex {
 	return x
 }
 
-// recordIdent files one identifier under its own span.
-func (x *siteIndex) recordIdent(ident *ast.Ident) {
-	x.idents[mutation.Span{StartByte: x.offset(ident.Pos()), EndByte: x.offset(ident.End())}] = ident
+func (x *siteIndex) hasStmt(span mutation.Span) bool {
+	_, ok := x.stmts[span]
+	return ok
+}
+
+func (x *siteIndex) hasExpr(span mutation.Span) bool {
+	_, ok := x.exprs[span]
+	return ok
 }
 
 // offset is the byte offset of a position in the file being indexed.
 //
 // [token.File.Offset] panics on a position outside the file, and every caller
 // here passes one taken from the syntax tree just parsed from that file, which
-// cannot be. Nothing derived from the catalogue reaches it: a candidate's span
-// is used as a map key or compared, never converted back into a position — the
-// one place that does convert one, [siteIndex.position], checks it against the
+// cannot be. Nothing derived from the catalogue reaches it: a hint's span is
+// used as a map key or compared, never converted back into a position — the one
+// place that does convert one, [siteIndex.position], checks it against the
 // file's size first, because that one really is fed catalogue data.
 func (x *siteIndex) offset(pos token.Pos) uint32 { return uint32(x.tok.Offset(pos)) }
 
@@ -170,47 +171,237 @@ func (x *siteIndex) span(node ast.Node) mutation.Span {
 	return mutation.Span{StartByte: x.offset(node.Pos()), EndByte: x.offset(node.End())}
 }
 
-// siteFor returns the rewrite site of one catalogued mutant: the innermost
-// enclosing expression that is bool-valued and safe to wrap in a Form C guard.
+// siteFor turns one mutant's hint into the site the renderer works from,
+// checking everything the hint claims against the file that is really there.
 //
-// For a comparison the site is the whole binary expression, because the edit
-// itself is one operator token — bytes that are not an expression and cannot be
-// guarded on their own. For a boolean literal the identifier already is the
-// expression, so the site is the candidate's own span.
-//
-// Everything the candidate claims is checked against the parsed file before a
-// site is returned. A candidate that says it replaces "==" at an offset where
-// the file holds a "+" is a catalogue that no longer describes this tree, and
-// the honest answer is an error rather than a boolean guard around an integer.
-func (x *siteIndex) siteFor(m mutation.Mutant, srcPath string) (mutation.Span, error) {
-	switch m.Rule.Family {
-	case mutation.FamilyComparison:
-		expr, ok := x.binary[m.Span.StartByte]
-		if !ok || !comparisonOps[expr.Op] || expr.Op.String() != m.Original {
-			return mutation.Span{}, x.notFound(m, srcPath, "no comparison operator "+strconv.Quote(m.Original)+" starts here")
+// Three things are checked and none of them is ceremony. The site has to
+// contain the edit, or the rewrite would splice a mutation into bytes that do
+// not hold it. The site has to be a node of the kind its form needs, or the
+// hint describes a different file than the one on disk. And a Form D site has
+// to be a declaration this form can express, because turning one into an
+// assignment is a byte edit over its own tokens rather than a re-rendering.
+func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath string) (site, error) {
+	span := guard.SiteSpan
+	if !span.Contains(m.Span) {
+		return site{}, &Error{
+			Code: CodeSiteConflict,
+			Message: fmt.Sprintf("%s: mutant %s at %s is not inside the site %s its guard hint names",
+				srcPath, m.DisplayID, m.Span, span),
 		}
-		return x.span(expr), nil
-	case mutation.FamilyBooleanLiteral:
-		ident, ok := x.idents[m.Span]
-		if !ok || ident.Name != m.Original || !booleanLiterals[ident.Name] {
-			return mutation.Span{}, x.notFound(m, srcPath, "no boolean literal "+strconv.Quote(m.Original)+" covers these bytes")
+	}
+	switch guard.Form {
+	case discover.GuardFormC:
+		if !x.hasExpr(span) {
+			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
 		}
-		return m.Span, nil
+		return site{form: discover.GuardFormC, span: span}, nil
+
+	case discover.GuardFormS:
+		stmt, ok := x.stmts[span]
+		if !ok {
+			return site{}, x.notFound(m, srcPath, span, "no statement covers these bytes")
+		}
+		if !wrappableStatement(stmt) {
+			return site{}, x.unsupported(m, srcPath, span,
+				fmt.Sprintf("a %T is not one of the statements Form S wraps", stmt))
+		}
+		return site{form: discover.GuardFormS, span: span}, nil
+
+	case discover.GuardFormD:
+		stmt, ok := x.stmts[span]
+		if !ok {
+			return site{}, x.notFound(m, srcPath, span, "no statement covers these bytes")
+		}
+		undeclare, err := x.undeclare(stmt, span, m, srcPath)
+		if err != nil {
+			return site{}, err
+		}
+		return site{
+			form:      discover.GuardFormD,
+			span:      span,
+			declare:   guard.DeclTypes,
+			undeclare: undeclare,
+		}, nil
+
 	default:
-		return mutation.Span{}, &Error{
-			Code: CodeUnsupportedFamily,
-			Message: fmt.Sprintf("%s: mutant %s belongs to the %q family, which needs a guard form this version does not emit",
-				x.position(srcPath, m.Span), m.DisplayID, m.Rule.Family),
-		}
+		return site{}, x.unsupported(m, srcPath, span,
+			"guard form "+strconv.Quote(string(guard.Form))+" is not one this version emits")
 	}
 }
 
-// notFound builds the "the file is not what the catalogue says" error.
-func (x *siteIndex) notFound(m mutation.Mutant, srcPath, detail string) error {
+// wrappableStatement reports whether a statement may be buried in a block.
+//
+// The list is exactly the one [discover.Guard] documents for Form S, and it is
+// short for one reason: every statement here declares nothing, so wrapping it
+// in `if … { … } else { … }` changes no scope and the code after it goes on
+// compiling. A `:=` and a `var` do declare, which is what Form D exists for; an
+// `if`, a `for` or a block is never a hint this package should see, and a hint
+// naming one means discovery and this package have drifted apart.
+//
+// `defer` and `go` are in the list and are wrapped whole, statement and all,
+// rather than having their call rewritten in place. Both are function-scoped
+// rather than block-scoped: a `defer` inside the guard's block still runs when
+// the enclosing *function* returns, and a `go` still starts its goroutine, so
+// the block the guard adds changes nothing about when either fires.
+func wrappableStatement(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
+		return true
+	case *ast.AssignStmt:
+		return s.Tok != token.DEFINE
+	default:
+		return false
+	}
+}
+
+// undeclare computes the cuts that turn one declaring statement into plain
+// assignments, in coordinates relative to the site.
+//
+// Two shapes reach here, and each is handled by removing the tokens that make
+// it a declaration and nothing else:
+//
+//   - `x, y := f()` loses one byte: the `:` of its `:=`. Everything else — the
+//     names, the spacing, the whole right-hand side, every line break in it —
+//     is the user's own bytes, still in place.
+//   - `var x T = f()` loses the `var` keyword and the type, and a parenthesized
+//     `var ( … )` block loses its parentheses too, which leaves the specs
+//     inside it as a list of assignments separated by the line breaks that were
+//     already there. A spec with no initialiser has nothing to assign and is
+//     cut whole; the name it declared is still declared, by the `var` the guard
+//     writes in front of itself from the hint's [discover.DeclType] list.
+//
+// Every cut has to be free of line breaks for the rewrite to stay
+// line-preserving. Two of them are as long as the source says — a spec with no
+// initialiser, and a spelled-out type — and discovery is what keeps those on
+// one line: a `var` it cannot undeclare this way is refused there, so no hint
+// naming one ever arrives, and the candidate is a recorded skip rather than a
+// failed run. That refusal belongs to the phase that can decline a candidate;
+// this one can only fail a whole file.
+//
+// The check is still made, by the caller rather than here: the splices go
+// through [LinePreserving] together with the nested guards, so a cut that does
+// hold a line break is reported as [CodeLineDrift] against the site instead of
+// being silently swallowed. Reaching it means discovery and this package have
+// drifted apart, which is what an internal error is for.
+func (x *siteIndex) undeclare(stmt ast.Stmt, span mutation.Span, m mutation.Mutant, srcPath string) ([]Splice, error) {
+	switch s := stmt.(type) {
+	case *ast.AssignStmt:
+		if s.Tok != token.DEFINE {
+			return nil, x.unsupported(m, srcPath, span,
+				"a Form D site has to declare something, and this assignment does not")
+		}
+		cut, err := x.rewriteToken(s.TokPos, token.DEFINE.String(), "=", span, m, srcPath)
+		if err != nil {
+			return nil, err
+		}
+		return []Splice{cut}, nil
+
+	case *ast.DeclStmt:
+		gen, ok := s.Decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			return nil, x.unsupported(m, srcPath, span,
+				"only a `var` declaration is a Form D site; a const or type declaration is not")
+		}
+		return x.undeclareVar(gen, span, m, srcPath)
+
+	default:
+		return nil, x.unsupported(m, srcPath, span,
+			fmt.Sprintf("a %T is not a declaration Form D can rewrite", stmt))
+	}
+}
+
+// undeclareVar is [siteIndex.undeclare] for a `var` declaration.
+func (x *siteIndex) undeclareVar(gen *ast.GenDecl, span mutation.Span, m mutation.Mutant, srcPath string) ([]Splice, error) {
+	cuts := make([]Splice, 0, 3+2*len(gen.Specs))
+	keyword, err := x.rewriteToken(gen.TokPos, token.VAR.String(), "", span, m, srcPath)
+	if err != nil {
+		return nil, err
+	}
+	cuts = append(cuts, keyword)
+
+	if gen.Lparen.IsValid() {
+		open, err := x.rewriteToken(gen.Lparen, token.LPAREN.String(), "", span, m, srcPath)
+		if err != nil {
+			return nil, err
+		}
+		closing, err := x.rewriteToken(gen.Rparen, token.RPAREN.String(), "", span, m, srcPath)
+		if err != nil {
+			return nil, err
+		}
+		cuts = append(cuts, open, closing)
+	}
+
+	for _, spec := range gen.Specs {
+		value, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return nil, x.unsupported(m, srcPath, span,
+				fmt.Sprintf("a %T is not a value specification", spec))
+		}
+		// A spec with no initialiser is not an assignment and cannot become
+		// one, so the whole of it goes; the guard declares its names anyway.
+		if len(value.Values) == 0 {
+			cuts = append(cuts, x.cut(value.Pos(), value.End(), span))
+			continue
+		}
+		if value.Type != nil {
+			cuts = append(cuts, x.cut(value.Type.Pos(), value.Type.End(), span))
+		}
+	}
+	return cuts, nil
+}
+
+// cut is the splice that removes the bytes between two positions, expressed
+// relative to base. The bytes it carries are read from the file, so the splice
+// describes what is really there and [Apply] has something to check the site
+// against.
+func (x *siteIndex) cut(from, to token.Pos, base mutation.Span) Splice {
+	span := mutation.Span{StartByte: x.offset(from), EndByte: x.offset(to)}
+	return Splice{
+		Span:     relativeTo(span, base.StartByte),
+		Original: x.src[span.StartByte:span.EndByte],
+	}
+}
+
+// rewriteToken is [siteIndex.cut] for one fixed token, checked against the
+// bytes at its position.
+//
+// The check is what turns a hint that no longer describes the file into a
+// refusal rather than an edit. Every position here comes from the parsed file
+// and so cannot miss, which is precisely why the one way it could — a future
+// caller passing a position from somewhere else — is worth a line of code.
+func (x *siteIndex) rewriteToken(
+	pos token.Pos,
+	tok, replacement string,
+	base mutation.Span,
+	m mutation.Mutant,
+	srcPath string,
+) (Splice, error) {
+	span := mutation.Span{StartByte: x.offset(pos), EndByte: x.offset(pos) + uint32(len(tok))}
+	if uint64(span.EndByte) > uint64(len(x.src)) || !bytes.Equal(x.src[span.StartByte:span.EndByte], []byte(tok)) {
+		return Splice{}, x.notFound(m, srcPath, base, "the declaration has no "+strconv.Quote(tok)+" where the file says it does")
+	}
+	return Splice{
+		Span:        relativeTo(span, base.StartByte),
+		Original:    x.src[span.StartByte:span.EndByte],
+		Replacement: []byte(replacement),
+	}, nil
+}
+
+// notFound builds the "the file is not what the hint says" error.
+func (x *siteIndex) notFound(m mutation.Mutant, srcPath string, span mutation.Span, detail string) error {
 	return &Error{
 		Code: CodeSiteNotFound,
-		Message: fmt.Sprintf("%s: mutant %s (%s) cannot be instrumented: %s",
-			x.position(srcPath, m.Span), m.DisplayID, m.Rule, detail),
+		Message: fmt.Sprintf("%s: mutant %s (%s) cannot be instrumented: its guard hint names the site %s and %s",
+			x.position(srcPath, m.Span), m.DisplayID, m.Rule, span, detail),
+	}
+}
+
+// unsupported builds the "this hint names a shape no guard form covers" error.
+func (x *siteIndex) unsupported(m mutation.Mutant, srcPath string, span mutation.Span, detail string) error {
+	return &Error{
+		Code: CodeUnsupportedGuard,
+		Message: fmt.Sprintf("%s: mutant %s (%s) cannot be instrumented: its guard hint names the site %s, where %s",
+			x.position(srcPath, m.Span), m.DisplayID, m.Rule, span, detail),
 	}
 }
 
@@ -225,209 +416,65 @@ func (x *siteIndex) position(srcPath string, span mutation.Span) string {
 	return fmt.Sprintf("%s:%d:%d", srcPath, pos.Line, pos.Column)
 }
 
-// A guardRenderer turns one file's rewrite sites into Form C guards.
-type guardRenderer struct {
-	// path is the module-relative path, for diagnostics only.
-	path string
-	// src is the pristine file, the coordinate system every span in the forest
-	// is expressed in.
-	src []byte
-	// alias is the local name the runtime package is imported under in this
-	// file, and the guards written into it have to spell whatever that turned
-	// out to be. It varies from file to file because "__gm" may already be
-	// taken — by something this file spells, or by something the package block
-	// binds anywhere in the package — in which case [aliasFor] bumps it.
-	alias string
-}
-
-// A siteNode is one node of the rewrite forest for a file.
-type siteNode = interval.Node[mutation.Mutant]
-
-// render composes every site of one file, children before parents, and returns
-// the splices to apply to the pristine bytes.
-//
-// The composition is bottom-up in parent-relative coordinates: a site's
-// original text is its own pristine bytes with each child's finished guard
-// spliced in, and only the outermost sites are ever spliced against the file
-// itself. [interval.Forest.InnerFirst] supplies the order that makes this
-// possible; the [OffsetMap] each nested [Apply] returns is deliberately unused,
-// because composing in a child's parent-relative coordinates is the same
-// arithmetic done by construction rather than by lookup, and it never leaves
-// the file's own coordinate system to begin with.
-// The second return value is the number of guards written: one per site,
-// nested sites included, which is what a file's guard count means. Several
-// mutants of one expression are alternatives inside a single guard.
-func (r *guardRenderer) render(forest interval.Forest[mutation.Mutant]) ([]Splice, int, error) {
-	rendered := make(map[*siteNode][]byte)
-	var failure error
-	forest.InnerFirst(func(node *siteNode) {
-		if failure != nil {
-			return
-		}
-		text, err := r.site(node, rendered)
-		if err != nil {
-			failure = err
-			return
-		}
-		rendered[node] = text
-	})
-	if failure != nil {
-		return nil, 0, failure
-	}
-
-	roots := forest.Roots()
-	splices := make([]Splice, 0, len(roots))
-	for _, root := range roots {
-		splices = append(splices, Splice{
-			Span:        root.Span,
-			Original:    r.original(root.Span),
-			Replacement: rendered[root],
-		})
-	}
-	return splices, len(rendered), nil
-}
-
-// site renders one node: its children are folded into its original text, and
-// the guard is wrapped around the result.
-func (r *guardRenderer) site(node *siteNode, rendered map[*siteNode][]byte) ([]byte, error) {
-	base := r.original(node.Span)
-
-	splices := make([]Splice, 0, len(node.Children))
-	for _, child := range node.Children {
-		splices = append(splices, Splice{
-			Span:        relativeTo(child.Span, node.Span.StartByte),
-			Original:    r.original(child.Span),
-			Replacement: rendered[child],
-		})
-	}
-	if !LinePreserving(splices) {
-		return nil, r.lineDrift("folding nested guards into the site at " + node.Span.String())
-	}
-	orig, _, err := Apply(base, splices)
-	if err != nil {
-		return nil, err
-	}
-	return r.guard(node, orig)
-}
-
-// guard renders the Form C selector for one site.
-//
-// The shape, for alternatives i1..in with mutated renderings m1..mn and the
-// site's current text ORIG, is
-//
-//	(A.M[i1] && (m1) || … || !(A.M[i1] || … || A.M[in]) && (ORIG))
-//
-// where A is this file's alias for the runtime package. Both branches are
-// ordinary expressions in the site's own type context, so the compiler settles
-// typing, evaluation order, and short-circuiting; exactly one of them is ever
-// evaluated, and with every flag false that one is ORIG, byte for byte the
-// source the user wrote.
-//
-// Every byte written before ORIG is on ORIG's first line and every byte written
-// after it is on ORIG's last line: the prefix holds no line break, and each mk
-// is flattened onto one line by [Flatten]. That is what keeps a rewritten
-// multi-line condition line-preserving.
-func (r *guardRenderer) guard(node *siteNode, orig []byte) ([]byte, error) {
-	var b bytes.Buffer
-	b.WriteByte('(')
-	for _, m := range node.Alternatives {
-		mutated, err := r.mutated(node.Span, m)
-		if err != nil {
-			return nil, err
-		}
-		b.WriteString(r.flag(m))
-		b.WriteString(" && (")
-		b.Write(mutated)
-		b.WriteString(") || ")
-	}
-	b.WriteString("!(")
-	for i, m := range node.Alternatives {
-		if i > 0 {
-			b.WriteString(" || ")
-		}
-		b.WriteString(r.flag(m))
-	}
-	b.WriteString(") && (")
-	b.Write(orig)
-	b.WriteString("))")
-
-	if got, want := CountLines(b.Bytes()), CountLines(orig); got != want {
-		return nil, r.lineDrift(fmt.Sprintf("the guard at %s spans %d lines, its site spans %d", node.Span, got+1, want+1))
-	}
-	return b.Bytes(), nil
-}
-
-// flag renders one mutant's activation lookup, "A.M[7]".
-func (r *guardRenderer) flag(m mutation.Mutant) string {
-	return r.alias + ".M[" + strconv.FormatUint(uint64(m.Index), 10) + "]"
-}
-
-// mutated renders one alternative: the site as it reads with that single
-// candidate's edit applied, folded onto one line.
-//
-// It is rendered from the pristine bytes and never from the site's current
-// text. A mutant is one edit to the program the user wrote, so the copy that
-// runs when its flag is set must not carry the guards of the sites nested
-// inside it — those would make it a different mutant, and one whose identity
-// nothing in the catalogue describes.
-func (r *guardRenderer) mutated(site mutation.Span, m mutation.Mutant) ([]byte, error) {
-	if !site.Contains(m.Span) {
-		return nil, &Error{
-			Code: CodeSiteConflict,
-			Message: fmt.Sprintf("%s: mutant %s at %s is not inside its own site %s",
-				r.path, m.DisplayID, m.Span, site),
-		}
-	}
-	patched, _, err := Apply(r.original(site), []Splice{{
-		Span:        relativeTo(m.Span, site.StartByte),
-		Original:    []byte(m.Original),
-		Replacement: []byte(m.Replacement),
-	}})
-	if err != nil {
-		return nil, err
-	}
-	return Flatten(patched)
-}
-
-// original returns the pristine bytes a span covers. The span came out of the
-// forest, which was built from spans this package computed against these very
-// bytes, so it fits by construction.
-func (r *guardRenderer) original(span mutation.Span) []byte {
-	return r.src[span.StartByte:span.EndByte]
-}
-
-// lineDrift builds the line-preservation failure.
-func (r *guardRenderer) lineDrift(detail string) error {
-	return &Error{
-		Code:    CodeLineDrift,
-		Message: "internal error: instrumenting " + strconv.Quote(r.path) + " would move a line: " + detail,
-	}
-}
-
-// relativeTo re-expresses a span in coordinates that start at base.
-func relativeTo(span mutation.Span, base uint32) mutation.Span {
-	return mutation.Span{StartByte: span.StartByte - base, EndByte: span.EndByte - base}
-}
-
 // buildSites arranges one file's mutants into the forest of rewrite sites they
-// occupy.
+// occupy, and the site each of those nodes is.
 //
 // Identical site spans become alternatives of one node — six comparison rules
-// rewriting one operator are one guard with six branches, not six guards — and
-// nested sites become children. Partial overlap cannot happen here: two
-// expressions of one syntax tree either nest or are disjoint, so a conflict is
-// a site span this package computed wrong, and it is reported as the internal
-// error it is.
-func buildSites(index *siteIndex, srcPath string, mutants []mutation.Mutant) (interval.Forest[mutation.Mutant], error) {
+// rewriting one operator are one guard with six branches, and an arithmetic
+// swap and a statement deletion on one statement are one guard with two, family
+// notwithstanding — and nested sites become children. Partial overlap cannot
+// happen: two nodes of one syntax tree either nest or are disjoint, so a
+// conflict means a hint's site span does not describe a node at all, and it is
+// reported as the internal error it is.
+func buildSites(
+	index *siteIndex,
+	srcPath string,
+	mutants []mutation.Mutant,
+	hints Hints,
+) (interval.Forest[mutation.Mutant], map[mutation.Span]site, error) {
 	items := make([]interval.Item[mutation.Mutant], 0, len(mutants))
+	sites := make(map[mutation.Span]site, len(mutants))
 	for _, m := range mutants {
-		span, err := index.siteFor(m, srcPath)
+		guard, err := hints.guardFor(m, srcPath)
 		if err != nil {
-			return interval.Forest[mutation.Mutant]{}, err
+			return interval.Forest[mutation.Mutant]{}, nil, err
 		}
-		items = append(items, interval.Item[mutation.Mutant]{Span: span, Payload: m})
+		resolved, err := index.siteFor(m, guard, srcPath)
+		if err != nil {
+			return interval.Forest[mutation.Mutant]{}, nil, err
+		}
+		if previous, seen := sites[resolved.span]; seen {
+			if err := agree(previous, resolved, m, srcPath); err != nil {
+				return interval.Forest[mutation.Mutant]{}, nil, err
+			}
+		}
+		sites[resolved.span] = resolved
+		items = append(items, interval.Item[mutation.Mutant]{Span: resolved.span, Payload: m})
 	}
-	return placeSites(srcPath, items)
+	forest, err := placeSites(srcPath, items)
+	if err != nil {
+		return interval.Forest[mutation.Mutant]{}, nil, err
+	}
+	return forest, sites, nil
+}
+
+// agree refuses two hints that name one site and disagree about what it is.
+//
+// The form and the declared names are properties of the site rather than of the
+// mutant, so two candidates in one statement must produce the same answer.
+// Rendering one guard from two contradictory hints would mean silently picking
+// whichever arrived first, which is the kind of order dependence the whole
+// phase is built to keep out.
+func agree(previous, current site, m mutation.Mutant, srcPath string) error {
+	if previous.form == current.form && slices.Equal(previous.declare, current.declare) {
+		return nil
+	}
+	return &Error{
+		Code: CodeSiteConflict,
+		Message: fmt.Sprintf(
+			"internal error: %s: the site %s is Form %s for mutant %s and Form %s for another mutant of the same bytes",
+			srcPath, current.span, current.form, m.DisplayID, previous.form),
+	}
 }
 
 // placeSites is the forest placement itself, split out from the site
@@ -443,4 +490,9 @@ func placeSites(srcPath string, items []interval.Item[mutation.Mutant]) (interva
 		}
 	}
 	return forest, nil
+}
+
+// relativeTo re-expresses a span in coordinates that start at base.
+func relativeTo(span mutation.Span, base uint32) mutation.Span {
+	return mutation.Span{StartByte: span.StartByte - base, EndByte: span.EndByte - base}
 }

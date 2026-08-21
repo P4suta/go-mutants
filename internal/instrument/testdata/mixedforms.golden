@@ -1,0 +1,28 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: the expression guard and the statement
+// guard meeting in one file, side by side and one inside the other.
+package sample; import __gm "example.com/mini/gomutants_rt"
+
+// Clamp holds v below limit.
+//
+// The comparison in the condition is a rewrite site of its own and the
+// assignment in the body is another, so one function carries a Form C guard and
+// a Form S guard that have nothing to do with each other.
+func Clamp(v, limit int) int {
+	if (__gm.M[0] && (v>=limit) || !(__gm.M[0]) && (v > limit)) {
+		if __gm.M[1] { v=limit+1 } else { v = limit - 1 }
+	}
+	return v
+}
+
+// Compare reports whether a exceeds b, and by how much.
+//
+// Here the two forms nest. The comparison is a Form C site, and it sits inside
+// the `return` that the arithmetic mutant makes a Form S site: the statement
+// guard's original branch has to carry the expression guard, and its own
+// mutated copy — one edit to the program the user wrote — must not.
+func Compare(a, b int) (bool, int) {
+	if __gm.M[3] { return a>b,a+b } else { return (__gm.M[2] && (a>=b) || !(__gm.M[2]) && (a > b)), a - b }
+}

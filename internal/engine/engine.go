@@ -503,9 +503,20 @@ func (s *session) mutate(
 	st.catalog = catalog
 	st.display = displayIndex(catalog, found.Candidates)
 
+	// The guard hints travel with the catalogue from here on. They are the one
+	// thing instrumentation cannot work out for itself — which rewrite form an
+	// edit takes is a question about types, and only this pass had a type
+	// checker — so losing them between the two phases would not be a missing
+	// optimisation, it would be a run that instruments nothing.
+	hints, err := instrument.HintsOf(found.Candidates)
+	if err != nil {
+		return err
+	}
+
 	validated, err := validate.Validate(ctx, validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
+		Hints:        hints,
 		ModulePath:   found.ModulePath,
 		Toolchain:    toolchain,
 		Jobs:         cfg.Execution.Jobs,

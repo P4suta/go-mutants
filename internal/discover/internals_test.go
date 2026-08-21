@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -388,12 +389,26 @@ func TestCgoExemptionCoversTestVariants(t *testing.T) {
 	}
 }
 
-// scanFor builds a scan over in-memory source, the way the file walk would.
-func scanFor(t *testing.T, src string) *fileScan {
+// scanFor builds a scan over in-memory source, the way the file walk would,
+// and hands back the syntax tree so that a test can name the node an edit is
+// anchored to.
+//
+// There is no type information: these tests are about the span invariant and
+// the suppression bookkeeping, both of which are decided before any type gate
+// is asked anything. The guard resolver works without it — with no types no
+// expression can be proved to be the universe bool, so every hint here comes
+// out as the statement form.
+func scanFor(t *testing.T, src string) (*fileScan, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
-	tokFile := fset.AddFile("p.go", fset.Base(), len(src))
-	tokFile.SetLinesForContent([]byte(src))
+	file, err := parser.ParseFile(fset, "p.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parsing the fixture: %v", err)
+	}
+	tokFile := fset.File(file.Package)
+	if tokFile == nil {
+		t.Fatal("the parsed fixture has no position information")
+	}
 	return &fileScan{
 		discovery: &discovery{skips: make(map[skipKey]int)},
 		rel:       "p.go",
@@ -401,7 +416,28 @@ func scanFor(t *testing.T, src string) *fileScan {
 		src:       []byte(src),
 		digest:    mutation.DigestString(src),
 		tokFile:   tokFile,
+		guard:     newGuardResolver(file, nil, nil, tokFile),
+	}, file
+}
+
+// firstBinary returns the first binary expression of a parsed fixture, which is
+// the node the emit tests anchor their edits to.
+func firstBinary(t *testing.T, file *ast.File) *ast.BinaryExpr {
+	t.Helper()
+	var found *ast.BinaryExpr
+	ast.Inspect(file, func(node ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if expr, ok := node.(*ast.BinaryExpr); ok {
+			found = expr
+		}
+		return found == nil
+	})
+	if found == nil {
+		t.Fatal("the fixture holds no binary expression")
 	}
+	return found
 }
 
 // ruleNamed looks up a canonical rule for a test.
@@ -416,9 +452,10 @@ func ruleNamed(t *testing.T, name string) mutation.Rule {
 
 func TestEmitRecordsTheSpanAndThePosition(t *testing.T) {
 	const src = "package p\n\nfunc f(a, b int) bool { return a != b }\n"
-	scan := scanFor(t, src)
+	scan, file := scanFor(t, src)
+	anchor := firstBinary(t, file)
 	offset := strings.Index(src, "!=")
-	if err := scan.emit(ruleNamed(t, "neq-to-eq"), scan.tokFile.Pos(offset), "!=", "=="); err != nil {
+	if err := scan.emit(ruleNamed(t, "neq-to-eq"), anchor, scan.tokFile.Pos(offset), "!=", "=="); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 	if len(scan.candidates) != 1 {
@@ -439,6 +476,18 @@ func TestEmitRecordsTheSpanAndThePosition(t *testing.T) {
 	if got.Package != "example.com/p" || got.SourceDigest != mutation.DigestString(src) {
 		t.Errorf("candidate = %+v, want the scan's package and digest", got)
 	}
+	// The hint is the statement the edit sits in, because nothing here can
+	// prove an expression is the universe bool without type information.
+	if got.Guard.Form != GuardFormS {
+		t.Errorf("guard form = %q, want %q", got.Guard.Form, GuardFormS)
+	}
+	if !got.Guard.SiteSpan.Contains(got.Span) {
+		t.Errorf("the guard site %s does not contain the edit %s", got.Guard.SiteSpan, got.Span)
+	}
+	if want := "return a != b"; string(src[got.Guard.SiteSpan.StartByte:got.Guard.SiteSpan.EndByte]) != want {
+		t.Errorf("the guard site covers %q, want %q",
+			src[got.Guard.SiteSpan.StartByte:got.Guard.SiteSpan.EndByte], want)
+	}
 }
 
 // TestEmitRefusesASpanThatMissesItsText is the invariant that keeps a wrong
@@ -447,9 +496,10 @@ func TestEmitRecordsTheSpanAndThePosition(t *testing.T) {
 // rather than a quietly mutated wrong expression.
 func TestEmitRefusesASpanThatMissesItsText(t *testing.T) {
 	const src = "package p\n\nfunc f(a, b int) bool { return a != b }\n"
-	scan := scanFor(t, src)
+	scan, file := scanFor(t, src)
+	anchor := firstBinary(t, file)
 	offset := strings.Index(src, "!=")
-	err := scan.emit(ruleNamed(t, "eq-to-neq"), scan.tokFile.Pos(offset), "==", "!=")
+	err := scan.emit(ruleNamed(t, "eq-to-neq"), anchor, scan.tokFile.Pos(offset), "==", "!=")
 	if CodeOf(err) != CodeSpanMismatch {
 		t.Fatalf("code = %q, want %s (err %v)", CodeOf(err), CodeSpanMismatch, err)
 	}
@@ -460,19 +510,41 @@ func TestEmitRefusesASpanThatMissesItsText(t *testing.T) {
 
 func TestEmitRefusesASpanPastTheEndOfTheFile(t *testing.T) {
 	const src = "package p\n"
-	scan := scanFor(t, src)
-	err := scan.emit(ruleNamed(t, "eq-to-neq"), scan.tokFile.Pos(len(src)-1), "==", "!=")
+	scan, file := scanFor(t, src)
+	err := scan.emit(ruleNamed(t, "eq-to-neq"), file, scan.tokFile.Pos(len(src)-1), "==", "!=")
 	if CodeOf(err) != CodeSpanMismatch {
 		t.Fatalf("code = %q, want %s (err %v)", CodeOf(err), CodeSpanMismatch, err)
 	}
 }
 
+// TestEmitRefusesAnUnguardableSite is the second thing that removes a
+// candidate, and the one this phase added: an edit whose rewrite site none of
+// the three forms covers is a recorded skip, not a catalogued mutant an
+// instrumenter would have to hand back. The `switch` tag is the shortest such
+// site — no form wraps a switch, and no statement further out holds the edit.
+func TestEmitRefusesAnUnguardableSite(t *testing.T) {
+	const src = "package p\n\nfunc f(a, b int) { switch a != b {\n} }\n"
+	scan, file := scanFor(t, src)
+	anchor := firstBinary(t, file)
+	offset := strings.Index(src, "!=")
+	if err := scan.emit(ruleNamed(t, "neq-to-eq"), anchor, scan.tokFile.Pos(offset), "!=", "=="); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if len(scan.candidates) != 0 {
+		t.Errorf("an unguardable candidate was emitted: %+v", scan.candidates)
+	}
+	if got := scan.skips[skipKey{path: "p.go", reason: SkipUnnameableDeclType}]; got != 1 {
+		t.Errorf("unguardable count = %d, want 1", got)
+	}
+}
+
 func TestEmitRecordsASuppressedCandidateInstead(t *testing.T) {
 	const src = "package p\n\nfunc f(a, b int) bool { return a != b }\n"
-	scan := scanFor(t, src)
+	scan, file := scanFor(t, src)
+	anchor := firstBinary(t, file)
 	offset := strings.Index(src, "!=")
 	scan.suppressions = []suppression{{start: scan.tokFile.Pos(0), end: scan.tokFile.Pos(len(src)), reason: SkipConstDecl}}
-	if err := scan.emit(ruleNamed(t, "neq-to-eq"), scan.tokFile.Pos(offset), "!=", "=="); err != nil {
+	if err := scan.emit(ruleNamed(t, "neq-to-eq"), anchor, scan.tokFile.Pos(offset), "!=", "=="); err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 	if len(scan.candidates) != 0 {
@@ -488,38 +560,73 @@ func TestNewMatchersDefaultsToEverySupportedRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMatchers(nil): %v", err)
 	}
-	if len(m.comparison) != len(comparisonSwaps) {
-		t.Errorf("got %d comparison matchers, want %d", len(m.comparison), len(comparisonSwaps))
+	tables := map[string]struct {
+		got  int
+		want int
+	}{
+		"comparison": {len(m.comparison), len(comparisonSwaps)},
+		"connective": {len(m.connective), len(connectiveSwaps)},
+		"integer":    {len(m.integer), len(integerSwaps)},
+		"float":      {len(m.float), len(floatSwaps)},
+		"bitwise":    {len(m.bitwise), len(bitwiseSwaps)},
+		"assign":     {len(m.assignOp), len(assignSwaps)},
+		"incdec":     {len(m.incDec), len(incDecSwaps)},
+		"boolean":    {len(m.boolean), len(booleanSwaps)},
+		"positional": {len(m.positional), len(positionalRules)},
 	}
-	if len(m.boolean) != len(booleanSwaps) {
-		t.Errorf("got %d boolean matchers, want %d", len(m.boolean), len(booleanSwaps))
+	for name, counts := range tables {
+		if counts.got != counts.want {
+			t.Errorf("got %d %s matchers, want %d", counts.got, name, counts.want)
+		}
 	}
 	if m.empty() {
 		t.Error("the default selection is empty")
 	}
-	// Every matcher replaces the operator with a different one, and with the
-	// operator's own spelling on both sides.
-	for tok, matcher := range m.comparison {
-		if matcher.original != tok.String() {
-			t.Errorf("%s: original = %q, want %q", tok, matcher.original, tok.String())
-		}
-		if matcher.replacement == matcher.original {
-			t.Errorf("%s: replacement is the original", tok)
+	// Every operator matcher replaces its operator with a different one, and
+	// with the operator's own spelling on both sides.
+	for _, table := range []map[token.Token]tokenMatcher{
+		m.comparison, m.connective, m.integer, m.float, m.bitwise, m.assignOp, m.incDec,
+	} {
+		for tok, matcher := range table {
+			if matcher.original != tok.String() {
+				t.Errorf("%s: original = %q, want %q", tok, matcher.original, tok.String())
+			}
+			if matcher.replacement == matcher.original {
+				t.Errorf("%s: replacement is the original", tok)
+			}
 		}
 	}
 }
 
-func TestNewMatchersIgnoresUnimplementedRules(t *testing.T) {
-	rule, ok := mutation.CanonicalRegistry().Lookup("add-to-sub")
-	if !ok {
-		t.Fatal("the canonical registry has no add-to-sub")
+// TestNewMatchersIgnoresAnUnimplementedRule keeps the "ignore what this phase
+// has not built yet" path honest now that there is nothing left to ignore.
+//
+// Every rule in the canonical registry is implemented here, so the ignoring
+// branch has no input any more. It stays in [newMatchers] because a v2 rule
+// would arrive in the registry before it arrives in this package, and the first
+// thing it must not do is fail every run that selected its family. The test
+// therefore asserts the state of the world — the registry and the
+// implementation agree exactly — rather than a behaviour nothing can reach.
+func TestNewMatchersIgnoresAnUnimplementedRule(t *testing.T) {
+	registry := mutation.CanonicalRegistry()
+	for _, rule := range registry.Rules() {
+		if !implementedNames[rule.Name] {
+			m, err := newMatchers([]mutation.Rule{rule})
+			if err != nil {
+				t.Fatalf("newMatchers(%s): %v", rule, err)
+			}
+			if !m.empty() {
+				t.Errorf("%s is not implemented but produced a matcher", rule)
+			}
+		}
 	}
-	m, err := newMatchers([]mutation.Rule{rule})
-	if err != nil {
-		t.Fatalf("newMatchers: %v", err)
+	if len(implementedNames) != registry.Len() {
+		t.Errorf("this phase implements %d rules, the registry holds %d", len(implementedNames), registry.Len())
 	}
-	if !m.empty() {
-		t.Error("a rule this phase does not implement produced a matcher")
+	for name := range implementedNames {
+		if _, ok := registry.Lookup(name); !ok {
+			t.Errorf("this phase matches %q, which the canonical registry does not hold", name)
+		}
 	}
 }
 
@@ -667,5 +774,155 @@ func TestAllSkipReasonsListsEverySkipReasonConstant(t *testing.T) {
 	}
 	if fresh := AllSkipReasons(); &fresh[0] == &listed[0] {
 		t.Error("AllSkipReasons hands out one shared slice, which a caller could reorder out from under everyone else")
+	}
+}
+
+// typedFixture type-checks one self-contained file and hands back the guard
+// resolver for it.
+//
+// The Form D refusals below are the only decisions in this package that need
+// both syntax and types, so [scanFor]'s untyped resolver cannot ask them: with
+// no [types.Info] every declared type is unspellable and every Form D site is
+// refused for that reason alone, which would make an accepted case impossible
+// to write. A file with no imports type-checks with no importer, which is what
+// keeps this a unit test.
+func typedFixture(t *testing.T, src string) (*guardResolver, *ast.File) {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parsing the fixture: %v", err)
+	}
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Defs:  make(map[*ast.Ident]types.Object),
+		Uses:  make(map[*ast.Ident]types.Object),
+	}
+	var conf types.Config
+	pkg, err := conf.Check("example.com/p", fset, []*ast.File{file}, info)
+	if err != nil {
+		t.Fatalf("type-checking the fixture: %v", err)
+	}
+	tokFile := fset.File(file.Package)
+	if tokFile == nil {
+		t.Fatal("the parsed fixture has no position information")
+	}
+	return newGuardResolver(file, info, pkg, tokFile), file
+}
+
+// lastDeclaringStmt returns the last `:=` or `var` statement in a file.
+//
+// Every fixture below is written so that the statement under test is the last
+// one that declares anything, which is what lets a shadowing case carry the
+// declaration it shadows in the same function.
+func lastDeclaringStmt(t *testing.T, file *ast.File) ast.Stmt {
+	t.Helper()
+	var found ast.Stmt
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				found = n
+			}
+		case *ast.DeclStmt:
+			found = n
+		}
+		return true
+	})
+	if found == nil {
+		t.Fatal("the fixture holds no declaring statement")
+	}
+	return found
+}
+
+// TestStatementGuardRefusesADeclarationItCannotHoist covers the two Form D
+// refusals that are properties of the user's own source rather than of its
+// types, and the accepted cases each of them has to leave alone.
+//
+// Both are absences everywhere else in the suite — the fixture module proves
+// them by producing no hint — so this is where the distinction between "no
+// candidate because the site is refused" and "no candidate at all" is stated
+// as two columns of one table.
+func TestStatementGuardRefusesADeclarationItCannotHoist(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "a plain short declaration is a Form D site",
+			src:  "package p\n\nfunc f(n int) int {\n\tx := n * 2\n\treturn x\n}\n",
+			want: true,
+		},
+		{
+			name: "a short declaration reading the name it shadows is refused",
+			src: "package p\n\nfunc f(n int) int {\n\tx := n\n\t{\n\t\tx := x * 2\n\t\t" +
+				"return x\n\t}\n}\n",
+			want: false,
+		},
+		{
+			name: "a var reading the name it shadows is refused",
+			src:  "package p\n\nvar L = 1\n\nfunc f(n int) int {\n\t{\n\t\tvar L = L + n\n\t\treturn L\n\t}\n}\n",
+			want: false,
+		},
+		{
+			name: "one spec of a var block reading another's name is refused",
+			src: "package p\n\nvar L = 1\n\nfunc f(n int) int {\n\tvar (\n\t\ta = L + n\n\t\t" +
+				"L = a + 1\n\t)\n\treturn a + L\n}\n",
+			want: false,
+		},
+		{
+			name: "a selected field of the same name is not a reference to it",
+			src:  "package p\n\ntype point struct{ x int }\n\nfunc f(p point) int {\n\tx := p.x\n\treturn x\n}\n",
+			want: true,
+		},
+		{
+			name: "a struct literal key of the same name is not a reference to it",
+			src: "package p\n\ntype point struct{ x int }\n\nfunc f(n int) point {\n\t" +
+				"x := point{x: n}\n\treturn x\n}\n",
+			want: true,
+		},
+		{
+			name: "a map literal key of the same name is a reference to it",
+			src: "package p\n\nfunc f(n int) int {\n\tx := n\n\t{\n\t\tx := map[int]int{x: n}\n\t\t" +
+				"return x[n]\n\t}\n}\n",
+			want: false,
+		},
+		{
+			name: "a declared type on one line is a Form D site",
+			src:  "package p\n\nfunc f(n int) int {\n\tvar x int = n * 2\n\treturn x\n}\n",
+			want: true,
+		},
+		{
+			name: "a declared type spelled across lines is refused",
+			src: "package p\n\nfunc f(n int, mk func(int) func(int) int) int {\n\tvar g func(\n\t\tv int,\n\t) " +
+				"int = mk(n)\n\treturn g(n)\n}\n",
+			want: false,
+		},
+		{
+			name: "a spec with no initialiser on one line is a Form D site",
+			src: "package p\n\nfunc f(n int) int {\n\tvar (\n\t\ts int\n\t\tstart = n\n\t)\n\ts = start\n\t" +
+				"return s\n}\n",
+			want: true,
+		},
+		{
+			name: "a spec with no initialiser spelled across lines is refused",
+			src: "package p\n\nfunc f(n int) int {\n\tvar (\n\t\ts struct {\n\t\t\thi int\n\t\t}\n\t\t" +
+				"start = n\n\t)\n\ts.hi = start\n\treturn s.hi\n}\n",
+			want: false,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g, file := typedFixture(t, c.src)
+			guard, ok := g.statementGuard(lastDeclaringStmt(t, file))
+			if ok != c.want {
+				t.Fatalf("statementGuard accepted = %v, want %v", ok, c.want)
+			}
+			if ok && guard.Form != GuardFormD {
+				t.Errorf("guard form = %q, want %q", guard.Form, GuardFormD)
+			}
+		})
 	}
 }

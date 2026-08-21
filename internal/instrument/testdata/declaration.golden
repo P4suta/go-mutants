@@ -1,0 +1,57 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: the declaration guard, over a short
+// declaration of two names, one of a single name, one that throws half its
+// values away, a `var` that spells its type out, and a parenthesized `var`
+// block written across four lines.
+package sample; import __gm "example.com/mini/gomutants_rt"
+
+// Split returns the two halves of n, from a short declaration whose two names
+// the guard has to hoist out of the block it wraps.
+func Split(n int) (int, int) {
+	var lo int; var hi int; if __gm.M[0] { lo,hi=n*2,n-n/2 } else if __gm.M[1] { lo,hi=n/2,n+n/2 } else { lo, hi = n/2, n-n/2 }
+	return lo, hi
+}
+
+// Scale multiplies v, declaring the result with a `var` that names its type.
+func Scale(v int) int {
+	var scaled int; if __gm.M[2] { scaled=v/3 } else {  scaled  = v * 3 }
+	return scaled
+}
+
+// Offset raises base by a step it declares on its own.
+func Offset(base int) int {
+	var step int; if __gm.M[3] { step=base-1 } else { step = base + 1 }
+	return step * 2
+}
+
+// First returns the head of values and discards their count, so that a short
+// declaration holding a blank identifier keeps it: the guard declares the names
+// it was told about and assigns to the left-hand side the user wrote.
+func First(values []int) int {
+	var head int; if __gm.M[4] { head,_=values[0],len(values)+1 } else { head, _ = values[0], len(values)-1 }
+	return head
+}
+
+// Weigh prices the comparison of a and b.
+//
+// The comparison is an expression site inside the declaration site around it,
+// so the declaration guard's original branch has to carry the expression guard
+// while its own mutated copies carry none.
+func Weigh(a, b int, cost func(bool) int) int {
+	var weight int; if __gm.M[6] { weight=cost(a>b)-1 } else { weight = cost((__gm.M[5] && (a>=b) || !(__gm.M[5]) && (a > b))) + 1 }
+	return weight
+}
+
+// Bounds returns the range the ends of values leave room for, from a
+// parenthesized `var` block: the keyword and the parentheses come out, which
+// leaves the specs inside as the list of assignments the guard needs, still on
+// the lines the author put them on.
+func Bounds(values []int) (int, int) {
+	var low int; var high int; if __gm.M[7] { low=values[0]+1;high=values[len(values)-1]+1 } else if __gm.M[8] { low=values[0]-1;high=values[len(values)-1]-1 } else {  
+		low  = values[0] - 1
+		high = values[len(values)-1] + 1
+	 }
+	return low, high
+}

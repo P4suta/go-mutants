@@ -71,16 +71,16 @@ const (
 	// instrumented output that does not parse, which is always a bug in this
 	// package.
 	CodeUnparsable Code = "GOM7322"
-	// CodeUnsupportedFamily reports a catalogued mutant from an operator family
-	// this phase cannot instrument. Form C guards bool-valued expressions; the
-	// statement and declaration forms, and the families that need them, arrive
-	// later.
-	CodeUnsupportedFamily Code = "GOM7323"
-	// CodeSiteNotFound reports a candidate whose edit does not sit inside any
-	// bool-valued expression this package knows how to wrap — an operator span
-	// that is not a comparison operator in the parsed file, or a boolean
-	// literal span that is not an identifier. The candidate and the file
-	// disagree about what is there, so nothing is edited.
+	// CodeUnsupportedGuard reports a guard hint naming a rewrite this phase
+	// cannot express: a form it does not emit, a statement Form S may not bury
+	// in a block, or a declaration Form D cannot turn into an assignment.
+	// Discovery refuses such a site rather than hinting at it, so this means
+	// the two have drifted apart.
+	CodeUnsupportedGuard Code = "GOM7323"
+	// CodeSiteNotFound reports a guard hint whose site span names no node of
+	// the kind the form needs — no expression for Form C, no statement for the
+	// other two — or a declaration missing the very token that declares. The
+	// hint and the file disagree about what is there, so nothing is edited.
 	CodeSiteNotFound Code = "GOM7324"
 	// CodeSiteConflict reports rewrite sites the interval forest refused to
 	// place. Two expressions of one file either nest or are disjoint, so this
@@ -100,6 +100,11 @@ const (
 	// CodeWriteFailed reports a snapshot the instrumenter could not write to,
 	// either an instrumented file or the generated runtime package.
 	CodeWriteFailed Code = "GOM7328"
+	// CodeMissingGuard reports a catalogued mutant with no guard hint. Choosing
+	// a rewrite site needs type information this package does not have and does
+	// not want, so a missing hint is a refusal rather than a fallback: see
+	// [Hints].
+	CodeMissingGuard Code = "GOM7329"
 )
 
 // String returns the code as it is printed.
@@ -120,12 +125,13 @@ var codes = []Code{
 	CodeOptions,
 	CodeSourceUnreadable,
 	CodeUnparsable,
-	CodeUnsupportedFamily,
+	CodeUnsupportedGuard,
 	CodeSiteNotFound,
 	CodeSiteConflict,
 	CodeLineDrift,
 	CodeImportInjection,
 	CodeWriteFailed,
+	CodeMissingGuard,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

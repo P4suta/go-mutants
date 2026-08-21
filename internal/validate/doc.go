@@ -11,12 +11,12 @@
 //
 // # Why a phase exists for this
 //
-// Instrumentation is a byte rewrite. It writes a guard around a bool-valued
-// expression and leaves typing to the compiler, which is what makes the guard
-// forms trustworthy and is also why some of them cannot compile: Form C
-// evaluates to `bool`, and a site whose context wanted a named boolean type —
-// `type Flag bool`, and an expression that is one, initialises one, or is
-// returned as one — becomes a type error the moment it is guarded. See
+// Instrumentation is a byte rewrite. It writes a guard around an expression, a
+// statement, or a declaration and leaves typing to the compiler, which is what
+// makes the guard forms trustworthy and is also why some of them cannot
+// compile: a mutated copy can be a program the compiler refuses — `v * 0`
+// swapped into `v / 0` is a constant division by zero, and an operator swap can
+// push an untyped constant out of the range its context allows. See
 // internal/instrument on why deciding that during instrumentation would mean
 // type-checking every file to ask a question the compiler answers for free, and
 // answering it conservatively would drop candidates that were fine.

@@ -165,8 +165,8 @@ aggregated per file: `path`, `reason`, and `count`. The `reason` enum is
 `const-decl`, `array-length`, `type-param`, `case-label`, `package-var-init`,
 `cgo`, `generated`, `excluded`, `struct-tag`, `label-or-goto`, and
 `unnameable-decl-type` — the identifiers documented in
-[Operators](operators.md), the last three emitted by instrumentation rather
-than by discovery.
+[Operators](operators.md). `struct-tag` and `label-or-goto` are still reserved
+for instrumentation; everything else is emitted by discovery.
 
 ### `expectations[]`
 

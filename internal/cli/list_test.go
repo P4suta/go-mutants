@@ -155,8 +155,17 @@ func TestImplementedRulesIsASubsetOfTheSelection(t *testing.T) {
 		t.Errorf("the whole catalogue implements %d rules, discovery reports %d",
 			len(implemented), len(discover.SupportedRules()))
 	}
-	if len(implementedRules(registry.FamilyRules(mutation.FamilyBitwise))) != 0 {
-		t.Error("the bitwise family is reported as implemented; this phase discovers comparisons and boolean literals only")
+	// Discovery implements the whole catalogue today, so the filter is the
+	// identity over any selection. That is a fact about discovery and not about
+	// this filter, which is exactly why it is asserted through
+	// [discover.SupportedRules] rather than through a family named here: the
+	// day a v2 rule lands in the registry ahead of discovery, this keeps
+	// answering correctly without being edited.
+	for _, family := range registry.Families() {
+		rules := registry.FamilyRules(family)
+		if got := len(implementedRules(rules)); got != len(rules) {
+			t.Errorf("the %s family has %d rules and %d are reported as implemented", family, len(rules), got)
+		}
 	}
 	families := implementedFamilies()
 	for _, rule := range discover.SupportedRules() {
@@ -166,73 +175,81 @@ func TestImplementedRulesIsASubsetOfTheSelection(t *testing.T) {
 	}
 }
 
-// TestWarnUnimplementedNamesEveryOperatorItDropped is the partial-selection
-// contract.
+// TestWarnUnimplementedIsSilentForTheWholeCatalogue is what the
+// partial-selection contract became when discovery finished the catalogue.
 //
-// Warning only when the whole selection is unimplemented leaves the commonest
-// case of all silent: `--operator comparison --operator bitwise` lists the
-// comparison half and drops the other one without a word, which is exactly the
-// wrong conclusion — "my code has no bitwise operators in it" — that this
-// warning exists to make unreachable.
-func TestWarnUnimplementedNamesEveryOperatorItDropped(t *testing.T) {
-	// quoted is how the warning spells a name, which is what makes "does not
-	// mention comparison" assertable: the implemented-families list at the end
-	// of every line names the comparison family unquoted.
-	quoted := func(name string) string { return `"` + name + `"` }
+// The contract was one warning line per name the selection dropped, so that
+// `--operator comparison --operator bitwise` could not list the comparison half
+// and drop the other one without a word — leaving the user with exactly the
+// wrong conclusion, "my code has no bitwise operators in it". Every rule in the
+// catalogue is discovered now, so no name can be dropped and the per-name
+// branch has no reachable input.
+//
+// [warnUnimplemented] is kept anyway, for the same reason discovery keeps the
+// branch that ignores a rule it has not implemented: a v2 rule lands in the
+// registry before it lands in discovery, and the first thing it must not do is
+// print an empty listing without a word. This test pins the state that makes
+// the warning unreachable — every catalogue name, family and rule alike, is
+// silent — so the day one of them stops being discovered is the day this fails
+// and the per-name assertions have to come back with it.
+func TestWarnUnimplementedIsSilentForTheWholeCatalogue(t *testing.T) {
+	registry := mutation.CanonicalRegistry()
 
-	tests := []struct {
-		name      string
-		operators []string
-		want      []string
-	}{
-		{"a profile names nothing", nil, nil},
-		{"one implemented family", []string{"comparison"}, nil},
-		{"one implemented rule", []string{"eq-to-neq"}, nil},
-		{"one unimplemented family", []string{"bitwise"}, []string{"bitwise"}},
-		{"one unimplemented rule", []string{"shl-to-shr"}, []string{"shl-to-shr"}},
-		{"the partial selection", []string{"comparison", "bitwise"}, []string{"bitwise"}},
-		{"two unimplemented families", []string{"bitwise", "statement-deletion"}, []string{"bitwise", "statement-deletion"}},
-		{"a name written twice", []string{"bitwise", "bitwise"}, []string{"bitwise"}},
+	names := []string{""}
+	for _, family := range registry.Families() {
+		names = append(names, string(family))
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for _, rule := range registry.Rules() {
+		names = append(names, rule.Name)
+	}
+	for _, name := range names {
+		t.Run("operator "+name, func(t *testing.T) {
 			cfg := config.Defaults()
-			cfg.Mutation.Operators = test.operators
+			if name != "" {
+				// The same name twice, which is also the deduplication case:
+				// one dropped name never earned two lines.
+				cfg.Mutation.Operators = []string{name, name}
+			}
 			rules, err := selectRules(cfg)
 			if err != nil {
-				t.Fatalf("selectRules(%v): %v", test.operators, err)
+				t.Fatalf("selectRules(%v): %v", cfg.Mutation.Operators, err)
 			}
-
 			var b strings.Builder
 			warnUnimplemented(&b, cfg, rules)
-			got := b.String()
-			if len(test.want) == 0 {
-				if got != "" {
-					t.Fatalf("warnUnimplemented wrote %q, want nothing for %v", got, test.operators)
-				}
-				return
-			}
-
-			lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
-			if len(lines) != len(test.want) {
-				t.Fatalf("warnUnimplemented wrote %d lines, want %d:\n%s", len(lines), len(test.want), got)
-			}
-			// One line per dropped name, in the order the names were written:
-			// a diagnostic that reorders itself is one nobody can diff.
-			for i, name := range test.want {
-				if !strings.Contains(lines[i], quoted(name)) {
-					t.Errorf("line %d = %q, want it to name %s", i, lines[i], quoted(name))
-				}
-				if !strings.Contains(lines[i], string(CodeUnimplementedOperators)) {
-					t.Errorf("line %d = %q, want the %s code", i, lines[i], CodeUnimplementedOperators)
-				}
-			}
-			// The implemented half is listed, so it must not be reported as
-			// dropped as well.
-			if strings.Contains(got, quoted("comparison")) {
-				t.Errorf("warnUnimplemented reported the comparison family as undiscoverable:\n%s", got)
+			if got := b.String(); got != "" {
+				t.Errorf("warnUnimplemented wrote %q for %v, want nothing: every catalogue name is discovered",
+					got, cfg.Mutation.Operators)
 			}
 		})
+	}
+}
+
+// TestWarnUnimplementedStillSaysWhyAnEmptyListingIsEmpty covers the message
+// itself, which the case above can no longer reach through a real selection.
+//
+// The aggregate form is the one a profile takes: a tier is not a list of names
+// the user chose between, so naming its unimplemented members would be a wall
+// of text about a decision they did not make. Driving it directly with a
+// selection that resolved to nothing discoverable keeps the wording, the code,
+// and the "implemented so far" list under test while nothing in the catalogue
+// can produce that selection.
+func TestWarnUnimplementedStillSaysWhyAnEmptyListingIsEmpty(t *testing.T) {
+	cfg := config.Defaults()
+	var b strings.Builder
+	warnUnimplemented(&b, cfg, nil)
+
+	got := b.String()
+	if !strings.Contains(got, string(CodeUnimplementedOperators)) {
+		t.Errorf("warning = %q, want the %s code", got, CodeUnimplementedOperators)
+	}
+	if !strings.Contains(got, "the listing is empty") {
+		t.Errorf("warning = %q, want it to say why the listing is empty", got)
+	}
+	if !strings.Contains(got, implementedFamilies()) {
+		t.Errorf("warning = %q, want it to name the implemented families %q", got, implementedFamilies())
+	}
+	if lines := strings.Count(got, "\n"); lines != 1 {
+		t.Errorf("warning spans %d lines, want 1:\n%s", lines, got)
 	}
 }
 

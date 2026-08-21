@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
@@ -47,9 +48,13 @@ func TestInstrumentRefusesWhatItCannotInstrument(t *testing.T) {
 // package can report, so that both the code table and this test are checked
 // against the same list.
 //
-// The last four are internal invariants rather than anything an input can
-// reach: a rewrite site comes from a syntax tree, so two of them cannot
-// partially overlap, and a file that parsed has a package clause. They are
+// The refusals divide in two. The hint-shaped ones — a mutant with no hint, a
+// hint naming bytes that are not the node its form needs, a hint naming a
+// statement no form can rewrite — are reachable from a catalogue and a hint
+// index that disagree with the file, which is what a stale run or a drifting
+// tree looks like from here. The last three are internal invariants no input
+// can reach: a rewrite site comes from a syntax tree, so two of them cannot
+// partially overlap, and a file that parsed has a package clause. Those are
 // produced through the test-only hooks for the reason the flattener's
 // postconditions are — a check nothing has ever run is not a check.
 func instrumentationFailures(t *testing.T) []failure {
@@ -94,26 +99,25 @@ func instrumentationFailures(t *testing.T) []failure {
 			})),
 		fail("source does not parse", instrument.CodeUnparsable,
 			instrumentCorrupted(t, lessSource, "package sample\n\nthis is not Go\n")),
-		fail("family needs another guard form", instrument.CodeUnsupportedFamily,
-			instrumentCandidate(t, plusSource, mutation.Candidate{
-				Rule:        lookupRule(t, "add-to-sub"),
-				Span:        spanOf(t, plusSource, "+"),
-				Original:    "+",
-				Replacement: "-",
+		fail("a catalogued mutant with no hint", instrument.CodeMissingGuard,
+			instrumentHinted(t, lessSource, lessCandidate(t), nil)),
+		fail("a hint whose site is no expression", instrument.CodeSiteNotFound,
+			instrumentHinted(t, lessSource, lessCandidate(t), &discover.Guard{
+				Form: discover.GuardFormC,
+				// The whole `return`: it holds the edit and is a statement
+				// rather than an expression, which is what a hint that has
+				// drifted from its file looks like from here.
+				SiteSpan: spanOf(t, lessSource, "return a < b"),
 			})),
-		fail("no comparison at the span", instrument.CodeSiteNotFound,
-			instrumentCandidate(t, plusSource, mutation.Candidate{
-				Rule:        lookupRule(t, "eq-to-neq"),
-				Span:        spanOf(t, plusSource, "+"),
-				Original:    "+",
-				Replacement: "!=",
+		fail("a hint naming a statement Form S may not wrap", instrument.CodeUnsupportedGuard,
+			instrumentHinted(t, branchSource, branchCandidate(t), &discover.Guard{
+				Form:     discover.GuardFormS,
+				SiteSpan: spanOf(t, branchSource, ifStatement),
 			})),
-		fail("no boolean literal at the span", instrument.CodeSiteNotFound,
-			instrumentCandidate(t, identSource, mutation.Candidate{
-				Rule:        lookupRule(t, "true-to-false"),
-				Span:        spanOf(t, identSource, "truth"),
-				Original:    "truth",
-				Replacement: "false",
+		fail("a hint naming a statement Form D cannot declare", instrument.CodeUnsupportedGuard,
+			instrumentHinted(t, branchSource, assignCandidate(t), &discover.Guard{
+				Form:     discover.GuardFormD,
+				SiteSpan: spanOf(t, branchSource, "a += b"),
 			})),
 		fail("sites partially overlap", instrument.CodeSiteConflict,
 			instrument.PlaceSites(sampleFile, []mutation.Span{{StartByte: 0, EndByte: 10}, {StartByte: 5, EndByte: 15}})),
@@ -138,18 +142,80 @@ func instrumentationFailures(t *testing.T) []failure {
 }
 
 // The sources the refusals above are built from. Each is the smallest file that
-// puts the bytes a bad candidate points at somewhere real.
+// puts the bytes a bad candidate or a bad hint points at somewhere real.
 const (
-	lessSource  = "package sample\n\nvar B = 1 < 2\n"
-	plusSource  = "package sample\n\nvar N = 1 + 2\n"
-	identSource = "package sample\n\nvar Name = truth\n\nvar truth = true\n"
+	lessSource   = "package sample\n\nfunc Less(a, b int) bool {\n\treturn a < b\n}\n"
+	branchSource = "package sample\n\nfunc F(a, b int) int {\n\tif a < b {\n\t\ta += b\n\t}\n\treturn a\n}\n"
+	ifStatement  = "if a < b {\n\t\ta += b\n\t}"
 )
 
+// lessCandidate is the comparison in [lessSource], and branchCandidate the one
+// in [branchSource]; assignCandidate is the compound assignment inside the
+// branch that one guards.
+func lessCandidate(t *testing.T) mutation.Candidate {
+	t.Helper()
+	return mutation.Candidate{
+		Rule:        lookupRule(t, "lt-to-le"),
+		Span:        spanOf(t, lessSource, "<"),
+		Original:    "<",
+		Replacement: "<=",
+	}
+}
+
+func branchCandidate(t *testing.T) mutation.Candidate {
+	t.Helper()
+	return mutation.Candidate{
+		Rule:        lookupRule(t, "lt-to-le"),
+		Span:        spanOf(t, branchSource, "<"),
+		Original:    "<",
+		Replacement: "<=",
+	}
+}
+
+func assignCandidate(t *testing.T) mutation.Candidate {
+	t.Helper()
+	return mutation.Candidate{
+		Rule:        lookupRule(t, "add-assign-to-sub-assign"),
+		Span:        spanOf(t, branchSource, "+="),
+		Original:    "+=",
+		Replacement: "-=",
+	}
+}
+
 // instrumentCandidate instruments a snapshot holding src and one catalogued
-// candidate, which is how a catalogue that does not describe the tree it is
-// pointed at is simulated. Path and SourceDigest default to the snapshot's one
-// file.
+// candidate, with the guard hint discovery would have produced for it. It is
+// how a catalogue that does not describe the tree it is pointed at is
+// simulated. Path and SourceDigest default to the snapshot's one file.
 func instrumentCandidate(t *testing.T, src string, candidate mutation.Candidate) error {
+	t.Helper()
+	return instrumentWith(t, src, candidate, func(catalog *mutation.Catalog) instrument.Hints {
+		return hintsInSource(t, []byte(src), catalog, hintOptions{})
+	})
+}
+
+// instrumentHinted instruments the same one-candidate snapshot with a hint the
+// caller states, which is how a hint that does not describe the tree — or no
+// hint at all, for a nil guard — is simulated.
+func instrumentHinted(t *testing.T, src string, candidate mutation.Candidate, guard *discover.Guard) error {
+	t.Helper()
+	return instrumentWith(t, src, candidate, func(catalog *mutation.Catalog) instrument.Hints {
+		hints := make(instrument.Hints, catalog.Len())
+		for _, m := range catalog.Mutants() {
+			if guard != nil {
+				hints[m.ID] = *guard
+			}
+		}
+		return hints
+	})
+}
+
+// instrumentWith is the shared body of the two above.
+func instrumentWith(
+	t *testing.T,
+	src string,
+	candidate mutation.Candidate,
+	hints func(*mutation.Catalog) instrument.Hints,
+) error {
 	t.Helper()
 
 	root := t.TempDir()
@@ -160,16 +226,19 @@ func instrumentCandidate(t *testing.T, src string, candidate mutation.Candidate)
 	if candidate.SourceDigest == "" {
 		candidate.SourceDigest = mutation.Digest([]byte(src))
 	}
+	catalog := catalogOf(t, []mutation.Candidate{candidate})
 	_, err := instrument.Instrument(instrument.Options{
 		SnapshotRoot: root,
 		ModulePath:   testModule,
-		Catalog:      catalogOf(t, []mutation.Candidate{candidate}),
+		Catalog:      catalog,
+		Hints:        hints(catalog),
 	})
 	return err
 }
 
 // instrumentCorrupted catalogues one file and then replaces its bytes, which is
-// what a tree drifting after discovery looks like from here.
+// what a tree drifting after discovery looks like from here. The hints are
+// derived from the bytes that were catalogued, as a run's would have been.
 func instrumentCorrupted(t *testing.T, src, replacement string) error {
 	t.Helper()
 
@@ -177,12 +246,14 @@ func instrumentCorrupted(t *testing.T, src, replacement string) error {
 	target := filepath.Join(root, sampleFile)
 	writeFile(t, target, []byte(src))
 	catalog := catalogOf(t, candidatesIn(t, []byte(src)))
+	hints := hintsInSource(t, []byte(src), catalog, hintOptions{})
 	writeFile(t, target, []byte(replacement))
 
 	_, err := instrument.Instrument(instrument.Options{
 		SnapshotRoot: root,
 		ModulePath:   testModule,
 		Catalog:      catalog,
+		Hints:        hints,
 	})
 	return err
 }

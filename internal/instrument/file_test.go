@@ -53,6 +53,9 @@ func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 		Path:          sampleFile,
 		Source:        pristine,
 		Mutants:       kept,
+		// The whole run's hints, not the subset's: they are an index by mutant
+		// id, and a bisection narrows the mutants rather than the hints.
+		Hints: hintsInSource(t, pristine, catalog, hintOptions{}),
 	})
 	if err != nil {
 		t.Fatalf("InstrumentFile: %v", err)
@@ -202,6 +205,7 @@ func TestInstrumentFileRefusesAlreadyInstrumentedBytes(t *testing.T) {
 		Path:          sampleFile,
 		Source:        instrumented,
 		Mutants:       catalog.Mutants(),
+		Hints:         hintsInSource(t, pristine, catalog, hintOptions{}),
 	})
 	if err == nil {
 		t.Fatal("InstrumentFile rewrote an already-instrumented file, want a refusal")

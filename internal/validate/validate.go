@@ -45,6 +45,13 @@ type Options struct {
 	// the catalogue the runner activates against must be the same one.
 	Catalog *mutation.Catalog
 
+	// Hints are the rewrite sites discovery chose, one per catalogued mutant,
+	// as [instrument.HintsOf] indexes them. They travel through this phase
+	// untouched: every rewrite it makes, the first and every one the search
+	// makes afterwards, is composed from the same hints against the same
+	// pristine bytes.
+	Hints instrument.Hints
+
 	// ModulePath is the import path of the main module at the snapshot root,
 	// which the generated runtime's import path is built from.
 	ModulePath string
@@ -75,8 +82,8 @@ type Options struct {
 //
 // Rejections are data rather than errors. A candidate whose guard does not
 // compile is an ordinary, expected outcome of the design — see internal/instrument
-// on named boolean types — and the run reports it, scores around it, and carries
-// on. What must never happen is a candidate disappearing silently, which is why
+// on why compiling is how that is established — and the run reports it, scores
+// around it, and carries on. What must never happen is a candidate disappearing silently, which is why
 // every field here is filled in: an ID nothing can look up, a coordinate nobody
 // can jump to, or a rejection with no diagnostic would each amount to the same
 // silence in a different disguise.
@@ -160,6 +167,7 @@ func Validate(ctx context.Context, opts Options) (Result, error) {
 	v := &validator{
 		root:      opts.Snap.Root,
 		catalog:   opts.Catalog,
+		hints:     opts.Hints,
 		toolchain: opts.Toolchain,
 		jobs:      opts.Jobs,
 		timeout:   opts.BuildTimeout,
@@ -206,6 +214,7 @@ func (o Options) validate() error {
 type validator struct {
 	root      string
 	catalog   *mutation.Catalog
+	hints     instrument.Hints
 	toolchain gocmd.Toolchain
 	jobs      int
 	timeout   time.Duration
@@ -243,6 +252,7 @@ func (v *validator) run(ctx context.Context, modulePath string) (Result, error) 
 		SnapshotRoot: v.root,
 		ModulePath:   modulePath,
 		Catalog:      v.catalog,
+		Hints:        v.hints,
 	})
 	if err != nil {
 		return Result{}, err
@@ -445,6 +455,7 @@ func (v *validator) instrumentFile(path string, subset []mutation.Mutant) error 
 		Path:          path,
 		Source:        v.pristine[path],
 		Mutants:       subset,
+		Hints:         v.hints,
 	})
 	if err != nil {
 		return err

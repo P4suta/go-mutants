@@ -108,6 +108,7 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 		tokFile:      tokFile,
 		info:         pkg.TypesInfo,
 		suppressions: collectSuppressions(file, pkg.TypesInfo),
+		guard:        newGuardResolver(file, pkg.TypesInfo, pkg.Types, tokFile),
 	}
 	return scan.walk(file)
 }
@@ -283,47 +284,363 @@ type fileScan struct {
 	tokFile      *token.File
 	info         *types.Info
 	suppressions []suppression
+	guard        *guardResolver
 }
 
 // walk emits every candidate in the file, or records why it did not.
+//
+// One switch over the syntax, one case per node kind a family can be anchored
+// to. Several families share a node kind — a binary expression is where the
+// comparison, connective, arithmetic, bitwise, and nil-error rules all look —
+// and each of them asks the type checker its own question there, which is why
+// the dispatch is by node and the discrimination is by type.
 func (s *fileScan) walk(file *ast.File) error {
 	var failure error
 	ast.Inspect(file, func(node ast.Node) bool {
-		if failure != nil {
+		if failure != nil || node == nil {
 			return false
 		}
 		switch n := node.(type) {
 		case *ast.BinaryExpr:
-			matcher, ok := s.matchers.comparison[n.Op]
-			if !ok {
-				return true
-			}
-			failure = s.emit(matcher.rule, n.OpPos, matcher.original, matcher.replacement)
+			failure = s.binaryExpr(n)
+		case *ast.UnaryExpr:
+			failure = s.unaryExpr(n)
 		case *ast.Ident:
-			matcher, ok := s.matchers.boolean[n.Name]
-			if !ok || !s.isUniverseBool(n) {
-				return true
-			}
-			failure = s.emit(matcher.rule, n.Pos(), n.Name, matcher.replacement)
+			failure = s.booleanLiteral(n)
+		case *ast.IfStmt:
+			failure = s.negateCondition(n.Cond, ruleNegateCondition)
+		case *ast.ForStmt:
+			failure = s.negateCondition(n.Cond, ruleNegateLoopCondition)
+		case *ast.ReturnStmt:
+			failure = s.returnStmt(n)
+		case *ast.AssignStmt:
+			failure = s.assignStmt(n)
+		case *ast.IncDecStmt:
+			failure = s.incDecStmt(n)
+		case *ast.ExprStmt:
+			failure = s.exprStmt(n)
 		}
 		return failure == nil
 	})
 	return failure
 }
 
-// isUniverseBool reports whether an identifier is the predeclared constant of
-// its own name, rather than something shadowing it. `true` is not a keyword in
-// Go, and a package that declares its own is entitled to have it left alone.
-func (s *fileScan) isUniverseBool(ident *ast.Ident) bool {
-	if s.info == nil {
-		return false
+// binaryExpr emits every candidate anchored on one binary expression.
+//
+// The arithmetic families are the reason the operand types are read once here
+// rather than inside each swap: `+` is an integer rule, a float rule, or
+// neither, and string concatenation is excluded because its operands are
+// strings — never because a quote was spotted near the operator.
+func (s *fileScan) binaryExpr(n *ast.BinaryExpr) error {
+	if err := s.swap(s.matchers.comparison, n, n.Op, n.OpPos); err != nil {
+		return err
 	}
-	obj := s.info.Uses[ident]
-	if obj == nil {
-		return false
+	if err := s.swap(s.matchers.connective, n, n.Op, n.OpPos); err != nil {
+		return err
 	}
-	konst, ok := obj.(*types.Const)
-	return ok && konst.Parent() == types.Universe
+	left, right := s.typeOf(n.X), s.typeOf(n.Y)
+	if isInteger(left) && isInteger(right) {
+		if err := s.swap(s.matchers.integer, n, n.Op, n.OpPos); err != nil {
+			return err
+		}
+	}
+	if isFloat(left) && isFloat(right) {
+		if err := s.swap(s.matchers.float, n, n.Op, n.OpPos); err != nil {
+			return err
+		}
+	}
+	if err := s.bitwise(n, left, right); err != nil {
+		return err
+	}
+	return s.nilErrorBranch(n)
+}
+
+// bitwise emits the bitwise swap, if the operator is one and the operands allow
+// it.
+//
+// A shift is gated on its left operand alone. The count is an operand of a
+// different kind — it may be any integer type and is never what the rule
+// rewrites — so requiring it to match the shifted value would refuse
+// `x << shift` for no reason connected to the mutation.
+func (s *fileScan) bitwise(n *ast.BinaryExpr, left, right types.Type) error {
+	switch n.Op {
+	case token.SHL, token.SHR:
+		if !isInteger(left) {
+			return nil
+		}
+	default:
+		if !isInteger(left) || !isInteger(right) {
+			return nil
+		}
+	}
+	return s.swap(s.matchers.bitwise, n, n.Op, n.OpPos)
+}
+
+// nilErrorBranch emits the rule that makes an `if err != nil` branch stop
+// firing.
+//
+// The whole comparison is replaced with `false` rather than the operator being
+// swapped, because the point is a branch that never runs: `err == nil` would
+// only move the failure to the other arm, which the comparison family already
+// covers.
+func (s *fileScan) nilErrorBranch(n *ast.BinaryExpr) error {
+	rule, ok := s.matchers.rule(ruleNilErrorBranch)
+	if !ok || n.Op != token.NEQ {
+		return nil
+	}
+	var other ast.Expr
+	switch {
+	case s.isNilLiteral(n.Y):
+		other = n.X
+	case s.isNilLiteral(n.X):
+		other = n.Y
+	default:
+		return nil
+	}
+	if !implementsError(s.typeOf(other)) {
+		return nil
+	}
+	return s.emitNode(rule, n, "false")
+}
+
+// unaryExpr emits the negation-removal rule.
+//
+// The span is the whole unary expression and the replacement is the operand's
+// own bytes, so the edit is exactly "delete the `!`" however much whitespace or
+// commentary sits between the two. Removing an operator can never remove a line
+// break, which is what keeps this line-preserving.
+func (s *fileScan) unaryExpr(n *ast.UnaryExpr) error {
+	rule, ok := s.matchers.rule(ruleRemoveNegation)
+	if !ok || n.Op != token.NOT || !isBoolClassed(s.typeOf(n.X)) {
+		return nil
+	}
+	operand, ok := s.text(n.X)
+	if !ok {
+		return nil
+	}
+	return s.emitNode(rule, n, operand)
+}
+
+// booleanLiteral emits the boolean-literal swap for a predeclared `true` or
+// `false`.
+func (s *fileScan) booleanLiteral(n *ast.Ident) error {
+	matcher, ok := s.matchers.boolean[n.Name]
+	if !ok || !s.isUniverseConst(n) {
+		return nil
+	}
+	return s.emit(matcher.rule, n, n.Pos(), n.Name, matcher.replacement)
+}
+
+// negateCondition wraps an `if` or `for` condition in a negation.
+//
+// The gate is "boolean underneath" rather than "the universe bool", because `!`
+// applies to any boolean type: a condition of a named boolean type is still
+// negatable, even though the guard around it cannot be Form C. Wrapping the
+// original bytes in `!(…)` rather than re-rendering the condition is what keeps
+// comments, spacing, and line count intact.
+func (s *fileScan) negateCondition(cond ast.Expr, name string) error {
+	rule, ok := s.matchers.rule(name)
+	if !ok || cond == nil || !isBoolClassed(s.typeOf(cond)) {
+		return nil
+	}
+	original, ok := s.text(cond)
+	if !ok {
+		return nil
+	}
+	return s.emitNode(rule, cond, "!("+original+")")
+}
+
+// returnStmt emits the return-replacement and error-swallowing rules for every
+// value of one `return`.
+//
+// A bare `return` in a function with named results is passed over in silence:
+// there are no bytes to replace, so there is no candidate and nothing was
+// decided against. A `return f()` whose single call fills several results is
+// passed over too — the values and the declared results cannot be lined up
+// one to one, and replacing the whole call would be a different edit than the
+// one this family describes.
+func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
+	results := s.enclosingResults(n)
+	if len(n.Results) == 0 || results == nil || results.Len() != len(n.Results) {
+		return nil
+	}
+	for i, value := range n.Results {
+		if err := s.returnValue(value, results.At(i).Type()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// returnValue emits whichever replacement the declared result type admits.
+//
+// The nillable results are split between two families, and the split is stated
+// on both sides so that neither can widen without the other narrowing: a value
+// whose static type is exactly `error` belongs to error-swallowing, and every
+// other nillable result belongs to return-replacement. `return &myErr{}` from a
+// function returning `error` is therefore a `return-nil` candidate — the value
+// is a concrete pointer, not an error interface value — while `return err` is
+// the `return-err-to-nil` the family exists for.
+func (s *fileScan) returnValue(value ast.Expr, declared types.Type) error {
+	if isExactlyError(s.typeOf(value)) {
+		return s.replaceReturn(value, ruleReturnErrToNil, "nil")
+	}
+	switch {
+	case isNumeric(declared):
+		return s.replaceReturn(value, ruleReturnZeroNumeric, "0")
+	case isStringy(declared):
+		return s.replaceReturn(value, ruleReturnEmptyString, `""`)
+	case isBoolClassed(declared):
+		if err := s.replaceReturn(value, ruleReturnTrue, "true"); err != nil {
+			return err
+		}
+		return s.replaceReturn(value, ruleReturnFalse, "false")
+	case isNillable(declared):
+		// Not an error-typed value: that was settled above.
+		return s.replaceReturn(value, ruleReturnNil, "nil")
+	default:
+		return nil
+	}
+}
+
+// replaceReturn emits one return-value replacement, unless the value is already
+// spelled exactly that way.
+//
+// The catalogue would refuse a replacement equal to its original anyway, and
+// refusing it loudly there would turn every `return nil` in the tree into a
+// failed run. It is not a skip either: `return 0` is not a place go-mutants
+// declined to mutate, it is a place where the mutation and the source are the
+// same program.
+func (s *fileScan) replaceReturn(value ast.Expr, name, replacement string) error {
+	rule, ok := s.matchers.rule(name)
+	if !ok {
+		return nil
+	}
+	original, ok := s.text(value)
+	if !ok || original == replacement {
+		return nil
+	}
+	return s.emitNode(rule, value, replacement)
+}
+
+// enclosingResults returns the declared results of the function a node sits in.
+func (s *fileScan) enclosingResults(node ast.Node) *types.Tuple {
+	if s.guard == nil || s.info == nil {
+		return nil
+	}
+	for n := node; n != nil; n = s.guard.parent[n] {
+		var signature types.Type
+		switch fn := n.(type) {
+		case *ast.FuncDecl:
+			if obj := s.info.Defs[fn.Name]; obj != nil {
+				signature = obj.Type()
+			}
+		case *ast.FuncLit:
+			if tv, ok := s.info.Types[fn]; ok {
+				signature = tv.Type
+			}
+		default:
+			continue
+		}
+		sig, ok := signature.(*types.Signature)
+		if !ok {
+			return nil
+		}
+		return sig.Results()
+	}
+	return nil
+}
+
+// assignStmt emits the compound-assignment swap and the assignment deletion.
+func (s *fileScan) assignStmt(n *ast.AssignStmt) error {
+	if matcher, ok := s.matchers.assignOp[n.Tok]; ok && len(n.Lhs) == 1 {
+		if target := s.typeOf(n.Lhs[0]); isInteger(target) || isFloat(target) {
+			if err := s.emit(matcher.rule, n, n.TokPos, matcher.original, matcher.replacement); err != nil {
+				return err
+			}
+		}
+	}
+	// Only a plain `=` is deleted. A `:=` declares, and deleting a declaration
+	// makes every later use of the name a compile error rather than a mutant.
+	if rule, ok := s.matchers.rule(ruleDeleteAssignment); ok && n.Tok == token.ASSIGN {
+		return s.emitNode(rule, n, "")
+	}
+	return nil
+}
+
+// incDecStmt emits the `++`/`--` swap and the statement deletion.
+func (s *fileScan) incDecStmt(n *ast.IncDecStmt) error {
+	if matcher, ok := s.matchers.incDec[n.Tok]; ok {
+		if target := s.typeOf(n.X); isInteger(target) || isFloat(target) {
+			if err := s.emit(matcher.rule, n, n.TokPos, matcher.original, matcher.replacement); err != nil {
+				return err
+			}
+		}
+	}
+	if rule, ok := s.matchers.rule(ruleDeleteIncDec); ok {
+		return s.emitNode(rule, n, "")
+	}
+	return nil
+}
+
+// exprStmt emits the call-statement deletion.
+//
+// A `panic(…)` statement is left alone, and so is the `(panic)(…)` the same
+// call may be written as. Deleting one removes the only reason the function
+// ends there, so every path that fell through it now reaches the closing brace
+// without a return — a compile error, manufactured wholesale in exactly the
+// defensive code where a deleted call would otherwise be an interesting mutant.
+// A `panic` the package shadowed with a function of its own is an ordinary call
+// and is deleted like any other.
+func (s *fileScan) exprStmt(n *ast.ExprStmt) error {
+	rule, ok := s.matchers.rule(ruleDeleteCallStatement)
+	if !ok {
+		return nil
+	}
+	call, ok := n.X.(*ast.CallExpr)
+	if !ok || s.isBuiltinCall(call, "panic") {
+		return nil
+	}
+	return s.emitNode(rule, n, "")
+}
+
+// swap emits one operator-token rewrite from a family table.
+func (s *fileScan) swap(table map[token.Token]tokenMatcher, anchor ast.Node, op token.Token, pos token.Pos) error {
+	matcher, ok := table[op]
+	if !ok {
+		return nil
+	}
+	return s.emit(matcher.rule, anchor, pos, matcher.original, matcher.replacement)
+}
+
+// text returns the pristine bytes of a node, as a string.
+func (s *fileScan) text(node ast.Node) (string, bool) {
+	start := s.tokFile.Offset(node.Pos())
+	end := s.tokFile.Offset(node.End())
+	if start < 0 || end < start || end > len(s.src) {
+		return "", false
+	}
+	return string(s.src[start:end]), true
+}
+
+// emitNode records a candidate whose span is a whole node, with the node's own
+// bytes as the original text.
+//
+// A node parsed from these bytes always lies inside them, so the failure below
+// is unreachable; it is an error rather than a silent skip because the one way
+// to reach it is a syntax tree and a file that have stopped describing each
+// other, which is the condition [emit]'s span check exists to shout about.
+func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement string) error {
+	original, ok := s.text(node)
+	if !ok {
+		position := s.tokFile.PositionFor(node.Pos(), false)
+		return &Error{
+			Code: CodeSpanMismatch,
+			Message: "internal error: " + s.rel + ":" + strconv.Itoa(position.Line) + ":" +
+				strconv.Itoa(position.Column) + " starts a node that reaches past the end of the file",
+		}
+	}
+	return s.emit(rule, node, node.Pos(), original, replacement)
 }
 
 // emit records one candidate, or the reason it was suppressed.
@@ -334,7 +651,15 @@ func (s *fileScan) isUniverseBool(ident *ast.Ident) bool {
 // the diff a survivor is displayed as — trusts that, and a mismatch means the
 // syntax tree and the file have drifted apart. Failing loudly is the only
 // honest answer; splicing a replacement over the wrong bytes is not.
-func (s *fileScan) emit(rule mutation.Rule, pos token.Pos, original, replacement string) error {
+//
+// The guard hint is resolved here too, and it is the second thing that can
+// remove a candidate: an edit whose rewrite site none of the three guard forms
+// can express is recorded as [SkipUnnameableDeclType] rather than catalogued
+// for an instrumenter that would have to refuse it later. anchor is the node
+// the edit belongs to — the binary expression an operator sits in, the
+// statement a deletion removes, the value a return replaces — and it is where
+// the search for that site starts.
+func (s *fileScan) emit(rule mutation.Rule, anchor ast.Node, pos token.Pos, original, replacement string) error {
 	if reason, ok := s.suppressed(pos); ok {
 		s.record(s.rel, reason, 1)
 		return nil
@@ -354,6 +679,11 @@ func (s *fileScan) emit(rule mutation.Rule, pos token.Pos, original, replacement
 	}
 	if string(covered) != original {
 		return s.spanMismatch(pos, original, "the file holds "+strconv.Quote(string(covered)))
+	}
+	guard, ok := s.guardFor(anchor, span)
+	if !ok {
+		s.record(s.rel, SkipUnnameableDeclType, 1)
+		return nil
 	}
 
 	candidate := mutation.Candidate{
@@ -377,8 +707,26 @@ func (s *fileScan) emit(rule mutation.Rule, pos token.Pos, original, replacement
 		Line:      position.Line,
 		Column:    position.Column,
 		Package:   s.pkgPath,
+		Guard:     guard,
 	})
 	return nil
+}
+
+// guardFor resolves the rewrite site of one candidate, checking the one
+// invariant the hint has to hold: the site contains the edit.
+//
+// A site that did not would be an instrumenter splicing a mutation into an
+// expression that does not hold it, which is the failure the whole span
+// discipline exists to prevent — so it is refused here rather than passed on.
+func (s *fileScan) guardFor(anchor ast.Node, span mutation.Span) (Guard, bool) {
+	if s.guard == nil || anchor == nil {
+		return Guard{}, false
+	}
+	guard, ok := s.guard.guardFor(anchor)
+	if !ok || !guard.SiteSpan.Contains(span) {
+		return Guard{}, false
+	}
+	return guard, true
 }
 
 // spanMismatch builds the internal-invariant error, located the way a user

@@ -34,15 +34,57 @@
 // never mutated. That is not recorded as a skip, because it is not a decision
 // about a particular file.
 //
+// Two more things are never candidates and are never skips either, for the
+// same reason: neither was a decision about a place. A call to the builtin
+// `panic` is not deleted, because deleting a terminating panic manufactures a
+// missing return rather than a mutant; and a return value already spelled as
+// its own replacement — `return 0` from a function returning an int — produces
+// nothing, because the mutation and the source would be the same program.
+//
 // Everything else that is passed over is recorded as a [Skip] with a
 // [SkipReason]: whole files (generated code, cgo packages, files the include
-// and exclude patterns removed) and individual expressions sitting in a
-// context that instrumentation cannot rewrite — constant declarations, array
-// lengths, case labels, package-level variable initialisers, and type
-// parameter lists or explicit type arguments. The reason reported for an
-// expression is the outermost suppressed region containing it: that is the
-// region a walker would have declined to descend into, so it is the reason
-// that stays true no matter what happens inside it.
+// and exclude patterns removed), individual expressions sitting in a context
+// that instrumentation cannot rewrite — constant declarations, array lengths,
+// case labels, package-level variable initialisers, and type parameter lists
+// or explicit type arguments — and edits whose rewrite site none of the three
+// guard forms can express, which are [SkipUnnameableDeclType]. The reason
+// reported for an expression is the outermost suppressed region containing it:
+// that is the region a walker would have declined to descend into, so it is
+// the reason that stays true no matter what happens inside it.
+//
+// [SkipUnnameableDeclType] is the widest of those, and deliberately so: it is
+// one reason with one string, and it covers every site v1's guard forms cannot
+// express. Beyond the type that cannot be spelled that it is named for, the
+// declaration form refuses a site whose initialiser mentions a name the site
+// itself declares — hoisting the declaration out in front of it would rebind
+// the reference to a zero value and change what the program computes — and one
+// whose declaration tokens cannot be cut out without moving a line. [Guard]
+// enumerates all of them.
+//
+// # The guard site hint
+//
+// Every candidate carries a [Guard]: which of the three rewrite forms the
+// instrumentation phase has to use for it, over which bytes, and — for the
+// declaration form — the source spelling of every type the site declares.
+//
+// It lives here because this is where the type information is. Whether an
+// expression is the universe `bool` or a named boolean type, what `x := f()`
+// declares, whether a value is an `error`: each is a [go/types] question, and
+// internal/instrument deliberately parses the snapshot without type checking
+// it, so that a byte rewriter can be tested with no toolchain in the loop.
+// [Guard] documents the contract in full; what belongs here is that the type
+// gates and the site hint are two uses of one type check, done once.
+//
+// # What the operator families ask of the types
+//
+// Every family below the comparison family is decided by what the operands
+// *are* rather than by how they are spelled, and every gate reads through a
+// named type to its underlying one: `type Celsius float64` adds and subtracts
+// exactly like a float64. String concatenation is not an integer-arithmetic
+// candidate because its operands are strings, complex arithmetic is out of
+// scope because the float gate asks for a floating-point type, and a type
+// parameter gates out of all of them because its underlying type is its
+// constraint. docs/operators.md is the table.
 //
 // # What the build configuration decides
 //

@@ -12,6 +12,12 @@ import "testing"
 // ended at a green build would not have compiled half the tree; running these
 // tests with no mutant active is what says the accepted guards both compile and
 // mean what the unmutated code meant.
+//
+// It is also what makes every healthy candidate in this file a killable one.
+// The fixture's claim is that validation removes exactly the traps, and the
+// cleanest evidence for it is a run that scores 100 on what is left: a healthy
+// mutant nothing kills would sit in the report as a survivor and be
+// indistinguishable, at a glance, from a trap that slipped through.
 func TestInRange(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -33,17 +39,18 @@ func TestInRange(t *testing.T) {
 	}
 }
 
-// TestMatches pins the trapped comparison in this file.
+// TestErased pins the trapped multiplication in this file.
 //
-// The mutant here is rejected rather than run, but the function it was proposed
-// for is ordinary code and stays part of the suite: a fixture whose trapped
-// functions were untested would let a broken restoration — pristine bytes
-// written back wrong — pass unnoticed.
-func TestMatches(t *testing.T) {
-	if !Matches("go", "go") {
-		t.Error(`Matches("go", "go") = false, want true`)
+// The mutant on the `*` is rejected rather than run, but the function it was
+// proposed for is ordinary code and stays part of the suite: a fixture whose
+// trapped functions were untested would let a broken restoration — pristine
+// bytes written back wrong — pass unnoticed, and the two healthy candidates
+// sharing the statement need a test to be killed by.
+func TestErased(t *testing.T) {
+	if got := Erased(7); got != 1 {
+		t.Errorf("Erased(7) = %d, want 1", got)
 	}
-	if Matches("go", "rust") {
-		t.Error(`Matches("go", "rust") = true, want false`)
+	if got := Erased(0); got != 1 {
+		t.Errorf("Erased(0) = %d, want 1", got)
 	}
 }

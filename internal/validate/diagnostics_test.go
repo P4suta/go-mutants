@@ -23,6 +23,16 @@ const (
 
 // TestParseDiagnostics reads real compiler output shapes into located
 // messages.
+//
+// Several rows below are transcripts from the era when a guard around a named
+// boolean type was itself the compile error, and they name a `flag.go` the
+// fixture no longer has. They are kept deliberately: what this parser has to
+// survive is the *shape* of a message — a `.\` prefix, a drive letter, a
+// subdirectory printed without one — and the body is incidental to that, so a
+// corpus of shapes the compiler has really printed is worth more than one
+// narrowed to the failures today's fixture happens to produce. Nothing here is
+// a claim about what fixtures/rejectable now contains; see its README for why
+// the named boolean stopped being a trap.
 func TestParseDiagnostics(t *testing.T) {
 	t.Parallel()
 

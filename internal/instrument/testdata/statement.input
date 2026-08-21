@@ -1,0 +1,47 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: the statement guard, over a return
+// carrying two mutants at once, an assignment written across three lines, a
+// deferred call, and a statement one of whose mutants deletes it outright.
+package sample
+
+// Measure reports the length of s and whatever measuring it went wrong with.
+//
+// Both returned values are rewrite sites and they share one: the
+// return-replacement of the count and the error-swallowing of the failure are
+// two alternatives of a single statement guard, because they are two edits to
+// one statement.
+func Measure(s string) (int, error) {
+	count, err := measure(s)
+	return count, err
+}
+
+// measure is the callee Measure delegates to, and is catalogued nowhere.
+func measure(s string) (int, error) {
+	return len(s), nil
+}
+
+// Accumulate folds every step into total, in an assignment spread over three
+// lines so that the guard has to write its own bytes on the first and the last
+// of them and nothing in between.
+func Accumulate(total int, steps []int) int {
+	for _, step := range steps {
+		total = total +
+			step*2 -
+			1
+	}
+	return total
+}
+
+// Track reports the count as the function returns and then raises it.
+//
+// The deferred call is wrapped whole rather than having its argument rewritten
+// in place: `defer` is function-scoped, so the block the guard adds changes
+// nothing about when it fires. The statement after it carries two mutants from
+// two different families — one swaps the operator, one deletes the statement —
+// which chain as alternatives of one guard all the same.
+func Track(counter *int, done func(int)) {
+	defer done(*counter + 1)
+	*counter = *counter + 2
+}

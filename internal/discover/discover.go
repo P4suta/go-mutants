@@ -61,7 +61,9 @@ type Options struct {
 // The embedded [mutation.Candidate] is the whole truth for identity and
 // instrumentation; the line, column, and package are for the console, the
 // report, and the GitHub annotations, none of which can do anything with a
-// byte offset.
+// byte offset. [Located.Guard] is neither: it is the site hint the
+// instrumentation phase consumes, and it is documented as a contract on
+// [Guard].
 type Located struct {
 	mutation.Candidate
 
@@ -74,6 +76,129 @@ type Located struct {
 	// Package is the import path of the package owning the file, with the
 	// " [pkg.test]" suffix of a test variant removed.
 	Package string
+	// Guard is the rewrite site the instrumenter has to use for this candidate.
+	// Every candidate carries one; a candidate for which no guard form could be
+	// determined is not emitted at all, it is a [SkipUnnameableDeclType] skip.
+	Guard Guard
+}
+
+// A GuardForm names one of the three rewrite shapes instrumentation composes a
+// dormant mutant from. The design plan calls them Form S, Form C, and Form D,
+// and these are those three and no others.
+type GuardForm string
+
+// The three guard forms.
+const (
+	// GuardFormC is the bool selector:
+	//
+	//	(__gm.M[3] && (<mutated>) || !(__gm.M[3]) && (<original>))
+	//
+	// It wraps an expression whose static type is exactly the universe `bool`,
+	// so that both branches are ordinary expressions in the site's own context
+	// and the compiler settles typing, evaluation order, and short-circuiting.
+	// A named boolean type is deliberately not a Form C site: the selector
+	// evaluates to `bool`, which is not assignable to `type Flag bool`.
+	GuardFormC GuardForm = "C"
+	// GuardFormS is the statement guard:
+	//
+	//	if __gm.M[7] { <mutated statement, flattened> } else { <original bytes> }
+	//
+	// It is used where the edit is not inside any bool-valued expression. The
+	// site is a statement that declares nothing, so wrapping it in a block
+	// changes no scope.
+	GuardFormS GuardForm = "S"
+	// GuardFormD is the declaration rewrite:
+	//
+	//	var x T; if __gm.M[9] { x = <mutated> } else { x = <original> }
+	//
+	// It is used where the site is a statement that *does* declare something —
+	// `x := e` or `var x = e` — because Form S would bury those declarations
+	// inside a block and the code after them would stop compiling. The declared
+	// types the rewrite needs are in [Guard.DeclTypes]; discovery computes them
+	// because it is the only phase that has the type information.
+	GuardFormD GuardForm = "D"
+)
+
+// A DeclType is one identifier a Form D site declares, together with the source
+// spelling of its type.
+//
+// Type is what [types.TypeString] produced against a qualifier built from the
+// file's own import declarations, so it can be written into that file verbatim.
+// Discovery never invents an import to make a type nameable: a type that cannot
+// be spelled with what the file already imports makes the whole candidate a
+// [SkipUnnameableDeclType] skip instead.
+type DeclType struct {
+	// Name is the identifier as it is spelled in the declaration.
+	Name string
+	// Type is the type as it must be written in this file.
+	Type string
+}
+
+// A Guard is the Form D site hint: the contract between discovery, which has
+// the type information, and instrumentation, which has none.
+//
+// # Why the hint is computed here
+//
+// Choosing a guard form needs answers only a type checker holds — is this
+// expression the universe `bool` or a named boolean type, what type does `x :=
+// f()` declare, is this value an `error` — and instrumentation deliberately
+// parses the snapshot without type checking it. Handing the decision down as
+// data keeps that split: the instrumenter stays a byte rewriter that can be
+// tested with no toolchain in the loop, and the phase that already paid for
+// go/types answers the questions once.
+//
+// # How the form is chosen
+//
+// Walking outward from the edit, in this order:
+//
+//  1. The nearest enclosing expression whose static type is exactly the
+//     universe `bool` — `types.Typ[types.Bool]`, or an untyped bool that
+//     materialised as one — and that sits in a position where a parenthesised
+//     expression is legal, is a [GuardFormC] site. The search stops at the
+//     first ancestor that is not an expression, so it never crosses out of a
+//     function literal into the expression the literal sits in.
+//  2. Otherwise the nearest enclosing statement, which must be an expression
+//     statement, a `return`, an assignment that is not `:=`, an `++`/`--`, a
+//     send, a `defer` or a `go` for [GuardFormS], or a `:=` or a `var`
+//     declaration for [GuardFormD]. The search stops at the enclosing function,
+//     for the same reason.
+//
+// Anything else is refused, and a refused candidate is never emitted. The
+// refusals are all reported as [SkipUnnameableDeclType], which this phase reads
+// as "v1's guard forms cannot express this site":
+//
+//   - the nearest statement is one no form covers — a `switch` tag, a `range`
+//     clause, an `if` whose condition is a named boolean type;
+//   - the statement sits where a block is not legal Go, which is an `if`,
+//     `switch` or `for` initialiser, a `for` post statement, or a type switch
+//     guard: `for i := 0; i < n; if __gm.M[3] { … }` does not parse;
+//   - a Form D site declares a type that cannot be spelled with the file's own
+//     imports;
+//   - a `:=` redeclares an existing variable instead of declaring every name on
+//     its left afresh. Form D would have to know which names to declare and
+//     which to leave alone, so v1 declines the whole site;
+//   - an initialiser of a Form D site mentions a name that same site declares.
+//     Go begins a declared name's scope at the end of its own specification, so
+//     `total := total * 2` and `err := fmt.Errorf("…: %w", err)` read the
+//     enclosing declaration; hoisting the new one out in front would rebind
+//     them to a zero value and quietly change what the program computes;
+//   - a Form D site is a `var` whose declaration tokens cannot be cut without
+//     moving a line: a spec with no initialiser, or a spelled-out type, written
+//     across more than one line. The whole of the first and the type of the
+//     second are what the rewrite removes, and removing a line break moves
+//     every line after it.
+type Guard struct {
+	// Form is the rewrite shape to use.
+	Form GuardForm
+	// SiteSpan is the byte range the guard replaces: the bool expression for
+	// Form C, the statement for Form S and Form D. It always contains the
+	// candidate's own span.
+	SiteSpan mutation.Span
+	// DeclTypes are the identifiers a Form D site declares, in source order,
+	// with the type each one must be declared as. It is empty for Form C and
+	// Form S, and may be empty for a Form D site whose every name is the blank
+	// identifier, which declares nothing.
+	DeclTypes []DeclType
 }
 
 // A SkipReason names why discovery passed something over. Reasons are part of
@@ -81,7 +206,8 @@ type Located struct {
 type SkipReason string
 
 // The v1 skip reasons: three that remove a whole file, five that suppress an
-// expression because of the context it sits in.
+// expression because of the context it sits in, and one that refuses a site no
+// guard form can express.
 const (
 	// SkipGenerated marks a file whose leading comments claim it is generated.
 	// Mutating generated code measures the generator's test suite, not this
@@ -117,6 +243,15 @@ const (
 	// values, however much a constant array length inside one may look like a
 	// value.
 	SkipTypeParam SkipReason = "type-param"
+
+	// SkipUnnameableDeclType marks a candidate whose rewrite site none of the
+	// three guard forms can express. The name comes from the case the design
+	// plan called out — a Form D declaration whose type cannot be spelled with
+	// the imports the file already has — and it has since become the single
+	// reason for every such refusal, because they are one fact for a user:
+	// go-mutants knows what it would like to mutate here and cannot say it in
+	// Go. [Guard] enumerates them.
+	SkipUnnameableDeclType SkipReason = "unnameable-decl-type"
 )
 
 // AllSkipReasons returns every reason discovery can emit, in the declaration
@@ -139,6 +274,7 @@ func AllSkipReasons() []SkipReason {
 		SkipCaseLabel,
 		SkipPackageVarInit,
 		SkipTypeParam,
+		SkipUnnameableDeclType,
 	}
 }
 

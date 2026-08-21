@@ -12,6 +12,11 @@ type Ordered interface {
 
 // Max holds a comparison in a generic function body: type parameters change
 // nothing about a body being ordinary code.
+//
+// Its returns are the other half of that. A type parameter's underlying type is
+// its constraint, which is an interface, so a return-replacement rule reading
+// the underlying type carelessly would offer to rewrite `return a` into `return
+// nil` in a function that returns an int. Neither return here is a candidate.
 func Max[T Ordered](a, b T) T {
 	if a > b {
 		return a

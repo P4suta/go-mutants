@@ -7,8 +7,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 **Status: partially implemented.** The pure packages, the strict
 configuration decoder, the snapshot, the baseline execution layer, discovery
-for two operator families, guard-based instrumentation with its generated
-runtime, compile validation, mutant execution, coverage-guided selection,
+for the whole eleven-family catalogue, guard-based instrumentation with its
+generated runtime in all three forms, compile validation, mutant execution,
+coverage-guided selection,
 `RunReport v1` with its history store, the live TUI dashboard, and the `list`
 and `run` commands exist. The outcome cache, `--changed`, `--shard`, the HTML
 report, and the Stryker projection do not. Each section below marks which of
@@ -112,9 +113,13 @@ executes.
   var x T; if __gm.M[9] { x = <mutated RHS> } else { x = <original RHS> }
   ```
 
-  `T` comes from `types.TypeString` with an import-qualifier map. A type that
-  cannot be named is a recorded skip with reason `unnameable-decl-type`, never
-  a silent omission.
+  `T` comes from `types.TypeString` with an import-qualifier map, and it is
+  discovery that computes it: the type information the qualifier needs is
+  there and nowhere else, so every candidate carries the form, the site span,
+  and any declared types down to instrumentation as a hint. A type that cannot
+  be named is a recorded skip with reason `unnameable-decl-type`, never a
+  silent omission — and so is every other site none of the three forms can
+  express; see [Operators](operators.md).
 
 **Flattening.** The mutated copy is re-tokenized with `go/scanner` and explicit
 semicolons are inserted where automatic semicolon insertion would have applied,
@@ -146,11 +151,11 @@ dispatch is a plain array load and the race detector stays quiet.
 ## Compile validation
 
 Status: implemented in `internal/validate`. Instrumentation is a byte rewrite
-that leaves typing to the compiler, so a few guarded sites cannot compile —
-Form C evaluates to `bool`, and a site whose context wanted a named boolean
-type is a type error the moment it is guarded. The compiler is this phase's
-oracle, and the phase's job is to ask it precisely enough that one bad
-candidate costs one candidate rather than a file or a run.
+that leaves typing to the compiler, so a few guarded sites cannot compile — a
+mutated copy can be a program the compiler refuses, as `x * 0` swapped into
+`x / 0` is a constant division by zero. The compiler is this phase's oracle,
+and the phase's job is to ask it precisely enough that one bad candidate costs
+one candidate rather than a file or a run.
 
 - **The fast path is one build.** Every catalogued mutant is spliced in at
   once and `go build ./...` accepts the lot. That is the ordinary case, and

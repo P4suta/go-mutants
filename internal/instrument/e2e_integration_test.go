@@ -114,16 +114,26 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		t.Fatalf("discovered module path = %q, want %q", found.ModulePath, killableModule)
 	}
 
-	// The catalogue, pinned whole. Four mutants is small enough to write down,
-	// and writing it down is what earns the lookups below: one mutant per
-	// (path, rule) is a property of how the fixture is laid out, not a
-	// coincidence, and if it ever stops holding this line says so before a step
-	// silently activates the wrong one.
+	// The catalogue, pinned whole. Thirteen mutants is still small enough to
+	// write down, and writing it down is what earns the lookups below: one
+	// mutant per (path, rule) is a property of how the fixture is laid out —
+	// one function per file and no repeated operator — not a coincidence, and
+	// if it ever stops holding this line says so before a step silently
+	// activates the wrong one.
 	catalog := catalogFrom(t, found)
 	wantCatalog := []string{
+		"clamp.go negate-condition v < hi -> !(v < hi)",
 		"clamp.go lt-to-le < -> <=",
+		"clamp.go negate-condition v > lo -> !(v > lo)",
 		"clamp.go gt-to-ge > -> >=",
+		"clamp.go return-zero-numeric v -> 0",
+		"clamp.go return-zero-numeric lo + 1 -> 0",
+		"clamp.go add-to-sub + -> -",
+		"clamp.go return-zero-numeric hi - 1 -> 0",
+		"clamp.go sub-to-add - -> +",
 		"ready.go true-to-false true -> false",
+		"untested.go return-true a != b -> true",
+		"untested.go return-false a != b -> false",
 		"untested.go neq-to-eq != -> ==",
 	}
 	if got := catalogLines(catalog); !slices.Equal(got, wantCatalog) {
@@ -131,10 +141,18 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 			strings.Join(got, "\n\t"), strings.Join(wantCatalog, "\n\t"))
 	}
 
+	// The hints discovery just computed, carried across the phase boundary:
+	// which rewrite form each edit takes is a question about types, and this is
+	// the only pass that had a type checker.
+	hints, hintsErr := instrument.HintsOf(found.Candidates)
+	if hintsErr != nil {
+		t.Fatalf("indexing the guard hints: %v", hintsErr)
+	}
 	instrumented, instrumentErr := instrument.Instrument(instrument.Options{
 		SnapshotRoot: snap.Root,
 		ModulePath:   found.ModulePath,
 		Catalog:      catalog,
+		Hints:        hints,
 	})
 	if instrumentErr != nil {
 		t.Fatalf("instrumenting the snapshot: %v", instrumentErr)
@@ -142,10 +160,13 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	if want := []string{"clamp.go", "ready.go", "untested.go"}; !slices.Equal(instrumented.FilesInstrumented, want) {
 		t.Errorf("instrumented %q, want %q", instrumented.FilesInstrumented, want)
 	}
-	// Two mutants in clamp.go are two guards, not one: they sit on different
-	// expressions. Mutants of a single expression would share a guard, which is
-	// the distinction this line is here to keep visible.
-	if want := map[string]int{"clamp.go": 2, "ready.go": 1, "untested.go": 1}; !maps.Equal(instrumented.GuardsByFile, want) {
+	// Nine mutants in clamp.go are five guards, not nine: a guard is a rewrite
+	// site, and the mutants of one expression or one statement share it. Both
+	// halves matter — the two conditions are two guards because they are two
+	// expressions, and `return lo + 1` is one guard for both the addition and
+	// the whole returned value — which is the distinction this line is here to
+	// keep visible.
+	if want := map[string]int{"clamp.go": 5, "ready.go": 1, "untested.go": 1}; !maps.Equal(instrumented.GuardsByFile, want) {
 		t.Errorf("guards by file = %v, want %v", instrumented.GuardsByFile, want)
 	}
 	if want := killableModule + "/gomutants_rt"; instrumented.RuntimeImport != want {
@@ -489,4 +510,227 @@ func driftLines(drifts []snapshot.Drift) []string {
 		out = append(out, drift.Kind.String()+" "+drift.RelPath)
 	}
 	return out
+}
+
+// refusedModule is the module path of the throwaway module the test below
+// writes, discovers, and instruments.
+const refusedModule = "fixture.example/refused"
+
+// refusedSource is ordinary, gofmt-clean Go holding the three declaration
+// shapes v1's guard forms cannot rewrite, each beside code in the same function
+// that they must not take down with them.
+const refusedSource = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package refused holds the declarations Form D has to decline, written the way
+// a user writes them rather than the way a fixture would.
+package refused
+
+import "fmt"
+
+// Widen declares a variable whose type is spelled across three lines.
+//
+// Turning the declaration into an assignment means cutting that type out in
+// place, and the bytes cut hold a line break — so the guard could not keep the
+// file's line numbering. There is nothing wrong with the source; it is gofmt's
+// own output.
+func Widen(n int, mk func(int) func(int) int) int {
+	var scale func(
+		v int,
+	) int = mk(n + 1)
+	return scale(n)
+}
+
+// Shadow reads, in the initialiser of a declaration, the variable that
+// declaration shadows. Go resolves the inner "total * 2" outward, because a
+// declared name's scope starts at the end of its own specification.
+func Shadow(n int) int {
+	total := n + 1
+	{
+		total := total * 2
+		n = total
+	}
+	return n
+}
+
+// Wrap is the same shape in the form Go programs are full of: an error wrapped
+// into a new one of the same name. It is the dangerous case, because hoisting
+// the declaration produces a program that still compiles and still passes — it
+// simply wraps a nil error instead of the one that was there.
+func Wrap(n int, err error) error {
+	if err != nil {
+		err := fmt.Errorf("step %d: %w", n+1, err)
+		return err
+	}
+	return nil
+}
+
+// Kept is the positive side of Widen's refusal, and the only place a spec with
+// no initialiser is rewritten rather than declined. It is cut out whole, which
+// is legal exactly because it fits on one line; the guard declares the name it
+// took away, and the spec beside it becomes the assignment.
+func Kept(n int) int {
+	var (
+		total int
+		start = n + 1
+	)
+	total = start * 2
+	return total
+}
+`
+
+// refusedTest pins what the package computes, so that the instrumented baseline
+// is checked against the pristine program's answers rather than against itself.
+const refusedTest = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package refused
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+)
+
+func double(k int) func(int) int { return func(v int) int { return v * k } }
+
+func TestWiden(t *testing.T) {
+	if got := Widen(3, double); got != 12 {
+		t.Errorf("Widen(3, double) = %d, want 12", got)
+	}
+}
+
+func TestShadow(t *testing.T) {
+	if got := Shadow(2); got != 6 {
+		t.Errorf("Shadow(2) = %d, want 6", got)
+	}
+}
+
+func TestWrap(t *testing.T) {
+	inner := errors.New("boom")
+	got := Wrap(1, inner)
+	if !errors.Is(got, inner) {
+		t.Errorf("Wrap(1, inner) = %v, want an error wrapping %v", got, inner)
+	}
+	if want := fmt.Sprintf("step 2: %v", inner); got.Error() != want {
+		t.Errorf("Wrap(1, inner) = %q, want %q", got, want)
+	}
+	if Wrap(1, nil) != nil {
+		t.Error("Wrap(1, nil) is not nil")
+	}
+}
+
+func TestKept(t *testing.T) {
+	if got := Kept(3); got != 8 {
+		t.Errorf("Kept(3) = %d, want 8", got)
+	}
+}
+`
+
+// TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal drives the whole
+// pipeline over a module whose declarations Form D has to refuse.
+//
+// Both halves of the refusal are asserted, and each was a real defect. A `var`
+// whose declared type is spelled across lines used to reach the instrumenter as
+// a hint it could only answer with a line-drift error — a hard failure out of
+// Instrument, so the user's whole run ended with an internal error and no
+// results, over source gofmt had just produced. And a declaration whose
+// initialiser reads the name it declares used to be hoisted in front of that
+// initialiser, which rebinds the reference to a freshly zeroed variable: the
+// tree still compiles, the instrumented baseline still passes, and every mutant
+// measured in the rewritten function is measured against a program the user did
+// not write. That one is why the baseline here is checked against a test suite
+// that pins the pristine answers, rather than against exit 0 alone.
+//
+// What the refusals must not do is take anything else with them. The catalogue
+// is pinned whole: the mutants outside those three statements are all still
+// there, in a file three of whose statements produced none. The last function
+// is the other side of the same line — a `var` block Form D does rewrite, whose
+// initialiser-less spec is cut out whole because it fits on one line, which is
+// the one place in the suite that cut is exercised end to end.
+func TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal(t *testing.T) {
+	toolchain := locateToolchain(t)
+
+	source := t.TempDir()
+	for name, content := range map[string]string{
+		"go.mod":          "module " + refusedModule + "\n\ngo 1.26\n",
+		"refused.go":      refusedSource,
+		"refused_test.go": refusedTest,
+	} {
+		if err := os.WriteFile(filepath.Join(source, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("writing %s into the module: %v", name, err)
+		}
+	}
+	snap, createErr := snapshot.Create(source, snapshot.Options{DestParent: t.TempDir()})
+	if createErr != nil {
+		t.Fatalf("snapshotting the module: %v", createErr)
+	}
+	t.Cleanup(func() {
+		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
+			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, cleanupErr)
+		}
+	})
+
+	found, discoverErr := discover.Discover(t.Context(), discover.Options{
+		SnapshotRoot: snap.Root,
+		Toolchain:    toolchain,
+	})
+	if discoverErr != nil {
+		t.Fatalf("discovering the module: %v", discoverErr)
+	}
+
+	// Every edit inside one of the three declarations is a recorded skip, and
+	// the reason is the one the frozen contract reserves for a site no guard
+	// form can express.
+	want := []string{"refused.go unnameable-decl-type 3"}
+	got := make([]string, 0, len(found.Skips))
+	for _, skip := range found.Skips {
+		got = append(got, skip.Path+" "+string(skip.Reason)+" "+fmt.Sprint(skip.Count))
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("skips =\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
+	}
+
+	catalog := catalogFrom(t, found)
+	wantCatalog := []string{
+		"refused.go return-zero-numeric scale(n) -> 0",
+		"refused.go add-to-sub + -> -",
+		"refused.go delete-assignment n = total -> ",
+		"refused.go return-zero-numeric n -> 0",
+		"refused.go negate-condition err != nil -> !(err != nil)",
+		"refused.go nil-error-branch err != nil -> false",
+		"refused.go neq-to-eq != -> ==",
+		"refused.go return-err-to-nil err -> nil",
+		// Kept, whose `var` block holds the one spec-with-no-initialiser this
+		// suite rewrites rather than refuses.
+		"refused.go add-to-sub + -> -",
+		"refused.go delete-assignment total = start * 2 -> ",
+		"refused.go mul-to-div * -> /",
+		"refused.go return-zero-numeric total -> 0",
+	}
+	if lines := catalogLines(catalog); !slices.Equal(lines, wantCatalog) {
+		t.Fatalf("catalogue =\n\t%s\nwant\n\t%s",
+			strings.Join(lines, "\n\t"), strings.Join(wantCatalog, "\n\t"))
+	}
+
+	hints, hintsErr := instrument.HintsOf(found.Candidates)
+	if hintsErr != nil {
+		t.Fatalf("indexing the guard hints: %v", hintsErr)
+	}
+	if _, instrumentErr := instrument.Instrument(instrument.Options{
+		SnapshotRoot: snap.Root,
+		ModulePath:   found.ModulePath,
+		Catalog:      catalog,
+		Hints:        hints,
+	}); instrumentErr != nil {
+		t.Fatalf("instrumenting the snapshot: %v", instrumentErr)
+	}
+
+	build := goInSnapshot(t, toolchain, snap.Root, "", "build", "./...")
+	requireExit(t, build, 0, "`go build ./...` in the instrumented snapshot")
+
+	baseline := runSuite(t, toolchain, snap.Root, "")
+	requireExit(t, baseline, 0, "the instrumented baseline")
+	requireOutput(t, baseline, "the instrumented baseline",
+		"--- PASS: TestWiden", "--- PASS: TestShadow", "--- PASS: TestWrap", "--- PASS: TestKept")
 }

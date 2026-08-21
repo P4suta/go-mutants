@@ -47,17 +47,24 @@ type FileOptions struct {
 	// [mutation.Mutant.Index]. An empty subset writes Source back unchanged,
 	// which is how "every candidate in this file was rejected" is spelled.
 	Mutants []mutation.Mutant
+
+	// Hints are the rewrite sites discovery chose. It is the same index
+	// [Options.Hints] carried — the whole run's, not this file's — because a
+	// bisection hands over a different subset every time and re-indexing per
+	// call would be one more thing to keep in step.
+	Hints Hints
 }
 
 // InstrumentFile rewrites one file of an already-instrumented snapshot so that
 // it carries guards for a subset of its catalogued mutants, and nothing else in
 // the snapshot changes.
 //
-// It exists for compile validation. Form C evaluates to `bool`, so a candidate
-// whose context wanted a named boolean type produces a file that does not
-// compile, and the only way to learn which candidate it was is to rebuild the
-// file with fewer of them until it does. That search needs to change one file's
-// guards without touching anything else, and in particular without touching the
+// It exists for compile validation. A guard is composed without type-checking
+// anything, so a candidate whose mutated copy the compiler refuses produces a
+// file that does not build, and the only way to learn which candidate it was is
+// to rebuild the file with fewer of them until it does. That search needs to
+// change one file's guards without touching anything else, and in particular
+// without touching the
 // generated runtime: the activation array is sized by the full catalogue and
 // every guard spells its own dense index, so a runtime regenerated from a
 // subset would renumber flags that instrumented files elsewhere in the tree
@@ -78,9 +85,9 @@ type FileOptions struct {
 // file has to come out as the file the user wrote.
 //
 // Passing anything but pristine bytes as Source is refused rather than obeyed:
-// the site lookup reports [CodeSiteNotFound] when the operator a mutant names
-// is no longer at its offset, and [Apply] reports [CodeSpliceMismatch] when it
-// is there but the bytes around it are not what the catalogue recorded.
+// the site lookup reports [CodeSiteNotFound] when the node a hint names is no
+// longer at its offset, and [Apply] reports [CodeSpliceMismatch] when it is
+// there but the bytes a mutant replaces are not what the catalogue recorded.
 func InstrumentFile(opts FileOptions) (int, error) {
 	if err := opts.validate(); err != nil {
 		return 0, err
@@ -103,7 +110,7 @@ func InstrumentFile(opts FileOptions) (int, error) {
 	dir := filepath.Dir(file)
 	reserved := func(pkg string) (map[string]bool, error) { return names.namesIn(dir, pkg) }
 
-	out, guards, err := instrumentSource(opts.Path, opts.Source, opts.Mutants, opts.RuntimeImport, reserved)
+	out, guards, err := instrumentSource(opts.Path, opts.Source, opts.Mutants, opts.Hints, opts.RuntimeImport, reserved)
 	if err != nil {
 		return 0, err
 	}

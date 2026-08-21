@@ -34,8 +34,8 @@ const (
 	sampleFile = "sample.go"
 )
 
-// TestInstrumentGolden pins the instrumented bytes of every shape the Form C
-// rewrite has to handle.
+// TestInstrumentGolden pins the instrumented bytes of every shape the three
+// rewrite forms have to handle.
 //
 // Byte-exact fixtures are the right assertion here rather than a structural
 // one. The output has to compile, preserve lines, and preserve every byte it
@@ -52,6 +52,11 @@ func TestInstrumentGolden(t *testing.T) {
 		// comparison and boolean literal in the file, which is what discovery
 		// would produce.
 		candidates func(t *testing.T, src []byte) []mutation.Candidate
+		// hints are the answers the fixture's guard hints need beyond its own
+		// syntax: what a short declaration declares, and which of its
+		// bool-valued expressions are of a named boolean type. See
+		// [hintOptions].
+		hints hintOptions
 		// sibling names the file the fixture's ".sibling" half is written to,
 		// for a fixture whose point is what the rest of its package holds.
 		// Empty means the fixture is one file on its own.
@@ -136,6 +141,90 @@ func TestInstrumentGolden(t *testing.T) {
 			}
 		},
 	}, {
+		name:       "statement",
+		candidates: statementEdits,
+		guards:     4,
+		extra: func(t *testing.T, in, out []byte) {
+			// One return, two mutants, one guard: the families differ and the
+			// statement does not, which is all a chain of alternatives is
+			// about.
+			assertContains(t, out, "if __gm.M[0] { return 0,err } else if __gm.M[1] { return count,nil } else { return count, err }")
+			// The deletion renders as the empty branch, which is what "this
+			// statement does not run" has to mean, and it chains with the
+			// operator swap on the same statement whatever family either is.
+			assertContains(t, out, "if __gm.M[4] { } else if __gm.M[5] { *counter= *counter-2 } else { *counter = *counter + 2 }")
+			// A `defer` is wrapped whole. The guard's block does not change
+			// when it fires, because `defer` is scoped to the function.
+			assertContains(t, out, "if __gm.M[3] { defer done(*counter-1) } else { defer done(*counter + 1) }")
+			// The three-line assignment keeps its two interior lines byte for
+			// byte: the guard writes on the statement's first and last line and
+			// the flattened copy it carries holds no line break at all. Line 31
+			// (0-based 30) is the middle of the site and is untouched.
+			assertContains(t, out, "{ total=total-step*2-1 } else { total = total +\n")
+			assertLinesUntouched(t, in, out, 6, 16, 29, 31, 44, 45)
+		},
+	}, {
+		name:       "declaration",
+		candidates: declarationEdits,
+		hints:      hintOptions{declared: declaredTypes()},
+		guards:     7,
+		extra: func(t *testing.T, _, out []byte) {
+			// Both names are hoisted out in front of the guard, in source
+			// order, and the `:=` inside it is downgraded to an assignment: the
+			// right-hand side is the user's own bytes either way.
+			assertContains(t, out, "var lo int; var hi int; if __gm.M[")
+			assertContains(t, out, "else { lo, hi = n/2, n-n/2 }")
+			// A `var` with an explicit type loses the keyword and the type,
+			// which the guard writes back in front of itself from the hint.
+			assertContains(t, out, "var scaled int; if __gm.M[")
+			assertContains(t, out, "else {  scaled  = v * 3 }")
+			// The blank identifier is not a name to declare and is not one to
+			// drop either: the assignment keeps the left-hand side as written.
+			assertContains(t, out, "var head int; if __gm.M[")
+			assertContains(t, out, "else { head, _ = values[0], len(values)-1 }")
+			// The parenthesized block keeps every line it had: the keyword and
+			// the parentheses are cut out where they stand, which leaves the
+			// specs as assignments on their own lines, and the flattened copies
+			// carry the semicolons those line breaks stood for.
+			assertContains(t, out, "var low int; var high int; if __gm.M[")
+			assertContains(t, out, "{ low=values[0]+1;high=values[len(values)-1]+1 }")
+			assertContains(t, out, "else {  \n\t\tlow  = values[0] - 1\n\t\thigh = values[len(values)-1] + 1\n\t }")
+			// An expression site inside a declaration site: the original branch
+			// carries the guard the nested site produced, and the declaration's
+			// own mutated copy is rendered from the pristine bytes and carries
+			// none.
+			assertContains(t, out, "{ weight=cost(a>b)-1 } else { weight = cost((__gm.M[")
+		},
+	}, {
+		name:       "mixedforms",
+		candidates: mixedFormEdits,
+		guards:     4,
+		extra: func(t *testing.T, _, out []byte) {
+			// Side by side: an expression guard in the condition, a statement
+			// guard in the body it decides.
+			assertContains(t, out, "if (__gm.M[0] && (v>=limit) || !(__gm.M[0]) && (v > limit)) {")
+			assertContains(t, out, "if __gm.M[1] { v=limit+1 } else { v = limit - 1 }")
+			// Nested: the statement guard's original branch carries the
+			// expression guard, and its own mutated copy carries none.
+			assertContains(t, out, "if __gm.M[3] { return a>b,a+b } else { return (__gm.M[2] && (a>=b) || !(__gm.M[2]) && (a > b)), a - b }")
+		},
+	}, {
+		name:       "namedbool",
+		candidates: namedBoolEdits,
+		hints:      hintOptions{namedBool: namedBoolExprs()},
+		guards:     2,
+		extra: func(t *testing.T, _, out []byte) {
+			// Form S, not Form C: a selector would evaluate to `bool`, which is
+			// not assignable to Flag. Both guards are chains of returns, so
+			// each is a terminating statement and each function still ends in
+			// one.
+			assertContains(t, out, "if __gm.M[0] { return x>=y } else { return x > y }")
+			assertContains(t, out, "if __gm.M[1] { return false } else { return true }")
+			if bytes.Contains(out, []byte("&& (")) {
+				t.Errorf("a named boolean type was guarded with a Form C selector:\n%s", out)
+			}
+		},
+	}, {
 		name:    "siblingalias",
 		sibling: "sibling.go",
 		guards:  1,
@@ -168,7 +257,7 @@ func TestInstrumentGolden(t *testing.T) {
 			}
 
 			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
-			result := instrumentSnapshot(t, root, catalog)
+			result := instrumentSnapshotWith(t, root, catalog, c.hints)
 			out := readFile(t, filepath.Join(root, sampleFile))
 
 			if c.sibling != "" {
@@ -212,21 +301,38 @@ func TestInstrumentGolden(t *testing.T) {
 func TestInstrumentPreservesCRLFOutsideTheGuards(t *testing.T) {
 	t.Parallel()
 
-	in := toCRLF(readFile(t, filepath.Join("testdata", "multiline.input")))
-	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), in)
+	for _, c := range []struct {
+		name       string
+		candidates func(*testing.T, []byte) []mutation.Candidate
+	}{
+		// Both fixtures whose sites span lines, one per form that can hold a
+		// line break in the branch that keeps the original: the expression
+		// guard's multi-line condition and the statement guard's multi-line
+		// assignment.
+		{name: "multiline"},
+		{name: "statement", candidates: statementEdits},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 
-	catalog := catalogOf(t, candidatesFor(t, nil, in))
-	instrumentSnapshot(t, root, catalog)
-	out := readFile(t, filepath.Join(root, sampleFile))
+			in := toCRLF(readFile(t, filepath.Join("testdata", c.name+".input")))
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, sampleFile), in)
 
-	if want := toCRLF(readFile(t, filepath.Join("testdata", "multiline.golden"))); !bytes.Equal(out, want) {
-		t.Errorf("instrumented CRLF output does not match the converted fixture\n--- got ---\n%q\n--- want ---\n%q", out, want)
-	}
-	assertWellFormed(t, in, out, catalog)
+			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
+			instrumentSnapshot(t, root, catalog)
+			out := readFile(t, filepath.Join(root, sampleFile))
 
-	if bytes.Count(out, []byte("\r\n")) != bytes.Count(out, []byte("\n")) {
-		t.Error("the instrumented file lost a carriage return: not every line break is a CRLF")
+			if want := toCRLF(readFile(t, filepath.Join("testdata", c.name+".golden"))); !bytes.Equal(out, want) {
+				t.Errorf("instrumented CRLF output does not match the converted fixture\n--- got ---\n%q\n--- want ---\n%q",
+					out, want)
+			}
+			assertWellFormed(t, in, out, catalog)
+
+			if bytes.Count(out, []byte("\r\n")) != bytes.Count(out, []byte("\n")) {
+				t.Error("the instrumented file lost a carriage return: not every line break is a CRLF")
+			}
+		})
 	}
 }
 
@@ -335,28 +441,49 @@ func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 func TestInstrumentIsDeterministic(t *testing.T) {
 	t.Parallel()
 
-	in := readFile(t, filepath.Join("testdata", "nested.input"))
-	catalog := catalogOf(t, candidatesFor(t, nil, in))
+	for _, c := range []struct {
+		name       string
+		candidates func(*testing.T, []byte) []mutation.Candidate
+		hints      hintOptions
+	}{
+		// One fixture per shape whose rendering has an order in it that could
+		// have come out of a map: nested expression sites, a chain of
+		// alternatives from two families, and the declarations a Form D guard
+		// hoists out in front of itself.
+		{name: "nested"},
+		{name: "statement", candidates: statementEdits},
+		{name: "declaration", candidates: declarationEdits, hints: hintOptions{declared: declaredTypes()}},
+		{name: "mixedforms", candidates: mixedFormEdits},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 
-	run := func() (string, []byte, []byte) {
-		root := t.TempDir()
-		writeFile(t, filepath.Join(root, sampleFile), in)
-		result := instrumentSnapshot(t, root, catalog)
-		runtime := readFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
-		return result.RuntimeImport, readFile(t, filepath.Join(root, sampleFile)), runtime
-	}
+			in := readFile(t, filepath.Join("testdata", c.name+".input"))
+			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
 
-	firstImport, firstSource, firstRuntime := run()
-	secondImport, secondSource, secondRuntime := run()
+			run := func() (string, []byte, []byte) {
+				root := t.TempDir()
+				writeFile(t, filepath.Join(root, sampleFile), in)
+				result := instrumentSnapshotWith(t, root, catalog, c.hints)
+				runtime := readFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
+				return result.RuntimeImport, readFile(t, filepath.Join(root, sampleFile)), runtime
+			}
 
-	if firstImport != secondImport {
-		t.Errorf("runtime import differs between runs: %q and %q", firstImport, secondImport)
-	}
-	if !bytes.Equal(firstSource, secondSource) {
-		t.Errorf("instrumented source differs between runs\n--- first ---\n%s\n--- second ---\n%s", firstSource, secondSource)
-	}
-	if !bytes.Equal(firstRuntime, secondRuntime) {
-		t.Errorf("generated runtime differs between runs\n--- first ---\n%s\n--- second ---\n%s", firstRuntime, secondRuntime)
+			firstImport, firstSource, firstRuntime := run()
+			secondImport, secondSource, secondRuntime := run()
+
+			if firstImport != secondImport {
+				t.Errorf("runtime import differs between runs: %q and %q", firstImport, secondImport)
+			}
+			if !bytes.Equal(firstSource, secondSource) {
+				t.Errorf("instrumented source differs between runs\n--- first ---\n%s\n--- second ---\n%s",
+					firstSource, secondSource)
+			}
+			if !bytes.Equal(firstRuntime, secondRuntime) {
+				t.Errorf("generated runtime differs between runs\n--- first ---\n%s\n--- second ---\n%s",
+					firstRuntime, secondRuntime)
+			}
+		})
 	}
 }
 
@@ -525,18 +652,116 @@ func catalogOf(t *testing.T, candidates []mutation.Candidate) *mutation.Catalog 
 }
 
 // instrumentSnapshot runs the instrumenter over a snapshot and fails the test
-// if it refuses.
+// if it refuses. The guard hints are derived from the snapshot itself; see
+// hints_test.go for what that derivation is and is not.
 func instrumentSnapshot(t *testing.T, root string, catalog *mutation.Catalog) instrument.Result {
+	t.Helper()
+	return instrumentSnapshotWith(t, root, catalog, hintOptions{})
+}
+
+// instrumentSnapshotWith is [instrumentSnapshot] for a fixture that has to
+// state something about its own types.
+func instrumentSnapshotWith(
+	t *testing.T,
+	root string,
+	catalog *mutation.Catalog,
+	opts hintOptions,
+) instrument.Result {
+	t.Helper()
+	return instrumentSnapshotHinted(t, root, catalog, hintsFor(t, root, catalog, opts))
+}
+
+// instrumentSnapshotHinted is [instrumentSnapshot] for a caller that assembled
+// the hints itself, which a tree of several fixtures has to.
+func instrumentSnapshotHinted(
+	t *testing.T,
+	root string,
+	catalog *mutation.Catalog,
+	hints instrument.Hints,
+) instrument.Result {
 	t.Helper()
 	result, err := instrument.Instrument(instrument.Options{
 		SnapshotRoot: root,
 		ModulePath:   testModule,
 		Catalog:      catalog,
+		Hints:        hints,
 	})
 	if err != nil {
 		t.Fatalf("Instrument: %v", err)
 	}
 	return result
+}
+
+// declaredTypes is what the declaration fixture's short declarations declare.
+// It is stated once here because both the golden test and the compile test have
+// to hand it to the hint derivation.
+func declaredTypes() map[string]string {
+	return map[string]string{
+		"lo": "int", "hi": "int", "scaled": "int", "step": "int", "head": "int",
+		"low": "int", "high": "int", "weight": "int",
+	}
+}
+
+// namedBoolExprs is the same for the named boolean fixture: the expressions
+// whose type is [Flag] rather than the universe bool.
+func namedBoolExprs() []string { return []string{"x > y", "true"} }
+
+// The edit tables of the fixtures whose catalogues are not "every comparison
+// and boolean literal". Each states the rule, the bytes it replaces, and what
+// it writes, exactly as internal/discover would have proposed them.
+
+// statementEdits catalogues the statement fixture: a return carrying two
+// families at once, an operator inside a multi-line assignment, one inside a
+// deferred call, and a statement that is both swapped and deleted.
+func statementEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "return-zero-numeric", in: "return count, err", find: "count", with: "0"},
+		editSpec{rule: "return-err-to-nil", in: "return count, err", find: "err", with: "nil"},
+		editSpec{rule: "add-to-sub", in: "total = total +", find: "+", with: "-"},
+		editSpec{rule: "add-to-sub", in: "done(*counter + 1)", find: "+", with: "-"},
+		editSpec{rule: "add-to-sub", in: "*counter = *counter + 2", find: "+", with: "-"},
+		editSpec{rule: "delete-assignment", in: "*counter = *counter + 2"},
+	)
+}
+
+// declarationEdits catalogues the declaration fixture: two names, one name, an
+// explicit type, and a blank identifier.
+func declarationEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "div-to-mul", in: "lo, hi := n/2, n-n/2", find: "/", with: "*"},
+		editSpec{rule: "sub-to-add", in: "n-n/2", find: "-", with: "+"},
+		editSpec{rule: "mul-to-div", in: "var scaled int = v * 3", find: "*", with: "/"},
+		editSpec{rule: "add-to-sub", in: "step := base + 1", find: "+", with: "-"},
+		editSpec{rule: "sub-to-add", in: "head, _ := values[0], len(values)-1", find: "-", with: "+"},
+		editSpec{rule: "gt-to-ge", in: "cost(a > b) + 1", find: ">", with: ">="},
+		editSpec{rule: "add-to-sub", in: "cost(a > b) + 1", find: "+", with: "-"},
+		editSpec{rule: "sub-to-add", in: "low  = values[0] - 1", find: "-", with: "+"},
+		editSpec{rule: "add-to-sub", in: "values[len(values)-1] + 1", find: "+", with: "-"},
+	)
+}
+
+// mixedFormEdits catalogues the fixture where the forms meet: a comparison and
+// a statement side by side, and a comparison inside a statement.
+func mixedFormEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "gt-to-ge", in: "v > limit", find: ">", with: ">="},
+		editSpec{rule: "sub-to-add", in: "v = limit - 1", find: "-", with: "+"},
+		editSpec{rule: "gt-to-ge", in: "return a > b, a - b", find: ">", with: ">="},
+		editSpec{rule: "sub-to-add", in: "a - b", find: "-", with: "+"},
+	)
+}
+
+// namedBoolEdits catalogues the named boolean fixture: the comparison and the
+// literal that a selector cannot produce the type of.
+func namedBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "gt-to-ge", in: "return x > y", find: ">", with: ">="},
+		editSpec{rule: "true-to-false", in: "return true", find: "true", with: "false"},
+	)
 }
 
 // assertWellFormed runs the invariants every instrumented file must hold,
