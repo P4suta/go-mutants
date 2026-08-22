@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
@@ -18,71 +17,9 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// TestCoverageIsOnOnlyForTheBuiltInTestCommand pins the rule the whole feature
-// switches on.
-//
-// It is not a preference and there is nothing to configure: the mapping is
-// between a test binary and the lines it reached, and it is sound exactly when
-// go-mutants compiled the binaries itself and knows what each one is. Anything
-// else — a wrapper, an extra flag, a different program — is a command whose
-// coverage cannot be attributed, and a wrong attribution costs a kill rather
-// than costing time.
-func TestCoverageIsOnOnlyForTheBuiltInTestCommand(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		command []string
-		want    bool
-	}{
-		{name: "the built-in default", command: config.DefaultTestCommand(), want: true},
-		{
-			// The same argv written out by hand, which is what a project that
-			// pins `test.command` in its configuration file most often has.
-			name: "the default spelled out", command: []string{"go", "test", "./..."}, want: true,
-		},
-		{name: "one extra flag", command: []string{"go", "test", "-count=1", "./..."}, want: false},
-		{name: "a narrower pattern", command: []string{"go", "test", "./internal/..."}, want: false},
-		{name: "another program", command: []string{"gotestsum", "--", "./..."}, want: false},
-		{name: "a shell script", command: []string{"./scripts/test.sh"}, want: false},
-		{name: "the flags reordered", command: []string{"go", "test", "./...", ""}, want: false},
-		{name: "nothing at all", command: nil, want: false},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := coverageEnabled(test.command); got != test.want {
-				t.Errorf("coverageEnabled(%q) = %t, want %t", test.command, got, test.want)
-			}
-		})
-	}
-}
-
-// TestCustomTestCommandWarningNamesBothCommands is what makes the rule above
-// diagnosable.
-//
-// A user who has just set `test.command` and noticed the run got slower needs
-// three things in one line: which command they wrote, which one would have
-// enabled the optimisation, and what the run is doing instead.
-func TestCustomTestCommandWarningNamesBothCommands(t *testing.T) {
-	t.Parallel()
-
-	message := customTestCommand([]string{"go", "test", "-count=1", "./..."})
-	for _, needle := range []string{
-		`"go test -count=1 ./..."`,
-		`"go test ./..."`,
-		"every mutant will be measured against every one of them",
-	} {
-		if !strings.Contains(message, needle) {
-			t.Errorf("the warning does not mention %q:\n%s", needle, message)
-		}
-	}
-	if strings.ContainsAny(message, "\n\r") {
-		t.Errorf("the warning is not one line: %q", message)
-	}
-}
+// The rule that decides whether this phase happens at all — whether the test
+// command is one go-mutants can read as a scope — lives in scope_test.go, next
+// to the classifier that applies it.
 
 // TestUnavailableWarningSaysWhatTheRunWillDoInstead covers the fail-open
 // message, whose second half is the load-bearing one: a warning saying only

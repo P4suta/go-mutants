@@ -122,73 +122,33 @@ func (o *Outcome) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// SkipReason explains why a possible mutation site was never turned into a
-// candidate. Skips are recorded and surfaced by `--explain`; a site is never
-// silently ignored, because "go-mutants found nothing here" and "go-mutants
-// refuses to mutate this" are very different statements about a codebase.
-type SkipReason string
-
-// The v1 skip reasons, matching docs/operators.md. Discovery and
-// instrumentation own the decision to emit each one; the list lives here so
-// that reports, schemas, and the CLI share one spelling.
-const (
-	SkipConstDecl           SkipReason = "const-decl"
-	SkipIotaExpr            SkipReason = "iota-expr"
-	SkipArrayLength         SkipReason = "array-length"
-	SkipStructTag           SkipReason = "struct-tag"
-	SkipTypeParamList       SkipReason = "type-param-list"
-	SkipTypeArg             SkipReason = "type-arg"
-	SkipSwitchCase          SkipReason = "switch-case"
-	SkipSelectCase          SkipReason = "select-case"
-	SkipPackageLevelVarInit SkipReason = "package-level-var-init"
-	SkipGoEmbedDecl         SkipReason = "go-embed-decl"
-	SkipLabelOrGoto         SkipReason = "label-or-goto"
-	SkipCgoPackage          SkipReason = "cgo-package"
-	SkipGeneratedFile       SkipReason = "generated-file"
-	SkipTestFile            SkipReason = "test-file"
-	SkipUnnameableDeclType  SkipReason = "unnameable-decl-type"
-)
-
-// String returns the reason as it appears in reports.
-func (r SkipReason) String() string { return string(r) }
-
-// KnownSkipReasons returns the documented skip reasons in the order of
-// docs/operators.md.
-func KnownSkipReasons() []SkipReason {
-	return []SkipReason{
-		SkipConstDecl,
-		SkipIotaExpr,
-		SkipArrayLength,
-		SkipStructTag,
-		SkipTypeParamList,
-		SkipTypeArg,
-		SkipSwitchCase,
-		SkipSelectCase,
-		SkipPackageLevelVarInit,
-		SkipGoEmbedDecl,
-		SkipLabelOrGoto,
-		SkipCgoPackage,
-		SkipGeneratedFile,
-		SkipTestFile,
-		SkipUnnameableDeclType,
-	}
-}
-
-// Known reports whether r is one of the documented skip reasons. Unknown
-// reasons are not rejected — discovery may need a new one before the docs
-// catch up — but reports can flag them.
-func (r SkipReason) Known() bool {
-	for _, known := range KnownSkipReasons() {
-		if known == r {
-			return true
-		}
-	}
-	return false
-}
+// Skip reasons are deliberately not declared in this package. A skip is a
+// decision discovery makes about a source position, so the vocabulary lives
+// with the decision: internal/discover's SkipReason and AllSkipReasons are the
+// single source of truth for the strings `list` prints and for the `skips[]`
+// rows a report carries. The `reason` enumeration of the run report schema is
+// a superset rather than a copy of that list: internal/report checks every
+// reason discovery emits against the enumeration, and the enumeration reserves
+// two further names — `struct-tag` and `label-or-goto` — that no Go constant
+// in this tree declares, so that landing them is a code change and not a
+// schema change. The type and the canonical list stay in internal/discover
+// even for a reason another phase emits; whoever lands one adds it there.
+//
+// This package used to carry a second copy of that vocabulary, spelled
+// differently — `generated-file` against discovery's `generated`,
+// `cgo-package` against `cgo`, `switch-case` and `select-case` against the one
+// `case-label` — pinned only by a test that retyped the same list. Nothing
+// outside these files ever read it, so nothing could disagree with it, and a
+// vocabulary nothing disagrees with is a vocabulary nothing keeps honest.
+// Anything here that comes to need a skip reason takes a plain string; it does
+// not start a second list, and it cannot import internal/discover for the
+// type, because internal/discover imports this package. A skip reason that
+// wants a Go type of its own belongs there rather than here.
 
 // RejectReason explains why a candidate that was catalogued could not be
-// executed. Unlike a skip, a rejection is discovered late: the mutant existed
-// on paper and then failed to survive compilation or instrumentation.
+// executed. Unlike a skip — which discovery records before a candidate exists
+// at all, see the note above — a rejection is discovered late: the mutant
+// existed on paper and then failed to survive compilation or instrumentation.
 //
 // The set stays open. Validation (the compile-and-bisect phase) owns the full
 // list and attaches a compiler diagnostic to each rejection; the constants

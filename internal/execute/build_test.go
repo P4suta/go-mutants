@@ -184,6 +184,72 @@ func TestBuildTestBinariesIssuesTheExpectedCommands(t *testing.T) {
 	}
 }
 
+// TestBuildTestBinariesListsOnlyTheScopedPackages is what makes a scoped
+// `test.command` worth more than a fast baseline.
+//
+// The patterns reach `go list` verbatim and in order, and nothing else about
+// the invocation moves. That is the whole mechanism: the listing decides which
+// packages exist as far as this phase is concerned, so scoping the listing
+// scopes the binaries, the profiling pass, and every mutant attempt after them.
+//
+// Verbatim matters as much as scoped. The go command's pattern vocabulary is the
+// one the user wrote their test command in, and any normalising on the way
+// through would be go-mutants deciding that a pattern means something slightly
+// different from what `go test` does with it.
+func TestBuildTestBinariesListsOnlyTheScopedPackages(t *testing.T) {
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if isList(c) {
+			return runner.Result{Output: []byte(listing(
+				pkgJSON("example.com/m/alpha", "/snap/alpha", true, false),
+			))}
+		}
+		return runner.Result{}
+	}}
+	opts, _ := buildOptions(t, f, 1)
+	opts.Packages = []string{"./alpha/...", "./beta"}
+
+	binaries, err := execute.BuildTestBinaries(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("building the test binaries: %v", err)
+	}
+	if len(binaries) != 1 || binaries[0].ImportPath != "example.com/m/alpha" {
+		t.Fatalf("built %+v, want only the one package the scope listed", binaries)
+	}
+
+	seen := f.seen()
+	if len(seen) != 2 {
+		t.Fatalf("issued %d commands, want a listing and one compile", len(seen))
+	}
+	wantList := []string{
+		toolchain.GoBin, "list", "-json=ImportPath,Dir,TestGoFiles,XTestGoFiles",
+		"./alpha/...", "./beta",
+	}
+	if !slices.Equal(seen[0].Argv, wantList) {
+		t.Errorf("listing argv = %q, want %q", seen[0].Argv, wantList)
+	}
+}
+
+// TestBuildTestBinariesRefusesABlankPattern covers the one scope that would
+// build a different set of binaries from the one it names.
+//
+// `go list ""` resolves against the working directory, which is the snapshot
+// root, so a blank entry would quietly list the root package instead of the
+// scope the caller meant — and a run that measured a different set of binaries
+// than the set it reported is the failure shape scoping must never have.
+func TestBuildTestBinariesRefusesABlankPattern(t *testing.T) {
+	f := &fake{}
+	opts, _ := buildOptions(t, f, 1)
+	opts.Packages = []string{"./alpha/...", "  "}
+
+	_, err := execute.BuildTestBinaries(t.Context(), opts)
+	if code := execute.CodeOf(err); code != execute.CodeOptions {
+		t.Fatalf("code = %s, want %s: %v", code, execute.CodeOptions, err)
+	}
+	if got := len(f.seen()); got != 0 {
+		t.Errorf("issued %d commands for options that cannot describe a build, want none", got)
+	}
+}
+
 // TestBuildTestBinariesTurnsVetOffWithoutLosingInheritedGoflags is the whole
 // reason the suppression is merged rather than set.
 //

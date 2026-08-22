@@ -14,6 +14,91 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **Scoped test binaries.** A `test.command` that go-mutants can read as a set
+  of package patterns now decides which test binaries a run builds, not just
+  which suites the baseline measures. A module whose tests live in three of
+  forty packages compiles three binaries and starts three processes per mutant
+  instead of forty. This repository's own dogfood gate went from 16 mutants in
+  7m08s to 121 mutants in 48-50 seconds on the same machine — seven times the
+  scope in a ninth of the time — and could grow from two files to two whole
+  packages because of it. Widening it further is now bounded by
+  missing tests rather than by the clock: the whole-package scope over
+  `internal/mutation`, `internal/glob` and `internal/interval` catalogues 560
+  mutants and runs in 1m20s, and it reports 41 real survivors in
+  `internal/mutation` that need tests written rather than a scope adjusted.
+  `.go-mutants.toml` records that measurement where somebody widening the scope
+  will read it.
+
+  Until now this was the one setting that promised more than it delivered.
+  `internal/execute` listed `./...` unconditionally, so naming
+  `go test ./internal/mutation/...` bought a fast baseline and then measured
+  every mutant against every binary in the module anyway — including the suites
+  the command had just excluded. Worse, it *cost* something: coverage-guided
+  selection switched off for any command that was not the built-in default, so
+  the setting most likely to make a large repository tractable was also the one
+  that turned off the optimisation it needed most.
+
+  Recognition is spelling-strict, and that is the design rather than a first
+  cut. A command is read when it is `go`, then `test`, then one or more package
+  patterns (`.` or anything under `./` with no `..` in it) and nothing else. Any
+  flag, any bare import path, a `..` anywhere in a pattern — including one that
+  climbs out of the tree and back into it, because patterns are resolved against
+  the disposable `go-mutants-snap-…` copy, whose directory name and siblings are
+  not the workspace's — a Windows `.\internal\...`, or another program is
+  unrecognised and behaves exactly as it always has: every
+  binary built, every mutant measured against all of them, and a `GOM7601`
+  warning saying so. There is no shortlist of harmless flags because there is no
+  flag that stays harmless as the go command grows — `-run` makes the command a
+  fraction of the suite, `-tags` compiles different files, `-race` changes which
+  paths are taken — and the failure is silent in the direction that matters: a
+  mutant skipped as uncovered that a test does cover is a kill lost and a score
+  inflated. Anything go-mutants has not been taught falls back to the slow,
+  correct behaviour, which is the only fallback that cannot flatter a suite.
+
+  Recognising a command also turns coverage-guided selection **on**, where it
+  used to be reserved for the built-in `go test ./...`. That is not a loosening
+  of the rule but the same rule stated properly: what made the mapping sound was
+  never the exact spelling of the default, it was go-mutants knowing in full
+  what the command does — and it knows exactly that for `go test` over patterns,
+  because it compiled the binaries those patterns name. A mutant in an included
+  file that no scoped binary covers is a `survived (uncovered)` result, which is
+  the honest reading of a scope that leaves the line out and the same answer the
+  run would reach by executing every scoped binary against it and watching them
+  all pass.
+
+  A scope that resolves to nothing is loud: `GOM4022`. It fires when a pattern
+  places no package directory at all — the go command answers that with a
+  warning and an exit status of zero, so nothing downstream would have noticed —
+  which is checked before the baseline is measured, and again when the scope as
+  a whole turns out to hold no package with a test file, which cannot be known
+  until the binaries are built. A pattern naming a directory that exists and
+  holds no Go files (`./docs` without the wildcard) is left to the baseline
+  instead, which runs the command verbatim and reports the go command's own "no
+  Go files in ...", for the same reason `-e` keeps a package that does not
+  compile from being blamed on the scope. This is the one diagnostic in the whole
+  coverage-and-scoping story that does not fail open, and the asymmetry is the
+  point. Everywhere else the fallback is "do more work and reach the same
+  verdict", which is free to take silently. Here there is no such direction:
+  widening back to `./...` would build and run the very suites the user's
+  command excluded, and running no binaries at all would report every mutant as
+  having survived a suite that never started — a score of zero from a run that
+  never looked. Both are fictions, and a typo in a package pattern takes a
+  second to fix once somebody is told which pattern it was. Each pattern is
+  resolved with its own `go list -e`, which is what lets the message name the
+  one that is wrong rather than reporting that the total came up short; `-e` is
+  what keeps a package that does not compile from being mistaken for a pattern
+  that names nothing, so `GOM4010` still diagnoses a broken snapshot with the
+  compiler's own words.
+
+  The report gains no field for any of this. `test.command` is already recorded
+  verbatim, and the command *is* the scope.
+
+  One thing a scoped command does not get yet is the outcome cache: `cache.mode
+  = "auto"` still stands down for anything but the built-in `go test ./...`,
+  with its `GOM7901` warning, because that rule is about whether go-mutants can
+  reason about a command's reproducibility rather than about whether it can read
+  its scope. Setting `mode = "on"` still promises it. Aligning the two is worth
+  doing and is deliberately not smuggled in here.
 - **The outcome cache.** A run reuses an outcome it has already proven, so a
   second run over unchanged code measures only what has moved. Entries live
   beside the run history — `<os cache>/go-mutants/workspaces/<key>/outcomes/` —
@@ -772,6 +857,52 @@ Entries say *why* a change was made, not only what changed.
   directory it never touched. The copy is now cleared before the run: asserting
   that a file is absent afterwards means nothing unless its absence beforehand
   is a fact rather than an assumption.
+- `internal/mutation` no longer declares a second skip-reason vocabulary.
+  It carried fifteen `SkipReason` constants spelled differently from the nine
+  `internal/discover` emits — `generated-file` against `generated`,
+  `cgo-package` against `cgo`, `switch-case` and `select-case` against the one
+  `case-label` — and nothing in the tree ever read one of them: not the CLI, not
+  the report builder, not the schema. Only `KnownSkipReasons` did, and its test
+  pinned that function against the same fifteen strings retyped, so the list
+  agreed with a copy of itself and with nothing a user could ever see. That is
+  the same shape of guard already removed from discovery and reporting, and it
+  is worse than no guard: it reads as a checked contract, so a contributor
+  adding a reason would reasonably have added it here and watched a green test
+  tell them the schema knew about it.
+
+  The vocabulary is deleted rather than realigned. Skip reasons belong with the
+  decision that produces them, and discovery's `AllSkipReasons` is already the
+  single list they come from: every reason it declares is checked against the
+  run report schema's `reason` enumeration, which is a superset holding two
+  names — `struct-tag` and `label-or-goto` — that no constant in the tree
+  declares yet, reserved so that landing them is a code change and not a schema
+  change. A test parses discovery's own sources, so a tenth constant fails in
+  the commit that adds it. A second list could only ever be the copy that
+  drifts. The published enumeration is unchanged, `docs/operators.md` and
+  `docs/json-schema.md` already documented discovery's spelling, and a note
+  where the constants were says where reasons live and why nothing should start
+  a second list here.
+- The outcome cache's maintenance walk no longer looks inside a workspace
+  directory that is a copy of another one. `cache status`, `cache gc` and
+  `cache clean` checked the ownership marker and stopped there, and a marker is
+  a genuine claim about the *original* directory: a CI cache restored under a
+  different key, a `cp -r` backup, an `xcopy` of somebody's cache folder all
+  carry it verbatim under a name this build would never have chosen. So the
+  copy's entries were counted as the marked workspace's by `status` and then
+  deleted as the marked workspace's by `gc` and `clean` — one workspace's
+  stored outcomes swept under a key that was never theirs, which is not an
+  arithmetic error anybody can undo once it is noticed.
+
+  The walk now requires a directory's name to equal `WorkspaceKey` of the digest
+  its own marker states, and reports the mismatch as a skipped row with a reason
+  naming the directory the marker really belongs to — the same shape the run
+  history's `List` already used, in the same words, because these commands walk
+  the very same directories and two walks disagreeing about what a workspace is
+  would make `cache status` and `report list` describe different stores. The
+  hazard on this side is the plainer one: the cache keys its deletions by the
+  directory entry it is standing in, so unlike the history store it never
+  reported a sweep it could not carry out — it carried out a sweep it should
+  never have been asked for.
 
 ### Notes
 

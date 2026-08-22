@@ -55,6 +55,11 @@ const binarySuffix = ".test"
 // binary: four, rendered as the eight hex characters the plan specifies.
 const binaryHashBytes = 4
 
+// allPackages is what [Options.Packages] means when it is empty: every package
+// in the snapshot, which is what this package built before a run could declare
+// a narrower test scope.
+const allPackages = "./..."
+
 // Options is everything this package needs to build and to run.
 //
 // The zero value is not usable: a toolchain, a snapshot, and a directory to put
@@ -71,6 +76,34 @@ type Options struct {
 	// directory every `go` command is issued from, and the tree whose packages
 	// are enumerated.
 	SnapshotRoot string
+
+	// Packages are the Go package patterns whose test binaries are compiled.
+	// Empty means [allPackages] — every package in the snapshot — which is what
+	// every caller got before a run could declare a narrower test scope.
+	//
+	// It is what makes a scoped `test.command` worth more than a fast baseline.
+	// A project whose tests are `go test ./internal/...` has said which suites
+	// measure it; building the other packages' binaries anyway would compile
+	// code the user excluded on purpose and then run it against every mutant,
+	// which is the whole cost of a mutation run spent on tests the user does not
+	// count.
+	//
+	// They are *patterns* rather than resolved import paths, and both halves of
+	// that matter. `./...` is one argument here and several hundred on a large
+	// module, which is a Windows command line length away from a build that
+	// cannot be issued at all; and the go command's pattern vocabulary is the
+	// vocabulary the user wrote their test command in, so handing it through
+	// unchanged is the only spelling that cannot come to mean something slightly
+	// different.
+	//
+	// A pattern that matches no package is deliberately not this package's
+	// error to raise. The go command answers one with a warning on the stream
+	// internal/runner captures and an exit status of zero, so it would arrive in
+	// the middle of the `go list -json` document [listPackages] parses and be
+	// reported as an unreadable listing. internal/engine therefore resolves
+	// every pattern it is about to pass, one at a time, before the first binary
+	// is compiled, and a pattern that names nothing never reaches this field.
+	Packages []string
 
 	// BinDir is where compiled test binaries are written. It must be **outside**
 	// SnapshotRoot, and that is not a style preference: the snapshot is
@@ -168,6 +201,16 @@ func (o Options) workers() int {
 	return max(o.Jobs, 1)
 }
 
+// patterns resolves [Options.Packages] against its documented default, so that
+// the one place a `go list` is issued does not have to know that an empty scope
+// is a whole-snapshot one.
+func (o Options) patterns() []string {
+	if len(o.Packages) == 0 {
+		return []string{allPackages}
+	}
+	return o.Packages
+}
+
 // resolve rejects options that cannot describe a build and returns them with
 // every directory this package writes into made absolute.
 //
@@ -188,6 +231,20 @@ func (o Options) resolve() (Options, error) {
 		return o, &Error{Code: CodeOptions, Message: "no snapshot root was given"}
 	case strings.TrimSpace(o.BinDir) == "":
 		return o, &Error{Code: CodeOptions, Message: "no directory for the test binaries was given"}
+	}
+
+	// A blank pattern is not a pattern. `go list ""` resolves against the
+	// working directory and would quietly list the snapshot root's own package
+	// instead of the scope the caller meant, which is the one failure shape a
+	// scoped build must never have: a run that measures a *different* set of
+	// binaries than the one it says it measured.
+	for _, pattern := range o.Packages {
+		if strings.TrimSpace(pattern) == "" {
+			return o, &Error{
+				Code:    CodeOptions,
+				Message: "the package patterns the test binaries are built from contain a blank entry",
+			}
+		}
 	}
 
 	binDir, binErr := filepath.Abs(o.BinDir)
@@ -281,12 +338,18 @@ func (p listedPackage) hasTests() bool {
 	return len(p.TestGoFiles) > 0 || len(p.XTestGoFiles) > 0
 }
 
-// BuildTestBinaries compiles one test binary per package in the snapshot that
-// has tests.
+// BuildTestBinaries compiles one test binary per package [Options.Packages]
+// selects that has tests.
 //
 // Packages with no test files are skipped rather than built: `go test -c`
 // produces nothing for them, and a binary that contains no tests can only ever
 // report that a mutant survived it.
+//
+// A scope that selects nothing at all comes back as an empty slice and no
+// error, exactly as a snapshot with no test files anywhere does. Whether that
+// is a fact about the project or a mistake in what the caller asked for is not
+// a question this package can answer — it was handed patterns, not a reason —
+// so internal/engine decides it, where the patterns came from.
 //
 // The builds run concurrently, bounded by [Options.Jobs]. That is safe by
 // construction — the build cache is designed for concurrent use, and each
@@ -335,7 +398,8 @@ func BuildTestBinaries(ctx context.Context, opts Options) ([]TestBinary, error) 
 	return binaries, nil
 }
 
-// listPackages enumerates the snapshot's packages, in `go list` order.
+// listPackages enumerates the packages [Options.Packages] selects, in `go list`
+// order.
 //
 // `-e` is deliberately not passed. By the time this runs the snapshot has
 // already built and passed its tests unmutated, so a package the go command
@@ -343,7 +407,8 @@ func BuildTestBinaries(ctx context.Context, opts Options) ([]TestBinary, error) 
 // code, and continuing past it would silently drop a package's tests from every
 // mutant's measurement.
 func listPackages(ctx context.Context, opts Options) ([]listedPackage, error) {
-	spec := opts.Toolchain.Command("list", "-json="+listFields, "./...")
+	args := append([]string{"list", "-json=" + listFields}, opts.patterns()...)
+	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
 	spec.Env = toolchainEnv(opts.Toolchain, "")
 	spec.Timeout = opts.Timeout

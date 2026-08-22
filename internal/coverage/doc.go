@@ -49,8 +49,14 @@
 //     never linked it — see the counter-example in the package tests, where the
 //     `user` package is absent from the `core` test binary's profile.
 //   - A mutant covered by no binary at all is not executed. It is reported as a
-//     survivor with `uncovered` set, because that is what it is: no test in the
-//     workspace runs the line, so no test could have caught the edit.
+//     survivor with `uncovered` set, because that is what the profiles say: not
+//     one of the binaries handed to [Map] runs the line, so not one of them
+//     could have caught the edit. "No binary at all" means none in *this set*,
+//     which is not always every test binary in the module — a `test.command`
+//     that names package patterns is a scope, and internal/engine hands over
+//     only the binaries that scope builds. The reading is the same either way,
+//     because the set is the suites the project measures itself with; the
+//     scoped case is argued at the place that decides it, in internal/engine.
 //
 // The blanket case — coverage could not be collected or could not be read — is
 // not this package's to decide. It hands back what it found and internal/engine

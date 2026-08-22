@@ -19,12 +19,27 @@ import (
 // `cache clean` are.
 //
 // All three walk one directory — `<root>/workspaces` — and all three obey the
-// same two rules, which are the whole safety argument for a tool that deletes
-// files in a directory it shares with every other program on the machine:
+// same three rules, which are the whole safety argument for a tool that deletes
+// files in a directory it shares with every other program on the machine. They
+// are internal/report's rules as well: the run history walks the very same
+// directories, and two walks that disagreed about which of them is a workspace
+// would make `cache status` and `report list` describe different stores.
 //
 //   - Nothing is touched without an ownership marker naming a workspace. A
 //     directory with no marker, or with one this build did not write, is
 //     skipped and counted; see [report.ReadMarker].
+//   - A workspace directory has to be named after the digest its own marker
+//     states — `report.WorkspaceKey(digest)`, and nothing else — or it too is
+//     skipped and counted. A directory somebody copied carries the original's
+//     marker under a name this build would never have chosen — a CI cache
+//     restored to a different key, a `cp -r` backup — and looking inside it
+//     would add its entries to the totals of the workspace named in that
+//     marker, and then remove them as that workspace's. Neither is a lie a
+//     count or a sweep can be corrected for afterwards: the entries would be
+//     gone, filed under a key that was never theirs. internal/report's
+//     [report.History.List] refuses the same directory, against the sharper
+//     failure the history store has; see the note at the top of its
+//     enumerate.go.
 //   - Nothing outside `<root>/workspaces/<key>/outcomes` is touched at all.
 //     The run history's `runs/` and `latest.json` sit in the same directory and
 //     are none of this file's business, and every path is built from the root
@@ -219,6 +234,12 @@ func Clean(root string) (Sweep, error) {
 // walk lists the workspace directories under a cache root, separating the ones
 // go-mutants owns from the ones it will not touch.
 //
+// A directory whose name is not the key its own marker's digest names is
+// skipped and counted, alongside the ones that carry no marker at all. It is
+// the one skip that is not about ownership — the marker may be perfectly
+// genuine — and it is what keeps a survey and a sweep talking about the
+// workspace the directory really is; see the second rule above.
+//
 // A root that does not exist is an empty cache rather than a failure: nothing
 // has been cached on this machine yet, which is a perfectly good answer to
 // `cache status` and to `cache gc` alike.
@@ -256,6 +277,19 @@ func walk(root string) ([]Workspace, []Skipped, error) {
 			continue
 		case err != nil:
 			skipped = append(skipped, Skipped{Name: entry.Name(), Reason: reasonOf(err)})
+			continue
+		}
+		// A marker is a claim about one directory, and the directory it claims is
+		// the one this build would have named for that workspace. Anything else is
+		// a copy of a workspace rather than a workspace, and surveying or sweeping
+		// it would count and then delete one workspace's stored outcomes under a
+		// key that is not its own. See the second rule above.
+		if key := report.WorkspaceKey(digest); entry.Name() != key {
+			skipped = append(skipped, Skipped{
+				Name: entry.Name(),
+				Reason: "its marker names the workspace filed under " + key +
+					", so it is a copy of that directory rather than one of this cache's own",
+			})
 			continue
 		}
 		owned = append(owned, Workspace{Key: entry.Name(), Dir: dir, Digest: digest})

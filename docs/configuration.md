@@ -85,17 +85,60 @@ low = 60
 - `command`: an argv vector, never a shell string. Defaults to
   `["go", "test", "./..."]`.
 
-  Setting it to anything else has one consequence worth knowing before you do:
-  it turns coverage-guided selection off, with a `GOM7601` warning naming both
-  commands. The narrowing maps a *test binary* onto the lines it reached, and
-  that is only sound because go-mutants compiled those binaries itself and
-  knows which package each one is. A custom command is an opaque program — it
-  may run a subset, a superset, several suites, or not be `go test` at all —
-  and guessing which of go-mutants' own binaries its coverage belongs to would
-  skip mutants a test does cover, which loses a kill rather than costing time.
-  The run is slower and its verdicts are unchanged. The same applies to a
-  `-- <test argv>` passthrough, since what matters is what the command does
-  rather than where it was written.
+  **The command is also a scope.** go-mutants reads it when — and only when — it
+  is `go`, then `test`, then one or more package patterns:
+  `["go", "test", "./internal/...", "./cmd/..."]` is read; the built-in default
+  is the trivial case of the same shape. A command it can read gets both of the
+  run's optimisations:
+
+  - **Only the named packages get a test binary.** A module whose tests live in
+    three of forty packages compiles three binaries and starts three processes
+    per mutant instead of forty. Before this, scoping the command bought a
+    faster baseline and nothing else — every mutant still ran the whole module.
+  - **Coverage-guided selection is on**, over exactly those binaries. A mutant
+    no binary in the scope reaches is reported as `survived (uncovered)`, which
+    is the honest reading of a scope that leaves the line out: those suites
+    would not have caught the edit, and they are the suites you said measure
+    this project.
+
+  Anything else is not read: a flag of any kind, a bare import path, a `..`
+  anywhere in a pattern, a Windows `.\internal\...`, or another program. Such
+  a run behaves exactly as it always has — every test binary is built and every
+  mutant is measured against all of them — and says so with a `GOM7601` warning
+  naming the command. The strictness is deliberate rather than unfinished. The
+  coverage mapping runs from a *test binary* to the lines it reached, and is
+  sound only because go-mutants compiled that binary and knows what it is; a
+  flag can change what a `go test` means (`-run` selects a fraction of it,
+  `-tags` compiles different files, `-race` changes which paths are taken), and
+  a wrong attribution does not cost time — it skips a mutant a test does cover,
+  which loses a kill and inflates the score. There is no shortlist of harmless
+  flags that stays harmless as the go command grows, so anything go-mutants has
+  not been taught falls back to the slow, correct behaviour.
+
+  A scope that names nothing is an error rather than a quiet narrowing:
+  `GOM4022`. It fires when a pattern resolves to no package directory at all —
+  a wildcard that matches nothing, or a path that is not there — which the go
+  command answers with a warning and exit status zero, so nothing else would
+  notice. That is checked before the baseline is measured, so a typo costs a
+  second rather than a full pipeline. A pattern naming a real directory with no
+  Go files in it (`./docs`, spelled without the wildcard) gets past this check
+  and is refused a moment later by the baseline, where `go test ./docs` fails
+  with the go command's own "no Go files in ..." — the same division of labour
+  that makes a package which does not compile a build failure rather than a
+  scope error. `GOM4022` fires again when the whole scope turns out to hold no
+  package with a test file, which can only be known once the binaries have been
+  built. This is the one diagnostic here that does
+  not fail open, because there is no open direction: widening back to `./...`
+  would run the suites your command excludes, and running nothing would report
+  every mutant as having survived a suite that never started.
+
+  The reading is of the effective command, so a `-- <test argv>` passthrough
+  that spells out `go test ./internal/...` is the same scope as a `test.command`
+  that does. What matters is what the command does, not where it was written.
+
+  One thing a scoped command does **not** yet get is the outcome cache: `auto`
+  still stands down for anything but the built-in `go test ./...` (see
+  `[cache]` below), so set `mode = "on"` if you want it.
 - `timeout`: a duration string such as `"60s"` or `"2m"`. Omitted derives
   `max(10s, slowest baseline × 5)`.
 - `baseline_runs`: positive integer, default 3. Every observation is retained

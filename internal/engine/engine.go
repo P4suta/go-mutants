@@ -422,6 +422,20 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	}()
 	env := childEnv(scratch)
 
+	// The test command's own scope, proven before a single command is measured.
+	// A pattern that names nothing is a mistake in the invocation, exactly like
+	// the `--changed` ref resolved above, and finding it out after a build, three
+	// timed test runs, discovery and an instrumentation pass would be several
+	// minutes spent to report a typo. Nothing is resolved for an unrecognised
+	// command: go-mutants has not read it as a scope and has no patterns to
+	// check.
+	patterns, scoped := testScope(out.TestCommand)
+	if scoped {
+		if err := resolveTestScope(ctx, toolchain, snap.Root, env, patterns); err != nil {
+			return err
+		}
+	}
+
 	if err := s.baseline(ctx, cfg, command, toolchain, snap.Root, env, out); err != nil {
 		return err
 	}
@@ -629,11 +643,28 @@ func (s *session) mutate(
 		Jobs:         cfg.Execution.Jobs,
 		Timeout:      BaselineCap,
 	}
-	// Coverage instrumentation is decided before the build because it is a
-	// build option: one set of binaries serves both the profiling pass and the
-	// mutant runs, and building twice to save a few milliseconds per mutant
-	// would cost more than it saved on every run.
-	if coverageEnabled(out.TestCommand) {
+	// One reading of the test command decides both of the run's optimisations,
+	// because both rest on the same fact: go-mutants can state in full what a
+	// recognised command does. The scope says which packages get a test binary,
+	// so a project that measures itself with `go test ./internal/...` no longer
+	// compiles and runs the rest of the module against every mutant; and the
+	// coverage mapping — from a test binary to the lines it reached — attributes
+	// to binaries this run built and named. An unrecognised command gets neither
+	// and loses nothing it had: every binary, every mutant, and a warning saying
+	// so. See [testScope] for why recognition is spelling-strict.
+	//
+	// The patterns are read back off the command rather than carried down from
+	// [session.pipeline], where they were resolved. It is a pure function of a
+	// value the outcome already holds, and one call site owning the reading is
+	// worth more than one saved.
+	//
+	// Both are decided before the build because both are build options: one set
+	// of binaries serves the profiling pass and the mutant runs alike, and
+	// building twice to save a few milliseconds per mutant would cost more than
+	// it saved on every run.
+	patterns, scoped := testScope(out.TestCommand)
+	if scoped {
+		execOpts.Packages = patterns
 		execOpts.CoverPkg = found.ModulePath + coverPkgSuffix
 	} else {
 		s.warnCode(string(coverage.CodeCustomTestCommand), customTestCommand(out.TestCommand))
@@ -641,6 +672,9 @@ func (s *session) mutate(
 
 	bins, err := s.buildTestBinaries(ctx, &execOpts)
 	if err != nil {
+		return err
+	}
+	if err = scopedBinaries(patterns, len(bins)); err != nil {
 		return err
 	}
 
@@ -701,16 +735,6 @@ func (s *session) buildTestBinaries(ctx context.Context, opts *execute.Options) 
 		firstLine(err.Error()) + ")")
 	opts.CoverPkg = ""
 	return execute.BuildTestBinaries(ctx, *opts)
-}
-
-// customTestCommand is what [coverage.CodeCustomTestCommand] says: which
-// command was configured, and why it cannot be mapped.
-func customTestCommand(command []string) string {
-	return "coverage-guided selection is off because test.command is " +
-		strconv.Quote(strings.Join(command, " ")) + " rather than the built-in " +
-		strconv.Quote(strings.Join(config.DefaultTestCommand(), " ")) +
-		"; go-mutants cannot tell which of its per-package test binaries a custom command's coverage belongs to, " +
-		"so every mutant will be measured against every one of them"
 }
 
 // instrumentedBaseline is the semantic preservation gate.

@@ -30,12 +30,32 @@
 //     package are the only things allowed to have moved; anything else is a
 //     test writing into the tree every later mutant is measured against, and
 //     [CodeWorkspaceDrift] names the files.
-//  7. Build each test package's binary once, profile them if coverage-guided
-//     selection is on, then execute every accepted mutant against the binaries
-//     it needs, activating one per process.
+//  7. Build a test binary for each package the test command's scope names,
+//     profile them if coverage-guided selection is on, then execute every
+//     accepted mutant against the binaries it needs, activating one per process.
 //  8. Build the run report from the catalogue and the outcomes, file it in the
 //     history store, and decide the exit status from the document that was
 //     published rather than from a second tally beside it.
+//
+// # The test command is a scope
+//
+// A `test.command` of `go test ./internal/...` says two things at once: run
+// these suites, and *only* these suites count. [testScope] reads the second, and
+// step 7 builds a test binary for the packages the command names and for no
+// others — so a run of a module whose tests live in three of forty packages
+// compiles three binaries and starts three processes per mutant instead of
+// forty. It is the largest single saving available to a project that has already
+// told go-mutants where its tests are, and before it existed such a project paid
+// for a scoped command with a faster baseline and nothing else.
+//
+// A scope is proven before anything is built. Every pattern in a recognised
+// command has to name at least one package in the snapshot, and the scope as a
+// whole has to hold at least one package with a test file; a scope that fails
+// either is [CodeTestScope] and stops the run. That is the one place in this
+// story that does not fail open, and [CodeTestScope] carries the argument: there
+// is no honest way to carry on, because widening back to `./...` would run the
+// suites the command excluded and running nothing would report every mutant as
+// having survived a suite that never started.
 //
 // # Coverage-guided selection
 //
@@ -45,21 +65,27 @@
 // with internal/coverage, and then measures every mutant only against the
 // binaries that reach it. A mutant no binary reaches is not executed at all: it
 // is reported as a survivor with `uncovered` set, which is both true — nothing
-// runs the line, so nothing could have caught the edit — and more actionable
-// than the bare "survived" a full run would have spent a process to reach.
+// the run measures with runs the line, so nothing it measures with could have
+// caught the edit — and more actionable than the bare "survived" a full run
+// would have spent a process to reach. Under a scoped `test.command` the
+// binaries are the ones that command runs, which is the honest reading of a
+// scope that leaves the line out: the argument is in coverage.go, beside the
+// phase that applies it.
 //
 // Two rules decide whether this happens, and both are documented where the code
 // that applies them lives:
 //
-//   - **Auto-on, and only for the built-in test command.** Coverage narrowing is
-//     on whenever the effective `test.command` is `go test ./...`, and off with
-//     a [coverage.CodeCustomTestCommand] warning for anything else. There is no
-//     setting, because there is nothing to choose between: the mapping is from a
-//     *test binary* to the lines it reached, and it is sound only because
-//     go-mutants compiled those binaries itself and knows what each one is. A
-//     custom command is an opaque program whose coverage cannot be attributed to
-//     them, and a wrong attribution does not cost time — it skips a mutant a
-//     test does cover, which is a kill lost and a score inflated.
+//   - **Auto-on for a test command go-mutants can read.** Coverage narrowing is
+//     on whenever the effective `test.command` is `go test` followed only by
+//     package patterns — the built-in `go test ./...` and any narrowing of it —
+//     and off with a [coverage.CodeCustomTestCommand] warning for anything else.
+//     There is no setting, because there is nothing to choose between: the
+//     mapping is from a *test binary* to the lines it reached, and it is sound
+//     only because go-mutants compiled those binaries itself and knows what each
+//     one is. An unrecognised command is an opaque program whose coverage cannot
+//     be attributed to them, and a wrong attribution does not cost time — it
+//     skips a mutant a test does cover, which is a kill lost and a score
+//     inflated. [testScope] carries why the reading is spelling-strict.
 //   - **Fail open, always.** Every way the pass can fail — the
 //     coverage-instrumented build not compiling, a profiling run failing,
 //     `go tool covdata` missing or erroring, a profile that will not parse, a
