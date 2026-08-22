@@ -5,6 +5,7 @@ package mutation
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -271,6 +272,108 @@ func TestTierNames(t *testing.T) {
 	if got := Tier(9).String(); got != "tier(9)" {
 		t.Errorf("Tier(9).String() = %q, want %q", got, "tier(9)")
 	}
+}
+
+// TestTierNamesAreSpeltOutOneByOne pins each tier's canonical name on its own.
+// The round trip above cannot: ParseTier resolves a name by comparing it
+// against String(), so a String() that answered the same wrong thing twice
+// would still round-trip perfectly. These names are the `--profile` values and
+// the `mutation.profile` values, so they are a published vocabulary rather
+// than a rendering detail.
+func TestTierNamesAreSpeltOutOneByOne(t *testing.T) {
+	t.Parallel()
+
+	want := map[Tier]string{
+		TierBalanced: "balanced",
+		TierStrong:   "strong",
+		TierAll:      "all",
+	}
+	for tier, name := range want {
+		if got := tier.String(); got != name {
+			t.Errorf("Tier(%d).String() = %q, want %q", uint8(tier), got, name)
+		}
+	}
+
+	// Tiers() is the list ParseTier searches and the one the tier vocabulary
+	// is enumerated from, so it has to be all three tiers in inclusion order
+	// rather than merely something to range over.
+	if diff := cmp.Diff([]Tier{TierBalanced, TierStrong, TierAll}, Tiers()); diff != "" {
+		t.Fatalf("Tiers() changed (-want +got):\n%s", diff)
+	}
+	for _, name := range []string{"balanced", "strong", "all"} {
+		tier, err := ParseTier(name)
+		if err != nil {
+			t.Errorf("ParseTier(%q) error = %v", name, err)
+			continue
+		}
+		if tier.String() != name {
+			t.Errorf("ParseTier(%q) = %v, which renders as %q", name, tier, tier.String())
+		}
+	}
+}
+
+// TestRegistryLookupsRefuseUnknownNames is the other half of the lookup
+// contract. Every accessor here returns a value and an ok, and the value is
+// position zero — the first row of the table — when the name is unknown, so an
+// ok that is always true would silently attribute an unregistered rule to
+// whatever happens to be catalogued first.
+func TestRegistryLookupsRefuseUnknownNames(t *testing.T) {
+	t.Parallel()
+
+	r := CanonicalRegistry()
+
+	if position, ok := r.Position("eq-to-nothing"); ok {
+		t.Errorf("Position(unknown) = %d, true; want 0, false", position)
+	}
+	if position, ok := r.FamilyPosition("invented-family"); ok {
+		t.Errorf("FamilyPosition(unknown) = %d, true; want 0, false", position)
+	}
+	if rule, ok := r.Lookup("eq-to-nothing"); ok {
+		t.Errorf("Lookup(unknown) = %v, true; want the zero rule, false", rule)
+	}
+	if rules := r.FamilyRules("invented-family"); len(rules) != 0 {
+		t.Errorf("FamilyRules(unknown) = %v, want none", rules)
+	}
+
+	// And the registered names still resolve, so the check above is not
+	// passing because everything says false.
+	if position, ok := r.Position("eq-to-neq"); !ok || position == 0 {
+		t.Errorf("Position(%q) = %d, %v; want a non-zero position and true", "eq-to-neq", position, ok)
+	}
+	if _, ok := r.FamilyPosition(FamilyComparison); !ok {
+		t.Errorf("FamilyPosition(%q) = false", FamilyComparison)
+	}
+}
+
+// TestMustRegistryPanicsOnAnInconsistentTable pins what the package-level
+// `canonical` rests on: the table is proven consistent while the package is
+// initialising, which is why no accessor downstream re-checks it. An
+// inconsistent table is a programming error, and swallowing the error would
+// hand every caller a nil registry to dereference instead of a stack trace
+// naming the row that is wrong.
+func TestMustRegistryPanicsOnAnInconsistentTable(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("mustRegistry() returned instead of panicking on a duplicate rule name")
+		}
+		message, ok := recovered.(string)
+		if !ok {
+			t.Fatalf("panic value = %v (%T), want a string", recovered, recovered)
+		}
+		if !strings.Contains(message, "canonical rule table is inconsistent") {
+			t.Errorf("panic = %q, want it to name the inconsistent table", message)
+		}
+		if !strings.Contains(message, ErrDuplicateRule.Error()) {
+			t.Errorf("panic = %q, want it to quote the underlying error", message)
+		}
+	}()
+
+	mustRegistry([]familyDef{
+		{FamilyComparison, TierBalanced, []string{"eq-to-neq", "eq-to-neq"}},
+	})
 }
 
 func TestRuleString(t *testing.T) {

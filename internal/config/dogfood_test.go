@@ -17,6 +17,117 @@ import (
 // keeps as the worked example of the whole v1 surface.
 const repositoryConfig = "../../" + FileName
 
+// repositoryExpectations is the ledger the repository's own configuration
+// declares, transcribed row for row.
+//
+// It is spelled out here, id and argument alike, for the reason the ledger
+// exists at all: an expectation is a claim that a mutant cannot be killed, and
+// the way such a claim rots is that somebody quietly deletes or rewords a row
+// to turn a red gate green. Pinning the ids catches a deletion; pinning the
+// reasons catches a row whose argument was replaced by a shrug. The order is
+// the file's order, which internal/report relies on when it tells an author
+// which row has gone stale.
+var repositoryExpectations = []Expectation{
+	{
+		ID: "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9",
+		Reason: "Equivalent: Disjoint is the zero value of Relation, " +
+			"being first in its iota block, so `return Disjoint` and " +
+			"`return 0` are the same constant.",
+	},
+	{
+		ID: "326eb774d53498b186d7a5990a0ee7f0c7dd2cf4934f6ba8adb79a0217b6025b",
+		Reason: "Equivalent: Len returns 0 through the guard for a reversed span " +
+			"and EndByte - StartByte otherwise, and that difference is 0 exactly " +
+			"when the bounds are equal, so `<` and `<=` report the same length " +
+			"for every span.",
+	},
+	{
+		ID: "0d13d53c6b4f43b0e2fb26f7da1096974e1caaf4b17cf09e527ddb014cf85abf",
+		Reason: "Equivalent: the comparison sits inside " +
+			"`case s.StartByte != other.StartByte`, where the two start bytes are " +
+			"already known to differ, so `<` and `<=` are the same test.",
+	},
+	{
+		ID: "b3bc0192a26baa4e0c2080c6abe78d188189d55ed7544392937d5023b498a485",
+		Reason: "Equivalent: the comparison sits inside " +
+			"`case s.EndByte != other.EndByte`, where the two end bytes are " +
+			"already known to differ, so `<` and `<=` are the same test.",
+	},
+	{
+		ID: "ab63a5a3e327b7db2bbe97d3267ca840cebf9cf54a899f10cdc52a111a398548",
+		Reason: "Equivalent: the comparison sits inside " +
+			"`if x.position != y.position`, where the two registry positions are " +
+			"already known to differ, so `<` and `<=` are the same test.",
+	},
+	{
+		ID: "90dcb6c9a5eef3328c6287e649f96f5d71187376e2fdb906a262947c815a0c75",
+		Reason: "Equivalent: OutcomeNotRun is the zero value of Outcome, being " +
+			"first in its iota block, so `return OutcomeNotRun` and `return 0` " +
+			"are the same constant -- the same argument as the Disjoint row above.",
+	},
+	{
+		ID: "cf02d1c0b8855d56c21d1216e47fec02bc0674638c7f3e8ab02ce647af24b391",
+		Reason: "Equivalent for every coherent tally: `p.MinimumScore > 0` and " +
+			"`>= 0` select different runs only when the floor is exactly zero and " +
+			"the score is negative, and a negative percentage needs a negative " +
+			"Detected count, which Score.Validate reports as incoherent.",
+	},
+	{
+		ID: "71a2e9ed6670de5c01f1c29c061ab45b9a5b6000d754250758601e204f997e68",
+		Reason: "Unreachable: Build only ever sees candidates Add accepted, and " +
+			"Add calls Registry.Verify, which refuses exactly the names " +
+			"Registry.Position cannot find -- both read one immutable map -- so " +
+			"nothing a caller can build reaches this return.",
+	},
+	{
+		ID: "e997446d6c157c03f5403f1ea5ae0a63a7b20fab96a4ccafa604197d2c44e929",
+		Reason: "Unkillable: `>` and `>=` pick different catalogues only at " +
+			"exactly math.MaxUint32 queued candidates, which is 4,294,967,295 " +
+			"Candidate values in one builder.",
+	},
+	{
+		ID: "a94a2c50fc8b33c7f5ea10f9f5cea1e05eb85138b54119cf80383a8eac4b5c01",
+		Reason: "Unkillable: this return is reached only past math.MaxUint32 " +
+			"queued candidates, so killing it means holding more than " +
+			"4,294,967,295 Candidate values in memory.",
+	},
+	{
+		ID: "0879ed736b35300ea72bf867721591ee218f02a21a7d1fdc5d1a8a89df20a718",
+		Reason: "Unkillable: Build only sees candidates Add validated and " +
+			"Candidate.ID re-runs that same validation, so the only error left " +
+			"for this branch to catch is WriteLengthPrefixed's 4 GiB field guard " +
+			"-- see the id.go rows below.",
+	},
+	{
+		ID: "85dc0334ed347973ea6af195207e0cd262ca6a2bfc9c7a710bda312262b5aad7",
+		Reason: "Unkillable: the same branch as the row above -- the error this " +
+			"forwards can only come from WriteLengthPrefixed's 4 GiB field guard.",
+	},
+	{
+		ID: "8ddcd93468242a0aee6129ec36bfb87e0bea490e44641536259cf1dfeb480420",
+		Reason: "Unkillable: WriteLengthPrefixed fails only on a field longer " +
+			"than math.MaxUint32 bytes, so entering this branch means hashing an " +
+			"identity whose path is four gigabytes long.",
+	},
+	{
+		ID: "497f2d5af7a1ee6456229c4775efd7e9a76c176fa4c905bda8ea838c8bf28b6c",
+		Reason: "Unkillable: the same branch as the row above -- the error this " +
+			"forwards exists only for a field longer than math.MaxUint32 bytes.",
+	},
+	{
+		ID: "17dfea878b710766031649b82b2f13b6a19bd2e46e5f7a8c914d93d129711d10",
+		Reason: "Unkillable: `>` and `>=` disagree only on a string of exactly " +
+			"math.MaxUint32 bytes, so telling them apart means allocating four " +
+			"gigabytes in a unit test.",
+	},
+	{
+		ID: "6d6e41c6c98de6b8eb9595c96e140f5d566b68ad43841b968d1a3e5e0f833478",
+		Reason: "Unkillable: this return is reached only for a string longer " +
+			"than math.MaxUint32 bytes, so killing it means allocating more than " +
+			"four gigabytes in a unit test.",
+	},
+}
+
 // The example everyone reads has to be an example that works. A documented
 // surface that the decoder rejects is worse than no example, and this is the
 // one test that would catch the file and the decoder drifting apart — a key
@@ -43,11 +154,12 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Two whole packages and one file. The whole-package entries are
-			// what scoped test binaries bought: the gate used to be two files
-			// because every mutant ran every test binary in the module.
+			// Three whole packages. Scoped test binaries bought the first two
+			// — the gate used to be two files, because every mutant ran every
+			// test binary in the module — and internal/mutation's own tests
+			// bought the third, by killing the survivors that kept it out.
 			Include: []string{
-				"internal/mutation/shard.go",
+				"internal/mutation/*.go",
 				"internal/glob/*.go",
 				"internal/interval/*.go",
 			},
@@ -56,16 +168,10 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 			// profile decides and this stays empty.
 			Operators: nil,
 			Profile:   mutation.TierBalanced,
-			// The one declared equivalent mutant: `return Disjoint` rewritten
-			// to `return 0`, where Disjoint is the zero value of Relation.
-			// Pinned here as well as in the file so that deleting the ledger
-			// entry to make a red gate green shows up as a failing test.
-			Expect: []Expectation{{
-				ID: "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9",
-				Reason: "Equivalent: Disjoint is the zero value of Relation, " +
-					"being first in its iota block, so `return Disjoint` and " +
-					"`return 0` are the same constant.",
-			}},
+			// The declared mutants, pinned here as well as in the file so that
+			// deleting a ledger entry to make a red gate green shows up as a
+			// failing test. See repositoryExpectations above.
+			Expect: repositoryExpectations,
 		},
 		Test: Test{
 			// The command is the run's scope as well as its measurement: these
@@ -86,7 +192,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// for why it is no longer pinned for correctness.
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		Policy:    mutation.Policy{Strict: false, MinimumScore: 96, RequireMutants: true},
+		Policy:    mutation.Policy{Strict: false, MinimumScore: 99, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",
 			Formats:   []ReportFormat{FormatJSON, FormatHTML},

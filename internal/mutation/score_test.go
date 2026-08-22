@@ -82,6 +82,37 @@ func TestTallyOfEmptyRun(t *testing.T) {
 	}
 }
 
+// TestSurvivorsSplitByTheLedger pins which of the two survivor counters a
+// survivor lands in. The counts are deliberately lopsided: the tallies above
+// hold one of each, and one of each is exactly the shape a rule that sent
+// every survivor to the wrong counter would still produce.
+func TestSurvivorsSplitByTheLedger(t *testing.T) {
+	t.Parallel()
+
+	results := []Result{
+		{Outcome: OutcomeSurvived},
+		{Outcome: OutcomeSurvived},
+		{Outcome: OutcomeSurvived},
+		{Outcome: OutcomeSurvived, ExpectedSurvivor: true},
+	}
+	got, err := TallyOf(results)
+	if err != nil {
+		t.Fatalf("TallyOf() error = %v", err)
+	}
+	want := Tally{UnexpectedSurvivors: 3, ExpectedSurvivors: 1}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("tally mismatch (-want +got):\n%s", diff)
+	}
+	// Only the three the ledger did not predict reach the denominator; the
+	// declared one is accounted for and leaves the score alone.
+	if got.Denominator() != 3 {
+		t.Errorf("Denominator() = %d, want 3", got.Denominator())
+	}
+	if got.Survived() != 4 {
+		t.Errorf("Survived() = %d, want 4", got.Survived())
+	}
+}
+
 func TestScoreOf(t *testing.T) {
 	t.Parallel()
 

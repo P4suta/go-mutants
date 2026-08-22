@@ -159,6 +159,29 @@ func TestSpanSlice(t *testing.T) {
 		t.Errorf("Slice() = %q, want %q", got, "==")
 	}
 
+	// The span is half-open, so a span that ends on the last byte ends at
+	// len(src) and is in range. That boundary is the whole difference between
+	// "reaches past the end" and "reaches the end": off by one here would
+	// refuse to slice the final mutation site of every file.
+	end := uint32(len(src))
+	whole, err := (Span{StartByte: 0, EndByte: end}).Slice(src)
+	if err != nil {
+		t.Fatalf("whole-source Slice() error = %v", err)
+	}
+	if string(whole) != string(src) {
+		t.Errorf("whole-source Slice() = %q, want %q", whole, src)
+	}
+	tail, err := (Span{StartByte: 11, EndByte: end}).Slice(src)
+	if err != nil {
+		t.Fatalf("trailing Slice() error = %v", err)
+	}
+	if string(tail) != " b" {
+		t.Errorf("trailing Slice() = %q, want %q", tail, " b")
+	}
+
+	if _, err := (Span{StartByte: 9, EndByte: end + 1}).Slice(src); !errors.Is(err, ErrSpanOutOfRange) {
+		t.Errorf("one-past-the-end Slice() error = %v, want ErrSpanOutOfRange", err)
+	}
 	if _, err := (Span{StartByte: 9, EndByte: 99}).Slice(src); !errors.Is(err, ErrSpanOutOfRange) {
 		t.Errorf("out-of-range Slice() error = %v, want ErrSpanOutOfRange", err)
 	}

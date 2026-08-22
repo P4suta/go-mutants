@@ -355,6 +355,19 @@ func TestNormalizePath(t *testing.T) {
 		{name: "nul byte", in: "internal/sco\x00re.go", wantErr: ErrEmptyPath},
 		{name: "absolute posix", in: "/internal/score.go", wantErr: ErrAbsolutePath},
 		{name: "absolute windows", in: `C:\repo\score.go`, wantErr: ErrAbsolutePath},
+		// A volume name is a letter and a colon, and both halves of that are
+		// checked here rather than assumed. The four letters are the ends of
+		// the two ASCII ranges, because a range that stops one short accepts
+		// `z:\...` as a relative path and mints an identity for a file outside
+		// the module. "1:" is the counter-example: a colon after something
+		// that is not a letter is a directory whose name contains a colon,
+		// which POSIX allows, and rejecting it would refuse a legal path.
+		{name: "bare volume name", in: "c:", wantErr: ErrAbsolutePath},
+		{name: "first lowercase volume name", in: `a:\repo\score.go`, wantErr: ErrAbsolutePath},
+		{name: "last lowercase volume name", in: `z:\repo\score.go`, wantErr: ErrAbsolutePath},
+		{name: "first uppercase volume name", in: `A:\repo\score.go`, wantErr: ErrAbsolutePath},
+		{name: "last uppercase volume name", in: `Z:\repo\score.go`, wantErr: ErrAbsolutePath},
+		{name: "colon after a digit is not a volume", in: "1:/repo/score.go", want: "1:/repo/score.go"},
 		{name: "escaping", in: "../score.go", wantErr: ErrEscapingPath},
 		{name: "escaping after cleaning", in: "internal/../../score.go", wantErr: ErrEscapingPath},
 		{name: "bare dot", in: ".", wantErr: ErrEscapingPath},

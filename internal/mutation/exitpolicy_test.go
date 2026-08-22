@@ -434,6 +434,62 @@ func TestExitCodes(t *testing.T) {
 	}
 }
 
+// TestVerdictOKNeedsBothHalves pins the conjunction in OK(). A verdict is OK
+// when the code says so *and* nothing was recorded against it, and both halves
+// are load-bearing because a verdict does not only ever come from Decide: the
+// report layer assembles one from a document, and a merged or partial run can
+// carry a code and a failure list that have to agree before anything calls the
+// run a pass.
+func TestVerdictOKNeedsBothHalves(t *testing.T) {
+	t.Parallel()
+
+	failure := Failure{Reason: ReasonNoMutants, Detail: "policy.require_mutants is set and the run produced no mutants"}
+
+	tests := []struct {
+		name    string
+		verdict Verdict
+		want    bool
+	}{
+		{name: "ok code and nothing recorded", verdict: Verdict{Code: ExitOK}, want: true},
+		{name: "failing code and nothing recorded", verdict: Verdict{Code: ExitPolicyFailure}},
+		{name: "ok code with a failure recorded", verdict: Verdict{Code: ExitOK, Failures: []Failure{failure}}},
+		{name: "failing code with a failure recorded", verdict: Verdict{Code: ExitInfrastructure, Failures: []Failure{failure}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := tc.verdict.OK(); got != tc.want {
+				t.Errorf("OK() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestVerdictHasAnswersAboutTheReasonItWasAsked is the other half of Has: a
+// verdict that carries one failure must say no to every other reason in the
+// vocabulary. TestVerdictAccessors asks a clean verdict, where an answer of
+// "yes to everything" is indistinguishable from an empty failure list.
+func TestVerdictHasAnswersAboutTheReasonItWasAsked(t *testing.T) {
+	t.Parallel()
+
+	v := Decide(Tally{Killed: 3, Errored: 1}, DefaultPolicy(), Signals{})
+	if !v.Has(ReasonErroredMutants) {
+		t.Fatalf("Has(%q) = false for failures %+v", ReasonErroredMutants, v.Failures)
+	}
+	for _, absent := range []FailureReason{
+		ReasonInfrastructure,
+		ReasonExpectationFailure,
+		ReasonUnexpectedSurvivors,
+		ReasonBelowMinimumScore,
+		ReasonNoMutants,
+	} {
+		if v.Has(absent) {
+			t.Errorf("Has(%q) = true, but the only failure recorded is %q", absent, ReasonErroredMutants)
+		}
+	}
+}
+
 func TestVerdictAccessors(t *testing.T) {
 	t.Parallel()
 
