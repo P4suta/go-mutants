@@ -160,6 +160,13 @@ func TestBuildTestBinariesIssuesTheExpectedCommands(t *testing.T) {
 	if got := envValue(list.Env, "GOWORK"); got != "off" {
 		t.Errorf("GOWORK = %q, want %q so a workspace above the snapshot cannot change the package set", got, "off")
 	}
+	// The listing is not a compile and has no vet pass to turn off, so it does
+	// not carry the suppression the build below does. Handing it one anyway
+	// would be harmless and would still be wrong: it would say that `go list`
+	// is one of the commands this rewrite has an opinion about.
+	if got := envValue(list.Env, "GOFLAGS"); strings.Contains(got, gocmd.VetOff) {
+		t.Errorf("the listing carries GOFLAGS %q, want no %s: `go list` runs no vet pass", got, gocmd.VetOff)
+	}
 
 	compile := seen[1]
 	wantCompile := []string{toolchain.GoBin, "test", "-c", "-o", binaries[0].BinPath, "example.com/m/pkg"}
@@ -171,6 +178,52 @@ func TestBuildTestBinariesIssuesTheExpectedCommands(t *testing.T) {
 	}
 	if compile.Timeout != opts.Timeout {
 		t.Errorf("compile timeout = %s, want %s", compile.Timeout, opts.Timeout)
+	}
+	if got := envValue(compile.Env, "GOFLAGS"); !strings.Contains(got, gocmd.VetOff) {
+		t.Errorf("compile GOFLAGS = %q, want it to carry %s", got, gocmd.VetOff)
+	}
+}
+
+// TestBuildTestBinariesTurnsVetOffWithoutLosingInheritedGoflags is the whole
+// reason the suppression is merged rather than set.
+//
+// The tree `go test -c` compiles here is instrumented: every mutant of an
+// expression sits beside the original, so `s == "." && s == ".."` is a shape
+// the snapshot legitimately holds and vet's `bools` analyzer legitimately
+// refuses. Turning vet off is what keeps that from stopping the run — but
+// GOFLAGS is also how a developer, a CI image or a toolchain manager says
+// `-mod=readonly`, and internal/execute inherits that on purpose. Overwriting
+// the variable would compile a different program from the one the project
+// builds, which is a subtler failure than the one being fixed.
+func TestBuildTestBinariesTurnsVetOffWithoutLosingInheritedGoflags(t *testing.T) {
+	t.Setenv("GOFLAGS", "-mod=readonly")
+
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if isList(c) {
+			return runner.Result{Output: []byte(listing(
+				pkgJSON("example.com/m/pkg", "/snap/pkg", true, false),
+			))}
+		}
+		return runner.Result{}
+	}}
+	opts, _ := buildOptions(t, f, 1)
+
+	if _, err := execute.BuildTestBinaries(t.Context(), opts); err != nil {
+		t.Fatalf("building the test binaries: %v", err)
+	}
+
+	seen := f.seen()
+	if len(seen) != 2 {
+		t.Fatalf("issued %d commands, want a listing and one compile", len(seen))
+	}
+	if got, want := envValue(seen[1].Env, "GOFLAGS"), "-mod=readonly "+gocmd.VetOff; got != want {
+		t.Errorf("compile GOFLAGS = %q, want %q", got, want)
+	}
+	// And the listing keeps exactly what the process had, which is the other
+	// half of the same claim: the suppression is scoped to the one command that
+	// needs it rather than applied to the phase.
+	if got, want := envValue(seen[0].Env, "GOFLAGS"), "-mod=readonly"; got != want {
+		t.Errorf("listing GOFLAGS = %q, want the inherited %q", got, want)
 	}
 }
 

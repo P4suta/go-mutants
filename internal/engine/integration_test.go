@@ -440,6 +440,110 @@ func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
 	}
 }
 
+// TestVetSuspectGuardShapesStillReachExecution is the regression test for the
+// one thing about an instrumented tree that is the *toolchain's* opinion rather
+// than go-mutants'.
+//
+// A Form C guard writes each mutant of an expression in beside the original,
+// rendered from the pristine bytes with that single edit applied — so the
+// or-to-and mutant of `s == "." || s == ".."` puts `s == "." && s == ".."` into
+// the snapshot verbatim. It is legal Go, it is always false, and it is exactly
+// what vet's `bools` analyzer reports as a suspect and; `s != "." || s != ".."`
+// is the same trap from the other side. Both `go test` and `go test -c` run a
+// default vet subset that includes `bools`, so before the engine started
+// merging `-vet=off` into GOFLAGS for the instrumented tree this run died twice
+// over — at [CodeInstrumentedBaselineFailed] when the test command ran, and at
+// internal/execute's CodeTestBuildFailed when a per-package binary was built —
+// with a diagnostic about generated code the user never wrote.
+//
+// What is asserted is therefore not a tally for its own sake but that the
+// mutants *executed*: an errored, not-run or rejected mutant here means the
+// suppression stopped reaching one of the two commands. The fixture is written
+// so that every mutant of it dies, which makes any other outcome a failure with
+// a name.
+//
+// The pristine baseline deliberately keeps vet at its default, and this fixture
+// proves that costs nothing: its own source holds neither suspect shape, so the
+// unmutated tree passes a vetted `go test` — which is what the run does before
+// it instruments anything.
+func TestVetSuspectGuardShapesStillReachExecution(t *testing.T) {
+	privateTempDir(t)
+	outcome, events, err := collect(t, t.Context(), options(t, "vetsuspect"))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
+	}
+
+	// The catalogue in full. The two boolean-connective lines are the fixture's
+	// whole reason to exist, and they are surrounded by the eight ordinary
+	// mutants that share their two expressions — because a suppression that
+	// reached only some of the tree would take those down with it.
+	//
+	// The line numbers come from a byte offset into the file, so editing the
+	// fixture's long package doc moves them exactly as editing its code does.
+	// Refresh them by asking the tool rather than by counting:
+	//
+	//	cd fixtures/vetsuspect && go-mutants list
+	want := []string{
+		"killed vetsuspect.go:61 eq-to-neq",
+		"killed vetsuspect.go:61 eq-to-neq",
+		"killed vetsuspect.go:61 or-to-and",
+		"killed vetsuspect.go:61 return-false",
+		"killed vetsuspect.go:61 return-true",
+		"killed vetsuspect.go:72 and-to-or",
+		"killed vetsuspect.go:72 neq-to-eq",
+		"killed vetsuspect.go:72 neq-to-eq",
+		"killed vetsuspect.go:72 return-false",
+		"killed vetsuspect.go:72 return-true",
+	}
+	got := results(events)
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("results =\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
+	}
+
+	summary := outcome.Report.Summary
+	if summary.Total != 10 || summary.Killed != 10 || summary.Survived != 0 {
+		t.Errorf("summary = %+v, want 10 mutants, all killed", summary)
+	}
+	if summary.NotRun != 0 || summary.Errored != 0 || summary.Inconclusive != 0 || summary.TimedOut != 0 {
+		t.Errorf("summary = %+v, want every mutant settled by executing it", summary)
+	}
+	// A rejection would be the same fault wearing a different name: the guarded
+	// file failing to build, reported per candidate. Compile validation runs
+	// `go build`, which has no vet pass at all, so a rejection here would mean
+	// the rewrite really is broken rather than merely suspect.
+	if len(outcome.Report.Rejected) != 0 {
+		t.Errorf("rejected = %+v, want none: the suspect shapes are legal Go", outcome.Report.Rejected)
+	}
+
+	// Executed, not inferred. Coverage settles an unreachable mutant without
+	// starting it, which is a legitimate outcome elsewhere in the corpus and
+	// would be a silent pass here — every line of this fixture is covered, so
+	// every mutant has to carry an attempt.
+	if uncovered := outcome.Report.Coverage.MutantsUncovered; uncovered == nil || *uncovered != 0 {
+		t.Errorf("coverage.mutants_uncovered = %v, want 0: both functions are called by the tests", uncovered)
+	}
+	connectives := 0
+	for _, m := range outcome.Report.Mutants {
+		if m.Attempts == 0 || m.Uncovered {
+			t.Errorf("mutant %s (%s at %s:%d) was never executed: attempts %d, uncovered %t",
+				m.DisplayID, m.Rule, m.Path, m.Line, m.Attempts, m.Uncovered)
+		}
+		if m.Family == string(mutation.FamilyBooleanConnective) {
+			connectives++
+		}
+	}
+	// Named against the registry's family rather than counted out of the table
+	// above, so that a rule renamed in the catalogue fails here instead of
+	// quietly leaving the fixture proving nothing.
+	if connectives != 2 {
+		t.Errorf("the run catalogued %d boolean-connective mutants, want the fixture's 2 vet-suspect ones", connectives)
+	}
+}
+
 // TestParallelWorkersReachTheSameTally is the one test that runs the mutants
 // concurrently.
 //

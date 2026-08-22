@@ -194,6 +194,18 @@ the outcome cache.
   `internal/mutation` binary. Two builds of one tree would cost more.
   `--race`, when requested, applies to that build and to the baseline so the
   derived timeout stays consistent.
+- **Vet off, on the instrumented tree only.** A Form C guard splices every
+  mutant of an expression in beside the original, so the snapshot legitimately
+  holds `s == "." && s == ".."` — which is what vet's `bools` analyzer exists to
+  report, and `go test` and `go test -c` run it by default. The two commands
+  issued against the instrumented tree, the instrumented baseline and the
+  `go test -c` above, therefore get `-vet=off` merged into `GOFLAGS`
+  (`gocmd.AppendGoflags`, so an inherited `-mod=readonly` survives). The
+  *pristine* baseline keeps vet at its default, which is the whole scope
+  argument: a real `bools` finding in the user's own source still stops the run
+  before anything is instrumented, and what is suppressed is an analyzer's
+  opinion of a rewrite rather than of them. `go build` and `go list` do not
+  define the flag and are unaffected.
 - **Direct binary launch.** Test binaries are executed directly, bypassing the
   `go test` result cache entirely, with the working directory set to the
   package directory inside the snapshot so `testdata` paths behave.

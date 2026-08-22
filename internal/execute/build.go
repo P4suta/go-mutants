@@ -295,6 +295,11 @@ func (p listedPackage) hasTests() bool {
 // snapshot with one uncompilable test package is not a snapshot any mutant can
 // be measured in, so finishing the other builds would only delay the report.
 //
+// The builds are issued with vet off, because the tree they compile is
+// generated code whose guard chains are legal Go that vet finds suspicious;
+// [compile] carries the argument in full, including why the *pristine* baseline
+// keeps vet at its default.
+//
 // The result is sorted by import path, whatever order the builds finished in.
 func BuildTestBinaries(ctx context.Context, opts Options) ([]TestBinary, error) {
 	opts, err := opts.resolve()
@@ -426,6 +431,31 @@ func uniqueName(importPath string, taken map[string]bool) string {
 }
 
 // compile builds one package's test binary.
+//
+// The build runs with vet off, and that is a statement about *this* tree and
+// nothing else. A snapshot reaching this function has been instrumented: every
+// mutant of an expression is spliced in beside the original, so a file here
+// legitimately holds `s == "." && s == ".."` — the or-to-and mutant of
+// `s == "." || s == ".."` — and vet's `bools` analyzer rejects exactly that
+// shape. `go test -c` runs a default vet subset before it compiles, so without
+// this the run would stop at [CodeTestBuildFailed], reporting a diagnostic
+// about generated code that go-mutants wrote and the user cannot fix.
+//
+// Vetting the user's own code is deliberately left where it belongs. The
+// pristine baseline runs the project's real test command with vet at its
+// default, so a genuine `bools` finding in the user's source still fails the
+// run — before a single mutant is built — and their own CI still sees it. What
+// is suppressed is a diagnostic about the instrumentation, not about them.
+//
+// It goes into GOFLAGS rather than into the argv above, though this particular
+// command line would take `-vet=off` directly, because the run's *other* command
+// against this tree cannot: internal/engine measures the instrumented baseline
+// with the project's own test command, which may be `gotestsum` or a shell
+// script and is not something go-mutants may add flags to. One mechanism for
+// one decision is worth more than the eight characters saved here. Merged
+// rather than set, because a project's inherited GOFLAGS is part of what "the
+// tests build here" means. `go list` above deliberately does not carry it: the
+// listing is not a compile and has no vet pass to turn off.
 func compile(ctx context.Context, opts Options, bin TestBinary) error {
 	args := []string{"test", "-c"}
 	if opts.CoverPkg != "" {
@@ -435,7 +465,7 @@ func compile(ctx context.Context, opts Options, bin TestBinary) error {
 
 	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
-	spec.Env = toolchainEnv(opts.Toolchain, "")
+	spec.Env = gocmd.AppendGoflags(toolchainEnv(opts.Toolchain, ""), gocmd.VetOff)
 	spec.Timeout = opts.Timeout
 
 	result := opts.runProcess(ctx, spec)

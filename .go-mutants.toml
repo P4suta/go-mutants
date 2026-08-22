@@ -86,20 +86,25 @@ reason = "Equivalent: Disjoint is the zero value of Relation, being first in its
 # baseline run, so the gate would be three and a half minutes in before its
 # first mutant.
 #
-# `mise run dogfood` also exports GOFLAGS=-vet=off, and that is not optional.
-# The instrumented snapshot is generated code in which every mutant of a
-# comparison is spliced in beside the original, so `x == "." && x == ".."` is a
-# normal shape there -- and `go test` runs vet's `bools` analyser by default and
-# rejects it. Without the override the run stops at GOM4013 (the snapshot fails
-# its own tests unmutated) or GOM7505 (a test binary would not build). The flag
-# is exported rather than written here because it has to reach the `go test -c`
-# the engine issues for each package, which this command line does not cover.
+# Nothing here has to say anything about vet, and that is a change worth
+# recording. The instrumented snapshot is generated code in which every mutant
+# of an expression is spliced in beside the original, so `x == "." && x == ".."`
+# is a normal shape there -- and `go test` runs vet's `bools` analyzer by
+# default and rejects it, which used to stop a run at GOM4013 (the snapshot
+# fails its own tests unmutated) or GOM7505 (a test binary would not build).
+# `mise run dogfood` worked around it by exporting GOFLAGS=-vet=off over the
+# whole run. The engine now handles it: it merges `-vet=off` into GOFLAGS for
+# the two commands issued against the instrumented tree -- the instrumented
+# baseline and the per-package `go test -c` -- and for nothing else, so the
+# pristine baseline below still runs `command` with vet at its default and a
+# genuine `bools` finding in this repository's source still fails the run.
 #
-# That task also exports RAPID_SEED=1, and running go-mutants against this file
-# by hand without it is running a slightly different gate. internal/interval's
-# suite is a pgregory.net/rapid property suite, rapid draws a fresh random seed
-# per process unless one is pinned, and an unpinned seed makes the score -- and
-# so the minimum_score floor below -- vary between runs of an unchanged tree.
+# `mise run dogfood` does still export RAPID_SEED=1, and running go-mutants
+# against this file by hand without it is running a slightly different gate.
+# internal/interval's suite is a pgregory.net/rapid property suite, rapid draws
+# a fresh random seed per process unless one is pinned, and an unpinned seed
+# makes the score -- and so the minimum_score floor below -- vary between runs
+# of an unchanged tree.
 command = ["go", "test", "./internal/mutation/...", "./internal/interval/..."]
 # Omit to derive max(10s, slowest baseline × 5) instead, which would be 23s
 # here -- far too tight, because this bounds each of the module's test binaries

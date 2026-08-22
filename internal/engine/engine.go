@@ -724,7 +724,18 @@ func customTestCommand(command []string) string {
 //
 // The environment is the run's own composed one, which has already had every
 // GO_MUTANTS_ variable stripped out of it — so this cannot accidentally be
-// measuring a mutant a developer's shell activated.
+// measuring a mutant a developer's shell activated. It gains one thing here and
+// only here: `-vet=off`, merged into whatever GOFLAGS the run inherited.
+//
+// That is scoped to this tree on purpose. The snapshot this command runs
+// against is generated code in which every mutant of an expression sits beside
+// the original, so `s == "." && s == ".."` — the or-to-and mutant of
+// `s == "." || s == ".."` — is a normal shape in it, and `go test` runs vet's
+// `bools` analyzer by default and rejects exactly that. Vetting the user's
+// pristine tree is their own CI's job and go-mutants does not take it away: the
+// [session.baseline] run above measures the same command with vet at its
+// default, so a real `bools` finding in their source still stops the run before
+// anything is instrumented.
 func (s *session) instrumentedBaseline(
 	ctx context.Context,
 	command []string,
@@ -735,7 +746,7 @@ func (s *session) instrumentedBaseline(
 	result := runner.Run(ctx, runner.Spec{
 		Argv:    resolveProgram(command, toolchain),
 		Dir:     root,
-		Env:     env,
+		Env:     gocmd.AppendGoflags(env, gocmd.VetOff),
 		Timeout: BaselineCap,
 	})
 	if err := check(ctx, result, CodeInstrumentedBaselineFailed,

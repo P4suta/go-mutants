@@ -82,33 +82,32 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # change to the file's profile shows up as a conflict to resolve rather than as
 # a silently different gate.
 #
-# The two variables are load-bearing:
+# The one variable is load-bearing:
 #
-#   GOFLAGS=-vet=off  the instrumented snapshot is generated code that splices
-#                     every mutant of an expression in beside the original, so
-#                     `x == "." && x == ".."` is a normal shape in it -- and
-#                     `go test` runs vet's `bools` analyser by default and
-#                     rejects exactly that. It has to be an environment
-#                     variable rather than a test.command argument because it
-#                     must also reach the `go test -c` the engine issues per
-#                     package. `go` ignores a GOFLAGS entry that the current
-#                     subcommand does not define, so `go build` and `go list`
-#                     are unaffected.
 #   RAPID_SEED=1      pgregory.net/rapid draws a fresh random seed per process
 #                     unless one is pinned, and internal/interval's property
 #                     suite is part of what kills these mutants. Unpinned, a
 #                     marginal mutant could be killed on one run and survive on
 #                     the next, which would make the score -- and therefore the
 #                     minimum_score gate -- a coin flip. Nightly re-explores
-#                     with random seeds and a far bigger budget instead. Like
-#                     GOFLAGS this is a variable rather than an argument, and
-#                     for the same reason: rapid reads it with os.LookupEnv in
-#                     its own init() (engine.go), where it becomes the default
-#                     for -rapid.seed, and internal/execute hands this
-#                     process's environment to every per-mutant test binary --
-#                     which is what a test.command argument would not reach.
+#                     with random seeds and a far bigger budget instead. It is a
+#                     variable rather than a test.command argument because rapid
+#                     reads it with os.LookupEnv in its own init() (engine.go),
+#                     where it becomes the default for -rapid.seed, and
+#                     internal/execute hands this process's environment to every
+#                     per-mutant test binary -- which is what a test.command
+#                     argument would not reach.
+#
+# This task used to export GOFLAGS=-vet=off as well, and no longer does, because
+# no user should have to. The instrumented snapshot is generated code that
+# splices every mutant of an expression in beside the original, so
+# `x == "." && x == ".."` is a normal shape in it and vet's `bools` analyzer
+# rejects exactly that; the engine now merges `-vet=off` into GOFLAGS itself for
+# the two commands it issues against that tree -- the instrumented baseline and
+# the per-package `go test -c` -- and leaves the pristine baseline vetted, so a
+# real finding in this repository's own source still fails this job.
 description = "Mutation-test this repository with go-mutants itself"
-env = { GOFLAGS = "-vet=off", RAPID_SEED = "1" }
+env = { RAPID_SEED = "1" }
 run = "go run ./cmd/go-mutants run --strict --profile balanced"
 
 [tasks.package]

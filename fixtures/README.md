@@ -41,6 +41,7 @@ at.
 | `killable/` | `fixture.example/killable` | The end-to-end kill. Thirteen mutants with predetermined fates: nine in `Clamp` and one boolean literal in `IsReady` that the tests kill, and three in `Untested` that survive because nothing calls it. One function per file and no repeated operator, so a mutant can be named by path, line and rule alone. |
 | `rejectable/` | `fixture.example/rejectable` | Compile validation's oracle. Nineteen candidates over three files, three of which are not programs once the mutation is applied: two constant divisions by zero (`v*0` swapped to `v/0`) and an untyped constant that stops fitting its context (`200 - 100` returned as a `uint8`, swapped to `200 + 100`). The other sixteen are healthy, share their files with the traps, and are all killed by the fixture's tests, so a phase that rejected a file rather than a candidate would be caught. Four of the sixteen are the control in `named.go`: the named boolean type that used to be this module's trap and is now an ordinary mutant. |
 | `coverage/` | `fixture.example/coverage` | Coverage-guided selection. Two packages, two test binaries, and three functions in one file with three different coverage fates, eleven mutants between them: `AboveZero` is reached only by its own package's tests, `Differs` only by the caller package's, and `Orphan` by nothing at all. It is the one fixture where the *right* answer and the *fast* answer differ, so a mutant measured against the wrong binary would survive rather than merely cost time. |
+| `vetsuspect/` | `fixture.example/vetsuspect` | The toolchain's opinion of the rewrite. Two functions, ten mutants, all killed — and two of the ten are the point: a Form C guard renders each alternative from the pristine bytes with one edit applied, so `or-to-and` writes `s == "." && s == ".."` into the snapshot and `and-to-or` writes `s != "." || s != ".."`. Both are legal Go and both are what vet's `bools` analyzer reports, and `go test` and `go test -c` run it by default. It is the only fixture whose subject is a command line rather than a program. |
 | `families/` | `fixture.example/families` | The whole operator catalogue. Twenty small functions in one package holding at least one live candidate for each of the 42 rules the frozen registry names — 76 mutants at profile `all`, 72 at `strong`, 59 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
 
 The discovery fixture is the one module in the corpus with no test files, which
@@ -124,14 +125,26 @@ it would hang one mutant until the run's timeout and turn a kill into a
 `internal/engine`'s integration suite runs the whole pipeline — snapshot,
 baseline, discovery, compile validation, the instrumented baseline, the drift
 gate, the coverage pass, execution, and the report — against `simple/`,
-`killable/`, `rejectable/`, `coverage/`, `families/`, and `failing-baseline/`.
-It asserts the exact tally each of them produces, so the numbers in those tests
-are the fixtures' documented claims about themselves stated as data:
-`killable/` is 10 killed and 3 survived, `rejectable/` is 16 accepted and 3
-rejected, `coverage/` is 8 killed and 3 uncovered survivors across 2 test
-binaries, `families/` is 63 killed and 13 survived over all eleven families,
-and `simple/` is a green run whose event sequence is pinned whole. A fixture
+`killable/`, `rejectable/`, `coverage/`, `families/`, `vetsuspect/`, and
+`failing-baseline/`. It asserts the exact tally each of them produces, so the
+numbers in those tests are the fixtures' documented claims about themselves
+stated as data: `killable/` is 10 killed and 3 survived, `rejectable/` is 16
+accepted and 3 rejected, `coverage/` is 8 killed and 3 uncovered survivors
+across 2 test binaries, `families/` is 63 killed and 13 survived over all
+eleven families, `vetsuspect/` is 10 killed and nothing left unexecuted, and
+`simple/` is a green run whose event sequence is pinned whole. A fixture
 edited without its test is a fixture whose claim quietly stopped being true.
+
+`vetsuspect/` is the one whose tally is the least interesting part of it. What
+that test asserts is that the mutants *executed* at all: `bools` is one of the
+analyzers `go test` and `go test -c` run before compiling, so a run without the
+engine's `-vet=off` on the instrumented tree dies at GOM4013 or GOM7505 with a
+diagnostic about generated code, and every mutant in the fixture is settled by
+never being built. Its own package documentation states the invariant that
+keeps it a trap — both comparisons against *different* constants, one pair
+joined by `||` and the other by `&&` — because every simplification of those
+two functions leaves the module compiling, the suite green, and the fixture
+proving nothing.
 
 `families/` is driven twice. `TestFamiliesRunReachesEveryOperatorFamily` runs it
 at profile `all` and holds it against a per-family table of kills and survivors,

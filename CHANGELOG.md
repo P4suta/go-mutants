@@ -627,6 +627,39 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- A run no longer stops because `go vet` disapproves of go-mutants' own
+  generated code. A Form C guard renders each alternative from the pristine
+  bytes with one edit applied and splices it in beside the original, so the
+  `or-to-and` mutant of `s == "." || s == ".."` writes `s == "." && s == ".."`
+  into the snapshot verbatim — legal Go, always false, and exactly what vet's
+  `bools` analyzer reports as a suspect and; `s != "." || s != ".."` is the same
+  trap from the other side. `go test` and `go test -c` both run a default vet
+  subset that includes `bools`, so any project with ordinary path handling in it
+  failed at `GOM4013` when the instrumented baseline ran the test command, or at
+  `GOM7505` when a per-package test binary was built, with a diagnostic naming
+  code its author never wrote and cannot fix.
+
+  `-vet=off` is now merged into `GOFLAGS` for exactly the two commands issued
+  against the *instrumented* tree, and for nothing else. The scope is the whole
+  point: the pristine baseline runs the project's real test command with vet at
+  its default, so a genuine `bools` finding in the user's source still stops the
+  run — before anything is instrumented — and their own CI still sees everything
+  it saw before. What is suppressed is an analyzer's opinion of a rewrite, not
+  an analyzer's opinion of them. `go build` and `go list` are untouched by
+  definition, since neither defines the flag; compile validation is a
+  `go build` and keeps rejecting a mutant the compiler really refuses.
+
+  Merged rather than set, through a new `gocmd.AppendGoflags`, because `GOFLAGS`
+  is also how a developer, a CI image or a toolchain manager says `-mod=readonly`
+  or `-tags=…`, and both packages inherit that on purpose: overwriting the
+  variable would compile a different program from the one the project builds,
+  which is a quieter failure than the one being fixed. `mise run dogfood` had
+  been working around this with a run-wide `GOFLAGS=-vet=off`, which is a
+  workaround no user of the tool could have been expected to find; that export
+  is gone. `fixtures/vetsuspect` holds both suspect shapes and the engine's
+  integration suite requires all ten of its mutants to be *executed*, which is
+  the assertion the old behaviour cannot pass — it never got as far as building
+  them.
 - `internal/runner`'s process-tree tests no longer fail under whole-suite load.
   Each of them kills a helper child that has been given a fixed 1500ms to boot
   and fork its grandchild, and each says so and fails rather than passing
