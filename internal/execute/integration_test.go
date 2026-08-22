@@ -100,7 +100,11 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	if bins[0].ImportPath != killableModule {
 		t.Errorf("built %q, want %q", bins[0].ImportPath, killableModule)
 	}
-	if bins[0].Dir != snap.Root {
+	// go list reports the package directory with symlinks resolved (macOS's
+	// /var is a link to /private/var), while the snapshot remembers the path
+	// it was created under. The two name one directory, so the comparison
+	// resolves both sides rather than trusting either spelling.
+	if resolvedPath(t, bins[0].Dir) != resolvedPath(t, snap.Root) {
 		t.Errorf("the package directory is %q, want the snapshot root %q", bins[0].Dir, snap.Root)
 	}
 	if info, statErr := os.Stat(bins[0].BinPath); statErr != nil || info.Size() == 0 {
@@ -548,4 +552,18 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 		t.Errorf("the snapshot drifted as\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
+}
+
+// resolvedPath is filepath.EvalSymlinks as an assertion helper: two spellings
+// of one directory (macOS's /var link into /private/var) must compare equal,
+// and a path that cannot be resolved is a test-environment failure, not a
+// verdict about the code under test.
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	return resolved
 }
