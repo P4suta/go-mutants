@@ -18,9 +18,11 @@ import (
 // The read-only half of the history store, and the one deletion it allows:
 // what `report list`, `report latest` and `report clean` are made of.
 //
-// Four rules hold everything here together. The first three are the ones the
-// outcome cache's maintenance obeys too — see internal/cache — because both
-// walk a directory go-mutants shares with every other program on the machine:
+// Four rules hold everything here together, and the outcome cache's
+// maintenance obeys all of them but the second — the one about reading
+// documents, which is the only thing the two walks do differently. See
+// internal/cache; both walk a directory go-mutants shares with every other
+// program on the machine:
 //
 //   - Nothing is looked inside without an ownership marker naming a workspace.
 //     A directory with no marker, or with one this build did not write, is
@@ -34,15 +36,19 @@ import (
 //     beside them and belongs to `cache clean`, the marker stays so that the
 //     directory keeps its identity, and every path is built here from the root
 //     and a workspace key rather than accepted from a caller.
+//   - A workspace directory has to be named after the digest its marker states
+//     — `WorkspaceKey(digest)`, and nothing else — or it is skipped and
+//     reported rather than listed; see [List].
 //
-// The fourth is this package's alone, and it is what makes the third one hold
-// across a listing and the deletion that follows it. A workspace directory has
-// to be named after the digest its marker states — `WorkspaceKey(digest)`, and
-// nothing else — or it is skipped and reported rather than listed; see [List].
-// [History.RemoveRuns] is asked for a digest and rebuilds the canonical path
-// from it, so a directory somebody copied or renamed — a restored CI cache, a
-// `cp -r` backup — would otherwise be listed as history, "cleaned" against the
-// original's path, reported as removed, and still be sitting there afterwards.
+// The fourth is what makes the third one hold across a listing and the deletion
+// that follows it. [History.RemoveRuns] is asked for a digest and rebuilds the
+// canonical path from it, so a directory somebody copied or renamed — a
+// restored CI cache, a `cp -r` backup — would otherwise be listed as history,
+// "cleaned" against the original's path, reported as removed, and still be
+// sitting there afterwards. internal/cache's walk refuses the same directory
+// against the hazard its own commands have, which is not this divergence but
+// the plainer one underneath it: counting and sweeping one workspace's stored
+// outcomes under a key that is not its own.
 //
 // Only the fields a listing needs are materialised from each document. A run
 // report carries every mutant in the catalogue, and a history directory can
@@ -171,7 +177,9 @@ type Removed struct {
 // skipped and reported, alongside the ones that carry no marker at all. It is
 // the one skip that is not about ownership — the marker may be perfectly
 // genuine — and it is what keeps this listing and `report clean` describing the
-// same store; see the fourth rule above.
+// same store; see the fourth rule above. internal/cache's walk applies the same
+// rule to the same directories, so `report list` and `cache status` never
+// disagree about which of them is a workspace.
 func (h History) List() (Listing, error) {
 	root, err := h.root()
 	if err != nil {

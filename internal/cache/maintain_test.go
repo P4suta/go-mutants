@@ -325,6 +325,142 @@ func TestADirectoryWithoutOurMarkerIsRefused(t *testing.T) {
 	}
 }
 
+// copyTree copies a directory and everything under it, which is what a restored
+// CI cache, an `xcopy`, or a `cp -r` of somebody's cache directory leaves
+// behind: the same entries and the same marker, under a name this build would
+// never have chosen.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	if err := os.MkdirAll(to, 0o700); err != nil {
+		t.Fatalf("creating %s: %v", to, err)
+	}
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		t.Fatalf("reading %s: %v", from, err)
+	}
+	for _, entry := range entries {
+		source, destination := filepath.Join(from, entry.Name()), filepath.Join(to, entry.Name())
+		if entry.IsDir() {
+			copyTree(t, source, destination)
+			continue
+		}
+		data, readErr := os.ReadFile(source)
+		if readErr != nil {
+			t.Fatalf("reading %s: %v", source, readErr)
+		}
+		if err = os.WriteFile(destination, data, 0o600); err != nil {
+			t.Fatalf("writing %s: %v", destination, err)
+		}
+	}
+}
+
+// copiedKey is the name the copy is filed under: sixteen hex characters, so it
+// is shaped exactly like a workspace key and is refused for what its marker
+// says rather than for how it is spelled. The hex shape is the point of the
+// fixture, not a credential, which is what the gitleaks annotation records.
+const copiedKey = "0123456789abcdef" //gitleaks:allow
+
+// withACopiedWorkspace builds a cache root holding one populated workspace and
+// a copy of it under [copiedKey], and returns the root along with one stored
+// outcome inside the copy that no command may touch.
+func withACopiedWorkspace(t *testing.T) (root, entry string) {
+	t.Helper()
+	root, dir := populated(t)
+	// dir is <root>/workspaces/<key>/outcomes/<context>.
+	original := filepath.Dir(filepath.Dir(dir))
+	copied := filepath.Join(filepath.Dir(original), copiedKey)
+	copyTree(t, original, copied)
+	return root, filepath.Join(copied, cache.OutcomesDirName, filepath.Base(dir), mutantIDs[0]+".json")
+}
+
+// checkTheCopyWasSkipped is the one skipped row every command owes for it.
+func checkTheCopyWasSkipped(t *testing.T, skipped []cache.Skipped) {
+	t.Helper()
+	if len(skipped) != 1 {
+		t.Fatalf("%d directories were skipped, want the copy: %+v", len(skipped), skipped)
+	}
+	if skipped[0].Name != copiedKey {
+		t.Errorf("the skipped directory is %q, want the copy %q", skipped[0].Name, copiedKey)
+	}
+	if key := report.WorkspaceKey(baseContext().WorkspaceDigest); !strings.Contains(skipped[0].Reason, key) {
+		t.Errorf("the reason does not name the directory the marker belongs to: %q", skipped[0].Reason)
+	}
+	if strings.HasPrefix(skipped[0].Reason, "GOM") {
+		t.Errorf("the skipped row repeats a code: %q", skipped[0].Reason)
+	}
+}
+
+// TestASweepSkipsAWorkspaceDirectoryThatIsACopy is the name-and-digest rule of
+// [cache.Status], [cache.GC] and [cache.Clean], and the twin of internal/report's
+// TestListSkipsAWorkspaceDirectoryThatIsACopy.
+//
+// A workspace directory copied under another name carries the original's
+// marker, so the ownership check alone waves it through. What follows is not
+// the history store's list-and-delete divergence — these three key their
+// deletions by the directory entry they are standing in, so what they sweep is
+// what they walked — but the plainer error underneath it: the copy's entries
+// would be counted as the original workspace's by `cache status` and removed as
+// the original workspace's by `cache gc` and `cache clean`, under a key that
+// was never theirs. A deleted entry cannot be put back once the arithmetic is
+// noticed, so the directory is skipped and reported instead.
+func TestASweepSkipsAWorkspaceDirectoryThatIsACopy(t *testing.T) {
+	t.Parallel()
+
+	// `cache status` counts the original once and names the copy as skipped.
+	root, entry := withACopiedWorkspace(t)
+	survey, err := cache.Status(root)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(survey.Workspaces) != 1 {
+		t.Fatalf("Status found %d workspaces, want only the one this cache named: %+v",
+			len(survey.Workspaces), survey.Workspaces)
+	}
+	if got, want := survey.Workspaces[0].Key, report.WorkspaceKey(baseContext().WorkspaceDigest); got != want {
+		t.Errorf("the surveyed workspace is %q, want the key its digest names %q", got, want)
+	}
+	if got, want := survey.Entries(), len(mutantIDs); got != want {
+		t.Errorf("the survey counted %d entries, want the %d the one workspace holds", got, want)
+	}
+	checkTheCopyWasSkipped(t, survey.Skipped)
+	if _, err = os.Stat(entry); err != nil {
+		t.Errorf("a survey that changes nothing lost an entry: %v", err)
+	}
+
+	// And both sweeps leave every one of the copy's entries where they were.
+	// Each starts from its own root, so that what one deleted is not what the
+	// next one is looking at.
+	for _, sweep := range []struct {
+		name string
+		run  func(root string) (cache.Sweep, error)
+	}{
+		// A cutoff in the future makes every stored outcome old enough, so
+		// nothing here turns on a modification time.
+		{"gc", func(root string) (cache.Sweep, error) { return cache.GC(root, time.Now().Add(time.Hour)) }},
+		{"clean", cache.Clean},
+	} {
+		t.Run(sweep.name, func(t *testing.T) {
+			t.Parallel()
+
+			root, entry := withACopiedWorkspace(t)
+			result, err := sweep.run(root)
+			if err != nil {
+				t.Fatalf("%s: %v", sweep.name, err)
+			}
+			if result.Workspaces != 1 {
+				t.Errorf("the sweep touched %d workspaces, want only the one this cache named", result.Workspaces)
+			}
+			if got, want := result.Entries, len(mutantIDs); got != want {
+				t.Errorf("the sweep removed %d entries, want the %d the one workspace holds", got, want)
+			}
+			checkTheCopyWasSkipped(t, result.Skipped)
+			if _, err := os.Stat(entry); err != nil {
+				t.Errorf("a directory the walk would not touch was swept anyway: %v", err)
+			}
+		})
+	}
+}
+
 // TestASweepReportsWhatItRemovedBeforeItFailed. Deleting is the whole of what
 // these commands do, so a failure is an error rather than a warning — and the
 // entries already gone are still gone, which the caller has to be able to say.

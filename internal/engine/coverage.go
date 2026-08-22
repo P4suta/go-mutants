@@ -7,11 +7,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -73,29 +71,22 @@ func (c coverageResult) Mode() CoverageMode {
 	return c.mode
 }
 
-// coverageEnabled decides whether a run may narrow itself by coverage.
+// Whether a run may narrow itself by coverage at all is decided one step
+// earlier, by [testScope], and it is not a configuration switch: the mapping is
+// either sound or it is not. It is sound exactly when go-mutants recognised the
+// test command, because a recognised command is one whose binaries go-mutants
+// compiled itself and can name — so "these lines were reached by this binary"
+// attributes to something the execution phase can act on. An unrecognised
+// command is an opaque program: `./scripts/test.sh`, `gotestsum`, a wrapper that
+// runs one package or twenty, possibly not `go test` at all. A wrong attribution
+// there would not cost time, it would cost a kill.
 //
-// The rule is exactly one thing: the effective test command is the built-in
-// `go test ./...`. It is not a configuration switch, because there is nothing
-// for a user to choose between — the mapping is either sound or it is not.
-//
-// It is sound for the built-in command because go-mutants compiled the test
-// binaries itself and knows which package each one belongs to, so "these lines
-// were reached by this binary" attributes to a name the execution phase can act
-// on. A custom command is an opaque program: `./scripts/test.sh`, `gotestsum`,
-// a wrapper that runs one package or twenty, possibly not `go test` at all.
-// Nothing about it says which of go-mutants' own per-package binaries its
-// coverage belongs to, and a wrong attribution does not cost time, it costs a
-// kill — the mutant is skipped, reported as an uncovered survivor, and the
-// score is inflated exactly where a user would never think to look.
-//
-// The comparison is against the effective command, so a `--` passthrough that
-// happens to spell the default is treated as the default. That is the same
-// judgement in the other direction: what makes the mapping sound is what the
-// command does, not where it was written.
-func coverageEnabled(command []string) bool {
-	return slices.Equal(command, config.DefaultTestCommand())
-}
+// A scoped command narrows what the mapping is *over* and changes nothing about
+// what it means. The binaries are the ones the user's own command runs, so a
+// mutant no scoped binary reaches is an uncovered survivor — which is the honest
+// reading of a test scope that leaves the line out, and the same answer the run
+// would reach by executing every scoped binary against it and watching them all
+// pass.
 
 // coveragePhase profiles the test binaries and narrows the run to what each
 // mutant needs.
@@ -343,9 +334,12 @@ func coverageMutants(runs []execute.MutantRun, st *state) []coverage.Mutant {
 
 // recordUncovered files one mutant that no test binary reaches.
 //
-// It is a survivor, and the outcome is not a convention: no test runs the line,
-// so no test could have caught the edit, and the score is entitled to count it
-// against the suite exactly as it counts a survivor that was executed. What
+// It is a survivor, and the outcome is not a convention: none of the binaries
+// the run measures with reaches the line, so none of them could have caught the
+// edit, and the score is entitled to count it against the suite exactly as it
+// counts a survivor that was executed. Under a scoped `test.command` those
+// binaries are the ones the user's own command runs rather than every binary in
+// the module, which narrows what the claim is over and not what it means. What
 // `uncovered` adds is the reason, which is the more actionable half — "write a
 // test for this line" rather than "sharpen the test you have".
 //

@@ -184,7 +184,38 @@ activation, the report, and the exit code — so `go-mutants run` measures a rea
 mutation score today, narrowed by coverage, by the selection stage below, and by
 the outcome cache.
 
-- **One build.** Each package with tests is compiled once with `go test -c`;
+- **The test command is a scope.** *Implemented.* A `test.command` of `go test`
+  followed only by package patterns is read as the set of packages the project
+  measures itself with, and only those packages get a test binary — so a module
+  whose tests live in three of forty packages starts three processes per mutant
+  instead of forty. The patterns reach `go list` verbatim, because the go
+  command's pattern vocabulary is the one the user wrote the command in.
+  Recognition is spelling-strict: `go`, `test`, then `.` or anything under `./`
+  with no `..` in it, and nothing else. A flag of any kind, a bare import path,
+  a `..` in any position — including one that climbs out of the tree and back
+  in, which resolves differently from the snapshot than from the workspace — a
+  Windows `.\internal\...`, or another program is unrecognised, and an
+  unrecognised command behaves exactly as before — every binary, every mutant,
+  and a `GOM7601` warning. There is no shortlist of harmless flags, because
+  `-run`, `-tags` and `-race` each change what a `go test` means and the failure
+  is silent in the direction that costs a kill.
+
+  A scope that resolves to nothing is `GOM4022` and stops the run: a pattern
+  that places no package directory (which the go command answers with a warning
+  and exit zero, so nothing else would notice), or a whole scope with no test
+  file in it. A pattern naming a directory that exists but holds no Go files is
+  left to the baseline a moment later, which runs the user's command verbatim
+  and gets the go command's own "no Go files in ..." — the same reason a package
+  that does not compile is a build failure rather than a scope error.
+  It is the one part of this story that does not fail open, because there is no
+  open direction — widening back to `./...` runs the suites the command
+  excludes, and running nothing reports every mutant as having survived a suite
+  that never started. Every pattern is resolved with one `go list -e` before the
+  baseline is measured, so a typo costs a second rather than a full pipeline;
+  `-e` is what keeps a package that does not compile from being mistaken for a
+  pattern that names nothing.
+- **One build.** Each package in the scope that has tests is compiled once with
+  `go test -c`;
   packages with no test files are skipped. `-cover -coverpkg=<module>/...` is
   added whenever coverage-guided selection is on, and the same binaries serve
   both the profiling pass and every mutant — there is no second, non-cover
@@ -235,10 +266,15 @@ the outcome cache.
   missing a kill. A mutant no binary reaches is not executed at all and is
   reported as `survived (uncovered)`.
 
-  Two rules bound it. Narrowing is auto-on only for the built-in
-  `go test ./...` and off with a `GOM7601` warning for any other
-  `test.command`, because an opaque command's coverage cannot be attributed to
-  go-mutants' own per-package binaries. And every failure of the pass —
+  Two rules bound it. Narrowing is auto-on exactly when `test.command` is one
+  go-mutants can read as a scope — `go test` over package patterns, the built-in
+  `go test ./...` included — and off with a `GOM7601` warning for anything else,
+  because an opaque command's coverage cannot be attributed to go-mutants' own
+  per-package binaries. A scoped command narrows what the mapping is *over* and
+  changes nothing about what it means: the binaries are the ones the user's own
+  command runs, so a mutant none of them reaches is an uncovered survivor, which
+  is the same answer the run would reach by executing every scoped binary
+  against it and watching them all pass. And every failure of the pass —
   including a `-cover` build that will not compile — publishes a `GOM7602`
   warning and runs everything, so the optimisation can never fail a run.
 - **`--changed [=<ref>]`.** *Implemented.* It intersects candidates with the

@@ -28,6 +28,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 	vendorassets "github.com/P4suta/go-mutants/vendor-assets"
 )
 
@@ -49,8 +50,7 @@ func artifactWorkspace(t *testing.T) string {
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
 	t.Setenv("TEMP", temp)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(temp, "cache"))
-	t.Setenv("LocalAppData", filepath.Join(temp, "cache"))
+	testsupport.CacheDir(t)
 	// A run inside a GitHub job writes a step summary and a stream of
 	// annotations; every test here but the last one is not in a job.
 	t.Setenv(console.GitHubSummaryEnv, "")

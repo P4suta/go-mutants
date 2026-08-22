@@ -13,6 +13,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/cache"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
 // mutantIDs are well-formed ids for the store tests: 64 lowercase hex
@@ -482,9 +483,7 @@ func TestOpenClaimsTheSameMarkerTheHistoryDoes(t *testing.T) {
 // `cache.directory` can take, without depending on which directory this machine
 // calls its cache.
 func TestRootResolvesUnderTheOperatingSystemCache(t *testing.T) {
-	base := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", base)
-	t.Setenv("LocalAppData", base)
+	base := testsupport.CacheDir(t)
 
 	root, err := cache.Root("")
 	if err != nil {

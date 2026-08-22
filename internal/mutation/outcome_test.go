@@ -119,41 +119,13 @@ func TestDetectedOutcomes(t *testing.T) {
 	}
 }
 
-func TestSkipReasons(t *testing.T) {
-	t.Parallel()
-
-	want := []SkipReason{
-		"const-decl",
-		"iota-expr",
-		"array-length",
-		"struct-tag",
-		"type-param-list",
-		"type-arg",
-		"switch-case",
-		"select-case",
-		"package-level-var-init",
-		"go-embed-decl",
-		"label-or-goto",
-		"cgo-package",
-		"generated-file",
-		"test-file",
-		"unnameable-decl-type",
-	}
-	if diff := cmp.Diff(want, KnownSkipReasons()); diff != "" {
-		t.Fatalf("documented skip reasons changed (-want +got):\n%s", diff)
-	}
-	for _, reason := range KnownSkipReasons() {
-		if !reason.Known() {
-			t.Errorf("%q should be known", reason)
-		}
-		if reason.String() != string(reason) {
-			t.Errorf("String() = %q, want %q", reason.String(), string(reason))
-		}
-	}
-	if SkipReason("invented").Known() {
-		t.Error("an undocumented reason should not report as known")
-	}
-}
+// There is no test of skip reasons here, and there is nothing left to test:
+// this package declares none. The one it used to have pinned
+// `KnownSkipReasons` against the same list retyped, which is a test of a
+// copy-paste rather than of an agreement with anything — the reasons that
+// reach a user come from internal/discover, whose own tests read its sources
+// and whose spelling internal/report checks against the schema. See the note
+// above [RejectReason] in outcome.go.
 
 func TestRejectReasons(t *testing.T) {
 	t.Parallel()

@@ -93,6 +93,31 @@ const (
 	// line; it is reported rather than assumed away because a Config can also be
 	// built in process, and an unknown name must never quietly select nothing.
 	CodeUnknownOperator Code = "GOM4021"
+	// CodeTestScope reports a `test.command` that go-mutants recognised as
+	// `go test` over package patterns, and whose patterns do not describe a
+	// scope any mutant can be measured in: one that names no package at all, a
+	// `go list` that would not resolve them, or a whole scope in which no
+	// package has a test file.
+	//
+	// It is the one diagnostic in the coverage-and-scoping story that is an
+	// error rather than a warning, and the asymmetry is deliberate. Everything
+	// else there fails *open*: a coverage pass that will not run gives up the
+	// optimisation and measures every mutant against every binary, which is
+	// slower and reaches exactly the same verdicts. There is no such direction
+	// here. The only way to carry on past a scope that resolves to nothing is to
+	// widen it back to `./...`, which would build and run the very test packages
+	// the user's own command excluded — measuring them a second time under a
+	// scope that says they do not count — or to run no binaries at all, in which
+	// case every mutant survives, nothing was executed, and the run reports a
+	// score of zero as though it had looked. Both are fictions, and a typo in a
+	// package pattern is a mistake somebody can fix in a second once they are
+	// told which pattern it was.
+	//
+	// It is raised before the baseline wherever it can be, because a pattern is
+	// checkable the moment the snapshot exists and learning about it after
+	// several minutes of building, testing and instrumenting would be a poor way
+	// to find out.
+	CodeTestScope Code = "GOM4022"
 
 	// CodeInterrupted reports a run stopped by a cancelled context, which in
 	// practice means Ctrl-C or SIGTERM. It is an error so that the sequence
@@ -164,6 +189,7 @@ var codes = []Code{
 	CodeCoverageRender,
 	CodeTimeoutTooSmall,
 	CodeUnknownOperator,
+	CodeTestScope,
 	CodeInterrupted,
 	CodeSnapshotNotRemoved,
 	CodeScratchNotRemoved,

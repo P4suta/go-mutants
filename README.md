@@ -91,12 +91,15 @@ The honest limits:
   rather than declares, a declared type the file cannot spell with the imports
   it has, and a statement in a `for` post or an `if` initialiser, where a block
   is not legal Go. `go-mutants list` prints the count.
-- **Coverage guidance is on only for the default test command.** A
-  `test.command` other than `go test ./...` cannot be attributed to
-  go-mutants' own per-package test binaries, so such a run measures every
-  mutant against every binary and says so with a `GOM7601` warning. Any failure
-  of the coverage pass itself does the same with `GOM7602`: the optimisation
-  can never fail a run.
+- **A `test.command` go-mutants can read is also a scope.** `go test` followed
+  only by package patterns — the built-in `go test ./...`, or a narrowing such
+  as `go test ./internal/...` — means only those packages get a test binary, and
+  coverage guidance is on over exactly those. Anything else (a flag of any kind,
+  another program) cannot be attributed to go-mutants' own per-package binaries,
+  so such a run measures every mutant against every binary and says so with a
+  `GOM7601` warning. A scope that resolves to nothing is `GOM4022` and stops the
+  run rather than silently widening. Any failure of the coverage pass itself
+  publishes `GOM7602`: that optimisation can never fail a run.
 - **The Stryker projection is one-way and lossy**, by design. The HTML report
   and `reports/mutation/mutation.json` are built from the run report after it
   has been filed, and are never read back. Six outcomes become five statuses:
@@ -272,10 +275,11 @@ With no arguments, help is printed. The v1 command tree is `run`, `list`,
 `cache status|gc|clean`, and all of it is built.
 
 Everything after `--` is captured verbatim as the test command's argv; it is
-never handed to a shell. It replaces `test.command`, so anything other than the
-built-in `go test ./...` turns coverage-guided selection off with a `GOM7601`
-warning. The comparison is against the resulting command and not against where
-it was written, so a passthrough that spells the default out is the default.
+never handed to a shell. It replaces `test.command`, so a passthrough of
+`go test` over package patterns scopes the run's test binaries and keeps
+coverage guidance, and anything else turns coverage-guided selection off with a
+`GOM7601` warning. The reading is of the resulting command and not of where it
+was written, so a passthrough that spells the default out is the default.
 
 Working on this repository instead:
 

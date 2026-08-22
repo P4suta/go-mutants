@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -44,7 +43,14 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			Include: []string{"internal/mutation/shard.go", "internal/interval/interval.go"},
+			// Two whole packages and one file. The whole-package entries are
+			// what scoped test binaries bought: the gate used to be two files
+			// because every mutant ran every test binary in the module.
+			Include: []string{
+				"internal/mutation/shard.go",
+				"internal/glob/*.go",
+				"internal/interval/*.go",
+			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
 			// profile decides and this stays empty.
@@ -62,16 +68,25 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 			}},
 		},
 		Test: Test{
-			Command:      []string{"go", "test", "./internal/mutation/...", "./internal/interval/..."},
-			Timeout:      180 * time.Second,
+			// The command is the run's scope as well as its measurement: these
+			// three patterns are the only packages a test binary is built for.
+			Command: []string{
+				"go", "test",
+				"./internal/mutation/...", "./internal/glob/...", "./internal/interval/...",
+			},
+			// `timeout` is deliberately omitted from the file now that the
+			// binaries are scoped, so it derives from the baseline rather than
+			// clearing internal/discover's toolchain-driving suite, which is no
+			// longer built. Zero is what "derive it" looks like here.
+			Timeout:      0,
 			BaselineRuns: 3,
 		},
-		// `jobs` is pinned in the file rather than defaulted: see the comment
-		// there for the measurement that made eight concurrent mutants slower
-		// than four on this module.
+		// `jobs` is pinned in the file rather than defaulted, so that a local
+		// run and a GitHub-hosted CI run are the same run; see the comment there
+		// for why it is no longer pinned for correctness.
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		Policy:    mutation.Policy{Strict: false, MinimumScore: 93, RequireMutants: true},
+		Policy:    mutation.Policy{Strict: false, MinimumScore: 96, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",
 			Formats:   []ReportFormat{FormatJSON, FormatHTML},

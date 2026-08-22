@@ -14,6 +14,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
 // cacheDigest and cacheMutant are one workspace and one mutant for the
@@ -26,14 +27,13 @@ var (
 // isolatedCache points os.UserCacheDir and the working directory at temporary
 // ones, and returns the cache root the commands will resolve.
 //
-// Both environment variables are set because os.UserCacheDir reads a different
-// one on each platform, and a test that redirected only the POSIX spelling
-// would quietly operate on the developer's own cache on Windows.
+// The redirection is [testsupport.CacheDir]'s rather than this package's,
+// because which variable os.UserCacheDir reads is a property of the operating
+// system and not of these tests; see its documentation for what a partial
+// redirection costs.
 func isolatedCache(t *testing.T) string {
 	t.Helper()
-	base := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", base)
-	t.Setenv("LocalAppData", base)
+	base := testsupport.CacheDir(t)
 	t.Chdir(t.TempDir())
 	return filepath.Join(base, report.DirName)
 }

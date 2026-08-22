@@ -100,7 +100,11 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	if bins[0].ImportPath != killableModule {
 		t.Errorf("built %q, want %q", bins[0].ImportPath, killableModule)
 	}
-	if bins[0].Dir != snap.Root {
+	// go list reports the package directory with symlinks resolved (macOS's
+	// /var is a link to /private/var), while the snapshot remembers the path
+	// it was created under. The two name one directory, so the comparison
+	// resolves both sides rather than trusting either spelling.
+	if resolvedPath(t, bins[0].Dir) != resolvedPath(t, snap.Root) {
 		t.Errorf("the package directory is %q, want the snapshot root %q", bins[0].Dir, snap.Root)
 	}
 	if info, statErr := os.Stat(bins[0].BinPath); statErr != nil || info.Size() == 0 {
@@ -295,6 +299,88 @@ func TestOnlyTheInstrumentedFilesDriftedDuringExecution(t *testing.T) {
 	}
 }
 
+// TestScopedBuildCompilesOnlyTheNamedPackages proves the scope against a real
+// toolchain and a module with two test packages.
+//
+// The unit tests pin the argv the listing is issued with, which is the
+// mechanism; this pins the consequence, which is the thing a user pays for. The
+// coverage fixture has a test package in `core` and another in `caller`, so an
+// unscoped build produces two binaries and a scope of `./core/...` has to
+// produce exactly one — and the one it does not produce is the observable half:
+// a binary that was never compiled is a suite that cannot run, which is what a
+// project that scoped its test command asked for.
+//
+// It builds from a pristine snapshot rather than an instrumented one on
+// purpose. Nothing here is about mutants; what is being asserted is that the
+// package set the listing was given is the package set that came out.
+func TestScopedBuildCompilesOnlyTheNamedPackages(t *testing.T) {
+	toolchain := locateToolchain(t)
+	snap := snapshotFixture(t, "coverage")
+
+	const (
+		corePackage   = "fixture.example/coverage/core"
+		callerPackage = "fixture.example/coverage/caller"
+	)
+	opts := execute.Options{
+		Toolchain:    toolchain,
+		SnapshotRoot: snap.Root,
+		BinDir:       filepath.Join(t.TempDir(), "bin"),
+		Jobs:         2,
+		Timeout:      buildTimeout,
+	}
+
+	whole, err := execute.BuildTestBinaries(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("building the whole fixture: %v\n%s", err, execute.OutputOf(err))
+	}
+	if got := importPathsOf(whole); !slices.Equal(got, []string{callerPackage, corePackage}) {
+		t.Fatalf("the unscoped build produced %q, want both of the fixture's test packages", got)
+	}
+
+	opts.BinDir = filepath.Join(t.TempDir(), "scoped")
+	opts.Packages = []string{"./core/..."}
+	scoped, err := execute.BuildTestBinaries(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("building the scoped fixture: %v\n%s", err, execute.OutputOf(err))
+	}
+	if got := importPathsOf(scoped); !slices.Equal(got, []string{corePackage}) {
+		t.Fatalf("the scoped build produced %q, want only %q", got, corePackage)
+	}
+	if info, statErr := os.Stat(scoped[0].BinPath); statErr != nil || info.Size() == 0 {
+		t.Fatalf("the compiled binary at %s is missing or empty: %v", scoped[0].BinPath, statErr)
+	}
+	// Nothing else was compiled into the directory either. A scope that listed
+	// one package and built two would be a scope that saved a listing and
+	// nothing else.
+	if got := len(entriesIn(t, opts.BinDir)); got != 1 {
+		t.Errorf("the scoped binary directory holds %d files, want 1", got)
+	}
+}
+
+// importPathsOf names the packages a build produced, in the order it returned
+// them, which internal/execute promises is sorted by import path.
+func importPathsOf(bins []execute.TestBinary) []string {
+	out := make([]string, len(bins))
+	for i, bin := range bins {
+		out[i] = bin.ImportPath
+	}
+	return out
+}
+
+// entriesIn lists the names directly under a directory.
+func entriesIn(t *testing.T, dir string) []string {
+	t.Helper()
+	found, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	names := make([]string, 0, len(found))
+	for _, e := range found {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
 // locateToolchain finds the Go toolchain, or ends the test saying so.
 func locateToolchain(t *testing.T) gocmd.Toolchain {
 	t.Helper()
@@ -466,4 +552,18 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 		t.Errorf("the snapshot drifted as\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
+}
+
+// resolvedPath is filepath.EvalSymlinks as an assertion helper: two spellings
+// of one directory (macOS's /var link into /private/var) must compare equal,
+// and a path that cannot be resolved is a test-environment failure, not a
+// verdict about the code under test.
+func resolvedPath(t *testing.T, path string) string {
+	t.Helper()
+
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolving %s: %v", path, err)
+	}
+	return resolved
 }

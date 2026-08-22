@@ -135,11 +135,15 @@ measurement it never made, and a reader cannot tell a real zero from a default
 one. `mutants_uncovered` is derived from `mutants[]` when the document is built,
 so the summary and the rows underneath it cannot disagree.
 
-`mode` is `package` exactly when the effective `test.command` is the built-in
-`go test ./...` **and** the coverage pass succeeded. A custom command turns it
-off with a `GOM7601` warning, because the mapping is from a test binary to the
-lines it reached and there is no honest way to attribute an opaque command's
-coverage to go-mutants' own per-package binaries. Any failure of the pass itself
+`mode` is `package` exactly when the effective `test.command` is one go-mutants
+reads as a scope — `go test` followed only by package patterns, the built-in
+`go test ./...` included — **and** the coverage pass succeeded. Anything else
+turns it off with a `GOM7601` warning, because the mapping is from a test binary
+to the lines it reached and there is no honest way to attribute an opaque
+command's coverage to go-mutants' own per-package binaries. The `test.command`
+the document already records verbatim is the scope: no field is added for it,
+because the command *is* the statement of which packages were measured. Any
+failure of the pass itself
 turns it off with a `GOM7602` warning and runs every mutant against every
 binary; see [Architecture](architecture.md).
 

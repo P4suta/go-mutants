@@ -15,14 +15,23 @@
 //
 // # Build once, run thousands of times
 //
-// [BuildTestBinaries] enumerates the snapshot's packages with `go list`, skips
-// the ones that have no test files at all, and compiles the rest with
+// [BuildTestBinaries] enumerates the packages [Options.Packages] selects with
+// `go list` — every package in the snapshot when the field is empty — skips the
+// ones that have no test files at all, and compiles the rest with
 // `go test -c` in parallel. Every mutant afterwards is measured by starting
 // those same binaries directly rather than through `go test`, which matters for
 // two reasons: it bypasses the go test result cache completely — the cache keys
 // on inputs it cannot see the mutant in — and it removes a `go` invocation, a
 // build graph load, and a package staleness check from the inner loop that runs
 // once per mutant per package.
+//
+// Which packages get a binary at all is [Options.Packages], and it is the
+// caller's decision rather than this package's. A project whose `test.command`
+// names `./internal/...` has said which suites measure it, and building the
+// rest anyway would compile code the user excluded and then run it against
+// every mutant. This package is handed patterns and builds exactly them; the
+// judgement about whether a pattern names anything, and what it means if it
+// does not, belongs to internal/engine, which is where the patterns came from.
 //
 // Nothing here decides *which* binaries a mutant needs, and that is a boundary
 // rather than a gap. internal/coverage decides it, from the profiles

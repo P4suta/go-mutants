@@ -29,17 +29,28 @@ const (
 	CodeMalformedProfile Code = "GOM7600"
 
 	// CodeCustomTestCommand reports coverage-guided selection switched off
-	// because `test.command` is not the built-in `go test ./...`.
+	// because `test.command` is not `go test` over package patterns.
 	//
-	// The mapping is between a *test binary* and the lines it reached, and it
-	// is only sound because go-mutants compiled those binaries itself and knows
-	// which package each one belongs to. A custom command is an opaque program:
-	// `./scripts/test.sh` or `gotestsum` may run a subset, a superset, several
-	// suites, or something that is not `go test` at all, and there is no honest
-	// way to attribute its coverage to the per-package binaries the execution
-	// phase actually runs. Guessing would silently skip mutants that a test
-	// does cover, which is a kill lost and a score inflated — so the run says
-	// so and measures every mutant against every binary instead.
+	// The built-in `go test ./...` is the trivial case of that shape and a
+	// narrowing such as `go test ./internal/...` is another, so a custom command
+	// is not by itself a reason to switch anything off. What a recognised command
+	// has in common is that go-mutants can state in full which suites it runs.
+	// The mapping is between a *test binary* and the lines it reached, and it is
+	// only sound because go-mutants compiled those binaries itself and knows
+	// which package each one belongs to.
+	//
+	// An unrecognised command is an opaque program whose coverage cannot be
+	// attributed to them: `./scripts/test.sh`, `gotestsum`, or a `go test`
+	// carrying anything that is not a pattern — `-run` alone makes the command a
+	// fraction of the suite it names — may run a subset, a superset, several
+	// suites, or something that is not `go test` at all. There is no honest way
+	// to attribute such a run's coverage to the per-package binaries the
+	// execution phase actually starts. Guessing would silently skip mutants that
+	// a test does cover, which is a kill lost and a score inflated — so the run
+	// says so and measures every mutant against every binary instead.
+	//
+	// internal/engine's testScope is where a command is read, and it carries the
+	// argument for why the reading is spelling-strict.
 	CodeCustomTestCommand Code = "GOM7601"
 
 	// CodeUnavailable reports a coverage pass that did not produce anything

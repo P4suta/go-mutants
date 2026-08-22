@@ -88,6 +88,13 @@
 // The operating system's own escalation is untouched and remains the answer for
 // a process that really is stuck.
 //
+// A dashboard with no keyboard — standard input redirected, so there is no
+// terminal to put in raw mode — keeps the first meaning and loses the second.
+// Ctrl-C is then a signal rather than a keystroke, internal/cli's handler
+// cancels the run, and everything downstream of the cancellation is identical;
+// what is gone is the second press, which was never anything but a way to stop
+// watching. See [Renderer.Run] for why the input is disabled rather than read.
+//
 // # Windows
 //
 // Both Windows Terminal and ConHost work: bubbletea enables

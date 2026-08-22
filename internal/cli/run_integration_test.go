@@ -28,6 +28,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
 // The work this run is meant to notice: a file that has never been added, and
@@ -89,8 +90,7 @@ func branchedModule(t *testing.T) (root, upstream string) {
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
 	t.Setenv("TEMP", temp)
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(temp, "cache"))
-	t.Setenv("LocalAppData", filepath.Join(temp, "cache"))
+	testsupport.CacheDir(t)
 	neutralGitEnvironment(t)
 
 	root = filepath.Join(t.TempDir(), "killable")

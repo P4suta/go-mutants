@@ -220,9 +220,11 @@ include = ` + tomlStrings(c.Mutation.Include) + `
 
 [test]
 # An argv vector, never a shell string. Nothing in it is word-split, expanded,
-# or handed to a shell. Anything other than the built-in command turns
-# coverage-guided selection off, because go-mutants cannot reason about a
-# command it did not write.
+# or handed to a shell. It is also the run's scope: "go test" followed only by
+# package patterns builds a test binary for those packages and no others, and
+# keeps coverage-guided selection. Anything else -- a flag, another program --
+# turns that off and measures every mutant against every binary, because
+# go-mutants cannot reason about a command it did not write.
 command = ` + tomlStrings(c.Test.Command) + `
 # How many times the unmutated tests are measured before any mutant runs. Every
 # observation is kept in the report, not just the slowest.
