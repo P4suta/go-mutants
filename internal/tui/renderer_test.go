@@ -163,6 +163,40 @@ func TestAnInputThatIsNotAKeyboardDoesNotFailTheRun(t *testing.T) {
 	}
 }
 
+// TestKeyboardRefusesAFileThatIsNotATerminalAndNothingElse states the rule the
+// test above depends on, directly and on every platform.
+//
+// The test above is the one that matters and the one that cannot be trusted to
+// notice: it only fails on Linux, because only Linux refuses to poll a
+// descriptor that is not a terminal, so widening [keyboard] to refuse every
+// reader that is not a terminal — or dropping it from the program options
+// altogether — would leave every other platform's gates green. os.DevNull is
+// not a terminal anywhere and a reader with no descriptor is not a file
+// anywhere, which is what makes both halves of the rule checkable here.
+func TestKeyboardRefusesAFileThatIsNotATerminalAndNothingElse(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer f.Close() //nolint:errcheck
+
+	if got := keyboard(f); got != nil {
+		t.Errorf("keyboard(%s) = %v, want nil: bubbletea would poll a descriptor Linux rejects",
+			os.DevNull, got)
+	}
+	if got := keyboard(nil); got != nil {
+		t.Errorf("keyboard(nil) = %v, want nil", got)
+	}
+	// A reader that is no file at all is handed over unchanged. It never
+	// reaches the platform machinery — cancelreader falls back to a goroutine
+	// for anything without a descriptor — so refusing it would take input away
+	// from a caller for no reason at all.
+	keys := strings.NewReader("q")
+	if got := keyboard(keys); got != keys {
+		t.Errorf("keyboard(a strings.Reader) = %v, want the reader itself", got)
+	}
+}
+
 func TestFinalIsACopy(t *testing.T) {
 	r := headless(func() {})
 	events := make(chan engine.Event, 2)

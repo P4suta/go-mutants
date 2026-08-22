@@ -26,6 +26,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
 // measuredFixture copies the killable fixture into a temporary directory,
@@ -40,15 +41,14 @@ func measuredFixture(t *testing.T) (root, store string) {
 
 	temp := t.TempDir()
 	// os.TempDir reads TMPDIR on POSIX and TMP then TEMP on Windows, so all
-	// three are set rather than guessing which platform is reading; the cache
-	// pair is what os.UserCacheDir reads, and redirecting it is what keeps this
-	// test out of the developer's own history.
+	// three are set rather than guessing which platform is reading.
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
 	t.Setenv("TEMP", temp)
-	cache := filepath.Join(temp, "cache")
-	t.Setenv("XDG_CACHE_HOME", cache)
-	t.Setenv("LocalAppData", cache)
+	// The run files a report, so os.UserCacheDir is redirected too — by
+	// [testsupport.CacheDir], which knows what each platform reads and proves
+	// afterwards that it landed where it meant to.
+	cache := testsupport.CacheDir(t)
 
 	root = filepath.Join(t.TempDir(), "killable")
 	if err = os.MkdirAll(root, 0o755); err != nil {

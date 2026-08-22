@@ -261,11 +261,26 @@ func TestRunOneRefusesAMutantItCannotMeasure(t *testing.T) {
 // supervisor; and the scrubbed environment is what stops a developer's exported
 // GO_MUTANTS_ACTIVE from quietly activating a second mutant.
 func TestRunOneComposesTheChildInvocation(t *testing.T) {
+	// Both directories are claimed before anything is exported, and both are
+	// real. t.TempDir creates under os.TempDir, which reads these very
+	// variables on POSIX, so a test that exports a made-up path and then asks
+	// for a temporary directory is asking the testing package to stat a
+	// directory that was never there — which is what this test used to do, and
+	// why it failed on Linux and macOS while passing on Windows, where
+	// os.TempDir reads TMP and TEMP instead. The inherited value has to be a
+	// directory rather than a name for the same reason: it is what the child
+	// would have got, and a child that used it would have to be able to.
+	scratch := t.TempDir()
+	inherited := t.TempDir()
+
 	t.Setenv("GO_MUTANTS_ACTIVE", "an-identity-from-the-users-shell")
 	t.Setenv("GO_MUTANTS_SOMETHING_ELSE", "also-scrubbed")
-	t.Setenv("TMPDIR", "/the/users/temp")
+	// All three spellings, so the assertion below means the same thing on every
+	// platform rather than depending on which one this one reads.
+	t.Setenv("TMPDIR", inherited)
+	t.Setenv("TMP", inherited)
+	t.Setenv("TEMP", inherited)
 
-	scratch := t.TempDir()
 	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 	opts := execute.WithRunner(execute.Options{ScratchDir: scratch}, f.run)
 

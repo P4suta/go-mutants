@@ -29,6 +29,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
 // TestDoctorIsGreenOnThisRepository. go-mutants develops itself, so its own
@@ -40,9 +41,7 @@ func TestDoctorIsGreenOnThisRepository(t *testing.T) {
 	// The cache check writes a probe file, so it is pointed at a temporary
 	// directory: a test suite has no business creating anything in the
 	// developer's own cache.
-	base := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", base)
-	t.Setenv("LocalAppData", base)
+	testsupport.CacheDir(t)
 	t.Chdir(repository)
 
 	code, stdout, stderr := execute(t, "doctor")
@@ -65,9 +64,7 @@ func TestDoctorIsGreenOnThisRepository(t *testing.T) {
 // including the details, which the unit tests can only fabricate.
 func TestDoctorJSONOnThisRepositorySatisfiesTheSchema(t *testing.T) {
 	repository := repositoryRoot(t)
-	base := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", base)
-	t.Setenv("LocalAppData", base)
+	testsupport.CacheDir(t)
 	t.Chdir(repository)
 
 	code, stdout, stderr := execute(t, "doctor", "--json")

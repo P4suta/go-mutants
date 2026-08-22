@@ -12,6 +12,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
 // The fabricated history these tests read. The documents are written by hand
@@ -63,14 +64,13 @@ func runDocument(runID, module, finished string, score float64) string {
 // isolatedHistory points os.UserCacheDir at a temporary directory and puts the
 // working directory in a module of its own, returning the store root.
 //
-// Both environment variables are set because os.UserCacheDir reads a different
-// one on each platform, and a test that redirected only the POSIX spelling
-// would operate on the developer's own history on Windows.
+// The redirection is [testsupport.CacheDir]'s rather than this package's,
+// because which variable os.UserCacheDir reads is a property of the operating
+// system and not of these tests; see its documentation for what a partial
+// redirection costs, which these tests paid on macOS.
 func isolatedHistory(t *testing.T) string {
 	t.Helper()
-	base := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", base)
-	t.Setenv("LocalAppData", base)
+	base := testsupport.CacheDir(t)
 
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"),
@@ -229,9 +229,7 @@ func TestReportListOfAModuleWithNoRunsIsNotAFailure(t *testing.T) {
 func TestHistoryCommandsNeedAModuleRoot(t *testing.T) {
 	for _, args := range [][]string{{"report", "list"}, {"report", "latest"}, {"report", "clean"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			base := t.TempDir()
-			t.Setenv("XDG_CACHE_HOME", base)
-			t.Setenv("LocalAppData", base)
+			testsupport.CacheDir(t)
 			t.Chdir(t.TempDir())
 
 			code, _, stderr := execute(t, args...)

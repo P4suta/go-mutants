@@ -6,9 +6,11 @@ package tui
 import (
 	"context"
 	"io"
+	"os"
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/P4suta/go-mutants/internal/engine"
 )
@@ -34,7 +36,8 @@ type Renderer struct {
 	// which is what a test uses and what a run with a redirected standard input
 	// gets: Ctrl-C then arrives as a signal instead, and internal/cli's
 	// handler cancels the run exactly as this renderer's key binding would
-	// have.
+	// have. A file that is not a terminal is treated as nil rather than
+	// refused; see [keyboard].
 	in io.Reader
 	// version is the go-mutants version in the header.
 	version string
@@ -82,7 +85,34 @@ func (r *Renderer) Run(ctx context.Context, events <-chan engine.Event) error {
 	options := []tea.ProgramOption{
 		tea.WithAltScreen(),
 		tea.WithOutput(r.out),
-		tea.WithInput(r.in),
+		// An input that is not a keyboard is disabled rather than handed over,
+		// and this is the one place in the package where the platform matters.
+		// bubbletea builds a cancelreader over any file it is given, and on
+		// Linux that means adding the descriptor to an epoll interest list,
+		// which the kernel refuses outright for a regular file or a pipe. The
+		// program then fails to start and [Renderer.Run] returns GOM7701 — a
+		// run that had already done all of its work, reported as a failure
+		// because its decoration could not read a keyboard nobody was typing
+		// on. Windows and macOS accept the same descriptor and the same run
+		// passes, so what is being levelled here is a difference between
+		// platforms rather than one between inputs.
+		//
+		// Nil is bubbletea's documented way to say "no input" and skips the
+		// cancelreader entirely rather than building one over nothing. What is
+		// given up is the key binding, not the ability to stop: Ctrl-C arrives
+		// as a signal instead, internal/cli's watchSignals cancels the run's
+		// context, and the engine unwinds, publishes its partial report and
+		// closes the stream exactly as it does for the keystroke — which is
+		// also what keeps the invariant that this renderer never quits before
+		// the report exists. The one thing genuinely lost is the second press,
+		// the escape hatch that abandons the dashboard early, because the
+		// signal watch deliberately acts on the first signal only.
+		//
+		// internal/cli already hands this renderer nil for anything that is not
+		// a terminal (see its dashboardInput), so no production run reaches the
+		// branch. It is here so that the guarantee belongs to the renderer
+		// rather than to its caller.
+		tea.WithInput(keyboard(r.in)),
 		// Signals are internal/cli's, not bubbletea's. Left to itself
 		// bubbletea turns SIGINT into an immediate exit, which would tear the
 		// screen down while the engine was still writing the partial report,
@@ -114,6 +144,23 @@ func (r *Renderer) Run(ctx context.Context, events <-chan engine.Event) error {
 
 	if err != nil {
 		return &Error{Code: CodeProgram, Message: "the live dashboard stopped before the run did", Err: err}
+	}
+	return nil
+}
+
+// keyboard returns the input bubbletea should read keys from, or nil to
+// disable input.
+//
+// Only a file that is not a terminal is refused, and the narrowness is the
+// point. A reader that is no file at all — an in-memory reader a test feeds
+// keys through — never reaches the machinery that refuses it: muesli's
+// cancelreader falls back to a plain goroutine for anything without a
+// descriptor, on every platform. Widening this to "not a terminal" would
+// silently take input away from that reader too.
+func keyboard(in io.Reader) io.Reader {
+	f, ok := in.(*os.File)
+	if !ok || term.IsTerminal(f.Fd()) {
+		return in
 	}
 	return nil
 }

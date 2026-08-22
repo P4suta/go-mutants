@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
 // inRejectableFixture is [inFixture] against fixtures/rejectable, which is the
@@ -41,10 +43,9 @@ func inRejectableFixture(t *testing.T) string {
 	t.Setenv("TMP", temp)
 	t.Setenv("TEMP", temp)
 	// The run files a report, and the default history store is the developer's
-	// own cache directory. XDG_CACHE_HOME and its Windows equivalent are what
-	// os.UserCacheDir reads, so redirecting them keeps this test out of it.
-	t.Setenv("XDG_CACHE_HOME", filepath.Join(temp, "cache"))
-	t.Setenv("LocalAppData", filepath.Join(temp, "cache"))
+	// own cache directory. [testsupport.CacheDir] redirects os.UserCacheDir
+	// wherever it reads from, which is a different variable on each platform.
+	testsupport.CacheDir(t)
 	t.Chdir(root)
 	return temp
 }

@@ -29,6 +29,17 @@ Entries say *why* a change was made, not only what changed.
   `.go-mutants.toml` records that measurement where somebody widening the scope
   will read it.
 
+  Scoping also decides which test binaries get a *vote*, which is a correctness
+  property and not only a speed one: a suite the baseline never measured can
+  fail for reasons that have nothing to do with any mutant, and every mutant it
+  fails is a false kill — which is exactly what happened on Linux, where
+  `internal/tui`'s dashboard test failed unconditionally because the kernel
+  refuses to poll a standard input that is not a terminal, so the unscoped
+  dogfood job recorded all 16 mutants as killed, the one declared equivalent
+  included, and exited 2 on the expectation that was then unfulfilled; the
+  input handling behind that failure is fixed, and the scope keeps a suite in
+  that state out of the run rather than relying on it having been.
+
   Until now this was the one setting that promised more than it delivered.
   `internal/execute` listed `./...` unconditionally, so naming
   `go test ./internal/mutation/...` bought a fast baseline and then measured
