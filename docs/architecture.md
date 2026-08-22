@@ -5,17 +5,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Architecture
 
-**Status: partially implemented.** The pure packages, the strict
-configuration decoder, the snapshot, the baseline execution layer, discovery
-for the whole eleven-family catalogue, guard-based instrumentation with its
-generated runtime in all three forms, compile validation, mutant execution,
-coverage-guided selection,
-`RunReport v1` with its history store, the live TUI dashboard, `--changed`,
-`--shard` with `report merge`, `--explain`, the outcome cache, and the `list`,
-`run`, `report` and `cache` commands exist. The HTML report and the Stryker
-projection do not. Each section below marks which of
-the two it is; nothing here should be read as a description of working
-software until its status says so.
+**Status: implemented.** The pure packages, the strict configuration decoder,
+the snapshot, the baseline execution layer, discovery for the whole
+eleven-family catalogue, guard-based instrumentation with its generated runtime
+in all three forms, compile validation, mutant execution, coverage-guided
+selection, `RunReport v1` with its history store, the Stryker projection and
+the self-contained HTML report, the live TUI dashboard, `--changed`, `--shard`
+with `report merge`, `--explain`, the outcome cache, and the whole v1 command
+tree — `run`, `list`, `doctor`, `init`, `report`, and `cache` — all exist.
+Each section below carries its own status line; nothing here should be read as
+a description of working software until its status says so.
 
 ## Invariants
 
@@ -70,8 +69,7 @@ outcome cache + RunReport v1      (JSON, HTML, history, exit policy)
 ```
 
 Every transition on this line is what `run` performs today, and discovery on
-its own is what `list` prints. One annotation above is still a promise: the HTML
-report does not exist.
+its own is what `list` prints. Nothing on it is a promise any more.
 
 Each arrow is a phase transition with its own type. `runner.Execute(m
 Validated)` cannot be called with a raw candidate; that is the compile-time
@@ -291,9 +289,9 @@ nothing was measured. Exit codes are 0, 1 (opt-in policy failure only), 2
 
 ## Reporting and the event stream
 
-Status: partially implemented. The event stream, both console renderers,
-`RunReport v1`, its history store, and `report merge` exist and carry a whole
-run today; the HTML report and the Stryker projection are planned. The
+Status: implemented. The event stream, both console renderers, `RunReport v1`,
+its history store, `report merge`, the Stryker projection, and the
+self-contained HTML report all exist and carry a whole run today. The
 engine never draws. It publishes to a single `chan engine.Event` (a sealed
 interface): `RunPlanned`, `PhaseChanged`, `BaselineProgress`,
 `BaselineCompleted`, `Discovered`, `Validated`, `CoverageMapped`,
@@ -385,11 +383,12 @@ is the whole of what was asked for and a failure is an error.
 | `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
 | `internal/execute` | Test-binary build, scheduling, timeout retry | implemented |
-| `internal/report` | RunReport, projections, HTML, history, merge | v1, history |
+| `internal/report` | RunReport, projections, HTML, history, merge | implemented |
 | `internal/engine` | Orchestration, typestate pipeline, events | implemented |
 | `internal/console` | Deterministic plain-line renderer | implemented |
 | `internal/tui` | The bubbletea dashboard | implemented |
-| `internal/schemas` | Embedded JSON Schemas, test-time validation | catalog, run report |
+| `internal/schemas` | Embedded JSON Schemas, validation before writing | catalog, run report, doctor |
+| `vendor-assets` | The vendored viewer bundle and its digest check | implemented |
 
 Pure packages have no filesystem or process access, which is what makes the
 golden ID vectors and property tests meaningful.

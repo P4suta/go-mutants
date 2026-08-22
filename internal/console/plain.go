@@ -223,7 +223,7 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 		return r.paint(styleWarning, "warning "+e.Code+":") + " " + e.Message, true
 
 	case engine.ReportPublished:
-		return "report run: " + e.RunPath + "\nreport latest: " + e.LatestPath, true
+		return publishedPaths(e), true
 
 	case engine.RunCompleted:
 		return r.completed(e), true
@@ -231,6 +231,32 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// publishedPaths renders where one run's report went: the two history documents
+// always, and the project artefacts when the run was asked for them.
+//
+// Four lines rather than a sentence, one path per line and each labelled, so
+// that the block can be read by a person and cut up by a script — a CI step
+// that wants the HTML to attach greps for `report html:` and takes the rest of
+// the line. A path is printed only when there is a file at the end of it: an
+// empty `report json:` would be a line about a file that does not exist, which
+// is worse than silence about a format nobody asked for.
+//
+// It is not styled. These are paths to be selected with a mouse and pasted into
+// a browser or a `scp`, and colour in the middle of one is noise.
+func publishedPaths(e engine.ReportPublished) string {
+	lines := []string{
+		"report run: " + e.RunPath,
+		"report latest: " + e.LatestPath,
+	}
+	if e.ProjectionPath != "" {
+		lines = append(lines, "report json: "+e.ProjectionPath)
+	}
+	if e.HTMLPath != "" {
+		lines = append(lines, "report html: "+e.HTMLPath)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // result renders one settled mutant as

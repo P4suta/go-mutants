@@ -440,6 +440,185 @@ Entries say *why* a change was made, not only what changed.
   nest, and that the families each tier adds are exactly `bitwise` and
   `arithmetic-assignment`, then `statement-deletion`. A count can move for any
   reason; those three names are what a profile actually means.
+- **The project artefacts: `reports/mutation/mutation.json` and
+  `mutation.html`.** These are the only two files go-mutants writes into a
+  workspace, and they are one publication in two formats. A `mutation.json`
+  from this run beside a `mutation.html` from last week is worse than either
+  file alone, because the two disagree and nothing in either says which is
+  newer — so a failure to write the HTML puts the JSON back exactly as it was
+  found, restored or removed, and the run reports the failure rather than a
+  half-published pair. Both are staged in the destination directory and renamed
+  into place, so a crash leaves the previous pair or the new one and never a
+  mixture. They are written *after* the run's own record is filed in the
+  history store, never before: the history is what a later run, a `report
+  merge`, or a `report latest` reads, and the other order would leave a
+  workspace holding a mutation report for a run with no record. `--report`
+  chooses `none`, `json`, `html`, or `json,html`, and `none` is honoured before
+  anything is read, so turning the artefacts off also turns off the work of
+  building them.
+- **A one-way, lossy, deterministic projection into the Mutation Testing Report
+  Schema.** `mutation.json` is what the Stryker ecosystem's viewers and
+  dashboards read. It is derived from the run report after that report has been
+  stored, and it is never read back: nothing in go-mutants parses a
+  mutation-testing-report file, because a format designed for a viewer is a poor
+  place to keep the facts a run established, and a round trip through it would
+  quietly become the thing everything else trusts.
+
+  Six outcomes become five statuses, and two of the format's own statuses are
+  deliberately never written. `Pending` describes a run still in progress, and
+  every document go-mutants writes describes a run that has stopped.
+  `NoCoverage` is the harder one: it looks like the right answer for a mutant no
+  test binary reaches, and it is not the one given, because the run report's own
+  vocabulary calls that mutant a survivor and the two documents must agree about
+  how many survivors there were. Which survivors were uncovered is a fact the
+  run report keeps and this one drops — which is what "lossy" means, and it is
+  written down rather than left for somebody to rediscover as a bug. A `not_run`
+  mutant is *not* omitted either: it projects as `Ignored` carrying a reason
+  worded for a reader who has no run report in front of them, because dropping
+  it would make the viewer's totals disagree with the run report's.
+
+  Determinism is enforced rather than hoped for: every array is sorted
+  explicitly before encoding, and `projectRoot` is omitted although the format
+  allows it, because it is an absolute path on the machine that produced the
+  report — it would make two identical runs produce different documents and
+  would leak a developer's directory layout into a file that gets attached to
+  pull requests.
+
+  Coordinates are the part most likely to be silently wrong. go-mutants locates
+  a mutant by a byte range because it splices bytes; the format locates one by
+  1-based `(line, column)` whose column is counted in **UTF-16 code units**,
+  because the viewer is JavaScript and a JavaScript string index is a UTF-16
+  index. Byte columns would place every mutant after a multi-byte rune too far
+  right, and rune columns would place every mutant after an emoji or a
+  mathematical symbol too far left — and the schema, which asks only that the
+  numbers be at least 1, would accept either. The projection also re-reads the
+  *pristine* tree, never the instrumented snapshot, and refuses (`GOM5202`)
+  when a span no longer covers the text the report says it covers: editing a
+  file while a run is in flight is what a developer does while waiting, and
+  every coordinate derived from a moved span would be wrong in a document that
+  would still validate.
+- **Validation before writing, against a vendored copy of somebody else's
+  schema.** A projection into another project's format is a promise about that
+  format, and the only way to keep such a promise is to hold the format's own
+  definition and check the document against it. `schema/stryker/` carries
+  mutation-testing-report-schema 3.9.0 with its Apache-2.0 licence, a
+  `PROVENANCE.json` recording the URL, the npm integrity hash and the SHA-256,
+  and a test that the bytes still match. It is compiled with no default draft,
+  because it declares draft-07 itself and forcing 2020-12 on it would silently
+  change what `definitions` and `additionalProperties` mean in a document that
+  is not ours to reinterpret.
+
+  Every projection is validated before anything is written, and one that fails
+  aborts with `GOM5203` having touched nothing. A document that appears
+  authoritative and is not would be worse than no document at all — and because
+  the check runs on the way out, a file that exists on disk is one another tool
+  will accept. It also catches the trap the version numbers set: the
+  `schemaVersion` a document carries is `"2"`, the major version of the report
+  *format*, not the 3.9.0 of the npm package the schema came from, and the
+  schema's own pattern refuses a document claiming `"3"`.
+- **A self-contained HTML report, and why zero network is non-negotiable.** A
+  mutation report is opened from a CI artefact, from a shared drive, from a
+  `file://` URL on a laptop on a train. Every one of those is a context where a
+  page that fetches anything shows an empty frame — so nothing in the page
+  causes a network request. The viewer's JavaScript is inlined from the
+  vendored bundle and the data is inlined as a JSON island; the only URLs in
+  the file are inside that bundle (the SVG namespace, documentation
+  hyperlinks a reader may click, `data:` image URIs) plus the attribution
+  comment, and `default-src 'none'` blocks every fetch regardless. An
+  integration test cuts the vendored bytes out and fails on any URL in what
+  go-mutants itself emits.
+
+  The page carries a strict `Content-Security-Policy` even though nothing served
+  it. That is not defence against the file's author, who is go-mutants; it is a
+  *statement* that the page needs no network, enforced by the browser rather
+  than asserted in a comment. `default-src 'none'` means a future edit that adds
+  a font, a tracker, or a "check for updates" fetch does not silently work — it
+  breaks loudly, in review, instead of turning a report somebody attached to a
+  pull request into a beacon. The two executable scripts are allowed by SHA-256
+  hash and by nothing else: no `'unsafe-inline'`, and no nonce, because a nonce
+  in a static file is a constant, which is `'unsafe-inline'` with extra steps.
+  The hashes are computed from the very strings the renderer concatenates, so a
+  script edited without updating the policy yields a page that refuses to run
+  rather than one that runs something unvouched-for.
+
+  The JSON island is not hashed and does not need to be: a `<script>` whose type
+  is not a JavaScript MIME type is a data block, and the HTML parser returns
+  from "prepare the script element" before the CSP check ever applies. It is
+  escaped instead, which is the protection that actually matters for it — `<`
+  becomes `\u003c`, and *every comparison operator go-mutants mutates is a `<`*,
+  so a `</script>` reaching the parser as markup is an ordinary case rather than
+  an exotic one. `&`, `>`, `U+2028` and `U+2029` go with it.
+
+  The vendored viewer's SHA-256 is re-checked **at render time**, on every page,
+  against both the constant in `vendor-assets` and the digest in its
+  `PROVENANCE.json`. Checking it at build time would prove something about the
+  machine that built the binary; checking it here proves something about the
+  bytes about to be written into a file somebody will open and trust. A mismatch
+  aborts with `GOM5210` rather than shipping an unvouched-for quarter-megabyte
+  of JavaScript.
+- **`doctor`.** An aligned table over the six things a run needs before it can
+  measure anything: the Go toolchain and where it was found, the module this
+  directory is the root of, git, whether go-mutants' own directory under the
+  operating system's cache root can be written, the platform, and whether
+  `.go-mutants.toml` parses and resolves. Every check runs whatever the ones
+  before it found, because a machine with two problems should learn about both
+  at once rather than one CI round at a time. A `warn` is a check that failed on
+  something only an opt-in feature needs — git, which only `run --changed` asks
+  for — and never fails the command; any `FAIL` exits 2. `--json` emits a
+  `go-mutants/doctor` v1 document, validated against the new
+  `schema/doctor-v1.schema.json` *before* it is printed, on the same argument
+  `report merge` makes: a document that fails the schema go-mutants itself
+  publishes is a poor thing to hand a script that is deciding whether to trust
+  this machine. The cache check proves writability by writing, so where it
+  writes is a safety property: a probe file created and removed inside
+  `<os cache>/go-mutants` and nowhere else.
+- **`init`.** A fully commented `.go-mutants.toml` whose every value is
+  interpolated from `config.Defaults()`, so adopting the file changes nothing
+  and a changed default cannot leave a stale number behind in the text. A test
+  parses what it generates and asserts the result is *exactly* `Defaults()`.
+  Three settings are commented out rather than written, and each for a reason:
+  `execution.jobs` is `min(CPU count, 8)`, which would make the generated file
+  machine-dependent and `init --check` a gate that fails on the wrong hardware;
+  `test.timeout` is zero meaning "derive it", which no duration spells; and the
+  empty lists (`mutation.exclude`, `mutation.operators`, `[[mutation.expect]]`)
+  are decisions that read as oversights when written out. There is no `--force`,
+  deliberately: a configuration file is hand-edited and is usually the only
+  record of decisions nobody wrote down twice, so deleting it first is the
+  deliberate act such a flag would only have pretended to be. `--dry-run` prints
+  and touches nothing; `--check` compares byte for byte and exits 1 — the one
+  place in the CLI where 1 is not a policy gate, and still an opt-in gate
+  somebody asked for.
+- **`report list`, `report latest` and `report clean`.** The run history is
+  filed under `<os cache>/go-mutants/workspaces/<key>/`, where the key is a
+  digest of the workspace's *contents* — so two runs with an edit between them
+  are stored apart, by design, since that digest is what makes a mutant id mean
+  something. These three gather one module's runs back together by the
+  `workspace.module_path` in each document, which is why they are run from a
+  module root: without a go.mod there is nothing to say whose history is being
+  asked about, and for `clean`, which deletes, guessing would be the worst
+  possible answer. `list` prints an aligned table newest first and exits 0 on an
+  empty history, because that is a true answer; `latest` summarises the newest
+  run and names its file, and `--json` prints the stored bytes verbatim rather
+  than a re-encoding, since an archive reshaped on its way out is not an
+  archive; `clean` removes `runs/` and `latest.json` and nothing else, leaving
+  the ownership marker so the directory keeps an identity a concurrent run may
+  be relying on, and leaving `outcomes/` to `cache clean`.
+
+  A document that cannot be read is a row in the listing rather than an error:
+  one truncated file must not cost a user the forty-nine runs beside it, and
+  "this file is not a run report" is exactly what they need told. A directory
+  with no marker, or one this build did not write, is reported and left alone —
+  it is neither listed as this module's history nor deleted, whatever the
+  documents inside it claim. So is one whose *name* is not the key its own
+  marker names: a workspace directory copied or restored under another name — a
+  CI cache unpacked into a fresh key, a backup taken by hand — carries a
+  perfectly genuine marker naming the original, and `clean` deletes by digest
+  and rebuilds the original's path from it. Listing such a copy as history would
+  report it swept while it sat on the disk, so it is reported as skipped
+  instead. And nothing is deleted on the strength of how a path is spelled:
+  containment in the store is proved against what the filesystem resolves, so a
+  directory somebody replaced with a link is one go-mutants refuses rather than
+  one it follows out of the cache.
 - Licensing and policy files: dual `MIT OR Apache-2.0` with `LICENSES/` and
   `REUSE.toml` annotations for the files that cannot carry an inline SPDX
   header, plus `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md`, and
@@ -509,6 +688,24 @@ Entries say *why* a change was made, not only what changed.
   the eleven, and every count in them was short; `list --operator bitwise` also
   stopped being an "this build cannot discover it" case, because every rule the
   registry names is discovered now.
+- `cache status` and `cache gc` no longer pluralise "directory" by adding an
+  "s". The counted noun takes the one irregular plural these messages need,
+  which is the kind of wart that makes a careful tool look careless.
+- The exit code table injected into every command's help said that 1 meant
+  `--strict` or `policy.minimum_score`. `init --check` exits 1 as well — it is
+  an opt-in freshness gate somebody asked for, which is the same category — and
+  the table is part of the command line contract that CI configurations branch
+  on, so a table naming only two of the three gates is a table that will be
+  believed and be wrong.
+- The project-artefact integration tests copied the fixture module *including*
+  any `reports/mutation/` already in it. That directory is gitignored precisely
+  because a manual run against one of the corpus modules leaves one behind, so
+  a developer's tree could carry a stale pair that a clean checkout does not —
+  and `--report html` then looked as though it had written last week's
+  `mutation.json`, while `--report none` looked as though it had created a
+  directory it never touched. The copy is now cleared before the run: asserting
+  that a file is absent afterwards means nothing unless its absence beforehand
+  is a fact rather than an assumption.
 
 ### Notes
 

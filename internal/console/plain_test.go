@@ -755,3 +755,70 @@ func TestUncoveredSurvivorsSortAfterCoveredOnesInTheBlock(t *testing.T) {
 		t.Errorf("the uncovered survivor comes first:\n%s", got)
 	}
 }
+
+// TestReportPublishedNamesEveryArtefactThatExists is the report block a user
+// reads to find the files.
+//
+// One labelled path per line, so the block can be read by a person and cut up
+// by a script — a CI step that attaches the page greps for `report html:` and
+// takes the rest of the line. A format that was not asked for prints nothing at
+// all rather than a label with no path after it, which would be a line about a
+// file that does not exist.
+func TestReportPublishedNamesEveryArtefactThatExists(t *testing.T) {
+	for name, tc := range map[string]struct {
+		event engine.ReportPublished
+		want  string
+	}{
+		"history only": {
+			event: engine.ReportPublished{RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json"},
+			want:  "report run: /c/runs/a.json\nreport latest: /c/latest.json\n",
+		},
+		"both artefacts": {
+			event: engine.ReportPublished{
+				RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json",
+				ProjectionPath: "/w/reports/mutation/mutation.json",
+				HTMLPath:       "/w/reports/mutation/mutation.html",
+			},
+			want: "report run: /c/runs/a.json\nreport latest: /c/latest.json\n" +
+				"report json: /w/reports/mutation/mutation.json\n" +
+				"report html: /w/reports/mutation/mutation.html\n",
+		},
+		"json only": {
+			event: engine.ReportPublished{
+				RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json",
+				ProjectionPath: "/w/reports/mutation/mutation.json",
+			},
+			want: "report run: /c/runs/a.json\nreport latest: /c/latest.json\n" +
+				"report json: /w/reports/mutation/mutation.json\n",
+		},
+		"html only": {
+			event: engine.ReportPublished{
+				RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json",
+				HTMLPath: "/w/reports/mutation/mutation.html",
+			},
+			want: "report run: /c/runs/a.json\nreport latest: /c/latest.json\n" +
+				"report html: /w/reports/mutation/mutation.html\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := render(t, NewPlain(nil, "0.1.0-dev", false, false), []engine.Event{tc.event})
+			if got != tc.want {
+				t.Errorf("the report block =\n%q\nwant\n%q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReportPublishedSurvivesQuiet keeps the one thing --quiet promises about
+// this block: where the report went is what a quiet run still needs.
+func TestReportPublishedSurvivesQuiet(t *testing.T) {
+	got := render(t, NewPlain(nil, "0.1.0-dev", false, true), []engine.Event{
+		engine.ReportPublished{
+			RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json",
+			ProjectionPath: "/w/reports/mutation/mutation.json",
+		},
+	})
+	if !strings.Contains(got, "report json: /w/reports/mutation/mutation.json") {
+		t.Errorf("--quiet dropped the artefact path:\n%q", got)
+	}
+}

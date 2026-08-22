@@ -20,6 +20,13 @@ import (
 // that "the report could not be assembled" and "the report does not match its
 // own schema" can never be confused for one another.
 //
+// It also owns the GOM52xx block, which is the project artefacts: the
+// mutation-testing-report projection, the vendored viewer it is rendered with,
+// and the two files a run writes into `report.directory`. Nothing in that block
+// can make the run report wrong — a GOM52xx says the record of the run is fine
+// and the thing built from it is not — which is why it is numbered apart from
+// the GOM51xx block rather than continued into it.
+//
 // It also owns the GOM78xx block, which is sharding: the `--shard K/N`
 // specification, the `shard` block of the document, and every way `report
 // merge` can refuse a set of shard reports. They are a block of their own
@@ -149,6 +156,84 @@ const (
 	// internal/schemas' GOM5003, which is a document that parsed and then failed
 	// the published schema: this one never got that far.
 	CodeMalformedDocument Code = "GOM5117"
+
+	// CodeHistoryUnreadable reports a stored document that could not be read off
+	// the disk at all. It is separate from [CodeMalformedDocument], which is a
+	// file that was read and is not a report: one is a filesystem answering no,
+	// the other is a file answering something else, and the remedies differ.
+	//
+	// Only a document a command was about to print gets this far. A file that
+	// cannot be read while a *listing* is being assembled is a [Damaged] row
+	// instead, because one unreadable file must not cost a user the listing of
+	// the other forty-nine.
+	CodeHistoryUnreadable Code = "GOM5118"
+
+	// CodeHistoryNotRemoved reports history that `report clean` could not
+	// delete, or a path it would not delete because it is not inside the store.
+	// Deleting is the whole of what that command does, so this is an error and
+	// never a warning: a clean that removed nothing must not exit 0 saying it
+	// did.
+	CodeHistoryNotRemoved Code = "GOM5119"
+)
+
+// The project-artefact diagnostic codes, which are the GOM52xx block this
+// package also owns: the mutation-testing-report projection, the vendored
+// viewer, and the two files a run writes into `report.directory`. See [Code].
+//
+// They are a block of their own rather than more GOM51xx numbers for the reason
+// the shard codes are: everything here is one feature with one remedy — look at
+// `reports/mutation/` and at what the run was asked to write there — and none
+// of it can make the run report itself wrong. A GOM51xx says the record of the
+// run is in trouble; a GOM52xx says the record is fine and the thing built from
+// it is not.
+const (
+	// CodeProjectionSourceUnreadable reports a pristine source file the
+	// projection needs and cannot read: deleted, renamed, or outside the
+	// workspace. The projection embeds the text every location refers to, and
+	// substituting an empty file would produce a viewer showing blank code with
+	// mutants pointing into nothing.
+	CodeProjectionSourceUnreadable Code = "GOM5201"
+
+	// CodeProjectionSourceDrift reports a source file that no longer holds the
+	// text a mutant was built from. The commonest cause is the ordinary one: the
+	// file was edited while the run was in flight. Every location in the
+	// projection is derived from a byte span, and a span into a file that has
+	// moved highlights whatever is there now — in a document that would still
+	// validate, which is why this is refused rather than reported as a warning.
+	CodeProjectionSourceDrift Code = "GOM5202"
+
+	// CodeProjectionInvalid reports a projection that does not satisfy the
+	// vendored mutation-testing-report schema. Nothing is written: see
+	// internal/report's strykerschema.go for why an invalid document is worse
+	// than a missing one.
+	CodeProjectionInvalid Code = "GOM5203"
+
+	// CodeProjectionSchemaUnusable reports a vendored schema that cannot be
+	// compiled at all, which is a broken build rather than a bad document.
+	CodeProjectionSchemaUnusable Code = "GOM5204"
+
+	// CodeVendoredAssetTampered reports a vendored browser asset that is not the
+	// one this build recorded: the embedded bytes, the SHA-256 in the source,
+	// and the digest in `PROVENANCE.json` do not all agree. The HTML report
+	// inlines a quarter of a megabyte of somebody else's JavaScript, and the
+	// digest is the whole of what makes that safe to hand to a reader.
+	CodeVendoredAssetTampered Code = "GOM5210"
+
+	// CodeArtifactDirectory reports a `report.directory` that could not be
+	// created or is not a directory.
+	CodeArtifactDirectory Code = "GOM5220"
+
+	// CodeArtifactWrite reports a project artefact that could not be staged or
+	// moved into place.
+	CodeArtifactWrite Code = "GOM5221"
+
+	// CodeArtifactRollback reports the worse half of a failed HTML write: the
+	// `mutation.json` written beside it could not be put back as it was. The two
+	// files are published together or not at all — a fresh JSON next to last
+	// week's HTML is a pair of documents that disagree — so a failure to write
+	// the second one undoes the first, and a failure to undo it is its own
+	// diagnosis rather than a footnote to the original error.
+	CodeArtifactRollback Code = "GOM5222"
 )
 
 // The sharding diagnostic codes, which are the GOM78xx block this package also
@@ -192,7 +277,9 @@ const (
 func (c Code) String() string { return string(c) }
 
 // codes is every code this package can emit, in numeric order. The package
-// tests assert that the list is complete, unique, and inside the GOM51xx block.
+// tests assert that the list is complete, unique, and inside one of the three
+// blocks this package owns: GOM51xx for the run report, GOM52xx for the project
+// artefacts, and GOM78xx for sharding.
 var codes = []Code{
 	CodeInvalidRunID,
 	CodeInvalidStatus,
@@ -211,11 +298,21 @@ var codes = []Code{
 	CodeInvalidOutcome,
 	CodeInvalidNotRunReason,
 	CodeMalformedDocument,
+	CodeHistoryUnreadable,
+	CodeHistoryNotRemoved,
 	CodeEncodeFailed,
 	CodeCacheUnavailable,
 	CodeHistoryDirectory,
 	CodeHistoryWrite,
 	CodeForeignWorkspace,
+	CodeProjectionSourceUnreadable,
+	CodeProjectionSourceDrift,
+	CodeProjectionInvalid,
+	CodeProjectionSchemaUnusable,
+	CodeVendoredAssetTampered,
+	CodeArtifactDirectory,
+	CodeArtifactWrite,
+	CodeArtifactRollback,
 	CodeInvalidShardSpec,
 	CodeInvalidShard,
 	CodeNoShardReports,

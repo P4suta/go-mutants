@@ -1,0 +1,13 @@
+{
+  "name": "mutation-testing-report-schema",
+  "version": "3.9.0",
+  "report_schema_version": "2",
+  "upstream_url": "https://unpkg.com/mutation-testing-report-schema@3.9.0/src/mutation-testing-report-schema.json",
+  "file": "mutation-testing-report-schema-3.9.0.json",
+  "sha256": "404575e9264686dbf85c399f6531fdb489bebc3146e7e1d793b8083bc6a041ae",
+  "retrieved_at": "2026-08-21T22:09:23Z",
+  "license": "Apache-2.0",
+  "license_file": "LICENSE",
+  "license_url": "https://unpkg.com/mutation-testing-report-schema@3.9.0/LICENSE",
+  "npm_integrity": "sha512-28CobrcLdQm35zySemaLMKrUpVccLMA1DekUGtfezOSmnI0Xq8oJisixYnO0BQYIwKCkKL7+AE71/uWq/vFSJQ=="
+}

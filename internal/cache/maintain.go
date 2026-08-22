@@ -29,7 +29,10 @@ import (
 //     The run history's `runs/` and `latest.json` sit in the same directory and
 //     are none of this file's business, and every path is built from the root
 //     and a directory entry's own base name, so there is no way for one to be
-//     assembled that climbs out.
+//     assembled that climbs out. Nothing is deleted on the strength of how a
+//     path is spelled, either: a directory somebody replaced with a link is
+//     inside the cache to read and elsewhere to delete, so containment is
+//     proved against what the filesystem resolves. See [within].
 //
 // `cache gc` deletes by modification time and never by content: the age of an
 // entry is a fact on the filesystem, and deciding by content would mean parsing
@@ -470,30 +473,116 @@ func remove(path, root string) error {
 	return nil
 }
 
-// within reports whether path is strictly inside root, comparing the two after
-// resolving both to absolute, cleaned paths.
+// within reports whether path is strictly inside root, comparing the two as the
+// filesystem resolves them rather than as they are spelled.
+//
+// The resolution is the point. A comparison of the two strings answers a
+// question about two strings, and [os.RemoveAll] asks the filesystem: an
+// `outcomes/` replaced by a link to somewhere else is lexically inside the
+// cache and physically wherever it points, so deleting a context directory
+// through it would take the target's with it. Nothing go-mutants writes creates
+// such a link, which is exactly why this is worth checking — the cache root is
+// a directory in the operating system's cache that anything on the machine can
+// write to.
+//
+// The last element is deliberately left unresolved. RemoveAll unlinks a
+// symbolic link rather than following it, so a linked leaf deletes the link and
+// nothing else; it is the directories leading to it that are a way out, because
+// walking them is what follows them. Resolving the parent alone also keeps a
+// path that is not there from becoming a failure, which is what a sweep racing
+// another process's needs.
+//
+// A path that cannot be resolved at all is refused rather than assumed
+// innocent, and the refusal keeps this package's [CodeNotRemoved]: not knowing
+// where a deletion would land is the one answer that must not end in a
+// deletion.
+//
+// internal/report's `within` is this function with the history store's root and
+// error code. The two are deliberate twins — see the note on [remove] — and a
+// change to either belongs in the other.
 func within(path, root string) (bool, error) {
-	absolutePath, err := filepath.Abs(path)
+	resolvedPath, err := resolveParent(path)
 	if err != nil {
 		return false, &Error{
 			Code:    CodeNotRemoved,
-			Message: path + " could not be resolved to an absolute path, so it was not deleted",
+			Message: path + " could not be resolved on disk, so it was not deleted",
 			Err:     err,
 		}
 	}
-	absoluteRoot, err := filepath.Abs(root)
+	resolvedRoot, err := resolvePath(root)
 	if err != nil {
 		return false, &Error{
 			Code:    CodeNotRemoved,
-			Message: root + " could not be resolved to an absolute path, so nothing under it was deleted",
+			Message: root + " could not be resolved on disk, so nothing under it was deleted",
 			Err:     err,
 		}
 	}
-	relative, err := filepath.Rel(absoluteRoot, absolutePath)
+	relative, err := filepath.Rel(resolvedRoot, resolvedPath)
 	if err != nil {
 		return false, nil
 	}
 	return relative != "." && relative != ".." &&
 		!strings.HasPrefix(relative, ".."+string(filepath.Separator)) &&
 		!filepath.IsAbs(relative), nil
+}
+
+// resolveParent resolves the directories leading to path, and leaves path's own
+// last element alone. See [within] for why the leaf is left as it is.
+func resolveParent(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	parent, err := resolvePath(filepath.Dir(absolute))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(absolute)), nil
+}
+
+// resolvePath resolves every symbolic link in a path, tolerating a path that is
+// not all there.
+//
+// [filepath.EvalSymlinks] needs the whole path to exist, and the paths this is
+// asked about need not: an entry another process's sweep removed a moment ago,
+// a context directory that was pruned between the listing and the deletion. So
+// a missing name is resolved as far as the filesystem goes and the rest is
+// appended verbatim, which is the same answer the full resolution would give
+// once those names existed — and it is an answer about where a deletion *would*
+// land, which is what the caller is deciding. Any other failure is returned,
+// and refuses the deletion.
+func resolvePath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	switch {
+	case err == nil:
+		return trimExtendedPrefix(resolved), nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", err
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		// The volume root itself, which is where walking up stops. There is
+		// nothing above it to resolve against and its own name is the answer.
+		return path, nil
+	}
+	resolvedParent, err := resolvePath(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedParent, filepath.Base(path)), nil
+}
+
+// trimExtendedPrefix drops the `\\?\` Windows uses to spell a path that escapes
+// the traditional length limit, so that a resolved path and a resolved root are
+// compared in one spelling whichever of the two the operating system chose to
+// hand back. Nothing outside Windows can be affected: a resolved path on any
+// other platform begins with a separator that is not a backslash.
+func trimExtendedPrefix(path string) string {
+	if rest, found := strings.CutPrefix(path, `\\?\UNC\`); found {
+		return `\\` + rest
+	}
+	if rest, found := strings.CutPrefix(path, `\\?\`); found {
+		return rest
+	}
+	return path
 }

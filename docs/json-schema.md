@@ -5,11 +5,13 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON contracts
 
-**Status: two schemas shipped.** `schema/catalog-v1.schema.json` and
-`schema/run-report-v1.schema.json` exist, are embedded in `internal/schemas`,
-and every document the CLI writes is validated against them in the tests. The
-`go-mutants/doctor` document and the Stryker projection are still planned, and
-say so below.
+**Status: three schemas shipped, plus one vendored.**
+`schema/catalog-v1.schema.json`, `schema/run-report-v1.schema.json` and
+`schema/doctor-v1.schema.json` exist, are embedded in `internal/schemas`, and
+every document the CLI writes is validated against them in the tests. The
+Stryker projection is validated too, against the vendored third-party schema in
+`schema/stryker/` — which is deliberately kept out of that registry, for the
+reasons given below.
 
 go-mutants publishes three native document types and one lossy projection for
 the Stryker report ecosystem. Every native document is discriminated by two
@@ -340,18 +342,55 @@ byte-for-byte as a determinism gate.
 
 ## `go-mutants/doctor` v1
 
-**Planned; no schema file exists yet.** Will be produced by `doctor --json`,
-reporting the discovered toolchain, module layout, git availability, cache
-directory, terminal capabilities, and every check's pass/fail with a
-remediation hint.
+Produced only by `doctor --json`, and validated against
+`schema/doctor-v1.schema.json` before it is printed.
+
+| Field | Contents |
+| --- | --- |
+| `document_type`, `schema_version` | `go-mutants/doctor`, `1` |
+| `tool_version` | The build that ran the checks |
+| `checks[]` | `name`, `status`, `detail` — one row per check, in table order |
+
+`status` is `ok`, `warn`, or `fail`. A `warn` is a check that failed on
+something only an opt-in feature needs — git, which only `run --changed` asks
+for — and never fails the command; any `fail` exits 2. `detail` is never empty:
+the version, the path, or the reason it could not be found, which is what makes
+a status something a reader can act on.
+
+The check names are stable within the schema version, so a consumer may branch
+on them: `go toolchain`, `module`, `git`, `cache directory`, `platform`,
+`configuration`. The list is always complete, even when a check failed — a
+machine with two problems should learn about both at once.
+
+This document describes the machine and not any code, so it carries no run ID,
+no workspace digest, and no mutants.
 
 ## Stryker projection
 
-**Planned.** One-way, lossy, and deterministic; never read back as state.
-`inconclusive` maps to `Ignored` with a `statusReason`, and a confirmed timeout
-maps to `Timeout`. If the projection cannot be validated against the vendored
-schema, the run aborts rather than emitting a document that would look
-authoritative. See [Stryker compatibility](stryker-compatibility.md).
+Written to `reports/mutation/mutation.json`, and embedded in
+`reports/mutation/mutation.html`. It is the one document here that go-mutants
+does not define: it belongs to the Mutation Testing Report Schema, vendored at
+`schema/stryker/mutation-testing-report-schema-3.9.0.json` with its Apache-2.0
+licence and a `PROVENANCE.json`.
+
+It is therefore *not* in the `internal/schemas` registry and carries no
+`document_type`. That registry maps a document type onto a schema go-mutants
+publishes; this is a third-party definition go-mutants writes *against*, so it
+is compiled separately — with no default draft, because the file declares
+draft-07 itself and reinterpreting somebody else's schema would defeat the
+purpose of vendoring it. `report validate` accordingly does not accept one.
+
+One-way, lossy, and deterministic; never read back as state. `schemaVersion` is
+`"2"` — the report format's major version, not the 3.9.0 of the npm package the
+schema came from. Every projection is validated against the vendored schema
+**before** it is written, and a document that fails aborts with `GOM5203`
+having touched nothing, rather than emitting something that would look
+authoritative.
+
+The full status mapping — including why `NoCoverage` and `Pending` are never
+emitted, why `not_run` projects as `Ignored` rather than being omitted, and the
+UTF-16 column rule the coordinates obey — is in
+[Stryker compatibility](stryker-compatibility.md).
 
 ## Compatibility rules
 

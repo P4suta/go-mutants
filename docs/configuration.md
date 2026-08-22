@@ -190,20 +190,43 @@ failure and nothing else.
 
 ### `[report]`
 
-The keys decode and validate — an out-of-range `high` or `low` is a positioned
-error today. A run publishes its `RunReport v1` to the history store under the
-OS cache directory, and `run --json` writes it to standard output; nothing is
-written into this directory yet, because the in-project outputs it names wait
-on the HTML report. `list --json` writes its catalogue document to standard
-output and never to this directory either.
+This section governs the two files a run writes into your own tree. Everything
+else go-mutants produces goes into a disposable snapshot or into the OS cache
+directory: the authoritative `RunReport v1` is published to the history store
+(and to standard output under `run --json`), and `list --json` writes its
+catalogue to standard output. Neither is ever written here.
 
-- `directory`: default `reports/mutation`. Excluded from the snapshot manifest
-  and from cache identity.
-- `formats`: any of `"json"` and `"html"`. `[]` disables project reports
-  without deleting existing files.
-- `high` / `low`: HTML colouring thresholds only. They are deliberately
-  independent of `[policy]`, so making a report prettier can never change
-  whether CI passes.
+- `directory`: default `reports/mutation`. A relative path resolves under the
+  workspace root; an absolute or escaping path is refused, because the
+  artefacts are a project's own output and belong beside the project. The
+  directory is excluded from the snapshot manifest and from cache identity, so
+  publishing into it cannot change a workspace digest or invalidate an outcome.
+- `formats`: any of `"json"` and `"html"`; default both. `"json"` is
+  `mutation.json`, the one-way projection into the Mutation Testing Report
+  Schema; `"html"` is `mutation.html`, a single self-contained page embedding
+  that projection and a vendored copy of the Mutation Testing Elements viewer,
+  which fetches nothing and opens from `file://`. `[]` disables the project
+  artefacts entirely — and does so before anything is read, so turning them off
+  also turns off the work of building them. It removes no existing file.
+- `high` / `low`: the viewer's colouring thresholds, as percentages, and
+  nothing else. They are deliberately independent of `[policy]`: making a
+  report prettier must never change whether CI passes, and the two are kept
+  apart so nobody can do it by accident. `policy.strict` and
+  `policy.minimum_score` are the only settings that decide an exit status. A
+  value outside 0..100 written in this file is a positioned error. A `low`
+  above `high` is a cross-field rule checked after merging and reported against
+  `report.low` with no position — `low` may come from the file and `high` from
+  a flag, so there is no single place to point at.
+
+`run --report none|json|html|json,html` overrides `formats` for one
+invocation. The pair is published together or not at all: if the HTML cannot be
+written, the JSON written moments before is put back as it was found, because
+two files describing different runs are worse than either alone. Both are
+staged and renamed into place, and both are written only after the run's own
+record is safely filed in the history store.
+
+See [`stryker-compatibility.md`](stryker-compatibility.md) for the outcome
+mapping, the UTF-16 column rule, and the report's security properties.
 
 ## Precedence
 
@@ -219,8 +242,16 @@ Contradictory flags are rejected before any work starts, through
 `MarkFlagsMutuallyExclusive` plus semantic validation, with a stable `GOM10xx`
 error code.
 
-The command tree today is `run`, `list`, `report merge|validate`, and
-`cache status|gc|clean`. `doctor` and `report list|latest|clean` are planned,
-and so is `init`, along with its
-`--dry-run` and `--check` flags, which will let it describe or verify a
-configuration without writing one; it will never overwrite an existing file.
+The command tree today is `run`, `list`, `doctor`, `init`,
+`report list|latest|clean|merge|validate`, and `cache status|gc|clean`.
+
+`init` writes this file with every built-in default in it and a comment
+explaining each one, so adopting it changes nothing. It never overwrites and
+there is no `--force`: delete the file first if that is what you mean.
+`--dry-run` prints what would be written and touches nothing; `--check` exits 0
+when the file already there is byte-identical to what this build would write and
+1 when it is not, which is a CI freshness gate rather than a policy failure.
+
+`doctor` reports the toolchain, the module, git, the cache directory, the
+platform, and whether this file parses — as an aligned table, or as a
+`go-mutants/doctor` v1 document with `--json`.

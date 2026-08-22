@@ -216,6 +216,11 @@ type RunOutcome struct {
 	// [ReportPublished].
 	RunPath    string
 	LatestPath string
+	// Artifacts are the project artefacts written into `report.directory`, as
+	// published in [ReportPublished]. Both paths are empty when
+	// `report.formats` asked for nothing, and both are empty when publishing
+	// them failed — in which case [Run] returns that failure.
+	Artifacts report.Artifacts
 	// Verdict is what [mutation.Decide] made of the report. It is the zero
 	// value when no report was published, in which case the failure itself
 	// decides the exit status.
@@ -1050,7 +1055,39 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 	out.Report = rep
 	out.RunPath = runPath
 	out.LatestPath = latestPath
-	s.emit(ReportPublished{RunPath: runPath, LatestPath: latestPath})
+
+	// The project artefacts come after the history and never before it. The
+	// history is where the run's own record lives and is the thing a later run,
+	// a `report merge`, or a `report latest` reads; `reports/mutation/` is a
+	// convenience for humans and for CI, built out of the document that is
+	// already safely filed. Publishing them the other way round would mean a
+	// crash between the two left a workspace with a mutation report for a run
+	// that has no record.
+	//
+	// The event is emitted whatever happens here, because both history paths are
+	// already real and a run that wrote a report without saying where would be
+	// the worse failure. The artefact failure is then returned and stops the
+	// run: a `--report json,html` that quietly produced neither file, exited 0,
+	// and left last week's pair in place is exactly the kind of green this
+	// project keeps refusing to print.
+	artifacts, artifactErr := report.WriteArtifacts(report.ArtifactOptions{
+		Report:        rep,
+		WorkspaceRoot: out.WorkspaceRoot,
+		Directory:     opts.Config.Report.Directory,
+		Formats:       opts.Config.Report.Formats,
+		High:          opts.Config.Report.High,
+		Low:           opts.Config.Report.Low,
+	})
+	out.Artifacts = artifacts
+	s.emit(ReportPublished{
+		RunPath:        runPath,
+		LatestPath:     latestPath,
+		ProjectionPath: artifacts.ProjectionPath,
+		HTMLPath:       artifacts.HTMLPath,
+	})
+	if artifactErr != nil {
+		return artifactErr
+	}
 
 	tally, err := rep.Tally()
 	if err != nil {

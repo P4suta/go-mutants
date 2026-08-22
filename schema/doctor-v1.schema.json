@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://go-mutants.invalid/schema/doctor-v1.schema.json",
+  "title": "go-mutants doctor report v1",
+  "description": "What `go-mutants doctor --json` found about this machine: one row per check, each with a status and a line of detail. It is a diagnosis of the environment rather than a measurement of any code, so it carries no run id, no workspace digest, and no mutants.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document_type", "schema_version", "tool_version", "checks"],
+  "properties": {
+    "document_type": { "const": "go-mutants/doctor" },
+    "schema_version": { "const": 1 },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "checks": {
+      "description": "Every check the tool ran, in the order the table prints them. The list is complete even when a check failed: a diagnosis that stopped at the first problem would hide the second one.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/check" }
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "detail"],
+      "properties": {
+        "name": {
+          "description": "What was checked, in the same words the table prints. Stable within a schema version, so a consumer may branch on it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "description": "ok is a check that passed. warn is a check that failed on something only an opt-in feature needs, and never fails the command. fail is a check go-mutants cannot work without, and any one of them exits 2.",
+          "enum": ["ok", "warn", "fail"]
+        },
+        "detail": {
+          "description": "One line naming what was found: the version, the path, or the reason it could not be. Never empty, because a status with nothing beside it is a verdict a reader cannot act on.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

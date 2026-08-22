@@ -3,8 +3,11 @@
 
 # Licensing for the files that cannot carry an inline SPDX header: the
 # machine-rewritten module files (the Go tool would drop or move a comment),
-# the published JSON schemas (JSON has no comment syntax at all), and the
-# verbatim license texts.
+# the published JSON schemas (JSON has no comment syntax at all), the verbatim
+# license texts, and the vendored third-party assets — which could carry a
+# header and deliberately do not, because a vendored file is verified by
+# SHA-256 against the digest recorded beside it and an added header would be a
+# modification that breaks the very check that proves the file is upstream's.
 
 version = 1
 
@@ -17,7 +20,11 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 # The first-party schemas in schema/. A vendored third-party schema arrives
 # with its own license and gets its own entry rather than joining this one.
 [[annotations]]
-path = ["schema/catalog-v1.schema.json", "schema/run-report-v1.schema.json"]
+path = [
+  "schema/catalog-v1.schema.json",
+  "schema/doctor-v1.schema.json",
+  "schema/run-report-v1.schema.json",
+]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
@@ -28,8 +35,36 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 # code beside them, so a header could not survive a regeneration either.
 [[annotations]]
 path = [
+  "internal/report/testdata/mutation-report.golden.json",
   "internal/report/testdata/run-report.golden.json",
   "internal/report/testdata/run-report-coverage.golden.json",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# The vendored Stryker report schema, and the Mutation Testing Elements viewer
+# the HTML report embeds. Both are Apache-2.0 rather than this project's dual
+# licence, so they get their own entry rather than joining the first-party one
+# above — and each ships the upstream `LICENSE` text and a `PROVENANCE.json`
+# recording the URL, the npm integrity hash, and the SHA-256 that is re-checked
+# at render time. The `PROVENANCE.json` files are go-mutants' own record *about*
+# a third-party file, so they are annotated here beside what they describe.
+[[annotations]]
+path = [
+  "schema/stryker/LICENSE",
+  "schema/stryker/mutation-testing-report-schema-3.9.0.json",
+  "vendor-assets/mutation-testing-elements/3.9.0/LICENSE",
+  "vendor-assets/mutation-testing-elements/3.9.0/mutation-test-elements.js",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "Stryker Mutator contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = [
+  "schema/stryker/PROVENANCE.json",
+  "vendor-assets/mutation-testing-elements/3.9.0/PROVENANCE.json",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"

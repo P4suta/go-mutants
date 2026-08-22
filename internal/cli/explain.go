@@ -200,7 +200,22 @@ func countNoun(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
 	}
-	return strconv.Itoa(n) + " " + noun + "s"
+	return strconv.Itoa(n) + " " + plural(noun)
+}
+
+// plural is the one English rule the nouns here need beyond adding an "s":
+// "directory" pluralises as "directories", and a tool that writes "2
+// directory" with an "s" on the end looks careless in the one place it is
+// asking to be trusted with deleting files. Every other noun in these messages
+// — outcome, mutant, run, check, key, site, day — takes a plain "s", and a noun
+// that needs a third rule should be spelled out by its caller rather than turn
+// this into a dictionary.
+func plural(noun string) string {
+	if rest, ok := strings.CutSuffix(noun, "y"); ok && !strings.HasSuffix(rest, "a") &&
+		!strings.HasSuffix(rest, "e") && !strings.HasSuffix(rest, "o") && !strings.HasSuffix(rest, "u") {
+		return rest + "ies"
+	}
+	return noun + "s"
 }
 
 // printf appends to the buffer. The write error is deliberately dropped: a

@@ -184,6 +184,48 @@ func TestGCLeavesATemporaryFileAlone(t *testing.T) {
 	}
 }
 
+// TestGCRefusesEntriesThatLeaveTheCache. The containment check is what makes
+// deleting files in the operating system's cache directory acceptable, and a
+// check that compares two strings does not make it: the cache root is a
+// directory anything on the machine can write to, so an `outcomes/` replaced by
+// a link to somewhere else is lexically inside the cache and physically
+// wherever it points.
+func TestGCRefusesEntriesThatLeaveTheCache(t *testing.T) {
+	t.Parallel()
+
+	root, dir := populated(t)
+	outcomes := filepath.Dir(dir)
+
+	// The stored outcomes moved out of the cache, with a link left behind under
+	// the name the walk will find.
+	outside := filepath.Join(t.TempDir(), "elsewhere")
+	if err := os.Rename(outcomes, outside); err != nil {
+		t.Fatalf("moving the outcomes out of the cache: %v", err)
+	}
+	if err := os.Symlink(outside, outcomes); err != nil {
+		t.Skipf("this platform will not let the test create a symbolic link: %v", err)
+	}
+	victims := make([]string, 0, len(mutantIDs))
+	for _, id := range mutantIDs {
+		victim := filepath.Join(outside, filepath.Base(dir), id+".json")
+		age(t, victim, 90*24*time.Hour)
+		victims = append(victims, victim)
+	}
+
+	_, err := cache.GC(root, time.Now().AddDate(0, 0, -cache.DefaultGCDays))
+	if err == nil {
+		t.Fatal("a sweep followed a link out of the cache and reported success")
+	}
+	if got := cache.CodeOf(err); got != cache.CodeNotRemoved {
+		t.Errorf("code = %q, want %q (%v)", got, cache.CodeNotRemoved, err)
+	}
+	for _, victim := range victims {
+		if _, statErr := os.Stat(victim); statErr != nil {
+			t.Errorf("a file outside the cache was deleted through the link: %v", statErr)
+		}
+	}
+}
+
 // TestCleanRemovesTheOutcomesAndNothingElse is the boundary between this
 // command and `report clean`: the run history filed in the same workspace
 // directory is a record of what happened and is not the cache's to delete.

@@ -17,6 +17,13 @@ import (
 // A Code is a stable, user-facing diagnostic code. This package owns the
 // GOM10xx block: mistakes in how go-mutants was invoked, as opposed to mistakes
 // in what it was asked to do.
+//
+// It also owns three blocks that belong to one command each — GOM80xx to
+// `doctor`, GOM81xx to `init`, and GOM82xx to `report list|latest|clean` —
+// rather than more GOM10xx numbers. Those commands do not measure anything, so
+// none of their failures is a mistake in an invocation; a user reading one
+// should see at a glance that it is about the environment, the configuration
+// file, or the run history, and that the remedy is in that one place.
 type Code string
 
 // The command line codes.
@@ -83,13 +90,80 @@ const (
 	// what internal/report and internal/schemas decided — and this one names the
 	// file, which is what `report merge` over several of them needs.
 	CodeInvalidReportDocument Code = "GOM1011"
+	// CodeGitHubSummary reports that the GitHub Actions step summary could not
+	// be appended to. It is printed and never returned: the summary and the
+	// survivor annotations are a convenience on top of a run that has already
+	// executed its mutants, filed its report, and printed its closing block, and
+	// letting a failure to decorate a job page turn a failed score gate's exit 1
+	// into an exit 2 would tell a CI job that the tool broke when the truth is
+	// that the tests missed something. See internal/cli's emitGitHub.
+	CodeGitHubSummary Code = "GOM1012"
+)
+
+// The `doctor` codes, which are the GOM80xx block. There is one, and that is
+// the design: every individual check reports itself as a row of the table with
+// its own words, so the command's only failure is the fact that a row said
+// fail.
+const (
+	// CodeEnvironmentUnusable reports that at least one `doctor` check failed.
+	// The table has already named which and why, so this carries the count and
+	// nothing else — and it is what makes the command exit 2, which is the
+	// answer a CI job branches on.
+	CodeEnvironmentUnusable Code = "GOM8001"
+)
+
+// The `init` codes, which are the GOM81xx block.
+const (
+	// CodeConfigurationExists reports a `.go-mutants.toml` that is already
+	// there. `init` never overwrites and has no --force: a configuration file is
+	// hand-edited, it is the only record of decisions nobody wrote down twice,
+	// and a flag that replaces it wholesale is a flag somebody will type by
+	// accident. Deleting the file first is the deliberate act that flag would
+	// have pretended to be.
+	CodeConfigurationExists Code = "GOM8101"
+	// CodeConfigurationUnreadable reports a `.go-mutants.toml` that `init
+	// --check` could not read: a directory of that name, a permission failure.
+	// A file that is not there is not this — it is a check that failed, since
+	// `init` would have created it.
+	CodeConfigurationUnreadable Code = "GOM8102"
+	// CodeConfigurationNotWritten reports a configuration file that could not be
+	// created: a directory that is not writable, a disk that is full, a name
+	// taken by something that is not a file.
+	CodeConfigurationNotWritten Code = "GOM8103"
+	// CodeConfigurationStale reports `init --check` finding a file that is not
+	// what this build of `init` would write. It is the one failure in this
+	// package that exits 1 rather than 2, because it is an opt-in gate a CI job
+	// asked for rather than anything being wrong with the machine; see
+	// [initLong].
+	CodeConfigurationStale Code = "GOM8104"
+)
+
+// The run-history codes, which are the GOM82xx block: what `report list`,
+// `report latest` and `report clean` refuse. The store's own failures — a
+// directory that cannot be walked, a marker naming somebody else, a file that
+// will not delete — keep internal/report's codes, because this package does not
+// re-code what the store decided.
+const (
+	// CodeNotAModuleRoot reports a history command run somewhere that is not a
+	// module root. A run is filed under the module it measured, so without a
+	// go.mod there is nothing to say which history is being asked about — and
+	// for `report clean`, which deletes, guessing would be the worst possible
+	// answer.
+	CodeNotAModuleRoot Code = "GOM8201"
+	// CodeNoStoredRun reports `report latest` finding no run for this module.
+	// An empty *listing* is an answer and exits 0; a `latest` with nothing to
+	// print is not, because the command's whole output is one document and
+	// there is none.
+	CodeNoStoredRun Code = "GOM8202"
 )
 
 // String returns the code as it is printed.
 func (c Code) String() string { return string(c) }
 
 // codes is every code this package can emit, in numeric order. The package
-// tests assert that the list is complete, unique, and inside the GOM10xx block.
+// tests assert that the list is complete, unique, and inside one of the four
+// blocks this package owns: GOM10xx for the command line itself, GOM80xx for
+// `doctor`, GOM81xx for `init`, and GOM82xx for the run-history commands.
 var codes = []Code{
 	CodeUsage,
 	CodeTestArgv,
@@ -102,6 +176,14 @@ var codes = []Code{
 	CodeMutantUnresolved,
 	CodeUnreadableReport,
 	CodeInvalidReportDocument,
+	CodeGitHubSummary,
+	CodeEnvironmentUnusable,
+	CodeConfigurationExists,
+	CodeConfigurationUnreadable,
+	CodeConfigurationNotWritten,
+	CodeConfigurationStale,
+	CodeNotAModuleRoot,
+	CodeNoStoredRun,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

@@ -3,7 +3,14 @@
 
 # Generated run reports. The report directory is configurable; this is the
 # default and is also excluded from snapshot manifests and cache identity.
+#
+# The second pattern is not redundant: the first has an inner slash, so git
+# anchors it to the repository root, and the project artefacts are written into
+# whatever workspace a run is pointed at. A test or a manual run against one of
+# the corpus modules under fixtures/ produces `fixtures/<name>/reports/mutation`,
+# which the anchored pattern does not cover and which must never be committed.
 reports/mutation/
+**/reports/mutation/
 
 # Release artifacts, the locally built CLI, and compiled test binaries.
 dist/

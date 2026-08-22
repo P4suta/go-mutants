@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 
@@ -336,11 +338,9 @@ func TestFirstViolationIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestEveryRegisteredSchemaCompiles asserts the forward direction only: every
-// registry entry names a schema that reads, compiles, and validates. The
-// reverse — every embedded file is registered — is deliberately not asserted,
-// because schema/ will also hold vendored third-party schemas that go-mutants
-// validates against but does not itself produce.
+// TestEveryRegisteredSchemaCompiles asserts the forward direction: every
+// registry entry names a schema that reads, compiles, and validates.
+// [TestEverySchemaIsRegistered] asserts the reverse.
 func TestEveryRegisteredSchemaCompiles(t *testing.T) {
 	types := DocumentTypes()
 	if len(types) != len(registry) {
@@ -361,6 +361,40 @@ func TestEveryRegisteredSchemaCompiles(t *testing.T) {
 		err := Validate(documentType, []byte(`{}`))
 		if got := CodeOf(err); got != CodeInvalidDocument {
 			t.Errorf("%s: validating {} gave code %q (%v), want %q", documentType, got, err, CodeInvalidDocument)
+		}
+	}
+}
+
+// TestEverySchemaIsRegistered asserts the reverse direction: every schema
+// embedded in [schema.FS] is one this build can validate against.
+//
+// The claim is assertable because of what that filesystem holds and does not
+// hold. `//go:embed *.json` matches this directory's own files and does not
+// recurse, so the vendored third-party schemas — the Stryker report schema,
+// which go-mutants projects onto and does not define — live under
+// schema/stryker/ behind an embed of their own and never appear here. What is
+// left is exactly the set go-mutants publishes, and a published schema nothing
+// registers is a schema no `--json` output is ever checked against: it would
+// ship, be documented, and validate nothing.
+func TestEverySchemaIsRegistered(t *testing.T) {
+	entries, err := fs.ReadDir(schema.FS, ".")
+	if err != nil {
+		t.Fatalf("listing the embedded schemas: %v", err)
+	}
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+			files = append(files, entry.Name())
+		}
+	}
+	if len(files) == 0 {
+		t.Fatal("no schema is embedded at all")
+	}
+	registered := registeredFiles()
+	for _, file := range files {
+		if !slices.Contains(registered, file) {
+			t.Errorf("schema/%s is published and no document type is validated against it; "+
+				"add it to the registry in schemas.go", file)
 		}
 	}
 }

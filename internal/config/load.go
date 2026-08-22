@@ -345,6 +345,27 @@ var expectedTypes = map[string]string{
 	"report.low":       "an integer",
 }
 
+// SchemaKeys returns every key the configuration schema defines, dotted and
+// sorted: the tables as well as the settings written inside them.
+//
+// It is exported for the one job outside this package that has to enumerate the
+// schema rather than read a file against it. `go-mutants init` writes a starter
+// configuration with every setting in it, set or shown as a commented example,
+// and a key added here that nobody remembered to write there would be a setting
+// the generated file silently leaves out — which is exactly the file a project
+// adopts as its record of what can be configured. The keys are the ones
+// [expectedTypes] describes, and the package's own tests walk the decoded
+// document to prove that map is the schema rather than a hand-kept copy of it;
+// see TestExpectedTypesCoversTheSchema.
+func SchemaKeys() []string {
+	keys := make([]string, 0, len(expectedTypes))
+	for key := range expectedTypes {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
+}
+
 // positionOf reads a decode error's one-based position.
 func positionOf(decode *toml.DecodeError) Position {
 	line, column := decode.Position()

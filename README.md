@@ -18,24 +18,28 @@ reaches is reported without being executed.
 The design targets the things that make mutation testing painful in practice.
 A live TUI dashboard instead of a silent wait, coverage-guided selection,
 deterministic stable mutant IDs, a lossless JSON report, `--changed` for pull
-requests, `--shard K/N` for CI fan-out, and an outcome cache that keeps a second
-run from re-measuring what has not moved are built today; the
-Stryker-ecosystem HTML projection is designed and not yet.
+requests, `--shard K/N` for CI fan-out, an outcome cache that keeps a second run
+from re-measuring what has not moved, and a self-contained HTML report that
+opens from `file://` with the network unplugged are all built today.
 
-## Status: pre-release, the whole operator catalogue
+## Status: pre-release, feature-complete for v1
 
-Three commands exist. `go-mutants run` performs real mutation testing: it
-snapshots the workspace, proves the baseline, discovers candidates, validates
-that they compile, instruments the snapshot once, and measures one mutant per
-test process — then writes a `run-report-v1` document and reports a mutation
-score it actually measured. `go-mutants list` enumerates the same mutants
-without executing them, as text or as a schema-validated JSON catalogue.
-`go-mutants report` reads those documents back: `merge` combines the reports of
-a sharded run into the whole run's report, and `validate` checks any report
-against the schema this build embeds. `go-mutants cache` works with the
-outcomes a run has proven: `status` says where they are and what is stored,
-`gc --days N` removes what was written more than N days ago, and `clean`
-removes them all.
+The v1 command tree is complete. `go-mutants run` performs real mutation
+testing: it snapshots the workspace, proves the baseline, discovers candidates,
+validates that they compile, instruments the snapshot once, and measures one
+mutant per test process — then writes a `run-report-v1` document, publishes
+`reports/mutation/mutation.{json,html}`, and reports a mutation score it
+actually measured. `go-mutants list` enumerates the same mutants without
+executing them, as text or as a schema-validated JSON catalogue.
+`go-mutants doctor` checks that this machine can run any of it, as a table or
+as a JSON document, and `go-mutants init` writes a fully commented
+`.go-mutants.toml` in which every value is the built-in default.
+`go-mutants report` reads those documents back: `list` and `latest` show the
+run history, `clean` deletes it, `merge` combines the reports of a sharded run
+into the whole run's report, and `validate` checks any report against the
+schema this build embeds. `go-mutants cache` works with the outcomes a run has
+proven: `status` says where they are and what is stored, `gc --days N` removes
+what was written more than N days ago, and `clean` removes them all.
 
 Coverage guidance is automatic and needs no flag: a run with the default test
 command profiles each test binary once, then measures a mutant only against the
@@ -84,8 +88,20 @@ The honest limits:
   mutant against every binary and says so with a `GOM7601` warning. Any failure
   of the coverage pass itself does the same with `GOM7602`: the optimisation
   can never fail a run.
-- **No HTML report** and no Stryker projection yet; the JSON document and the
-  console summary are the output.
+- **The Stryker projection is one-way and lossy**, by design. The HTML report
+  and `reports/mutation/mutation.json` are built from the run report after it
+  has been filed, and are never read back. Six outcomes become five statuses:
+  an uncovered survivor projects as `Survived` rather than `NoCoverage`, so
+  that the two documents agree about how many survivors there were, and the
+  expectations ledger, the cache accounting, and coverage do not survive the
+  trip. The `run-report-v1` document is the one to diagnose, resume, or audit
+  from; [`docs/stryker-compatibility.md`](docs/stryker-compatibility.md) states
+  the whole mapping.
+- **One host platform per report.** Build constraints decide which files a
+  package even has, so a report is a statement about the platform it was
+  measured on; there is no cross-`GOOS` matrix. `doctor` warns when the `go` on
+  `PATH` targets a platform other than the host. A `go.work` workspace is
+  supported only for the modules the snapshot itself holds.
 - **The outcome cache is on only for the default test command**, on the same
   terms and for the same reason as coverage guidance: `cache.mode = "auto"`
   reuses nothing for a command go-mutants cannot reason about and says so with
@@ -98,12 +114,14 @@ The honest limits:
   when it cannot read a diff: a narrowing that silently fell back to
   "everything" or to "nothing" would be worse than not running at all. Rename
   detection is off, so a renamed file selects every mutant in it.
-- The `init` and `doctor` commands do not exist, and `report` has only `merge`
-  and `validate`.
+- **The run history is filed per workspace**, and a workspace is identified by a
+  digest of its contents, so runs with an edit between them are stored apart.
+  `report list|latest|clean` gather one module's runs back together by the
+  module path in each document, and are run from a module root.
 
-The design is settled and written down under [`docs/`](docs/), every page marks
-what is implemented versus planned, and the toolchain, gates, and CI are real
-and green.
+The design is settled and written down under [`docs/`](docs/), every page
+carries a status line saying how much of it is built, and the toolchain, gates,
+and CI are real and green.
 
 Do not describe go-mutants as production-ready. Nothing is published, tagged,
 or released.
@@ -121,9 +139,19 @@ or released.
 ```console
 go install github.com/P4suta/go-mutants/cmd/go-mutants@latest
 cd your-module
-go-mutants list
+go-mutants doctor            # is this machine ready?
+go-mutants init              # write a commented .go-mutants.toml (optional)
 go-mutants run
 ```
+
+Then open `reports/mutation/mutation.html`. It is one file: double-click it,
+attach it to a CI job, drop it on a shared drive. It fetches nothing, so it
+works from `file://` on a laptop with no network — see
+[Safety model](#safety-model).
+
+`init` is optional and changes nothing by itself: every value it writes is the
+built-in default, so the file is a place to start editing rather than a
+prerequisite. It never overwrites an existing one.
 
 On a terminal the run draws the dashboard. Into a pipe, in CI, or under
 `--no-tui`, it prints its phases as it goes, then one line per mutant as it
@@ -157,6 +185,16 @@ measured; there is no sentinel number for it. The full document goes to the
 history store under your OS cache directory, and `run --json` writes it to
 standard output instead.
 
+Every run also publishes into your own tree, at `reports/mutation/`:
+`mutation.json`, the Stryker-ecosystem projection, and `mutation.html`, the
+self-contained viewer. The run prints where each went, one labelled path per
+line, so a CI step can grep for the one it wants to attach. They are the only
+files go-mutants writes into a workspace; `--report none` turns them off, and
+`--report json` or `--report html` asks for one of the two. The pair is
+published together or not at all — a `mutation.json` from this run beside a
+`mutation.html` from last week is worse than either alone — and both are
+written only after the run's own record is safely filed.
+
 Other flags that work today:
 
 ```console
@@ -167,7 +205,11 @@ go-mutants run --no-tui
 go-mutants run --explain
 go-mutants run --changed=origin/main
 go-mutants run --shard 1/4
+go-mutants run --report none
 go-mutants list --operator comparison --json
+go-mutants doctor --json
+go-mutants init --check
+go-mutants report latest
 go-mutants report merge shard-*.json --output mutation.json
 go-mutants report validate mutation.json
 ```
@@ -197,10 +239,9 @@ a `script` session, a recorded demo. It changes nothing about what the run
 measures. An editor's output pane needs no flag: it is a pipe rather than a
 terminal, so it already gets the plain lines.
 
-With no arguments, help is printed. The intended v1 command tree is `run`,
-`list`, `doctor`, `init`, `report list|latest|validate|clean|merge`, and
-`cache status|gc|clean`; `run`, `list`, `cache`, `report merge` and
-`report validate` are built.
+With no arguments, help is printed. The v1 command tree is `run`, `list`,
+`doctor`, `init`, `report list|latest|validate|clean|merge`, and
+`cache status|gc|clean`, and all of it is built.
 
 Everything after `--` is captured verbatim as the test command's argv; it is
 never handed to a shell. It replaces `test.command`, so anything other than the
@@ -224,10 +265,10 @@ mise run check
   `.git`, caches, and the report directory, and that rejects symlinks,
   junctions, and special files.
 - **Run reports and cached outcomes are written outside your tree**, into the
-  OS cache directory, temp-file-then-atomic-rename. `reports/mutation/` is
-  reserved for the in-project outputs the HTML report will add, and is already
-  excluded from snapshot and cache identity so that writing one cannot change a
-  digest.
+  OS cache directory, temp-file-then-atomic-rename. The single exception is
+  `reports/mutation/`, where the JSON projection and the HTML page are
+  published; it is excluded from snapshot and cache identity, so writing one
+  cannot change a digest. Add it to your `.gitignore` — it is build output.
 - **go-mutants proves a directory is its own before it deletes anything.**
   Every workspace directory in the OS cache carries an ownership marker naming
   the workspace it belongs to, and `cache gc` and `cache clean` refuse any
@@ -245,7 +286,7 @@ mise run check
 | Code | Meaning |
 | ---: | --- |
 | 0 | Run completed; no policy failure |
-| 1 | Opt-in policy failure only (`--strict` or `policy.minimum_score`) |
+| 1 | Opt-in gate failure only (`--strict`, `policy.minimum_score`, `init --check`) |
 | 2 | Infrastructure, configuration, baseline, or stale-expectation failure |
 | 130 | Interrupted (Ctrl-C); a partial report is published first |
 | 143 | Terminated (SIGTERM); a partial report is published first |

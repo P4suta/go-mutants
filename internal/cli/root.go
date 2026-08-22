@@ -31,7 +31,7 @@ const Version = "0.1.0-dev"
 const exitCodeHelp = `
 Exit codes:
   0    the run completed and no policy gate failed
-  1    an opt-in policy gate failed (--strict, policy.minimum_score)
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
   2    an infrastructure, configuration, baseline, or expectation failure
   130  interrupted (Ctrl-C)
   143  terminated (SIGTERM)
@@ -43,10 +43,12 @@ It copies your workspace into a disposable snapshot, proves the unmutated tests
 pass there, rewrites the copy, and measures how many of those rewrites your
 tests notice. Your own tree is only ever read.
 
-This is a pre-release build. The whole v1 operator catalogue is discovered, a
-run can be narrowed to a git diff (--changed) or to one shard of a matrix
-(--shard), and outcomes it has proven are reused between runs (--cache); the
-HTML report is still landing.`
+This is a pre-release build, and the v1 feature set is complete: the whole
+operator catalogue is discovered, a run can be narrowed to a git diff
+(--changed) or to one shard of a matrix (--shard), outcomes it has proven are
+reused between runs (--cache), and every run publishes its report into
+reports/mutation/ as JSON and as a self-contained HTML page that opens from
+file:// with the network unplugged.`
 
 // NewRootCommand builds the command tree.
 //
@@ -90,6 +92,8 @@ func NewRootCommand() *cobra.Command {
 	root.SetVersionTemplate("go-mutants {{.Version}}\n")
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newListCommand())
+	root.AddCommand(newDoctorCommand())
+	root.AddCommand(newInitCommand())
 	root.AddCommand(newReportCommand())
 	root.AddCommand(newCacheCommand())
 	return root

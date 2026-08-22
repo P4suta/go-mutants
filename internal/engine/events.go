@@ -418,7 +418,11 @@ type Warning struct {
 // ReportPublished reports that the run report is on disk and complete.
 //
 // It is emitted only after the atomic rename, never before: a path that has
-// been announced has to be a path that can be opened.
+// been announced has to be a path that can be opened. Every path it names obeys
+// that rule individually, which is why a run whose project artefacts failed
+// still publishes this event — with the two history paths filled in and the
+// artefact paths empty — before it reports the failure. The alternative would
+// be a run that wrote a report and never said where.
 type ReportPublished struct {
 	// RunPath is the absolute path of this run's own immutable document.
 	RunPath string
@@ -426,6 +430,18 @@ type ReportPublished struct {
 	// run of this workspace. It is a copy rather than a pointer, so reading the
 	// newest run is one file open; see internal/report.
 	LatestPath string
+	// ProjectionPath is the absolute path of the `mutation.json` written into
+	// `report.directory`: the lossy, one-way projection of this run into the
+	// mutation-testing-report format the Stryker ecosystem's viewers read.
+	//
+	// It is empty when `report.formats` did not ask for it — `--report none` and
+	// `--report html` both leave it so — and empty on the failure path described
+	// above. It is never the path of a file that is not there.
+	ProjectionPath string
+	// HTMLPath is the absolute path of the `mutation.html` written beside it:
+	// one self-contained page that opens from `file://` and fetches nothing.
+	// Empty on the same terms as ProjectionPath.
+	HTMLPath string
 }
 
 // Counts is the counted breakdown of a run, as the closing summary states it.

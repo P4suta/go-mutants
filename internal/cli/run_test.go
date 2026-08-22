@@ -9,15 +9,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/tui"
 )
 
@@ -269,6 +272,8 @@ func overlayFrom(t *testing.T, args []string) config.Overlay {
 		o.timeout, _ = flags.GetDuration("timeout")
 		o.strict, _ = flags.GetBool("strict")
 		o.noStrict, _ = flags.GetBool("no-strict")
+		o.cache, _ = flags.GetString("cache")
+		o.report, _ = flags.GetString("report")
 		layer, fail = runOverlay(c, o)
 		return fail
 	}
@@ -433,5 +438,155 @@ func TestInterpretCodesAnUnresolvedMutantAsAUsageError(t *testing.T) {
 	}
 	if got := ExitCode(err); got != mutation.ExitInfrastructure {
 		t.Errorf("ExitCode = %d, want %d: a run that never started measured nothing", got, mutation.ExitInfrastructure)
+	}
+}
+
+// TestReportFlagCarriesTheFormatsTheUserTyped is the `--report` half of the
+// precedence rules: a flag that was not typed carries nothing and loses to the
+// file, and every spelling that was typed carries exactly what it says.
+//
+// `none` is the case worth writing down. It has to arrive as an *explicit*
+// empty list rather than as an absence, because an absence loses to
+// `report.formats` in the file and "write no project reports" would then be
+// impossible to say on a command line.
+func TestReportFlagCarriesTheFormatsTheUserTyped(t *testing.T) {
+	if overlayFrom(t, nil).ReportFormats.IsSet() {
+		t.Error("--report was carried without being typed")
+	}
+	for _, tc := range []struct {
+		value string
+		want  []config.ReportFormat
+	}{
+		{value: "none", want: []config.ReportFormat{}},
+		{value: "json", want: []config.ReportFormat{config.FormatJSON}},
+		{value: "html", want: []config.ReportFormat{config.FormatHTML}},
+		{value: "json,html", want: []config.ReportFormat{config.FormatJSON, config.FormatHTML}},
+		// Whitespace around a comma is a person typing, not a mistake.
+		{value: " html , json ", want: []config.ReportFormat{config.FormatHTML, config.FormatJSON}},
+	} {
+		overlay := overlayFrom(t, []string{"--report", tc.value})
+		got, ok := overlay.ReportFormats.Get()
+		if !ok {
+			t.Errorf("--report %q carried nothing", tc.value)
+			continue
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("--report %q carried %v, want %v", tc.value, got, tc.want)
+		}
+	}
+}
+
+// TestReportFlagRefusesAFormatNobodyWrites names the flag the user typed rather
+// than the TOML key they never wrote, which is why the value is parsed in the
+// command line layer at all.
+func TestReportFlagRefusesAFormatNobodyWrites(t *testing.T) {
+	cmd := newRunCommand()
+	o := &runOptions{report: "json,pdf"}
+	if err := cmd.Flags().Set("report", o.report); err != nil {
+		t.Fatalf("setting --report: %v", err)
+	}
+	_, err := runOverlay(cmd, o)
+	if err == nil {
+		t.Fatal("--report json,pdf was accepted")
+	}
+	if !strings.Contains(err.Error(), "--report") {
+		t.Errorf("the diagnostic does not name the flag: %v", err)
+	}
+}
+
+// TestEmitGitHubIsGatedOnTheEnvironmentAndOnJSON pins when the two workflow
+// halves are written at all.
+//
+// `GITHUB_STEP_SUMMARY` is set by the runner for every step of every job and by
+// nothing else, so it is a far better signal than `CI` — and it also names the
+// file that has to be written. `--json` suppresses both, because standard
+// output is the document then and a `::warning` line in front of it would break
+// the one promise `--json` makes.
+func TestEmitGitHubIsGatedOnTheEnvironmentAndOnJSON(t *testing.T) {
+	score := 50.0
+	document := &report.Report{
+		DocumentType:  report.DocumentType,
+		SchemaVersion: report.SchemaVersion,
+		Summary:       report.Summary{Total: 2, Killed: 1, Survived: 1, ScorePercent: &score},
+		Mutants: []report.Mutant{{
+			ID: strings.Repeat("11", 32), DisplayID: "11223344",
+			Path: "internal/alpha/alpha.go", Line: 10, Column: 7,
+			Family: "comparison", Rule: "eq-to-neq",
+			Original: "==", Replacement: "!=", Outcome: report.OutcomeSurvived,
+		}},
+	}
+
+	for name, tc := range map[string]struct {
+		set        bool
+		asJSON     bool
+		report     *report.Report
+		wantStdout bool
+		wantFile   bool
+	}{
+		"inside a job":             {set: true, report: document, wantStdout: true, wantFile: true},
+		"outside a job":            {set: false, report: document},
+		"inside a job with --json": {set: true, asJSON: true, report: document},
+		"with no report":           {set: true, report: nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "summary.md")
+			if tc.set {
+				t.Setenv(console.GitHubSummaryEnv, path)
+			} else {
+				t.Setenv(console.GitHubSummaryEnv, "")
+			}
+			var out, errOut bytes.Buffer
+			emitGitHub(&out, &errOut, tc.asJSON, tc.report)
+
+			if got := strings.Contains(out.String(), "::warning "); got != tc.wantStdout {
+				t.Errorf("standard output = %q, want an annotation: %v", out.String(), tc.wantStdout)
+			}
+			data, err := os.ReadFile(path)
+			switch {
+			case tc.wantFile && err != nil:
+				t.Errorf("the summary file was not written: %v", err)
+			case tc.wantFile && !strings.Contains(string(data), "## go-mutants"):
+				t.Errorf("the summary file holds %q", data)
+			case !tc.wantFile && err == nil:
+				t.Errorf("a summary file was written when it should not have been: %q", data)
+			}
+			if errOut.Len() != 0 {
+				t.Errorf("something was reported on standard error: %q", errOut.String())
+			}
+		})
+	}
+}
+
+// TestEmitGitHubReportsAFailureAndDoesNotReturnIt is the judgement
+// [reportDashboardFailure] makes, applied to the same kind of thing: by the
+// time this runs the mutants have been measured, the report is filed, and the
+// closing block is on the screen. Letting a failure to decorate a job page turn
+// a failed score gate's exit 1 into an exit 2 would tell a CI job that the tool
+// broke when the truth is that the tests missed something.
+func TestEmitGitHubReportsAFailureAndDoesNotReturnIt(t *testing.T) {
+	// A directory where the summary file has to be: the append cannot succeed,
+	// on any platform.
+	dir := filepath.Join(t.TempDir(), "summary.md")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("staging the failure: %v", err)
+	}
+	t.Setenv(console.GitHubSummaryEnv, dir)
+
+	score := 50.0
+	var out, errOut bytes.Buffer
+	emitGitHub(&out, &errOut, false, &report.Report{
+		Summary: report.Summary{Total: 1, Survived: 1, ScorePercent: &score},
+		Mutants: []report.Mutant{{
+			ID: strings.Repeat("11", 32), DisplayID: "11223344",
+			Path: "a.go", Line: 1, Column: 1, Rule: "eq-to-neq",
+			Original: "==", Replacement: "!=", Outcome: report.OutcomeSurvived,
+		}},
+	})
+	if !strings.Contains(errOut.String(), string(CodeGitHubSummary)) {
+		t.Errorf("the failure was not reported: %q", errOut.String())
+	}
+	// The annotations still went out: they are the half a reviewer sees.
+	if !strings.Contains(out.String(), "::warning ") {
+		t.Errorf("the annotations were lost with the summary: %q", out.String())
 	}
 }

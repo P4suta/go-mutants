@@ -21,10 +21,18 @@ import (
 // exactly the situation a user is trying to tell them apart — a report that was
 // written and a report that does not validate.
 //
-// GOM78xx is the second block, and it is sharding: the `--shard` specification,
-// the document's `shard` block, and every refusal `report merge` can make. It
-// is checked here rather than merely allowed, so that a shard code cannot drift
-// into the GOM51xx range or a reporting code into the shard one.
+// GOM52xx is the second block: the project artefacts — the
+// mutation-testing-report projection, the vendored viewer, and the two files a
+// run writes into `report.directory`. It is numbered apart because nothing in
+// it can make the run report wrong, and a user reading GOM52 should know at a
+// glance that the record of their run is intact.
+//
+// GOM78xx is the third, and it is sharding: the `--shard` specification, the
+// document's `shard` block, and every refusal `report merge` can make.
+//
+// The membership of the two secondary blocks is listed here rather than merely
+// allowed, so that a shard code cannot drift into the GOM51xx range, an
+// artefact code into the shard one, or a reporting code into either.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	t.Parallel()
 
@@ -32,14 +40,22 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	if len(codes) == 0 {
 		t.Fatal("this package reports no codes at all")
 	}
-	shardCodes := map[report.Code]bool{
-		report.CodeInvalidShardSpec:       true,
-		report.CodeInvalidShard:           true,
-		report.CodeNoShardReports:         true,
-		report.CodeNotAShardReport:        true,
-		report.CodeIncongruentShards:      true,
-		report.CodeIncompleteShardSet:     true,
-		report.CodeShardOwnershipMismatch: true,
+	blocks := map[report.Code]string{
+		report.CodeProjectionSourceUnreadable: "GOM52",
+		report.CodeProjectionSourceDrift:      "GOM52",
+		report.CodeProjectionInvalid:          "GOM52",
+		report.CodeProjectionSchemaUnusable:   "GOM52",
+		report.CodeVendoredAssetTampered:      "GOM52",
+		report.CodeArtifactDirectory:          "GOM52",
+		report.CodeArtifactWrite:              "GOM52",
+		report.CodeArtifactRollback:           "GOM52",
+		report.CodeInvalidShardSpec:           "GOM78",
+		report.CodeInvalidShard:               "GOM78",
+		report.CodeNoShardReports:             "GOM78",
+		report.CodeNotAShardReport:            "GOM78",
+		report.CodeIncongruentShards:          "GOM78",
+		report.CodeIncompleteShardSet:         "GOM78",
+		report.CodeShardOwnershipMismatch:     "GOM78",
 	}
 	seen := make(map[report.Code]bool, len(codes))
 	for _, code := range codes {
@@ -47,17 +63,17 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 			t.Errorf("code %s is defined twice", code)
 		}
 		seen[code] = true
-		want := "GOM51"
-		if shardCodes[code] {
-			want = "GOM78"
+		want, listed := blocks[code]
+		if !listed {
+			want = "GOM51"
 		}
 		if !strings.HasPrefix(string(code), want) || len(code) != len("GOM5101") {
 			t.Errorf("code %s is outside the %sxx block", code, want)
 		}
 	}
-	for code := range shardCodes {
+	for code, block := range blocks {
 		if !seen[code] {
-			t.Errorf("the sharding code %s is not listed by Codes()", code)
+			t.Errorf("the %sxx code %s is not listed by Codes()", block, code)
 		}
 	}
 	if !slices.IsSortedFunc(codes, func(x, y report.Code) int { return strings.Compare(string(x), string(y)) }) {

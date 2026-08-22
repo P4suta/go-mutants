@@ -32,8 +32,11 @@ description = "Run the unit test suite"
 run = "go test ./..."
 
 [tasks.test-integration]
+# The engine's integration suite alone runs 8-10 minutes of real toolchain
+# work; Go's default per-package 10m alarm fires under load, so the budget
+# is stated explicitly.
 description = "Run the toolchain-backed integration suite"
-run = "go test -tags integration ./..."
+run = "go test -tags integration -timeout 40m ./..."
 
 [tasks.fmt]
 # `gofmt -l` exits 0 even when it lists files, so the offenders have to be

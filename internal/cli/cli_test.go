@@ -29,15 +29,42 @@ func execute(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errOut.String()
 }
 
+// TestCodesAreUniqueAndInBlock holds this package inside the ranges it owns.
+//
+// There are four. GOM10xx is the command line itself; GOM80xx, GOM81xx and
+// GOM82xx belong to one command each — `doctor`, `init`, and the three
+// run-history commands — because none of their failures is a mistake in an
+// invocation, and a user reading one should see at a glance which of the three
+// places the remedy is in. Each block is checked rather than merely allowed, so
+// that a doctor code cannot drift into the history range or a usage code into
+// either.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
+	blocks := map[Code]string{
+		CodeEnvironmentUnusable:     "GOM80",
+		CodeConfigurationExists:     "GOM81",
+		CodeConfigurationUnreadable: "GOM81",
+		CodeConfigurationNotWritten: "GOM81",
+		CodeConfigurationStale:      "GOM81",
+		CodeNotAModuleRoot:          "GOM82",
+		CodeNoStoredRun:             "GOM82",
+	}
 	seen := map[Code]bool{}
 	for _, code := range Codes() {
 		if seen[code] {
 			t.Errorf("code %s is listed twice", code)
 		}
 		seen[code] = true
-		if !strings.HasPrefix(string(code), "GOM10") {
-			t.Errorf("code %s is outside the GOM10xx block this package owns", code)
+		want, ok := blocks[code]
+		if !ok {
+			want = "GOM10"
+		}
+		if !strings.HasPrefix(string(code), want) || len(code) != len("GOM1001") {
+			t.Errorf("code %s is outside the %sxx block", code, want)
+		}
+	}
+	for code := range blocks {
+		if !seen[code] {
+			t.Errorf("the %sxx code %s is not listed by Codes()", blocks[code], code)
 		}
 	}
 	if !slices.IsSortedFunc(Codes(), func(a, b Code) int { return strings.Compare(string(a), string(b)) }) {
@@ -125,6 +152,44 @@ func TestUnknownCommandSuggestsAndFails(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "run") {
 		t.Error("no did-you-mean suggestion for a one-edit typo")
+	}
+}
+
+// TestNewCommandsAreSuggested. A command added to the tree has to reach the
+// did-you-mean list, or the list quietly becomes a statement about which
+// commands existed when it was last checked.
+func TestNewCommandsAreSuggested(t *testing.T) {
+	cases := map[string]string{
+		"docter": "doctor",
+		"inti":   "init",
+	}
+	for typo, want := range cases {
+		t.Run(typo, func(t *testing.T) {
+			code, _, stderr := execute(t, typo)
+			if code != int(mutation.ExitInfrastructure) {
+				t.Errorf("exit = %d, want 2", code)
+			}
+			if !strings.Contains(stderr, "Did you mean") || !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want a suggestion of %q", stderr, want)
+			}
+		})
+	}
+}
+
+// TestReportHelpListsTheHistoryCommands. cobra only reports an unknown
+// *subcommand* from the root, so `go-mutants report lst` prints `report`'s help
+// and succeeds — the same as `go-mutants cache anything` does today. That makes
+// the parent's help the whole of the answer somebody mistyping gets, so it has
+// to name all five.
+func TestReportHelpListsTheHistoryCommands(t *testing.T) {
+	code, stdout, stderr := execute(t, "report", "lst")
+	if code != int(mutation.ExitOK) {
+		t.Fatalf("exit = %d, want 0\n%s", code, stderr)
+	}
+	for _, name := range []string{"list", "latest", "clean", "merge", "validate"} {
+		if !strings.Contains(stdout, "\n  "+name+" ") {
+			t.Errorf("`report`'s help does not offer %q:\n%s", name, stdout)
+		}
 	}
 }
 

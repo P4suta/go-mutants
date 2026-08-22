@@ -102,6 +102,7 @@ type runOptions struct {
 	changed   string
 	shard     string
 	cache     string
+	report    string
 	jobs      int
 	timeout   time.Duration
 	strict    bool
@@ -159,6 +160,8 @@ func newRunCommand() *cobra.Command {
 		"execute only shard `K/N` of the mutants, 1-based; every shard reports the whole catalogue, and `go-mutants report merge` combines them")
 	flags.StringVar(&o.cache, "cache", "",
 		"outcome cache `MODE`: auto, on, or off (default: cache.mode, or auto — which reuses outcomes only for the built-in test command)")
+	flags.StringVar(&o.report, "report", "",
+		"project report `FORMATS` to write into report.directory: none, json, html, or json,html (default: report.formats, or json,html)")
 	// The pflag default is zero and the real one is described in the usage
 	// text. Printing config.DefaultJobs() as the default would make `--help`
 	// say 8 on a laptop and 4 on a CI runner, and help output that depends on
@@ -335,6 +338,7 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	emitGitHub(out, cmd.ErrOrStderr(), o.json, outcome.Report)
 
 	if runErr != nil {
 		return interpret(runErr, watch.Signal())
@@ -397,6 +401,18 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 			return config.Overlay{}, err
 		}
 		overlay.CacheMode = config.Explicit(mode)
+	}
+	// `--report` is the third of the same kind: the overlay carries a list of
+	// formats and the command line carries one comma-separated word. `none` is
+	// the reason the parsing cannot be left to the overlay machinery — it means
+	// an explicitly empty list, which has to beat the file's `formats` the way
+	// any other explicit value does, and an empty flag value could not say that.
+	if flags.Changed("report") {
+		formats, err := config.ParseReportFormats(o.report)
+		if err != nil {
+			return config.Overlay{}, err
+		}
+		overlay.ReportFormats = config.Explicit(formats)
 	}
 	return overlay, nil
 }
@@ -471,6 +487,44 @@ func checkSelectors(mutant string, changed bool, shard string) error {
 		Message: "--mutant and " + other + " cannot be combined: --mutant names one mutant to measure, and " +
 			other + " can only take it away, leaving a run that executes nothing and exits 0",
 		Hint: "drop " + other + " to answer a question about the one mutant, or drop --mutant to narrow the whole run",
+	}
+}
+
+// emitGitHub writes the GitHub Actions half of a run's output: the survivor
+// annotations to out, and the Markdown summary appended to the file
+// `$GITHUB_STEP_SUMMARY` names.
+//
+// The variable is the whole of the detection. It is set by the runner for every
+// step of every job and by nothing else, which makes it a far better signal
+// than `CI`, and it also names the file that has to be written — so a run
+// inside a job that somehow has no summary file is a run that emits nothing,
+// rather than one that prints workflow commands into somebody's terminal.
+//
+// `--json` suppresses both halves. Standard output belongs to the document
+// then, and a `::warning` line in front of it would make the one thing `--json`
+// promises — that the output is a document a validator can read — false.
+//
+// A failure to write either half is reported and does not decide the exit
+// status, which is [reportDashboardFailure]'s judgement applied to the same
+// kind of thing. By the time this runs the mutants have been executed, the
+// report is filed, and the closing block is on the screen; the annotations are
+// a convenience on top of a run that has already done its work, and letting one
+// turn a failed score gate's exit 1 into an exit 2 would tell a CI job "the
+// tool broke" where the truth is "your tests missed something".
+func emitGitHub(out, errOut io.Writer, asJSON bool, r *report.Report) {
+	if asJSON || r == nil {
+		return
+	}
+	summary := os.Getenv(console.GitHubSummaryEnv)
+	if summary == "" {
+		return
+	}
+	if err := console.EmitGitHub(out, summary, r); err != nil {
+		RenderError(errOut, &Error{
+			Code:    CodeGitHubSummary,
+			Message: "the GitHub Actions summary could not be written to " + summary,
+			Err:     err,
+		})
 	}
 }
 

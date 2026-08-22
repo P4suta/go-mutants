@@ -69,11 +69,21 @@ func fixture(t *testing.T, name string) string {
 // default store is the developer's own operating system cache directory: a test
 // suite that wrote there would leave a directory per fixture behind on every
 // machine that ever ran it.
+//
+// `report.formats` is the second of the same kind, and it is emptied for a
+// reason worth stating. The project artefacts are the only files a run writes
+// into the *workspace*, and these tests run against the corpus modules in this
+// repository rather than against copies of them — so a default `json,html`
+// would commit a `reports/mutation/` under `fixtures/` on every developer's
+// machine, in a directory `.gitignore` does not cover. The artefacts are
+// exercised end to end where they belong: by the tests that copy a fixture
+// somewhere disposable first, which is what a user's own tree is.
 func options(t *testing.T, name string) Options {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Test.BaselineRuns = 1
 	cfg.Execution.Jobs = 1
+	cfg.Report.Formats = nil
 	return Options{
 		Config:        cfg,
 		WorkspaceRoot: fixture(t, name),

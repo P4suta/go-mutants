@@ -162,8 +162,9 @@ source.
 ## Documented exclusions
 
 These are recorded as skips with a reason and never silently dropped.
-`go-mutants list` already prints the breakdown, and `--json` carries every
-skip with its reason; `--explain` is the planned per-skip detail view:
+`go-mutants list` prints the breakdown, `--json` carries every skip with its
+reason, and `run --explain` prints the per-skip detail view underneath the
+summary:
 
 The reason strings below are the exact identifiers `internal/discover` emits
 (they appear verbatim in `list` output and in catalog/report JSON):
