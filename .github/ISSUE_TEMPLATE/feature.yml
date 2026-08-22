@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+---
+
+name: Feature request
+description: Propose a focused improvement to go-mutants
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Describe the user problem first. Cross-GOOS mutation matrices,
+        `switch`/`select` case mutation, multi-module workspace orchestration,
+        and self-update are outside the v1 scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is difficult or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Describe observable behavior, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility considerations
+      description: >-
+        Note effects on the CLI, config, JSON schemas, stable mutant IDs, or
+        performance. Rule names and versions participate in mutant identity.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
