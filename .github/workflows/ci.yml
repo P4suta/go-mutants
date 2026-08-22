@@ -34,8 +34,15 @@ jobs:
           install: true
           cache: true
       - run: mise run check
+      # Dependabot writes commit bodies full of release-note links far past
+      # committed's 100-column line limit, and its messages are rewritten at
+      # squash-merge time anyway (the merge subject and body are supplied by
+      # the merger), so linting the machine's draft would only gate what never
+      # reaches main.
       - name: committed (pull request range)
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'dependabot[bot]'
         run: >-
           committed ${{ github.event.pull_request.base.sha }}..${{
           github.event.pull_request.head.sha }}
