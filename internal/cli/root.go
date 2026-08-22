@@ -22,7 +22,18 @@ import (
 
 // Version is the go-mutants version, and the only place the string exists.
 // Releases stamp it at link time; a development build says so.
-const Version = "0.1.0-dev"
+//
+// It is a var rather than a const for exactly one reason: the release build
+// overrides it with
+//
+//	-X github.com/P4suta/go-mutants/internal/cli.Version=<tag>
+//
+// which the linker can only apply to a variable. Nothing assigns to it at run
+// time, and nothing may: the string is read into report documents and cache
+// keys, so a build that changed it mid-run would be describing two different
+// tools in one file. See .goreleaser.yaml, which is the only place the
+// override is written.
+var Version = "0.1.0-dev"
 
 // exitCodeHelp is appended to the help of every command. The table is part of
 // the command line contract — CI configurations branch on these numbers — so it

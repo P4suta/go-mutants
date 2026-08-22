@@ -1,53 +1,176 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# go-mutants dogfooding itself. `mise run dogfood` uses this file once the
-# engine exists; until then it documents the full v1 configuration surface.
-# Every key below is decoded strictly: an unknown key is an error carrying the
-# line and column where it was found, never a silently ignored typo.
+# go-mutants dogfooding itself. This is the configuration `mise run dogfood`
+# uses, locally and in CI, and it is also the worked example of the whole v1
+# configuration surface. Every key below is decoded strictly: an unknown key is
+# an error carrying the line and column where it was found, never a silently
+# ignored typo.
+#
+# Two constraints shape the scope, because this gate runs on every push:
+#
+#   fast          the job has to finish in minutes, not tens of minutes.
+#   deterministic the same tree has to produce the same score twice, or the
+#                 minimum_score floor below is a coin flip rather than a gate.
+#
+# The scope is small, and the reason is measured rather than assumed. It is
+# written down under [mutation] because a reader's first question about a
+# sixteen-mutant gate on a repository with thousands of candidates is "why so
+# few", and that question deserves a number rather than a shrug.
 
 version = 1
 
 [mutation]
 # Tiers are monotonically inclusive: balanced ⊂ strong ⊂ all.
 profile = "balanced"
-include = ["cmd/**/*.go", "internal/**/*.go"]
+# Two files: shard assignment, and the five-way span relation the interval
+# forest is built on. Both are pure arithmetic that everything downstream
+# trusts -- which shard a mutant lands in, and whether two mutants may share a
+# build -- so they are the right places to prove the tool on.
+#
+# Why not more. With coverage-guided selection off (see [test]), go-mutants
+# measures every mutant against every test binary in the module, in import-path
+# order, until one fails. This module's sixth test package by import path is
+# internal/discover, whose suite drives the real Go toolchain and takes about a
+# minute on its own, so any mutant the five packages ahead of it do not kill
+# costs at least that much. Measured at --jobs 4, which is what a GitHub-hosted
+# runner resolves to:
+#
+#   these two files                      16 mutants    7m08s
+#   internal/mutation/score.go+shard.go   44 mutants   >10m (stopped)
+#   internal/cache, one shard of eight    47 mutants   >10m (stopped)
+#
+# Per-mutant durations in the first run ranged from 47s to 103s. That is the
+# budget this scope is sized against, and it is a fact about this repository's
+# own test suite rather than about how fast go-mutants is on a project whose
+# suite is quick.
+include = ["internal/mutation/shard.go", "internal/interval/interval.go"]
 exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # `operators` is intentionally omitted: the profile decides the families, which
 # keeps this file honest when a new family lands. Uncomment to narrow.
 # operators = ["comparison", "error-swallowing"]
 
-# Declared equivalent mutants. An expectation is evidence to check, not a skip
+# A declared equivalent mutant. An expectation is evidence to check, not a skip
 # list: the mutant still runs, survival fulfills it, a kill is exit 2, and an
 # ID that no longer exists in the catalog is stale and also exit 2.
-# [[mutation.expect]]
-# id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-# reason = "Equivalent: the branch is unreachable for all valid inputs."
+#
+# This one is the real thing rather than an illustration. `Relate` returns the
+# named constant, and `Disjoint` is the first member of its iota block, so
+# `Disjoint` and `0` are the same value of the same type after constant
+# conversion -- there are not two programs here for a test to tell apart. It
+# was found by running this gate, and it is declared rather than tested away or
+# quietly excluded, which is the difference between a mutation score and a
+# number.
+[[mutation.expect]]
+id = "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9"
+reason = "Equivalent: Disjoint is the zero value of Relation, being first in its iota block, so `return Disjoint` and `return 0` are the same constant."
 
 [test]
-# An argv vector, never a shell string.
-command = ["go", "test", "./..."]
-# Omit to derive max(10s, slowest baseline × 5) instead.
-timeout = "60s"
+# An argv vector, never a shell string. Scoped to the two suites that cover the
+# two mutated files, which is what the baseline proves before any mutant runs.
+#
+# Naming a command instead of taking the built-in `go test ./...` costs two
+# optimisations, and the run says so out loud rather than degrading quietly:
+#
+#   GOM7601  coverage-guided selection is off. go-mutants cannot tell which of
+#            its per-package test binaries a custom command's coverage belongs
+#            to, so every mutant is measured against every one of them. That is
+#            the fail-open direction -- slower, never a missed kill -- and it
+#            is why the scope above is two files rather than two packages.
+#   GOM7901  the outcome cache reuses nothing, because cache.mode "auto" only
+#            trusts the command whose reproducibility it can reason about.
+#
+# The built-in command was measured as the alternative and is worse here rather
+# than better: `go test ./...` in a freshly built snapshot takes 3m32s, and
+# go-mutants refuses (GOM4020) a test.timeout that is not above the slowest
+# baseline run, so the gate would be three and a half minutes in before its
+# first mutant.
+#
+# `mise run dogfood` also exports GOFLAGS=-vet=off, and that is not optional.
+# The instrumented snapshot is generated code in which every mutant of a
+# comparison is spliced in beside the original, so `x == "." && x == ".."` is a
+# normal shape there -- and `go test` runs vet's `bools` analyser by default and
+# rejects it. Without the override the run stops at GOM4013 (the snapshot fails
+# its own tests unmutated) or GOM7505 (a test binary would not build). The flag
+# is exported rather than written here because it has to reach the `go test -c`
+# the engine issues for each package, which this command line does not cover.
+#
+# That task also exports RAPID_SEED=1, and running go-mutants against this file
+# by hand without it is running a slightly different gate. internal/interval's
+# suite is a pgregory.net/rapid property suite, rapid draws a fresh random seed
+# per process unless one is pinned, and an unpinned seed makes the score -- and
+# so the minimum_score floor below -- vary between runs of an unchanged tree.
+command = ["go", "test", "./internal/mutation/...", "./internal/interval/..."]
+# Omit to derive max(10s, slowest baseline × 5) instead, which would be 23s
+# here -- far too tight, because this bounds each of the module's test binaries
+# in turn rather than the scoped baseline command. The binary that decides the
+# number is internal/discover's, which drives the real Go toolchain and takes
+# about a minute on its own, and every mutant runs it.
+#
+# 60s was measured and rejected: under load internal/discover's binary crossed
+# it, and go-mutants did the conservative thing -- a single timeout is retried
+# serially and, when it does not reproduce, recorded as `inconclusive` rather
+# than as a kill. That is correct behaviour and a bad gate, because an
+# inconclusive mutant leaves the score in both directions, so a busy runner
+# quietly shrinks the denominator instead of failing. 180s is three times the
+# binary it has to clear.
+timeout = "180s"
 baseline_runs = 3
 
 [execution]
-# Omit to default to min(NumCPU, 8).
-jobs = 8
+# Pinned, against the usual advice, because the default is measurably wrong for
+# this gate. Every mutant here runs the whole module's test binaries (GOM7601
+# below), several of which drive the real Go toolchain, so eight concurrent
+# mutants means eight concurrent toolchains. On a 16-CPU machine the default of
+# min(NumCPU, 8) completed no mutants in ten minutes; --jobs 4 completed all
+# sixteen in 7m08s on the same machine. Four is also what a GitHub-hosted
+# runner would have resolved to, so pinning it makes a local run and a CI run
+# the same run.
+jobs = 4
 
 [cache]
 # auto reuses proven outcomes keyed by tool version, executable digest,
 # workspace digest, catalog digest, command, the timeout as configured, and
 # GOFLAGS/GOOS/GOARCH -- and reuses nothing at all when test.command is not the
 # built-in `go test ./...`, because go-mutants cannot reason about a command it
-# did not write. Set it to "on" to promise that yours is reproducible.
+# did not write. That is this file's own situation; see GOM7901 above. Left at
+# auto rather than "on" because promising that a command is reproducible is a
+# promise, and this gate does not need it.
 mode = "auto"
 # directory = "team-cache"
 
 [policy]
-# The build is not failed unless asked: strict is opt-in, here and in CI.
+# strict stays false in the file on purpose: the gate belongs to the caller.
+# `mise run dogfood` and the CI job that runs it pass --strict, so a developer
+# who wants to look at a survivor rather than be failed by it just runs
+# `go-mutants run`. That is not the same as a run that cannot fail: the floor
+# below is compared on every run, --strict or not, and the note there says
+# where each of the two gates actually bites.
 strict = false
-minimum_score = 0
+# Measured, not wished for. The scope generates 16 mutants. Fifteen are killed
+# and the sixteenth is the declared equivalent above, which leaves the
+# denominator rather than counting against it, so the measured score is
+# 100.00%.
+#
+# The floor is seven points under that, and it is worth being exact about which
+# gate that slack belongs to, because the two are independent and only one of
+# them guards CI:
+#
+#   --strict            mutation.Decide fails on UnexpectedSurvivors > 0, so
+#                       the first unexpected survivor is exit 1 for the dogfood
+#                       task and for CI. There is no headroom on that gate at
+#                       all, and none is wanted.
+#   minimum_score = 93  compared against the measured score whether or not
+#                       --strict was passed. Fifteen scored mutants are worth
+#                       6.67 points each, so 14/15 = 93.33% clears 93 and
+#                       13/15 = 86.67% does not: an ungated `go-mutants run`
+#                       reports one survivor and exits 0, and fails at two.
+#
+# So the floor is deliberately the looser of the two. It is the backstop for a
+# run that did not ask to be gated, never the thing keeping CI honest, and a
+# green CI run is never green because of it. Raise it if the scope grows; do
+# not lower it to accommodate a survivor that a test could kill.
+minimum_score = 93
 require_mutants = true
 
 [report]

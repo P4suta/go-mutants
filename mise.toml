@@ -68,18 +68,94 @@ description = "Run every local gate that CI runs, in CI order"
 run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 
 [tasks.dogfood]
-# Phase 12 replaces this with `go-mutants run --include internal/... --strict`
-# against this repository; until the engine exists there is nothing to run.
-description = "Mutation-test this repository with itself (placeholder for now)"
-run = 'echo "dogfood arrives in a later phase"'
-run_windows = "echo dogfood arrives in a later phase"
+# go-mutants against go-mutants. The scope, the measured score and the floor
+# all live in .go-mutants.toml, next to the settings they justify; only the two
+# things that cannot be expressed in that file live here.
+#
+# --strict is passed rather than written into the file because the gate belongs
+# to the caller: policy.strict stays false so that `go-mutants run` on a
+# developer's machine reports a survivor instead of failing on it, and this
+# task is the caller that insists. That flag is the whole difference between
+# the two runs, and it is the only thing that fails this job on one survivor --
+# policy.minimum_score = 93 is compared either way and does not fail until two.
+# --profile balanced is redundant with the file and stated anyway, so that a
+# change to the file's profile shows up as a conflict to resolve rather than as
+# a silently different gate.
+#
+# The two variables are load-bearing:
+#
+#   GOFLAGS=-vet=off  the instrumented snapshot is generated code that splices
+#                     every mutant of an expression in beside the original, so
+#                     `x == "." && x == ".."` is a normal shape in it -- and
+#                     `go test` runs vet's `bools` analyser by default and
+#                     rejects exactly that. It has to be an environment
+#                     variable rather than a test.command argument because it
+#                     must also reach the `go test -c` the engine issues per
+#                     package. `go` ignores a GOFLAGS entry that the current
+#                     subcommand does not define, so `go build` and `go list`
+#                     are unaffected.
+#   RAPID_SEED=1      pgregory.net/rapid draws a fresh random seed per process
+#                     unless one is pinned, and internal/interval's property
+#                     suite is part of what kills these mutants. Unpinned, a
+#                     marginal mutant could be killed on one run and survive on
+#                     the next, which would make the score -- and therefore the
+#                     minimum_score gate -- a coin flip. Nightly re-explores
+#                     with random seeds and a far bigger budget instead. Like
+#                     GOFLAGS this is a variable rather than an argument, and
+#                     for the same reason: rapid reads it with os.LookupEnv in
+#                     its own init() (engine.go), where it becomes the default
+#                     for -rapid.seed, and internal/execute hands this
+#                     process's environment to every per-mutant test binary --
+#                     which is what a test.command argument would not reach.
+description = "Mutation-test this repository with go-mutants itself"
+env = { GOFLAGS = "-vet=off", RAPID_SEED = "1" }
+run = "go run ./cmd/go-mutants run --strict --profile balanced"
 
 [tasks.package]
-# Phase 12 replaces this with a real `goreleaser release --snapshot --clean`
-# once the CLI produces installable artifacts.
-description = "Build unpublished snapshot artifacts (goreleaser placeholder)"
-run = 'echo "packaging arrives in a later phase"'
-run_windows = "echo packaging arrives in a later phase"
+# Snapshot artifacts, so that the packaging path is exercised on every CI run
+# rather than for the first time on a tag. The release workflow drives the same
+# .goreleaser.yaml without --snapshot.
+#
+# The smoke is not `--version; echo ok`. A build whose `-X` missed its target
+# links and runs perfectly and prints the compiled-in default, so the check
+# asserts that what came out is the version goreleaser stamped rather than
+# internal/cli's own fallback. That is the one packaging mistake nothing else
+# in this repository would catch.
+#
+# The fallback is read out of the source with `go run` rather than written here
+# as a literal, so that bumping internal/cli.Version cannot quietly turn this
+# check into one that passes for an unstamped build.
+#
+# `doctor --json` is deliberately not part of the smoke. It probes for a Go
+# toolchain, which is a fact about the machine unpacking the archive rather
+# than about the archive, and a packaging gate that fails because a bare
+# container has no `go` fails for the wrong reason.
+description = "Build unpublished snapshot artifacts and smoke-test the binary"
+run = ["goreleaser release --snapshot --clean", '''
+  set -eu
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  case $(uname -m) in
+    x86_64|amd64) arch=amd64_v1 ;;
+    arm64|aarch64) arch=arm64_v8.0 ;;
+    *) echo "unpackaged architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
+  binary="dist/go-mutants_${os}_${arch}/go-mutants"
+  fallback=$(go run ./cmd/go-mutants --version)
+  printed=$("$binary" --version)
+  echo "$binary says: $printed"
+  case $printed in
+    "go-mutants "*) ;;
+    *) echo "unexpected --version output: $printed" >&2; exit 1 ;;
+  esac
+  if [ "$printed" = "$fallback" ]; then
+    echo "the -X ldflag did not stamp internal/cli.Version: still $printed" >&2
+    exit 1
+  fi
+  ''']
+run_windows = [
+  "goreleaser release --snapshot --clean",
+  '''pwsh -NoLogo -NoProfile -Command "$b = 'dist/go-mutants_windows_amd64_v1/go-mutants.exe'; $fallback = (go run ./cmd/go-mutants --version); $v = & $b --version; Write-Output ($b + ' says: ' + $v); if ($v -notlike 'go-mutants *') { Write-Output ('unexpected --version output: ' + $v); exit 1 }; if ($v -eq $fallback) { Write-Output ('the -X ldflag did not stamp internal/cli.Version: still ' + $v); exit 1 }"''',
+]
 
 [tasks.hooks]
 description = "Install the git pre-commit and commit-msg hooks"

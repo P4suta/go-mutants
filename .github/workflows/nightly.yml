@@ -17,32 +17,97 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Target shape for the fuzz job: the strict TOML decoder, internal/glob,
-  # stable-ID determinism, and the statement flattener each get a `go test
-  # -fuzz` corpus. Those targets do not exist yet, and `-fuzz` without a
-  # target is an error, so the job runs the ordinary suite until the pure-core
-  # and instrumentation phases add them.
+  # One matrix entry per fuzz target the repository actually has. `go test
+  # -fuzz` fuzzes exactly one target and refuses a pattern that matches
+  # several, so the target and its package travel together in the same entry.
+  # A matrix rather than three sequential steps because the budgets then
+  # overlap: three five-minute searches cost five minutes, not fifteen.
   fuzz:
+    name: fuzz ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The strict TOML decoder: every malformed document has to come back
+          # as an error with a position, never a panic and never a silently
+          # accepted key.
+          - target: FuzzParse
+            package: ./internal/config
+          # Pattern matching, where a pathological glob must not backtrack into
+          # a hang.
+          - target: FuzzMatch
+            package: ./internal/glob
+          # The statement flattener, which rewrites real Go source. This is the
+          # target that matters most: its output has to parse and mean the same
+          # thing as its input.
+          - target: FuzzFlatten
+            package: ./internal/instrument
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
         with:
           install: true
           cache: true
-      - run: mise run test
+      # -run='^$' keeps the package's ordinary tests out of the budget: the
+      # five minutes belong to the fuzzer, and the unit suite already ran in
+      # CI on the commit this schedule is fuzzing.
+      - name: Fuzz for five minutes
+        run: >-
+          mise exec -- go test -run='^$' -fuzz='^${{ matrix.target }}$'
+          -fuzztime=5m ${{ matrix.package }}
+      # A crasher is the entire point of the job. `go test -fuzz` writes the
+      # failing input into the package's testdata/fuzz directory, which dies
+      # with the runner unless it is collected here.
+      - name: Collect the failing input
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fuzz-crasher-${{ matrix.target }}
+          path: internal/*/testdata/fuzz/**
+          retention-days: 14
+          if-no-files-found: warn
 
-  # Target shape for the property job: the pgregory.net/rapid suites, above
-  # all `parse(flattened) ≡ parse(patched original)` for the flattener. Same
-  # placeholder until those suites exist.
+  # The pgregory.net/rapid suites: the flattener's
+  # `parse(flattened) ≡ parse(patched original)` invariant, the interval
+  # forest's containment and traversal laws, and shard assignment.
+  #
+  # Two independent boosts, because they widen different things. RAPID_CHECKS
+  # deepens one search -- rapid's own case budget, 100 by default so that
+  # `mise run test` stays a few seconds. It is a job-level variable rather
+  # than a flag because rapid reads it with os.LookupEnv in its own init()
+  # (engine.go) and makes it the default for -rapid.checks, so it reaches
+  # every test binary this step builds without threading a flag through mise.
+  # -count reruns the whole suite, and since rapid draws a fresh random seed
+  # per run unless -rapid.seed or RAPID_SEED pins one, each rerun explores
+  # from somewhere else entirely.
   property:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      RAPID_CHECKS: "2000"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
         with:
           install: true
           cache: true
-      - run: mise run test
+      # The per-package alarm is stated because 2000 checks x 5 runs is a long
+      # way past the ten minutes go test defaults to, and a budget overrun
+      # reported as a panic reads like a hang in the code under test.
+      - name: Property suites, deepened and repeated
+        run: >-
+          mise exec -- go test -count=5 -timeout=40m
+          ./internal/instrument/... ./internal/interval/...
+          ./internal/mutation/...
+      # rapid persists a shrunk failing case next to the suite that found it.
+      # Same reasoning as the fuzz corpus above: collect it or lose it.
+      - name: Collect the shrunk failing case
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rapid-failures
+          path: internal/*/testdata/rapid/**
+          retention-days: 14
+          if-no-files-found: warn

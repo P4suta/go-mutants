@@ -69,9 +69,43 @@ jobs:
       - run: mise run test
       - run: mise run test-integration
 
-  # `mise run package` is a placeholder until the goreleaser configuration
-  # lands; the job exists now so packaging can never be added untested.
+  # Snapshot artifacts for all six targets, plus the smoke that proves the
+  # version was stamped. Packaging breaks quietly -- a renamed ldflags target,
+  # an archive that lost its licences -- so it runs on every push rather than
+  # for the first time on a tag.
   artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        # goreleaser reads the tag history to work out a version, and a shallow
+        # clone leaves it guessing.
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          install: true
+          cache: true
+      - run: mise run package
+      # Fourteen days is longer than any review takes and shorter than the
+      # ninety days the account default would keep six binaries per push for.
+      - name: Upload the snapshot artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dist-snapshot
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+
+  # Self-mutation, gated. The scope, the measured score, the floor and the one
+  # declared equivalent mutant all live in .go-mutants.toml; the task adds
+  # --strict, so an undeclared survivor fails this job.
+  #
+  # The budget is generous relative to the 7m08s this scope measures at --jobs 4
+  # locally, because the cost per mutant here is dominated by this repository's
+  # own slowest test package rather than by anything go-mutants does, and a
+  # runner having a bad day should show up as a slow job rather than a red one.
+  dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -80,16 +114,14 @@ jobs:
         with:
           install: true
           cache: true
-      - run: mise run package
-
-  # Self-mutation. Also a placeholder until the engine can run against itself.
-  dogfood:
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
-        with:
-          install: true
-          cache: true
       - run: mise run dogfood
+      # The run report is the source of truth for the score, and reading the
+      # HTML beats scrolling the log when the gate does fail.
+      - name: Upload the mutation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 14
+          if-no-files-found: warn

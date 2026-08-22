@@ -5,7 +5,13 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # go-mutants
 
+<!--
+The CI badge goes here once this repository is published. Until then it would
+render as a broken image asserting a repository that does not resolve, at the
+top of a README whose quick start says that nothing is published:
+
 [![CI](https://github.com/P4suta/go-mutants/actions/workflows/ci.yml/badge.svg)](https://github.com/P4suta/go-mutants/actions/workflows/ci.yml)
+-->
 
 Mutation testing for Go modules that is fast enough to leave switched on.
 go-mutants instruments every compilable mutant **once** into a disposable
@@ -30,7 +36,8 @@ validates that they compile, instruments the snapshot once, and measures one
 mutant per test process — then writes a `run-report-v1` document, publishes
 `reports/mutation/mutation.{json,html}`, and reports a mutation score it
 actually measured. `go-mutants list` enumerates the same mutants without
-executing them, as text or as a schema-validated JSON catalogue.
+executing them, as text or as a JSON catalogue that answers to
+`schema/catalog-v1.schema.json`.
 `go-mutants doctor` checks that this machine can run any of it, as a table or
 as a JSON document, and `go-mutants init` writes a fully commented
 `.go-mutants.toml` in which every value is the built-in default.
@@ -64,9 +71,11 @@ renderer rather than formatting its own.
 All eleven operator families and all forty-two rules are discovered,
 instrumented, compile-validated, executed, and scored. A score from go-mutants
 is a score against the whole v1 catalogue, narrowed only by the profile you
-chose: `balanced` is the default and leaves out `bitwise`,
-`arithmetic-assignment`, and `statement-deletion`, which `strong` and `all` add
-back. [`docs/operators.md`](docs/operators.md) is the table.
+chose. The tiers are monotonically inclusive: `balanced` is the default and
+leaves out `bitwise`, `arithmetic-assignment`, and `statement-deletion`;
+`strong` adds the first two; `all` adds the third, statement deletion being the
+classic source of equivalent mutants. [`docs/operators.md`](docs/operators.md)
+is the table.
 
 The honest limits:
 
@@ -137,12 +146,28 @@ or released.
 ## Quick start
 
 ```console
-go install github.com/P4suta/go-mutants/cmd/go-mutants@latest
-cd your-module
+# from the root of this repository
+go install ./cmd/go-mutants  # builds into `go env GOPATH`/bin
+
+cd path/to/your-module
 go-mutants doctor            # is this machine ready?
 go-mutants init              # write a commented .go-mutants.toml (optional)
 go-mutants run
 ```
+
+Building from a checkout is not one option among several; it is the only one.
+The repository is not published and nothing is tagged, so there is no module
+version for `go install …@latest` to resolve and no commit anyone could pin.
+That line belongs in this block once `v0.1.0` exists, and not before.
+
+`go install` writes the binary into `go env GOPATH`/bin. If that directory is
+not on your `PATH`, the three commands after `cd` still work — invoke the binary
+by its full path instead of by name.
+
+`doctor` is first for a reason: go-mutants shells out to the `go` on your
+`PATH`, and a toolchain owned by a version manager is often not on it. If
+`doctor` says so, run go-mutants through the manager — `mise exec -- go-mutants
+run` — rather than adding Go to `PATH` for one command.
 
 Then open `reports/mutation/mutation.html`. It is one file: double-click it,
 attach it to a CI job, drop it on a shared drive. It fetches nothing, so it
@@ -167,7 +192,7 @@ SURVIVED (uncovered)  bf513c0d  untested.go:14:11  neq-to-eq  != -> ==  (0s)
     - !=
     + ==
 mutants 13  killed 10  survived 3  timeout 0  inconclusive 0  errored 0
-    not-run 0  rejected 0  uncovered 3
+    not-run 0  rejected 0  uncovered 3  cached 0
 score 76.92%
 run 20260820T221649Z-67af  exit 0
 ```
@@ -178,7 +203,10 @@ The counters are one line on a real terminal; they are wrapped above to fit.
 no test binary reaches that line, so the mutant was never executed and the run
 knows why it survived. The column appears only in a coverage-guided run, and
 `uncovered` is a subset of `survived` rather than a seventh bucket — the
-columns still add up to `mutants`.
+columns still add up to `mutants`. `cached 0` is the same kind of column on the
+same terms: it appears only when the cache was on, it counts outcomes this run
+reused rather than measured, and those mutants are already counted under the
+verdict they carry.
 
 `score N/A` is printed instead of a percentage when nothing scoreable was
 measured; there is no sentinel number for it. The full document goes to the
@@ -287,7 +315,7 @@ mise run check
 | ---: | --- |
 | 0 | Run completed; no policy failure |
 | 1 | Opt-in gate failure only (`--strict`, `policy.minimum_score`, `init --check`) |
-| 2 | Infrastructure, configuration, baseline, or stale-expectation failure |
+| 2 | Infrastructure, configuration, baseline, or expectation failure |
 | 130 | Interrupted (Ctrl-C); a partial report is published first |
 | 143 | Terminated (SIGTERM); a partial report is published first |
 

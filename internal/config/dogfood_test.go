@@ -44,22 +44,34 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			Include: []string{"cmd/**/*.go", "internal/**/*.go"},
+			Include: []string{"internal/mutation/shard.go", "internal/interval/interval.go"},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
 			// profile decides and this stays empty.
 			Operators: nil,
 			Profile:   mutation.TierBalanced,
-			Expect:    nil,
+			// The one declared equivalent mutant: `return Disjoint` rewritten
+			// to `return 0`, where Disjoint is the zero value of Relation.
+			// Pinned here as well as in the file so that deleting the ledger
+			// entry to make a red gate green shows up as a failing test.
+			Expect: []Expectation{{
+				ID: "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9",
+				Reason: "Equivalent: Disjoint is the zero value of Relation, " +
+					"being first in its iota block, so `return Disjoint` and " +
+					"`return 0` are the same constant.",
+			}},
 		},
 		Test: Test{
-			Command:      []string{"go", "test", "./..."},
-			Timeout:      60 * time.Second,
+			Command:      []string{"go", "test", "./internal/mutation/...", "./internal/interval/..."},
+			Timeout:      180 * time.Second,
 			BaselineRuns: 3,
 		},
-		Execution: Execution{Jobs: 8},
+		// `jobs` is pinned in the file rather than defaulted: see the comment
+		// there for the measurement that made eight concurrent mutants slower
+		// than four on this module.
+		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		Policy:    mutation.Policy{Strict: false, MinimumScore: 0, RequireMutants: true},
+		Policy:    mutation.Policy{Strict: false, MinimumScore: 93, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",
 			Formats:   []ReportFormat{FormatJSON, FormatHTML},

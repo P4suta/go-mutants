@@ -1,0 +1,96 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Release artifacts for go-mutants.
+#
+# `mise run package` drives this file in snapshot mode on every CI run, so the
+# packaging path is exercised long before a tag exists. The release workflow
+# drives the same file without --snapshot on a tag push.
+---
+version: 2
+project_name: go-mutants
+
+builds:
+  - id: go-mutants
+    main: ./cmd/go-mutants
+    binary: go-mutants
+    # Tier-1 desktop and CI platforms. The tool shells out to the Go toolchain
+    # and supervises process trees, so the matrix matches the operating systems
+    # ci.yml's platform-tests job already proves the engine on.
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    # No cgo anywhere in the module, and a static binary is what makes the
+    # archives runnable on a distribution older than the builder's libc.
+    env: [CGO_ENABLED=0]
+    # -trimpath keeps the builder's absolute paths out of the binary, which is
+    # both a reproducibility and a privacy property.
+    flags: [-trimpath]
+    ldflags:
+      # -s -w drop the symbol table and DWARF: this binary is not debugged from
+      # a customer's machine, and the two together are worth about a third of
+      # the file size.
+      #
+      # The -X target is internal/cli.Version, which is a var for exactly this
+      # reason and is documented as such at its declaration. It is the only
+      # place the version string exists: `--version`, `doctor`, every run
+      # report, and the cache identity all read it, so stamping it here stamps
+      # all of them at once.
+      - >-
+        -s -w
+        -X github.com/P4suta/go-mutants/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: go-mutants
+    ids: [go-mutants]
+    formats: [tar.gz]
+    # A tar.gz is not something a stock Windows shell unpacks, so Windows gets
+    # a zip of the identical contents.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # Uname-style names rather than Go's own, because that is what an install
+    # script that already handles other tools expects to see.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64{{ else }}{{ .Arch }}{{ end }}
+    # Both licences travel with the binary: the project is MIT OR Apache-2.0,
+    # and shipping only one of them would misstate the offer.
+    files:
+      - LICENSE-MIT
+      - LICENSE-APACHE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  # Snapshot builds have no tag to read, so they say so in the version. This is
+  # the string `--version` prints out of `mise run package`, and the smoke test
+  # there asserts it rather than merely asserting exit 0 -- a build whose -X
+  # silently missed its target would still exit 0.
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^build:"
+
+release:
+  # Named rather than inferred from `git remote`. A clone that has no origin --
+  # a `git archive` export, a CI checkout that only fetched the tag, this
+  # repository before it is pushed anywhere -- still has to pass `goreleaser
+  # check`, and the owner is not a secret: the module path already spells it.
+  github:
+    owner: P4suta
+    name: go-mutants
+  # goreleaser owns the GitHub release, and it only ever drafts one. Publishing
+  # stays a human decision made against the release checklist.
+  draft: true
+  replace_existing_draft: true
+  prerelease: auto

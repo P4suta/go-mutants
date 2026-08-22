@@ -15,35 +15,149 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/runner"
 )
 
-// spawnBudget is how long a helper child is given to boot and get as far as the
-// thing the test is about — spawning its grandchild, or installing a signal
-// disposition — before the run is ended under it.
+// The tests that kill a process tree share one hazard, and these constants and
+// the helpers under them are the whole answer to it.
 //
-// Every test that kills a tree is meaningful only if the tree exists by the
-// time the kill lands. Those tests say so and fail loudly rather than quietly
-// when it does not, which is right, but it makes the budget part of what they
-// assert. A child here is a whole Go test binary, coverage-instrumented under
-// `go test -cover`, starting on a machine where twenty-odd siblings are
-// starting at the same moment; measured on this one it normally announces
-// itself within a few tens of milliseconds, and a single load spike across
-// twenty-five runs pushed one past 400ms. The budget is therefore set an order
-// of magnitude above the typical case rather than just above it. It costs
-// nothing but wall clock in the runs where it is not needed, and these tests
-// are parallel.
-const spawnBudget = 1500 * time.Millisecond
+// Such a test is meaningful only if the tree exists by the time the kill lands.
+// A child here is a whole Go test binary, coverage-instrumented under
+// `go test -cover`, booting on a machine where twenty-odd sibling packages are
+// booting at the same moment: measured on this one it announces its grandchild
+// within a few tens of milliseconds, and a single load spike pushed one past
+// 400ms. Whenever it loses that race the test has proved nothing, and it says
+// so and fails rather than passing quietly — which is right, and which is also
+// what made these tests flaky under whole-suite load.
+//
+// The fix is not a bigger number. The deadline is doing two jobs at once and
+// only one of them is any test's subject: it is the moment the kill lands, and
+// it is unavoidably also the tolerance for how long a child takes to boot. A
+// single constant serving both cannot be right — generous enough for the second
+// job makes every run pay for the worst machine, because a child that sleeps for
+// a minute never exits early and the run always takes the whole deadline. So the
+// deadline starts small and doubles only on the attempts that lost the race,
+// and the delay a grandchild waits before writing is *derived* from the deadline
+// in use rather than asserted against it in a comment.
 
-// sentinelDelay is how long a grandchild waits before writing its sentinel.
+const (
+	// firstKillDeadline is the deadline the first attempt uses. It is already
+	// an order of magnitude above the typical boot-and-fork, so an unloaded
+	// machine never reaches a second attempt.
+	firstKillDeadline = 1500 * time.Millisecond
+
+	// spawnBudget is the ceiling the deadline doubles towards before
+	// [underDoublingDeadline] gives up and fails.
+	//
+	// It is a ceiling on waiting, not a cost: reaching it takes four attempts,
+	// and an attempt only happens because the one before it caught a child that
+	// had not yet got where it was going.
+	spawnBudget = 15 * time.Second
+
+	// killSettle is the gap between the moment a kill has certainly finished —
+	// the deadline plus [runner.TerminationGrace] — and the moment a grandchild
+	// that survived it would write. The grace is counted on both platforms
+	// although only POSIX has one, because Windows terminating immediately only
+	// widens the gap.
+	killSettle = 1500 * time.Millisecond
+
+	// sentinelWriteMargin is added on top of a grandchild's own delay before
+	// absence is read as proof. The delay is measured from the grandchild's
+	// start and a test can only measure from the run's, and the difference is
+	// the child booting, forking, and then the grandchild booting: two whole Go
+	// test binaries, not one.
+	//
+	// It is three seconds rather than the one this used to be because the error
+	// here is silent and in the wrong direction. Looking too early at a
+	// grandchild that escaped and is merely late reports a pass, so the margin
+	// has to cover the same load spike the deadline above is sized against —
+	// and a margin the same size as a single measured boot did not.
+	sentinelWriteMargin = 3 * time.Second
+)
+
+// sentinelDelayFor is how long a grandchild waits before writing its sentinel,
+// derived from the deadline the attempt is actually using.
 //
-// It has to sit far enough past [spawnBudget] plus [runner.TerminationGrace]
-// that "the file is not there" means the kill worked rather than that the test
-// looked too early.
-const sentinelDelay = 5 * time.Second
+// It is a function rather than a constant because that inequality — the write
+// must fall after the kill has finished, or "the file is not there" would mean
+// "we looked too early" rather than "the kill worked" — used to live in a
+// comment two constants apart from the number that could break it. Here it
+// cannot be broken by changing a deadline.
+func sentinelDelayFor(deadline time.Duration) time.Duration {
+	return deadline + runner.TerminationGrace + killSettle
+}
+
+// underDoublingDeadline calls attempt with a kill deadline that starts at
+// [firstKillDeadline] and doubles until attempt reports it caught what it was
+// trying to catch, or until the next doubling would pass [spawnBudget].
+//
+// The loudness the flakiness came with is kept and sharpened: a genuinely
+// broken spawn reports nothing at any deadline, and this fails by name rather
+// than letting a test that proved nothing pass.
+func underDoublingDeadline(t *testing.T, attempt func(deadline, sentinelDelay time.Duration) bool) {
+	t.Helper()
+
+	for deadline := firstKillDeadline; ; deadline *= 2 {
+		if attempt(deadline, sentinelDelayFor(deadline)) {
+			return
+		}
+		if 2*deadline > spawnBudget {
+			t.Fatalf("no attempt caught a child that had reached the thing under test, at any kill "+
+				"deadline from %v up to %v: that is not load, it is a child that never gets there",
+				firstKillDeadline, deadline)
+		}
+		t.Logf("a %v kill deadline landed before the child was ready; retrying at %v", deadline, 2*deadline)
+	}
+}
+
+// milliseconds renders a duration the way every helper verb parses one.
+func milliseconds(d time.Duration) string {
+	return strconv.FormatInt(d.Milliseconds(), 10)
+}
+
+// waitForFile polls until path exists, and reports how it gave up if it does
+// not appear inside within.
+//
+// A single os.Stat is only sound when something else has already proved the
+// writer finished. Where the writer is another freshly booting Go test binary,
+// watching is what keeps a positive control from becoming a second timing race.
+func waitForFile(t *testing.T, path string, within time.Duration) error {
+	t.Helper()
+
+	const poll = 20 * time.Millisecond
+	deadline := time.Now().Add(within)
+	for {
+		switch _, err := os.Stat(path); {
+		case err == nil:
+			return nil
+		case !errors.Is(err, os.ErrNotExist):
+			return fmt.Errorf("watching for %s: %w", path, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%s never appeared within %v", path, within)
+		}
+		time.Sleep(poll)
+	}
+}
+
+// noSentinelSurvived asserts that no attempt's grandchild ever wrote.
+//
+// Every attempt is checked, not only the one that finally caught the fork: a
+// grandchild that escaped the kill on the first attempt is exactly the bug
+// these tests exist for, whichever attempt ended up proving the spawn.
+func noSentinelSurvived(t *testing.T, sentinels []string, outlived string) {
+	t.Helper()
+
+	for i, sentinel := range sentinels {
+		if _, err := os.Stat(sentinel); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("attempt %d: os.Stat(sentinel) = %v, want os.ErrNotExist: %s", i, err, outlived)
+		}
+	}
+}
 
 // TestExitCodePropagation pins the contract the engine classifies mutants
 // with: whatever the child exits with comes back untouched, and none of it is
@@ -329,9 +443,14 @@ func TestTimeoutKillsTheProcessTree(t *testing.T) {
 		if result.ExitCode != 0 {
 			t.Fatalf("ExitCode = %d, want 0; output: %s", result.ExitCode, result.Output)
 		}
-		if _, err := os.Stat(sentinel); err != nil {
+		// Watched for rather than stat'ed once. The grandchild is a whole Go
+		// test binary too, and on a busy machine it can still be booting when
+		// its parent's own 600ms are up and Run has returned; a control that
+		// looked exactly once would be a second timing race rather than a
+		// control.
+		if err := waitForFile(t, sentinel, spawnBudget); err != nil {
 			t.Fatalf("the sentinel is missing after an unkilled run: %v.\n"+
-				"The negative case below cannot mean anything until this passes; output: %s",
+				"The negative cases below cannot mean anything until this passes; output: %s",
 				err, result.Output)
 		}
 	})
@@ -339,31 +458,39 @@ func TestTimeoutKillsTheProcessTree(t *testing.T) {
 	t.Run("the sentinel never appears after a timeout", func(t *testing.T) {
 		t.Parallel()
 
-		const timeout = spawnBudget
-		sentinel := filepath.Join(t.TempDir(), "sentinel")
-		start := time.Now()
-		result := runner.Run(t.Context(), runner.Spec{
-			Argv:    helperCommand(t, "tree", sentinel, strconv.Itoa(int(sentinelDelay.Milliseconds())), "60000"),
-			Env:     helperEnviron(),
-			Timeout: timeout,
+		dir := t.TempDir()
+		var sentinels []string
+		var conclusive time.Time
+
+		underDoublingDeadline(t, func(deadline, sentinelDelay time.Duration) bool {
+			sentinel := filepath.Join(dir, "sentinel-"+strconv.Itoa(len(sentinels)))
+			sentinels = append(sentinels, sentinel)
+
+			start := time.Now()
+			result := runner.Run(t.Context(), runner.Spec{
+				Argv:    helperCommand(t, "tree", sentinel, milliseconds(sentinelDelay), "60000"),
+				Env:     helperEnviron(),
+				Timeout: deadline,
+			})
+			// Attempts only ever start later and wait longer, so the last one
+			// sets the moment after which absence is conclusive for all of them.
+			conclusive = start.Add(sentinelDelay + sentinelWriteMargin)
+
+			if result.Err != nil {
+				t.Fatalf("Err = %v, want nil", result.Err)
+			}
+			if !result.TimedOut {
+				t.Fatalf("TimedOut = false, want true; output: %s", result.Output)
+			}
+			// A child that never reported a grandchild proves nothing about
+			// killing a tree, so it is a retry rather than a verdict.
+			return strings.Contains(string(result.Output), "grandchild ")
 		})
-		if result.Err != nil {
-			t.Fatalf("Err = %v, want nil", result.Err)
-		}
-		if !result.TimedOut {
-			t.Fatalf("TimedOut = false, want true; output: %s", result.Output)
-		}
-		if !strings.Contains(string(result.Output), "grandchild ") {
-			t.Fatalf("the child never reported spawning a grandchild, so this run proves nothing; output: %q",
-				result.Output)
-		}
 
 		// Wait past the moment the grandchild would have written, so that
 		// "the file is not there" means "it is never going to be there".
-		time.Sleep(time.Until(start.Add(sentinelDelay + time.Second)))
-		if _, err := os.Stat(sentinel); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("os.Stat(sentinel) = %v, want os.ErrNotExist: the grandchild outlived the timeout", err)
-		}
+		time.Sleep(time.Until(conclusive))
+		noSentinelSurvived(t, sentinels, "the grandchild outlived the timeout")
 	})
 
 	// This is the regression test. The single-run case above passes even with
@@ -377,48 +504,57 @@ func TestTimeoutKillsTheProcessTree(t *testing.T) {
 	t.Run("the sentinel never appears under concurrent load", func(t *testing.T) {
 		t.Parallel()
 
-		const (
-			concurrency = 8
-			timeout     = spawnBudget
-		)
+		const concurrency = 8
 		dir := t.TempDir()
-		start := time.Now()
+		var sentinels []string
+		var conclusive time.Time
+		attempts := 0
 
-		var wg sync.WaitGroup
-		for i := range concurrency {
-			sentinel := filepath.Join(dir, "sentinel-"+strconv.Itoa(i))
-			argv := helperCommand(t, "tree", sentinel,
-				strconv.Itoa(int(sentinelDelay.Milliseconds())), "60000")
+		underDoublingDeadline(t, func(deadline, sentinelDelay time.Duration) bool {
+			attempt := attempts
+			attempts++
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				result := runner.Run(t.Context(), runner.Spec{
-					Argv:    argv,
-					Env:     helperEnviron(),
-					Timeout: timeout,
-				})
-				switch {
-				case result.Err != nil:
-					t.Errorf("run %d: Err = %v, want nil", i, result.Err)
-				case !result.TimedOut:
-					t.Errorf("run %d: TimedOut = false, want true; output: %s", i, result.Output)
-				case !strings.Contains(string(result.Output), "grandchild "):
-					t.Errorf("run %d: no grandchild was spawned, so this run proves nothing; output: %q",
-						i, result.Output)
-				}
-			}()
-		}
-		wg.Wait()
+			var (
+				wg      sync.WaitGroup
+				spawned atomic.Int64
+			)
+			start := time.Now()
+			for i := range concurrency {
+				sentinel := filepath.Join(dir, fmt.Sprintf("sentinel-%d-%d", attempt, i))
+				sentinels = append(sentinels, sentinel)
+				argv := helperCommand(t, "tree", sentinel, milliseconds(sentinelDelay), "60000")
 
-		time.Sleep(time.Until(start.Add(sentinelDelay + time.Second)))
-		for i := range concurrency {
-			sentinel := filepath.Join(dir, "sentinel-"+strconv.Itoa(i))
-			if _, err := os.Stat(sentinel); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("run %d: os.Stat(sentinel) = %v, want os.ErrNotExist: "+
-					"a grandchild escaped the supervisor and outlived the kill", i, err)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					result := runner.Run(t.Context(), runner.Spec{
+						Argv:    argv,
+						Env:     helperEnviron(),
+						Timeout: deadline,
+					})
+					switch {
+					case result.Err != nil:
+						t.Errorf("attempt %d run %d: Err = %v, want nil", attempt, i, result.Err)
+					case !result.TimedOut:
+						t.Errorf("attempt %d run %d: TimedOut = false, want true; output: %s",
+							attempt, i, result.Output)
+					case strings.Contains(string(result.Output), "grandchild "):
+						spawned.Add(1)
+					}
+				}()
 			}
-		}
+			wg.Wait()
+			conclusive = start.Add(sentinelDelay + sentinelWriteMargin)
+
+			// The whole burst is retried, never the individual runs that lost
+			// the race, because concurrency is this case's subject: a lone
+			// retry would not reproduce the adoption gap it was written for.
+			return spawned.Load() == concurrency
+		})
+
+		time.Sleep(time.Until(conclusive))
+		noSentinelSurvived(t, sentinels,
+			"a grandchild escaped the supervisor and outlived the kill")
 	})
 }
 
@@ -445,45 +581,54 @@ func TestTerminationEscalatesToSIGKILL(t *testing.T) {
 		t.Skip("TerminateJobObject is immediate by construction; Windows has no grace phase to escalate out of")
 	}
 
-	const timeout = spawnBudget
-	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	dir := t.TempDir()
+	var sentinels []string
+	var conclusive time.Time
 
-	start := time.Now()
-	result := runner.Run(t.Context(), runner.Spec{
-		Argv:    helperCommand(t, "deaf", sentinel, strconv.Itoa(int(sentinelDelay.Milliseconds()))),
-		Env:     helperEnviron(),
-		Timeout: timeout,
+	underDoublingDeadline(t, func(deadline, sentinelDelay time.Duration) bool {
+		sentinel := filepath.Join(dir, "sentinel-"+strconv.Itoa(len(sentinels)))
+		sentinels = append(sentinels, sentinel)
+
+		start := time.Now()
+		result := runner.Run(t.Context(), runner.Spec{
+			Argv:    helperCommand(t, "deaf", sentinel, milliseconds(sentinelDelay)),
+			Env:     helperEnviron(),
+			Timeout: deadline,
+		})
+		elapsed := time.Since(start)
+		conclusive = start.Add(sentinelDelay + sentinelWriteMargin)
+
+		if result.Err != nil {
+			t.Fatalf("Err = %v, want nil: a timeout is a result, not a failure to run", result.Err)
+		}
+		if !result.TimedOut {
+			t.Fatalf("TimedOut = false, want true; output: %s", result.Output)
+		}
+		if result.ExitCode != runner.ExitCodeUnavailable {
+			t.Errorf("ExitCode = %d, want ExitCodeUnavailable (%d)", result.ExitCode, runner.ExitCodeUnavailable)
+		}
+		// SIGTERM won the race to the disposition, so this run says nothing
+		// about the escalation. Retried rather than judged — and the assertions
+		// below are skipped with it, because a child that took the polite
+		// signal legitimately comes back before the grace has elapsed.
+		if !strings.Contains(string(result.Output), helperDeafMarker) {
+			return false
+		}
+		if elapsed < deadline+runner.TerminationGrace {
+			t.Errorf("Run returned after %v, before the deadline and the %v grace had both elapsed: "+
+				"the child was ended by SIGTERM and SIGKILL was never needed",
+				elapsed, runner.TerminationGrace)
+		}
+		if elapsed > deadline+runner.TerminationGrace+sentinelDelay {
+			t.Errorf("Run took %v; it waited for the child's own lifetime instead of killing it", elapsed)
+		}
+		return true
 	})
-	elapsed := time.Since(start)
-
-	if result.Err != nil {
-		t.Fatalf("Err = %v, want nil: a timeout is a result, not a failure to run", result.Err)
-	}
-	if !result.TimedOut {
-		t.Fatalf("TimedOut = false, want true; output: %s", result.Output)
-	}
-	if result.ExitCode != runner.ExitCodeUnavailable {
-		t.Errorf("ExitCode = %d, want ExitCodeUnavailable (%d)", result.ExitCode, runner.ExitCodeUnavailable)
-	}
-	if !strings.Contains(string(result.Output), helperDeafMarker) {
-		t.Fatalf("the child never reported that it was ignoring SIGTERM, so this run proves nothing "+
-			"about the escalation; output: %q", result.Output)
-	}
-	if elapsed < timeout+runner.TerminationGrace {
-		t.Errorf("Run returned after %v, before the deadline and the %v grace had both elapsed: "+
-			"the child was ended by SIGTERM and SIGKILL was never needed",
-			elapsed, runner.TerminationGrace)
-	}
-	if elapsed > timeout+runner.TerminationGrace+sentinelDelay {
-		t.Errorf("Run took %v; it waited for the child's own lifetime instead of killing it", elapsed)
-	}
 
 	// The tree really is gone, not merely unresponsive: wait past the moment
 	// the child would have written, so absence means it is never going to.
-	time.Sleep(time.Until(start.Add(sentinelDelay + time.Second)))
-	if _, err := os.Stat(sentinel); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("os.Stat(sentinel) = %v, want os.ErrNotExist: the SIGTERM-deaf child outlived the escalation", err)
-	}
+	time.Sleep(time.Until(conclusive))
+	noSentinelSurvived(t, sentinels, "the SIGTERM-deaf child outlived the escalation")
 }
 
 // TestCancellationKillsTheProcessTree covers the Ctrl-C path. It is the same
@@ -493,38 +638,41 @@ func TestTerminationEscalatesToSIGKILL(t *testing.T) {
 func TestCancellationKillsTheProcessTree(t *testing.T) {
 	t.Parallel()
 
-	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	dir := t.TempDir()
+	var sentinels []string
+	var conclusive time.Time
 
-	ctx, cancel := context.WithCancel(t.Context())
-	start := time.Now()
-	go func() {
-		time.Sleep(spawnBudget)
-		cancel()
-	}()
-	result := runner.Run(ctx, runner.Spec{
-		Argv: helperCommand(t, "tree", sentinel, strconv.Itoa(int(sentinelDelay.Milliseconds())), "60000"),
-		Env:  helperEnviron(),
+	underDoublingDeadline(t, func(deadline, sentinelDelay time.Duration) bool {
+		sentinel := filepath.Join(dir, "sentinel-"+strconv.Itoa(len(sentinels)))
+		sentinels = append(sentinels, sentinel)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		start := time.Now()
+		timer := time.AfterFunc(deadline, cancel)
+		defer timer.Stop()
+
+		result := runner.Run(ctx, runner.Spec{
+			Argv: helperCommand(t, "tree", sentinel, milliseconds(sentinelDelay), "60000"),
+			Env:  helperEnviron(),
+		})
+		conclusive = start.Add(sentinelDelay + sentinelWriteMargin)
+
+		if result.Err != nil {
+			t.Fatalf("Err = %v, want nil: cancellation is not a failure to run", result.Err)
+		}
+		if result.TimedOut {
+			t.Error("TimedOut = true after a cancellation; only Spec.Timeout may set it")
+		}
+		if result.ExitCode != runner.ExitCodeUnavailable {
+			t.Errorf("ExitCode = %d, want ExitCodeUnavailable (%d)", result.ExitCode, runner.ExitCodeUnavailable)
+		}
+		return strings.Contains(string(result.Output), "grandchild ")
 	})
-	cancel()
 
-	if result.Err != nil {
-		t.Fatalf("Err = %v, want nil: cancellation is not a failure to run", result.Err)
-	}
-	if result.TimedOut {
-		t.Error("TimedOut = true after a cancellation; only Spec.Timeout may set it")
-	}
-	if result.ExitCode != runner.ExitCodeUnavailable {
-		t.Errorf("ExitCode = %d, want ExitCodeUnavailable (%d)", result.ExitCode, runner.ExitCodeUnavailable)
-	}
-	if !strings.Contains(string(result.Output), "grandchild ") {
-		t.Fatalf("the child never reported spawning a grandchild, so this run proves nothing; output: %q",
-			result.Output)
-	}
-
-	time.Sleep(time.Until(start.Add(sentinelDelay + time.Second)))
-	if _, err := os.Stat(sentinel); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("os.Stat(sentinel) = %v, want os.ErrNotExist: the grandchild outlived the cancellation", err)
-	}
+	time.Sleep(time.Until(conclusive))
+	noSentinelSurvived(t, sentinels, "the grandchild outlived the cancellation")
 }
 
 // TestAlreadyCancelledContextStartsNothing pins the cheap path: no process, no

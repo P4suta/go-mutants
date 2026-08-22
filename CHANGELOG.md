@@ -193,7 +193,8 @@ Entries say *why* a change was made, not only what changed.
 - CI as three workflows with every action pinned by commit SHA,
   `permissions: contents: read`, per-ref concurrency, and a timeout on every
   job: `ci.yml` (quality, a three-OS test matrix, artifacts, dogfood),
-  `nightly.yml` (fuzz and property placeholders), and `release.yml` (verify,
+  `nightly.yml` (one leg per fuzz target the repository actually has, plus a
+  property job at a deepened budget), and `release.yml` (verify,
   then a draft-only release job that is the sole holder of `contents: write`).
   Dependabot watches actions and Go modules weekly.
 - `.go-mutants.toml`, the configuration this project will dogfood itself with,
@@ -626,6 +627,38 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- `internal/runner`'s process-tree tests no longer fail under whole-suite load.
+  Each of them kills a helper child that has been given a fixed 1500ms to boot
+  and fork its grandchild, and each says so and fails rather than passing
+  quietly when the kill lands before the fork — which is right, and which is
+  exactly what made them flaky. The child is a whole coverage-instrumented Go
+  test binary starting while twenty sibling packages start, and on a machine
+  running `go test ./...` 1500ms is not always enough.
+
+  Raising the constant was considered and the code says why it is not the fix.
+  That one number is doing two jobs at once — it is the moment the kill lands
+  *and* the tolerance for how long the child takes to boot — and the
+  grandchild's own delay has to sit past the first of them, so a load-proof 15s
+  would have inverted that inequality and turned four tests deterministically
+  red; and because the helper sleeps for a minute and so never exits early, the
+  run always takes the whole deadline, which makes a generous constant a cost
+  every run pays rather than a ceiling only a slow one reaches.
+
+  The deadline now starts at 1500ms and doubles up to a 15s ceiling, and only on
+  the attempts that caught a child which had not yet forked, so an unloaded
+  machine never reaches a second attempt and the suite's wall clock is
+  unchanged. The grandchild's delay is *derived* from the deadline in use rather
+  than asserted against it in a comment two constants away, which is the part
+  that keeps the next edit from reintroducing this. The proves-nothing guard is
+  kept and sharpened: a spawn that is genuinely broken reports nothing at any
+  deadline and fails by name rather than being retried into silence. The
+  concurrent case retries the whole burst instead of the runs that lost the
+  race, because concurrency is its subject and a lone retry would not reproduce
+  the adoption gap it was written for, and every attempt's sentinel is checked
+  at the end rather than only the last one's — a grandchild that escaped on the
+  first attempt is the bug the test exists for. The positive control watches for
+  its sentinel instead of stat-ing once, since the grandchild is another Go
+  binary that can still be booting when its parent's own 600ms are up.
 - A `var` inside a function body no longer ends a run with an internal error.
   Form D rewrites a declaration by cutting its declaring tokens out in place,
   and two of those cuts are as long as the source says: a spec with no
@@ -724,9 +757,15 @@ Entries say *why* a change was made, not only what changed.
   renderer's closing block states the split separately, as `uncovered N`
   alongside the six, precisely because it is a subset of `survived` and not a
   seventh bucket.
-- `dogfood` and `package` are honest placeholders that echo and exit 0. They
-  exist as named tasks and as CI jobs so that self-mutation and packaging can
-  never be bolted on without a gate; they become real in the later phases.
+- `dogfood` and `package` were honest placeholders that echoed a sentence and
+  exited 0 when this note was written, listed as named tasks and as CI jobs so
+  that self-mutation and packaging could never be bolted on without a gate. Both
+  do real work now: `package` runs `goreleaser release --snapshot --clean` and
+  then asserts that the built binary's `--version` is the stamped one rather
+  than `internal/cli`'s compiled-in fallback, and `dogfood` runs go-mutants
+  against this repository under `--strict`. Running is not gating, and the two
+  are tracked apart: `docs/release-checklist.md` states what a dogfood run has
+  to show — `inconclusive 0` among it — before its box can be ticked.
 - The operator catalogue enumerates 42 rules while the design plan's headline
   says 43. The registry has now resolved this in favour of the enumeration:
   `mutation.CanonicalRuleCount` is 42, asserted by the canonical registry
@@ -739,8 +778,9 @@ Entries say *why* a change was made, not only what changed.
   registered operator. The message is kept, and kept under test at the unit
   level, because it must not depend on that staying true. The outcome cache,
   `--changed`, `--shard`, the HTML report, the Stryker projection, and the
-  `init`, `doctor`, `report`, and `cache` commands do not exist yet, and no page
-  in `docs/` claims otherwise.
+  `init`, `doctor`, `report`, and `cache` commands all landed in the phases
+  after this note was written, and no page in `docs/` claims otherwise in either
+  direction.
 - The **Status** column is gone from `docs/operators.md` rather than filled in
   with one repeated word. It recorded the gap between "the rule mints an ID" and
   "`run` can score it", and with no rule left on the wrong side of it the column
