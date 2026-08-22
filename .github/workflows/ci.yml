@@ -104,11 +104,11 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
-  # Self-mutation, gated. The scope, the measured score, the floor and the one
-  # declared equivalent mutant all live in .go-mutants.toml; the task adds
-  # --strict, so an undeclared survivor fails this job.
+  # Self-mutation, gated. The scope, the measured score, the floor and the
+  # declared expectations all live in .go-mutants.toml; the task adds --strict,
+  # so an undeclared survivor fails this job.
   #
-  # The budget is generous relative to the 7m08s this scope measures at --jobs 4
+  # The budget is generous relative to the 1m20s this scope measures at --jobs 4
   # locally, because the cost per mutant here is dominated by this repository's
   # own slowest test package rather than by anything go-mutants does, and a
   # runner having a bad day should show up as a slow job rather than a red one.

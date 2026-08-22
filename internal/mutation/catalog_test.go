@@ -356,6 +356,80 @@ func TestCatalogOrderBreaksTiesOnTheReplacement(t *testing.T) {
 	}
 }
 
+// TestCompareEntriesOrdersEveryTiebreak pins the canonical order as a
+// comparator, level by level, and in both directions.
+//
+// Both directions is the point. `Build` sorts with slices.SortFunc, which only
+// ever asks whether one entry sorts *before* another, so a comparator that
+// answered "equal" where it means "after" would sort identically today and
+// stop being an ordering the moment anything else read it — a merge, a report,
+// a binary search over catalogue order. slices.SortFunc documents that its
+// comparison must be a strict weak ordering; that is a contract about the
+// function, not about the one call site, so it is asserted about the function.
+func TestCompareEntriesOrdersEveryTiebreak(t *testing.T) {
+	t.Parallel()
+
+	// Registry positions and ids stand in for real ones: compareEntries reads
+	// the path, the span, the position, the replacement and the id, in that
+	// order, and nothing else.
+	base := entry{
+		candidate: Candidate{
+			Path:        "internal/a.go",
+			Span:        Span{StartByte: 10, EndByte: 12},
+			Replacement: "!=",
+		},
+		id:       strings.Repeat("a", IDHexLength),
+		position: 5,
+	}
+
+	tests := []struct {
+		name  string
+		later func(entry) entry
+	}{
+		{
+			name:  "the path comes first",
+			later: func(e entry) entry { e.candidate.Path = "internal/b.go"; return e },
+		},
+		{
+			name:  "then the span",
+			later: func(e entry) entry { e.candidate.Span = Span{StartByte: 11, EndByte: 12}; return e },
+		},
+		{
+			name:  "then the registry position",
+			later: func(e entry) entry { e.position = 6; return e },
+		},
+		{
+			name:  "then the replacement",
+			later: func(e entry) entry { e.candidate.Replacement = "=="; return e },
+		},
+		{
+			name:  "and finally the id",
+			later: func(e entry) entry { e.id = strings.Repeat("b", IDHexLength); return e },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			first, second := base, tc.later(base)
+			if first == second {
+				t.Fatal("the fixture must differ at the level under test")
+			}
+			if got := compareEntries(first, second); got >= 0 {
+				t.Errorf("compareEntries(first, second) = %d, want negative", got)
+			}
+			if got := compareEntries(second, first); got <= 0 {
+				t.Errorf("compareEntries(second, first) = %d, want positive", got)
+			}
+			for _, e := range []entry{first, second} {
+				if got := compareEntries(e, e); got != 0 {
+					t.Errorf("compareEntries(e, e) = %d, want 0", got)
+				}
+			}
+		})
+	}
+}
+
 func TestDisplayLengthFallsBackToTheDefault(t *testing.T) {
 	t.Parallel()
 
@@ -382,13 +456,47 @@ func TestDisplayLengthFallsBackToTheDefault(t *testing.T) {
 	}
 }
 
+// TestDisplayLengthAcceptsTheFullIDLength is the boundary the fallback above
+// is written around. Sixty-four is a display length, not an out-of-range
+// request: asking for short ids that are the whole id has to be honoured and
+// reported, rather than quietly truncated back to twenty by a check that is
+// one off.
+func TestDisplayLengthAcceptsTheFullIDLength(t *testing.T) {
+	t.Parallel()
+
+	b := NewBuilder().setDisplayLength(IDHexLength)
+	if err := b.AddAll(fixtureCandidates(t)); err != nil {
+		t.Fatalf("AddAll() error = %v", err)
+	}
+	catalog, err := b.Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := catalog.DisplayLength(); got != IDHexLength {
+		t.Errorf("DisplayLength() = %d, want %d", got, IDHexLength)
+	}
+	for _, m := range catalog.Mutants() {
+		if m.DisplayID != m.ID {
+			t.Errorf("DisplayID = %q, want the whole id %q", m.DisplayID, m.ID)
+		}
+	}
+}
+
 func TestDisplayIDCollisionIsReported(t *testing.T) {
 	t.Parallel()
 
-	// Twenty mutants truncated to a single hex character cannot all be
-	// unique: sixteen buckets, twenty ids. The pigeonhole makes the test
+	// Sixty-four mutants truncated to a single hex character cannot all be
+	// unique: sixteen buckets, sixty-four ids. The pigeonhole makes the test
 	// deterministic without needing a real SHA-256 collision.
-	const count = 20
+	//
+	// Sixty-four rather than the twenty that the pigeonhole alone needs,
+	// because the sortedness assertion below is the only thing that pins the
+	// order of the reported collisions, and that order is assembled by ranging
+	// over a map. Go randomises that range, so a handful of collisions could
+	// land already sorted by luck and let a comparator that ordered nothing at
+	// all pass. Filling every bucket makes an accidentally sorted list a
+	// one-in-fourteen-factorial event rather than a one-in-a-few-hundred one.
+	const count = 64
 	source := strings.Repeat("true", count)
 	digest := DigestString(source)
 
@@ -451,6 +559,71 @@ func TestDisplayIDCollisionIsReported(t *testing.T) {
 	}
 	if !strings.Contains(collision.Error(), "display id collision") {
 		t.Errorf("Error() = %q, want it to mention a display id collision", collision.Error())
+	}
+}
+
+// TestDisplayIDCollisionOfExactlyTwo is the smallest collision there is, and
+// the boundary the check is written around: a short form shared by two mutants
+// is already ambiguous, so `--mutant` has to be refused rather than resolved to
+// whichever of the two the catalogue happens to hold first. The test above
+// cannot pin it — twenty ids over sixteen buckets crowd several into one, and
+// a check that ignored pairs would still find those.
+func TestDisplayIDCollisionOfExactlyTwo(t *testing.T) {
+	t.Parallel()
+
+	// The pair is searched for rather than hard-coded, the same way
+	// TestResolvePrefixRefusesToGuess finds its ambiguous prefix. Twenty
+	// candidates over sixteen first-hex-character buckets means the pigeonhole
+	// guarantees one, and the identities are fixed, so it is the same pair on
+	// every machine: the test neither skips nor flakes.
+	const count = 20
+	source := strings.Repeat("true", count)
+	digest := DigestString(source)
+
+	var pair []Candidate
+	firstOfBucket := make(map[byte]Candidate, 16)
+	for i := range count {
+		start := uint32(i * 4)
+		c := Candidate{
+			Path:         "pair.go",
+			Rule:         mustRule(t, "true-to-false"),
+			Span:         Span{StartByte: start, EndByte: start + 4},
+			Original:     "true",
+			Replacement:  "false",
+			SourceDigest: digest,
+		}
+		id, err := c.ID()
+		if err != nil {
+			t.Fatalf("ID() error = %v", err)
+		}
+		if previous, seen := firstOfBucket[id[0]]; seen {
+			pair = []Candidate{previous, c}
+			break
+		}
+		firstOfBucket[id[0]] = c
+	}
+	if pair == nil {
+		t.Fatalf("no two of %d identities share a first hex character; widen the fixture", count)
+	}
+
+	b := NewBuilder().setDisplayLength(1)
+	if err := b.AddAll(pair); err != nil {
+		t.Fatalf("AddAll() error = %v", err)
+	}
+	catalog, err := b.Build()
+	if err == nil {
+		t.Fatalf("Build() = %d mutants, want a collision between exactly two display ids", catalog.Len())
+	}
+
+	var collision *DisplayCollisionError
+	if !errors.As(err, &collision) {
+		t.Fatalf("Build() error = %v (%T), want *DisplayCollisionError", err, err)
+	}
+	if len(collision.Collisions) != 1 {
+		t.Fatalf("Collisions = %+v, want exactly one", collision.Collisions)
+	}
+	if got := len(collision.Collisions[0].IDs); got != 2 {
+		t.Errorf("the collision names %d ids, want 2", got)
 	}
 }
 
@@ -614,6 +787,31 @@ func TestBuilderRejectsContradictoryFacts(t *testing.T) {
 			t.Fatalf("Add() error = %v, want ErrOriginalConflict", err)
 		}
 	})
+}
+
+// TestAddAllStopsAtTheFirstInvalidCandidate pins that AddAll reports what Add
+// refused rather than swallowing it. A discovery pass that produced one
+// incoherent candidate must not be catalogued as though every candidate were
+// fine: the bad one would simply be missing, and a catalogue that is quietly
+// short is a mutation score computed over the wrong denominator.
+func TestAddAllStopsAtTheFirstInvalidCandidate(t *testing.T) {
+	t.Parallel()
+
+	candidates := fixtureCandidates(t)
+	broken := candidates[1]
+	broken.Replacement = broken.Original
+
+	b := NewBuilder()
+	err := b.AddAll([]Candidate{candidates[0], broken, candidates[2]})
+	if !errors.Is(err, ErrNoOpReplacement) {
+		t.Fatalf("AddAll() error = %v, want ErrNoOpReplacement", err)
+	}
+	// It stops where it failed: the candidates before the bad one are queued
+	// and the ones after it are not, which is what "stopping at the first
+	// invalid one" means for a builder that does not roll back.
+	if got := b.Len(); got != 1 {
+		t.Errorf("Len() = %d after a rejected AddAll, want 1", got)
+	}
 }
 
 func TestCatalogLookups(t *testing.T) {

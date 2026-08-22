@@ -21,13 +21,11 @@ Entries say *why* a change was made, not only what changed.
   instead of forty. This repository's own dogfood gate went from 16 mutants in
   7m08s to 121 mutants in 48-50 seconds on the same machine — seven times the
   scope in a ninth of the time — and could grow from two files to two whole
-  packages because of it. Widening it further is now bounded by
-  missing tests rather than by the clock: the whole-package scope over
-  `internal/mutation`, `internal/glob` and `internal/interval` catalogues 560
-  mutants and runs in 1m20s, and it reports 41 real survivors in
-  `internal/mutation` that need tests written rather than a scope adjusted.
-  `.go-mutants.toml` records that measurement where somebody widening the scope
-  will read it.
+  packages because of it. What bounded it after that was missing tests rather
+  than the clock, and those tests are in this release too, so the gate is now
+  three whole packages and 560 mutants in about 1m20s — see *The dogfood gate
+  covers every pure-core package* below. `.go-mutants.toml` records each
+  measurement where somebody widening the scope again will read it.
 
   Scoping also decides which test binaries get a *vote*, which is a correctness
   property and not only a speed one: a suite the baseline never measured can
@@ -110,6 +108,61 @@ Entries say *why* a change was made, not only what changed.
   reason about a command's reproducibility rather than about whether it can read
   its scope. Setting `mode = "on"` still promises it. Aligning the two is worth
   doing and is deliberately not smuggled in here.
+- **The dogfood gate covers every pure-core package.** This repository's own
+  `.go-mutants.toml` now includes `internal/mutation/*.go` where it included
+  only `shard.go`, so the gate is every package the rest of the tool is built on
+  — the mutation model, the glob engine, the interval relation — and nothing is
+  left out of it because it was inconvenient: 560 mutants, 544 killed, 16
+  declared, 100.00%, about 1m20s at `--jobs 4`. The widening and the tests that
+  made it possible are one change, because the measurement recorded in that file
+  said they had to be. It reported 41 unexpected survivors, every one of them in
+  `internal/mutation`, and the file said in as many words that the honest way to
+  include the package was to write the tests that kill them — not to declare 41
+  expectations, which would be a skip list wearing a ledger's clothes, and not
+  to exclude the seven files that survived, which would be choosing the scope to
+  fit the score. The gaps the gate found were closed with tests, not with scope.
+
+  Twenty-six of the 41 are now killed, by cases in the package's own suites.
+  `Tier`'s names are pinned one at a time, which the round trip could not do
+  because `ParseTier` resolves a name by comparing it against `String()`, so a
+  `String()` that answered the same wrong thing twice still round-tripped. The
+  catalogue's comparator is asserted in both directions at every tiebreak,
+  which is what `slices.SortFunc`'s strict weak ordering actually asks of it.
+  `normalizePath`'s volume-letter bounds are checked at all four ends, because
+  a range one letter short accepts `z:\…` as a relative path and mints an
+  identity for a file outside the module. `Span.Slice` is checked at the
+  half-open end, where off by one refuses the last mutation site in every file.
+  And `Verdict.OK`'s conjunction, `Verdict.Has`'s answer about a reason it was
+  not given, `TallyOf`'s split of survivors into the two counters the ledger
+  distinguishes, the registry accessors' refusal of an unknown name rather than
+  a row zero with `ok`, `MustRegistry`'s panic on a table that fails its own
+  consistency check, `AddAll`'s report of what `Add` refused, and the short-id
+  boundaries at 64 characters and at a collision of exactly two all have tests
+  that did not exist before.
+
+  The remaining 15 are declared in `[[mutation.expect]]`, each with the
+  argument for that row rather than fifteen copies of the word "equivalent":
+  five are equivalent by construction — a comparison the surrounding branch has
+  already decided, or a named constant that is its type's zero value — one is
+  equivalent for every value another check in the same package calls coherent,
+  one guards a state the package's own API cannot produce, and eight sit behind
+  a 4 GiB length prefix or a `math.MaxUint32` index, where the test that would
+  kill them is a test that allocates four gigabytes. Declared is not skipped:
+  every row is judged on every run, survival is what fulfills it, and a kill or
+  an id the catalogue no longer holds is exit 2. Ten survive a test binary that
+  ran; the other five sit on lines no binary in the scope reaches, so the run
+  reports them `survived (uncovered)` without starting a process — coverage
+  reaching the same verdict those five reasons argue for, from a cheaper
+  direction.
+
+  `policy.minimum_score` moved 96 → 99 in the same change, because a percentage
+  buys a different number of survivors at every catalogue size. The floor has
+  never been the gate that guards CI — `--strict` fails on the first unexpected
+  survivor, and that is the flag `mise run dogfood` passes — it is the backstop
+  for a run that did not ask to be gated. Over 120 scored mutants, 96 bought
+  four survivors of slack; over 544 it would buy twenty-one, which is a
+  materially weaker backstop wearing a number that had not changed. Ninety-nine
+  buys five.
 - **The outcome cache.** A run reuses an outcome it has already proven, so a
   second run over unchanged code measures only what has moved. Entries live
   beside the run history — `<os cache>/go-mutants/workspaces/<key>/outcomes/` —

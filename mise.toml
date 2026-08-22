@@ -72,18 +72,20 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 121 mutants, 48-50 seconds, 100.00%. It
-# used to be 16 mutants in 7m08s, and the difference is that a `test.command`
-# naming package patterns now scopes the *test binaries* rather than only the
-# baseline -- so a mutant runs the one or two suites that cover it instead of
-# every suite in the module, internal/discover's toolchain-driving one included.
+# The budget this job is sized against: 560 mutants, about 1m20s, 100.00%. It
+# was 121 mutants in 48-50 seconds before internal/mutation's suites grew the
+# tests that let the scope take that whole package, and 16 mutants in 7m08s
+# before a `test.command` naming package patterns began to scope the *test
+# binaries* rather than only the baseline -- so a mutant runs the suites that
+# cover it instead of every suite in the module, internal/discover's
+# toolchain-driving one included.
 #
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
 # developer's machine reports a survivor instead of failing on it, and this
 # task is the caller that insists. That flag is the whole difference between
 # the two runs, and it is the only thing that fails this job on one survivor --
-# policy.minimum_score = 96 is compared either way and does not fail until five.
+# policy.minimum_score = 99 is compared either way and does not fail until six.
 # --profile balanced is redundant with the file and stated anyway, so that a
 # change to the file's profile shows up as a conflict to resolve rather than as
 # a silently different gate.
