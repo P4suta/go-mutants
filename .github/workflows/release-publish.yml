@@ -1,0 +1,216 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Publish release
+
+# Manual, and only manual. A tag push used to start this, and no longer can:
+# release-please pushes its tag with GITHUB_TOKEN, and a GITHUB_TOKEN push
+# starts no workflow. Rather than work around that with a bot identity, the
+# trigger is a human pressing a button behind an environment approval, which is
+# what the release checklist described the tag push as standing in for anyway.
+"on":
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Existing vX.Y.Z tag for a retry; leave empty for a new release
+        required: false
+        type: string
+
+concurrency:
+  group: release-publish-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Configure required reviewers for the `release` environment in repository
+    # settings. That approval is the gate; everything below it runs unattended.
+    environment:
+      name: release
+    runs-on: ubuntu-latest
+    # The gates alone budget 90 minutes -- `check` 25, `test-integration` 40,
+    # `dogfood` 25, matching the ci.yml jobs they replay -- so 90 would be the
+    # arithmetic ceiling with nothing left for the six-target goreleaser build,
+    # signing, and the uploads. A slow runner should show up as a slow release,
+    # not as a burnt approval.
+    timeout-minutes: 150
+    permissions:
+      # release-please-action runs in this job: it needs to push the tag and
+      # create the release (contents), and to label the pull request it is
+      # releasing (issues, pull-requests).
+      contents: write
+      issues: write
+      pull-requests: write
+      # Keyless cosign signing and actions/attest both mint an OIDC token.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      # The environment approval happens before this step, so tagging and
+      # publishing cannot run without explicit human approval.
+      # googleapis/release-please-action v5.0.0
+      - id: release
+        if: inputs.tag == ''
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # yamllint disable-line rule:line-length
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # The half release-please.yml skips: tag the merged Release PR and
+          # create the GitHub release carrying the generated notes.
+          skip-github-release: false
+
+      - name: Require a release on a new publish run
+        if: inputs.tag == '' && steps.release.outputs.release_created != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "release-please did not create a release;" >&2
+          echo "merge the Release PR first" >&2
+          exit 1
+
+      - id: target
+        name: Resolve and validate release tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-${RELEASE_TAG}}"
+          tag_pattern='^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'
+          if [[ ! "$tag" =~ $tag_pattern ]]; then
+            echo "invalid release tag: ${tag}" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.target.outputs.tag }}
+          # goreleaser derives the version from the tag and the changelog from
+          # the range since the previous one; both need the full history.
+          fetch-depth: 0
+
+      # release-please rewrites VERSION and internal/cli/root.go's marked line
+      # in the Release PR, so on a tag it created these already agree. This
+      # step is what makes that a checked fact rather than a trusted one -- and
+      # on an `inputs.tag` retry it is the only thing standing between a typo
+      # in the box and a rebuilt release stamped with somebody else's version.
+      - name: Verify source version matches the release tag
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          test "$version" = "$RELEASE_VERSION"
+          grep -q "defaultVersion = \"$RELEASE_VERSION\"" internal/cli/root.go
+
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+
+      # The gates ci.yml runs on every push, replayed against the tagged tree.
+      # Nothing is built or signed until all three are green.
+      - run: mise run check
+      - run: mise run test-integration
+      - run: mise run dogfood
+
+      # release.yml ran the gates and goreleaser in two jobs with a checkout
+      # each; this one runs them in the same working tree, and `goreleaser
+      # release` without --snapshot refuses a dirty one. That coupling is new,
+      # so it is asserted rather than assumed. The gates are not supposed to
+      # write anything tracked -- dogfood publishes into the gitignored
+      # reports/mutation/, and a target workspace is never modified -- and if
+      # one ever starts to, this says which path in one line instead of
+      # leaving a goreleaser abort ninety minutes into a release to be read.
+      - name: The gates must leave the tagged tree clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirt="$(git status --porcelain)"
+          if [ -n "$dirt" ]; then
+            echo "::error::the gates modified the tagged tree; goreleaser" \
+              "will not release from a dirty checkout"
+            echo "$dirt" >&2
+            exit 1
+          fi
+
+      # The same .goreleaser.yaml `mise run package` exercises on every push,
+      # without --snapshot: the version now comes from the tag rather than from
+      # snapshot.version_template. The GitHub release already exists --
+      # release-please created it above, carrying its generated notes -- so
+      # .goreleaser.yaml sets `release.mode: keep-existing` and the archives
+      # attach to it rather than replacing what it says.
+      - name: goreleaser release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: mise exec -- goreleaser release --clean
+
+      # sigstore/cosign-installer v4.1.2
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      # Only the files goreleaser publishes are signed. Its dist/ also holds
+      # per-target build directories, `metadata.json`, `artifacts.json` and a
+      # normalised copy of the config, which are build intermediates rather
+      # than release assets: signing them would publish a signature over a file
+      # nobody can download and check it against.
+      - name: Sign and verify distribution files
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow_path=".github/workflows/release-publish.yml"
+          identity="https://github.com/${GITHUB_REPOSITORY}/${workflow_path}"
+          identity_regexp="^${identity}@refs/"
+          identity_regexp+="(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+.*)$"
+          find dist -maxdepth 1 -type f \
+            \( -name '*.tar.gz' -o -name '*.zip' -o -name 'checksums.txt' \) \
+            -print0 > "$RUNNER_TEMP/release-files"
+          while IFS= read -r -d '' file; do
+            cosign sign-blob --yes --bundle "${file}.sigstore.json" "$file"
+            cosign verify-blob \
+              --bundle "${file}.sigstore.json" \
+              --certificate-oidc-issuer \
+              https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp "$identity_regexp" \
+              "$file"
+          done < "$RUNNER_TEMP/release-files"
+
+      # goreleaser's checksums.txt is a standard sha256sum manifest, so one
+      # attestation covers every archive by digest.
+      - id: attest
+        # actions/attest v4.2.1
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
+        with:
+          subject-checksums: dist/checksums.txt
+
+      - name: Retain the GitHub attestation bundle
+        shell: bash
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$BUNDLE_PATH" dist/github-attestation.sigstore.json
+
+      # goreleaser uploaded the archives and checksums.txt itself; this adds
+      # the evidence about them. --clobber is what makes an `inputs.tag` retry
+      # replace the previous run's bundles instead of failing on a name that
+      # already exists.
+      - name: Upload signatures and attestation to the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' evidence < <(
+            find dist -maxdepth 1 -type f -name '*.sigstore.json' -print0
+          )
+          if (( ${#evidence[@]} == 0 )); then
+            echo "no signature bundles found under dist" >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "${evidence[@]}" --clobber

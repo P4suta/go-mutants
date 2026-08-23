@@ -169,5 +169,17 @@ terminal and CI alike. go-mutants does not fail your build unless you ask it to.
 Every box in [`docs/release-checklist.md`](docs/release-checklist.md) must be
 ticked on a single immutable commit, with the evidence produced by
 GitHub-hosted runners on Linux, Windows, and macOS rather than by a laptop.
-Tagging, publishing, and turning the drafted GitHub release into a real one are
-separate human decisions taken after that.
+
+Tagging and publishing are one human decision taken after that, and only one:
+approving the `release` environment on a `Publish release` run. There is no
+second gate — the draft-only GitHub release that used to stand in for this
+approval is gone, because a second place to press publish is a second place to
+forget.
+
+This file is not decoration. `release-please-config.json`'s `bootstrap-sha` is
+the commit that introduced the release automation, so the notes release-please
+generates for `v0.1.0` describe only what landed after it — everything earlier
+was squashed with subjects that are not conventional commits and cannot be
+parsed. **The text above is what gets pasted over the generated release body
+for `v0.1.0`**, reviewed against `CHANGELOG.md` first. From `v0.2.0` on every
+subject in range is conventional and the generated notes stand on their own.

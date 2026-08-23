@@ -17,6 +17,28 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
+# The release-please files. `VERSION` is a single version string and nothing
+# else — anything else in it, a comment included, is a parse error for the
+# `simple` release strategy that owns it — and the two JSON files are JSON,
+# which has no comment syntax at all. All three are rewritten by a bot in the
+# Release PR, so a header would not survive even if the format allowed one.
+#
+# `.release-please/CHANGELOG.generated.md` does not exist yet: release-please
+# creates it on the first release. It is annotated ahead of time so the first
+# release is not also the first REUSE failure, and it is annotated rather than
+# given an HTML comment header for the same reason — the file is rewritten
+# whole on every release.
+[[annotations]]
+path = [
+  "VERSION",
+  "release-please-config.json",
+  ".release-please-manifest.json",
+  ".release-please/CHANGELOG.generated.md",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
 # The first-party schemas in schema/. A vendored third-party schema arrives
 # with its own license and gets its own entry rather than joining this one.
 [[annotations]]

@@ -1,0 +1,42 @@
+---
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+name: Release PR
+
+"on":
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+# A release pull request must never be cancelled half-written by the next push
+# to main; the second run reconciles against whatever the first one left.
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Maintains the Release PR and nothing else. It reads the conventional-commit
+  # subjects merged since `bootstrap-sha`, works out the next version, and
+  # rewrites VERSION, internal/cli/root.go's marked line, and
+  # .release-please/CHANGELOG.generated.md in a pull request. Merging that pull
+  # request is what makes a release possible; it is not what makes one happen.
+  release-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # googleapis/release-please-action v5.0.0
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # yamllint disable-line rule:line-length
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Tagging and release creation are deliberately reserved for
+          # release-publish.yml, which runs behind the `release` environment's
+          # required reviewer. If this job created the tag, a merge would
+          # publish, and the human approval this design is built around would
+          # have nothing left to approve.
+          skip-github-release: true

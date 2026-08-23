@@ -51,5 +51,25 @@ Use imperative subjects of at most 72 characters (80 is the hard
 lint job both run `committed`. Keep commits focused, and update `CHANGELOG.md`
 with the reason for the change, not only its shape.
 
+**Pull request titles must be conventional commits.** This repository
+squash-merges, so the pull request title — not the titles of the commits inside
+it — becomes the subject on `main`, and that subject is the only thing
+release-please reads. Use `type(scope): imperative subject`:
+
+- `feat:` a user-visible capability — minor bump
+- `fix:` a user-visible defect repaired — patch bump
+- `feat!:`, or any type with a `BREAKING CHANGE:` footer — major bump
+- `docs:`, `test:`, `chore:`, `build:`, `ci:`, `refactor:`, `perf:` — no bump,
+  and excluded from the generated release notes
+
+A title release-please cannot parse produces no version bump and no Release PR
+at all, which is a release that silently does not happen rather than a loud
+failure. The same 72-character guidance applies: the title is a commit subject.
+
+The commits *inside* the pull request are still linted by `committed` and still
+want imperative subjects, but they do not need a conventional-commit type —
+they are squashed away. `docs/release-checklist.md` describes what the subject
+on `main` then drives.
+
 By contributing you agree that your work may be distributed under
 `MIT OR Apache-2.0`.

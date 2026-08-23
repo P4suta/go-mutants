@@ -14,6 +14,72 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **Release automation, as two workflows with a human between them.**
+  `release-please.yml` runs on every push to `main` and maintains one open
+  Release PR: it reads the conventional-commit subjects, works out the next
+  version, and rewrites `VERSION`, `internal/cli/root.go`'s marked line, and
+  `.release-please/CHANGELOG.generated.md`. It deliberately does not tag —
+  `skip-github-release: true`. `release-publish.yml` is `workflow_dispatch`
+  only, behind the `release` environment's required reviewer, and does the
+  other half: tag, verify, gate, build, sign, attest, upload.
+
+  The split is not ceremony, it is the only shape that works. The obvious
+  design — release-please pushes the tag, a tag-push workflow publishes — is
+  the one `release.yml` implemented and it cannot work here, because
+  release-please pushes with `GITHUB_TOKEN` and **a push made with
+  `GITHUB_TOKEN` starts no workflow**. GitHub does that on purpose, to stop
+  workflows triggering each other forever, and the usual escapes are a personal
+  access token or a GitHub App key: a long-lived credential with write access
+  to the repository, held so that a bot can start a job a human was going to
+  approve anyway. Putting the approval on the workflow instead removes both the
+  credential and the indirection. Merging the Release PR now publishes nothing;
+  pressing *Publish release* and approving the environment is the release
+  decision, and it is a decision a person makes once, in one place.
+
+  `release.yml` is gone. Its `verify` job is not lost — the same gates
+  (`check`, `test-integration`, and now `dogfood` too) run inside
+  `release-publish.yml` against the checked-out tag, which is a stronger claim
+  than the old job made: it also refuses to build if `VERSION` and
+  `internal/cli`'s `defaultVersion` disagree with the tag, and it refuses
+  before installing a toolchain, so a typo in the retry box costs seconds. The
+  old tag-and-source agreement check lives on there in that form.
+  `.goreleaser.yaml` stopped drafting: a draft nobody publishes was standing in
+  for the human decision, and now the environment approval *is* the human
+  decision, so a second one would only be a second place to forget. It gained
+  `mode: keep-existing` so the archives attach to the release release-please
+  created without overwriting its notes, an explicit `prerelease: true` because
+  `auto` would have read `v0.1.0` as stable and quietly flipped
+  release-please's prerelease flag on the way past, and
+  `replace_existing_artifacts: true` because retrying a release is a designed
+  path here and GitHub answers a re-uploaded asset name with a 422.
+
+  **The generated changelog is deliberately not `CHANGELOG.md`.** It is
+  `.release-please/CHANGELOG.generated.md`, which diverges from
+  release-please's default. This file is the reason: its entries say *why*, they
+  run to paragraphs, and several describe a decision spanning a dozen commits —
+  none of which a concatenation of commit subjects can produce. Pointing the
+  bot at this file would mean either losing that or hand-editing a file a bot
+  rewrites, which is a merge conflict on every release. So the machine log goes
+  somewhere else and feeds the GitHub release notes, this file stays
+  authoritative, and it is rolled by hand (`[Unreleased]` → `## X.Y.Z - date`)
+  in an ordinary pull request merged *before* the Release PR.
+  `docs/release-checklist.md` documents that order, because
+  `release-please-config.json` is JSON and cannot document itself.
+
+  Two consequences worth stating plainly. Pull request titles must now be
+  conventional commits, because squash-merging makes the title the subject on
+  `main` and that subject is release-please's only input — a title it cannot
+  parse produces no Release PR at all, a release that silently does not happen;
+  `CONTRIBUTING.md` says so where the commit-style guidance already lived. And
+  `internal/cli`'s checked-in version no longer carries a `-dev` suffix, since
+  release-please owns that literal and writes the bare released version into
+  it. `internal/cli.resolveVersion` is what compensates: an unstamped binary
+  now consults `runtime/debug.ReadBuildInfo` before falling back, so a
+  `go install …/cmd/go-mutants@latest` or `@main` build reports the version or
+  pseudo-version the module proxy actually served it instead of whatever the
+  source tree last said. A link-time stamp still outranks it, and a plain
+  `go build` from a working tree still reports the default — the residual gap,
+  recorded in the checklist rather than papered over.
 - **Scoped test binaries.** A `test.command` that go-mutants can read as a set
   of package patterns now decides which test binaries a run builds, not just
   which suites the baseline measures. A module whose tests live in three of
@@ -339,13 +405,16 @@ Entries say *why* a change was made, not only what changed.
   `dogfood`, `package`, and `hooks`. Every gate is defined exactly once there,
   so `just`, the git hooks, and CI cannot drift apart; `justfile` and
   `lefthook.yml` are deliberately thin shims over it.
-- CI as three workflows with every action pinned by commit SHA,
+- CI as workflows with every action pinned by commit SHA,
   `permissions: contents: read`, per-ref concurrency, and a timeout on every
   job: `ci.yml` (quality, a three-OS test matrix, artifacts, dogfood),
   `nightly.yml` (one leg per fuzz target the repository actually has, plus a
-  property job at a deepened budget), and `release.yml` (verify,
-  then a draft-only release job that is the sole holder of `contents: write`).
-  Dependabot watches actions and Go modules weekly.
+  property job at a deepened budget), and `release.yml` (verify, then a
+  draft-only release job that is the sole holder of `contents: write`).
+  Dependabot watches actions and Go modules weekly. *`release.yml` was replaced
+  before any of this was released — see* **Release automation** *above for the
+  two workflows that supersede it and why the tag-triggered shape could not
+  work.*
 - `.go-mutants.toml`, the configuration this project will dogfood itself with,
   written out in full with comments so the v1 surface is reviewable before the
   strict decoder exists.

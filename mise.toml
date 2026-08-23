@@ -56,7 +56,7 @@ description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linte
 run = [
   "golangci-lint run",
   "typos",
-  "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml",
+  "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml",
   "actionlint",
   "yamllint .github lefthook.yml .golangci.yml",
   "gitleaks dir . --no-banner --redact --verbose",

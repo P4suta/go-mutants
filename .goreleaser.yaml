@@ -89,8 +89,33 @@ release:
   github:
     owner: P4suta
     name: go-mutants
-  # goreleaser owns the GitHub release, and it only ever drafts one. Publishing
-  # stays a human decision made against the release checklist.
-  draft: true
-  replace_existing_draft: true
-  prerelease: auto
+  # goreleaser no longer owns the GitHub release. release-please creates it,
+  # carrying notes generated from the conventional-commit subjects, and
+  # goreleaser finds it already there and attaches the archives to it. Which
+  # means this block is now about *not* undoing what release-please said.
+  #
+  # `keep-existing` is goreleaser's default and is written out anyway, because
+  # the default is the whole point here: `replace` would overwrite the release
+  # notes with goreleaser's own changelog, and the difference between the two
+  # is a silent one -- the archives attach either way.
+  mode: keep-existing
+  # `draft` and `replace_existing_draft` were here and are gone. Publishing is
+  # no longer goreleaser's decision to defer: the human approval moved to the
+  # `release` environment's required reviewer, which gates the whole publish
+  # workflow before a single byte is built. A draft-only release under that
+  # design would be a second approval for the same decision, and
+  # `replace_existing_draft` would mean the retry path could delete the
+  # release release-please had already published.
+  #
+  # `prerelease` was `auto`, which reads the tag: `v0.1.0` carries no
+  # prerelease component, so `auto` resolves to false -- and goreleaser sends
+  # the flag on every run, including runs against a release that already
+  # exists. That would flip release-please's prerelease release to a stable
+  # one on the way past. It mirrors `prerelease` in release-please-config.json
+  # instead; the two are changed together or not at all.
+  prerelease: true
+  # An `inputs.tag` retry of the publish workflow rebuilds dist/ from scratch
+  # and re-uploads archives whose names already exist on the release, which
+  # GitHub answers with a 422. Retrying is a designed-for path here, so the
+  # replacement is enabled rather than left to fail.
+  replace_existing_artifacts: true

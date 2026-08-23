@@ -158,10 +158,24 @@ go-mutants init              # write a commented .go-mutants.toml (optional)
 go-mutants run
 ```
 
-Building from a checkout is not one option among several; it is the only one.
-The repository is not published and nothing is tagged, so there is no module
-version for `go install …@latest` to resolve and no commit anyone could pin.
-That line belongs in this block once `v0.1.0` exists, and not before.
+Building from a checkout is not one option among several; it is currently the
+only one. Nothing is tagged yet, so there is no module version for
+`go install …@latest` to resolve.
+
+Once `v0.1.0` is released, the checkout stops being a prerequisite and the
+first line becomes:
+
+```console
+go install github.com/P4suta/go-mutants/cmd/go-mutants@latest
+```
+
+**That command does not work yet, and will not until the first release
+exists.** It is written down now because the release automation that produces
+that tag is in this tree — see [`docs/release-checklist.md`](docs/release-checklist.md)
+— and because a binary installed that way still reports its own version
+correctly: the module proxy records what it fetched, and `go-mutants --version`
+reads it back out of the build information when no release stamped anything.
+Pin a specific release with `@v0.1.0` rather than `@latest` in CI.
 
 `go install` writes the binary into `go env GOPATH`/bin. If that directory is
 not on your `PATH`, the three commands after `cd` still work — invoke the binary
