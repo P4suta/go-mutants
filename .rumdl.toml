@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# rumdl's defaults are the house style for every hand-written Markdown file in
+# this repository, and this file exists to keep exactly one machine-written one
+# out of them.
+
+[global]
+# release-please writes .release-please/CHANGELOG.generated.md in the Release
+# PR, in its own house style: two blank lines under every heading, which is
+# MD012. Nothing in this repository can influence that, and a lint job that
+# fails on the file release-please just wrote would fail every release rather
+# than catch anything. The narrative CHANGELOG.md — the one a human writes and
+# the one docs/release-checklist.md calls authoritative — is deliberately not
+# excluded and is still linted like every other page.
+exclude = [".release-please"]
