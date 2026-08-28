@@ -85,6 +85,80 @@ func TestRunOneSurvivesWhenEveryBinaryPasses(t *testing.T) {
 	}
 }
 
+// TestRunOnePassesTargetArgumentsAndUsesTheSuppliedEnvironment is the bridge
+// contract: one compiled binary can be reused for a named TestX or FuzzX, and a
+// long-lived caller can freeze the environment instead of consulting global
+// process state at every execution.
+func TestRunOnePassesTargetArgumentsAndUsesTheSuppliedEnvironment(t *testing.T) {
+	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+	opts := options(f, 1)
+	opts.Env = []string{
+		"FROZEN=value",
+		"GO_MUTANTS_ACTIVE=from-caller",
+		"TMP=from-caller",
+		"TEMP=from-caller",
+		"TMPDIR=from-caller",
+	}
+	opts.ScratchDir = t.TempDir()
+
+	attempt := execute.RunOne(t.Context(), opts, execute.MutantRun{
+		ID:      "abc123",
+		Timeout: mutantTimeout,
+		Args:    []string{"-test.run=^TestRoundTrip$", "-test.count=1"},
+	}, testBins("example.com/a"))
+	if attempt.Outcome != mutation.OutcomeSurvived {
+		t.Fatalf("outcome = %s, want %s (%v)", attempt.Outcome, mutation.OutcomeSurvived, attempt.Err)
+	}
+	seen := f.seen()
+	if len(seen) != 1 {
+		t.Fatalf("started %d processes, want 1", len(seen))
+	}
+	wantArgs := []string{
+		"example.com/a.test",
+		"-test.timeout=14s",
+		"-test.run=^TestRoundTrip$",
+		"-test.count=1",
+	}
+	if !slices.Equal(seen[0].Argv, wantArgs) {
+		t.Errorf("argv = %q, want %q", seen[0].Argv, wantArgs)
+	}
+	if got := envValue(seen[0].Env, "FROZEN"); got != "value" {
+		t.Errorf("FROZEN = %q, want value", got)
+	}
+	if got := envValue(seen[0].Env, instrument.ActiveEnv); got != "abc123" {
+		t.Errorf("%s = %q, want abc123", instrument.ActiveEnv, got)
+	}
+	for _, key := range []string{"TMP", "TEMP", "TMPDIR"} {
+		if got := envValue(seen[0].Env, key); got != opts.ScratchDir {
+			t.Errorf("%s = %q, want %q", key, got, opts.ScratchDir)
+		}
+	}
+}
+
+func TestRunOneRefusesATargetTimeoutOverride(t *testing.T) {
+	for _, argument := range []string{
+		"-test.timeout=0",
+		"-test.timeout",
+		"--test.timeout=0",
+		"--test.timeout",
+	} {
+		t.Run(argument, func(t *testing.T) {
+			f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+			attempt := execute.RunOne(t.Context(), options(f, 1), execute.MutantRun{
+				ID:      "abc123",
+				Timeout: mutantTimeout,
+				Args:    []string{argument},
+			}, testBins("example.com/a"))
+			if got := execute.CodeOf(attempt.Err); got != execute.CodeMutantInvalid {
+				t.Errorf("code = %q, want %q (%v)", got, execute.CodeMutantInvalid, attempt.Err)
+			}
+			if got := len(f.seen()); got != 0 {
+				t.Errorf("started %d processes, want none", got)
+			}
+		})
+	}
+}
+
 // TestRunOneReportsAStaleCatalogRatherThanAKill pins the exit status that must
 // never be mistaken for a detection.
 //

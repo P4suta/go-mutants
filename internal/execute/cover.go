@@ -122,7 +122,7 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 			// No activation, and the same composed environment a mutant gets:
 			// a profile taken under a different environment would describe a
 			// different program from the one the mutants are measured in.
-			Env:     baseEnv(scratch),
+			Env:     baseEnvFrom(opts.Env, scratch),
 			Timeout: opts.Timeout,
 		})
 		if err := commandFailure(ctx, result, CodeCoverageFailed,

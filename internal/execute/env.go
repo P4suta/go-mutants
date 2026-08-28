@@ -37,7 +37,16 @@ var tempKeys = []string{"TMP", "TEMP", "TMPDIR"}
 // part of what "the tests pass here" means, and a run that stripped them would
 // be measuring a different project.
 func baseEnv(scratch string) []string {
-	source := os.Environ()
+	return baseEnvFrom(nil, scratch)
+}
+
+// baseEnvFrom is baseEnv with an explicit source environment. A nil source
+// preserves os/exec's inheritance convention; a non-nil source is copied and
+// sanitised without consulting process-global state.
+func baseEnvFrom(source []string, scratch string) []string {
+	if source == nil {
+		source = os.Environ()
+	}
 	env := make([]string, 0, len(source)+len(tempKeys)+2)
 	for _, entry := range source {
 		key, _, _ := strings.Cut(entry, "=")
@@ -73,8 +82,8 @@ func baseEnv(scratch string) []string {
 //     which `go` runs — os/exec resolved that from [gocmd.Toolchain.GoBin]
 //     already — it decides what that `go` sees, because a toolchain that finds
 //     a different one ahead of it on PATH can hand work to it.
-func toolchainEnv(toolchain gocmd.Toolchain, scratch string) []string {
-	env := setEnv(baseEnv(scratch), "GOWORK", "off")
+func toolchainEnvFrom(source []string, toolchain gocmd.Toolchain, scratch string) []string {
+	env := setEnv(baseEnvFrom(source, scratch), "GOWORK", "off")
 	return prependPath(env, toolchain)
 }
 
@@ -84,9 +93,13 @@ func toolchainEnv(toolchain gocmd.Toolchain, scratch string) []string {
 // It is [baseEnv] and nothing else. A test binary is the user's program, and
 // the fewer variables go-mutants invents around it the closer the measurement
 // is to what `go test` would have produced — so the toolchain settings that
-// [toolchainEnv] pins for the build are deliberately not applied here.
+// [toolchainEnvFrom] pins for the build are deliberately not applied here.
 func mutantEnv(active, scratch string) []string {
-	return append(baseEnv(scratch), instrument.ActiveEnv+"="+active)
+	return mutantEnvFrom(nil, active, scratch)
+}
+
+func mutantEnvFrom(source []string, active, scratch string) []string {
+	return append(baseEnvFrom(source, scratch), instrument.ActiveEnv+"="+active)
 }
 
 // isTempKey reports whether key is one of the temporary-directory variables.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/operatorselect"
 )
 
 // SelectRules resolves a configured selection into the rules discovery runs.
@@ -26,31 +27,15 @@ import (
 // select identically: a listing that showed a mutant a run would not execute,
 // or the other way round, would make `--mutant` unusable. Both call this.
 func SelectRules(cfg config.Config) ([]mutation.Rule, error) {
-	registry := mutation.CanonicalRegistry()
-	if len(cfg.Mutation.Operators) == 0 {
-		return registry.SelectTier(cfg.Mutation.Profile), nil
-	}
-	selected := make(map[string]bool)
-	for _, name := range cfg.Mutation.Operators {
-		named, ok := OperatorRules(registry, name)
-		if !ok {
-			return nil, &Error{
-				Code: CodeUnknownOperator,
-				Message: "unknown operator " + strconv.Quote(name) +
-					": expected an operator family or a rule name from the v1 catalogue",
-			}
-		}
-		for _, rule := range named {
-			selected[rule.Name] = true
+	rules, unknown := operatorselect.Select(cfg.Mutation.Profile, cfg.Mutation.Operators)
+	if unknown != "" {
+		return nil, &Error{
+			Code: CodeUnknownOperator,
+			Message: "unknown operator " + strconv.Quote(unknown) +
+				": expected an operator family or a rule name from the v1 catalogue",
 		}
 	}
-	out := make([]mutation.Rule, 0, len(selected))
-	for _, rule := range registry.Rules() {
-		if selected[rule.Name] {
-			out = append(out, rule)
-		}
-	}
-	return out, nil
+	return rules, nil
 }
 
 // OperatorRules resolves one operator name to the rules it stands for: a family
@@ -62,11 +47,5 @@ func SelectRules(cfg config.Config) ([]mutation.Rule, error) {
 // lookup, and a warning that describes a selection nobody made is worse than no
 // warning.
 func OperatorRules(registry *mutation.Registry, name string) ([]mutation.Rule, bool) {
-	if _, ok := registry.FamilyPosition(mutation.Family(name)); ok {
-		return registry.FamilyRules(mutation.Family(name)), true
-	}
-	if rule, ok := registry.Lookup(name); ok {
-		return []mutation.Rule{rule}, true
-	}
-	return nil, false
+	return operatorselect.Resolve(registry, name)
 }

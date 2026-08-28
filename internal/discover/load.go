@@ -62,13 +62,13 @@ type loadResult struct {
 }
 
 // load runs the package loader over the whole snapshot.
-func load(ctx context.Context, root string, toolchain gocmd.Toolchain) (*loadResult, error) {
+func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv []string) (*loadResult, error) {
 	fset := token.NewFileSet()
 	cfg := &packages.Config{
 		Context: ctx,
 		Mode:    loadMode,
 		Dir:     root,
-		Env:     environment(toolchain),
+		Env:     environmentFrom(baseEnv, toolchain),
 		Fset:    fset,
 		// Test files are loaded and type-checked but never mutated. They are
 		// here because a tree whose tests do not compile is not a tree that can
@@ -129,7 +129,16 @@ func toolchainHint(toolchain gocmd.Toolchain) string {
 // binary sees: a `go` that finds a different `go` ahead of it on PATH can hand
 // work to it, and the toolchain line in a go.mod is resolved the same way.
 func environment(toolchain gocmd.Toolchain) []string {
-	env := setEnv(os.Environ(), "GOWORK", "off")
+	return environmentFrom(nil, toolchain)
+}
+
+func environmentFrom(base []string, toolchain gocmd.Toolchain) []string {
+	if base == nil {
+		base = os.Environ()
+	} else {
+		base = slices.Clone(base)
+	}
+	env := setEnv(base, "GOWORK", "off")
 	if toolchain.GoBin == "" {
 		return env
 	}

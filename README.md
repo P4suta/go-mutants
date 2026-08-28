@@ -304,6 +304,56 @@ mise run bootstrap
 mise run check
 ```
 
+## Engine API
+
+The module root also exposes package `github.com/P4suta/go-mutants` for tools
+that need mutation as an engine rather than as a score-producing command. It
+keeps the same safety boundary: `Open` freezes a disposable snapshot,
+`Workspace.Exec` runs a shell-free baseline inside it, and `Prepare` discovers,
+compile-validates, instruments, and builds the selected test binaries once.
+`Session.Exec` can then reuse those binaries for any number of mutant and
+top-level test or fuzz-target combinations.
+
+```go
+workspace, err := gomutants.Open(ctx, ".")
+if err != nil {
+	return err
+}
+defer workspace.Close()
+
+baseline, err := workspace.Exec(ctx, gomutants.Command{
+	Argv: []string{"go", "test", "./..."},
+})
+if err != nil {
+	return err
+}
+if baseline.TimedOut || baseline.ExitCode != 0 {
+	return fmt.Errorf("baseline failed with exit %d", baseline.ExitCode)
+}
+
+session, err := workspace.Prepare(ctx, gomutants.PrepareOptions{
+	Profile: "strong",
+})
+if err != nil {
+	return err
+}
+defer session.Close()
+
+result, err := session.Exec(ctx, gomutants.ExecRequest{
+	Mutant: mutantID,
+	Package: "example.com/project/internal/codec",
+	Args: []string{"-test.run=^TestRoundTrip$"},
+})
+```
+
+Use standard test-binary flags such as `-test.run=^TestX$` and
+`-test.fuzz=^FuzzX$`; the API defines no second test DSL. Commands and targets
+may add ordinary `KEY=VALUE` environment entries, while `GO_MUTANTS_*` and the
+temporary-directory variables remain reserved. `Session.Changes` reports, in
+stable path order, anything a target wrote into the prepared snapshot. Public
+values use only standard-library types; discovery, instrumentation, runner, and
+report internals do not cross the package boundary.
+
 ## Safety model
 
 - **Your tree is read-only.** Discovery reads it; every build, edit, and test

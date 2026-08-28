@@ -76,6 +76,36 @@ func TestEnvironmentLeavesPathAloneWithoutAToolchain(t *testing.T) {
 	}
 }
 
+// TestEnvironmentFromUsesTheFrozenBase pins the public-session case. Once a
+// workspace has opened, a later edit to process-global environment must not
+// change which build tags, module settings, credentials, or cache inputs its
+// discovery pass observes.
+func TestEnvironmentFromUsesTheFrozenBase(t *testing.T) {
+	dir := filepath.Join("frozen", "go", "bin")
+	base := []string{
+		"PATH=" + filepath.Join("frozen", "path"),
+		"FROZEN=value",
+		"GOWORK=" + filepath.Join("elsewhere", "go.work"),
+	}
+	t.Setenv("FROZEN", "ambient")
+	t.Setenv("AMBIENT_ONLY", "must-not-appear")
+
+	env := environmentFrom(base, gocmd.Toolchain{GoBin: filepath.Join(dir, "go")})
+	if got := lookupEnv(env, "FROZEN"); len(got) != 1 || got[0] != "value" {
+		t.Errorf("FROZEN = %v, want the captured value", got)
+	}
+	if got := lookupEnv(env, "AMBIENT_ONLY"); len(got) != 0 {
+		t.Errorf("AMBIENT_ONLY = %v, want the later ambient value excluded", got)
+	}
+	if got := lookupEnv(env, "GOWORK"); len(got) != 1 || got[0] != "off" {
+		t.Errorf("GOWORK = %v, want off", got)
+	}
+	path := lookupEnv(env, "PATH")
+	if len(path) != 1 || !strings.HasPrefix(path[0], dir+string(filepath.ListSeparator)) {
+		t.Errorf("PATH = %v, want the toolchain before the captured PATH", path)
+	}
+}
+
 // TestEnvironmentSwitchesWorkspaceModeOff is the guarantee behind
 // [CodeWorkspace]: refusing a `go.work` at the snapshot root only settles the
 // file that is in the snapshot, and the go command would find one in a parent
