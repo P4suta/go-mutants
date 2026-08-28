@@ -384,13 +384,29 @@ func prepareFuzzWorkspace(root, destination string, binaries []execute.TestBinar
 	}
 	cloned := slices.Clone(binaries)
 	for i := range cloned {
-		relative, err := filepath.Rel(root, cloned[i].Dir)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		relative, err := snapshotRelativePath(root, cloned[i].Dir)
+		if err != nil {
 			return nil, fmt.Errorf("test package %q is outside the snapshot", cloned[i].ImportPath)
 		}
 		cloned[i].Dir = filepath.Join(destination, relative)
 	}
 	return cloned, nil
+}
+
+func snapshotRelativePath(root, path string) (string, error) {
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	canonicalPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(canonicalRoot, canonicalPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("path is outside the snapshot")
+	}
+	return relative, nil
 }
 
 func copyTree(source, destination string) error {
