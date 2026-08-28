@@ -35,7 +35,7 @@ body:
     attributes:
       label: Environment
       description: Include OS, architecture, and Go toolchain version.
-      placeholder: Windows 11 x64; go1.26.5
+      placeholder: Windows 11 x64; go1.26.6
     validations:
       required: true
   - type: textarea
