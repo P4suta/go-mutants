@@ -64,6 +64,7 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.Rejection{}
 	_ = gomutants.ExecRequest{}
 	_ = gomutants.MutantResult{}
+	_ = gomutants.Artifact{}
 	_ = gomutants.Change{}
 	_ = gomutants.OutcomeKilled
 	_ = gomutants.ChangeAdded

@@ -5,8 +5,12 @@ package gomutants
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,6 +38,9 @@ const (
 	defaultBuildTimeout  = 10 * time.Minute
 	sessionPrefix        = "session-"
 	execPrefix           = "exec-"
+	maximumArtifacts     = 128
+	maximumArtifactBytes = 2 << 20
+	maximumArtifactsSize = 16 << 20
 )
 
 // Session is a discovered, validated, instrumented snapshot with test binaries
@@ -328,12 +335,22 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	opts := s.executeOptions
 	opts.ScratchDir = scratch
 	opts.Env = env
+	runBinaries := s.binaries
+	artifactRoot := ""
+	if hasFuzzTarget(request.Args) {
+		artifactRoot = filepath.Join(scratch, "fuzz-workspace")
+		runBinaries, err = prepareFuzzWorkspace(s.root, artifactRoot, s.binaries)
+		if err != nil {
+			return MutantResult{}, fmt.Errorf("gomutants: session exec fuzz workspace: %w", err)
+		}
+	}
 	attempt := execute.RunOne(ctx, opts, execute.MutantRun{
 		ID:       mutant.ID,
 		Timeout:  timeout,
 		Binaries: binaryIndexes,
 		Args:     targetArgs,
-	}, s.binaries)
+	}, runBinaries)
+	artifacts, artifactErr := captureFuzzArtifacts(artifactRoot)
 	result := MutantResult{
 		ID:         mutant.ID,
 		DisplayID:  mutant.DisplayID,
@@ -341,6 +358,10 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		KilledBy:   attempt.KilledBy,
 		Duration:   attempt.Duration,
 		OutputTail: attempt.OutputTail,
+		Artifacts:  artifacts,
+	}
+	if artifactErr != nil {
+		return result, fmt.Errorf("gomutants: session exec artifacts: %w", artifactErr)
 	}
 	if attempt.Err != nil {
 		return result, fmt.Errorf("gomutants: session exec: %w", attempt.Err)
@@ -349,6 +370,126 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return result, fmt.Errorf("gomutants: session exec: %w", err)
 	}
 	return result, nil
+}
+
+func hasFuzzTarget(arguments []string) bool {
+	return slices.ContainsFunc(arguments, func(argument string) bool {
+		return testflag.Match(argument, "test.fuzz")
+	})
+}
+
+func prepareFuzzWorkspace(root, destination string, binaries []execute.TestBinary) ([]execute.TestBinary, error) {
+	if err := copyTree(root, destination); err != nil {
+		return nil, err
+	}
+	cloned := slices.Clone(binaries)
+	for i := range cloned {
+		relative, err := filepath.Rel(root, cloned[i].Dir)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("test package %q is outside the snapshot", cloned[i].ImportPath)
+		}
+		cloned[i].Dir = filepath.Join(destination, relative)
+	}
+	return cloned, nil
+}
+
+func copyTree(source, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if entry.Type()&fs.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("refuses non-regular fuzz-workspace entry %s", relative)
+		}
+		input, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			_ = input.Close()
+			return err
+		}
+		_, copyErr := io.Copy(output, input)
+		closeOutErr := output.Close()
+		closeInErr := input.Close()
+		return errors.Join(copyErr, closeOutErr, closeInErr)
+	})
+}
+
+func captureFuzzArtifacts(root string) ([]Artifact, error) {
+	if root == "" {
+		return nil, nil
+	}
+	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	artifacts := make([]Artifact, 0)
+	total := int64(0)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("refuses symbolic link %s", path)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("refuses irregular artifact %s", path)
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		header := make([]byte, len("go test fuzz v1\n"))
+		_, headerErr := io.ReadFull(file, header)
+		_ = file.Close()
+		if headerErr != nil || string(header) != "go test fuzz v1\n" {
+			return nil
+		}
+		if info.Size() > maximumArtifactBytes || total+info.Size() > maximumArtifactsSize || len(artifacts) >= maximumArtifacts {
+			return fmt.Errorf("fuzz artifacts exceed the session capture limit")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		artifacts = append(artifacts, Artifact{
+			Path: filepath.ToSlash(relative), SHA256: hex.EncodeToString(sum[:]), Data: data,
+		})
+		total += info.Size()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(artifacts, func(a, b Artifact) int { return strings.Compare(a.Path, b.Path) })
+	return artifacts, nil
 }
 
 // sessionTargetArgs supplies the one flag cmd/go normally adds around a fuzz

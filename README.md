@@ -352,7 +352,10 @@ may add ordinary `KEY=VALUE` environment entries, while `GO_MUTANTS_*` and the
 temporary-directory variables remain reserved. `Session.Changes` reports, in
 stable path order, anything a target wrote into the prepared snapshot. Public
 values use only standard-library types; discovery, instrumentation, runner, and
-report internals do not cross the package boundary.
+report internals do not cross the package boundary. A fuzz target that writes
+standard `go test fuzz v1` inputs into its private cache returns bounded copies
+as `MutantResult.Artifacts` before that cache is removed, so a caller can
+validate and promote a killing input without retaining session scratch.
 
 ## Safety model
 

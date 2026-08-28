@@ -162,6 +162,15 @@ type MutantResult struct {
 	KilledBy   string
 	Duration   time.Duration
 	OutputTail string
+	Artifacts  []Artifact
+}
+
+// Artifact is one bounded standard fuzz-corpus file captured before a target's
+// private execution scratch is removed.
+type Artifact struct {
+	Path   string
+	SHA256 string
+	Data   []byte
 }
 
 // ChangeKind describes how a prepared snapshot moved while targets ran.

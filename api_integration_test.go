@@ -50,6 +50,19 @@ func FuzzSessionIdentity(f *testing.F) {
 	})
 }
 
+func FuzzSessionClamp(f *testing.F) {
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, input []byte) {
+		value := 5
+		if len(input) > 0 {
+			value = 10
+		}
+		if got := Clamp(value, 0, 10); got != map[bool]int{true: 9, false: 5}[len(input) > 0] {
+			t.Fatalf("Clamp(%d, 0, 10) = %d", value, got)
+		}
+	})
+}
+
 func TestSessionBlocks(t *testing.T) {
 	time.Sleep(10 * time.Second)
 }
@@ -173,6 +186,31 @@ func TestSessionBlocks(t *testing.T) {
 	}
 	if killed.Outcome != gomutants.OutcomeKilled || killed.KilledBy != "fixture.example/killable" {
 		t.Errorf("clamp result = %+v, want a package-local kill", killed)
+	}
+	fuzzKilled, err := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  clamp.DisplayID,
+		Package: "fixture.example/killable",
+		Args: []string{
+			"-test.run=^$",
+			"-test.fuzz=^FuzzSessionClamp$",
+			"-test.fuzztime=5s",
+		},
+	})
+	if err != nil {
+		t.Fatalf("fuzzing the clamp mutant: %v", err)
+	}
+	if fuzzKilled.Outcome != gomutants.OutcomeKilled || len(fuzzKilled.Artifacts) == 0 {
+		t.Fatalf("fuzz kill = %+v, want a kill with captured standard corpus artifacts", fuzzKilled)
+	}
+	if !slices.ContainsFunc(fuzzKilled.Artifacts, func(artifact gomutants.Artifact) bool {
+		return strings.HasPrefix(string(artifact.Data), "go test fuzz v1\n") && artifact.SHA256 != "" && artifact.Path != ""
+	}) {
+		t.Errorf("artifacts = %+v, want standard Go fuzz encoding", fuzzKilled.Artifacts)
+	}
+	if changes, changesErr := session.Changes(); changesErr != nil {
+		t.Fatalf("checking snapshot after fuzz: %v", changesErr)
+	} else if len(changes) != 0 {
+		t.Fatalf("fuzz target changed the prepared snapshot: %+v", changes)
 	}
 	fuzzed, err := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:  untested.DisplayID,

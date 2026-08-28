@@ -234,6 +234,32 @@ func TestSessionTargetArgsRecognisesBothStandardFlagPrefixes(t *testing.T) {
 	}
 }
 
+func TestCaptureFuzzArtifactsIsSortedAndBoundedToRegularFiles(t *testing.T) {
+	root := t.TempDir()
+	for name, contents := range map[string]string{
+		"z/hash": "go test fuzz v1\n[]byte(\"z\")\n",
+		"a/hash": "go test fuzz v1\n[]byte(\"a\")\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artifacts, err := captureFuzzArtifacts(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 2 || artifacts[0].Path != "a/hash" || artifacts[1].Path != "z/hash" {
+		t.Fatalf("artifacts = %+v", artifacts)
+	}
+	if artifacts[0].SHA256 == "" || len(artifacts[0].Data) == 0 {
+		t.Errorf("artifact lacks digest or bytes: %+v", artifacts[0])
+	}
+}
+
 func environmentValue(env []string, name string) string {
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
