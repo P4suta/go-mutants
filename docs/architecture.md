@@ -416,6 +416,7 @@ is the whole of what was asked for and a failure is an error.
 
 | Package | Responsibility | Status |
 | --- | --- | --- |
+| module root (`gomutants`) | Public frozen-workspace and reusable-session API | implemented |
 | `cmd/go-mutants` | Thin main | implemented |
 | `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | `run`, `list` |
 | `internal/config` | Strict TOML decode and precedence merge | implemented |
@@ -431,6 +432,9 @@ is the whole of what was asked for and a failure is an error.
 | `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
 | `internal/execute` | Test-binary build, scheduling, timeout retry | implemented |
+| `internal/operatorselect` | Shared profile/family/rule selection | implemented |
+| `internal/drift` | Shared instrumentation-aware snapshot drift gate | implemented |
+| `internal/testflag` | Shared Go test-binary flag recognition | implemented |
 | `internal/report` | RunReport, projections, HTML, history, merge | implemented |
 | `internal/engine` | Orchestration, typestate pipeline, events | implemented |
 | `internal/console` | Deterministic plain-line renderer | implemented |

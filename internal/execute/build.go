@@ -137,6 +137,18 @@ type Options struct {
 	// from under itself.
 	ScratchDir string
 
+	// Env is the complete base environment for toolchain commands, coverage
+	// runs, and mutant test processes. Nil inherits the current process
+	// environment. The execution layer always removes GO_MUTANTS_ activation
+	// variables and redirects temporary-directory variables before starting a
+	// child, so callers cannot accidentally pre-activate a mutant or send test
+	// debris into the snapshot.
+	//
+	// Keeping the environment on Options lets a long-lived public session
+	// freeze it at open time. The CLI leaves this nil and retains its historical
+	// behaviour of inheriting the environment of the run.
+	Env []string
+
 	// Jobs is how many test binaries are compiled, and how many mutants are
 	// executed, at once. Zero or negative means one: silently serialising is a
 	// slow run, and silently parallelising is a machine brought to its knees by
@@ -410,7 +422,7 @@ func listPackages(ctx context.Context, opts Options) ([]listedPackage, error) {
 	args := append([]string{"list", "-json=" + listFields}, opts.patterns()...)
 	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
-	spec.Env = toolchainEnv(opts.Toolchain, "")
+	spec.Env = toolchainEnvFrom(opts.Env, opts.Toolchain, "")
 	spec.Timeout = opts.Timeout
 	spec.OutputLimit = listOutputLimit
 
@@ -530,7 +542,7 @@ func compile(ctx context.Context, opts Options, bin TestBinary) error {
 
 	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
-	spec.Env = gocmd.AppendGoflags(toolchainEnv(opts.Toolchain, ""), gocmd.VetOff)
+	spec.Env = gocmd.AppendGoflags(toolchainEnvFrom(opts.Env, opts.Toolchain, ""), gocmd.VetOff)
 	spec.Timeout = opts.Timeout
 
 	result := opts.runProcess(ctx, spec)

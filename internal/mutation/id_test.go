@@ -363,6 +363,7 @@ func TestNormalizePath(t *testing.T) {
 		// that is not a letter is a directory whose name contains a colon,
 		// which POSIX allows, and rejecting it would refuse a legal path.
 		{name: "bare volume name", in: "c:", wantErr: ErrAbsolutePath},
+		{name: "dot slash before volume name", in: "./A:", wantErr: ErrAbsolutePath},
 		{name: "first lowercase volume name", in: `a:\repo\score.go`, wantErr: ErrAbsolutePath},
 		{name: "last lowercase volume name", in: `z:\repo\score.go`, wantErr: ErrAbsolutePath},
 		{name: "first uppercase volume name", in: `A:\repo\score.go`, wantErr: ErrAbsolutePath},

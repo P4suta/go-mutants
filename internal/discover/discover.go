@@ -38,6 +38,13 @@ type Options struct {
 	// does and does not achieve.
 	Toolchain gocmd.Toolchain
 
+	// Env is the complete base environment used by the package loader. Nil
+	// inherits the current process environment. Discovery still forces
+	// GOWORK=off and prepends the located toolchain's directory to PATH. The
+	// field allows a long-lived public workspace to freeze all other build
+	// inputs at Open time instead of observing later process-global changes.
+	Env []string
+
 	// Rules selects the operators to apply. Empty means every rule this phase
 	// implements, which is what [SupportedRules] returns. Rules the canonical
 	// registry does not know are an error; rules it knows but this phase has
@@ -380,7 +387,7 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	loaded, err := load(ctx, root, opts.Toolchain)
+	loaded, err := load(ctx, root, opts.Toolchain, opts.Env)
 	if err != nil {
 		return Result{}, err
 	}

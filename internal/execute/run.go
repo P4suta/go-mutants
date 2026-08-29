@@ -14,6 +14,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/testflag"
 )
 
 // InProcessTimeoutFactor multiplies a mutant's timeout to get the
@@ -61,6 +62,14 @@ type MutantRun struct {
 	// and duplicates are not removed: this package runs what it is told to run,
 	// and a caller that wants each binary once passes each index once.
 	Binaries []int
+
+	// Args are passed verbatim to each selected Go test binary after the
+	// harness-owned timeout flag. They make one prepared binary reusable for a
+	// top-level test, a fuzz target, or an ordinary whole-package run without
+	// invoking a shell or rebuilding it. A caller may not supply -test.timeout:
+	// the outer process-tree supervisor and the later in-process deadline are a
+	// paired safety boundary and cannot be overridden per target.
+	Args []string
 }
 
 // An Attempt is one pass over the test binaries with one mutant active.
@@ -133,6 +142,9 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 				" has no test binaries to be measured against; reporting it as survived would be a green produced by running nothing",
 		})
 	}
+	if err := validateArgs(m); err != nil {
+		return errored(err)
+	}
 
 	selected, err := selectBinaries(m, bins)
 	if err != nil {
@@ -144,7 +156,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		return errored(err)
 	}
 
-	env := mutantEnv(m.ID, scratch)
+	env := mutantEnvFrom(opts.Env, m.ID, scratch)
 	// A duration string rather than a number of seconds: `-test.timeout` takes
 	// Go's own duration syntax, and rendering it that way keeps sub-second
 	// budgets from truncating to `0`.
@@ -160,8 +172,11 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			return attempt
 		}
 
+		argv := make([]string, 0, len(m.Args)+2)
+		argv = append(argv, bin.BinPath, deadline)
+		argv = append(argv, m.Args...)
 		result := opts.runProcess(ctx, runner.Spec{
-			Argv:    []string{bin.BinPath, deadline},
+			Argv:    argv,
 			Dir:     bin.Dir,
 			Env:     env,
 			Timeout: m.Timeout,
@@ -221,6 +236,23 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		}
 	}
 	return attempt
+}
+
+// validateArgs protects the timeout owned by RunOne. Both spellings accepted
+// by the standard flag package are refused, including the separated value
+// form; allowing either would let a target turn off the in-process half of the
+// timeout guarantee while the public API still claimed the supplied budget.
+func validateArgs(m MutantRun) error {
+	for _, arg := range m.Args {
+		if testflag.Match(arg, "test.timeout") {
+			return &Error{
+				Code: CodeMutantInvalid,
+				Message: "the mutant " + display(m.ID) +
+					" target overrides -test.timeout, which is reserved by the process supervisor",
+			}
+		}
+	}
+	return nil
 }
 
 // selectBinaries resolves [MutantRun.Binaries] against the binaries this run

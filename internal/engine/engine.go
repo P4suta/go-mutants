@@ -20,6 +20,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/discover"
+	"github.com/P4suta/go-mutants/internal/drift"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/gocmd"
@@ -796,27 +797,12 @@ func (s *session) instrumentedBaseline(
 // not among either, because internal/execute refuses a binary directory inside
 // the snapshot for precisely this reason.
 func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result) error {
-	drifts, err := snap.Redigest()
+	unexpected, err := drift.Unexpected(snap, instrumented)
 	if err != nil {
 		return &Error{
 			Code:    CodeWorkspaceDrift,
 			Message: "the snapshot could not be checked for drift after the instrumented baseline",
 			Err:     err,
-		}
-	}
-	guarded := make(map[string]bool, len(instrumented.FilesInstrumented))
-	for _, path := range instrumented.FilesInstrumented {
-		guarded[path] = true
-	}
-	runtimePrefix := instrumented.RuntimeDir + "/"
-
-	var unexpected []string
-	for _, drift := range drifts {
-		switch {
-		case drift.Kind == snapshot.DriftChanged && guarded[drift.RelPath]:
-		case drift.Kind == snapshot.DriftAdded && strings.HasPrefix(drift.RelPath, runtimePrefix):
-		default:
-			unexpected = append(unexpected, drift.Kind.String()+" "+drift.RelPath)
 		}
 	}
 	if len(unexpected) == 0 {

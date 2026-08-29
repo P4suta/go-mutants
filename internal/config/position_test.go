@@ -139,6 +139,17 @@ func TestIndexPositionsInlineTables(t *testing.T) {
 	}
 }
 
+func TestIndexPositionsUsesCanonicalKeyCase(t *testing.T) {
+	positions := indexPositions([]byte("version=1\n[CAChe]\ndireCtorY=\"./A:\""))
+	got, ok := positions["cache.directory"]
+	if !ok {
+		t.Fatal("mixed-case known key has no canonical position")
+	}
+	if got.Line != 3 || got.Column != 11 {
+		t.Fatalf("position = %d:%d, want 3:11", got.Line, got.Column)
+	}
+}
+
 // The walk is a diagnostic aid, not a parser. It must survive anything without
 // panicking, because it runs on documents the decoder has already accepted and
 // a crash here would replace a good error message with a stack trace.

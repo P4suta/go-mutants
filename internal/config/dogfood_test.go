@@ -54,6 +54,13 @@ var repositoryExpectations = []Expectation{
 			"already known to differ, so `<` and `<=` are the same test.",
 	},
 	{
+		ID: "9fd083af0792f6b5155cb1cff8883f7a3dce112be8c53e3c92c2ccc0e813044b",
+		Reason: "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; " +
+			"a letter plus colon is rejected by the identical post-clean volume " +
+			"guard immediately below, and every other two-byte path fails the " +
+			"colon-or-letter predicates.",
+	},
+	{
 		ID: "ab63a5a3e327b7db2bbe97d3267ca840cebf9cf54a899f10cdc52a111a398548",
 		Reason: "Equivalent: the comparison sits inside " +
 			"`if x.position != y.position`, where the two registry positions are " +
@@ -104,24 +111,24 @@ var repositoryExpectations = []Expectation{
 			"forwards can only come from WriteLengthPrefixed's 4 GiB field guard.",
 	},
 	{
-		ID: "8ddcd93468242a0aee6129ec36bfb87e0bea490e44641536259cf1dfeb480420",
+		ID: "ce40ad71426f18bdb1c7af2f1ab665321d3b2e150d071e52c39b9c6e38ada90c",
 		Reason: "Unkillable: WriteLengthPrefixed fails only on a field longer " +
 			"than math.MaxUint32 bytes, so entering this branch means hashing an " +
 			"identity whose path is four gigabytes long.",
 	},
 	{
-		ID: "497f2d5af7a1ee6456229c4775efd7e9a76c176fa4c905bda8ea838c8bf28b6c",
+		ID: "feba9b0fd4945263451deb51c5fbe281d6fd97a4c98c181f6aec9eebcab4c2c1",
 		Reason: "Unkillable: the same branch as the row above -- the error this " +
 			"forwards exists only for a field longer than math.MaxUint32 bytes.",
 	},
 	{
-		ID: "17dfea878b710766031649b82b2f13b6a19bd2e46e5f7a8c914d93d129711d10",
+		ID: "e8eb2f6092486a0554da44e0796371ab157e4bf07c574ef16d9ff8ece74f4474",
 		Reason: "Unkillable: `>` and `>=` disagree only on a string of exactly " +
 			"math.MaxUint32 bytes, so telling them apart means allocating four " +
 			"gigabytes in a unit test.",
 	},
 	{
-		ID: "6d6e41c6c98de6b8eb9595c96e140f5d566b68ad43841b968d1a3e5e0f833478",
+		ID: "ad9321c58f07017b27f8a9dd8f1e4acad7a38d4a83a9e100589634d63512117c",
 		Reason: "Unkillable: this return is reached only for a string longer " +
 			"than math.MaxUint32 bytes, so killing it means allocating more than " +
 			"four gigabytes in a unit test.",
