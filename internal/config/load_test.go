@@ -301,6 +301,15 @@ func TestParseRejects(t *testing.T) {
 			message: "not usable as a cache directory",
 		},
 		{
+			name:    "cleaned windows volume cache directory",
+			source:  "version=1\n[CAChe]\ndireCtorY=\"./A:\"",
+			code:    CodeInvalidCacheDirectory,
+			key:     "cache.directory",
+			line:    3,
+			column:  11,
+			message: "not usable as a cache directory",
+		},
+		{
 			name:    "minimum score above the range",
 			source:  "version = 1\n\n[policy]\nminimum_score = 101\n",
 			code:    CodeMinimumScoreOutOfRange,

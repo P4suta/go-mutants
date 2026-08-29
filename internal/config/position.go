@@ -138,6 +138,11 @@ func record(offsets map[string]int, key string, node *unstable.Node) {
 	if key == "" || node == nil || node.Raw.Length == 0 {
 		return
 	}
+	// go-toml matches decoded struct fields case-insensitively, while the
+	// validators name those fields with the schema's canonical lower-case
+	// paths. Index the same canonical spelling so a legal mixed-case spelling
+	// still points at the value that was actually written.
+	key = strings.ToLower(key)
 	offsets[key] = int(node.Raw.Offset)
 }
 

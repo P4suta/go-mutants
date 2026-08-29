@@ -126,6 +126,12 @@ func NormalizePath(p string) (string, error) {
 		return "", fmt.Errorf("%w: %q has a volume name", ErrAbsolutePath, p)
 	}
 	cleaned := path.Clean(slashed)
+	// Cleaning removes a leading "./". Re-check the canonical spelling so
+	// inputs such as "./C:" cannot turn into a Windows volume name only after
+	// the first absolute-path check has already passed.
+	if len(cleaned) >= 2 && cleaned[1] == ':' && isASCIILetter(cleaned[0]) {
+		return "", fmt.Errorf("%w: %q has a volume name", ErrAbsolutePath, p)
+	}
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("%w: %q", ErrEscapingPath, p)
 	}
