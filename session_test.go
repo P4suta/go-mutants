@@ -43,3 +43,27 @@ func TestPrepareFuzzWorkspaceAcceptsAliasedSnapshotParent(t *testing.T) {
 		t.Fatalf("fuzz workspace binaries = %+v", got)
 	}
 }
+
+func TestSelectTestPackagesAcceptsAliasedSnapshotRoot(t *testing.T) {
+	realParent := t.TempDir()
+	realRoot := filepath.Join(realParent, "snapshot")
+	if err := os.MkdirAll(realRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	aliasParent := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(realParent, aliasParent); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	aliasRoot := filepath.Join(aliasParent, "snapshot")
+
+	got, err := selectTestPackages(aliasRoot, []execute.TestBinary{{
+		ImportPath: "fixture.example/root",
+		Dir:        realRoot,
+	}}, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != 0 {
+		t.Fatalf("selected package indexes = %v, want [0]", got)
+	}
+}

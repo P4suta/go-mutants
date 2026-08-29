@@ -38,8 +38,8 @@ profile = "balanced"
 #
 #   internal/mutation/*.go + internal/glob/*.go + internal/interval/*.go
 #
-# catalogues 560 mutants (444 + 68 + 48) and kills 544 of them, which leaves the
-# sixteen rows declared below and a score of 100.00%, in about 1m20s at --jobs 4
+# catalogues 566 mutants (450 + 68 + 48) and kills 549 of them, which leaves the
+# seventeen rows declared below and a score of 100.00%, in about 1m20s at --jobs 4
 # — comfortably inside this gate's budget.
 #
 # internal/mutation was a single file here — shard.go — until its own suites
@@ -78,18 +78,18 @@ exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 id = "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9"
 reason = "Equivalent: Disjoint is the zero value of Relation, being first in its iota block, so `return Disjoint` and `return 0` are the same constant."
 
-# The fifteen rows below are the same kind of row, in internal/mutation: the
+# The sixteen rows below are the same kind of row, in internal/mutation: the
 # survivors there that no honest test can reach. Every survivor a test could pin
 # has a test instead, in that package's own suites, which is why this list is
-# fifteen rows rather than the forty-one the whole-package scope first reported.
+# sixteen rows rather than the forty-one the whole-package scope first reported.
 # Each row says which of four things it is rather than repeating the word
-# "equivalent" fifteen times, because a ledger that argues the same sentence
+# "equivalent" sixteen times, because a ledger that argues the same sentence
 # over and over is the skip list this file refuses to keep.
 #
 # Every one of these ids names a mutant the include list above covers, so all
-# fifteen are catalogued and judged on every run of this gate rather than taken
+# sixteen are catalogued and judged on every run of this gate rather than taken
 # on trust: survival is what fulfills a row, a kill is exit 2, and an id the
-# catalogue no longer holds is stale and exit 2 as well. Ten of them survive a
+# catalogue no longer holds is stale and exit 2 as well. Eleven of them survive a
 # test binary that ran. The other five are reported `survived (uncovered)`
 # without a process being started, because no binary in this scope reaches the
 # line at all -- which is coverage saying, from a cheaper direction, exactly
@@ -110,6 +110,10 @@ reason = "Equivalent: the comparison sits inside `case s.StartByte != other.Star
 [[mutation.expect]]
 id = "b3bc0192a26baa4e0c2080c6abe78d188189d55ed7544392937d5023b498a485"
 reason = "Equivalent: the comparison sits inside `case s.EndByte != other.EndByte`, where the two end bytes are already known to differ, so `<` and `<=` are the same test."
+
+[[mutation.expect]]
+id = "9fd083af0792f6b5155cb1cff8883f7a3dce112be8c53e3c92c2ccc0e813044b"
+reason = "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; a letter plus colon is rejected by the identical post-clean volume guard immediately below, and every other two-byte path fails the colon-or-letter predicates."
 
 [[mutation.expect]]
 id = "ab63a5a3e327b7db2bbe97d3267ca840cebf9cf54a899f10cdc52a111a398548"
@@ -157,19 +161,19 @@ id = "85dc0334ed347973ea6af195207e0cd262ca6a2bfc9c7a710bda312262b5aad7"
 reason = "Unkillable: the same branch as the row above -- the error this forwards can only come from WriteLengthPrefixed's 4 GiB field guard."
 
 [[mutation.expect]]
-id = "8ddcd93468242a0aee6129ec36bfb87e0bea490e44641536259cf1dfeb480420"
+id = "ce40ad71426f18bdb1c7af2f1ab665321d3b2e150d071e52c39b9c6e38ada90c"
 reason = "Unkillable: WriteLengthPrefixed fails only on a field longer than math.MaxUint32 bytes, so entering this branch means hashing an identity whose path is four gigabytes long."
 
 [[mutation.expect]]
-id = "497f2d5af7a1ee6456229c4775efd7e9a76c176fa4c905bda8ea838c8bf28b6c"
+id = "feba9b0fd4945263451deb51c5fbe281d6fd97a4c98c181f6aec9eebcab4c2c1"
 reason = "Unkillable: the same branch as the row above -- the error this forwards exists only for a field longer than math.MaxUint32 bytes."
 
 [[mutation.expect]]
-id = "17dfea878b710766031649b82b2f13b6a19bd2e46e5f7a8c914d93d129711d10"
+id = "e8eb2f6092486a0554da44e0796371ab157e4bf07c574ef16d9ff8ece74f4474"
 reason = "Unkillable: `>` and `>=` disagree only on a string of exactly math.MaxUint32 bytes, so telling them apart means allocating four gigabytes in a unit test."
 
 [[mutation.expect]]
-id = "6d6e41c6c98de6b8eb9595c96e140f5d566b68ad43841b968d1a3e5e0f833478"
+id = "ad9321c58f07017b27f8a9dd8f1e4acad7a38d4a83a9e100589634d63512117c"
 reason = "Unkillable: this return is reached only for a string longer than math.MaxUint32 bytes, so killing it means allocating more than four gigabytes in a unit test."
 
 [test]
@@ -270,10 +274,10 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 560 mutants. Five hundred and
-# forty-four are killed and the other sixteen are the rows declared above, which
-# leave the denominator rather than counting against it, so the measured score
-# is 100.00%, with all sixteen expectations fulfilled and none stale.
+# Measured, not wished for. The scope catalogues 566 mutants. Five hundred and
+# forty-nine are killed and the other seventeen are the rows declared above,
+# which leave the denominator rather than counting against it, so the measured
+# score is 100.00%, with all seventeen expectations fulfilled and none stale.
 # `mise run dogfood` measures between 1m10s and 1m30s at --jobs 4 over five
 # runs, about 1m20s on average, on the machine where the scope before this one
 # -- one file and two packages, 121 mutants -- took 48-50 seconds and the scope
@@ -291,9 +295,9 @@ strict = false
 #                       task and for CI. There is no headroom on that gate at
 #                       all, and none is wanted.
 #   minimum_score = 99  compared against the measured score whether or not
-#                       --strict was passed. Five hundred and forty-four scored
-#                       mutants are worth 0.18 points each, so 539/544 = 99.08%
-#                       clears 99 and 538/544 = 98.90% does not: an ungated
+#                       --strict was passed. Five hundred and forty-nine scored
+#                       mutants are worth 0.18 points each, so 544/549 = 99.09%
+#                       clears 99 and 543/549 = 98.91% does not: an ungated
 #                       `go-mutants run` reports up to five survivors and exits
 #                       0, and fails at six.
 #

@@ -560,6 +560,16 @@ func selectTestPackages(root string, binaries []execute.TestBinary, selected str
 }
 
 func samePath(a, b string) bool {
+	// macOS exposes temporary directories through aliases such as /var and
+	// /private/var. go list may report the canonical spelling while the
+	// workspace retains the spelling returned by os.MkdirTemp, so compare the
+	// filesystem-resolved paths when both still exist.
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(b); err == nil {
+		b = resolved
+	}
 	a = filepath.Clean(a)
 	b = filepath.Clean(b)
 	if runtime.GOOS == "windows" {
