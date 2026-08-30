@@ -33,8 +33,8 @@ func TestPublicSessionSelectsOnlyMutantsOnChangedLines(t *testing.T) {
 	if changed == string(source) {
 		t.Fatal("fixture no longer contains the comparison this test edits")
 	}
-	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
-		t.Fatal(err)
+	if writeErr := os.WriteFile(path, []byte(changed), 0o644); writeErr != nil {
+		t.Fatal(writeErr)
 	}
 
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
