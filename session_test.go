@@ -4,12 +4,48 @@
 package gomutants
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/execute"
 )
+
+func TestPrepareFuzzTemplateReportsCopyFailure(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-snapshot")
+	_, _, err := prepareFuzzTemplate(missing, t.TempDir(), nil)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("prepareFuzzTemplate error = %v, want os.ErrNotExist", err)
+	}
+	if !strings.Contains(err.Error(), "gomutants: prepare fuzz template") {
+		t.Fatalf("prepareFuzzTemplate error = %q, want public operation context", err)
+	}
+}
+
+func TestWorkspacePrepareReportsFuzzTemplateFailure(t *testing.T) {
+	workspace, err := Open(t.Context(), filepath.Join("fixtures", "killable"), OpenOptions{
+		TempDirectory: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if closeErr := workspace.Close(); closeErr != nil {
+			t.Errorf("Close: %v", closeErr)
+		}
+	})
+	forced := errors.New("forced fuzz template failure")
+	workspace.prepareFuzz = func(string, string, []execute.TestBinary) (string, []execute.TestBinary, error) {
+		return "", nil, forced
+	}
+
+	_, err = workspace.Prepare(t.Context(), PrepareOptions{Operators: []string{"comparison"}})
+	if !errors.Is(err, forced) {
+		t.Fatalf("Prepare error = %v, want forced fuzz template failure", err)
+	}
+}
 
 // macOS exposes its temporary directory through both /var and /private/var.
 // Go subprocesses may canonicalise that spelling even though os.MkdirTemp did

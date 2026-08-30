@@ -44,6 +44,11 @@ func TestSessionEnvironment(t *testing.T) {
 func FuzzSessionIdentity(f *testing.F) {
 	f.Add("seed")
 	f.Fuzz(func(t *testing.T, value string) {
+		if _, err := os.Stat("session-artifact.txt"); err == nil {
+			t.Fatal("fuzz target inherited an artifact from an earlier target")
+		} else if !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
 		if string([]byte(value)) != value {
 			t.Fatalf("string round trip changed %q", value)
 		}
@@ -239,6 +244,21 @@ func TestSessionBlocks(t *testing.T) {
 	}
 	if survived.Outcome != gomutants.OutcomeSurvived {
 		t.Errorf("write target result = %+v, want survivor", survived)
+	}
+	isolatedFuzz, err := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  untested.DisplayID,
+		Package: "fixture.example/killable",
+		Args: []string{
+			"-test.run=^$",
+			"-test.fuzz=^FuzzSessionIdentity$",
+			"-test.fuzztime=100ms",
+		},
+	})
+	if err != nil {
+		t.Fatalf("fuzzing after a target changed the snapshot: %v", err)
+	}
+	if isolatedFuzz.Outcome != gomutants.OutcomeSurvived {
+		t.Errorf("fuzz target after snapshot write = %+v, want an isolated survivor", isolatedFuzz)
 	}
 	if _, reservedErr := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant: untested.ID,
