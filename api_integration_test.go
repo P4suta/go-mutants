@@ -284,7 +284,7 @@ func TestSessionBlocks(t *testing.T) {
 		Args: []string{
 			"-test.run=^$",
 			"-test.fuzz=^FuzzSessionIdentity$",
-			"-test.fuzztime=100ms",
+			"-test.fuzztime=10x",
 		},
 	})
 	if err != nil {
@@ -312,7 +312,7 @@ func TestSessionBlocks(t *testing.T) {
 		Args: []string{
 			"-test.run=^$",
 			"-test.fuzz=^FuzzSessionIdentity$",
-			"-test.fuzztime=100ms",
+			"-test.fuzztime=10x",
 		},
 	})
 	if err != nil {
