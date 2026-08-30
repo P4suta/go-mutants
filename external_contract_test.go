@@ -58,7 +58,7 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.OpenOptions{}
 	_ = gomutants.Command{}
 	_ = gomutants.CommandResult{}
-	_ = gomutants.PrepareOptions{}
+	_ = gomutants.PrepareOptions{Changed: true, ChangedRef: "HEAD"}
 	_ = gomutants.Catalog{}
 	_ = gomutants.Mutant{}
 	_ = gomutants.Rejection{}

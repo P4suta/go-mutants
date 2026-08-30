@@ -20,9 +20,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/drift"
 	"github.com/P4suta/go-mutants/internal/execute"
+	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -89,6 +91,18 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	resolved, err := resolvePrepareOptions(options)
 	if err != nil {
 		return nil, err
+	}
+	var changed *gitdiff.Changed
+	if resolved.Changed {
+		value, resolveErr := gitdiff.Resolve(ctx, gitdiff.Options{
+			Root: w.snapshot.SourceRoot,
+			Ref:  resolved.ChangedRef,
+			Env:  slices.Clone(w.env),
+		})
+		if resolveErr != nil {
+			return nil, fmt.Errorf("gomutants: prepare changed lines: %w", resolveErr)
+		}
+		changed = &value
 	}
 	rules, err := selectRules(resolved.Profile, resolved.Operators)
 	if err != nil {
@@ -205,6 +219,12 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		accepted,
 		binaries,
 	)
+	if changed != nil {
+		accepted = narrowAcceptedToChanged(accepted, publicCatalog.Mutants, *changed)
+		for i := range publicCatalog.Mutants {
+			publicCatalog.Mutants[i].Accepted = accepted[publicCatalog.Mutants[i].ID]
+		}
+	}
 	session := &Session{
 		root:           w.snapshot.Root,
 		scratch:        scratch,
@@ -225,6 +245,9 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 }
 
 func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
+	if !opts.Changed && opts.ChangedRef != "" {
+		return PrepareOptions{}, errors.New("gomutants: prepare changed ref requires changed selection")
+	}
 	if opts.Profile == "" {
 		opts.Profile = defaultProfile
 	}
@@ -264,6 +287,20 @@ func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
 		opts.Verify.Timeout = opts.BuildTimeout
 	}
 	return opts, nil
+}
+
+func narrowAcceptedToChanged(accepted map[string]bool, mutants []Mutant, changed gitdiff.Changed) map[string]bool {
+	narrowed := make(map[string]bool, len(accepted))
+	for _, mutant := range mutants {
+		if !accepted[mutant.ID] {
+			continue
+		}
+		if mutant.Path == "" || mutant.Line < 1 ||
+			changed.Touches(mutant.Path, mutant.Line, coverage.EndLine(mutant.Line, mutant.Original)) {
+			narrowed[mutant.ID] = true
+		}
+	}
+	return narrowed
 }
 
 func relativePackagePattern(pattern string) bool {
@@ -316,9 +353,11 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %q: %w", request.Mutant, err)
 	}
 	if !s.accepted[mutant.ID] {
-		rejection := s.rejections[mutant.ID]
-		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was rejected during validation: %s",
-			mutant.DisplayID, rejection.Diagnostic)
+		if rejection, rejected := s.rejections[mutant.ID]; rejected {
+			return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was rejected during validation: %s",
+				mutant.DisplayID, rejection.Diagnostic)
+		}
+		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was not selected for this session", mutant.DisplayID)
 	}
 	binaryIndexes, err := selectTestPackages(s.root, s.binaries, request.Package)
 	if err != nil {
