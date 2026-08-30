@@ -31,16 +31,17 @@ var temporaryKeys = []string{"TMP", "TEMP", "TMPDIR"}
 // Workspace is a frozen disposable copy of one module. Its zero value is not
 // usable. Open constructs one and Close releases it.
 type Workspace struct {
-	mu        sync.Mutex
-	snapshot  *snapshot.Snapshot
-	toolchain gocmd.Toolchain
-	scratch   string
-	env       []string
-	closed    bool
-	closeDone chan struct{}
-	closeErr  error
-	prepared  bool
-	session   *Session
+	mu          sync.Mutex
+	snapshot    *snapshot.Snapshot
+	toolchain   gocmd.Toolchain
+	scratch     string
+	env         []string
+	closed      bool
+	closeDone   chan struct{}
+	closeErr    error
+	prepared    bool
+	session     *Session
+	prepareFuzz fuzzTemplatePreparer
 }
 
 // Open locates the Go toolchain and copies root into a disposable snapshot.
@@ -85,11 +86,12 @@ func Open(ctx context.Context, root string, options ...OpenOptions) (*Workspace,
 	}
 
 	return &Workspace{
-		snapshot:  snap,
-		toolchain: toolchain,
-		scratch:   scratch,
-		env:       sanitiseEnvironment(base, scratch),
-		closeDone: make(chan struct{}),
+		snapshot:    snap,
+		toolchain:   toolchain,
+		scratch:     scratch,
+		env:         sanitiseEnvironment(base, scratch),
+		closeDone:   make(chan struct{}),
+		prepareFuzz: prepareFuzzTemplate,
 	}, nil
 }
 
