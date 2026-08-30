@@ -20,9 +20,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/drift"
 	"github.com/P4suta/go-mutants/internal/execute"
+	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -43,6 +45,8 @@ const (
 	maximumArtifactsSize = 16 << 20
 )
 
+type fuzzTemplatePreparer func(string, string, []execute.TestBinary) (string, []execute.TestBinary, error)
+
 // Session is a discovered, validated, instrumented snapshot with test binaries
 // compiled once. Its zero value is not usable. A Session permits concurrent
 // Exec calls; Changes and Close wait for those calls to finish.
@@ -56,6 +60,8 @@ type Session struct {
 	accepted       map[string]bool
 	rejections     map[string]Rejection
 	binaries       []execute.TestBinary
+	fuzzRoot       string
+	fuzzBinaries   []execute.TestBinary
 	executeOptions execute.Options
 	mutantTimeout  time.Duration
 	preparedFiles  map[string]fileState
@@ -85,6 +91,18 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	resolved, err := resolvePrepareOptions(options)
 	if err != nil {
 		return nil, err
+	}
+	var changed *gitdiff.Changed
+	if resolved.Changed {
+		value, resolveErr := gitdiff.Resolve(ctx, gitdiff.Options{
+			Root: w.snapshot.SourceRoot,
+			Ref:  resolved.ChangedRef,
+			Env:  slices.Clone(w.env),
+		})
+		if resolveErr != nil {
+			return nil, fmt.Errorf("gomutants: prepare changed lines: %w", resolveErr)
+		}
+		changed = &value
 	}
 	rules, err := selectRules(resolved.Profile, resolved.Operators)
 	if err != nil {
@@ -182,6 +200,10 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	if err != nil {
 		return nil, fmt.Errorf("gomutants: prepare snapshot state: %w", err)
 	}
+	fuzzRoot, fuzzBinaries, err := w.prepareFuzz(w.snapshot.Root, scratch, binaries)
+	if err != nil {
+		return nil, err
+	}
 
 	accepted := make(map[string]bool, len(validated.AcceptedIDs))
 	for _, id := range validated.AcceptedIDs {
@@ -197,6 +219,12 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		accepted,
 		binaries,
 	)
+	if changed != nil {
+		accepted = narrowAcceptedToChanged(accepted, publicCatalog.Mutants, *changed)
+		for i := range publicCatalog.Mutants {
+			publicCatalog.Mutants[i].Accepted = accepted[publicCatalog.Mutants[i].ID]
+		}
+	}
 	session := &Session{
 		root:           w.snapshot.Root,
 		scratch:        scratch,
@@ -206,6 +234,8 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		accepted:       accepted,
 		rejections:     rejectionIndex,
 		binaries:       slices.Clone(binaries),
+		fuzzRoot:       fuzzRoot,
+		fuzzBinaries:   fuzzBinaries,
 		executeOptions: execOptions,
 		mutantTimeout:  resolved.MutantTimeout,
 		preparedFiles:  preparedFiles,
@@ -215,6 +245,9 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 }
 
 func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
+	if !opts.Changed && opts.ChangedRef != "" {
+		return PrepareOptions{}, errors.New("gomutants: prepare changed ref requires changed selection")
+	}
 	if opts.Profile == "" {
 		opts.Profile = defaultProfile
 	}
@@ -254,6 +287,20 @@ func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
 		opts.Verify.Timeout = opts.BuildTimeout
 	}
 	return opts, nil
+}
+
+func narrowAcceptedToChanged(accepted map[string]bool, mutants []Mutant, changed gitdiff.Changed) map[string]bool {
+	narrowed := make(map[string]bool, len(accepted))
+	for _, mutant := range mutants {
+		if !accepted[mutant.ID] {
+			continue
+		}
+		if mutant.Path == "" || mutant.Line < 1 ||
+			changed.Touches(mutant.Path, mutant.Line, coverage.EndLine(mutant.Line, mutant.Original)) {
+			narrowed[mutant.ID] = true
+		}
+	}
+	return narrowed
 }
 
 func relativePackagePattern(pattern string) bool {
@@ -306,9 +353,11 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %q: %w", request.Mutant, err)
 	}
 	if !s.accepted[mutant.ID] {
-		rejection := s.rejections[mutant.ID]
-		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was rejected during validation: %s",
-			mutant.DisplayID, rejection.Diagnostic)
+		if rejection, rejected := s.rejections[mutant.ID]; rejected {
+			return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was rejected during validation: %s",
+				mutant.DisplayID, rejection.Diagnostic)
+		}
+		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was not selected for this session", mutant.DisplayID)
 	}
 	binaryIndexes, err := selectTestPackages(s.root, s.binaries, request.Package)
 	if err != nil {
@@ -339,7 +388,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	artifactRoot := ""
 	if hasFuzzTarget(request.Args) {
 		artifactRoot = filepath.Join(scratch, "fuzz-workspace")
-		runBinaries, err = prepareFuzzWorkspace(s.root, artifactRoot, s.binaries)
+		runBinaries, err = prepareFuzzWorkspace(s.fuzzRoot, artifactRoot, s.fuzzBinaries)
 		if err != nil {
 			return MutantResult{}, fmt.Errorf("gomutants: session exec fuzz workspace: %w", err)
 		}
@@ -376,6 +425,15 @@ func hasFuzzTarget(arguments []string) bool {
 	return slices.ContainsFunc(arguments, func(argument string) bool {
 		return testflag.Match(argument, "test.fuzz")
 	})
+}
+
+func prepareFuzzTemplate(root, scratch string, binaries []execute.TestBinary) (string, []execute.TestBinary, error) {
+	fuzzRoot := filepath.Join(scratch, "fuzz-template")
+	fuzzBinaries, err := prepareFuzzWorkspace(root, fuzzRoot, binaries)
+	if err != nil {
+		return "", nil, fmt.Errorf("gomutants: prepare fuzz template: %w", err)
+	}
+	return fuzzRoot, fuzzBinaries, nil
 }
 
 func prepareFuzzWorkspace(root, destination string, binaries []execute.TestBinary) ([]execute.TestBinary, error) {
