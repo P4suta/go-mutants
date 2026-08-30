@@ -61,6 +61,13 @@ type PrepareOptions struct {
 	// win. They select candidates and never remove files from the snapshot.
 	Include []string
 	Exclude []string
+	// Changed limits executable mutants to source spans touched since the merge
+	// base with ChangedRef. Discovery, validation, instrumentation, and catalog
+	// identity still cover every candidate selected by Include and Exclude.
+	Changed bool
+	// ChangedRef is a git revision such as HEAD or origin/main. Empty follows
+	// the current branch's upstream. It is invalid unless Changed is true.
+	ChangedRef string
 	// Packages are relative Go package patterns whose test binaries are built.
 	// Empty selects ./....
 	Packages []string

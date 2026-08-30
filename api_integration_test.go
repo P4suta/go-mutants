@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +17,66 @@ import (
 
 	gomutants "github.com/P4suta/go-mutants"
 )
+
+func TestPublicSessionSelectsOnlyMutantsOnChangedLines(t *testing.T) {
+	root := copyFixture(t, "killable")
+	git(t, root, "init", "--quiet")
+	git(t, root, "add", "--all")
+	git(t, root, "commit", "--quiet", "--message", "base")
+
+	path := filepath.Join(root, "clamp.go")
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := strings.Replace(string(source), "if v > lo {", "if v > lo { // changed", 1)
+	if changed == string(source) {
+		t.Fatal("fixture no longer contains the comparison this test edits")
+	}
+	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
+		TempDirectory: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := workspace.Close(); closeErr != nil {
+			t.Errorf("closing workspace: %v", closeErr)
+		}
+	})
+	session, err := workspace.Prepare(t.Context(), gomutants.PrepareOptions{
+		Operators:  []string{"comparison"},
+		Changed:    true,
+		ChangedRef: "HEAD",
+	})
+	if err != nil {
+		t.Fatalf("preparing changed session: %v", err)
+	}
+
+	catalog := session.Catalog()
+	want := catalogMutant(t, catalog, "clamp.go", "gt-to-ge")
+	if !want.Accepted {
+		t.Fatalf("changed mutant was not selected: %+v", want)
+	}
+	for _, location := range []struct{ path, rule string }{
+		{path: "clamp.go", rule: "lt-to-le"},
+		{path: "untested.go", rule: "neq-to-eq"},
+	} {
+		mutant := catalogMutant(t, catalog, location.path, location.rule)
+		if mutant.Accepted {
+			t.Errorf("unchanged mutant %s/%s was selected", location.path, location.rule)
+		}
+		if _, execErr := session.Exec(t.Context(), gomutants.ExecRequest{Mutant: mutant.ID}); execErr == nil {
+			t.Errorf("Session.Exec accepted unchanged mutant %s/%s", location.path, location.rule)
+		} else if !strings.Contains(execErr.Error(), "not selected") {
+			t.Errorf("unchanged mutant error = %q, want selection context", execErr)
+		}
+	}
+}
 
 func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 	root := copyFixture(t, "killable")
@@ -304,11 +365,17 @@ func TestSessionBlocks(t *testing.T) {
 
 func findMutant(t *testing.T, catalog gomutants.Catalog, path, rule string) gomutants.Mutant {
 	t.Helper()
+	mutant := catalogMutant(t, catalog, path, rule)
+	if !mutant.Accepted {
+		t.Fatalf("mutant %s/%s was rejected", path, rule)
+	}
+	return mutant
+}
+
+func catalogMutant(t *testing.T, catalog gomutants.Catalog, path, rule string) gomutants.Mutant {
+	t.Helper()
 	for _, mutant := range catalog.Mutants {
 		if mutant.Path == path && mutant.Rule == rule {
-			if !mutant.Accepted {
-				t.Fatalf("mutant %s/%s was rejected", path, rule)
-			}
 			return mutant
 		}
 	}
@@ -342,4 +409,21 @@ func copyFixture(t *testing.T, name string) string {
 		t.Fatalf("copying fixture: %v", err)
 	}
 	return destination
+}
+
+func git(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	configuration := []string{
+		"-c", "user.name=go-mutants test",
+		"-c", "user.email=go-mutants@example.invalid",
+		"-c", "commit.gpgsign=false",
+		"-c", "core.autocrlf=false",
+	}
+	command := exec.CommandContext(t.Context(), "git", append(configuration, args...)...)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return strings.TrimSpace(string(output))
 }
