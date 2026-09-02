@@ -533,6 +533,35 @@ type catalogMutant struct {
 	EndByte     uint32 `json:"end_byte"`
 	Original    string `json:"original"`
 	Replacement string `json:"replacement"`
+	// Branch is discovery's proof that this edit can only narrow the condition
+	// of an `if` or a `for`, and is omitted entirely when there is none. See
+	// [discover.BranchProof] for what the span promises.
+	Branch *catalogBranch `json:"branch,omitempty"`
+}
+
+// A catalogBranch is the body span a proved mutant's condition gates, in the
+// coordinates `go test -coverprofile` reports statement blocks in.
+type catalogBranch struct {
+	Direction       string `json:"direction"`
+	BodyStartLine   int    `json:"body_start_line"`
+	BodyStartColumn int    `json:"body_start_column"`
+	BodyEndLine     int    `json:"body_end_line"`
+	BodyEndColumn   int    `json:"body_end_column"`
+}
+
+// catalogBranchOf converts discovery's proof into the document's. Nil stays
+// nil, which is what keeps the property absent rather than null.
+func catalogBranchOf(proof *discover.BranchProof) *catalogBranch {
+	if proof == nil {
+		return nil
+	}
+	return &catalogBranch{
+		Direction:       proof.Direction,
+		BodyStartLine:   proof.BodyStartLine,
+		BodyStartColumn: proof.BodyStartColumn,
+		BodyEndLine:     proof.BodyEndLine,
+		BodyEndColumn:   proof.BodyEndColumn,
+	}
 }
 
 // A catalogSkip is one recorded reason, aggregated per file by discovery.
@@ -594,6 +623,7 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 			EndByte:     m.Span.EndByte,
 			Original:    m.Original,
 			Replacement: m.Replacement,
+			Branch:      catalogBranchOf(where.Branch),
 		})
 	}
 

@@ -75,6 +75,19 @@
 // [Guard] documents the contract in full; what belongs here is that the type
 // gates and the site hint are two uses of one type check, done once.
 //
+// # The branch proof
+//
+// Some candidates also carry a [BranchProof], and it is the one thing this
+// phase produces that nothing downstream needs. Four edits can only make an
+// `if` or `for` condition *less* often true, and where one of them does, the
+// span of the body that condition gates is worth publishing: a consumer holding
+// per-test coverage can discharge every test during which that body never ran,
+// because such a test cannot tell the mutant from the original program. It is
+// computed here for the reason the guard hint is — the questions it rests on
+// are all questions for go/types — and it is optional in both directions, so a
+// refusal is silent and is never a [Skip]. [BranchProof] carries the lemma and
+// every condition a proof has to satisfy.
+//
 // # What the operator families ask of the types
 //
 // Every family below the comparison family is decided by what the operands

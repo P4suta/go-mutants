@@ -70,6 +70,11 @@ type candidate struct {
 	// of measuring. It is only ever set on a reusable outcome, which is the
 	// pairing [report.Build] enforces.
 	cached bool
+	// branch is discovery's branch proof, and is nil in every fixture but the
+	// one written to carry it: a proof is a statement about the source, so
+	// attaching one to an edit that does not narrow a condition would put an
+	// untruth into a golden document.
+	branch *discover.BranchProof
 }
 
 // fixtureCandidates covers every outcome the document can carry, plus a
@@ -189,6 +194,7 @@ func located(t *testing.T, candidates []candidate) ([]discover.Located, *mutatio
 			Line:    c.line,
 			Column:  c.column,
 			Package: c.pkg,
+			Branch:  c.branch,
 		})
 	}
 	catalog, err := discover.BuildCatalog(discover.Result{Candidates: rows})

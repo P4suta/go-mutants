@@ -432,6 +432,7 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			EndByte:      m.Span.EndByte,
 			Original:     m.Original,
 			Replacement:  m.Replacement,
+			Branch:       branchOf(where.Branch),
 			Outcome:      outcome,
 			NotRunReason: reason,
 			DurationMS:   milliseconds(result.Duration),
@@ -546,6 +547,21 @@ type locationKey struct {
 	path string
 	span mutation.Span
 	rule string
+}
+
+// branchOf converts discovery's branch proof into the document's. Nil stays
+// nil, which is what keeps the property absent rather than null.
+func branchOf(proof *discover.BranchProof) *Branch {
+	if proof == nil {
+		return nil
+	}
+	return &Branch{
+		Direction:       proof.Direction,
+		BodyStartLine:   proof.BodyStartLine,
+		BodyStartColumn: proof.BodyStartColumn,
+		BodyEndLine:     proof.BodyEndLine,
+		BodyEndColumn:   proof.BodyEndColumn,
+	}
 }
 
 // locate indexes discovery's candidates by that key, keeping the first of any

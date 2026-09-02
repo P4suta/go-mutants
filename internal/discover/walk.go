@@ -659,6 +659,10 @@ func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement strin
 // the edit belongs to — the binary expression an operator sits in, the
 // statement a deletion removes, the value a return replaces — and it is where
 // the search for that site starts.
+//
+// The branch proof is resolved from the same anchor and removes nothing: it is
+// present when this phase could prove the edit only narrows an `if` or `for`
+// condition, and nil otherwise. See [BranchProof].
 func (s *fileScan) emit(rule mutation.Rule, anchor ast.Node, pos token.Pos, original, replacement string) error {
 	if reason, ok := s.suppressed(pos); ok {
 		s.record(s.rel, reason, 1)
@@ -708,6 +712,7 @@ func (s *fileScan) emit(rule mutation.Rule, anchor ast.Node, pos token.Pos, orig
 		Column:    position.Column,
 		Package:   s.pkgPath,
 		Guard:     guard,
+		Branch:    s.branchProof(rule, anchor),
 	})
 	return nil
 }

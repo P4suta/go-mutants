@@ -109,6 +109,32 @@ type Mutant struct {
 	Original     string
 	Replacement  string
 	Accepted     bool
+	// Branch is the body this mutant's condition gates, when go-mutants could
+	// prove the edit only narrows it. Nil means no proof, never "no branch".
+	Branch *BranchProof
+}
+
+// BranchDecreasing is the one Direction go-mutants emits today: the mutated
+// condition implies the original one on every evaluation.
+const BranchDecreasing = "decreasing"
+
+// BranchProof is present on a mutant whose edit can only narrow the condition
+// of an if or a for statement. BodyStart is the body's opening brace and
+// BodyEnd its closing brace, as 1-based lines and 1-based byte columns of the
+// pristine file — the coordinates `go test -coverprofile` reports statement
+// blocks in.
+//
+// The contract is about the span alone: a test during which no statement of
+// that body executed cannot distinguish the mutant from the original program,
+// so it need not be executed against it. Direction names the lemma the span
+// came from and is diagnostic. A consumer must not need to read it, so that a
+// later lemma can attach a proof of its own without any consumer changing.
+type BranchProof struct {
+	Direction       string
+	BodyStartLine   int
+	BodyStartColumn int
+	BodyEndLine     int
+	BodyEndColumn   int
 }
 
 // Rejection is a catalogued mutant that validation proved does not compile.

@@ -250,6 +250,7 @@
         "end_byte": { "$ref": "#/$defs/count" },
         "original": { "type": "string" },
         "replacement": { "type": "string" },
+        "branch": { "$ref": "#/$defs/branch" },
         "outcome": {
           "description": "timed-out is a confirmed timeout — it timed out, was retried serially, and timed out again — and counts as a detection. A single timeout that did not reproduce is inconclusive.",
           "enum": ["killed", "survived", "timed-out", "inconclusive", "errored", "not-run"]
@@ -283,6 +284,19 @@
           "description": "This outcome was adopted from the outcome cache rather than measured by this run, so duration_ms, attempts, killed_by and output_tail are the ones the run that measured it recorded. It is only ever true of killed, survived and timed-out — the cache stores no other outcome — never of an uncovered mutant, and never in a run whose cache.mode is off.",
           "type": "boolean"
         }
+      }
+    },
+    "branch": {
+      "description": "Present only when go-mutants proved this edit can only narrow the condition of an if or a for. body_start is the body's opening brace and body_end its closing brace, as 1-based lines and 1-based byte columns of the pristine file — the coordinates `go test -coverprofile` reports statement blocks in. A test during which no statement of that body executed cannot distinguish the mutant from the original program. direction names the lemma the span came from and is diagnostic; the promise is about the span alone, so a consumer must not branch on it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["direction", "body_start_line", "body_start_column", "body_end_line", "body_end_column"],
+      "properties": {
+        "direction": { "enum": ["decreasing"] },
+        "body_start_line": { "type": "integer", "minimum": 1 },
+        "body_start_column": { "type": "integer", "minimum": 1 },
+        "body_end_line": { "type": "integer", "minimum": 1 },
+        "body_end_column": { "type": "integer", "minimum": 1 }
       }
     },
     "rejected": {
