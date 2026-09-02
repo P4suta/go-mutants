@@ -4,6 +4,8 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/schemas"
 )
 
 // The toolchain-backed half of `list` — the snapshot, the loader, the
@@ -396,6 +399,117 @@ func TestStringListNeverEncodesAsNull(t *testing.T) {
 	got[0] = "b"
 	if source[0] != "a" {
 		t.Error("stringList aliases its argument")
+	}
+}
+
+// TestBranchProofAppearsInTheCatalogDocument carries the branch proof through
+// the same join and into the published document.
+//
+// The absence is asserted on the encoded bytes rather than on the struct,
+// because `branch` is an optional property: a mutant discovery proved nothing
+// about has to carry no key at all, and a `null` would be a different document
+// to everybody's decoder.
+func TestBranchProofAppearsInTheCatalogDocument(t *testing.T) {
+	found := branchProofDiscovery(t)
+	doc, err := found.document(config.Defaults(), "")
+	if err != nil {
+		t.Fatalf("building the document: %v", err)
+	}
+	if len(doc.Mutants) != 2 {
+		t.Fatalf("document holds %d mutants, want 2", len(doc.Mutants))
+	}
+	proved, plain := doc.Mutants[0], doc.Mutants[1]
+	if proved.Branch == nil {
+		t.Fatalf("the proved mutant carries no branch: %+v", proved)
+	}
+	want := catalogBranch{
+		Direction:       discover.BranchDecreasing,
+		BodyStartLine:   3,
+		BodyStartColumn: 12,
+		BodyEndLine:     5,
+		BodyEndColumn:   2,
+	}
+	if *proved.Branch != want {
+		t.Errorf("branch = %+v, want %+v", *proved.Branch, want)
+	}
+	if plain.Branch != nil {
+		t.Errorf("the unproved mutant carries a branch: %+v", *plain.Branch)
+	}
+
+	var buf bytes.Buffer
+	if err := writeCatalogJSON(&buf, doc); err != nil {
+		t.Fatalf("encoding the document: %v", err)
+	}
+	if err := schemas.Validate(schemas.CatalogV1, buf.Bytes()); err != nil {
+		t.Fatalf("the document does not satisfy %s: %v\n%s", schemas.CatalogV1, err, buf.String())
+	}
+	var decoded struct {
+		Mutants []map[string]any `json:"mutants"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("decoding the document: %v", err)
+	}
+	if _, ok := decoded.Mutants[0]["branch"]; !ok {
+		t.Error("the proved mutant has no branch key")
+	}
+	if _, ok := decoded.Mutants[1]["branch"]; ok {
+		t.Error("the unproved mutant has a branch key, want the property omitted")
+	}
+}
+
+// branchProofDiscovery builds a discovery result holding two candidates in one
+// file: one whose condition discovery proved a body span for, and one it proved
+// nothing about.
+func branchProofDiscovery(t *testing.T) discovered {
+	t.Helper()
+	digest := mutation.DigestString("package a\n")
+	located := func(name string, start, end uint32, original, replacement string, branch *discover.BranchProof) discover.Located {
+		t.Helper()
+		rule, ok := mutation.CanonicalRegistry().Lookup(name)
+		if !ok {
+			t.Fatalf("the canonical registry does not know %s", name)
+		}
+		span, err := mutation.NewSpan(start, end)
+		if err != nil {
+			t.Fatalf("building the span: %v", err)
+		}
+		return discover.Located{
+			Candidate: mutation.Candidate{
+				Path:         "a/a.go",
+				Rule:         rule,
+				Span:         span,
+				Original:     original,
+				Replacement:  replacement,
+				SourceDigest: digest,
+			},
+			Line:    3,
+			Column:  9,
+			Package: "example.com/mini/a",
+			Branch:  branch,
+		}
+	}
+	result := discover.Result{
+		Candidates: []discover.Located{
+			located("le-to-lt", 20, 22, "<=", "<", &discover.BranchProof{
+				Direction:       discover.BranchDecreasing,
+				BodyStartLine:   3,
+				BodyStartColumn: 12,
+				BodyEndLine:     5,
+				BodyEndColumn:   2,
+			}),
+			located("lt-to-le", 30, 31, "<", "<=", nil),
+		},
+		ModulePath: "example.com/mini",
+		GoVersion:  "1.26",
+	}
+	catalog, err := discover.BuildCatalog(result)
+	if err != nil {
+		t.Fatalf("cataloguing: %v", err)
+	}
+	return discovered{
+		result:          result,
+		catalog:         catalog,
+		workspaceDigest: strings.Repeat("ab", 32),
 	}
 }
 

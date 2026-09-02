@@ -61,6 +61,8 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.PrepareOptions{}
 	_ = gomutants.Catalog{}
 	_ = gomutants.Mutant{}
+	_ = gomutants.BranchProof{}
+	_ = gomutants.BranchDecreasing
 	_ = gomutants.Rejection{}
 	_ = gomutants.ExecRequest{}
 	_ = gomutants.MutantResult{}
