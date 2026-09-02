@@ -464,12 +464,27 @@ func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
 	if len(n.Results) == 0 || results == nil || results.Len() != len(n.Results) {
 		return nil
 	}
+	// One site for the whole statement, computed before any candidate: the
+	// probe rewrite replaces the statement rather than the value, so every
+	// candidate in it describes the same rewrite and differs only in which
+	// result it replaces. A nil site is a statement this file cannot spell a
+	// probe for, and every candidate in it goes out unprobed.
+	site := s.returnSite(n, results)
 	for i, value := range n.Results {
-		if err := s.returnValue(value, results.At(i).Type()); err != nil {
+		if err := s.returnValue(value, results.At(i).Type(), site.at(i)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// returnSite computes the probe hint of one `return`, or nil when this phase
+// holds no resolver to compute it with.
+func (s *fileScan) returnSite(n *ast.ReturnStmt, results *types.Tuple) *ReturnSite {
+	if s.guard == nil {
+		return nil
+	}
+	return s.guard.returnSite(n, results)
 }
 
 // returnValue emits whichever replacement the declared result type admits.
@@ -481,23 +496,23 @@ func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
 // function returning `error` is therefore a `return-nil` candidate — the value
 // is a concrete pointer, not an error interface value — while `return err` is
 // the `return-err-to-nil` the family exists for.
-func (s *fileScan) returnValue(value ast.Expr, declared types.Type) error {
+func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ReturnSite) error {
 	if isExactlyError(s.typeOf(value)) {
-		return s.replaceReturn(value, ruleReturnErrToNil, "nil")
+		return s.replaceReturn(value, ruleReturnErrToNil, "nil", site)
 	}
 	switch {
 	case isNumeric(declared):
-		return s.replaceReturn(value, ruleReturnZeroNumeric, "0")
+		return s.replaceReturn(value, ruleReturnZeroNumeric, "0", site)
 	case isStringy(declared):
-		return s.replaceReturn(value, ruleReturnEmptyString, `""`)
+		return s.replaceReturn(value, ruleReturnEmptyString, `""`, site)
 	case isBoolClassed(declared):
-		if err := s.replaceReturn(value, ruleReturnTrue, "true"); err != nil {
+		if err := s.replaceReturn(value, ruleReturnTrue, "true", site); err != nil {
 			return err
 		}
-		return s.replaceReturn(value, ruleReturnFalse, "false")
+		return s.replaceReturn(value, ruleReturnFalse, "false", site)
 	case isNillable(declared):
 		// Not an error-typed value: that was settled above.
-		return s.replaceReturn(value, ruleReturnNil, "nil")
+		return s.replaceReturn(value, ruleReturnNil, "nil", site)
 	default:
 		return nil
 	}
@@ -511,7 +526,7 @@ func (s *fileScan) returnValue(value ast.Expr, declared types.Type) error {
 // failed run. It is not a skip either: `return 0` is not a place go-mutants
 // declined to mutate, it is a place where the mutation and the source are the
 // same program.
-func (s *fileScan) replaceReturn(value ast.Expr, name, replacement string) error {
+func (s *fileScan) replaceReturn(value ast.Expr, name, replacement string, site *ReturnSite) error {
 	rule, ok := s.matchers.rule(name)
 	if !ok {
 		return nil
@@ -520,7 +535,7 @@ func (s *fileScan) replaceReturn(value ast.Expr, name, replacement string) error
 	if !ok || original == replacement {
 		return nil
 	}
-	return s.emitNode(rule, value, replacement)
+	return s.emitProbed(rule, value, replacement, site)
 }
 
 // enclosingResults returns the declared results of the function a node sits in.
@@ -631,6 +646,13 @@ func (s *fileScan) text(node ast.Node) (string, bool) {
 // to reach it is a syntax tree and a file that have stopped describing each
 // other, which is the condition [emit]'s span check exists to shout about.
 func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement string) error {
+	return s.emitProbed(rule, node, replacement, nil)
+}
+
+// emitProbed is [fileScan.emitNode] for a candidate that also carries a probe
+// hint. The hint is a fact about the rewrite site of a *different* tree, so it
+// travels beside the candidate rather than changing anything about it.
+func (s *fileScan) emitProbed(rule mutation.Rule, node ast.Node, replacement string, site *ReturnSite) error {
 	original, ok := s.text(node)
 	if !ok {
 		position := s.tokFile.PositionFor(node.Pos(), false)
@@ -640,7 +662,7 @@ func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement strin
 				strconv.Itoa(position.Column) + " starts a node that reaches past the end of the file",
 		}
 	}
-	return s.emit(rule, node, node.Pos(), original, replacement)
+	return s.emitAt(rule, node, node.Pos(), original, replacement, site)
 }
 
 // emit records one candidate, or the reason it was suppressed.
@@ -664,6 +686,19 @@ func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement strin
 // present when this phase could prove the edit only narrows an `if` or `for`
 // condition, and nil otherwise. See [BranchProof].
 func (s *fileScan) emit(rule mutation.Rule, anchor ast.Node, pos token.Pos, original, replacement string) error {
+	return s.emitAt(rule, anchor, pos, original, replacement, nil)
+}
+
+// emitAt is [fileScan.emit] with the probe hint the return-value family carries.
+// Every other family passes nil, because the probe forms of their sites are not
+// written yet and a hint nothing can rewrite would be worse than none.
+func (s *fileScan) emitAt(
+	rule mutation.Rule,
+	anchor ast.Node,
+	pos token.Pos,
+	original, replacement string,
+	site *ReturnSite,
+) error {
 	if reason, ok := s.suppressed(pos); ok {
 		s.record(s.rel, reason, 1)
 		return nil
@@ -689,6 +724,10 @@ func (s *fileScan) emit(rule mutation.Rule, anchor ast.Node, pos token.Pos, orig
 		s.record(s.rel, SkipUnnameableDeclType, 1)
 		return nil
 	}
+	// The probe hint is attached after the guard and never instead of it: a
+	// site the probe tree cannot express is still a site the mutant tree does,
+	// so a nil hint is not a skip and removes no candidate.
+	guard.Return = site
 
 	candidate := mutation.Candidate{
 		Path:         s.rel,

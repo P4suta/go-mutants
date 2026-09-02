@@ -541,6 +541,117 @@ func (g *guardResolver) fieldKeyed(lit *ast.CompositeLit) bool {
 	return isStruct
 }
 
+// returnSite computes the probe hint of one `return` statement, or nil when
+// this file cannot express the rewrite it describes.
+//
+// The result types come from the enclosing function's signature rather than
+// from the operands, for the reason [ReturnSite] gives: the declared type is the
+// conversion the `return` performs, and it is the conversion the mutant's
+// constant would have gone through too. [guardResolver.typeString] is what
+// spells them — the same machinery Form D's declarations go through, so a type
+// this file cannot name is refused here exactly as it is there, and no second
+// spelling rule can drift away from the first.
+//
+// [ReturnSite.Index] is left at zero: the caller fills it in per result through
+// [ReturnSite.at], so that every candidate of one statement shares one site.
+func (g *guardResolver) returnSite(stmt *ast.ReturnStmt, results *types.Tuple) *ReturnSite {
+	if stmt == nil || results == nil || results.Len() != len(stmt.Results) {
+		return nil
+	}
+	span, ok := g.span(stmt)
+	if !ok {
+		return nil
+	}
+	spelled := make([]string, 0, results.Len())
+	for i := range results.Len() {
+		declared := results.At(i).Type()
+		if mentionsTypeParam(declared, make(map[types.Type]bool)) {
+			return nil
+		}
+		rendered, spellable := g.typeString(declared)
+		if !spellable {
+			return nil
+		}
+		spelled = append(spelled, rendered)
+	}
+	return &ReturnSite{Span: span, Types: spelled}
+}
+
+// mentionsTypeParam reports whether a type is, or is built from, a type
+// parameter.
+//
+// The probe compares a temporary of the declared result type against a
+// constant, and that comparison is not always legal for a type parameter: a
+// constraint may admit types a constant cannot be converted to, or types that
+// are not comparable at all. The site is refused whole rather than per result,
+// because a statement whose results cannot all be declared is a statement whose
+// rewrite cannot be written at all.
+//
+// [guardResolver.nameable] deliberately accepts a type parameter — it is in
+// scope wherever a declaration using it is, and Form D really can declare one —
+// so this is a separate question asked for a separate reason, and not a
+// tightening of that one. The seen set is for recursive types, which reach
+// themselves through a pointer or a slice.
+func mentionsTypeParam(t types.Type, seen map[types.Type]bool) bool {
+	if t == nil || seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	switch typ := types.Unalias(t).(type) {
+	case *types.TypeParam:
+		return true
+	case *types.Named:
+		args := typ.TypeArgs()
+		for i := 0; args != nil && i < args.Len(); i++ {
+			if mentionsTypeParam(args.At(i), seen) {
+				return true
+			}
+		}
+		return false
+	case *types.Pointer:
+		return mentionsTypeParam(typ.Elem(), seen)
+	case *types.Slice:
+		return mentionsTypeParam(typ.Elem(), seen)
+	case *types.Array:
+		return mentionsTypeParam(typ.Elem(), seen)
+	case *types.Chan:
+		return mentionsTypeParam(typ.Elem(), seen)
+	case *types.Map:
+		return mentionsTypeParam(typ.Key(), seen) || mentionsTypeParam(typ.Elem(), seen)
+	case *types.Struct:
+		for i := range typ.NumFields() {
+			if mentionsTypeParam(typ.Field(i).Type(), seen) {
+				return true
+			}
+		}
+		return false
+	case *types.Interface:
+		for i := range typ.NumExplicitMethods() {
+			if mentionsTypeParam(typ.ExplicitMethod(i).Type(), seen) {
+				return true
+			}
+		}
+		for i := range typ.NumEmbeddeds() {
+			if mentionsTypeParam(typ.EmbeddedType(i), seen) {
+				return true
+			}
+		}
+		return false
+	case *types.Signature:
+		return mentionsTypeParam(typ.Params(), seen) || mentionsTypeParam(typ.Results(), seen)
+	case *types.Tuple:
+		for i := range typ.Len() {
+			if mentionsTypeParam(typ.At(i).Type(), seen) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // declTypeOf renders the type of one declared identifier as this file may
 // spell it.
 func (g *guardResolver) declTypeOf(ident *ast.Ident) (DeclType, bool) {
