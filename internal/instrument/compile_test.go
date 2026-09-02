@@ -398,7 +398,7 @@ func goCommand(t *testing.T, toolchain gocmd.Toolchain, dir string, args ...stri
 	// GOPROXY is off because a fixture module with no dependencies must never
 	// reach the network to build.
 	//
-	// -buildvcs=off is part of the same statement rather than a workaround. A
+	// -buildvcs=false is part of the same statement rather than a workaround. A
 	// fixture module lives in a temporary directory and has no version control
 	// of its own, so stamping it can only ever find somebody else's repository
 	// above it — and a stray or half-created .git in the temporary root then

@@ -162,7 +162,7 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 	fixture := newProbeFixture(t)
 	log := filepath.Join(t.TempDir(), "infection.log")
 
-	stdout, stderr, code := runProbe(t, fixture.binary, instrument.ProbeEnv+"="+log)
+	stdout, stderr, code := runProbe(t, t.TempDir(), fixture.binary, instrument.ProbeEnv+"="+log)
 	if code != 0 {
 		t.Fatalf("the probe binary exited %d\n--- stdout ---\n%s\n--- stderr ---\n%s", code, stdout, stderr)
 	}
@@ -220,7 +220,7 @@ func TestProbeRuntimeIsSilentWithoutTheProbeVariable(t *testing.T) {
 	// runtime that invented a path would have to put the file somewhere.
 	quiet := t.TempDir()
 
-	stdout, stderr, code := runProbe(t, fixture.binary)
+	stdout, stderr, code := runProbe(t, quiet, fixture.binary)
 	if code != 0 {
 		t.Errorf("the probe binary exited %d with no log to write\n--- stderr ---\n%s", code, stderr)
 	}
@@ -250,7 +250,7 @@ func TestProbeRuntimeExitsWhenTheLogCannotBeOpened(t *testing.T) {
 	fixture := newProbeFixture(t)
 	log := filepath.Join(t.TempDir(), "no-such-directory", "infection.log")
 
-	_, stderr, code := runProbe(t, fixture.binary, instrument.ProbeEnv+"="+log)
+	_, stderr, code := runProbe(t, t.TempDir(), fixture.binary, instrument.ProbeEnv+"="+log)
 	if code != instrument.ProbeUnavailableExit {
 		t.Errorf("an unwritable log exited %d, want %d\n%s", code, instrument.ProbeUnavailableExit, stderr)
 	}
@@ -301,7 +301,7 @@ func TestInfectIsRaceFree(t *testing.T) {
 	}
 
 	log := filepath.Join(t.TempDir(), "infection.log")
-	stdout, stderr, code := runProbe(t, binary, instrument.ProbeEnv+"="+log)
+	stdout, stderr, code := runProbe(t, t.TempDir(), binary, instrument.ProbeEnv+"="+log)
 	if code != 0 {
 		t.Errorf("the race-instrumented probe test exited %d\n--- stdout ---\n%s\n--- stderr ---\n%s", code, stdout, stderr)
 	}
@@ -630,14 +630,17 @@ func raceUnavailable(out string) bool {
 	return false
 }
 
-// runProbe executes a built binary with the given environment assignments
-// appended, returning its streams separately and its exit status.
+// runProbe executes a built binary in dir with the given environment
+// assignments appended, returning its streams separately and its exit status.
 //
 // The streams are separate because one of these tests asserts that nothing at
 // all was said, and [instrument.ProbeEnv] is stripped from the inherited
 // environment first: "unset" has to mean unset even when the developer running
-// the suite happens to be probing something else.
-func runProbe(t *testing.T, binary string, env ...string) (string, string, int) {
+// the suite happens to be probing something else. The working directory is the
+// caller's because one of these tests watches it: a runtime that invented a
+// relative path would put the file there, and a binary left to run wherever
+// the test process happens to be would keep that file out of sight.
+func runProbe(t *testing.T, dir, binary string, env ...string) (string, string, int) {
 	t.Helper()
 
 	inherited := os.Environ()
@@ -650,6 +653,7 @@ func runProbe(t *testing.T, binary string, env ...string) (string, string, int) 
 	}
 
 	cmd := exec.Command(binary)
+	cmd.Dir = dir
 	cmd.Env = append(clean, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
