@@ -197,9 +197,10 @@ mutated, only reasoned about.
   conversions that are not to an array, and `len` `cap` `min` `max` `real`
   `imag` `complex`. Every other call, and every index, slice, type assertion,
   receive, dereference and composite literal, is refused.
-- **The body holds at least one statement.** Coverage instruments statements, so
-  an empty body produces no block and "did it run" is not a question a profile
-  can answer.
+- **The body holds at least one statement.** `cmd/cover` records an empty body
+  as a block of zero statements whose coordinates differ between releases, so
+  "did it run" has no single answer across profiles — and a branch that does
+  nothing is one no test can observe either way, so refusing costs nothing.
 - **No `//line` directive over either brace.** `cmd/cover` attributes a block to
   the file name the directive gives, so the span would be measured in one file's
   numbering and compared against blocks recorded under another's.

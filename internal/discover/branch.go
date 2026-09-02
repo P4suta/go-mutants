@@ -51,9 +51,12 @@ import (
 // false. Inertness is decided by an allowlist rather than a denylist, because
 // the honest default for a construct nobody has thought about is "no proof".
 //
-// The body has to hold at least one statement. Coverage instruments statements,
-// so an empty body produces no block at all and "no statement of the body ran"
-// is not a question the consumer can put to a profile.
+// The body has to hold at least one statement. `cmd/cover` records an empty
+// body as a block of zero statements whose coordinates differ between releases
+// (Go 1.26.6 starts it one past the `{` and ends it past the `}`, Go 1.27.0
+// makes it empty), so "no statement of the body ran" is not a question with one
+// answer across profiles — and a branch that does nothing is one no test can
+// observe either way, so refusing the proof costs nothing.
 //
 // A file with a `//line` directive over either brace is refused outright.
 // `cmd/cover` attributes a block to the file name the directive gives, so the

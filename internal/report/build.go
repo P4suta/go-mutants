@@ -549,9 +549,6 @@ type locationKey struct {
 	rule string
 }
 
-// locate indexes discovery's candidates by that key, keeping the first of any
-// duplicates: two candidates with the same key are the same edit, so they are
-// at the same line and column by construction.
 // branchOf converts discovery's branch proof into the document's. Nil stays
 // nil, which is what keeps the property absent rather than null.
 func branchOf(proof *discover.BranchProof) *Branch {
@@ -567,6 +564,9 @@ func branchOf(proof *discover.BranchProof) *Branch {
 	}
 }
 
+// locate indexes discovery's candidates by that key, keeping the first of any
+// duplicates: two candidates with the same key are the same edit, so they are
+// at the same line and column by construction.
 func locate(candidates []discover.Located) map[locationKey]discover.Located {
 	out := make(map[locationKey]discover.Located, len(candidates))
 	for _, candidate := range candidates {
