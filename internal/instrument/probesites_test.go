@@ -171,9 +171,9 @@ func probeCases() []probeCase {
 			// that holds it, which is then folded onto one line: one statement,
 			// one block, two Infect calls, and the literal's own `return`
 			// rewritten inside it.
-			assertContains(t, out, "var __gm_r0 int = func()int{{var __gm_r0 int=a+b;"+
-				"if __gm_r0!=0{__gm.Infect(1)};return __gm_r0};}();")
-			assertContains(t, out, "if __gm_r0 != 0 { __gm.Infect(0) }; return __gm_r0, __gm_r1 }")
+			assertContains(t, out, "var __gm_r0 func() int = func()int{{var __gm_r0 int=a+b;"+
+				"if __gm_r0!=0{__gm.Infect(0)};return __gm_r0};};")
+			assertContains(t, out, "if __gm_r1 != nil { __gm.Infect(1) }; return __gm_r0, __gm_r1 }")
 		},
 	}, {
 		name:       "probe-names",
@@ -721,12 +721,12 @@ func probeTypedEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeNestedEdits catalogues the nested fixture: the outer return's call and
-// the literal's own return inside it.
+// probeNestedEdits catalogues the nested fixture: the outer return's error and
+// the literal's own return, which sits inside the operand beside it.
 func probeNestedEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
-		editSpec{rule: "return-zero-numeric", in: "func() int {\n\t\treturn a + b\n\t}()", with: "0"},
+		editSpec{rule: "return-err-to-nil", in: "\t}, err", find: "err", with: "nil"},
 		editSpec{rule: "return-zero-numeric", in: "return a + b", find: "a + b", with: "0"},
 	)
 }

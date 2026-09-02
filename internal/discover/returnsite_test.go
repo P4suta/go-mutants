@@ -141,17 +141,21 @@ func measure(s string) (int, error) { return 0, nil }
 // The rewrite declares `var r0 T = E0`, and T has to be the *result* type: that
 // is the conversion the `return` itself performs, and it is the type the mutant
 // would have converted its constant to. Taking the operand's type instead would
-// declare `var r0 int = 1` in a function returning float32 — a different
-// program that happens to compile — and would compare the wrong value against
-// the wrong constant.
+// declare `var r0 int = 1` in a function returning int64 — a different program
+// that happens to compile — and would compare the wrong value against the wrong
+// constant.
+//
+// The float case that used to stand here is gone on purpose: a floating-point
+// result is refused outright now, and
+// [TestReturnSiteRefusesAFloatingResult] is where it is stated.
 func TestReturnSiteSpellsTheDeclaredResultTypeNotTheOperands(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 // Level is a named integer type, spelled as this file spells it.
 type Level int
 
-// Half returns an untyped constant as a float.
-func Half() float32 { return 1 }
+// Wide returns an untyped constant as an integer wider than its default type.
+func Wide() int64 { return 1 }
 
 // Count returns the same constant through a named result of a named type.
 func Count() (n Level) { return 1 }
@@ -162,7 +166,7 @@ func Count() (n Level) { return 1 }
 		snippet string
 		types   []string
 	}{
-		{"an untyped constant in a float function", "func Half() float32 { return 1 }", []string{"float32"}},
+		{"an untyped constant in a wider function", "func Wide() int64 { return 1 }", []string{"int64"}},
 		{"a named result of a named type", "func Count() (n Level) { return 1 }", []string{"Level"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -278,6 +282,449 @@ func Pair[T any](a int, t T) (int, T) { return a, t }
 	if got.Guard.Return != nil {
 		t.Errorf("return site = %+v, want none: one result is a type parameter", got.Guard.Return)
 	}
+}
+
+// candidatesInside returns every candidate whose span lies within a snippet of
+// the fixture, which is how a claim about a whole statement is made: the site is
+// refused for all of its candidates or for none of them.
+func candidatesInside(t *testing.T, candidates []Located, src, snippet string) []Located {
+	t.Helper()
+
+	region := spanOf(t, src, snippet)
+	var found []Located
+	for _, c := range candidates {
+		if region.Contains(c.Span) {
+			found = append(found, c)
+		}
+	}
+	return found
+}
+
+// describe renders candidates as the rule and the bytes each replaces, which is
+// what names one in a fixture small enough to read.
+func describe(candidates []Located) []string {
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, c.Rule.Name+" "+c.Original)
+	}
+	return out
+}
+
+// TestReturnSiteRefusesAStatementWithAnEffectfulOperand is the first of the
+// three conditions the hint rests on, and the only one that is a property of the
+// whole statement rather than of one result.
+//
+// A Form S mutant of `return E0, E1` at result 0 is `return K, E1`, and it never
+// evaluates E0 at all. Two separate things follow. The effects of E0 are effects
+// the mutant does not have, so `return compute(), nil` mutated to `return 0,
+// nil` skips whatever compute did and can be killed by a test watching for it,
+// while the probe — which does evaluate compute — reports that the site never
+// differed. And the rewrite fixes an evaluation order the compiler does not use:
+// the spec leaves the order of a plain variable read relative to a call in
+// another operand unspecified and gc performs the read *after* the calls, so for
+// `return x, f()` where f writes to x the probe compares a value the original
+// never returned.
+//
+// One rule answers both. No operand of the statement may have an effect — no
+// call, no receive, no append — and then every order yields the same values and
+// the probe's execution is the original's. So the refusal is stated over every
+// candidate of the statement, including the ones whose own operand is a plain
+// identifier.
+func TestReturnSiteRefusesAStatementWithAnEffectfulOperand(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		source string
+		// stmt is the statement whose every candidate must go out unprobed.
+		stmt string
+		// want is what that statement catalogues, so that a fixture which stopped
+		// producing candidates cannot pass this test by producing none.
+		want []string
+	}{{
+		name: "a call in the mutated operand",
+		source: `package sample
+
+// Compute returns a number a call produces, and no error.
+func Compute() (int, error) { return compute(), nil }
+
+// compute is the call the mutant would never make.
+func compute() int { return 1 }
+`,
+		stmt: "return compute(), nil",
+		want: []string{"return-zero-numeric compute()"},
+	}, {
+		name: "a receive beside a plain identifier",
+		source: `package sample
+
+// Take returns a number it holds and one it receives.
+func Take(n int, ch chan int) (int, int) { return n, <-ch }
+`,
+		stmt: "return n, <-ch",
+		want: []string{"return-zero-numeric n", "return-zero-numeric <-ch"},
+	}, {
+		name: "an append in the only operand",
+		source: `package sample
+
+// Grow returns a longer slice.
+func Grow(s []int, x int) []int { return append(s, x) }
+`,
+		stmt: "return append(s, x)",
+		want: []string{"return-nil append(s, x)"},
+	}, {
+		name: "a call beside the mutated operand",
+		source: `package sample
+
+// Order returns a value it holds and one a call produces.
+func Order(x int, f func() int) (int, int) { return x, f() }
+`,
+		stmt: "return x, f()",
+		want: []string{"return-zero-numeric x", "return-zero-numeric f()"},
+	}, {
+		name: "a method call",
+		source: `package sample
+
+// counter is a value with a method, so that a method call can be returned.
+type counter struct{ n int }
+
+// Load returns the counter's value.
+func (c counter) Load() int { return c.n }
+
+// Read returns a counter's value and no error.
+func Read(c counter) (int, error) { return c.Load(), nil }
+`,
+		stmt: "return c.Load(), nil",
+		want: []string{"return-zero-numeric c.Load()"},
+	}} {
+		t.Run(c.name, func(t *testing.T) {
+			candidates, src := discoverProbeModule(t, c.source, nil)
+			inside := candidatesInside(t, candidates, src, c.stmt)
+			if got := describe(inside); !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("the statement catalogues %v, want %v", got, c.want)
+			}
+			for _, got := range inside {
+				if got.Guard.Return != nil {
+					t.Errorf("%s over %q carries the return site %+v, want none: an operand of its statement has effects",
+						got.Rule.Name, got.Original, got.Guard.Return)
+				}
+				if got.Guard.Form == "" {
+					t.Errorf("%s over %q lost its guard form as well, so the refusal cost the mutant and not only the probe",
+						got.Rule.Name, got.Original)
+				}
+			}
+		})
+	}
+}
+
+// TestReturnSiteRefusesTheResultWhoseOperandCanPanic is the second condition,
+// and the first that is decided per result.
+//
+// If the probed operand panics, the mutant that replaced it with a constant does
+// not: the two programs diverge, and the comparison the probe would have drawn
+// its conclusion from is never reached. Nothing is recorded, which reads exactly
+// like "the value never differed" — and that reading is what licenses skipping
+// the test. The test itself passed, so the panic was recovered somewhere, and
+// the run is not fail-closed either.
+//
+// Every fixture below returns the error beside the refused operand, and the
+// error keeps its hint. That is the claim in both directions at once: the
+// statement is effect-free, so it was not refused for the reason above, and the
+// operand that cannot panic is still probed while the one that can is not.
+func TestReturnSiteRefusesTheResultWhoseOperandCanPanic(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		source string
+		stmt   string
+		// rule and bytes name the candidate that must go out unprobed.
+		rule  string
+		bytes string
+		// types is what the statement's results are spelled as, for the sibling
+		// that keeps its hint.
+		types []string
+	}{{
+		name: "a field of a pointer",
+		source: `package sample
+
+// node is a struct this fixture reaches through a pointer.
+type node struct{ n int }
+
+// Field returns a field of a pointer and the error beside it.
+func Field(p *node, err error) (int, error) { return p.n, err }
+`,
+		stmt: "return p.n, err", rule: ruleReturnZeroNumeric, bytes: "p.n",
+		types: []string{"int", "error"},
+	}, {
+		name: "an index",
+		source: `package sample
+
+// First returns the first item of a slice that may hold none.
+func First(items []int, err error) (int, error) { return items[0], err }
+`,
+		stmt: "return items[0], err", rule: ruleReturnZeroNumeric, bytes: "items[0]",
+		types: []string{"int", "error"},
+	}, {
+		name: "a dereference",
+		source: `package sample
+
+// Deref returns what a pointer points at.
+func Deref(p *int, err error) (int, error) { return *p, err }
+`,
+		stmt: "return *p, err", rule: ruleReturnZeroNumeric, bytes: "*p",
+		types: []string{"int", "error"},
+	}, {
+		name: "a division by a variable",
+		source: `package sample
+
+// Div returns a quotient whose divisor may be zero.
+func Div(a, b int, err error) (int, error) { return a / b, err }
+`,
+		stmt: "return a / b, err", rule: ruleReturnZeroNumeric, bytes: "a / b",
+		types: []string{"int", "error"},
+	}, {
+		name: "a type assertion",
+		source: `package sample
+
+// Text returns a value asserted to be a string.
+func Text(v any, err error) (string, error) { return v.(string), err }
+`,
+		stmt: "return v.(string), err", rule: ruleReturnEmptyString, bytes: "v.(string)",
+		types: []string{"string", "error"},
+	}, {
+		name: "a comparison of interface values",
+		source: `package sample
+
+// Same reports whether two values are equal, which panics for some of them.
+func Same(x, y any, err error) (bool, error) { return x == y, err }
+`,
+		stmt: "return x == y, err", rule: ruleReturnTrue, bytes: "x == y",
+		types: []string{"bool", "error"},
+	}, {
+		name: "a method value",
+		source: `package sample
+
+// counter is a value with a method, so that a method value can be returned.
+type counter struct{ n int }
+
+// Load returns the counter's value.
+func (c *counter) Load() int { return c.n }
+
+// Loader returns a method value bound to a pointer that may be nil.
+func Loader(c *counter, err error) (func() int, error) { return c.Load, err }
+`,
+		stmt: "return c.Load, err", rule: ruleReturnNil, bytes: "c.Load",
+		types: []string{"func() int", "error"},
+	}, {
+		name: "make with a variable length",
+		source: `package sample
+
+// Buffer returns a slice of a length that may be negative.
+func Buffer(n int, err error) ([]int, error) { return make([]int, n), err }
+`,
+		stmt: "return make([]int, n), err", rule: ruleReturnNil, bytes: "make([]int, n)",
+		types: []string{"[]int", "error"},
+	}, {
+		name: "a slice converted to an array pointer",
+		source: `package sample
+
+// Head returns the first four bytes of a slice that may be shorter.
+func Head(b []byte, err error) (*[4]byte, error) { return (*[4]byte)(b), err }
+`,
+		stmt: "return (*[4]byte)(b), err", rule: ruleReturnNil, bytes: "(*[4]byte)(b)",
+		types: []string{"*[4]byte", "error"},
+	}, {
+		// Beyond the shapes the design listed, and found by asking what else in
+		// the grammar can panic: building a map whose key type is an interface
+		// hashes the key, and hashing a slice, map or function value is a
+		// run-time panic rather than a compile error.
+		name: "a map literal keyed by an interface",
+		source: `package sample
+
+// Keyed returns a map built around a key that may not be hashable.
+func Keyed(k any, err error) (map[any]int, error) { return map[any]int{k: 1}, err }
+`,
+		stmt: "return map[any]int{k: 1}, err", rule: ruleReturnNil, bytes: "map[any]int{k: 1}",
+		types: []string{"map[any]int", "error"},
+	}} {
+		t.Run(c.name, func(t *testing.T) {
+			candidates, src := discoverProbeModule(t, c.source, nil)
+
+			got := candidateWithOriginal(t, candidates, c.rule, c.bytes)
+			if got.Guard.Return != nil {
+				t.Errorf("return site = %+v, want none: evaluating %s can panic", got.Guard.Return, c.bytes)
+			}
+			if got.Guard.Form == "" {
+				t.Error("the candidate lost its guard form as well, so the refusal cost the mutant and not only the probe")
+			}
+
+			sibling := candidateWithOriginal(t, candidates, ruleReturnErrToNil, "err").Guard.Return
+			want := &ReturnSite{Span: spanOf(t, src, c.stmt), Types: c.types, Index: 1}
+			if !reflect.DeepEqual(sibling, want) {
+				t.Errorf("the error beside it carries %+v, want %+v: one refused result does not refuse the statement",
+					sibling, want)
+			}
+		})
+	}
+}
+
+// TestReturnSiteAcceptsEveryEffectFreeShape is the other half of the two
+// grammars: what a probed operand is still allowed to be.
+//
+// The rules are refusals, and a refusal is only as good as what it leaves
+// standing. Every shape here computes a value and does nothing else — reads a
+// variable, a constant, a field of a struct value; takes an address; builds a
+// composite; converts; asks a builtin for a length; folds two of those together
+// with an operator that cannot fail. Between them they are what the measured
+// return-value survivors are actually made of, which is why the sound rule costs
+// the layer nothing it could have discharged.
+func TestReturnSiteAcceptsEveryEffectFreeShape(t *testing.T) {
+	candidates, src := discoverProbeModule(t, `package sample
+
+import "time"
+
+// report is the struct these fixtures build by value and through a pointer.
+type report struct{ n int }
+
+// Ident returns a variable, the plainest operand there is.
+func Ident(count int) int { return count }
+
+// Literal returns a constant written into the source.
+func Literal() int { return 42 }
+
+// Absent returns a count beside a map that is nothing, so that the nil is a
+// sibling rather than a candidate: a return already spelled as its own
+// replacement produces no mutant.
+func Absent(seen int) (int, map[string]int) { return seen, nil }
+
+// Field returns a field of a struct value.
+func Field(s report) int { return s.n }
+
+// Qualified returns a constant another package declares.
+func Qualified() time.Duration { return time.Minute }
+
+// Scaled returns that constant multiplied by another.
+func Scaled() time.Duration { return 10 * time.Minute }
+
+// Address returns the address of its own argument.
+func Address(x int) *int { return &x }
+
+// Zero returns a count beside a composite literal that is a sibling of it.
+func Zero(total int) (int, report) { return total, report{} }
+
+// Built returns a composite literal through a pointer.
+func Built(n int) *report { return &report{n: n} }
+
+// Closure returns a function value beside the error that would name what went
+// wrong. The literal is a sibling rather than the mutated operand because an
+// edit anchored on a function literal has no guard form at all — the mutant
+// tree cannot write it, so discovery emits no candidate for it — while creating
+// a closure is still an operand the statement beside it may be probed through.
+func Closure(a, b int, err error) (func() int, error) { return func() int { return a * b }, err }
+
+// Length returns how long a slice is.
+func Length(s []int) int { return len(s) }
+
+// Text returns a string converted from bytes.
+func Text(b []byte) string { return string(b) }
+
+// Half returns a value divided by a constant that is not zero.
+func Half(x int) int { return x / 2 }
+
+// Shifted returns a value shifted by a constant.
+func Shifted(x int) int { return x << 3 }
+
+// Sum returns two values added.
+func Sum(a, b int) int { return a + b }
+
+// Missing reports whether a pointer is nil, which comparing cannot panic on.
+func Missing(p *report) bool { return p == nil }
+
+// Both reports whether two flags hold.
+func Both(ok, found bool) bool { return ok && found }
+`, nil)
+
+	for _, c := range []struct {
+		name  string
+		rule  string
+		bytes string
+		stmt  string
+		types []string
+		index int
+	}{
+		{"an identifier", ruleReturnZeroNumeric, "count", "return count", []string{"int"}, 0},
+		{"a literal", ruleReturnZeroNumeric, "42", "return 42", []string{"int"}, 0},
+		{"a nil sibling", ruleReturnZeroNumeric, "seen", "return seen, nil", []string{"int", "map[string]int"}, 0},
+		{"a field of a struct value", ruleReturnZeroNumeric, "s.n", "return s.n", []string{"int"}, 0},
+		{"a qualified constant", ruleReturnZeroNumeric, "time.Minute", "return time.Minute", []string{"time.Duration"}, 0},
+		{"a constant expression", ruleReturnZeroNumeric, "10 * time.Minute", "return 10 * time.Minute", []string{"time.Duration"}, 0},
+		{"an address", ruleReturnNil, "&x", "return &x", []string{"*int"}, 0},
+		{"a composite literal sibling", ruleReturnZeroNumeric, "total", "return total, report{}", []string{"int", "report"}, 0},
+		{"a composite literal", ruleReturnNil, "&report{n: n}", "return &report{n: n}", []string{"*report"}, 0},
+		{"a function literal sibling", ruleReturnErrToNil, "err",
+			"return func() int { return a * b }, err", []string{"func() int", "error"}, 1},
+		{"a builtin", ruleReturnZeroNumeric, "len(s)", "return len(s)", []string{"int"}, 0},
+		{"a conversion", ruleReturnEmptyString, "string(b)", "return string(b)", []string{"string"}, 0},
+		{"a division by a constant", ruleReturnZeroNumeric, "x / 2", "return x / 2", []string{"int"}, 0},
+		{"a shift by a constant", ruleReturnZeroNumeric, "x << 3", "return x << 3", []string{"int"}, 0},
+		{"an addition", ruleReturnZeroNumeric, "a + b", "return a + b", []string{"int"}, 0},
+		{"a pointer comparison", ruleReturnTrue, "p == nil", "return p == nil", []string{"bool"}, 0},
+		{"a logical conjunction", ruleReturnTrue, "ok && found", "return ok && found", []string{"bool"}, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := candidateWithOriginal(t, candidates, c.rule, c.bytes).Guard.Return
+			want := &ReturnSite{Span: spanOf(t, src, c.stmt), Types: c.types, Index: c.index}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("return site = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+// TestReturnSiteRefusesAFloatingResult is the third condition, and the one that
+// is about the comparison rather than about the operand.
+//
+// `-0.0 != 0` is false. A `return-zero-numeric` mutant at a float result whose
+// value is negative zero is therefore recorded as *not* infected, which is the
+// answer that skips the test — while `math.Signbit` and `1/x` both tell the two
+// values apart, so a test really can kill that mutant. NaN is the other way
+// round and needs no rule: `NaN != 0` is true, so the site is reported infected,
+// which is only ever the safe answer.
+//
+// Complex results go with them, for the same reason in two dimensions, and the
+// int beside one keeps its hint: the refusal is about the result being compared,
+// not about the statement it sits in.
+func TestReturnSiteRefusesAFloatingResult(t *testing.T) {
+	candidates, src := discoverProbeModule(t, `package sample
+
+// Half returns a float, whose negative zero compares equal to zero.
+func Half(x float32) float32 { return x }
+
+// Wave returns a complex value beside a count that keeps its hint.
+func Wave(n int, z complex128) (int, complex128) { return n, z }
+`, nil)
+
+	for _, c := range []struct {
+		name  string
+		bytes string
+	}{
+		{"a float result", "x"},
+		{"a complex result", "z"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, c.bytes)
+			if got.Guard.Return != nil {
+				t.Errorf("return site = %+v, want none: -0.0 != 0 is false", got.Guard.Return)
+			}
+			if got.Guard.Form == "" {
+				t.Error("the candidate lost its guard form as well, so the refusal cost the mutant and not only the probe")
+			}
+		})
+	}
+
+	t.Run("the integer beside a complex result", func(t *testing.T) {
+		got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, "n").Guard.Return
+		want := &ReturnSite{Span: spanOf(t, src, "return n, z"), Types: []string{"int", "complex128"}, Index: 0}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("return site = %+v, want %+v", got, want)
+		}
+	})
 }
 
 // TestReturnSiteIsAbsentForOtherRules keeps the hint to the family it describes.

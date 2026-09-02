@@ -7,15 +7,20 @@
 // that operand is folded onto a line.
 package sample; import __gm "example.com/mini/gomutants_rt"
 
-// Nested totals two numbers through a literal, so that the outer return's
-// first operand holds a return of its own.
+// Nested returns a closure that totals two numbers, and the error beside it.
+//
+// A function literal is the one way a `return` sits inside another's operand,
+// and the literal is *returned* rather than called: an immediately invoked
+// literal is a call, and internal/discover hands no probe hint to a statement
+// holding one, so a fixture written that way would document a rewrite the
+// instrumenter is never asked for.
 //
 // The two rewrites want temporaries of the same name, and the literal is where
 // that has to be harmless: a declared name's scope begins at the end of its own
 // specification, so the outer temporary is not in scope inside its own
 // initialiser, and the inner block declares one of its own in any case.
-func Nested(a, b int) (int, error) {
-	{ var __gm_r0 int = func()int{{var __gm_r0 int=a+b;if __gm_r0!=0{__gm.Infect(1)};return __gm_r0};}(); var __gm_r1 error = nil; if __gm_r0 != 0 { __gm.Infect(0) }; return __gm_r0, __gm_r1 }
+func Nested(a, b int, err error) (func() int, error) {
+	{ var __gm_r0 func() int = func()int{{var __gm_r0 int=a+b;if __gm_r0!=0{__gm.Infect(0)};return __gm_r0};}; var __gm_r1 error = err; if __gm_r1 != nil { __gm.Infect(1) }; return __gm_r0, __gm_r1 }
 
 
 }
