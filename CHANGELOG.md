@@ -16,7 +16,7 @@ Entries say *why* a change was made, not only what changed.
 
 - **A probe tree that measures return-value mutants.** The runtime below could
   record an infection and nothing called it. This is the first form that does.
-  In `ModeProbe`, every `return` carrying a return-value mutant becomes
+  In `ModeProbe`, every eligible `return` carrying a return-value mutant becomes
 
   ```go
   { var r0 T = E0; var r1 U = E1; if r1 != K { __gm.Infect(i) }; return r0, r1 }

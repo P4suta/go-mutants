@@ -27,7 +27,7 @@ func TestReturnSiteSurvivesHintsOf(t *testing.T) {
 	candidate := mutation.Candidate{
 		Path:         sampleFile,
 		Rule:         lookupRule(t, "return-zero-numeric"),
-		Span:         mutation.Span{StartByte: 43, EndByte: 44},
+		Span:         mutation.Span{StartByte: 44, EndByte: 45},
 		Original:     "1",
 		Replacement:  "0",
 		SourceDigest: mutation.Digest([]byte(src)),
@@ -37,7 +37,7 @@ func TestReturnSiteSurvivesHintsOf(t *testing.T) {
 		t.Fatalf("identifying the candidate: %v", err)
 	}
 	site := &discover.ReturnSite{
-		Span:  mutation.Span{StartByte: 36, EndByte: 44},
+		Span:  mutation.Span{StartByte: 37, EndByte: 45},
 		Types: []string{"int"},
 		Index: 0,
 	}

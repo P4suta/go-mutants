@@ -281,7 +281,7 @@ evaluating `E1` is nothing but computing a value, which is three conditions
   map, channel or function value with the `nil` literal compares against the
   nil value of that very type — no dynamic-type comparison happens, so nothing
   panics.
-- **The statement stays well formed.** `return r0, r1` assigns named results
+- **The statement stays well-formed.** `return r0, r1` assigns named results
   exactly as the original did, so deferred functions observe the same values,
   and a block whose last statement is a `return` is itself a terminating
   statement, so a function whose body ended in one still does.
