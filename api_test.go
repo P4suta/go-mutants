@@ -208,7 +208,7 @@ func TestConcurrentWorkspaceCloseWaitsForTheSameCleanup(t *testing.T) {
 func TestSessionTargetArgsRecognisesBothStandardFlagPrefixes(t *testing.T) {
 	for _, argument := range []string{"-test.fuzz=FuzzX", "--test.fuzz=FuzzX"} {
 		t.Run(argument, func(t *testing.T) {
-			got, err := sessionTargetArgs([]string{argument}, t.TempDir())
+			got, err := sessionTargetArgs([]string{argument}, t.TempDir(), "exec")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +227,7 @@ func TestSessionTargetArgsRecognisesBothStandardFlagPrefixes(t *testing.T) {
 		"--test.fuzzworker",
 	} {
 		t.Run(argument, func(t *testing.T) {
-			if _, err := sessionTargetArgs([]string{argument}, t.TempDir()); err == nil {
+			if _, err := sessionTargetArgs([]string{argument}, t.TempDir(), "exec"); err == nil {
 				t.Errorf("sessionTargetArgs accepted reserved %q", argument)
 			}
 		})

@@ -38,6 +38,8 @@ const (
 	defaultBuildTimeout  = 10 * time.Minute
 	sessionPrefix        = "session-"
 	execPrefix           = "exec-"
+	probePrefix          = "probe-"
+	infectionLogName     = "infection.log"
 	maximumArtifacts     = 128
 	maximumArtifactBytes = 2 << 20
 	maximumArtifactsSize = 16 << 20
@@ -60,6 +62,20 @@ type Session struct {
 	mutantTimeout  time.Duration
 	preparedFiles  map[string]fileState
 	closed         bool
+
+	// probeSnapshot is the second instrumented copy of the same source, or nil
+	// when the session was prepared without one. Its presence is what
+	// [Session.Probe] refuses on, because a session with no probe tree cannot
+	// answer the infection question at all — and answering it emptily would be
+	// the one wrong answer.
+	probeSnapshot *snapshot.Snapshot
+	// probeBinaries and probeOptions are that tree's own test binaries and the
+	// options they are started with. They are separate values rather than a
+	// mode on the mutant ones because the two trees are different directories:
+	// a binary of one started against the other would measure a program nobody
+	// built.
+	probeBinaries []execute.TestBinary
+	probeOptions  execute.Options
 }
 
 // Prepare discovers, validates, instruments, verifies, and builds one reusable
@@ -124,6 +140,32 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		return nil, fmt.Errorf("gomutants: prepare validation environment: %w", err)
 	}
 	validationEnv = prependEnvironmentPath(validationEnv, filepath.Dir(w.toolchain.GoBin))
+
+	// The probe tree is copied here and nowhere later, and the ordering is
+	// forced rather than chosen. A workspace holds one snapshot, validation
+	// instruments it *in place*, and the probe tree has to be the same source
+	// as the mutant tree — so the copy is taken from the pristine snapshot
+	// before the next line rewrites it, and from the snapshot rather than from
+	// the user's tree, which may have moved since Open froze it.
+	var probeSnap *snapshot.Snapshot
+	if resolved.Probe {
+		probeSnap, err = snapshot.Create(w.snapshot.Root, snapshot.Options{
+			DestParent: filepath.Dir(w.snapshot.Root),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("gomutants: prepare probe snapshot: %w", err)
+		}
+		if probeSnap.WorkspaceDigest != w.snapshot.WorkspaceDigest {
+			return failPrepare(probeSnap, fmt.Errorf(
+				"gomutants: prepare probe snapshot digest %s does not match the mutant snapshot's %s",
+				probeSnap.WorkspaceDigest, w.snapshot.WorkspaceDigest))
+		}
+	}
+	// Every return from here on goes through fail, so that a probe tree copied
+	// and then abandoned does not outlive the call that made it — as Open
+	// cleans up its own snapshot when the scratch directory beside it fails.
+	fail := func(err error) (*Session, error) { return failPrepare(probeSnap, err) }
+
 	validated, err := validate.Validate(ctx, validate.Options{
 		Snap:         w.snapshot,
 		Catalog:      catalog,
@@ -135,34 +177,34 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		Env:          validationEnv,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare validation: %w", err)
+		return fail(fmt.Errorf("gomutants: prepare validation: %w", err))
 	}
 
 	verify := resolved.Verify
 	verifyBase, err := overlayEnvironment(w.env, verify.Env)
 	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare verification environment: %w", err)
+		return fail(fmt.Errorf("gomutants: prepare verification environment: %w", err))
 	}
 	verify.Env = nil
 	verifyBase = gocmd.AppendGoflags(verifyBase, gocmd.VetOff)
 	verified, err := w.runCommand(ctx, verify, verifyBase)
 	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare instrumented verification: %w", err)
+		return fail(fmt.Errorf("gomutants: prepare instrumented verification: %w", err))
 	}
 	switch {
 	case verified.TimedOut:
-		return nil, fmt.Errorf("gomutants: prepare instrumented verification timed out after %s", verify.Timeout)
+		return fail(fmt.Errorf("gomutants: prepare instrumented verification timed out after %s", verify.Timeout))
 	case verified.ExitCode != 0:
-		return nil, fmt.Errorf("gomutants: prepare instrumented verification exited with status %d: %s",
-			verified.ExitCode, outputSummary(verified.Output))
+		return fail(fmt.Errorf("gomutants: prepare instrumented verification exited with status %d: %s",
+			verified.ExitCode, outputSummary(verified.Output)))
 	}
-	if driftErr := checkInitialDrift(w.snapshot, validated.Instrumented); driftErr != nil {
-		return nil, driftErr
+	if driftErr := checkInitialDrift(w.snapshot, validated.Instrumented, "verification"); driftErr != nil {
+		return fail(driftErr)
 	}
 
 	scratch, err := os.MkdirTemp(w.scratch, sessionPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare session scratch: %w", err)
+		return fail(fmt.Errorf("gomutants: prepare session scratch: %w", err))
 	}
 	execOptions := execute.Options{
 		Toolchain:    w.toolchain,
@@ -176,11 +218,28 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	}
 	binaries, err := execute.BuildTestBinaries(ctx, execOptions)
 	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare test binaries: %w", err)
+		return fail(fmt.Errorf("gomutants: prepare test binaries: %w", err))
 	}
 	preparedFiles, err := scanFiles(w.snapshot.Root)
 	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare snapshot state: %w", err)
+		return fail(fmt.Errorf("gomutants: prepare snapshot state: %w", err))
+	}
+
+	probeOptions, probeBinaries, probed, err := prepareProbeTree(ctx, probeTreeOptions{
+		snap:         probeSnap,
+		catalog:      catalog,
+		hints:        hints,
+		modulePath:   found.ModulePath,
+		toolchain:    w.toolchain,
+		jobs:         resolved.Jobs,
+		buildTimeout: resolved.BuildTimeout,
+		packages:     resolved.Packages,
+		env:          w.env,
+		validateEnv:  validationEnv,
+		scratch:      scratch,
+	})
+	if err != nil {
+		return fail(err)
 	}
 
 	accepted := make(map[string]bool, len(validated.AcceptedIDs))
@@ -195,6 +254,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		catalog,
 		validated.Rejected,
 		accepted,
+		probed,
 		binaries,
 	)
 	session := &Session{
@@ -209,9 +269,123 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		executeOptions: execOptions,
 		mutantTimeout:  resolved.MutantTimeout,
 		preparedFiles:  preparedFiles,
+		probeSnapshot:  probeSnap,
+		probeBinaries:  probeBinaries,
+		probeOptions:   probeOptions,
 	}
 	w.session = session
 	return session, nil
+}
+
+// failPrepare returns a preparation failure, removing the probe tree first when
+// one had already been copied.
+//
+// A probe tree is a whole second copy of somebody's module, so a Prepare that
+// gives up after taking one has to remove it: nothing else knows it exists —
+// the Session it would have belonged to is never returned — and the Workspace's
+// own Close cleans up only the snapshot it made itself.
+func failPrepare(probeSnap *snapshot.Snapshot, err error) (*Session, error) {
+	if probeSnap == nil {
+		return nil, err
+	}
+	if cleanupErr := probeSnap.Cleanup(); cleanupErr != nil {
+		return nil, errors.Join(err, cleanupErr)
+	}
+	return nil, err
+}
+
+// probeTreeOptions is what [prepareProbeTree] needs, gathered so that the one
+// caller reads as the decision it is making rather than as eleven arguments.
+type probeTreeOptions struct {
+	snap         *snapshot.Snapshot
+	catalog      *mutation.Catalog
+	hints        instrument.Hints
+	modulePath   string
+	toolchain    gocmd.Toolchain
+	jobs         int
+	buildTimeout time.Duration
+	packages     []string
+	env          []string
+	validateEnv  []string
+	scratch      string
+}
+
+// prepareProbeTree instruments, validates and builds the probe tree, and
+// reports which mutants it ends up speaking for.
+//
+// A nil snapshot is the session prepared without one: no work, no binaries, and
+// an empty probed set, which is what makes every [Mutant.Probed] false and
+// [Session.Probe] refuse.
+//
+// The tree goes through the same [validate.Validate] the mutant tree does, with
+// [instrument.ModeProbe], so a probe site that does not compile is bisected out
+// by the phase that already knows how — and a rejection here is not a rejected
+// mutant. The mutant is untouched in its own tree; what it loses is its probe.
+//
+// There is deliberately no verification command on this tree. The mutant tree's
+// verify exists because a whole run is scored against it and one broken build
+// would falsify every number; a probe pass is per call and already reports a
+// failing target as "no facts", so a suite-wide gate here would buy a guarantee
+// the per-call rule already gives and cost a full test run to get it.
+//
+// Probed is the conjunction of two things and not either alone. The mutant must
+// have a probe form — [instrument.Hints.Probes] — because a mutant with none
+// leaves its file untouched and is therefore *accepted* by this validation
+// exactly as a probed one is; and its site must have survived that validation,
+// because a probe that did not compile was bisected back out of the tree.
+// Reading either half as the whole would mark a mutant nothing can record as
+// one whose silence means something.
+func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
+	execute.Options, []execute.TestBinary, map[string]bool, error,
+) {
+	if opts.snap == nil {
+		return execute.Options{}, nil, nil, nil
+	}
+
+	validated, err := validate.Validate(ctx, validate.Options{
+		Snap:         opts.snap,
+		Catalog:      opts.catalog,
+		Hints:        opts.hints,
+		ModulePath:   opts.modulePath,
+		Toolchain:    opts.toolchain,
+		Jobs:         opts.jobs,
+		BuildTimeout: opts.buildTimeout,
+		Env:          opts.validateEnv,
+		Mode:         instrument.ModeProbe,
+	})
+	if err != nil {
+		return execute.Options{}, nil, nil, fmt.Errorf("gomutants: prepare probe validation: %w", err)
+	}
+	if driftErr := checkInitialDrift(opts.snap, validated.Instrumented, "probe instrumentation"); driftErr != nil {
+		return execute.Options{}, nil, nil, driftErr
+	}
+
+	probeOptions := execute.Options{
+		Toolchain:    opts.toolchain,
+		SnapshotRoot: opts.snap.Root,
+		Packages:     slices.Clone(opts.packages),
+		BinDir:       filepath.Join(opts.scratch, "probe-bin"),
+		ScratchDir:   filepath.Join(opts.scratch, "probe-targets"),
+		Env:          slices.Clone(opts.env),
+		Jobs:         opts.jobs,
+		Timeout:      opts.buildTimeout,
+	}
+	binaries, err := execute.BuildTestBinaries(ctx, probeOptions)
+	if err != nil {
+		return execute.Options{}, nil, nil, fmt.Errorf("gomutants: prepare probe test binaries: %w", err)
+	}
+
+	survived := make(map[string]bool, len(validated.AcceptedIDs))
+	for _, id := range validated.AcceptedIDs {
+		survived[id] = true
+	}
+	probed := make(map[string]bool, len(survived))
+	for _, m := range opts.catalog.Mutants() {
+		if survived[m.ID] && opts.hints.Probes(m) {
+			probed[m.ID] = true
+		}
+	}
+	return probeOptions, binaries, probed, nil
 }
 
 func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
@@ -310,7 +484,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was rejected during validation: %s",
 			mutant.DisplayID, rejection.Diagnostic)
 	}
-	binaryIndexes, err := selectTestPackages(s.root, s.binaries, request.Package)
+	binaryIndexes, err := selectTestPackages(s.root, s.binaries, request.Package, "exec")
 	if err != nil {
 		return MutantResult{}, err
 	}
@@ -327,7 +501,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return MutantResult{}, fmt.Errorf("gomutants: session exec scratch: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(scratch) }()
-	targetArgs, err := sessionTargetArgs(request.Args, scratch)
+	targetArgs, err := sessionTargetArgs(request.Args, scratch, "exec")
 	if err != nil {
 		return MutantResult{}, err
 	}
@@ -370,6 +544,110 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return result, fmt.Errorf("gomutants: session exec: %w", err)
 	}
 	return result, nil
+}
+
+// Probe runs one test or fuzz target against the session's probe tree and
+// reports which catalogued mutants that target could have observed.
+//
+// The probe tree is the same source as the mutant tree with no mutant ever
+// active: the program the user wrote runs, and each site go-mutants has a probe
+// form for records — without side effects — whether the mutated value would
+// have differed from the one the original produced. So a mutant that is
+// [Mutant.Probed] and absent from [ProbeResult.Infected] is one this target
+// never saw a differing value at, and a target that cannot distinguish a mutant
+// from the original program cannot kill it. That is the licence: the caller may
+// skip executing that (mutant, target) pair, and the result it would have got
+// is "survived".
+//
+// The licence is only ever given by a [ProbeMeasured] outcome, and only for a
+// probed mutant. Every other outcome, and every error, means the pass has no
+// facts — not that nothing was infected. **A caller that reads an error, a
+// failed target, a timeout or an unavailable runtime as "not infected" is
+// unsound**: it will drop executions that would have found kills, and the
+// mutation score it reports will be higher than the truth with nothing in the
+// output saying so. An unprobed mutant is the same trap in a different shape.
+// It is absent from every measurement there will ever be, because nothing was
+// compiled that could record it, and a caller has to treat it as infected by
+// every target.
+//
+// An error is returned when the session was prepared without a probe tree
+// ([ErrProbeNotPrepared]), when the request names a package with no prepared
+// test binary or is otherwise malformed — the same checks [Session.Exec]
+// makes — and when the infrastructure fails: a scratch directory that cannot be
+// made, a process that will not start, or an infection log that is there and
+// cannot be read. A *missing* log after a clean exit is not a failure but the
+// empty set: the probe runtime writes its header in `init`, before any test
+// code runs, so a binary that wrote no log linked no probe and ran no probed
+// site.
+//
+// Each call gets its own scratch directory and its own log, which is what makes
+// the answer a statement about this target and this call. Probe is safe to call
+// concurrently with itself and with [Session.Exec]; the two share the session
+// and nothing else.
+func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult, error) {
+	if s == nil {
+		return ProbeResult{}, errors.New("gomutants: session probe: nil session")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return ProbeResult{}, errors.New("gomutants: session probe: session is closed")
+	}
+	if s.probeSnapshot == nil {
+		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", ErrProbeNotPrepared)
+	}
+	if request.Timeout < 0 {
+		return ProbeResult{}, errors.New("gomutants: session probe: timeout is negative")
+	}
+	binaryIndexes, err := selectTestPackages(s.probeSnapshot.Root, s.probeBinaries, request.Package, "probe")
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	env, err := overlayEnvironment(s.env, request.Env)
+	if err != nil {
+		return ProbeResult{}, fmt.Errorf("gomutants: session probe environment: %w", err)
+	}
+	timeout := request.Timeout
+	if timeout == 0 {
+		timeout = s.mutantTimeout
+	}
+	scratch, err := os.MkdirTemp(s.scratch, probePrefix)
+	if err != nil {
+		return ProbeResult{}, fmt.Errorf("gomutants: session probe scratch: %w", err)
+	}
+	// The log lives and dies with the call. Two passes appending to one file
+	// would each read the other's indices as their own, and a file left behind
+	// would do the same to the next run over the same directory.
+	defer func() { _ = os.RemoveAll(scratch) }()
+	targetArgs, err := sessionTargetArgs(request.Args, scratch, "probe")
+	if err != nil {
+		return ProbeResult{}, err
+	}
+
+	opts := s.probeOptions
+	opts.ScratchDir = scratch
+	opts.Env = env
+	attempt := execute.RunProbe(ctx, opts, execute.ProbeRun{
+		Timeout:  timeout,
+		Binaries: binaryIndexes,
+		Args:     targetArgs,
+		LogPath:  filepath.Join(scratch, infectionLogName),
+		Digest:   s.catalog.Digest(),
+		Mutants:  s.catalog.Len(),
+	}, s.probeBinaries)
+	if attempt.Err != nil {
+		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", attempt.Err)
+	}
+	if err := ctx.Err(); err != nil {
+		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", err)
+	}
+	return ProbeResult{
+		Outcome:    ProbeOutcome(attempt.Outcome),
+		Infected:   attempt.Infected,
+		ExitCode:   attempt.ExitCode,
+		Duration:   attempt.Duration,
+		OutputTail: attempt.OutputTail,
+	}, nil
 }
 
 func hasFuzzTarget(arguments []string) bool {
@@ -512,7 +790,12 @@ func captureFuzzArtifacts(root string) ([]Artifact, error) {
 // target. A test binary refuses -test.fuzz without -test.fuzzcachedir; keeping
 // that cache in the execution scratch preserves the read-only snapshot and
 // lets the standard seed corpus compiled from testdata/fuzz run unchanged.
-func sessionTargetArgs(args []string, scratch string) ([]string, error) {
+//
+// The call names itself so that a diagnostic says which of the session's two
+// measurements refused the target. Both go through this function because a
+// caller composing arguments for one has to be able to hand them to the other:
+// one request vocabulary, one set of reserved flags, one message shape.
+func sessionTargetArgs(args []string, scratch, call string) ([]string, error) {
 	out := slices.Clone(args)
 	fuzz := false
 	for _, argument := range args {
@@ -520,9 +803,9 @@ func sessionTargetArgs(args []string, scratch string) ([]string, error) {
 		case testflag.Match(argument, "test.fuzz"):
 			fuzz = true
 		case testflag.Match(argument, "test.fuzzcachedir"):
-			return nil, errors.New("gomutants: session exec: -test.fuzzcachedir is reserved by the session")
+			return nil, fmt.Errorf("gomutants: session %s: -test.fuzzcachedir is reserved by the session", call)
 		case testflag.Match(argument, "test.fuzzworker"):
-			return nil, errors.New("gomutants: session exec: -test.fuzzworker is reserved by the Go fuzz coordinator")
+			return nil, fmt.Errorf("gomutants: session %s: -test.fuzzworker is reserved by the Go fuzz coordinator", call)
 		}
 	}
 	if !fuzz {
@@ -530,12 +813,12 @@ func sessionTargetArgs(args []string, scratch string) ([]string, error) {
 	}
 	cache := filepath.Join(scratch, "fuzz-cache")
 	if err := os.MkdirAll(cache, 0o755); err != nil {
-		return nil, fmt.Errorf("gomutants: session exec fuzz cache: %w", err)
+		return nil, fmt.Errorf("gomutants: session %s fuzz cache: %w", call, err)
 	}
 	return append(out, "-test.fuzzcachedir="+cache), nil
 }
 
-func selectTestPackages(root string, binaries []execute.TestBinary, selected string) ([]int, error) {
+func selectTestPackages(root string, binaries []execute.TestBinary, selected, call string) ([]int, error) {
 	if selected == "" {
 		return nil, nil
 	}
@@ -544,7 +827,7 @@ func selectTestPackages(root string, binaries []execute.TestBinary, selected str
 		var err error
 		selectedDir, err = moduleDirectory(root, selected)
 		if err != nil {
-			return nil, fmt.Errorf("gomutants: session exec package: %w", err)
+			return nil, fmt.Errorf("gomutants: session %s package: %w", call, err)
 		}
 	}
 	var indexes []int
@@ -554,7 +837,7 @@ func selectTestPackages(root string, binaries []execute.TestBinary, selected str
 		}
 	}
 	if len(indexes) == 0 {
-		return nil, fmt.Errorf("gomutants: session exec package %q has no prepared test binary", selected)
+		return nil, fmt.Errorf("gomutants: session %s package %q has no prepared test binary", call, selected)
 	}
 	return indexes, nil
 }
@@ -578,9 +861,14 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
-// Close waits for target executions and releases the session's binaries and
-// scratch files. It is idempotent. Closing a Session does not close its parent
-// Workspace; closing the Workspace closes both.
+// Close waits for target executions and releases the session's binaries, its
+// scratch files, and the probe tree when it has one. It is idempotent. Closing
+// a Session does not close its parent Workspace; closing the Workspace closes
+// both.
+//
+// The probe tree goes here rather than with the Workspace's own snapshot
+// because the session is what made it: a second copy of the module, built for
+// this session's catalogue, useless to anything that outlives it.
 func (s *Session) Close() error {
 	if s == nil {
 		return nil
@@ -591,11 +879,16 @@ func (s *Session) Close() error {
 		return nil
 	}
 	s.closed = true
-	if s.scratch == "" {
-		return nil
+
+	var closeErr error
+	if s.scratch != "" {
+		closeErr = os.RemoveAll(s.scratch)
 	}
-	if err := os.RemoveAll(s.scratch); err != nil {
-		return fmt.Errorf("gomutants: close session: %w", err)
+	if s.probeSnapshot != nil {
+		closeErr = errors.Join(closeErr, s.probeSnapshot.Cleanup())
+	}
+	if closeErr != nil {
+		return fmt.Errorf("gomutants: close session: %w", closeErr)
 	}
 	return nil
 }
@@ -608,6 +901,7 @@ func makeCatalog(
 	catalog *mutation.Catalog,
 	rejected []validate.Rejection,
 	accepted map[string]bool,
+	probed map[string]bool,
 	binaries []execute.TestBinary,
 ) (Catalog, map[string]Rejection) {
 	type locationKey struct {
@@ -644,6 +938,7 @@ func makeCatalog(
 			Replacement:  internal.Replacement,
 			Accepted:     accepted[internal.ID],
 			Branch:       publicBranch(where.Branch),
+			Probed:       probed[internal.ID],
 		}
 		mutants = append(mutants, public)
 		byID[public.ID] = public
@@ -730,14 +1025,22 @@ func outputSummary(output []byte) string {
 	return strconv.Quote(trimmed)
 }
 
-func checkInitialDrift(snap *snapshot.Snapshot, instrumented instrument.Result) error {
+// checkInitialDrift asserts that a freshly instrumented tree holds nothing but
+// what instrumentation put there.
+//
+// The `what` names the step being held to account, because the two trees reach
+// this gate having done different things: the mutant tree has just run the
+// user's verification command in it, and the probe tree has run nothing at all,
+// so a drift there is instrumentation's own and saying "verification" about it
+// would send a reader looking in the wrong place.
+func checkInitialDrift(snap *snapshot.Snapshot, instrumented instrument.Result, what string) error {
 	unexpected, err := drift.Unexpected(snap, instrumented)
 	if err != nil {
 		return fmt.Errorf("gomutants: prepare drift check: %w", err)
 	}
 	if len(unexpected) != 0 {
-		return fmt.Errorf("gomutants: prepare verification changed the snapshot outside instrumentation:\n%s",
-			strings.Join(unexpected, "\n"))
+		return fmt.Errorf("gomutants: prepare %s changed the snapshot outside instrumentation:\n%s",
+			what, strings.Join(unexpected, "\n"))
 	}
 	return nil
 }

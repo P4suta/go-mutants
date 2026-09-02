@@ -416,7 +416,7 @@ func prepareProbeable(probe bool) *preparedFixture {
 	prepared.parent = parent
 
 	root := filepath.Join(parent, "probeable")
-	if err := copyFixtureTree("probeable", root); err != nil {
+	if err = copyFixtureTree("probeable", root); err != nil {
 		prepared.err = err
 		return prepared
 	}
@@ -938,14 +938,14 @@ func TestCloseRemovesTheProbeTree(t *testing.T) {
 		t.Fatalf("a probe session left %d snapshots (%v), want the mutant tree and the probe tree",
 			len(snapshots), snapshots)
 	}
-	if err := session.Close(); err != nil {
+	if err = session.Close(); err != nil {
 		t.Fatalf("closing the session: %v", err)
 	}
 	if snapshots := snapshotDirectories(t, parent); len(snapshots) != 1 {
 		t.Errorf("closing the session left %d snapshots (%v), want only the workspace's own",
 			len(snapshots), snapshots)
 	}
-	if err := workspace.Close(); err != nil {
+	if err = workspace.Close(); err != nil {
 		t.Fatalf("closing the workspace: %v", err)
 	}
 	entries, err := os.ReadDir(parent)

@@ -62,7 +62,7 @@ func TestSelectTestPackagesAcceptsAliasedSnapshotRoot(t *testing.T) {
 	got, err := selectTestPackages(aliasRoot, []execute.TestBinary{{
 		ImportPath: "fixture.example/root",
 		Dir:        realRoot,
-	}}, ".")
+	}}, ".", "exec")
 	if err != nil {
 		t.Fatal(err)
 	}
