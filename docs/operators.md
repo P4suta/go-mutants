@@ -136,6 +136,98 @@ guard forms cannot express this site":
   than one line. The rewrite removes the whole of the first and the type of the
   second, and removing a line break moves every line after it.
 
+## Branch proof
+
+Four edits can only make a condition *less* often true. When one of them lands
+in the condition of an `if` or a `for`, discovery records the span of the body
+that condition gates, and publishes it as the mutant's `branch` in
+[both JSON documents](json-schema.md#branch).
+
+| Rule | Edit | Why it narrows |
+| --- | --- | --- |
+| `le-to-lt` | `<=` → `<` | Drops the equal case |
+| `ge-to-gt` | `>=` → `>` | Drops the equal case |
+| `or-to-and` | `\|\|` → `&&` | Requires both operands where one sufficed |
+| `nil-error-branch` | `X != nil` → `false` | True of nothing |
+
+Write C for the original condition and C′ for the mutant's. In each row
+C′ ⟹ C, and that is the whole lemma:
+
+> If no statement of the gated body ran during a test, C was false every time it
+> was evaluated. C′ ⟹ C, so C′ was false there too, the branch taken was
+> identical on every evaluation, and — the condition having no effects — the two
+> programs ran identically. **That test cannot have observed the mutant.**
+
+A consumer holding per-test coverage can therefore discharge every such test
+without executing it. Nothing else may be inferred from `branch`: it is a
+one-way statement about a body nobody entered, never about one they did.
+
+The increasing edits are deliberately absent. `lt-to-le`, `gt-to-ge` and
+`and-to-or` widen a condition, so the mutant may enter a body the original never
+did — exactly the case coverage cannot rule out. `eq-to-neq` and `neq-to-eq`
+move it in neither direction, because the two comparisons are true of disjoint
+sets of inputs rather than nested ones.
+
+### The conditions a proof has to satisfy
+
+A proof is stated only when **all** of these hold; otherwise there is simply no
+`branch`. The refusal is silent and is not a skip: nothing was declined to be
+mutated, only reasoned about.
+
+- **Monotone path.** Walking outward from the edit, only parentheses and the two
+  short-circuit connectives may be crossed, and the walk has to end at the `if`
+  or `for` whose condition it arrived at. `A && B` and `A || B` are monotone in
+  both operands, so narrowing an operand narrows the whole; a `!` inverts the
+  implication, and a boolean `==` or `!=` destroys it. An `else if` works
+  naturally, because the inner `if` is where the walk ends. An `if`'s
+  initialiser is not part of its condition and is never inspected: it runs
+  before the condition is evaluated, and the mutant runs it too.
+- **The whole condition is inert** — no effects, no possible panic, guaranteed
+  to terminate — and not merely the part the edit touches. The mutant may
+  evaluate *fewer* sub-expressions than the original: `X != nil` becomes
+  `false`, which evaluates nothing; `A || B` becomes `A && B`, which stops
+  evaluating `B` when `A` is false; and once an operand short-circuits, every
+  operand after it stops being evaluated too. An effect or a panic in something
+  the mutant skips is an observable difference even when both take the same
+  branch. Inertness is an allowlist over the syntax, so the honest default for a
+  construct nobody has thought about is "no proof": names, literals, field
+  selections that dereference no pointer, `!` `-` `+` `^`, the arithmetic,
+  bitwise and ordering operators, `/` `%` `<<` `>>` with a *constant* right
+  operand, `==`/`!=` against `nil` or between types comparable without a panic,
+  conversions that are not to an array, and `len` `cap` `min` `max` `real`
+  `imag` `complex`. Every other call, and every index, slice, type assertion,
+  receive, dereference and composite literal, is refused.
+- **The body holds at least one statement.** Coverage instruments statements, so
+  an empty body produces no block and "did it run" is not a question a profile
+  can answer.
+- **No `//line` directive over either brace.** `cmd/cover` attributes a block to
+  the file name the directive gives, so the span would be measured in one file's
+  numbering and compared against blocks recorded under another's.
+
+### Why the braces, and not the first statement
+
+The span runs from the body's opening brace to its closing brace, inclusive,
+because `cmd/cover` does not record a body block the same way in every release.
+For
+
+```go
+if a <= b {
+	return 1
+}
+```
+
+on lines 4 to 6, Go 1.26.6 records the body block as `4.12,6.3` — starting at
+the `{` and ending one past the `}` — while Go 1.27.0 records `5.3,6.1`,
+starting at the first statement.
+
+`[Lbrace, Rbrace]` is the one span that works under both. It contains the body's
+first recorded block start either way, and no block belonging to code outside
+the body starts inside it under either convention: the `if` or `for` header
+block *ends* at the `{`, an `else` block's recorded start is after the `else`
+keyword, and the block following the whole statement starts after the `}`. That
+is exactly what the consumer's check needs — an instrumented block starts inside
+the span, and no covered block does, therefore the body never ran.
+
 ## Profiles
 
 Profiles are monotonically inclusive tiers, matching the sibling projects:

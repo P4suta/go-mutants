@@ -14,6 +14,36 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A branch proof on the mutants whose edit can only narrow a condition.**
+  `le-to-lt`, `ge-to-gt`, `or-to-and` and `nil-error-branch` all produce a
+  mutated condition that *implies* the original one. When such an edit sits in
+  the condition of an `if` or a `for`, discovery now records the span of the
+  body that condition gates and publishes it as an optional `branch` object on
+  the mutant, in both `list --json` and the run report.
+
+  The point is what a consumer can do with it without asking go-mutants
+  anything further. If no statement of that body ran during a test, the original
+  condition was false every time it was evaluated; the mutated one implies it,
+  so it was false too, the branch taken was identical, and the two programs ran
+  the same. That test cannot have observed the mutant and does not have to be
+  executed against it — which is a whole class of executions a consumer holding
+  per-test coverage can discharge on paper.
+
+  The span is the body's braces rather than its first statement, because
+  `cmd/cover` moved: for one `if`, Go 1.26.6 records the body block starting at
+  the `{` and Go 1.27.0 starting at the first statement, and `[{, }]` is the one
+  span that contains the recorded block start under both while containing no
+  block that belongs to code outside the body. A proof is emitted only when the
+  path from the edit to the statement is monotone, the *whole* condition is
+  inert — the mutant may evaluate fewer sub-expressions than the original, so an
+  effect or a panic in one it skips would be observable — the body is non-empty,
+  and no `//line` directive would make the coordinates name another file. Every
+  refusal is silent: an absent proof is not a place go-mutants declined to
+  mutate, only one it declined to reason about. `docs/operators.md` has the
+  lemma and every condition; `docs/json-schema.md` has the wire shape.
+
+  Mutant identity is untouched: no rule's name, version, or emission changed, so
+  every cached outcome survives.
 - **Release automation, as two workflows with a human between them.**
   `release-please.yml` runs on every push to `main` and maintains one open
   Release PR: it reads the conventional-commit subjects, works out the next

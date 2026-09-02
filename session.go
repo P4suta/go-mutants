@@ -643,6 +643,7 @@ func makeCatalog(
 			Original:     internal.Original,
 			Replacement:  internal.Replacement,
 			Accepted:     accepted[internal.ID],
+			Branch:       publicBranch(where.Branch),
 		}
 		mutants = append(mutants, public)
 		byID[public.ID] = public
@@ -680,11 +681,42 @@ func makeCatalog(
 	}, rejectionIndex
 }
 
+// publicBranch converts discovery's branch proof into the public one. Nil
+// stays nil: no proof is not the same statement as no branch.
+func publicBranch(proof *discover.BranchProof) *BranchProof {
+	if proof == nil {
+		return nil
+	}
+	return &BranchProof{
+		Direction:       proof.Direction,
+		BodyStartLine:   proof.BodyStartLine,
+		BodyStartColumn: proof.BodyStartColumn,
+		BodyEndLine:     proof.BodyEndLine,
+		BodyEndColumn:   proof.BodyEndColumn,
+	}
+}
+
+// cloneCatalog copies everything a caller could write through, the branch
+// proofs included. Session.Catalog promises a deep copy, and an aliased
+// pointer would leave a caller one assignment away from rewriting the
+// session's own catalogue.
 func cloneCatalog(c Catalog) Catalog {
 	c.Mutants = slices.Clone(c.Mutants)
+	for i := range c.Mutants {
+		c.Mutants[i].Branch = publicBranchCopy(c.Mutants[i].Branch)
+	}
 	c.Rejections = slices.Clone(c.Rejections)
 	c.TestPackages = slices.Clone(c.TestPackages)
 	return c
+}
+
+// publicBranchCopy duplicates a proof, keeping nil as nil.
+func publicBranchCopy(proof *BranchProof) *BranchProof {
+	if proof == nil {
+		return nil
+	}
+	copied := *proof
+	return &copied
 }
 
 func outputSummary(output []byte) string {

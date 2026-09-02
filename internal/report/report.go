@@ -531,20 +531,25 @@ type PolicyResult struct {
 // established nothing reaches — which are also the only ones the run did not
 // execute.
 type Mutant struct {
-	ID          string  `json:"id"`
-	DisplayID   string  `json:"display_id"`
-	Path        string  `json:"path"`
-	Package     string  `json:"package"`
-	Family      string  `json:"family"`
-	Rule        string  `json:"rule"`
-	RuleVersion int     `json:"rule_version"`
-	Line        int     `json:"line"`
-	Column      int     `json:"column"`
-	StartByte   uint32  `json:"start_byte"`
-	EndByte     uint32  `json:"end_byte"`
-	Original    string  `json:"original"`
-	Replacement string  `json:"replacement"`
-	Outcome     Outcome `json:"outcome"`
+	ID          string `json:"id"`
+	DisplayID   string `json:"display_id"`
+	Path        string `json:"path"`
+	Package     string `json:"package"`
+	Family      string `json:"family"`
+	Rule        string `json:"rule"`
+	RuleVersion int    `json:"rule_version"`
+	Line        int    `json:"line"`
+	Column      int    `json:"column"`
+	StartByte   uint32 `json:"start_byte"`
+	EndByte     uint32 `json:"end_byte"`
+	Original    string `json:"original"`
+	Replacement string `json:"replacement"`
+	// Branch is discovery's proof that this edit can only narrow the condition
+	// of an `if` or a `for`, carried through so that a consumer reading a
+	// report has the same span `list --json` publishes. It is omitted entirely
+	// when there is none; see [Branch].
+	Branch  *Branch `json:"branch,omitempty"`
+	Outcome Outcome `json:"outcome"`
 	// NotRunReason says why a not-run mutant was not run, and is nil for every
 	// mutant that was measured. See [NotRunReason].
 	NotRunReason *string `json:"not_run_reason"`
@@ -570,6 +575,22 @@ type Mutant struct {
 	// It is never true of an uncovered mutant, of a not-run one, or of an
 	// outcome the cache refuses to store; see internal/cache.
 	Cached bool `json:"cached"`
+}
+
+// A Branch is the body span a mutant's condition gates, in the coordinates
+// `go test -coverprofile` reports statement blocks in.
+//
+// A test during which no statement of that body executed cannot distinguish
+// the mutant from the original program. Direction names the lemma the span came
+// from and is diagnostic; the promise is about the span alone. The proof itself
+// is made in internal/discover, which is the only phase with the type
+// information to make it; this document only carries it.
+type Branch struct {
+	Direction       string `json:"direction"`
+	BodyStartLine   int    `json:"body_start_line"`
+	BodyStartColumn int    `json:"body_start_column"`
+	BodyEndLine     int    `json:"body_end_line"`
+	BodyEndColumn   int    `json:"body_end_column"`
 }
 
 // A Rejected is a catalogued mutant validation refused, with the compiler's

@@ -64,7 +64,21 @@
         "start_byte": { "type": "integer", "minimum": 0 },
         "end_byte": { "type": "integer", "minimum": 0 },
         "original": { "type": "string" },
-        "replacement": { "type": "string" }
+        "replacement": { "type": "string" },
+        "branch": { "$ref": "#/$defs/branch" }
+      }
+    },
+    "branch": {
+      "description": "Present only when go-mutants proved this edit can only narrow the condition of an if or a for. body_start is the body's opening brace and body_end its closing brace, as 1-based lines and 1-based byte columns of the pristine file — the coordinates `go test -coverprofile` reports statement blocks in. A test during which no statement of that body executed cannot distinguish the mutant from the original program. direction names the lemma the span came from and is diagnostic; the promise is about the span alone, so a consumer must not branch on it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["direction", "body_start_line", "body_start_column", "body_end_line", "body_end_column"],
+      "properties": {
+        "direction": { "enum": ["decreasing"] },
+        "body_start_line": { "type": "integer", "minimum": 1 },
+        "body_start_column": { "type": "integer", "minimum": 1 },
+        "body_end_line": { "type": "integer", "minimum": 1 },
+        "body_end_column": { "type": "integer", "minimum": 1 }
       }
     },
     "skip": {

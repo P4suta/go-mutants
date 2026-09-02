@@ -87,6 +87,11 @@ type Located struct {
 	// Every candidate carries one; a candidate for which no guard form could be
 	// determined is not emitted at all, it is a [SkipUnnameableDeclType] skip.
 	Guard Guard
+	// Branch is the body a decreasing edit's condition gates, or nil when this
+	// phase proved nothing about the candidate. Unlike [Located.Guard] it is
+	// optional in both directions: nothing downstream needs it, and a consumer
+	// that has it can discharge tests without running them. See [BranchProof].
+	Branch *BranchProof
 }
 
 // A GuardForm names one of the three rewrite shapes instrumentation composes a

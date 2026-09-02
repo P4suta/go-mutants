@@ -187,7 +187,9 @@ Each entry carries the full 64-hex `id` and the 20-hex `display_id`, `path`,
 `package`, `family`, `rule`, `rule_version`, `line`, `column`, `start_byte`,
 `end_byte`, `original`, `replacement`, `outcome`, `not_run_reason`,
 `duration_ms`, `killed_by`, `attempts`, `output_tail`,
-`covering_test_packages`, `uncovered`, and `cached`.
+`covering_test_packages`, `uncovered`, and `cached`. One more key, `branch`, is
+optional and appears only on the mutants go-mutants could prove something extra
+about; see [`branch`](#branch) below.
 
 `cached` says the outcome was adopted from the outcome cache rather than
 measured by this run, so `duration_ms`, `attempts`, `killed_by` and
@@ -239,6 +241,35 @@ The values are hyphenated while the summary keys are snake_case (`timed_out`,
 `not_run`). That is deliberate and must not be unified by anybody tidying up:
 the keys are field names, the values are a published enum, and renaming one
 breaks somebody's `jq` expression.
+
+### `branch`
+
+`branch` is optional in both documents that carry a mutant — the run report and
+the catalog — and it appears only on a mutant whose edit go-mutants proved can
+only make the condition of an `if` or a `for` *less* often true. It is absent
+rather than `null` when there is no proof, so a decoder sees a missing key.
+
+| Field | Contents |
+| --- | --- |
+| `direction` | `decreasing`: the mutated condition implies the original one on every evaluation |
+| `body_start_line`, `body_start_column` | The body's opening brace |
+| `body_end_line`, `body_end_column` | The body's closing brace, inclusive |
+
+The coordinates are 1-based lines and 1-based **byte** columns of the pristine
+file, the same as `line` and `column`, and they are the coordinates
+`go test -coverprofile` reports its statement blocks in. What they promise is
+this: **a test during which no statement of that body executed cannot
+distinguish the mutant from the original program**, so it does not have to be
+executed against it. A consumer holding per-test coverage can therefore
+discharge tests without running them.
+
+`direction` is diagnostic. It names the lemma the span was derived from, and a
+consumer must not branch on it: a later release may prove the same span from a
+different lemma, and the promise above is about the span alone.
+
+Why the braces rather than the first statement is
+[in the operator reference](operators.md#branch-proof), together with the
+conditions a proof has to satisfy before go-mutants will state it.
 
 ### The score, and when it is null
 
@@ -335,14 +366,15 @@ Produced only by `list --json`, and validated against
 | `tool_version` | The build that wrote the document |
 | `workspace` | Same shape as the run report's |
 | `selection` | `profile`, `operators`, `include`, `exclude` |
-| `mutants[]` | Identity and coordinates only — no outcome |
+| `mutants[]` | Identity and coordinates only — no outcome — plus the optional [`branch`](#branch) |
 | `skips[]` | The same `path`/`reason`/`count` shape |
 
 A catalog is not a run report: it has no outcomes, no summary, no test output,
 and no run ID, because nothing was executed to produce one. Its `mutants[]`
-entries stop at `replacement`, and it records the profile separately from the
-selection patterns so that two catalogs from the same tree can be compared
-byte-for-byte as a determinism gate.
+entries stop at `replacement` — plus the optional [`branch`](#branch), which is
+a fact about the source and not about a run — and it records the profile
+separately from the selection patterns so that two catalogs from the same tree
+can be compared byte-for-byte as a determinism gate.
 
 ## `go-mutants/doctor` v1
 
