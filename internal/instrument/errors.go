@@ -105,6 +105,14 @@ const (
 	// not want, so a missing hint is a refusal rather than a fallback: see
 	// [Hints].
 	CodeMissingGuard Code = "GOM7329"
+	// CodeInfectionLog reports an infection log [ReadInfectionLog] will not
+	// read: an empty file, a missing header, a header naming another catalogue
+	// or another size, a repeated header that differs from the first, an index
+	// that is not a decimal uint32 or that names no catalogued mutant, or a
+	// last line the process that wrote it never finished. An infection fact is
+	// a licence not to run a test, so a log that cannot be read whole yields
+	// nothing rather than the part of itself that still parses.
+	CodeInfectionLog Code = "GOM7330"
 )
 
 // String returns the code as it is printed.
@@ -132,6 +140,7 @@ var codes = []Code{
 	CodeImportInjection,
 	CodeWriteFailed,
 	CodeMissingGuard,
+	CodeInfectionLog,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

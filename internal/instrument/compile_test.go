@@ -397,7 +397,14 @@ func goCommand(t *testing.T, toolchain gocmd.Toolchain, dir string, args ...stri
 	// configured with cannot decide what this build resolves against, and
 	// GOPROXY is off because a fixture module with no dependencies must never
 	// reach the network to build.
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod", "GOPROXY=off")
+	//
+	// -buildvcs=off is part of the same statement rather than a workaround. A
+	// fixture module lives in a temporary directory and has no version control
+	// of its own, so stamping it can only ever find somebody else's repository
+	// above it — and a stray or half-created .git in the temporary root then
+	// decides whether these tests build, which is a fact about the machine and
+	// not about the instrumented tree.
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod -buildvcs=false", "GOPROXY=off")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
