@@ -115,6 +115,14 @@ func TestCodesAreReachable(t *testing.T) {
 		record(f.err)
 	}
 
+	// The probe half's one refusal. It is produced here rather than through
+	// that list because it is not a refusal to instrument anything: it is the
+	// reader of the infection log declining to attribute a file it cannot read
+	// whole. [TestReadInfectionLogRejectsAnythingItCannotReadWhole] is where the
+	// shapes that reach it are enumerated.
+	_, err = instrument.ReadInfectionLog(strings.NewReader(""), "cafefeed", 1)
+	record(err)
+
 	for _, c := range instrument.Codes() {
 		if !produced[c] {
 			t.Errorf("no test produces code %s", c)

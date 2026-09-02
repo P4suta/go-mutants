@@ -15,9 +15,39 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// Options configures [Instrument]. The zero value is not usable: every field is
-// required, because none of them has a default that could not be somebody's
-// working tree.
+// A Mode selects which of the two trees [Instrument] produces.
+//
+// The two are different snapshots of the same module and never the same one.
+// Each carries a generated runtime package of its own, under the same directory
+// name, chosen by the same collision rule — which is safe precisely because
+// they never share a tree, and is what lets everything above them read one
+// [Result] without asking which mode produced it.
+type Mode int
+
+const (
+	// ModeMutant is the tree every guard and the activation runtime belong to,
+	// and the zero value because it is what instrumentation has meant since
+	// there was only one kind: one build carrying every catalogued mutant, one
+	// of them live per test process.
+	ModeMutant Mode = iota
+	// ModeProbe is the tree a probe pass runs, in which no mutant is ever
+	// active. The original semantics run, and each site reports — without side
+	// effects — whether the mutated value would have differed from the one the
+	// original produced. That is how a run learns a test cannot have observed a
+	// mutant without ever executing the two against each other.
+	//
+	// The probe forms are not written yet. This mode generates the runtime a
+	// probe tree calls and rewrites no file, so a probe tree today is the
+	// original source with a runtime nobody calls: honest about being an
+	// intermediate rather than pretending to be a probe pass. The order is
+	// deliberate — the runtime, its log format and the reader of that format
+	// are what the rewriting has to match, so they are settled first.
+	ModeProbe
+)
+
+// Options configures [Instrument]. The zero value is not usable: every field
+// but [Options.Mode] is required, because none of the others has a default that
+// could not be somebody's working tree.
 type Options struct {
 	// SnapshotRoot is the directory holding the copy of the module to rewrite.
 	// It is the snapshot and never the user's own tree: instrumentation edits
@@ -40,6 +70,11 @@ type Options struct {
 	// A mutant with no hint is refused rather than guessed at; see [Hints] for
 	// why the choice is not this package's to make.
 	Hints Hints
+
+	// Mode selects which tree this pass produces. The zero value is
+	// [ModeMutant], so a caller written before the probe tree existed keeps
+	// producing exactly what it always did.
+	Mode Mode
 }
 
 // Result reports what one instrumentation pass did.
@@ -64,6 +99,11 @@ type Result struct {
 // The rewrite is in place. That is what the snapshot is for: it is a disposable
 // copy, and rewriting it lets one build serve every mutant, with activation
 // costing an environment variable per test process instead of a rebuild.
+//
+// Everything below describes the mutant tree, which is what [Options.Mode]'s
+// zero value asks for. [ModeProbe] produces the other tree instead — a
+// different snapshot, with a runtime of its own and no mutant ever active in
+// it — and what that mode does and does not do yet is documented there.
 //
 // Files are edited only where the catalogue points, guards preserve the line
 // number of every original byte, and each file that gains a guard also gains
@@ -104,6 +144,20 @@ func Instrument(opts Options) (Result, error) {
 		RuntimeImport: importPath,
 		GuardsByFile:  make(map[string]int),
 	}
+
+	// A probe tree is generated and not yet rewritten: its runtime is written
+	// into the snapshot and every file is left as it was. The result still
+	// reports the directory and the import path, because those are what the
+	// caller needs to build the tree either way — and the guard hints are not
+	// consulted at all, since a hint answers "which form does this site take"
+	// and this tree has no sites.
+	if opts.Mode == ModeProbe {
+		if err := writeProbeRuntime(opts.SnapshotRoot, dir, opts.Catalog); err != nil {
+			return Result{}, err
+		}
+		return result, nil
+	}
+
 	// One cache for the whole pass: the runtime import alias each file gets has
 	// to dodge every name its package already binds, and reading a directory
 	// once per package rather than once per file is the difference between a
@@ -155,6 +209,16 @@ func (o Options) validate() error {
 	}
 	if o.Catalog == nil {
 		return &Error{Code: CodeOptions, Message: "no catalogue was given"}
+	}
+	// A mode this package does not know is refused rather than treated as the
+	// zero value: silently instrumenting a mutant tree for a caller that asked
+	// for something else would hand back a [Result] describing a tree nobody
+	// wanted, and every later phase would believe it.
+	if o.Mode != ModeMutant && o.Mode != ModeProbe {
+		return &Error{
+			Code:    CodeOptions,
+			Message: "the instrumentation mode " + strconv.Itoa(int(o.Mode)) + " is not one this package knows",
+		}
 	}
 	for _, m := range o.Catalog.Mutants() {
 		if !insideSnapshot(m.Path) {

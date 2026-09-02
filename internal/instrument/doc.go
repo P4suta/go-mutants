@@ -106,6 +106,38 @@
 // this file alone would say so. A file with no guards is not touched at all,
 // since an unused import does not compile.
 //
+// # The probe runtime
+//
+// [ModeProbe] generates a different package into a different snapshot, for the
+// tree a probe pass runs: one in which no mutant is ever active, so the original
+// semantics execute and each site reports, without side effects, whether the
+// mutated value would have differed. Its one export is `Infect(i uint32)`,
+// which records mutant i's dense index the first time that site is seen to
+// differ and never again, and its `init` reads [ProbeEnv] for the file to append
+// those indices to. Nothing in the environment is an ordinary run: the runtime
+// is linked in, records nothing, and costs a nil check.
+//
+// A probe that cannot write its log exits [ProbeUnavailableExit] rather than
+// carrying on, for the reason an unknown mutant ID stops the other runtime. An
+// empty log reads exactly like a run in which no site was ever infected, and
+// that reading is what licenses a consumer to skip an execution, so silence is
+// the one thing a probe may never answer with.
+//
+// The log is the append-only `gomutants-infection-v1` format: a header line
+// naming the format, the catalogue digest and the array width, then one decimal
+// index per line. Several test processes append to one file, so the header
+// appears once per process rather than once per file, and every occurrence has
+// to be identical. [ReadInfectionLog] reads it back, fail-closed. It is given
+// the catalogue's size rather than that width, derives the width itself through
+// the rule the generators size the array with, and bounds every index by the
+// size — so an empty catalogue's log is readable and admits no index at all.
+// See its documentation for why a partial answer is the one thing it must not
+// return.
+//
+// The probe forms themselves are not written yet: [ModeProbe] generates the
+// runtime and rewrites no file, so a probe tree today is the original source
+// with a runtime nobody calls.
+//
 // # Line preservation
 //
 // Instrumentation preserves the line number of every byte of the original

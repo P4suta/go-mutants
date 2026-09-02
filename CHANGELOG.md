@@ -14,6 +14,63 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A probe runtime, and the infection log it appends to.** The branch proof
+  below discharges executions on paper by reasoning about a condition. The
+  proof beneath it is *infection*: if the site of mutant `m` never evaluated to
+  a value different from the original's during test `t`, then `t` cannot have
+  killed `m` — a mutant is a one-site edit, so equal values at every evaluation
+  and equal side effects mean the two programs ran the same state sequence, and
+  running them against each other can only reproduce an answer already known.
+  Measuring that needs a second instrumented tree in which no mutant is ever
+  active, where the original semantics run and each site reports, without side
+  effects, whether the mutated value would have differed.
+
+  This is that tree's runtime half. `instrument.Options` grows a `Mode`; the
+  zero value is the mutant tree every existing caller already builds, and
+  `ModeProbe` generates the probe runtime into the snapshot. It rewrites no
+  file yet — a probe tree today is the original source with a runtime nobody
+  calls — and that is said out loud in `ModeProbe`'s own documentation rather
+  than left to be discovered, because the runtime, its log format and the
+  reader of that format are what the rewriting has to match, so they are
+  settled first.
+
+  The runtime exports one name, `Infect(i uint32)`, and carries no table from
+  mutant ID to index: a probe tree activates nothing, so it never resolves an
+  ID. One atomic compare-and-swap per mutant keeps a site evaluated a million
+  times to a single line, and that line goes straight to an `O_APPEND` file —
+  no exit hook, no flush window, so whatever a process wrote before it died is
+  exactly what it proved. `GO_MUTANTS_PROBE` names the file; empty or unset is
+  an ordinary run, which matters because the same tree is also built and run by
+  people who are not probing. A log the runtime cannot open or write exits `98`
+  instead of running the tests, because an empty log reads exactly like a run
+  in which no site was ever infected, and *that* reading is what licenses
+  skipping an execution — silence is the one answer a probe must never give.
+
+  The format is `gomutants-infection-v1`: a header naming the catalog digest
+  and the array width, then one decimal index per line. Several test processes
+  append to one file, so the header appears once per process rather than once
+  per file, and every occurrence must be identical.
+
+  `instrument.ReadInfectionLog` reads it back and is handed the catalog's
+  **size**, not that width. The two differ for exactly one catalog — the array
+  is never zero-length, so an empty catalog's runtime writes a header saying
+  one — and the reader derives the width itself through the rule the generators
+  use, so no caller has to know it. Indices are bounded by the size instead, so
+  an empty catalog's log stays readable (its header alone says nothing was
+  infected, because nothing could be) while any index in it is refused as
+  naming a mutant that does not exist.
+
+  It is fail-closed throughout: an empty file, a foreign or inconsistent
+  header, an index that is not a decimal `uint32`, an index at or past the
+  catalog size, or a last line the writer never finished each yield `GOM7330`
+  and no indices at all. The part of a damaged log that still parses is
+  precisely what a smaller, wrong answer looks like, and a smaller answer here
+  is a test that was skipped when it should have run.
+
+  The mutant runtime is untouched, byte for byte, and a test now asserts that
+  it still exports exactly `M`: the two packages carry the same name and only
+  never meet because they are generated into different snapshots.
+  `docs/architecture.md` has the tree, the format, and why 98 exists.
 - **A branch proof on the mutants whose edit can only narrow a condition.**
   `le-to-lt`, `ge-to-gt`, `or-to-and` and `nil-error-branch` all produce a
   mutated condition that *implies* the original one. When such an edit sits in

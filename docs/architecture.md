@@ -147,6 +147,84 @@ first-party, no `go.mod` edit is needed and vendor mode is undisturbed. Writes
 to `M` happen only during `init`, which happens-before test code, so the
 dispatch is a plain array load and the race detector stays quiet.
 
+## Probe runtime and the infection log
+
+Status: the runtime and its log format are implemented in
+`internal/instrument`; the probe forms and the pass that drives them are not.
+
+The next proof a consumer can act on is **infection**: if the site of mutant
+`m` never evaluated to a value different from the original's during test `t`,
+then `t` cannot have killed `m`. A mutant is a one-site edit, so equal values
+at every evaluation and equal side effects mean the two programs ran the same
+state sequence, and executing `t` against `m` can only reproduce a result
+already known. Measuring that needs a **probe tree**: a second instrumented
+snapshot in which no mutant is ever active, where the original semantics run
+and each site checks — without side effects — whether the mutated value would
+have differed.
+
+`Instrument` chooses between the two trees with `Options.Mode`. The zero value
+is the mutant tree above; `ModeProbe` generates the probe runtime and, today,
+rewrites no file — a probe tree is currently the original source with a runtime
+nobody calls. The runtime, its log format and the reader of that format are
+settled first because the rewriting is what has to match them.
+
+The probe runtime is generated into a **different snapshot** under the same
+`<module>/gomutants_rt/` name and the same collision rule, so the two packages
+never meet and everything above them reads one `Result` without asking which
+tree produced it. It exports exactly one name, `Infect(i uint32)`, and holds no
+ID table at all: a probe tree activates nothing, so it never resolves an ID —
+it records the dense index a guard already spells. One atomic
+compare-and-swap per mutant keeps a site evaluated a million times to one line,
+and the line goes straight to an `O_APPEND` file, so there is no exit hook and
+no flush window: whatever a process wrote before it died is exactly what it
+proved. Because writes to the mutant runtime's `M` still happen only in `init`,
+that invariant is untouched — this is a different artifact in a different tree,
+not a change to the one the mutant pass builds.
+
+`init` reads `GO_MUTANTS_PROBE` for the file to append to. Empty or unset is an
+ordinary run: the runtime is linked in, records nothing, and costs one nil
+check, which matters because the same tree is also built and run by people who
+are not probing. A log it cannot open or write makes the process exit `98`
+instead of running the tests. That is not defensive: an empty log reads exactly
+like a run in which no site was ever infected, and *that* reading is what
+licenses skipping executions, so silence is the one answer a probe must never
+give. Nothing classifies 98 yet — the runner knows 97 and not its neighbour —
+and the probe pass that drives these processes has to classify it as an
+infrastructure error the way 97 is, or the refusal buys nothing.
+
+The log is the append-only `gomutants-infection-v1` format:
+
+```text
+gomutants-infection-v1 <catalog digest> <N>
+<index>
+<index>
+```
+
+`<N>` is the runtime's array length — the catalog size, or 1 for an empty
+catalog, exactly as `M`'s is. Several test processes of one target append to
+one file, so the header appears **once per process** rather than once per file:
+a process that held its header back until it had an index to write would say
+nothing at all if it died first. Every occurrence must be identical.
+`fmt.Fprintln` issues a single `Write` and POSIX `O_APPEND` keeps small writes
+whole, so concurrent processes never interleave inside a line.
+
+`instrument.ReadInfectionLog` reads it back and is deliberately fail-closed. It
+is handed the **catalog size**, not `<N>`, and derives `<N>` from it through the
+same rule the generators size the array with, so no caller has to know that
+rule. The distinction is the empty catalog and nothing else: indices are bounded
+by the size rather than by `<N>`, so an empty catalog's log is readable — its
+header alone says nothing was infected, because nothing could be — while any
+index in it names a mutant that does not exist and is refused.
+
+An empty file, a missing header, a header naming another catalog or another
+width, a repeated header that differs from the first, an index that is not a
+decimal `uint32`, an index at or past the catalog size, or a last line the
+writer never finished each yield `GOM7330` and no indices at all. The part of a
+damaged log that still parses is precisely what a smaller, wrong answer looks
+like, and a smaller answer here is a test that was skipped when it should have
+run. The caller's one safe reading of an error is "this target yields no
+infection facts".
+
 ## Compile validation
 
 Status: implemented in `internal/validate`. Instrumentation is a byte rewrite
