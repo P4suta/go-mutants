@@ -126,6 +126,9 @@ func TestBranchProofReachesTheEngineAPI(t *testing.T) {
 		t.Fatalf("the catalogue holds %d mutants, want 2", len(public.Mutants))
 	}
 	proved, plain := public.Mutants[0], public.Mutants[1]
+	if proved.Rule != "le-to-lt" || plain.Rule != "lt-to-le" {
+		t.Fatalf("the catalogue lists %s then %s, want le-to-lt then lt-to-le", proved.Rule, plain.Rule)
+	}
 	if proved.Branch == nil {
 		t.Fatalf("the proved mutant carries no branch: %+v", proved)
 	}
@@ -141,5 +144,19 @@ func TestBranchProofReachesTheEngineAPI(t *testing.T) {
 	}
 	if plain.Branch != nil {
 		t.Errorf("the unproved mutant carries a branch: %+v", *plain.Branch)
+	}
+
+	// Session.Catalog hands out a copy, and a proof is the one pointer in a
+	// mutant, so the copy has to carry its own: an aliased proof would leave a
+	// caller one assignment away from rewriting the session's catalogue.
+	clone := cloneCatalog(public)
+	if clone.Mutants[0].Branch == proved.Branch {
+		t.Errorf("cloneCatalog aliased the branch proof")
+	}
+	if *clone.Mutants[0].Branch != want {
+		t.Errorf("cloneCatalog changed the branch proof: %+v", *clone.Mutants[0].Branch)
+	}
+	if clone.Mutants[1].Branch != nil {
+		t.Errorf("cloneCatalog gave the unproved mutant a branch: %+v", *clone.Mutants[1].Branch)
 	}
 }
