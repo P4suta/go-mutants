@@ -542,7 +542,8 @@ func (g *guardResolver) fieldKeyed(lit *ast.CompositeLit) bool {
 }
 
 // returnSite computes the probe hint of one `return` statement, or nil when
-// this file cannot express the rewrite it describes.
+// this file cannot express the rewrite it describes or the statement is not one
+// the probe may stand in for.
 //
 // The result types come from the enclosing function's signature rather than
 // from the operands, for the reason [ReturnSite] gives: the declared type is the
@@ -551,6 +552,12 @@ func (g *guardResolver) fieldKeyed(lit *ast.CompositeLit) bool {
 // spells them — the same machinery Form D's declarations go through, so a type
 // this file cannot name is refused here exactly as it is there, and no second
 // spelling rule can drift away from the first.
+//
+// Every operand has to be effect-free, which is a property of the whole
+// statement and so is asked here rather than per result: the mutant does not
+// evaluate the operand it replaces, and the rewrite fixes an evaluation order
+// the compiler does not use. effects.go argues both. The per-result conditions
+// are [guardResolver.probesResult]'s.
 //
 // [ReturnSite.Index] is left at zero: the caller fills it in per result through
 // [ReturnSite.at], so that every candidate of one statement shares one site.
@@ -561,6 +568,11 @@ func (g *guardResolver) returnSite(stmt *ast.ReturnStmt, results *types.Tuple) *
 	span, ok := g.span(stmt)
 	if !ok {
 		return nil
+	}
+	for _, value := range stmt.Results {
+		if !g.effectFree(value) {
+			return nil
+		}
 	}
 	spelled := make([]string, 0, results.Len())
 	for i := range results.Len() {
@@ -575,6 +587,21 @@ func (g *guardResolver) returnSite(stmt *ast.ReturnStmt, results *types.Tuple) *
 		spelled = append(spelled, rendered)
 	}
 	return &ReturnSite{Span: span, Types: spelled}
+}
+
+// probesResult reports whether the probe may stand in for the mutant at one
+// result of a statement [guardResolver.returnSite] has already accepted.
+//
+// Two conditions, both about this result alone. Its operand may not panic,
+// because a panic is a divergence between the original and the mutant that the
+// comparison is never reached to see. And its declared type may not be a
+// floating-point or complex one, because `-0.0 != 0` is false while the two
+// values are distinguishable. effects.go argues both, and both leave the other
+// results of the same statement probed: the rewrite declares a temporary per
+// result and writes an `if` per mutant, so dropping one mutant's `if` is a
+// rewrite it already knows how to render.
+func (g *guardResolver) probesResult(value ast.Expr, declared types.Type) bool {
+	return !floatingResult(declared) && g.panicFree(value)
 }
 
 // mentionsTypeParam reports whether a type is, or is built from, a type

@@ -468,10 +468,19 @@ func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
 	// probe rewrite replaces the statement rather than the value, so every
 	// candidate in it describes the same rewrite and differs only in which
 	// result it replaces. A nil site is a statement this file cannot spell a
-	// probe for, and every candidate in it goes out unprobed.
+	// probe for, or one the probe cannot stand in for, and every candidate in it
+	// goes out unprobed.
+	//
+	// The per-result conditions are asked after it, and each of them refuses one
+	// result while leaving the others probed.
 	site := s.returnSite(n, results)
 	for i, value := range n.Results {
-		if err := s.returnValue(value, results.At(i).Type(), site.at(i)); err != nil {
+		declared := results.At(i).Type()
+		hint := site.at(i)
+		if hint != nil && !s.probesResult(value, declared) {
+			hint = nil
+		}
+		if err := s.returnValue(value, declared, hint); err != nil {
 			return err
 		}
 	}
@@ -485,6 +494,16 @@ func (s *fileScan) returnSite(n *ast.ReturnStmt, results *types.Tuple) *ReturnSi
 		return nil
 	}
 	return s.guard.returnSite(n, results)
+}
+
+// probesResult reports whether one result of a `return` may carry the site
+// computed for that statement, or false when this phase holds no resolver to
+// ask.
+func (s *fileScan) probesResult(value ast.Expr, declared types.Type) bool {
+	if s.guard == nil {
+		return false
+	}
+	return s.guard.probesResult(value, declared)
 }
 
 // returnValue emits whichever replacement the declared result type admits.
