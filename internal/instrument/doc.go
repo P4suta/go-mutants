@@ -142,13 +142,20 @@
 //	{ var r0 T0 = E0; var r1 T1 = E1; …; if rj != K { __gm.Infect(i) }; return r0, r1, … }
 //
 // where Tj is the *declared result type* of the enclosing function, which is
-// the conversion the `return` itself performs. Go evaluates a return's operands
-// once each and then assigns them to the results, so this evaluates nothing
-// twice and nothing extra: it is the same program, with one comparison and one
-// call added after the values are in hand. probe.go states the argument in full
-// — why the comparison is total, why the block is still a terminating
-// statement, and the one case where IEEE equality makes the probe report less
-// than it could.
+// the conversion the `return` itself performs. It evaluates nothing twice and
+// nothing extra: the same program, with one comparison and one call added after
+// the values are in hand.
+//
+// The mutant it stands in for returns K *instead of evaluating* Ej, so the hint
+// is handed out only for a statement whose every operand is effect-free —
+// nothing the mutant skips can then matter, and no evaluation order is
+// observable — only for a result whose operand cannot panic, since a panic is a
+// divergence the comparison is never reached to record, and never for a
+// floating-point or complex result, since `-0.0 != 0` is false. All three are
+// decided by internal/discover, which has a type checker; this package has none
+// and trusts the hint as it trusts a Form D declared type. probe.go states the
+// argument in full, along with why the comparison is total and why the block is
+// still a terminating statement.
 //
 // Everything else is unprobed. A mutant of another family is catalogued and
 // mutated exactly as before and simply not measured, so a file holding only

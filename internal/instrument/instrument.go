@@ -38,11 +38,15 @@ const (
 	//
 	// One probe form is written: the return-value mutants, whose statement
 	// becomes a block that evaluates each operand once, compares the mutated
-	// result against the constant, and returns what it evaluated. Every other
-	// family is left unprobed — its mutants are catalogued and mutated as ever,
-	// and a run simply learns nothing about which tests could observe them, so
-	// it runs them all. See internal/instrument's probe.go for the form and why
-	// it is exact.
+	// result against the constant, and returns what it evaluated. The mutant
+	// returns that constant *instead of evaluating* its operand, so the form
+	// speaks for it only where internal/discover proved that evaluating the
+	// operand is nothing but computing a value: every operand of the statement
+	// effect-free, the probed one unable to panic, and its result neither
+	// floating-point nor complex. Every other family is left unprobed — its
+	// mutants are catalogued and mutated as ever, and a run simply learns
+	// nothing about which tests could observe them, so it runs them all. See
+	// internal/instrument's probe.go for the form and why it is exact.
 	ModeProbe
 )
 

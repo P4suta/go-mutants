@@ -242,16 +242,35 @@ one `if` written per mutant, so a mutant on the second result of
 
 and the form is chosen first because its exactness needs the least argument.
 
-- **Nothing is evaluated twice and nothing extra is evaluated.** Go evaluates
-  the operands of a `return` once each and then assigns them to the results,
-  which is precisely what the `var` sequence does. So `Ej` may call, receive,
-  send or panic and the rewrite is still the same program. The language fixes
-  the left-to-right order of function calls, method calls, receive operations
-  and binary logical operations and leaves the order of the rest unspecified,
-  so evaluating the operands in source order is one legal execution of the
-  original — which is all a rewrite has to be.
+The mutant it stands in for is `return E0, K`: it returns the constant
+*instead of evaluating* `E1`. So the probe speaks for that mutant only where
+evaluating `E1` is nothing but computing a value, which is three conditions
+`internal/discover` proves before it hands out a hint at all.
+
+- **Every operand of the statement is effect-free** — no call, no method call,
+  no receive, no `append`. The mutated operand has to be, because an effect
+  there is an effect the mutant does not have: `return compute(), nil` mutated
+  to `return 0, nil` never calls `compute`, and a test watching for what it did
+  kills a mutant the probe reported as never differing. The operands beside it
+  have to be as well, because the rewrite evaluates in source order and the
+  compiler does not — the spec leaves the order of a plain variable read
+  relative to a call in another operand unspecified, and gc performs the read
+  after the calls, so for `return s.n, set()` the probe would compare a value
+  the original binary never returned. With no effects anywhere, every order
+  yields the same values and the block's execution is the original's.
+- **The probed operand cannot panic.** If it panics the mutant does not, the
+  two programs diverge, and the divergence is invisible here: the `if` is never
+  reached, so nothing is recorded and the log reads exactly as it reads for a
+  site that never differed. The other operands may still panic, because the
+  original and the mutant then panic there identically. This one is decided per
+  result, so `return p.n, err` keeps the probe on `err` and loses it on `p.n`.
+- **The probed result is not floating-point or complex.** `-0.0 != 0` is false,
+  so a `return-zero-numeric` mutant at a float result holding negative zero
+  reads as *not* infected — the answer that skips a test — while `math.Signbit`
+  and `1/x` tell the two values apart. NaN needs no rule and gets none:
+  `NaN != 0` is true, which is the safe answer.
 - **`Tj` is the declared result type, not the operand's.** `return 0` in a
-  function returning `float32` becomes `var r0 float32 = 0`, which is exactly
+  function returning `int64` becomes `var r0 int64 = 0`, which is exactly
   the conversion the `return` performs — and the conversion the mutant's
   `return K` would have performed too, so `rj != K` compares the two values the
   two programs would really have returned. `internal/discover` spells those
@@ -261,10 +280,7 @@ and the form is chosen first because its exactness needs the least argument.
   whatever named type they wear, and comparing an interface, pointer, slice,
   map, channel or function value with the `nil` literal compares against the
   nil value of that very type — no dynamic-type comparison happens, so nothing
-  panics. The one place `!=` is not the identity of values is IEEE 754: a float
-  result of negative zero reads as *not* differing from `0`. That errs towards
-  a test being run anyway, never towards one skipped for a mutant it could have
-  killed.
+  panics.
 - **The statement stays well formed.** `return r0, r1` assigns named results
   exactly as the original did, so deferred functions observe the same values,
   and a block whose last statement is a `return` is itself a terminating
@@ -275,15 +291,24 @@ and the form is chosen first because its exactness needs the least argument.
   one rewrite per statement. A `return` nested inside another's operand — in a
   function literal — is composed children-first, exactly as nested guards are.
 
-Two shapes are refused, both in `internal/discover` where a hint is computed
-rather than in the rewriter that would have to use it. A result type the file
-cannot spell — a dot-imported package's, `unsafe.Pointer` — leaves the site
-without a hint, and so does a result that is or contains a type parameter,
-because a value of a type parameter's type need not be comparable with a
-constant. A refusal costs the *probe* and nothing else: the candidate is still
-catalogued, still mutated and still guarded in the mutant tree, which is why it
-is not a skip reason — a skip would tell a user go-mutants passed over an edit
-it in fact makes.
+Two more shapes are refused, and every refusal happens in `internal/discover`
+where a hint is computed rather than in the rewriter that would have to use it.
+A result type the file cannot spell — a dot-imported package's,
+`unsafe.Pointer` — leaves the site without a hint, and so does a result that is
+or contains a type parameter, because a value of a type parameter's type need
+not be comparable with a constant. A refusal costs the *probe* and nothing else:
+the candidate is still catalogued, still mutated and still guarded in the mutant
+tree, which is why it is not a skip reason — a skip would tell a user
+go-mutants passed over an edit it in fact makes.
+
+The three soundness conditions cost the layer almost nothing, which is the
+measured reason they are drawn where they are. On a consumer's baseline of some
+6,300 mutants, the return-value survivors whose operand is a bare call are
+overwhelmingly `return fmt.Errorf(…)`, always infected and never dischargeable
+by this layer anyway; of the survivors whose operand is pure — an identifier, a
+literal, a field, a composite — almost all sit in statements whose other
+operands are pure too, because `return 0, err` and `return report{}, err` are
+what such a statement looks like.
 
 Everything else is simply unprobed for now. Only this family has a form, so a
 file of comparisons comes out of `ModeProbe` byte for byte as its author wrote

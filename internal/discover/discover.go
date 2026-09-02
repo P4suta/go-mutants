@@ -223,9 +223,10 @@ type Guard struct {
 
 	// Return is the probe hint of a return-value mutant: the statement it sits
 	// in, the type every result of that statement must be declared as, and the
-	// position of the result the mutation replaces. It is nil when some result
-	// type cannot be spelled in the file, and always nil for other rules; a nil
-	// Return means the mutant is not probed, never that it is not mutated.
+	// position of the result the mutation replaces. It is nil when the probe
+	// cannot be written for the statement or cannot stand in for this result —
+	// [ReturnSite] gives the five reasons — and always nil for other rules; a
+	// nil Return means the mutant is not probed, never that it is not mutated.
 	Return *ReturnSite
 }
 
@@ -246,8 +247,8 @@ type Guard struct {
 // # Why the type is the declared result type
 //
 // Tj is the *result* type of the enclosing function and never the type of the
-// operand. `return 1` in a function returning float32 becomes
-// `var r0 float32 = 1`, because that is the conversion the `return` itself
+// operand. `return 1` in a function returning int64 becomes
+// `var r0 int64 = 1`, because that is the conversion the `return` itself
 // performs — and it is the conversion the mutant's `return 0` would have
 // performed too, so comparing a temporary of that type against the constant
 // asks exactly the question "would the two returns have differed". A temporary
@@ -256,20 +257,35 @@ type Guard struct {
 //
 // # Why every result is named
 //
-// Go evaluates the operands of a `return` once each and then assigns them to
-// the results, and the `var` sequence above does exactly that. Naming only the
-// mutated result would leave the others to be re-evaluated by the `return`,
-// which is a second evaluation of whatever side effects they hold. So the hint
-// describes the whole statement, and two candidates in one `return` carry the
-// same Span and Types and differ only in Index.
+// The rewrite replaces the statement, so it has to reproduce it: naming only
+// the mutated result would leave the others to the `return` and evaluate them a
+// second time. So the hint describes the whole statement, and two candidates in
+// one `return` carry the same Span and Types and differ only in Index.
 //
 // # When it is absent
 //
-// The rewrite writes these types into the file it rewrites, so a type that file
-// cannot spell is a probe that cannot be written: those sites are refused here
-// and the mutant is simply not probed. A result that is or contains a type
-// parameter is refused as well — a value of a type parameter's type need not be
-// comparable with a constant, and the constraint decides.
+// Five reasons, and the first two are about the statement as a whole. The
+// rewrite writes the result types into the file it rewrites, so a type that
+// file cannot spell is a probe that cannot be written. A result that is or
+// contains a type parameter is refused too — a value of a type parameter's type
+// need not be comparable with a constant, and the constraint decides.
+//
+// The third is the soundness of the measurement rather than the writing of it.
+// The mutant returns its constant *instead of evaluating* the operand it
+// replaces, so the probe stands in for it only where evaluating that operand is
+// nothing but computing a value. Every operand of the statement therefore has
+// to be effect-free: an effect in the mutated operand is one the mutant does
+// not have, and an effect in any other operand makes the order matter, which
+// the rewrite fixes to source order while the compiler is free to read a plain
+// variable after the calls beside it.
+//
+// The last two are per result and leave the other results of the same statement
+// probed. The probed operand may not be one whose evaluation can panic, because
+// a panic makes the two programs diverge somewhere the comparison is never
+// reached to see, so nothing is recorded and the log reads as "never differed".
+// And the probed result may not be floating-point or complex, because
+// `-0.0 != 0` is false while the two values are distinguishable. effects.go
+// carries the grammars that decide the last three and the argument for each.
 //
 // A refusal costs the probe and nothing else. The candidate is still emitted,
 // still catalogued, still mutated and still guarded, which is why it is not a

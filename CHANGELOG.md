@@ -27,25 +27,36 @@ Entries say *why* a change was made, not only what changed.
   would ever have differed from it — which is the fact that licenses not running
   a test against a mutant.
 
-  The form is first because its exactness needs the least argument. Go evaluates
-  the operands of a `return` once each and then assigns them to the results, and
-  the `var` sequence does exactly that: nothing is evaluated twice and nothing
-  extra is evaluated, so an operand may call, receive, send or panic and the
-  probe is still the same program. `T` is the *declared result type* — `return 0`
-  in a function returning `float32` becomes `var r0 float32 = 0` — because that
-  is the conversion the `return` performs, and the one the mutant's constant
-  would have gone through, so the comparison is between the two values the two
-  programs would really have returned. Named results and `defer` see what they
-  always saw, and a block ending in `return` is still a terminating statement.
+  The form is first because its exactness needs the least argument. `T` is the
+  *declared result type* — `return 0` in a function returning `int64` becomes
+  `var r0 int64 = 0` — because that is the conversion the `return` performs, and
+  the one the mutant's constant would have gone through, so the comparison is
+  between the two values the two programs would really have returned. Named
+  results and `defer` see what they always saw, and a block ending in `return`
+  is still a terminating statement.
+
+  What is *probed* is narrower than what is mutated, because the mutant returns
+  its constant **instead of evaluating** the operand it replaces. A statement is
+  probed only when every one of its operands is effect-free — no call, no method
+  call, no receive, no `append` — since an effect in the mutated operand is one
+  the mutant never has, and an effect in any other operand makes the evaluation
+  order matter, which the rewrite fixes to source order while the compiler is
+  free to read a plain variable after the calls beside it. A result is probed
+  only when its own operand cannot panic, because a panic is a divergence
+  between the two programs that the comparison is never reached to record. And a
+  floating-point or complex result is never probed, because `-0.0 != 0` is false
+  while the two values are distinguishable. One refused result leaves the others
+  in its statement probed.
 
   `discover.Guard` grows a `Return` hint for the six return-value rules, spelled
-  with the machinery Form D's declarations already go through. It is absent when
-  a result type cannot be written in the file — a dot-imported package's,
-  `unsafe.Pointer` — and when a result is or contains a type parameter, whose
-  values need not be comparable with a constant. An absent hint costs the probe
-  and nothing else: the candidate is still catalogued, still mutated and still
-  guarded, which is why it is not a new skip reason and why nothing in
-  `go-mutants list --json` or the run report changes.
+  with the machinery Form D's declarations already go through. Besides the three
+  conditions above it is absent when a result type cannot be written in the file
+  — a dot-imported package's, `unsafe.Pointer` — and when a result is or
+  contains a type parameter, whose values need not be comparable with a
+  constant. An absent hint costs the probe and nothing else: the candidate is
+  still catalogued, still mutated and still guarded, which is why it is not a new
+  skip reason and why nothing in `go-mutants list --json` or the run report
+  changes.
 
   `validate.Options` grows the same `Mode`, so the probe tree is built and
   bisected by the phase that already builds and bisects the mutant tree. A

@@ -29,33 +29,47 @@ import (
 //
 // # Why it is exact
 //
-// Go evaluates the operands of a `return` once each and then assigns them to
-// the results. The `var` sequence does exactly that: no operand is re-evaluated
-// and nothing extra is evaluated, so an operand may call, receive, send or
-// panic and the rewrite is still the same program. The language fixes the
-// left-to-right order of calls, method calls, receives and binary logical
-// operations and leaves the order of everything else unspecified, so evaluating
-// the operands in source order is one legal execution of the original — which
-// is all a rewrite has to be. That is what makes the return form the safest
-// probe there is, and it is why it is the first one written.
+// The mutant this stands in for is `return …, K, …`: it returns the constant
+// *instead of evaluating* Ej. So the rewrite can only speak for it where
+// evaluating Ej is nothing but computing a value, and internal/discover hands a
+// hint only where that holds. Three conditions, each argued in full in that
+// package's effects.go.
+//
+// Every operand of the statement is effect-free — no call, no method call, no
+// receive, no `append`. Then nothing the mutant skips was going to change what
+// the program does, and no evaluation order is observable: the `var` sequence
+// evaluates in source order, which is *not* the order gc uses for a plain
+// variable read beside a call, and with no effects anywhere every order yields
+// the same values. So the block's execution is the original's.
+//
+// The probed operand cannot panic. A panic there is a divergence — the mutant
+// returns its constant and panics at nothing — and it is one the comparison is
+// never reached to record, so the log would read exactly as it reads for a site
+// that never differed. The *other* operands may still panic: the original and
+// the mutant panic there identically, and recording nothing is then the truth.
+//
+// The probed result is not floating-point or complex, because `-0.0 != 0` is
+// false while `math.Signbit` and `1/x` tell those two values apart. NaN needs
+// no rule: `NaN != 0` is true, so such a site reports infected, which is only
+// ever the safe answer.
+//
+// This side re-derives none of it. The instrumenter has no type information and
+// trusts the hint exactly as it trusts a Form D declared type: a hint present
+// is a site discovery proved these three things about.
 //
 // Tj is the *declared result type* of the enclosing function, not the type of
-// the operand: `return 0` in a function returning float32 becomes
-// `var r0 float32 = 0`, which is exactly the conversion the `return` performs.
+// the operand: `return 0` in a function returning int64 becomes
+// `var r0 int64 = 0`, which is exactly the conversion the `return` performs.
 // The mutant's `return K` would have gone through the same conversion, so
 // `rj != K` compares the two values the two programs would really have
 // returned. internal/discover spells those types, with the machinery a Form D
 // declaration already goes through, and refuses the site when it cannot.
 //
-// The comparison is total for every constant this family produces. Numbers,
-// strings and booleans compare with `!=` whatever named type they wear, and a
-// comparison of an interface, pointer, slice, map, channel or function value
-// with the `nil` literal compares against the nil value of that very type — no
-// dynamic-type comparison happens, so nothing panics. The one place `!=` is not
-// the identity of values is IEEE 754: a float result of negative zero compares
-// equal to `0`, so a mutant returning `0` there is recorded as not differing.
-// That errs in the safe direction — a test that is run anyway, never a test
-// skipped for a mutant it could have killed.
+// The comparison itself is total for every constant this family produces.
+// Numbers, strings and booleans compare with `!=` whatever named type they
+// wear, and a comparison of an interface, pointer, slice, map, channel or
+// function value with the `nil` literal compares against the nil value of that
+// very type — no dynamic-type comparison happens, so nothing panics.
 //
 // Named results and `defer` see what they always saw: `return r0, r1` assigns
 // the named results exactly as the original did, before any deferred function
