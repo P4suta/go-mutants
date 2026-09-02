@@ -42,6 +42,7 @@ at.
 | `rejectable/` | `fixture.example/rejectable` | Compile validation's oracle. Nineteen candidates over three files, three of which are not programs once the mutation is applied: two constant divisions by zero (`v*0` swapped to `v/0`) and an untyped constant that stops fitting its context (`200 - 100` returned as a `uint8`, swapped to `200 + 100`). The other sixteen are healthy, share their files with the traps, and are all killed by the fixture's tests, so a phase that rejected a file rather than a candidate would be caught. Four of the sixteen are the control in `named.go`: the named boolean type that used to be this module's trap and is now an ordinary mutant. |
 | `coverage/` | `fixture.example/coverage` | Coverage-guided selection. Two packages, two test binaries, and three functions in one file with three different coverage fates, eleven mutants between them: `AboveZero` is reached only by its own package's tests, `Differs` only by the caller package's, and `Orphan` by nothing at all. It is the one fixture where the *right* answer and the *fast* answer differ, so a mutant measured against the wrong binary would survive rather than merely cost time. |
 | `vetsuspect/` | `fixture.example/vetsuspect` | The toolchain's opinion of the rewrite. Two functions, ten mutants, all killed — and two of the ten are the point: a Form C guard renders each alternative from the pristine bytes with one edit applied, so `or-to-and` writes `s == "." && s == ".."` into the snapshot and `and-to-or` writes `s != "." || s != ".."`. Both are legal Go and both are what vet's `bools` analyzer reports, and `go test` and `go test -c` run it by default. It is the only fixture whose subject is a command line rather than a program. |
+| `probeable/` | `fixture.example/probeable` | The probe session. Three mutants and no other mutable expression: two return-value ones a probe tree has a form for and one boolean literal it has none for, so both directions of the layer can be stated — a probed mutant whose absence from a measurement is a fact, and an unprobed one whose absence means nothing at all and which a consumer has to treat as infected by every test. Every probed function returns a value differing from its mutant's constant on every call, so a test that does not name it is a test that never reached it. Its `isolated/` package holds nothing to mutate and imports nothing that does, so its binary links no runtime and writes no log — the one absence a probe pass must read as the empty set rather than as a failure. |
 | `families/` | `fixture.example/families` | The whole operator catalogue. Twenty small functions in one package holding at least one live candidate for each of the 42 rules the frozen registry names — 76 mutants at profile `all`, 72 at `strong`, 59 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
 
 The discovery fixture is the one module in the corpus with no test files, which
@@ -134,6 +135,18 @@ across 2 test binaries, `families/` is 63 killed and 13 survived over all
 eleven families, `vetsuspect/` is 10 killed and nothing left unexecuted, and
 `simple/` is a green run whose event sequence is pinned whole. A fixture
 edited without its test is a fixture whose claim quietly stopped being true.
+
+`probeable/` is driven by the engine API's own integration suite instead, which
+prepares two sessions over it — one with a probe tree and one without — and
+holds every claim in its package documentation as data: two mutants probed and
+one not, a test that reaches a site named and one that does not absent, a
+failing and a timed-out target carrying no facts, and, over every (mutant, test)
+pair it has, that a kill was always preceded by an infection. That last one is
+the soundness statement of the whole infection layer, and the fixture's three
+returns exist to make it checkable by reading the file. Adding a fourth
+mutable expression, or letting `Width` or `Label` ever return the constant its
+mutant returns, would leave the module compiling, the suite green, and a probe
+recorded as silent about a site it did reach.
 
 `vetsuspect/` is the one whose tally is the least interesting part of it. What
 that test asserts is that the mutants *executed* at all: `bools` is one of the
