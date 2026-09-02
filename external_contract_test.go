@@ -50,6 +50,7 @@ var (
 	_ func(*gomutants.Workspace) error = (*gomutants.Workspace).Close
 	_ func(*gomutants.Session) gomutants.Catalog = (*gomutants.Session).Catalog
 	_ func(*gomutants.Session, context.Context, gomutants.ExecRequest) (gomutants.MutantResult, error) = (*gomutants.Session).Exec
+	_ func(*gomutants.Session, context.Context, gomutants.ProbeRequest) (gomutants.ProbeResult, error) = (*gomutants.Session).Probe
 	_ func(*gomutants.Session) ([]gomutants.Change, error) = (*gomutants.Session).Changes
 	_ func(*gomutants.Session) error = (*gomutants.Session).Close
 )
@@ -66,9 +67,16 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.Rejection{}
 	_ = gomutants.ExecRequest{}
 	_ = gomutants.MutantResult{}
+	_ = gomutants.ProbeRequest{}
+	_ = gomutants.ProbeResult{}
 	_ = gomutants.Artifact{}
 	_ = gomutants.Change{}
 	_ = gomutants.OutcomeKilled
+	_ = gomutants.ProbeMeasured
+	_ = gomutants.ProbeTestFailed
+	_ = gomutants.ProbeTimedOut
+	_ = gomutants.ProbeUnavailable
+	_ = gomutants.ErrProbeNotPrepared
 	_ = gomutants.ChangeAdded
 }
 `
