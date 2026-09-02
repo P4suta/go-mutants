@@ -166,7 +166,7 @@ func writeGeneratedPackage(root, dir string, source []byte) error {
 // one costs a byte and keeps the generated source one shape rather than two.
 func renderRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
 	mutants := catalog.Mutants()
-	size := runtimeArraySize(catalog)
+	size := arraySize(catalog.Len())
 
 	var b strings.Builder
 	generatedPreamble(&b)
@@ -243,7 +243,7 @@ func renderRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
 // index can address, and a header claiming zero mutants would describe a log in
 // which no line could ever be valid.
 func renderProbeRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
-	size := runtimeArraySize(catalog)
+	size := arraySize(catalog.Len())
 
 	var b strings.Builder
 	generatedPreamble(&b)
@@ -333,15 +333,23 @@ func probeDiagnostic(b *strings.Builder, indent, what, cause string) {
 	b.WriteString(indent + "os.Exit(probeUnavailableExit)\n")
 }
 
-// runtimeArraySize is the length of the per-mutant array both generated
-// runtimes carry: the catalogue's size, or one when the catalogue is empty.
+// arraySize is the length of the per-mutant array both generated runtimes
+// carry, given how many mutants the catalogue holds: that number, or one when
+// the catalogue holds none.
 //
 // An empty catalogue is a real case — a run whose filters selected nothing —
 // and a zero-length array is legal Go that no index can address. One element
 // costs a byte and keeps each generated source one shape rather than two.
-func runtimeArraySize(catalog *mutation.Catalog) int {
-	if size := catalog.Len(); size > 0 {
-		return size
+//
+// It takes a count rather than a catalogue because [ReadInfectionLog] applies
+// the same rule from the other end: the reader is handed the catalogue's size,
+// as every other caller is, and derives the width the header carries through
+// this function. Sharing it is what keeps the writer and the reader agreeing
+// about the one catalogue for which the width and the size are different
+// numbers.
+func arraySize(mutants int) int {
+	if mutants > 0 {
+		return mutants
 	}
 	return 1
 }

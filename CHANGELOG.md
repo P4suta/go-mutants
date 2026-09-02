@@ -47,15 +47,25 @@ Entries say *why* a change was made, not only what changed.
   skipping an execution — silence is the one answer a probe must never give.
 
   The format is `gomutants-infection-v1`: a header naming the catalog digest
-  and the array length, then one decimal index per line. Several test processes
+  and the array width, then one decimal index per line. Several test processes
   append to one file, so the header appears once per process rather than once
   per file, and every occurrence must be identical.
-  `instrument.ReadInfectionLog` reads it back fail-closed — an empty file, a
-  foreign or inconsistent header, an index that is not a decimal `uint32`, an
-  index past the catalog, or a last line the writer never finished each yield
-  `GOM7330` and no indices at all. The part of a damaged log that still parses
-  is precisely what a smaller, wrong answer looks like, and a smaller answer
-  here is a test that was skipped when it should have run.
+
+  `instrument.ReadInfectionLog` reads it back and is handed the catalog's
+  **size**, not that width. The two differ for exactly one catalog — the array
+  is never zero-length, so an empty catalog's runtime writes a header saying
+  one — and the reader derives the width itself through the rule the generators
+  use, so no caller has to know it. Indices are bounded by the size instead, so
+  an empty catalog's log stays readable (its header alone says nothing was
+  infected, because nothing could be) while any index in it is refused as
+  naming a mutant that does not exist.
+
+  It is fail-closed throughout: an empty file, a foreign or inconsistent
+  header, an index that is not a decimal `uint32`, an index at or past the
+  catalog size, or a last line the writer never finished each yield `GOM7330`
+  and no indices at all. The part of a damaged log that still parses is
+  precisely what a smaller, wrong answer looks like, and a smaller answer here
+  is a test that was skipped when it should have run.
 
   The mutant runtime is untouched, byte for byte, and a test now asserts that
   it still exports exactly `M`: the two packages carry the same name and only

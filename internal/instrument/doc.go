@@ -124,11 +124,15 @@
 // the one thing a probe may never answer with.
 //
 // The log is the append-only `gomutants-infection-v1` format: a header line
-// naming the format, the catalogue digest and the array length, then one decimal
+// naming the format, the catalogue digest and the array width, then one decimal
 // index per line. Several test processes append to one file, so the header
 // appears once per process rather than once per file, and every occurrence has
-// to be identical. [ReadInfectionLog] reads it back, fail-closed — see its
-// documentation for why a partial answer is the one thing it must not return.
+// to be identical. [ReadInfectionLog] reads it back, fail-closed. It is given
+// the catalogue's size rather than that width, derives the width itself through
+// the rule the generators size the array with, and bounds every index by the
+// size — so an empty catalogue's log is readable and admits no index at all.
+// See its documentation for why a partial answer is the one thing it must not
+// return.
 //
 // The probe forms themselves are not written yet: [ModeProbe] generates the
 // runtime and rewrites no file, so a probe tree today is the original source

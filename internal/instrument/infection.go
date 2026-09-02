@@ -34,12 +34,21 @@ func infectionHeader(digest string, n int) string {
 // records, sorted ascending.
 //
 // The log is what a probe tree's generated runtime appended to while the tests
-// ran; digest and n are the catalogue's [mutation.Catalog.Digest] and the length
-// of the runtime's array, which is the catalogue's size or one when it is empty.
-// Several processes append to one log, so the header may appear more than once
-// — a process buffering it until it had an index to write would have nothing at
-// all to say if it died — and every occurrence has to be the one this
-// catalogue's runtime writes.
+// ran; digest and mutants are the catalogue's [mutation.Catalog.Digest] and its
+// [mutation.Catalog.Len]. Several processes append to one log, so the header may
+// appear more than once — a process buffering it until it had an index to write
+// would have nothing at all to say if it died — and every occurrence has to be
+// the one this catalogue's runtime writes.
+//
+// What the caller is asked for is the catalogue's size and not the width of the
+// runtime's array, and the two are the same number for every catalogue but one.
+// The array is never zero-length, so an empty catalogue's runtime writes a
+// header saying one; that width is derived here through [arraySize], the very
+// function the generators size the array with, so no caller has to know the
+// rule. Indices are then bounded by the size rather than by the width, which is
+// what stops an empty catalogue's log admitting an index 0 that names no mutant
+// — while leaving such a log perfectly readable, since the header and nothing
+// else says that nothing was infected because nothing could be.
 //
 // The reader is fail-closed, and that is the whole design rather than a
 // defensive habit. An infection fact is a licence not to execute a test, so a
@@ -49,12 +58,12 @@ func infectionHeader(digest string, n int) string {
 // a smaller, wrong answer looks like. The caller has one safe reading of an
 // error, which is "this target yields no infection facts", and no safe reading
 // of a partial one.
-func ReadInfectionLog(r io.Reader, digest string, n int) ([]uint32, error) {
-	if n <= 0 {
+func ReadInfectionLog(r io.Reader, digest string, mutants int) ([]uint32, error) {
+	if mutants < 0 {
 		return nil, &Error{
 			Code: CodeInfectionLog,
-			Message: "an infection log cannot be read against a catalogue of " + strconv.Itoa(n) +
-				" mutants: a probe runtime sizes its array to at least one",
+			Message: "an infection log cannot be read against a catalogue of " + strconv.Itoa(mutants) +
+				" mutants: a catalogue holds none or some, never fewer than none",
 		}
 	}
 	data, err := io.ReadAll(r)
@@ -78,7 +87,7 @@ func ReadInfectionLog(r io.Reader, digest string, n int) ([]uint32, error) {
 		}
 	}
 
-	header := infectionHeader(digest, n)
+	header := infectionHeader(digest, arraySize(mutants))
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	if lines[0] != header {
 		return nil, &Error{
@@ -108,11 +117,14 @@ func ReadInfectionLog(r io.Reader, digest string, n int) ([]uint32, error) {
 				Message: "the infection log holds " + strconv.Quote(line) + " where a mutant index belongs",
 			}
 		}
-		if index >= uint64(n) {
+		// The catalogue's size, not the array's width: the one index an empty
+		// catalogue's array could hold names no mutant, and a fact about a
+		// mutant nobody catalogued is the answer this reader must never give.
+		if index >= uint64(mutants) {
 			return nil, &Error{
 				Code: CodeInfectionLog,
 				Message: "the infection log names mutant index " + strconv.FormatUint(index, 10) +
-					", which is outside the " + strconv.Itoa(n) + " the catalogue holds",
+					", which is outside the " + strconv.Itoa(mutants) + " the catalogue holds",
 			}
 		}
 		seen[uint32(index)] = true

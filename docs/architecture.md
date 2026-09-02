@@ -185,11 +185,12 @@ not a change to the one the mutant pass builds.
 ordinary run: the runtime is linked in, records nothing, and costs one nil
 check, which matters because the same tree is also built and run by people who
 are not probing. A log it cannot open or write makes the process exit `98`
-instead of running the tests, and the runner classifies 98 as an infrastructure
-error the way it classifies 97. That is not defensive: an empty log reads
-exactly like a run in which no site was ever infected, and *that* reading is
-what licenses skipping executions, so silence is the one answer a probe must
-never give.
+instead of running the tests. That is not defensive: an empty log reads exactly
+like a run in which no site was ever infected, and *that* reading is what
+licenses skipping executions, so silence is the one answer a probe must never
+give. Nothing classifies 98 yet — the runner knows 97 and not its neighbour —
+and the probe pass that drives these processes has to classify it as an
+infrastructure error the way 97 is, or the refusal buys nothing.
 
 The log is the append-only `gomutants-infection-v1` format:
 
@@ -207,15 +208,22 @@ nothing at all if it died first. Every occurrence must be identical.
 `fmt.Fprintln` issues a single `Write` and POSIX `O_APPEND` keeps small writes
 whole, so concurrent processes never interleave inside a line.
 
-`instrument.ReadInfectionLog` reads it back and is deliberately fail-closed.
+`instrument.ReadInfectionLog` reads it back and is deliberately fail-closed. It
+is handed the **catalog size**, not `<N>`, and derives `<N>` from it through the
+same rule the generators size the array with, so no caller has to know that
+rule. The distinction is the empty catalog and nothing else: indices are bounded
+by the size rather than by `<N>`, so an empty catalog's log is readable — its
+header alone says nothing was infected, because nothing could be — while any
+index in it names a mutant that does not exist and is refused.
+
 An empty file, a missing header, a header naming another catalog or another
-size, a repeated header that differs from the first, an index that is not a
-decimal `uint32`, an index past `N`, or a last line the writer never finished
-each yield `GOM7330` and no indices at all. The part of a damaged log that
-still parses is precisely what a smaller, wrong answer looks like, and a
-smaller answer here is a test that was skipped when it should have run. The
-caller's one safe reading of an error is "this target yields no infection
-facts".
+width, a repeated header that differs from the first, an index that is not a
+decimal `uint32`, an index at or past the catalog size, or a last line the
+writer never finished each yield `GOM7330` and no indices at all. The part of a
+damaged log that still parses is precisely what a smaller, wrong answer looks
+like, and a smaller answer here is a test that was skipped when it should have
+run. The caller's one safe reading of an error is "this target yields no
+infection facts".
 
 ## Compile validation
 
