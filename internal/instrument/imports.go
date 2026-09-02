@@ -48,6 +48,19 @@ const aliasBase = "__gm"
 // identifier node spells it: `import "example.com/__gm"` binds "__gm" as surely
 // as an explicit alias does.
 func aliasFor(file *ast.File, reserved map[string]bool) string {
+	return aliasIn(takenNames(file, reserved))
+}
+
+// takenNames is the set of identifiers a rewrite of this file may not bind: the
+// two scopes [aliasFor] documents, gathered once.
+//
+// It is a set rather than an answer because the alias is not the only name a
+// rewrite invents. The probe form declares a temporary per result of a `return`
+// and has to dodge exactly the same identifiers for exactly the same reasons —
+// a temporary shadowing something the file spells would change what an operand
+// reads — so the set is computed once per file and both choices are made
+// against it.
+func takenNames(file *ast.File, reserved map[string]bool) map[string]bool {
 	taken := make(map[string]bool, len(reserved))
 	for name := range reserved {
 		taken[name] = true
@@ -66,7 +79,11 @@ func aliasFor(file *ast.File, reserved map[string]bool) string {
 			taken[path.Base(unquoted)] = true
 		}
 	}
+	return taken
+}
 
+// aliasIn picks the runtime import alias against a set of taken names.
+func aliasIn(taken map[string]bool) string {
 	if !taken[aliasBase] {
 		return aliasBase
 	}

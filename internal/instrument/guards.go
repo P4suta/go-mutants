@@ -33,48 +33,12 @@ type guardRenderer struct {
 // A siteNode is one node of the rewrite forest for a file.
 type siteNode = interval.Node[mutation.Mutant]
 
-// render composes every site of one file, children before parents, and returns
-// the splices to apply to the pristine bytes.
-//
-// The composition is bottom-up in parent-relative coordinates: a site's
-// original text is its own pristine bytes with each child's finished guard
-// spliced in, and only the outermost sites are ever spliced against the file
-// itself. [interval.Forest.InnerFirst] supplies the order that makes this
-// possible; the [OffsetMap] each nested [Apply] returns is deliberately unused,
-// because composing in a child's parent-relative coordinates is the same
-// arithmetic done by construction rather than by lookup, and it never leaves
-// the file's own coordinate system to begin with.
-// The second return value is the number of guards written: one per site,
-// nested sites included, which is what a file's guard count means. Several
+// render composes every guard of one file through [renderSites], which settles
+// the order and the splices for both trees. The count that comes back is the
+// file's guard count: one per site, nested sites included, since several
 // mutants of one site are alternatives inside a single guard.
 func (r *guardRenderer) render(forest interval.Forest[mutation.Mutant]) ([]Splice, int, error) {
-	rendered := make(map[*siteNode][]byte)
-	var failure error
-	forest.InnerFirst(func(node *siteNode) {
-		if failure != nil {
-			return
-		}
-		text, err := r.compose(node, rendered)
-		if err != nil {
-			failure = err
-			return
-		}
-		rendered[node] = text
-	})
-	if failure != nil {
-		return nil, 0, failure
-	}
-
-	roots := forest.Roots()
-	splices := make([]Splice, 0, len(roots))
-	for _, root := range roots {
-		splices = append(splices, Splice{
-			Span:        root.Span,
-			Original:    r.original(root.Span),
-			Replacement: rendered[root],
-		})
-	}
-	return splices, len(rendered), nil
+	return renderSites(forest, r.src, r.compose)
 }
 
 // compose renders one node: its children are folded into its original text,

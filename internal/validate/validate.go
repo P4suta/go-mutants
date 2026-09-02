@@ -75,6 +75,24 @@ type Options struct {
 	// composes the set explicitly so that a GOFLAGS or a GOWORK from the
 	// developer's shell cannot decide what the snapshot resolves against.
 	Env []string
+
+	// Mode selects which tree is instrumented and validated. The zero value is
+	// [instrument.ModeMutant], so a caller written before the probe tree existed
+	// keeps validating exactly what it always did.
+	//
+	// Everything this phase does is the same either way — one build, the
+	// pristine gate, per-file isolation, rejections in catalogue order — and so
+	// is the meaning of accepting a mutant. What changes is what a *rejection*
+	// says: in the mutant tree it is "this mutant cannot be compiled and will
+	// not be run", and in the probe tree it is "this mutant's probe site cannot
+	// be compiled and will not be measured". The mutant itself is untouched
+	// either way, since the two trees are different snapshots.
+	//
+	// The result does not carry the mode back. A caller that cannot say which
+	// tree it asked for has a bigger problem than this field would solve, and a
+	// [Result] that answered it would invite exactly the code that reads the
+	// answer instead of knowing it.
+	Mode instrument.Mode
 }
 
 // A Rejection is one catalogued mutant that cannot be compiled, and the
@@ -168,6 +186,7 @@ func Validate(ctx context.Context, opts Options) (Result, error) {
 		root:      opts.Snap.Root,
 		catalog:   opts.Catalog,
 		hints:     opts.Hints,
+		mode:      opts.Mode,
 		toolchain: opts.Toolchain,
 		jobs:      opts.Jobs,
 		timeout:   opts.BuildTimeout,
@@ -212,9 +231,15 @@ func (o Options) validate() error {
 // "does this subset compile", which is the part worth testing exhaustively and
 // the part a real toolchain makes far too slow to test that way.
 type validator struct {
-	root      string
-	catalog   *mutation.Catalog
-	hints     instrument.Hints
+	root    string
+	catalog *mutation.Catalog
+	hints   instrument.Hints
+	// mode is the tree being validated, carried into both instrumentation
+	// calls: the whole-tree one that starts the phase and the per-file one every
+	// step of the search rewrites through. A mode that reached only the first
+	// would produce a tree that turned back into the other the moment anything
+	// was bisected.
+	mode      instrument.Mode
 	toolchain gocmd.Toolchain
 	jobs      int
 	timeout   time.Duration
@@ -253,6 +278,7 @@ func (v *validator) run(ctx context.Context, modulePath string) (Result, error) 
 		ModulePath:   modulePath,
 		Catalog:      v.catalog,
 		Hints:        v.hints,
+		Mode:         v.mode,
 	})
 	if err != nil {
 		return Result{}, err
@@ -456,6 +482,7 @@ func (v *validator) instrumentFile(path string, subset []mutation.Mutant) error 
 		Source:        v.pristine[path],
 		Mutants:       subset,
 		Hints:         v.hints,
+		Mode:          v.mode,
 	})
 	if err != nil {
 		return err

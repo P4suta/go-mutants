@@ -125,9 +125,10 @@ func probeCases() []probeCase {
 		extra: func(t *testing.T, _, out []byte) {
 			// The declared result type is a named boolean, so that is what the
 			// temporary is declared as — and both constants compare against it
-			// without a conversion anybody has to write.
-			assertContains(t, out, "{ var __gm_r0 Flag = x > y; if __gm_r0 != true { __gm.Infect(1) }; "+
-				"if __gm_r0 != false { __gm.Infect(0) }; return __gm_r0 }")
+			// without a conversion anybody has to write. Two mutants of one
+			// result are two `if` lines over one temporary, in catalogue order.
+			assertContains(t, out, "{ var __gm_r0 Flag = x>y; if __gm_r0 != true { __gm.Infect(0) }; "+
+				"if __gm_r0 != false { __gm.Infect(1) }; return __gm_r0 }")
 		},
 	}, {
 		name:       "probe-multiline",
