@@ -55,6 +55,27 @@ type hintOptions struct {
 	// which is not assignable to a named boolean type — so discovery hands it to
 	// the statement form instead, and this is how a fixture says so.
 	namedBool []string
+	// unprobed lists the `return` statements discovery would refuse to compute a
+	// probe hint for, spelled exactly as the fixture writes them. Discovery
+	// refuses a statement whose result types it cannot spell in the file, and a
+	// fixture cannot demonstrate that from syntax alone — every result type a
+	// function declares is, by construction, spelled in the file that declares
+	// it — so the fixture says which of its statements stands for one.
+	unprobed []string
+}
+
+// returnValueRules are the six rules whose candidates carry a probe hint. They
+// are restated here rather than imported for the reason the rest of this file
+// is a restatement: it is the fixtures' own statement of what discovery
+// produces, so that a golden file is a claim about the rewrite and not about
+// the neighbour that asked for it.
+var returnValueRules = map[string]bool{
+	"return-zero-numeric": true,
+	"return-empty-string": true,
+	"return-true":         true,
+	"return-false":        true,
+	"return-nil":          true,
+	"return-err-to-nil":   true,
 }
 
 // hintsFor derives the hints of a whole catalogue, reading each catalogued file
@@ -74,7 +95,7 @@ func hintsFor(t *testing.T, root string, catalog *mutation.Catalog, opts hintOpt
 			deriver = newHintDeriver(t, m.Path, src, opts)
 			deriving[m.Path] = deriver
 		}
-		hints[m.ID] = deriver.guardFor(m.Span)
+		hints[m.ID] = deriver.guardFor(m.Span, m.Rule.Name)
 	}
 	return hints
 }
@@ -101,7 +122,7 @@ func hintsOfCandidates(
 		if err != nil {
 			t.Fatalf("identifying the candidate at %s %s: %v", candidate.Path, candidate.Span, err)
 		}
-		hints[id] = deriver.guardFor(candidate.Span)
+		hints[id] = deriver.guardFor(candidate.Span, candidate.Rule.Name)
 	}
 	return hints
 }
@@ -114,7 +135,7 @@ func hintsInSource(t *testing.T, src []byte, catalog *mutation.Catalog, opts hin
 	deriver := newHintDeriver(t, sampleFile, src, opts)
 	hints := make(instrument.Hints, catalog.Len())
 	for _, m := range catalog.Mutants() {
-		hints[m.ID] = deriver.guardFor(m.Span)
+		hints[m.ID] = deriver.guardFor(m.Span, m.Rule.Name)
 	}
 	return hints
 }
@@ -165,21 +186,100 @@ func newHintDeriver(t *testing.T, path string, src []byte, opts hintOptions) *hi
 // guardFor is the hint for one candidate's span, or a fatal error: a fixture
 // that catalogues an edit no guard form covers is a fixture with a mistake in
 // it, not a case worth carrying.
-func (d *hintDeriver) guardFor(span mutation.Span) discover.Guard {
+//
+// The rule decides one thing and nothing else: whether the hint also carries a
+// return site. That is a fact about which family the edit belongs to rather
+// than about the syntax around it, which is why the span alone cannot answer it
+// — an operator swap and a return replacement can sit in the same `return`.
+func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 	d.t.Helper()
 
 	anchor := d.anchor(span)
 	if anchor == nil {
 		d.t.Fatalf("%s: no node covers %s", d.path, span)
 	}
-	if guard, ok := d.formC(anchor); ok {
-		return guard
+	guard, ok := d.formC(anchor)
+	if !ok {
+		if guard, ok = d.statementSite(anchor); !ok {
+			d.t.Fatalf("%s: no guard form covers the edit at %s (%q)", d.path, span, d.text(anchor))
+		}
 	}
-	if guard, ok := d.statementSite(anchor); ok {
-		return guard
+	guard.Return = d.returnSite(anchor, span, rule)
+	return guard
+}
+
+// returnSite derives the probe hint of a return-value candidate: the statement
+// it sits in, the declared type of every result of that statement, and which of
+// them the edit replaces.
+//
+// The types are read off the enclosing function's own syntax, which is exactly
+// what discovery's type-checked answer comes to for a fixture: a result type is
+// spelled in the file that declares it, so the bytes of the signature *are* the
+// spelling. What syntax cannot show is a refusal, and [hintOptions.unprobed] is
+// how a fixture states one.
+func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule string) *discover.ReturnSite {
+	d.t.Helper()
+
+	if !returnValueRules[rule] {
+		return nil
 	}
-	d.t.Fatalf("%s: no guard form covers the edit at %s (%q)", d.path, span, d.text(anchor))
-	return discover.Guard{}
+	stmt, fn := d.enclosingReturn(anchor)
+	if stmt == nil || fn == nil {
+		d.t.Fatalf("%s: the %s candidate at %s is not inside a return statement", d.path, rule, span)
+	}
+	for _, refused := range d.opts.unprobed {
+		if d.text(stmt) == refused {
+			return nil
+		}
+	}
+	results := d.resultTypes(fn)
+	if len(results) != len(stmt.Results) {
+		d.t.Fatalf("%s: the statement %q returns %d values and its function declares %d results",
+			d.path, d.text(stmt), len(stmt.Results), len(results))
+	}
+	for i, value := range stmt.Results {
+		if d.span(value).Contains(span) {
+			return &discover.ReturnSite{Span: d.span(stmt), Types: results, Index: i}
+		}
+	}
+	d.t.Fatalf("%s: the %s candidate at %s is in no result of %q", d.path, rule, span, d.text(stmt))
+	return nil
+}
+
+// enclosingReturn finds the `return` a node sits in and the function that
+// return belongs to, stopping at the first function boundary so that a literal
+// inside a return answers with its own return and its own signature.
+func (d *hintDeriver) enclosingReturn(anchor ast.Node) (*ast.ReturnStmt, *ast.FuncType) {
+	var stmt *ast.ReturnStmt
+	for node := anchor; node != nil; node = d.parent[node] {
+		switch n := node.(type) {
+		case *ast.ReturnStmt:
+			if stmt == nil {
+				stmt = n
+			}
+		case *ast.FuncDecl:
+			return stmt, n.Type
+		case *ast.FuncLit:
+			return stmt, n.Type
+		}
+	}
+	return nil, nil
+}
+
+// resultTypes spells one function's declared results, one entry per result and
+// in order, so that `(a, b int)` names int twice.
+func (d *hintDeriver) resultTypes(fn *ast.FuncType) []string {
+	if fn == nil || fn.Results == nil {
+		return nil
+	}
+	var out []string
+	for _, field := range fn.Results.List {
+		spelled := d.text(field.Type)
+		for range max(len(field.Names), 1) {
+			out = append(out, spelled)
+		}
+	}
+	return out
 }
 
 // anchor is the innermost node covering a candidate's span, which is the node

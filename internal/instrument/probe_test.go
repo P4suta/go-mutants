@@ -316,15 +316,16 @@ func TestInfectIsRaceFree(t *testing.T) {
 	}
 }
 
-// TestInstrumentInProbeModeRewritesNoFile pins the honest intermediate this
-// change ships.
+// TestProbeModeRewritesOnlyWhereItHasAProbeForm pins what a probe tree does
+// with a catalogue it cannot measure.
 //
-// The probe forms are not written yet, so a probe tree today is the original
-// source with a runtime nobody calls. That is worth asserting rather than
-// leaving implied: a mode that rewrote a file by accident would produce a tree
-// whose sites are guarded and whose runtime never activates any of them, which
-// is a program that looks instrumented and proves nothing.
-func TestInstrumentInProbeModeRewritesNoFile(t *testing.T) {
+// Only the return-value family has a probe form so far, so a file of
+// comparisons comes out as the file the user wrote — no rewrite, no import, and
+// no entry in the result. That is worth asserting rather than leaving implied:
+// a mode that rewrote a file by accident would produce a tree whose sites are
+// guarded and whose runtime activates none of them, which is a program that
+// looks instrumented and proves nothing.
+func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	t.Parallel()
 
 	in := readFile(t, filepath.Join("testdata", "comparison.input"))
@@ -413,21 +414,17 @@ func TestProbeAndMutantRuntimesShareTheDirectoryName(t *testing.T) {
 }
 
 // probeSnapshot runs the instrumenter over a snapshot in probe mode and fails
-// the test if it refuses. No hints are handed over because no file is rewritten:
-// a hint answers "which form does this site take", and a probe tree has no
-// sites yet.
+// the test if it refuses.
+//
+// The hints are derived from the snapshot itself, exactly as the mutant tree's
+// [instrumentSnapshot] derives them. A probe tree needs them for the same
+// reason the mutant tree does — a hint is what says which rewrite a candidate
+// takes, and a probe tree rewrites the `return` statements the return-value
+// family points at — and a catalogue this index does not cover is refused in
+// either mode rather than quietly under-instrumented.
 func probeSnapshot(t *testing.T, root string, catalog *mutation.Catalog) instrument.Result {
 	t.Helper()
-	result, err := instrument.Instrument(instrument.Options{
-		SnapshotRoot: root,
-		ModulePath:   testModule,
-		Catalog:      catalog,
-		Mode:         instrument.ModeProbe,
-	})
-	if err != nil {
-		t.Fatalf("Instrument in probe mode: %v", err)
-	}
-	return result
+	return probeSnapshotWith(t, root, catalog, hintOptions{})
 }
 
 // exportedNames returns every identifier a generated package declares at the
