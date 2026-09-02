@@ -168,7 +168,11 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 	}
 
 	data := readFile(t, log)
-	header := "gomutants-infection-v1 " + fixture.digest + " " + strconv.Itoa(fixture.size)
+	// The fixture's catalogue holds three mutants, so the array width the header
+	// carries and the catalogue size the reader is handed are the same number
+	// here. They part company only for an empty catalogue, which is
+	// [TestReadInfectionLogBoundsIndicesByTheCatalogueSize]'s business.
+	header := "gomutants-infection-v1 " + fixture.digest + " " + strconv.Itoa(fixture.mutants)
 	var headers int
 	var indices []string
 	for _, line := range lines(data) {
@@ -191,7 +195,7 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 		t.Errorf("the log holds the indices %v, want %v (each distinct mutant exactly once)", indices, want)
 	}
 
-	got, err := instrument.ReadInfectionLog(bytes.NewReader(data), fixture.digest, fixture.size)
+	got, err := instrument.ReadInfectionLog(bytes.NewReader(data), fixture.digest, fixture.mutants)
 	if err != nil {
 		t.Fatalf("ReadInfectionLog over a log a real probe wrote: %v", err)
 	}
@@ -474,8 +478,9 @@ type probeFixture struct {
 	binary string
 	// digest identifies the catalogue the runtime was generated from.
 	digest string
-	// size is how many mutants that catalogue holds.
-	size int
+	// mutants is how many mutants that catalogue holds, which is what the
+	// reader of the log is handed.
+	mutants int
 }
 
 // newProbeFixture instruments a mini module as a probe tree and builds a
@@ -512,7 +517,7 @@ func newProbeFixture(t *testing.T) probeFixture {
 	if out, err := goCommand(t, toolchain, root, "build", "-o", binary, "./cmd/mini"); err != nil {
 		t.Fatalf("building the probe fixture: %v\n%s", err, out)
 	}
-	return probeFixture{binary: binary, digest: catalog.Digest(), size: catalog.Len()}
+	return probeFixture{binary: binary, digest: catalog.Digest(), mutants: catalog.Len()}
 }
 
 // probeMain is the command the probe fixture builds, with the generated
