@@ -1,0 +1,25 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: the names a probe rewrite would like for
+// its temporaries are already taken, and one of them is read by an operand the
+// rewrite evaluates after declaring the first.
+package sample; import __gm "example.com/mini/gomutants_rt"
+
+// __gm_r0 and __gm_r1 are the first two names derived from the runtime alias,
+// declared here so that the rewrite has to look elsewhere.
+var (
+	__gm_r0 = 2
+	__gm_r1 = 3
+)
+
+// Pair returns its argument beside a package-level count.
+//
+// The second operand reads __gm_r0. A rewrite that declared its own __gm_r0 for
+// the first result would rebind that read — a declared name's scope begins at
+// the end of its own specification, so the first temporary *is* in scope for
+// the second one's initialiser — and the function would quietly return its
+// first result twice.
+func Pair(a int) (int, int) {
+	{ var __gm_r1_0 int = a; var __gm_r1_1 int = __gm_r0; if __gm_r1_0 != 0 { __gm.Infect(0) }; return __gm_r1_0, __gm_r1_1 }
+}

@@ -53,6 +53,18 @@ type FileOptions struct {
 	// bisection hands over a different subset every time and re-indexing per
 	// call would be one more thing to keep in step.
 	Hints Hints
+
+	// Mode selects which tree this file belongs to, and must be the mode
+	// [Instrument] built the snapshot with. The zero value is [ModeMutant], so a
+	// caller written before the probe tree existed keeps rewriting exactly what
+	// it always did.
+	//
+	// Passing the wrong one is not caught here and cannot be: a guard and a
+	// probe are both well-formed rewrites of the same bytes, so a file rewritten
+	// in the other mode would compile and would measure the wrong thing. The
+	// mode belongs to the pass, and the caller that chose it for [Instrument] is
+	// the one that has it.
+	Mode Mode
 }
 
 // InstrumentFile rewrites one file of an already-instrumented snapshot so that
@@ -110,7 +122,8 @@ func InstrumentFile(opts FileOptions) (int, error) {
 	dir := filepath.Dir(file)
 	reserved := func(pkg string) (map[string]bool, error) { return names.namesIn(dir, pkg) }
 
-	out, guards, err := instrumentSource(opts.Path, opts.Source, opts.Mutants, opts.Hints, opts.RuntimeImport, reserved)
+	out, guards, err := instrumentSource(
+		opts.Path, opts.Source, opts.Mutants, opts.Hints, opts.RuntimeImport, reserved, opts.Mode)
 	if err != nil {
 		return 0, err
 	}
@@ -150,6 +163,15 @@ func (o FileOptions) validate() error {
 		return &Error{
 			Code:    CodeOptions,
 			Message: "no pristine source was given for " + strconv.Quote(o.Path),
+		}
+	}
+	// The same refusal [Options.validate] makes, for the same reason: rewriting
+	// a mutant tree for a caller that asked for something else would hand back a
+	// file nobody wanted, and nothing downstream would notice.
+	if o.Mode != ModeMutant && o.Mode != ModeProbe {
+		return &Error{
+			Code:    CodeOptions,
+			Message: "the instrumentation mode " + strconv.Itoa(int(o.Mode)) + " is not one this package knows",
 		}
 	}
 	for _, m := range o.Mutants {

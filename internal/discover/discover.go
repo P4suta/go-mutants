@@ -199,6 +199,15 @@ type DeclType struct {
 //     across more than one line. The whole of the first and the type of the
 //     second are what the rewrite removes, and removing a line break moves
 //     every line after it.
+//
+// # The probe hint rides beside it
+//
+// [Guard.Return] answers a question about a different tree and does not touch
+// any of the above. The three forms are how a mutant is written into the mutant
+// tree; the return site is how the same candidate is *measured* in the probe
+// tree, where no mutant is ever active. It is present only for the return-value
+// rules, it may be absent for those, and its absence changes nothing about the
+// guard — see [ReturnSite].
 type Guard struct {
 	// Form is the rewrite shape to use.
 	Form GuardForm
@@ -211,6 +220,100 @@ type Guard struct {
 	// Form S, and may be empty for a Form D site whose every name is the blank
 	// identifier, which declares nothing.
 	DeclTypes []DeclType
+
+	// Return is the probe hint of a return-value mutant: the statement it sits
+	// in, the type every result of that statement must be declared as, and the
+	// position of the result the mutation replaces. It is nil when the probe
+	// cannot be written for the statement or cannot stand in for this result —
+	// [ReturnSite] gives the five reasons — and always nil for other rules; a
+	// nil Return means the mutant is not probed, never that it is not mutated.
+	Return *ReturnSite
+}
+
+// A ReturnSite is what the probe tree needs to know about one `return`.
+//
+// # What it describes
+//
+// The probe tree runs the original program and reports, per mutant, whether the
+// value at its site ever differed from the constant the mutant would have
+// returned. For a return-value mutant at result position j of
+// `return E0, E1, …` the rewrite is
+//
+//	{ var r0 T0 = E0; var r1 T1 = E1; …; if rj != K { __gm.Infect(i) }; return r0, r1, … }
+//
+// and this is the T0, T1, … and the j it needs. K is the mutant's own
+// replacement, which the catalogue already carries.
+//
+// # Why the type is the declared result type
+//
+// Tj is the *result* type of the enclosing function and never the type of the
+// operand. `return 1` in a function returning int64 becomes
+// `var r0 int64 = 1`, because that is the conversion the `return` itself
+// performs — and it is the conversion the mutant's `return 0` would have
+// performed too, so comparing a temporary of that type against the constant
+// asks exactly the question "would the two returns have differed". A temporary
+// declared as the operand's type would be a different program, and one that
+// usually compiles.
+//
+// # Why every result is named
+//
+// The rewrite replaces the statement, so it has to reproduce it: naming only
+// the mutated result would leave the others to the `return` and evaluate them a
+// second time. So the hint describes the whole statement, and two candidates in
+// one `return` carry the same Span and Types and differ only in Index.
+//
+// # When it is absent
+//
+// Five reasons, and the first two are about the statement as a whole. The
+// rewrite writes the result types into the file it rewrites, so a type that
+// file cannot spell is a probe that cannot be written. A result that is or
+// contains a type parameter is refused too — a value of a type parameter's type
+// need not be comparable with a constant, and the constraint decides.
+//
+// The third is the soundness of the measurement rather than the writing of it.
+// The mutant returns its constant *instead of evaluating* the operand it
+// replaces, so the probe stands in for it only where evaluating that operand is
+// nothing but computing a value. Every operand of the statement therefore has
+// to be effect-free: an effect in the mutated operand is one the mutant does
+// not have, and an effect in any other operand makes the order matter, which
+// the rewrite fixes to source order while the compiler is free to read a plain
+// variable after the calls beside it.
+//
+// The last two are per result and leave the other results of the same statement
+// probed. The probed operand may not be one whose evaluation can panic, because
+// a panic makes the two programs diverge somewhere the comparison is never
+// reached to see, so nothing is recorded and the log reads as "never differed".
+// And the probed result may not be floating-point or complex, because
+// `-0.0 != 0` is false while the two values are distinguishable. effects.go
+// carries the grammars that decide the last three and the argument for each.
+//
+// A refusal costs the probe and nothing else. The candidate is still emitted,
+// still catalogued, still mutated and still guarded, which is why it is not a
+// [Skip]: nothing was declined, and a skip counted here would tell a user that
+// go-mutants had passed over an edit it in fact makes.
+type ReturnSite struct {
+	// Span is the byte range of the whole `return` statement, which is what the
+	// probe rewrite replaces.
+	Span mutation.Span
+	// Types is one spelled type per result of that statement, in order, as this
+	// file may write them.
+	Types []string
+	// Index is the position, in that list, of the result the candidate's span
+	// replaces.
+	Index int
+}
+
+// at returns the hint for one result position of the same statement, or nil for
+// a statement that has none. The statement-level part is computed once per
+// `return` and every candidate in it takes a copy with its own position, which
+// is what keeps two candidates of one statement agreeing about the site.
+func (r *ReturnSite) at(index int) *ReturnSite {
+	if r == nil {
+		return nil
+	}
+	site := *r
+	site.Index = index
+	return &site
 }
 
 // A SkipReason names why discovery passed something over. Reasons are part of

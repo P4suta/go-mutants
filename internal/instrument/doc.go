@@ -134,9 +134,42 @@
 // See its documentation for why a partial answer is the one thing it must not
 // return.
 //
-// The probe forms themselves are not written yet: [ModeProbe] generates the
-// runtime and rewrites no file, so a probe tree today is the original source
-// with a runtime nobody calls.
+// # The probe forms
+//
+// One form is written, for the return-value rules, whose replacement is always
+// a constant K. A `return` carrying such a mutant at result position j becomes
+//
+//	{ var r0 T0 = E0; var r1 T1 = E1; …; if rj != K { __gm.Infect(i) }; return r0, r1, … }
+//
+// where Tj is the *declared result type* of the enclosing function, which is
+// the conversion the `return` itself performs. It evaluates nothing twice and
+// nothing extra: the same program, with one comparison and one call added after
+// the values are in hand.
+//
+// The mutant it stands in for returns K *instead of evaluating* Ej, so the hint
+// is handed out only for a statement whose every operand is effect-free —
+// nothing the mutant skips can then matter, and no evaluation order is
+// observable — only for a result whose operand cannot panic, since a panic is a
+// divergence the comparison is never reached to record, and never for a
+// floating-point or complex result, since `-0.0 != 0` is false. All three are
+// decided by internal/discover, which has a type checker; this package has none
+// and trusts the hint as it trusts a Form D declared type. probe.go states the
+// argument in full, along with why the comparison is total and why the block is
+// still a terminating statement.
+//
+// Everything else is unprobed. A mutant of another family is catalogued and
+// mutated exactly as before and simply not measured, so a file holding only
+// such mutants comes out of [ModeProbe] byte for byte as its author wrote it —
+// with no runtime import, since an unused import does not compile. A run then
+// learns nothing about which tests could observe those mutants and executes
+// them all, which is the safe direction and the one this mode always errs in.
+//
+// The temporaries are named from the same alias the runtime import takes, and
+// checked against the same two scopes. The reason is capture rather than
+// shadowing: a declared name's scope begins at the end of its own
+// specification, so a temporary named for the first result is in scope for the
+// second one's initialiser, and a file already spelling that name would have
+// its second operand quietly rebound.
 //
 // # Line preservation
 //

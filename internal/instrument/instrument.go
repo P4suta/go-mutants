@@ -36,12 +36,17 @@ const (
 	// original produced. That is how a run learns a test cannot have observed a
 	// mutant without ever executing the two against each other.
 	//
-	// The probe forms are not written yet. This mode generates the runtime a
-	// probe tree calls and rewrites no file, so a probe tree today is the
-	// original source with a runtime nobody calls: honest about being an
-	// intermediate rather than pretending to be a probe pass. The order is
-	// deliberate — the runtime, its log format and the reader of that format
-	// are what the rewriting has to match, so they are settled first.
+	// One probe form is written: the return-value mutants, whose statement
+	// becomes a block that evaluates each operand once, compares the mutated
+	// result against the constant, and returns what it evaluated. The mutant
+	// returns that constant *instead of evaluating* its operand, so the form
+	// speaks for it only where internal/discover proved that evaluating the
+	// operand is nothing but computing a value: every operand of the statement
+	// effect-free, the probed one unable to panic, and its result neither
+	// floating-point nor complex. Every other family is left unprobed — its
+	// mutants are catalogued and mutated as ever, and a run simply learns
+	// nothing about which tests could observe them, so it runs them all. See
+	// internal/instrument's probe.go for the form and why it is exact.
 	ModeProbe
 )
 
@@ -84,12 +89,17 @@ type Result struct {
 	RuntimeDir string
 	// RuntimeImport is that package's import path.
 	RuntimeImport string
-	// FilesInstrumented lists the module-relative paths that received guards,
-	// in catalogue order.
+	// FilesInstrumented lists the module-relative paths that were rewritten, in
+	// catalogue order.
 	FilesInstrumented []string
-	// GuardsByFile counts the guards written into each of those files. A guard
-	// is one rewrite site: several mutants of one expression share a single
-	// guard, so this is never simply the number of mutants in the file.
+	// GuardsByFile counts the rewrite sites written into each of those files. A
+	// site is one rewritten span: several mutants of one expression share a
+	// single guard, and several mutants of one `return` share a single probe, so
+	// this is never simply the number of mutants in the file.
+	//
+	// Both trees are counted the same way and the drift gate reads them the same
+	// way, which is what lets everything above this package hold one [Result]
+	// without asking which mode produced it.
 	GuardsByFile map[string]int
 }
 
@@ -145,26 +155,14 @@ func Instrument(opts Options) (Result, error) {
 		GuardsByFile:  make(map[string]int),
 	}
 
-	// A probe tree is generated and not yet rewritten: its runtime is written
-	// into the snapshot and every file is left as it was. The result still
-	// reports the directory and the import path, because those are what the
-	// caller needs to build the tree either way — and the guard hints are not
-	// consulted at all, since a hint answers "which form does this site take"
-	// and this tree has no sites.
-	if opts.Mode == ModeProbe {
-		if err := writeProbeRuntime(opts.SnapshotRoot, dir, opts.Catalog); err != nil {
-			return Result{}, err
-		}
-		return result, nil
-	}
-
 	// One cache for the whole pass: the runtime import alias each file gets has
 	// to dodge every name its package already binds, and reading a directory
 	// once per package rather than once per file is the difference between a
 	// directory read and a quadratic one.
 	names := newPackageNames()
 	for _, group := range groupByPath(opts.Catalog) {
-		guards, err := instrumentFile(opts.SnapshotRoot, group.path, group.mutants, opts.Hints, importPath, names)
+		guards, err := instrumentFile(
+			opts.SnapshotRoot, group.path, group.mutants, opts.Hints, importPath, names, opts.Mode)
 		if err != nil {
 			return Result{}, err
 		}
@@ -179,10 +177,22 @@ func Instrument(opts Options) (Result, error) {
 	// leaves a snapshot that is obviously half-rewritten rather than one that
 	// looks instrumented and is not. Its directory name was settled first,
 	// because every file that was rewritten imports it by that name.
-	if err := writeRuntime(opts.SnapshotRoot, dir, opts.Catalog); err != nil {
+	if err := writeTreeRuntime(opts.SnapshotRoot, dir, opts.Catalog, opts.Mode); err != nil {
 		return Result{}, err
 	}
 	return result, nil
+}
+
+// writeTreeRuntime generates the runtime the mode's tree calls.
+//
+// The directory and the import path are settled identically for both, because
+// they are never in one snapshot; which package goes into that directory is the
+// only thing the two trees disagree about here.
+func writeTreeRuntime(root, dir string, catalog *mutation.Catalog, mode Mode) error {
+	if mode == ModeProbe {
+		return writeProbeRuntime(root, dir, catalog)
+	}
+	return writeRuntime(root, dir, catalog)
 }
 
 // validate checks the options and the catalogue's paths.
@@ -301,6 +311,7 @@ func instrumentFile(
 	hints Hints,
 	importPath string,
 	names *packageNames,
+	mode Mode,
 ) (int, error) {
 	file := filepath.Join(root, filepath.FromSlash(srcPath))
 	info, err := os.Stat(file)
@@ -326,7 +337,7 @@ func instrumentFile(
 	dir := filepath.Dir(file)
 	reserved := func(pkg string) (map[string]bool, error) { return names.namesIn(dir, pkg) }
 
-	out, guards, err := instrumentSource(srcPath, src, mutants, hints, importPath, reserved)
+	out, guards, err := instrumentSource(srcPath, src, mutants, hints, importPath, reserved, mode)
 	if err != nil {
 		return 0, err
 	}
@@ -428,6 +439,7 @@ func instrumentSource(
 	hints Hints,
 	importPath string,
 	reserved reservedNames,
+	mode Mode,
 ) ([]byte, int, error) {
 	if len(mutants) == 0 {
 		return src, 0, nil
@@ -436,26 +448,27 @@ func instrumentSource(
 	if err != nil {
 		return nil, 0, err
 	}
-	forest, sites, err := buildSites(newSiteIndex(tok, file, src), srcPath, mutants, hints)
-	if err != nil {
-		return nil, 0, err
-	}
 
-	var taken map[string]bool
+	var bound map[string]bool
 	if reserved != nil && file.Name != nil {
-		if taken, err = reserved(file.Name.Name); err != nil {
+		if bound, err = reserved(file.Name.Name); err != nil {
 			return nil, 0, err
 		}
 	}
-	renderer := &guardRenderer{path: srcPath, src: src, alias: aliasFor(file, taken), sites: sites}
-	splices, guards, err := renderer.render(forest)
+	// The names a rewrite may not bind, gathered once: the import alias and,
+	// in a probe tree, the temporaries are all chosen against this one set.
+	taken := takenNames(file, bound)
+	alias := aliasIn(taken)
+
+	splices, guards, err := composeSites(
+		newSiteIndex(tok, file, src), srcPath, src, mutants, hints, alias, taken, mode)
 	if err != nil {
 		return nil, 0, err
 	}
 	if guards == 0 {
 		return src, 0, nil
 	}
-	imports, err := importSplices(file, tok, srcPath, renderer.alias, importPath)
+	imports, err := importSplices(file, tok, srcPath, alias, importPath)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -485,6 +498,47 @@ func instrumentSource(
 		return nil, 0, err
 	}
 	return out, guards, nil
+}
+
+// composeSites turns one file's mutants into the splices its tree's rewrite
+// needs, and reports how many sites it wrote.
+//
+// The two trees part company here and nowhere else in this file. Everything
+// around it — the parse, the names, the import injection, the two
+// postconditions, the write — is the same work whichever tree is being built,
+// because all of it is about the file rather than about the form.
+func composeSites(
+	index *siteIndex,
+	srcPath string,
+	src []byte,
+	mutants []mutation.Mutant,
+	hints Hints,
+	alias string,
+	taken map[string]bool,
+	mode Mode,
+) ([]Splice, int, error) {
+	if mode == ModeProbe {
+		forest, sites, edits, widest, err := buildProbeSites(index, srcPath, mutants, hints)
+		if err != nil {
+			return nil, 0, err
+		}
+		renderer := &probeRenderer{
+			path:  srcPath,
+			src:   src,
+			alias: alias,
+			temps: newProbeTemps(alias, taken, widest),
+			sites: sites,
+			edits: edits,
+		}
+		return renderer.render(forest)
+	}
+
+	forest, sites, err := buildSites(index, srcPath, mutants, hints)
+	if err != nil {
+		return nil, 0, err
+	}
+	renderer := &guardRenderer{path: srcPath, src: src, alias: alias, sites: sites}
+	return renderer.render(forest)
 }
 
 // checkLineCount is the file-level half of the line-preservation invariant:

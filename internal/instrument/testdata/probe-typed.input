@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: results whose declared type is not the
+// type of the operand that fills them, which is the type the probe has to
+// declare its temporary as.
+package sample
+
+// Level is a named integer type.
+type Level int
+
+// Half returns an untyped constant as a float, so the temporary has to be a
+// float32 and not the int the constant would default to.
+func Half() float32 { return 1 }
+
+// Count returns the same constant through a named result of a named type.
+func Count() (n Level) { return 1 }
+
+// Text returns a string, which is the third constant the family compares
+// against.
+func Text(s string) string { return s }

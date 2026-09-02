@@ -477,6 +477,60 @@ func agree(previous, current site, m mutation.Mutant, srcPath string) error {
 	}
 }
 
+// renderSites composes every site of one file, children before parents, and
+// returns the splices to apply to the pristine bytes.
+//
+// The composition is bottom-up in parent-relative coordinates: a site's
+// original text is its own pristine bytes with each child's finished rewrite
+// spliced in, and only the outermost sites are ever spliced against the file
+// itself. [interval.Forest.InnerFirst] supplies the order that makes this
+// possible; the [OffsetMap] each nested [Apply] returns is deliberately unused,
+// because composing in a child's parent-relative coordinates is the same
+// arithmetic done by construction rather than by lookup, and it never leaves the
+// file's own coordinate system to begin with.
+//
+// The second return value is the number of sites rewritten: one per node,
+// nested sites included. Several mutants of one site are alternatives inside a
+// single rewrite, which is why it is not the number of mutants.
+//
+// Both trees share this, and only this. What a site becomes is the caller's
+// compose function — a guard chain in one tree, a probe block in the other —
+// and everything around it, the order and the splices, is a fact about nested
+// byte ranges rather than about either form.
+func renderSites(
+	forest interval.Forest[mutation.Mutant],
+	src []byte,
+	compose func(*siteNode, map[*siteNode][]byte) ([]byte, error),
+) ([]Splice, int, error) {
+	rendered := make(map[*siteNode][]byte)
+	var failure error
+	forest.InnerFirst(func(node *siteNode) {
+		if failure != nil {
+			return
+		}
+		text, err := compose(node, rendered)
+		if err != nil {
+			failure = err
+			return
+		}
+		rendered[node] = text
+	})
+	if failure != nil {
+		return nil, 0, failure
+	}
+
+	roots := forest.Roots()
+	splices := make([]Splice, 0, len(roots))
+	for _, root := range roots {
+		splices = append(splices, Splice{
+			Span:        root.Span,
+			Original:    src[root.Span.StartByte:root.Span.EndByte],
+			Replacement: rendered[root],
+		})
+	}
+	return splices, len(rendered), nil
+}
+
 // placeSites is the forest placement itself, split out from the site
 // computation so that the invariant it enforces can be exercised directly.
 func placeSites(srcPath string, items []interval.Item[mutation.Mutant]) (interval.Forest[mutation.Mutant], error) {
