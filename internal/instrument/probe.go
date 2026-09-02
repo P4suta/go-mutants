@@ -128,6 +128,33 @@ func probeFor(m mutation.Mutant, guard discover.Guard) *probeEdit {
 	return &probeEdit{index: m.Index, result: site.Index, constant: m.Replacement}
 }
 
+// Probes reports whether a [ModeProbe] pass writes a call naming this mutant's
+// index — whether, in other words, a probe tree speaks for it at all.
+//
+// It is exported because the answer is one a caller must have and cannot
+// re-derive, and because getting it wrong is unsound in exactly one direction.
+// A mutant with no probe form leaves its file untouched here, so the probe tree
+// compiles and [validate.Validate] *accepts* the mutant exactly as it accepts a
+// probed one. A caller reading "accepted by a probe validation" as "probed"
+// would then take that mutant's absence from every infection log as licence to
+// skip the tests that kill it — while the truth is that nothing could ever have
+// recorded it. Only this package knows which forms exist, so only this package
+// can say.
+//
+// The predicate is [probeFor] and nothing beside it, which is what keeps the
+// answer and the rewrite from drifting apart: a form added there is answered
+// for here without a second list to keep in step. A mutant this index has never
+// heard of is not probed rather than a guess — a catalogue and a hint index
+// built from different discovery passes is the one case where guessing would
+// invent a fact.
+func (h Hints) Probes(m mutation.Mutant) bool {
+	guard, ok := h[m.ID]
+	if !ok {
+		return false
+	}
+	return probeFor(m, guard) != nil
+}
+
 // A probeSite is one `return` statement as the rewrite needs it: the bytes it
 // replaces, where each returned value sits inside them, and the type each
 // result has to be declared as.

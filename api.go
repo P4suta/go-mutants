@@ -3,7 +3,10 @@
 
 package gomutants
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // OpenOptions controls how [Open] freezes a workspace. Its zero value is the
 // ordinary local invocation.
@@ -75,6 +78,18 @@ type PrepareOptions struct {
 	// Verify is run once after instrumentation with no mutant active. Its zero
 	// value means `go test ./...`. Vet is disabled only for this generated tree.
 	Verify Command
+	// Probe also builds the probe tree: a second instrumented snapshot of the
+	// same source in which no mutant is ever active and each site it has a form
+	// for reports, without side effects, whether the mutated value would have
+	// differed. [Session.Probe] measures against it, and [Mutant.Probed] says
+	// which mutants it speaks for.
+	//
+	// It is off by default because it is not free — a second instrumentation, a
+	// second compile validation and a second set of test binaries — and because
+	// a caller that never asks the infection question should not pay for the
+	// answer. Nothing about the mutant tree, the catalogue or [Session.Exec]
+	// changes either way.
+	Probe bool
 }
 
 // Catalog is the immutable public description of one prepared session.
@@ -112,6 +127,28 @@ type Mutant struct {
 	// Branch is the body this mutant's condition gates, when go-mutants could
 	// prove the edit only narrows it. Nil means no proof, never "no branch".
 	Branch *BranchProof
+	// Probed reports whether a probe of this mutant was compiled into the
+	// session's probe tree, and so whether [Session.Probe] can ever name it.
+	//
+	// It is false without [PrepareOptions.Probe], false for a mutant whose
+	// family has no probe form yet, false where discovery could not prove the
+	// rewrite exact, and false where the probe site turned out not to compile.
+	// A false here is never a statement about the mutant itself: it is
+	// catalogued, mutated and executed exactly as any other.
+	//
+	// What it changes is how the *absence* of this mutant from a
+	// [ProbeResult.Infected] set may be read. For a probed mutant that absence
+	// is the fact that the target never produced a value the mutant would have
+	// changed, so the target cannot kill it. For an unprobed one nothing could
+	// have recorded it, so its absence says nothing at all and a caller must
+	// treat it as infected by every test. Reading the two the same way is the
+	// one mistake this field exists to prevent, and it is the mistake that
+	// silently drops the executions that find kills.
+	//
+	// It is session-local, like the rest of this API's live values: it appears
+	// in no report, in no schema, and in no `go-mutants list --json` document,
+	// because it describes a tree that exists for as long as the session does.
+	Probed bool
 }
 
 // BranchDecreasing is the one Direction go-mutants emits today: the mutated
@@ -189,6 +226,93 @@ type MutantResult struct {
 	Duration   time.Duration
 	OutputTail string
 	Artifacts  []Artifact
+}
+
+// ErrProbeNotPrepared is returned by [Session.Probe] on a session prepared
+// without [PrepareOptions.Probe].
+//
+// It is a sentinel because it is the one probe failure a caller can act on
+// rather than only report: the answer is to prepare the session again asking
+// for a probe tree. Everything else that stops a probe is an ordinary error.
+var ErrProbeNotPrepared = errors.New("gomutants: the session was prepared without a probe tree")
+
+// ProbeRequest selects one test or fuzz target to run against a prepared
+// session's probe tree. Its fields mean exactly what [ExecRequest]'s do, minus
+// the mutant: a probe tree activates none.
+type ProbeRequest struct {
+	// Package is an import path or one module-relative package directory.
+	// Empty probes the selected target in every compiled test package, and the
+	// one log they all append to is what makes the answer a statement about the
+	// target rather than about one binary of it.
+	Package string
+	// Args are passed verbatim to each selected test binary. -test.timeout is
+	// reserved, as it is for [ExecRequest].
+	Args []string
+	// Env overlays the environment frozen by Open for this pass. GO_MUTANTS_
+	// and the temporary-directory variables stay reserved; the probe runtime's
+	// own variable is set by the session and is not a caller's to supply.
+	Env []string
+	// Timeout overrides PrepareOptions.MutantTimeout when positive. A negative
+	// duration is invalid.
+	Timeout time.Duration
+}
+
+// ProbeOutcome is how one [Session.Probe] pass ended.
+//
+// Exactly one of the four is a measurement, and the asymmetry is deliberate: an
+// infection fact licenses a caller not to execute a test, so a pass that cannot
+// be vouched for reports that it has no facts rather than reporting that
+// nothing was infected — which is the same sentence spelled in a way somebody
+// would act on.
+type ProbeOutcome string
+
+// The probe outcomes.
+const (
+	// ProbeMeasured is a pass whose every binary exited zero and whose log was
+	// readable. It is the only outcome carrying [ProbeResult.Infected].
+	ProbeMeasured ProbeOutcome = "measured"
+	// ProbeTestFailed is a pass in which a test binary exited non-zero. The
+	// probe tree runs the program the user wrote, so a red suite there is a
+	// flaky test or a bug in go-mutants, and neither is evidence about which
+	// sites the target would have reached.
+	ProbeTestFailed ProbeOutcome = "test-failed"
+	// ProbeTimedOut is a pass the session's supervisor had to kill. What it had
+	// not reached yet is indistinguishable from what it would never reach.
+	ProbeTimedOut ProbeOutcome = "timed-out"
+	// ProbeUnavailable is a pass whose probe runtime could not open or write
+	// its log and refused to run the tests at all. It is the failure mode the
+	// runtime exists to make loud: a silent probe reads exactly like one that
+	// saw nothing.
+	ProbeUnavailable ProbeOutcome = "unavailable"
+)
+
+// ProbeResult is one pass of one target over the session's probe tree.
+type ProbeResult struct {
+	// Outcome is how the pass ended.
+	Outcome ProbeOutcome
+	// Infected are the catalogue indices — [Mutant.Index] — of the mutants
+	// whose site produced, at least once during this target, a value the mutant
+	// would not have produced. They are sorted ascending and distinct, and they
+	// index the same catalogue [Session.Catalog] returns, so they need no
+	// translation.
+	//
+	// It is non-nil exactly when Outcome is [ProbeMeasured], the empty set
+	// included: a target that ran and infected nothing is a fact, and the most
+	// useful one there is. Every other outcome carries nil, so a caller that
+	// forgets to check the outcome ranges over nothing rather than over a set
+	// that means something else.
+	//
+	// Only a mutant whose [Mutant.Probed] is true can appear here, and the
+	// converse is what a caller has to remember: an unprobed mutant is absent
+	// from every measurement and must be treated as infected by every test.
+	Infected []uint32
+	// ExitCode is the status of the test binary that decided the pass.
+	ExitCode int
+	// Duration is the wall-clock time the child processes took.
+	Duration time.Duration
+	// OutputTail is the last lines the deciding binary printed, and is empty
+	// for a measured pass.
+	OutputTail string
 }
 
 // Artifact is one bounded standard fuzz-corpus file captured before a target's

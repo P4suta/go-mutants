@@ -14,6 +14,56 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A probe pass on the engine API: `Session.Probe`.** The probe tree below
+  could record an infection and nothing ran it. This runs it. A session prepared
+  with `PrepareOptions.Probe` builds that tree beside the mutant one, and one
+  call runs one test or fuzz target against it and returns the catalog indices
+  whose site produced a value the mutant would not have:
+
+  ```go
+  measured, err := session.Probe(ctx, gomutants.ProbeRequest{
+      Package: "example.com/project/internal/codec",
+      Args: []string{"-test.run=^TestRoundTrip$"},
+  })
+  ```
+
+  A target that never distinguished a mutant from the original program cannot
+  kill it, so a consumer may skip that execution and record "survived". Every
+  decision here is shaped by what happens when that licence is given wrongly. An
+  empty set of indices and "no facts" are the same bytes to a careless caller and
+  opposite instructions to a careful one, so they are different values:
+  `ProbeResult.Infected` is non-nil exactly for the `measured` outcome, while
+  `test-failed`, `timed-out`, `unavailable` and every error carry `nil`. The pass
+  stops at the first binary that does not exit zero, because the indices the rest
+  would append cannot be combined with a pass that already failed — the result
+  would be a subset of the truth wearing the shape of the whole of it. A
+  *missing* log after a clean exit is the one absence that is a fact and comes
+  back as the empty set: the runtime writes its header in `init`, so a binary
+  that wrote nothing linked no probe and ran no probed site.
+
+  `Mutant.Probed` says which mutants the tree speaks for, and it is the
+  conjunction of two things rather than either alone. A mutant with no probe form
+  leaves its file untouched in the probe tree, so that tree compiles and the
+  validation *accepts* it exactly as it accepts a probed one — and a caller
+  reading "accepted" as "probed" would take its permanent absence from every log
+  as licence to skip the tests that kill it. So the consumer's rule has two
+  clauses: skip only when the mutant is `Probed` and a `measured` probe does not
+  name it, and treat an unprobed mutant as infected by every test.
+
+  The tree is copied from the pristine snapshot *before* the mutant tree's
+  validation rewrites it in place, and a copy whose workspace digest differs
+  fails `Prepare`: a probe tree that is not the mutant tree's source proves
+  nothing about it. It is validated by the same phase in `ModeProbe`, so a probe
+  site that does not compile is bisected out and costs that mutant its probe and
+  nothing else, and it carries no verification command of its own — a probe pass
+  already reports a failing target as no facts per call, so a suite-wide gate
+  would buy what the per-call rule already gives and cost a full test run to get
+  it. `Session.Close` removes it.
+
+  `Probe` is off by default and the whole change is additive. `Session.Exec`, the
+  mutant tree, `go-mutants list --json` and the run-report schema are unchanged,
+  and `Probed` is session-local: it appears in no document, because it describes
+  a tree that exists for as long as the session does.
 - **A probe tree that measures return-value mutants.** The runtime below could
   record an infection and nothing called it. This is the first form that does.
   In `ModeProbe`, every eligible `return` carrying a return-value mutant becomes

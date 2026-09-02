@@ -102,6 +102,23 @@ func mutantEnvFrom(source []string, active, scratch string) []string {
 	return append(baseEnvFrom(source, scratch), instrument.ActiveEnv+"="+active)
 }
 
+// probeEnv is the environment one test binary of the *probe* tree runs with,
+// recording into the log at logPath.
+//
+// It is [mutantEnv] with the other variable, and the difference is the whole
+// point of the tree: nothing here activates anything. [instrument.ActiveEnv] is
+// not merely left unset, it is stripped by [baseEnvFrom] along with every other
+// GO_MUTANTS_ variable, so a value exported in a developer's shell cannot make
+// a probe pass measure a program other than the one the user wrote — which is
+// the claim the whole layer rests on.
+func probeEnv(scratch, logPath string) []string {
+	return probeEnvFrom(nil, scratch, logPath)
+}
+
+func probeEnvFrom(source []string, scratch, logPath string) []string {
+	return append(baseEnvFrom(source, scratch), instrument.ProbeEnv+"="+logPath)
+}
+
 // isTempKey reports whether key is one of the temporary-directory variables.
 func isTempKey(key string) bool {
 	return slices.ContainsFunc(tempKeys, func(k string) bool { return sameEnvKey(key, k) })

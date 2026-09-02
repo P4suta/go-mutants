@@ -75,6 +75,28 @@ const (
 	// tree have drifted apart, and every outcome measured from here on would be
 	// a fiction.
 	CodeStaleCatalog Code = "GOM7514"
+	// CodeProbeInvalid reports a [ProbeRun] that cannot be measured: no
+	// timeout, no log to record into, no test binary, a target overriding the
+	// harness timeout, or a binary subset this run does not have. Every one of
+	// them would otherwise end as an empty set of infected mutants — which is
+	// indistinguishable from a pass that ran everything and saw nothing, and is
+	// what licenses a consumer to skip executions.
+	CodeProbeInvalid Code = "GOM7515"
+	// CodeProbeStart reports a probe tree's test binary that could not be
+	// started or supervised. Like [CodeMutantStart] it is never a statement
+	// about the tests, and the underlying GOM72xx cause stays reachable through
+	// [Error.Err]; unlike it, the pass yields no infection facts rather than an
+	// errored mutant.
+	CodeProbeStart Code = "GOM7516"
+	// CodeProbeLog reports an infection log that exists and could not be read
+	// against the catalogue it was written for — unopenable, empty, truncated,
+	// or carrying another catalogue's header. A *missing* log after a clean
+	// exit is not this: it is the empty set, because the runtime writes its
+	// header in init and a binary that wrote nothing linked no probe. One that
+	// is there and cannot be read is a measurement nobody can interpret, and
+	// the part of it that still parses is exactly what a smaller, wrong answer
+	// looks like.
+	CodeProbeLog Code = "GOM7517"
 	// CodeInterrupted reports a schedule stopped by a cancelled context, which
 	// in practice means Ctrl-C or SIGTERM. The results measured so far are
 	// returned alongside it, with everything that never ran marked
@@ -115,6 +137,9 @@ var codes = []Code{
 	CodeScratchDir,
 	CodeMutantStart,
 	CodeStaleCatalog,
+	CodeProbeInvalid,
+	CodeProbeStart,
+	CodeProbeLog,
 	CodeInterrupted,
 	CodeCoverageDir,
 	CodeCoverageFailed,

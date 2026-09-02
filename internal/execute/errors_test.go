@@ -132,6 +132,24 @@ func TestCodesAreReachable(t *testing.T) {
 	record(execute.RunOne(t.Context(), options(stale, 1),
 		execute.MutantRun{ID: "abc", Timeout: mutantTimeout}, testBins("example.com/a")).Err)
 
+	// GOM7515: a probe pass with no log to record into, which could only ever
+	// end as an empty set of indices produced by having recorded nothing.
+	record(execute.RunProbe(t.Context(), execute.Options{},
+		execute.ProbeRun{Timeout: mutantTimeout}, testBins("example.com/a")).Err)
+
+	// GOM7516: a probe's test binary that could not be started.
+	record(execute.RunProbe(t.Context(), options(unstartableRunner, 1),
+		execute.ProbeRun{Timeout: mutantTimeout, LogPath: filepath.Join(t.TempDir(), "infection.log")},
+		testBins("example.com/a")).Err)
+
+	// GOM7517: an infection log that exists and cannot be read against the
+	// catalogue it was supposed to have been written against.
+	damaged := filepath.Join(t.TempDir(), "infection.log")
+	writeFile(t, damaged, "not an infection log\n")
+	passing := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+	record(execute.RunProbe(t.Context(), options(passing, 1),
+		execute.ProbeRun{Timeout: mutantTimeout, LogPath: damaged}, testBins("example.com/a")).Err)
+
 	// GOM7520: a cancelled schedule.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

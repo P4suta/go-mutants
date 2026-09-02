@@ -204,3 +204,13 @@ func unstartable() runner.Result {
 		Err:      &runner.Error{Code: runner.CodeProcessStartFailed, Message: "could not start it"},
 	}
 }
+
+// probeUnavailable is the generated probe runtime refusing to run because the
+// log it was told to write cannot be opened.
+func probeUnavailable() runner.Result {
+	return runner.Result{
+		ExitCode: instrument.ProbeUnavailableExit,
+		Duration: time.Millisecond,
+		Output:   []byte("go-mutants: cannot open the infection log\n"),
+	}
+}

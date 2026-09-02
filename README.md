@@ -346,6 +346,31 @@ result, err := session.Exec(ctx, gomutants.ExecRequest{
 })
 ```
 
+A session prepared with `Probe: true` also builds a **probe tree**: a second
+instrumented snapshot of the same source in which no mutant is ever active and
+each site go-mutants has a probe form for records, without side effects, whether
+the mutated value would have differed. `Session.Probe` runs one target against
+it and returns the catalog indices that target could have observed.
+
+```go
+measured, err := session.Probe(ctx, gomutants.ProbeRequest{
+	Package: "example.com/project/internal/codec",
+	Args: []string{"-test.run=^TestRoundTrip$"},
+})
+```
+
+A target that never distinguished a mutant from the original program cannot kill
+it, so that execution can be skipped and its answer is "survived". The rule has
+two clauses and both are load-bearing: skip only when `Mutant.Probed` is true
+**and** a `ProbeMeasured` result does not name that mutant's `Index`.
+`ProbeResult.Infected` is non-nil only for `ProbeMeasured` — a failed target, a
+timeout, an unavailable runtime and every error carry no facts at all rather
+than an empty set — and an unprobed mutant is absent from every measurement
+there will ever be, so it has to be treated as infected by every test. Reading
+any of those as "not infected" drops executions that would have found kills, and
+the resulting score is higher than the truth with nothing in the output saying
+so.
+
 Use standard test-binary flags such as `-test.run=^TestX$` and
 `-test.fuzz=^FuzzX$`; the API defines no second test DSL. Commands and targets
 may add ordinary `KEY=VALUE` environment entries, while `GO_MUTANTS_*` and the

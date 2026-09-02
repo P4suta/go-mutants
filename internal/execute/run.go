@@ -157,10 +157,6 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 	}
 
 	env := mutantEnvFrom(opts.Env, m.ID, scratch)
-	// A duration string rather than a number of seconds: `-test.timeout` takes
-	// Go's own duration syntax, and rendering it that way keeps sub-second
-	// budgets from truncating to `0`.
-	deadline := "-test.timeout=" + (InProcessTimeoutFactor * m.Timeout).String()
 
 	attempt := Attempt{Outcome: mutation.OutcomeSurvived}
 	for _, bin := range selected {
@@ -172,15 +168,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			return attempt
 		}
 
-		argv := make([]string, 0, len(m.Args)+2)
-		argv = append(argv, bin.BinPath, deadline)
-		argv = append(argv, m.Args...)
-		result := opts.runProcess(ctx, runner.Spec{
-			Argv:    argv,
-			Dir:     bin.Dir,
-			Env:     env,
-			Timeout: m.Timeout,
-		})
+		result := startTarget(ctx, opts, bin, env, m.Timeout, m.Args)
 		attempt.Duration += result.Duration
 
 		// The order of these cases is the contract, and the third is the one
@@ -236,6 +224,38 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		}
 	}
 	return attempt
+}
+
+// startTarget starts one prepared test binary and waits for it.
+//
+// This is the whole of what [RunOne] and [RunProbe] do to a child process, and
+// it is one function precisely because the two must agree about it. A probe
+// pass is only evidence about a mutant run if the same tests ran the same way:
+// same working directory — a Go test resolves testdata relative to where it
+// runs — same paired timeouts, and the same arguments in the same order. What
+// the two trees disagree about is the *tree* and the environment composed for
+// it, both of which arrive here already decided.
+//
+// The deadline is rendered as a duration string rather than a number of
+// seconds, because `-test.timeout` takes Go's own duration syntax and a
+// sub-second budget written as a number would truncate to `0`.
+func startTarget(
+	ctx context.Context,
+	opts Options,
+	bin TestBinary,
+	env []string,
+	timeout time.Duration,
+	args []string,
+) runner.Result {
+	argv := make([]string, 0, len(args)+2)
+	argv = append(argv, bin.BinPath, "-test.timeout="+(InProcessTimeoutFactor*timeout).String())
+	argv = append(argv, args...)
+	return opts.runProcess(ctx, runner.Spec{
+		Argv:    argv,
+		Dir:     bin.Dir,
+		Env:     env,
+		Timeout: timeout,
+	})
 }
 
 // validateArgs protects the timeout owned by RunOne. Both spellings accepted

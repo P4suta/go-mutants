@@ -62,7 +62,7 @@ func TestSelectTestPackagesAcceptsAliasedSnapshotRoot(t *testing.T) {
 	got, err := selectTestPackages(aliasRoot, []execute.TestBinary{{
 		ImportPath: "fixture.example/root",
 		Dir:        realRoot,
-	}}, ".")
+	}}, ".", "exec")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestBranchProofReachesTheEngineAPI(t *testing.T) {
 		t.Fatalf("cataloguing: %v", err)
 	}
 
-	public, _ := makeCatalog("", gocmd.Toolchain{}, "balanced", found, catalog, nil, nil, nil)
+	public, _ := makeCatalog("", gocmd.Toolchain{}, "balanced", found, catalog, nil, nil, nil, nil)
 	if len(public.Mutants) != 2 {
 		t.Fatalf("the catalogue holds %d mutants, want 2", len(public.Mutants))
 	}

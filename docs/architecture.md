@@ -150,8 +150,9 @@ dispatch is a plain array load and the race detector stays quiet.
 ## Probe runtime and the infection log
 
 Status: the runtime, its log format and the first probe form — the return-value
-one — are implemented in `internal/instrument`; the other probe forms and the
-pass that drives these processes are not.
+one — are implemented in `internal/instrument`, and the pass that drives these
+processes is implemented in `internal/execute` and reachable through the engine
+API's `Session.Probe`; the other probe forms are not.
 
 The next proof a consumer can act on is **infection**: if the site of mutant
 `m` never evaluated to a value different from the original's during test `t`,
@@ -190,9 +191,9 @@ are not probing. A log it cannot open or write makes the process exit `98`
 instead of running the tests. That is not defensive: an empty log reads exactly
 like a run in which no site was ever infected, and *that* reading is what
 licenses skipping executions, so silence is the one answer a probe must never
-give. Nothing classifies 98 yet — the runner knows 97 and not its neighbour —
-and the probe pass that drives these processes has to classify it as an
-infrastructure error the way 97 is, or the refusal buys nothing.
+give. The pass classifies 98 as its own outcome, `unavailable`, which carries no
+facts — a red suite and a runtime that could not record are different problems
+and neither is evidence about infection.
 
 The log is the append-only `gomutants-infection-v1` format:
 
@@ -317,6 +318,102 @@ could observe those mutants and runs them all, which is the safe direction.
 A probe site that turns out not to compile is dropped the same way, by the
 bisection in `internal/validate`: the mutant loses its probe and keeps
 everything else.
+
+### The probe pass
+
+A tree that records nothing until somebody runs it is not yet a measurement.
+The pass is what runs it, and it reaches a consumer as one method on the engine
+API's session:
+
+```go
+session, err := workspace.Prepare(ctx, gomutants.PrepareOptions{Probe: true})
+…
+measured, err := session.Probe(ctx, gomutants.ProbeRequest{
+    Package: "example.com/project/internal/codec",
+    Args:    []string{"-test.run=^TestRoundTrip$"},
+})
+```
+
+`PrepareOptions.Probe` is what builds the tree, and it is off by default: a
+second instrumentation, a second compile validation and a second set of test
+binaries are not free, and a caller that never asks the infection question
+should not pay for the answer. Nothing about the mutant tree, the catalog or
+`Session.Exec` changes either way.
+
+The ordering inside `Prepare` is forced rather than chosen. A workspace holds
+one snapshot and validation instruments it *in place*, so the probe tree is
+copied from the pristine snapshot **before** the mutant tree's validation
+rewrites it — and from the snapshot rather than from the user's tree, which may
+have moved since `Open` froze it. The copy's `WorkspaceDigest` has to equal the
+mutant snapshot's or `Prepare` fails: a probe tree that is not the mutant tree's
+source proves nothing about it, and the digest is the statement of sameness the
+snapshot package already has. It is then validated by the same
+`internal/validate` phase with `Mode: instrument.ModeProbe` and passes the same
+drift gate, and its test binaries are built into the session's own scratch.
+There is deliberately **no verification command** on it: a probe pass already
+reports a failing target as "no facts" per call, so a suite-wide gate would buy
+what the per-call rule already gives and cost a full test run to get it. The
+tree lives as long as the session and `Session.Close` removes it.
+
+One call is one target against however many binaries `ProbeRequest.Package`
+selects, each started exactly as a mutant's is — same working directory, same
+paired timeouts, same arguments, since evidence about a mutant run is only
+evidence if the same tests ran the same way — but with `GO_MUTANTS_PROBE` in the
+environment where a mutant run has `GO_MUTANTS_ACTIVE`. All of them append to
+one log, private to the call, in a scratch directory removed when it returns:
+several processes appending to one file is what the format is built for, and it
+is what makes the answer a statement about the *target* rather than about one of
+the binaries that ran it.
+
+The four outcomes are one measurement and three refusals:
+
+| Outcome | When | `Infected` |
+| --- | --- | --- |
+| `measured` | every selected binary exited 0 and the log was readable | the set |
+| `test-failed` | a binary exited non-zero | `nil` |
+| `timed-out` | the supervisor killed a binary | `nil` |
+| `unavailable` | a runtime exited `98` and never ran the tests | `nil` |
+
+The asymmetry is the design rather than an accident of it. An infection fact is
+a licence not to execute a test, so everything the pass cannot vouch for is
+reported as *no facts* and never as "nothing was infected" — which is the same
+sentence spelled in a way somebody would act on. `Infected` is non-nil exactly
+for a `measured` pass, so a caller that forgets to read the outcome ranges over
+nothing instead of over a set that means the opposite of what it looks like. An
+error — an unprepared session (`ErrProbeNotPrepared`), a malformed request, a
+process that would not start, an unreadable log — carries no result at all, for
+the same reason. The pass also stops at the first binary that does not exit
+zero: the indices the rest would append cannot be combined with a pass that has
+already failed, and the result would be a subset of the truth wearing the shape
+of the whole of it.
+
+A **missing** log after a clean exit is the one absence that is a fact, and it
+is the empty set rather than a failure. The runtime writes its header in `init`,
+before any test code runs, so a binary that produced no file is a binary that
+never linked a probe — and one that never linked a probe ran no probed site. An
+*existing* log that `ReadInfectionLog` refuses is `GOM7517` and no facts.
+
+`Mutant.Probed` says which mutants the tree speaks for, and it is the field a
+consumer is likeliest to misread. It is the conjunction of two things: the
+mutant has a probe form, and its site survived the probe tree's validation.
+Neither half is enough on its own — a mutant with no form leaves its file
+untouched, so the probe tree compiles and the validation **accepts** it exactly
+as it accepts a probed one, and a caller reading "accepted" as "probed" would
+take its permanent absence from every log as licence to skip the tests that kill
+it. `instrument.Hints.Probes` answers the half only that package can, and it is
+`probeFor` and nothing beside it, so a form added there is answered for here
+with no second list to keep in step.
+
+So the consumer's rule has two clauses, and dropping either one is unsound:
+
+> Skip executing test `t` against mutant `m` only when `m.Probed` is true and a
+> `measured` probe of `t` does not name `m.Index`. An unprobed mutant is absent
+> from every measurement there will ever be, so treat it as infected by every
+> test.
+
+`Probed` is session-local, like the rest of the engine API's live values: it
+appears in no report, in no schema, and in no `go-mutants list --json` document,
+because it describes a tree that exists for as long as the session does.
 
 ## Compile validation
 

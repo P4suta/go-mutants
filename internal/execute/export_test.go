@@ -51,3 +51,6 @@ func BaseEnv(scratch string) []string { return baseEnv(scratch) }
 
 // MutantEnv exposes the environment one activated test binary runs with.
 func MutantEnv(active, scratch string) []string { return mutantEnv(active, scratch) }
+
+// ProbeEnv exposes the environment one test binary of the probe tree runs with.
+func ProbeEnv(scratch, logPath string) []string { return probeEnv(scratch, logPath) }
