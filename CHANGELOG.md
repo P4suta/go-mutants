@@ -14,6 +14,50 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A probe tree that measures return-value mutants.** The runtime below could
+  record an infection and nothing called it. This is the first form that does.
+  In `ModeProbe`, every `return` carrying a return-value mutant becomes
+
+  ```go
+  { var r0 T = E0; var r1 U = E1; if r1 != K { __gm.Infect(i) }; return r0, r1 }
+  ```
+
+  and nothing else in the file changes. No mutant is active in it: what runs is
+  the program the user wrote, and what is recorded is whether the mutated value
+  would ever have differed from it — which is the fact that licenses not running
+  a test against a mutant.
+
+  The form is first because its exactness needs the least argument. Go evaluates
+  the operands of a `return` once each and then assigns them to the results, and
+  the `var` sequence does exactly that: nothing is evaluated twice and nothing
+  extra is evaluated, so an operand may call, receive, send or panic and the
+  probe is still the same program. `T` is the *declared result type* — `return 0`
+  in a function returning `float32` becomes `var r0 float32 = 0` — because that
+  is the conversion the `return` performs, and the one the mutant's constant
+  would have gone through, so the comparison is between the two values the two
+  programs would really have returned. Named results and `defer` see what they
+  always saw, and a block ending in `return` is still a terminating statement.
+
+  `discover.Guard` grows a `Return` hint for the six return-value rules, spelled
+  with the machinery Form D's declarations already go through. It is absent when
+  a result type cannot be written in the file — a dot-imported package's,
+  `unsafe.Pointer` — and when a result is or contains a type parameter, whose
+  values need not be comparable with a constant. An absent hint costs the probe
+  and nothing else: the candidate is still catalogued, still mutated and still
+  guarded, which is why it is not a new skip reason and why nothing in
+  `go-mutants list --json` or the run report changes.
+
+  `validate.Options` grows the same `Mode`, so the probe tree is built and
+  bisected by the phase that already builds and bisects the mutant tree. A
+  rejection there means "this mutant's probe site does not compile", so that one
+  mutant goes unmeasured while its neighbours in the same file still are.
+
+  Every other family is unprobed for now, and a file holding only such mutants
+  comes out of `ModeProbe` byte for byte as its author wrote it. A run then
+  learns nothing about which tests could observe them and runs them all, which
+  is the safe direction. The mutant tree is unchanged, byte for byte: the two
+  modes share one site index, one alias, one splicer and one forest walk, and
+  differ only in what a site is rewritten into.
 - **A probe runtime, and the infection log it appends to.** The branch proof
   below discharges executions on paper by reasoning about a condition. The
   proof beneath it is *infection*: if the site of mutant `m` never evaluated to

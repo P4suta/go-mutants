@@ -149,8 +149,9 @@ dispatch is a plain array load and the race detector stays quiet.
 
 ## Probe runtime and the infection log
 
-Status: the runtime and its log format are implemented in
-`internal/instrument`; the probe forms and the pass that drives them are not.
+Status: the runtime, its log format and the first probe form — the return-value
+one — are implemented in `internal/instrument`; the other probe forms and the
+pass that drives these processes are not.
 
 The next proof a consumer can act on is **infection**: if the site of mutant
 `m` never evaluated to a value different from the original's during test `t`,
@@ -163,10 +164,11 @@ and each site checks — without side effects — whether the mutated value woul
 have differed.
 
 `Instrument` chooses between the two trees with `Options.Mode`. The zero value
-is the mutant tree above; `ModeProbe` generates the probe runtime and, today,
-rewrites no file — a probe tree is currently the original source with a runtime
-nobody calls. The runtime, its log format and the reader of that format are
-settled first because the rewriting is what has to match them.
+is the mutant tree above; `ModeProbe` rewrites every site it has a probe form
+for and generates the probe runtime beside them. `InstrumentFile` takes the same
+mode and `validate.Options` carries it into both, so a probe tree is built and
+bisected by exactly the phase that builds and bisects the mutant tree — one
+build if it compiles, and a per-mutant rejection when a site does not.
 
 The probe runtime is generated into a **different snapshot** under the same
 `<module>/gomutants_rt/` name and the same collision rule, so the two packages
@@ -224,6 +226,72 @@ damaged log that still parses is precisely what a smaller, wrong answer looks
 like, and a smaller answer here is a test that was skipped when it should have
 run. The caller's one safe reading of an error is "this target yields no
 infection facts".
+
+### The return probe
+
+The first probe form covers the return-value rules — `return-zero-numeric`,
+`return-empty-string`, `return-true`, `return-false`, `return-nil` and
+`return-err-to-nil` — whose replacement is always a constant `K` drawn from
+`0`, `""`, `true`, `false` and `nil`. One temporary is declared per result and
+one `if` written per mutant, so a mutant on the second result of
+`return E0, E1` makes that statement
+
+```go
+{ var r0 T0 = E0; var r1 T1 = E1; if r1 != K { __gm.Infect(i) }; return r0, r1 }
+```
+
+and the form is chosen first because its exactness needs the least argument.
+
+- **Nothing is evaluated twice and nothing extra is evaluated.** Go evaluates
+  the operands of a `return` once each and then assigns them to the results,
+  which is precisely what the `var` sequence does. So `Ej` may call, receive,
+  send or panic and the rewrite is still the same program. The language fixes
+  the left-to-right order of function calls, method calls, receive operations
+  and binary logical operations and leaves the order of the rest unspecified,
+  so evaluating the operands in source order is one legal execution of the
+  original — which is all a rewrite has to be.
+- **`Tj` is the declared result type, not the operand's.** `return 0` in a
+  function returning `float32` becomes `var r0 float32 = 0`, which is exactly
+  the conversion the `return` performs — and the conversion the mutant's
+  `return K` would have performed too, so `rj != K` compares the two values the
+  two programs would really have returned. `internal/discover` spells those
+  types with the machinery Form D's declarations already go through, so there
+  is one spelling rule rather than two that can drift apart.
+- **The comparison is total.** Numbers, strings and booleans compare with `!=`
+  whatever named type they wear, and comparing an interface, pointer, slice,
+  map, channel or function value with the `nil` literal compares against the
+  nil value of that very type — no dynamic-type comparison happens, so nothing
+  panics. The one place `!=` is not the identity of values is IEEE 754: a float
+  result of negative zero reads as *not* differing from `0`. That errs towards
+  a test being run anyway, never towards one skipped for a mutant it could have
+  killed.
+- **The statement stays well formed.** `return r0, r1` assigns named results
+  exactly as the original did, so deferred functions observe the same values,
+  and a block whose last statement is a `return` is itself a terminating
+  statement, so a function whose body ended in one still does.
+- **Several mutants of one statement are several `if` lines in one block.**
+  `return-true` and `return-false` on one boolean result, or a rule on each of
+  two results, are alternatives of a single rewrite; there is never more than
+  one rewrite per statement. A `return` nested inside another's operand — in a
+  function literal — is composed children-first, exactly as nested guards are.
+
+Two shapes are refused, both in `internal/discover` where a hint is computed
+rather than in the rewriter that would have to use it. A result type the file
+cannot spell — a dot-imported package's, `unsafe.Pointer` — leaves the site
+without a hint, and so does a result that is or contains a type parameter,
+because a value of a type parameter's type need not be comparable with a
+constant. A refusal costs the *probe* and nothing else: the candidate is still
+catalogued, still mutated and still guarded in the mutant tree, which is why it
+is not a skip reason — a skip would tell a user go-mutants passed over an edit
+it in fact makes.
+
+Everything else is simply unprobed for now. Only this family has a form, so a
+file of comparisons comes out of `ModeProbe` byte for byte as its author wrote
+it, with no runtime import at all; a run then learns nothing about which tests
+could observe those mutants and runs them all, which is the safe direction.
+A probe site that turns out not to compile is dropped the same way, by the
+bisection in `internal/validate`: the mutant loses its probe and keeps
+everything else.
 
 ## Compile validation
 
