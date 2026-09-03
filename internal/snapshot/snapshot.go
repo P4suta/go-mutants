@@ -180,6 +180,18 @@ type Snapshot struct {
 	// package documentation.
 	WorkspaceDigest string
 
+	// StableDir reports whether the snapshot directory carries the
+	// [StableName] of SourceRoot rather than the random fallback name.
+	//
+	// It is false when the stable name was held by a directory [Create] was
+	// not allowed to remove: a live snapshot of the same root, one a keep
+	// preserved on purpose, or an unowned directory too young for the sweep to
+	// judge. The snapshot is a perfectly good snapshot either way and the run
+	// is not affected — the only thing lost is the build-cache hits the stable
+	// path buys — so the case is reported rather than refused, for a caller
+	// that wants to say why a run compiled everything from scratch.
+	StableDir bool
+
 	// dir is the temporary directory this package owns: it holds the copy in
 	// TreeName and the internal/tempowner lock and marker beside it. It is the
 	// path Cleanup removes and the path the guard is about.
@@ -228,11 +240,47 @@ func (s *Snapshot) Parent() string {
 	return s.destParent
 }
 
-// Create copies the tree rooted at srcRoot into a fresh temporary directory.
+// Create copies the tree rooted at srcRoot into a temporary directory named
+// after that root.
 //
 // The source tree is only ever read. On any failure after the destination
 // exists, the partial copy is removed before the error is returned, so a
 // failed Create leaves nothing behind.
+//
+// # The directory it lands in
+//
+// The name is the [StableName] of the absolute source root, so that the go
+// command's build cache recognises the packages underneath it from one run to
+// the next; that function carries the whole reason the name is not random.
+//
+// Only the path is ever reused. A directory found under the stable name is
+// swept — removed entirely — before anything is copied into it, and there is
+// no path through this function that adopts a tree it did not write: a
+// snapshot's bytes are named by its workspace digest, and the tree a killed
+// run left half-instrumented is not this run's tree.
+//
+// When the name is held by a directory the sweep will not collect, Create
+// takes an os.MkdirTemp name instead rather than wait for it, because none of
+// those directories is going to be released: a locked one belongs to a
+// concurrent run of the same root, a kept one is the evidence a keep preserved
+// on purpose, and an unowned young one may be a run in progress under an older
+// binary. That run loses its build-cache hits and nothing else, and
+// [Snapshot.StableDir] is where it says so.
+//
+// # Two runs of one root at once
+//
+// Neither order of the race puts two processes in one directory:
+//
+//   - Between the os.Mkdir that took the name and the tempowner.Claim below,
+//     the directory carries no marker and a modification time of a moment ago,
+//     which is exactly the shape a concurrent sweep's legacy rule spares.
+//   - Between a sweep removing an orphan and the os.Mkdir that follows it,
+//     another process may create the directory first. Then that Mkdir fails
+//     and this run falls back — which is why the sweep is followed by one more
+//     attempt and not by a retry loop.
+//
+// So two runs of one root end with one stable directory and one random one,
+// each holding its own lock, and never with two runs in one tree.
 func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	absSrc, err := filepath.Abs(srcRoot)
 	if err != nil {
@@ -264,20 +312,9 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	slices.SortFunc(w.files, byRelPath)
 	slices.SortFunc(w.dirs, byRelPath)
 
-	created, err := os.MkdirTemp(opts.DestParent, DirPrefix)
+	dir, stable, err := destination(opts.DestParent, absSrc)
 	if err != nil {
-		return nil, &Error{Code: CodeDestination, Path: opts.DestParent, Message: "cannot create the snapshot directory", Err: err}
-	}
-	// The directory is absolute whatever DestParent was. A relative DestParent
-	// would otherwise produce a relative path, which the Cleanup guard refuses
-	// on sight — the snapshot would be perfectly usable and impossible to
-	// delete. It also means every consumer downstream, which will hand this
-	// path to subprocesses running in their own working directories, gets a
-	// path that still means the same thing there.
-	dir, err := filepath.Abs(created)
-	if err != nil {
-		_ = os.RemoveAll(created)
-		return nil, &Error{Code: CodeDestination, Path: created, Message: "cannot resolve the snapshot directory", Err: err}
+		return nil, err
 	}
 	// Claimed before a single byte is copied into it. A directory that holds a
 	// copy of somebody's module and says nothing about who is using it is
@@ -291,12 +328,13 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	s := &Snapshot{
 		SourceRoot: absSrc,
 		Root:       filepath.Join(dir, TreeName),
+		StableDir:  stable,
 		dir:        dir,
 		owner:      owner,
 		// The directory the snapshot was created in, taken from the path that
 		// was actually created rather than from the option, so the guard
 		// compares against where the snapshot really is and not where it was
-		// asked to be. os.MkdirTemp("") lands in the operating system
+		// asked to be. An empty DestParent lands in the operating system
 		// temporary directory, which the guard allows in its own right.
 		destParent: filepath.Dir(dir),
 		remove:     os.RemoveAll,
