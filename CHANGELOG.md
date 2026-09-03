@@ -1074,6 +1074,27 @@ Entries say *why* a change was made, not only what changed.
   tree — a snapshot of a snapshot — would copy the marker and hash a manifest
   that no longer described the tree it came from. The visible consequence is
   that paths printed for diagnostics now end in `…/go-mutants-snap-XXXX/tree`.
+- **The snapshot directory of a given module now has the same name on every
+  run**, `go-mutants-snap-` followed by sixteen hex characters of the SHA-256 of
+  the absolute source root, rather than a fresh `os.MkdirTemp` name. This is a
+  performance change and a large one. The go command hashes each package's
+  absolute directory into its compile action id unless `-trimpath` is passed,
+  and go-mutants will not pass it — `-trimpath` changes the program under test,
+  and a test that reads `runtime.Caller` paths would behave differently in the
+  snapshot than in the tree the user is editing — so a snapshot at a fresh path
+  shared nothing with the previous run's build cache. Every run recompiled the
+  whole module from scratch, and the cache filled with one copy of the project's
+  objects per run.
+
+  Only the path is reused, never the bytes. A directory found under the name is
+  swept exactly as any other leftover is, and the tree is copied into it fresh,
+  so a run never inherits the half-instrumented tree of a run that died before
+  it. What the sweep will not collect is not waited for either: a directory
+  locked by a concurrent run of the same module, one a `KeepTemp` run preserved,
+  or an unowned young one leaves this run with a random name instead, which
+  costs it the cache hits and nothing else. Two runs of one module therefore end
+  with one stable directory and one random one, each holding its own lock, and
+  never with two runs in one tree.
 - A run and an `Open` now remove the temporary directories abandoned by earlier
   go-mutants runs before they create their own, which is a deletion neither of
   them used to perform. It is confined to the directories go-mutants itself

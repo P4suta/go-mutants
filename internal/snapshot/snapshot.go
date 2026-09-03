@@ -14,13 +14,22 @@
 //
 // # What a snapshot is
 //
-// [Create] walks the source tree, copies it byte for byte into a fresh
-// os.MkdirTemp directory, and returns a [Snapshot] holding three things: the
-// root of the copy, a sorted [Entry] manifest, and the [Snapshot.WorkspaceDigest]
-// that names the tree's exact contents. The digest is what makes the outcome
-// cache trustworthy — a cached result is only reusable for a workspace whose
-// every byte hashes the same — and what proves two shards of one run looked at
-// the same code.
+// [Create] walks the source tree, copies it byte for byte into a temporary
+// directory named after the source root, and returns a [Snapshot] holding three
+// things: the root of the copy, a sorted [Entry] manifest, and the
+// [Snapshot.WorkspaceDigest] that names the tree's exact contents. The digest
+// is what makes the outcome cache trustworthy — a cached result is only
+// reusable for a workspace whose every byte hashes the same — and what proves
+// two shards of one run looked at the same code.
+//
+// The directory's name is the [StableName] of the root rather than one
+// os.MkdirTemp drew, because the go command hashes a package's absolute
+// directory into its compile action id and a run at a fresh path is therefore a
+// whole-module rebuild that shares nothing with the last one's build cache.
+// Only the path is reused: a directory left over from a previous run is swept
+// and copied into again, never adopted. When the name is held by a directory
+// the sweep will not collect, the fallback name really is an os.MkdirTemp one,
+// and [Snapshot.StableDir] says which of the two happened.
 //
 // # Refusals
 //
@@ -102,8 +111,9 @@ const (
 	// digest. It carries the recipe version; see the package documentation.
 	WorkspaceDomain = "go-mutants-workspace-v1"
 
-	// DirPrefix is the os.MkdirTemp prefix of every snapshot directory. It is
-	// also load bearing: [Snapshot.Cleanup] refuses to delete a directory
+	// DirPrefix begins the name of every snapshot directory: the [StableName]
+	// one usually carries and the os.MkdirTemp name it falls back to alike. It
+	// is also load bearing: [Snapshot.Cleanup] refuses to delete a directory
 	// whose name does not start with it, and internal/tempowner's sweep
 	// collects the abandoned ones by it.
 	DirPrefix = "go-mutants-snap-"

@@ -108,6 +108,28 @@ marker beside the sources would be reported as drift by every run that checks;
 and the probe tree, which is a snapshot of a snapshot, would copy the marker
 and hash a manifest that no longer described the tree it came from.
 
+The `…` above is not random. It is sixteen hex characters of the SHA-256 of the
+absolute source root, so the snapshot of a given module lands on the same path
+on every run. The go command hashes each package's absolute directory into its
+compile action id unless `-trimpath` is passed, and go-mutants will not pass
+it: `-trimpath` changes the program under test — a test that reads
+`runtime.Caller` paths behaves differently under it — and the build that was
+verified has to be the build the user's own `go test` runs. So a snapshot at a
+fresh path shared nothing with the previous run's build cache: every run
+recompiled the whole module, and the cache filled with one copy of its objects
+per run. One name per source root turns the second run into an incremental one.
+
+Only the path is reused, never the bytes. A directory already sitting under
+that name goes to the sweep described above, and the tree is copied fresh into
+whatever the sweep left, so a run never inherits the half-instrumented tree of
+one that died before it. What the sweep will not collect is not waited for
+either: a directory locked by a concurrent run of the same root, one a
+`KeepTemp` run preserved, or an unowned young one leaves this run with an
+`os.MkdirTemp` name instead, which costs it the build-cache hits and nothing
+else and is reported in `Snapshot.StableDir`. In either order of that race, two
+runs of one root end with one stable directory and one random one, each holding
+its own lock, and never with two runs in one tree.
+
 `OpenOptions.KeepTemp` is the escape hatch for the one question a removed
 directory cannot answer — what the tree a mutant ran in actually looked like.
 It marks each directory `kept` instead of removing it, so the next run's sweep
