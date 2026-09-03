@@ -197,19 +197,33 @@ func runProbeSuite(t *testing.T, toolchain gocmd.Toolchain, root, log string) ru
 	return runner.Run(t.Context(), spec)
 }
 
-// verdictLines returns every per-test verdict `go test -v` printed, in order.
+// verdictLines returns every per-test verdict `go test -v` printed, in order,
+// without the duration each one ends in.
 //
 // It is the comparable form of "the suite behaved the same": exit 0 alone would
 // be satisfied by a tree with no tests left in it, and the whole output carries
-// timings that differ between runs.
+// timings that differ between runs. The duration on the verdict line itself is
+// one of those timings: a verdict is a fact about the program, its duration a
+// fact about the machine, and on a slow runner the same test rounds to 0.01s
+// in one run and 0.00s in the next.
 func verdictLines(result runner.Result) []string {
 	var out []string
 	for _, line := range strings.Split(string(result.Output), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "--- PASS:") || strings.HasPrefix(trimmed, "--- FAIL:") ||
 			strings.HasPrefix(trimmed, "--- SKIP:") {
-			out = append(out, trimmed)
+			out = append(out, withoutDuration(trimmed))
 		}
 	}
 	return out
+}
+
+// withoutDuration strips the trailing " (1.23s)" of a verdict line, and leaves
+// a line that does not end in one alone.
+func withoutDuration(verdict string) string {
+	open := strings.LastIndex(verdict, " (")
+	if open < 0 || !strings.HasSuffix(verdict, "s)") {
+		return verdict
+	}
+	return verdict[:open]
 }
