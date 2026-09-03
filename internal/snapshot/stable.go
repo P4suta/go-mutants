@@ -109,3 +109,27 @@ func destination(destParent, absSrc string) (string, bool, error) {
 	}
 	return created, false, nil
 }
+
+// claimDestination takes ownership of the directory [destination] just made,
+// and decides what happens to that directory when it cannot.
+//
+// A claim that lost to another process's lock is left exactly as found. With a
+// random name that could not happen — nobody else could be inside a directory
+// this process had just made — but a stable name is a name another run can
+// arrive at: a run stopped between its Mkdir and this claim for longer than
+// [tempowner.LegacyMaxAge] would find, on resuming, that another run of the
+// same root had swept the empty directory, recreated it and claimed it. The
+// directory is that run's now, whoever first created it, and removing it would
+// remove a live snapshot. Every other failure happens inside a directory no
+// other process has entered, and the empty directory is removed so that a
+// failed Create leaves nothing behind.
+func claimDestination(dir string, now time.Time) (*tempowner.Owner, error) {
+	owner, err := tempowner.Claim(dir, now)
+	if err == nil {
+		return owner, nil
+	}
+	if !errors.Is(err, tempowner.ErrOwned) {
+		_ = os.RemoveAll(dir)
+	}
+	return nil, &Error{Code: CodeDestination, Path: dir, Message: "cannot claim the snapshot directory", Err: err}
+}

@@ -288,6 +288,12 @@ func (s *Snapshot) Parent() string {
 //     another process may create the directory first. Then that Mkdir fails
 //     and this run falls back — which is why the sweep is followed by one more
 //     attempt and not by a retry loop.
+//   - A run stopped between its os.Mkdir and its tempowner.Claim for longer
+//     than the legacy window finds, on resuming, that another run swept the
+//     empty directory and claimed it. Its claim then fails, and it leaves the
+//     directory alone rather than removing the other run's tree: the one
+//     failure after which Create does not clean up is the one where the
+//     directory is no longer its own.
 //
 // So two runs of one root end with one stable directory and one random one,
 // each holding its own lock, and never with two runs in one tree.
@@ -330,10 +336,9 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	// copy of somebody's module and says nothing about who is using it is
 	// exactly the orphan the sweep exists to collect, and the window in which
 	// it could be one is the window between these two lines.
-	owner, err := tempowner.Claim(dir, time.Now())
+	owner, err := claimDestination(dir, time.Now())
 	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, &Error{Code: CodeDestination, Path: dir, Message: "cannot claim the snapshot directory", Err: err}
+		return nil, err
 	}
 	s := &Snapshot{
 		SourceRoot: absSrc,
