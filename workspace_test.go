@@ -231,3 +231,44 @@ func sortedPaths(paths []string) []string {
 	slices.Sort(paths)
 	return paths
 }
+
+// TestKeepTempThatCannotBeRecordedRemovesRatherThanLeaks holds KeepTemp to the
+// same standard on the way out. A directory whose keep could not be written
+// into its marker is exactly what the next Open would sweep as an orphan, so
+// Close does not report it preserved and does not leave it for that sweep: it
+// removes it, says why, and Preserved names nothing.
+func TestKeepTempThatCannotBeRecordedRemovesRatherThanLeaks(t *testing.T) {
+	root := copyFixture(t, "simple")
+	parent := t.TempDir()
+
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
+		TempDirectory: parent,
+		KeepTemp:      true,
+	})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	created := temporaryDirectories(t, parent)
+	if len(created) != 2 {
+		t.Fatalf("Open created %v, want a snapshot directory and a scratch directory", created)
+	}
+	for _, directory := range created {
+		marker := tempowner.MarkerPath(directory)
+		if err = os.Remove(marker); err != nil {
+			t.Fatalf("removing the marker of %s: %v", directory, err)
+		}
+		if err = os.Mkdir(marker, 0o755); err != nil {
+			t.Fatalf("obstructing the marker of %s: %v", directory, err)
+		}
+	}
+
+	if err = workspace.Close(); err == nil {
+		t.Fatal("Close succeeded although no keep could be recorded")
+	}
+	if preserved := workspace.Preserved(); len(preserved) != 0 {
+		t.Errorf("Preserved() is %v after a keep that could not be recorded, want nothing", preserved)
+	}
+	if left := temporaryDirectories(t, parent); len(left) != 0 {
+		t.Errorf("Close left %v behind after a keep it could not record", left)
+	}
+}

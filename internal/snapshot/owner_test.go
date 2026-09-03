@@ -144,3 +144,46 @@ func TestKeepLeavesTheSnapshotOnDiskAndSaysSo(t *testing.T) {
 		t.Errorf("Cleanup removed a kept snapshot: %v", statErr)
 	}
 }
+
+// TestKeepThatCannotBeRecordedIsNotAKeep is the other half of the marker being
+// the whole point: a keep the marker did not record would be swept by the next
+// run as an orphan, so the snapshot does not pretend to be kept. Keep reports
+// the failure, and Cleanup — deferred all over this codebase — still removes
+// the directory, which is what the next run's sweep would have done anyway,
+// only honestly and now.
+func TestKeepThatCannotBeRecordedIsNotAKeep(t *testing.T) {
+	t.Parallel()
+
+	src := t.TempDir()
+	writeTree(t, src, map[string]string{"main.go": "package main\n"})
+	dest := t.TempDir()
+
+	snap, err := Create(src, Options{DestParent: dest})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	obstructMarker(t, snap.Dir())
+
+	if err = snap.Keep(); err == nil {
+		t.Fatal("Keep succeeded although the marker could not be written")
+	}
+	if err = snap.Cleanup(); err != nil {
+		t.Fatalf("Cleanup after a failed Keep: %v", err)
+	}
+	if _, statErr := os.Stat(snap.Dir()); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("a failed Keep left %s behind (%v)", snap.Dir(), statErr)
+	}
+}
+
+// obstructMarker makes the owner marker of dir unwritable on every platform by
+// putting a directory where the file has to go.
+func obstructMarker(t *testing.T, dir string) {
+	t.Helper()
+	path := tempowner.MarkerPath(dir)
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("removing the marker: %v", err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("obstructing the marker: %v", err)
+	}
+}
