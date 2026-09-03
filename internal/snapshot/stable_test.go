@@ -272,6 +272,58 @@ func TestCreateLeavesAKeptStableDirectoryAlone(t *testing.T) {
 	}
 }
 
+// TestClaimDestinationLeavesADirectoryAnotherProcessOwns closes the one gap a
+// stable name opens between making the directory and claiming it.
+//
+// With a random name nobody else could be inside the directory Create had just
+// made, so removing it after a failed claim was always removing its own work.
+// A stable name is a name another process can arrive at: a run stopped between
+// its Mkdir and its Claim for longer than the legacy sweep window would find,
+// on resuming, that another run had swept the empty directory, recreated it
+// and claimed it. The claim then loses to that run's lock, and what it must
+// not do is remove that run's live snapshot on the way out.
+func TestClaimDestinationLeavesADirectoryAnotherProcessOwns(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), StableName("/home/example/project"))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("creating the directory: %v", err)
+	}
+	theirs, err := tempowner.Claim(dir, time.Now())
+	if err != nil {
+		t.Fatalf("claiming the directory as the other run: %v", err)
+	}
+	defer func() {
+		if releaseErr := theirs.Release(); releaseErr != nil {
+			t.Errorf("releasing the other run's claim: %v", releaseErr)
+		}
+	}()
+	sentinel := filepath.Join(dir, TreeName)
+	if err = os.Mkdir(sentinel, 0o700); err != nil {
+		t.Fatalf("creating the other run's tree: %v", err)
+	}
+
+	owner, err := claimDestination(dir, time.Now())
+	if err == nil {
+		t.Fatal("claiming a directory another run holds succeeded")
+	}
+	if owner != nil {
+		t.Errorf("a failed claim returned an owner: %+v", owner)
+	}
+	var snapErr *Error
+	if !errors.As(err, &snapErr) || snapErr.Code != CodeDestination {
+		t.Errorf("the failure is %v, want a snapshot Error with code %s", err, CodeDestination)
+	}
+	if !errors.Is(err, tempowner.ErrOwned) {
+		t.Errorf("the failure %v does not say the directory is owned", err)
+	}
+	if _, statErr := os.Stat(sentinel); statErr != nil {
+		t.Errorf("the other run's tree is gone after the failed claim: %v", statErr)
+	}
+	if marker, markerErr := tempowner.ReadMarker(dir); markerErr != nil || marker.PID != os.Getpid() {
+		t.Errorf("the other run's marker reads %+v (%v) after the failed claim", marker, markerErr)
+	}
+}
+
 // snapshotOnce creates a snapshot, records where it landed and whether it got
 // the stable name, and removes it again before returning.
 //
