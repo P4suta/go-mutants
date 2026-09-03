@@ -29,6 +29,12 @@ func TestCleanupRemovesTheSnapshot(t *testing.T) {
 	if _, err := os.Stat(snap.Root); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("snapshot root survived Cleanup (err=%v)", err)
 	}
+	// The owned directory goes too, and with it the lock and the marker: an
+	// ownership file left behind would be an orphan of exactly the kind this
+	// pair exists to collect.
+	if _, err := os.Stat(snap.Dir()); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the owned directory survived Cleanup (err=%v)", err)
+	}
 	// The source tree is untouched, which is the entire point of the package.
 	if got := readFile(t, filepath.Join(src, "a", "b", "c.go")); got != "package c\n" {
 		t.Errorf("source file changed to %q", got)
@@ -49,9 +55,9 @@ func TestCleanupNilSnapshot(t *testing.T) {
 	}
 }
 
-// TestCleanupRefusesUnsafeRoots is the guard. Each case is a Root that a bug
-// could plausibly put there, and every one of them must be refused without a
-// single file being touched.
+// TestCleanupRefusesUnsafeRoots is the guard. Each case is a directory that a
+// bug could plausibly put there, and every one of them must be refused without
+// a single file being touched.
 func TestCleanupRefusesUnsafeRoots(t *testing.T) {
 	t.Parallel()
 
@@ -66,23 +72,23 @@ func TestCleanupRefusesUnsafeRoots(t *testing.T) {
 		},
 		{
 			name: "relative path",
-			snap: Snapshot{Root: filepath.Join("relative", DirPrefix+"x"), destParent: "relative"},
+			snap: owned(filepath.Join("relative", DirPrefix+"x"), "relative"),
 		},
 		{
 			name: "a real directory that is not a snapshot",
-			snap: Snapshot{Root: dest, destParent: filepath.Dir(dest)},
+			snap: owned(dest, filepath.Dir(dest)),
 		},
 		{
 			name: "right parent, wrong name",
-			snap: Snapshot{Root: filepath.Join(dest, "important-sources"), destParent: dest},
+			snap: owned(filepath.Join(dest, "important-sources"), dest),
 		},
 		{
 			name: "right name, unrelated parent",
-			snap: Snapshot{Root: filepath.Join(dest, "sub", DirPrefix+"x"), destParent: dest},
+			snap: owned(filepath.Join(dest, "sub", DirPrefix+"x"), dest),
 		},
 		{
 			name: "no destination parent recorded",
-			snap: Snapshot{Root: filepath.Join(dest, DirPrefix+"x")},
+			snap: owned(filepath.Join(dest, DirPrefix+"x"), ""),
 		},
 	}
 	for _, tt := range tests {
@@ -107,19 +113,24 @@ func TestCleanupRefusesUnsafeRoots(t *testing.T) {
 func TestCleanupAcceptsTheOSTemporaryDirectory(t *testing.T) {
 	t.Parallel()
 
-	snap := Snapshot{
-		Root:  filepath.Join(os.TempDir(), DirPrefix+"synthetic"),
-		sleep: func(time.Duration) {},
-	}
+	snap := owned(filepath.Join(os.TempDir(), DirPrefix+"synthetic"), "")
+	snap.sleep = func(time.Duration) {}
 	var got string
 	snap.remove = func(path string) error { got = path; return nil }
 
 	if err := snap.Cleanup(); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
-	if got != snap.Root {
-		t.Errorf("removed %q, want %q", got, snap.Root)
+	if got != snap.Dir() {
+		t.Errorf("removed %q, want %q", got, snap.Dir())
 	}
+}
+
+// owned assembles the Snapshot a Create with these paths would have produced,
+// minus the directory itself, so that the guard cases below read as the paths
+// they are about rather than as three fields each.
+func owned(dir, destParent string) Snapshot {
+	return Snapshot{dir: dir, Root: filepath.Join(dir, TreeName), destParent: destParent}
 }
 
 // TestCleanupRetriesUntilItSucceeds pins the retry loop against a removal that
@@ -128,7 +139,7 @@ func TestCleanupRetriesUntilItSucceeds(t *testing.T) {
 	t.Parallel()
 
 	dest := t.TempDir()
-	snap := Snapshot{Root: filepath.Join(dest, DirPrefix+"x"), destParent: dest}
+	snap := owned(filepath.Join(dest, DirPrefix+"x"), dest)
 
 	attempts := 0
 	snap.remove = func(string) error {
@@ -165,7 +176,7 @@ func TestCleanupGivesUp(t *testing.T) {
 	t.Parallel()
 
 	dest := t.TempDir()
-	snap := Snapshot{Root: filepath.Join(dest, DirPrefix+"x"), destParent: dest}
+	snap := owned(filepath.Join(dest, DirPrefix+"x"), dest)
 
 	stubborn := errors.New("used by another process")
 	attempts := 0

@@ -76,6 +76,13 @@ type Session struct {
 	// built.
 	probeBinaries []execute.TestBinary
 	probeOptions  execute.Options
+
+	// keepTemp is the workspace's OpenOptions.KeepTemp. A kept session leaves
+	// its probe tree on disk and leaves its own scratch directory alone: the
+	// scratch lives inside the workspace's, which is being kept too.
+	keepTemp bool
+	// preserved names what Close left behind, for the Workspace to report.
+	preserved []string
 }
 
 // Prepare discovers, validates, instruments, verifies, and builds one reusable
@@ -150,7 +157,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	var probeSnap *snapshot.Snapshot
 	if resolved.Probe {
 		probeSnap, err = snapshot.Create(w.snapshot.Root, snapshot.Options{
-			DestParent: filepath.Dir(w.snapshot.Root),
+			DestParent: w.snapshot.Parent(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("gomutants: prepare probe snapshot: %w", err)
@@ -272,6 +279,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		probeSnapshot:  probeSnap,
 		probeBinaries:  probeBinaries,
 		probeOptions:   probeOptions,
+		keepTemp:       w.keepTemp,
 	}
 	w.session = session
 	return session, nil
@@ -881,16 +889,37 @@ func (s *Session) Close() error {
 	s.closed = true
 
 	var closeErr error
-	if s.scratch != "" {
+	if s.scratch != "" && !s.keepTemp {
 		closeErr = os.RemoveAll(s.scratch)
 	}
 	if s.probeSnapshot != nil {
-		closeErr = errors.Join(closeErr, s.probeSnapshot.Cleanup())
+		kept, err := keepOrRemove(s.keepTemp, s.probeSnapshot.Keep, s.probeSnapshot.Cleanup)
+		closeErr = errors.Join(closeErr, err)
+		if kept {
+			s.preserved = append(s.preserved, s.probeSnapshot.Dir())
+		}
 	}
 	if closeErr != nil {
 		return fmt.Errorf("gomutants: close session: %w", closeErr)
 	}
 	return nil
+}
+
+// preserved names the directories this session left on disk, which is the probe
+// tree of a kept session and nothing otherwise. The session scratch is not
+// among them: it lives inside the workspace's scratch directory, which the
+// Workspace reports on its own.
+//
+// It is unexported because [Workspace.Preserved] is the one place a caller asks
+// this question: a session whose probe tree was kept is always closed by, or
+// before, the workspace that owns it.
+func (s *Session) preservedDirs() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.Clone(s.preserved)
 }
 
 func makeCatalog(

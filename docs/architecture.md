@@ -75,6 +75,45 @@ Each arrow is a phase transition with its own type. `runner.Execute(m
 Validated)` cannot be called with a raw candidate; that is the compile-time
 version of the rule "only validated mutants run".
 
+## Temporary directories: an owner and a collector
+
+Every byte a run writes has an owner and a collector. The snapshot is a full
+copy of somebody's module, and "removed at the end of the run" is a promise no
+process can keep: a SIGKILL, an out-of-memory kill or a closed terminal leaves
+the copy behind, and nothing will ever delete it.
+
+So each top-level directory go-mutants creates under the temporary parent — the
+snapshot, the probe tree, the per-run scratch — carries the pair
+`internal/tempowner` writes into it:
+
+- `owner.lock`, an exclusive advisory lock held open for the directory's whole
+  lifetime. It is the liveness signal and the only one: it disappears when the
+  process does, however the process died. A pid is not used for liveness,
+  because pids are reused and the answer would be about some other process.
+- `owner.json`, `{"schema":"go-mutants-temp-owner-v1","pid":…,"started":…,
+  "kept":…}`, which people read and which the sweep reads for one bit.
+
+Before it copies anything, a run sweeps its own prefixes in that parent. A
+directory whose lock is free and whose marker does not say `kept` is an orphan
+and goes, and so does an unowned directory nothing has touched for a day — the
+shape a run started by a version older than this leaves behind. A locked
+directory belongs to a live run, a kept one was preserved on purpose, and
+everything else in a directory shared with the whole machine is left exactly as
+it was found. A failure to collect is a warning (`GOM4044` for `run`) and never
+the reason a run stops: the measurements are unaffected either way.
+
+The copy itself lives one level down, in `go-mutants-snap-…/tree`. That is
+forced rather than chosen. `snapshot.Redigest` applies no exclusions, so a
+marker beside the sources would be reported as drift by every run that checks;
+and the probe tree, which is a snapshot of a snapshot, would copy the marker
+and hash a manifest that no longer described the tree it came from.
+
+`OpenOptions.KeepTemp` is the escape hatch for the one question a removed
+directory cannot answer — what the tree a mutant ran in actually looked like.
+It marks each directory `kept` instead of removing it, so the next run's sweep
+obeys the decision rather than collecting it minutes later, and
+`Workspace.Preserved` names what was left behind.
+
 ## Instrumentation: guard-based rewriting
 
 Status: implemented in `internal/instrument`. This is the hardest component and
@@ -694,6 +733,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/discover` | `packages.Load`, types walk, candidates, skips | 2 families |
 | `internal/instrument` | Forms S/C/D, flattener, runtime codegen, splicer | implemented |
 | `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
+| `internal/tempowner` | Temporary-directory lock, marker, and orphan sweep | implemented |
 | `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
 | `internal/runner` | One process, timed and supervised; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping | implemented |

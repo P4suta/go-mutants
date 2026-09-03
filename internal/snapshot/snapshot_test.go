@@ -514,7 +514,7 @@ func TestCreateWithRelativeDestParent(t *testing.T) {
 	if !filepath.IsAbs(snap.Root) {
 		t.Errorf("Root = %q, want an absolute path", snap.Root)
 	}
-	if got := filepath.Dir(snap.Root); !pathsEqual(got, dest) {
+	if got := snap.Parent(); !pathsEqual(got, dest) {
 		t.Errorf("snapshot parent = %s, want %s", got, dest)
 	}
 
@@ -575,10 +575,15 @@ func TestSnapshotRootShape(t *testing.T) {
 	dest := t.TempDir()
 	snap := create(t, src, Options{DestParent: dest})
 
-	if !strings.HasPrefix(filepath.Base(snap.Root), DirPrefix) {
-		t.Errorf("snapshot directory %q does not begin with %q", filepath.Base(snap.Root), DirPrefix)
+	if !strings.HasPrefix(filepath.Base(snap.Dir()), DirPrefix) {
+		t.Errorf("snapshot directory %q does not begin with %q", filepath.Base(snap.Dir()), DirPrefix)
 	}
-	if got := filepath.Dir(snap.Root); !pathsEqual(got, dest) {
+	// The copy is a subdirectory of the directory that carries the ownership
+	// files; see TestCreateOwnsItsDirectoryWithoutTouchingTheTree.
+	if got := filepath.Dir(snap.Root); !pathsEqual(got, snap.Dir()) {
+		t.Errorf("the tree lives in %s, want %s", got, snap.Dir())
+	}
+	if got := snap.Parent(); !pathsEqual(got, dest) {
 		t.Errorf("snapshot parent = %s, want %s", got, dest)
 	}
 	if !filepath.IsAbs(snap.SourceRoot) {

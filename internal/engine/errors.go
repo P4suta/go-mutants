@@ -169,6 +169,16 @@ const (
 	// missing was somebody saying it out loud when it is the only thing the run
 	// had to say.
 	CodeSelectedMutantRejected Code = "GOM4043"
+	// CodeOrphanNotRemoved reports temporary directories left by earlier runs
+	// that this run could not collect.
+	//
+	// It is the same kind of warning as the two above and for the same reason:
+	// the run's results are unaffected and the remedy is a deletion in the
+	// temporary area. It is worth saying out loud because the directories it
+	// names are module-sized, nothing else will ever remove them, and a machine
+	// quietly filling up is a failure that arrives days later as something
+	// else.
+	CodeOrphanNotRemoved Code = "GOM4044"
 )
 
 // String returns the code as it is printed.
@@ -195,6 +205,7 @@ var codes = []Code{
 	CodeScratchNotRemoved,
 	CodeReportNotPublished,
 	CodeSelectedMutantRejected,
+	CodeOrphanNotRemoved,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric
