@@ -125,6 +125,40 @@ func TestClaimWritesTheMarkerAndHoldsTheLock(t *testing.T) {
 	}
 }
 
+// TestClaimNamesAnOwnedDirectoryWithErrOwned pins the one failure a caller has
+// to tell apart from the rest: a claim that lost to another process's lock is a
+// directory that now belongs to that process, and a caller that had just made
+// it must not remove it on the way out.
+func TestClaimNamesAnOwnedDirectoryWithErrOwned(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	now := time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC)
+
+	first, err := Claim(dir, now)
+	if err != nil {
+		t.Fatalf("claiming the directory: %v", err)
+	}
+	defer func() {
+		if releaseErr := first.Release(); releaseErr != nil {
+			t.Errorf("releasing the first claim: %v", releaseErr)
+		}
+	}()
+
+	second, err := Claim(dir, now.Add(time.Second))
+	if err == nil {
+		t.Fatal("a second Claim on a held directory succeeded")
+	}
+	if second != nil {
+		t.Errorf("a failed Claim returned an owner: %+v", second)
+	}
+	if !errors.Is(err, ErrOwned) {
+		t.Errorf("the failure is %v, want one that errors.Is ErrOwned", err)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("the failure %q does not name the directory %q", err, dir)
+	}
+}
+
 // TestKeepMarksTheDirectoryAndReleasesTheLock covers the deliberate keep: the
 // directory outlives the process that made it, and says so in a way the next
 // run's sweep obeys.

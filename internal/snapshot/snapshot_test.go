@@ -491,9 +491,10 @@ func TestCreateDoesNotCopyItself(t *testing.T) {
 }
 
 // TestCreateWithRelativeDestParent covers the path where the snapshot is
-// perfectly usable and undeletable: a relative DestParent yields a relative
-// root from os.MkdirTemp, and the Cleanup guard refuses anything that is not
-// absolute. Both the success and the abandoned-copy paths have to survive it.
+// perfectly usable and undeletable: a relative DestParent used as it stands —
+// joined with the stable name, or handed to os.MkdirTemp — yields a relative
+// root, and the Cleanup guard refuses anything that is not absolute. Both the
+// success and the abandoned-copy paths have to survive it.
 func TestCreateWithRelativeDestParent(t *testing.T) {
 	t.Parallel()
 

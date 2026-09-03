@@ -114,6 +114,12 @@ type Owner struct {
 	marker Marker
 }
 
+// ErrOwned is the failure [Claim] wraps when the directory's lock is held by
+// another process. It is the one failure a caller has to tell apart from the
+// rest: the directory now belongs to whoever holds the lock, however the caller
+// came by it, and is not the caller's to remove.
+var ErrOwned = errors.New("already owned by another process")
+
 // Claim writes the marker pair into an existing directory and takes its lock.
 //
 // The lock comes first and the marker second, so that a directory caught
@@ -125,7 +131,7 @@ func Claim(dir string, now time.Time) (*Owner, error) {
 		return nil, fmt.Errorf("locking %s: %w", dir, err)
 	}
 	if !held {
-		return nil, fmt.Errorf("%s is already owned by another process", dir)
+		return nil, fmt.Errorf("%s is %w", dir, ErrOwned)
 	}
 	marker := Marker{Schema: Schema, PID: os.Getpid(), Started: now.UTC()}
 	if err := writeMarker(dir, marker); err != nil {
