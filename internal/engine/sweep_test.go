@@ -59,18 +59,23 @@ func TestSweepTemporaryRemovesTheRunsOwnOrphans(t *testing.T) {
 // TestSweepTemporaryWarnsWhenAnOrphanSurvives keeps a directory that will not
 // go away from ending a run: the results are unaffected and the remedy is a
 // deletion in the temporary area, which is exactly what the two neighbouring
-// cleanup warnings already say.
+// cleanup warnings already say. What makes the orphan refuse is the platform's
+// business — obstructRemoval is defined per platform — because a parent that
+// is not a directory, the obvious obstacle, is reported as absent on Windows
+// and an absent parent is correctly nothing to sweep.
 func TestSweepTemporaryWarnsWhenAnOrphanSurvives(t *testing.T) {
-	parent := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(parent, []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	parent := t.TempDir()
+	orphan := abandonedDirectory(t, parent, snapshot.DirPrefix+"stuck")
+	obstructRemoval(t, parent, orphan)
 
 	s := &session{}
 	s.sweepTemporary(parent)
 
 	if len(s.warnings) != 1 || s.warnings[0].Code != string(CodeOrphanNotRemoved) {
 		t.Fatalf("a failed sweep published %v, want one %s warning", s.warnings, CodeOrphanNotRemoved)
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Errorf("the orphan the sweep warned about is gone after all: %v", err)
 	}
 }
 

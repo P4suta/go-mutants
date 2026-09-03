@@ -36,6 +36,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/snapshot"
 )
 
 // testToolVersion is the version string the engine records in a test report.
@@ -324,12 +325,15 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 
 	// The snapshot is gone, and so is the scratch directory beside it — the
 	// compiled test binaries and the per-worker temporary directories included.
-	if filepath.Dir(outcome.SnapshotRoot) != tempRoot {
-		t.Errorf("the snapshot was created in %s, want it under the redirected temporary directory %s",
-			filepath.Dir(outcome.SnapshotRoot), tempRoot)
+	// The copy is the tree below the directory the run owns, and that directory
+	// is directly under the temporary directory the run was told to use.
+	owned := filepath.Dir(outcome.SnapshotRoot)
+	if filepath.Base(outcome.SnapshotRoot) != snapshot.TreeName || filepath.Dir(owned) != tempRoot {
+		t.Errorf("the snapshot was created at %s, want %s below a directory the run owns in the redirected temporary directory %s",
+			outcome.SnapshotRoot, snapshot.TreeName, tempRoot)
 	}
-	if _, err := os.Stat(outcome.SnapshotRoot); !os.IsNotExist(err) {
-		t.Errorf("the snapshot at %s survived the run (stat error %v)", outcome.SnapshotRoot, err)
+	if _, err := os.Stat(owned); !os.IsNotExist(err) {
+		t.Errorf("the snapshot directory %s survived the run (stat error %v)", owned, err)
 	}
 	if left := entries(t, tempRoot); len(left) != 0 {
 		t.Errorf("the run left %v behind in the temporary directory", left)
