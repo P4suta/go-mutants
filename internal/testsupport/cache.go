@@ -82,7 +82,39 @@ func CacheDir(t *testing.T) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("creating the redirected cache root %s: %v", dir, err)
 	}
+	silenceGoTelemetry(t, base)
 	return dir
+}
+
+// silenceGoTelemetry turns the go command's telemetry off below the moved HOME.
+//
+// The telemetry directory is the one thing derived from HOME that
+// [pinGoDirectories] cannot hold still: it comes from os.UserConfigDir — under
+// HOME on macOS, and on a Linux without XDG_CONFIG_HOME — and no variable
+// names it. A go command that finds no mode file there starts in "local" mode,
+// opens counters, and forks a sidecar that outlives it to build local reports.
+// So a test that drove a single `go version` under a moved HOME left a detached
+// process writing into its own temporary directory, and t.TempDir's cleanup
+// failed with "directory not empty"; that is how TestDoctorPublishesItsCheckNames
+// failed on macOS on 2026-09-03, on a run nothing near it had changed.
+//
+// The mode file is written only when the config directory is below the moved
+// HOME. The machine's real telemetry setting is never touched, and a machine
+// whose config directory lives elsewhere keeps whatever mode its owner chose,
+// which is what every go command on it gets anyway.
+func silenceGoTelemetry(t *testing.T, home string) {
+	t.Helper()
+	config, err := os.UserConfigDir()
+	if err != nil || !within(home, config) {
+		return
+	}
+	telemetry := filepath.Join(config, "go", "telemetry")
+	if err := os.MkdirAll(telemetry, 0o700); err != nil {
+		t.Fatalf("creating the telemetry directory below the moved HOME: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(telemetry, "mode"), []byte("off\n"), 0o600); err != nil {
+		t.Fatalf("turning go telemetry off below the moved HOME: %v", err)
+	}
 }
 
 // pinGoDirectories keeps the go command's own directories where they were.
