@@ -18,6 +18,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/tempowner"
 )
 
 const (
@@ -27,6 +28,11 @@ const (
 )
 
 var temporaryKeys = []string{"TMP", "TEMP", "TMPDIR"}
+
+// temporaryPrefixes are the names Open creates directly under TempDirectory,
+// and so the names its sweep is allowed to collect. Nothing else in that
+// directory is go-mutants' to touch.
+var temporaryPrefixes = []string{snapshot.DirPrefix, scratchPrefix}
 
 // Workspace is a frozen disposable copy of one module. Its zero value is not
 // usable. Open constructs one and Close releases it.
@@ -41,6 +47,18 @@ type Workspace struct {
 	closeErr  error
 	prepared  bool
 	session   *Session
+
+	// scratchOwner holds the scratch directory's lock and marker for as long as
+	// the workspace is open. The snapshot carries its own.
+	scratchOwner *tempowner.Owner
+	// keepTemp is OpenOptions.KeepTemp, remembered because Close is where it
+	// takes effect.
+	keepTemp bool
+	// swept is what Open collected before it copied anything.
+	swept SweepResult
+	// preserved names the directories a KeepTemp Close left behind, in path
+	// order. It is written once, by Close.
+	preserved []string
 }
 
 // Open locates the Go toolchain and copies root into a disposable snapshot.
@@ -71,6 +89,12 @@ func Open(ctx context.Context, root string, options ...OpenOptions) (*Workspace,
 		return nil, fmt.Errorf("gomutants: open toolchain: %w", err)
 	}
 
+	// Before anything is copied, so that a machine holding the leftovers of a
+	// killed run has the disk back before this one asks for hundreds of
+	// megabytes of it. Concurrent Opens are safe in one process and across
+	// several, because every live directory holds its own lock.
+	swept := sweepTemporary(opts.TempDirectory)
+
 	snap, err := snapshot.Create(root, snapshot.Options{
 		ReportDir:  opts.ReportDirectory,
 		DestParent: opts.TempDirectory,
@@ -78,19 +102,76 @@ func Open(ctx context.Context, root string, options ...OpenOptions) (*Workspace,
 	if err != nil {
 		return nil, fmt.Errorf("gomutants: open snapshot: %w", err)
 	}
-	scratch, err := os.MkdirTemp(filepath.Dir(snap.Root), scratchPrefix)
+	// Beside the snapshot rather than inside it: everything under the snapshot
+	// root has to be a byte that came from the user's tree, and a test that
+	// writes to TMPDIR would otherwise be indistinguishable from one that wrote
+	// into the workspace.
+	scratch, err := os.MkdirTemp(snap.Parent(), scratchPrefix)
 	if err != nil {
 		cleanupErr := snap.Cleanup()
 		return nil, errors.Join(fmt.Errorf("gomutants: open scratch directory: %w", err), cleanupErr)
 	}
+	scratchOwner, err := tempowner.Claim(scratch, time.Now())
+	if err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("gomutants: open scratch directory: %w", err),
+			os.RemoveAll(scratch), snap.Cleanup())
+	}
 
 	return &Workspace{
-		snapshot:  snap,
-		toolchain: toolchain,
-		scratch:   scratch,
-		env:       sanitiseEnvironment(base, scratch),
-		closeDone: make(chan struct{}),
+		snapshot:     snap,
+		toolchain:    toolchain,
+		scratch:      scratch,
+		env:          sanitiseEnvironment(base, scratch),
+		closeDone:    make(chan struct{}),
+		scratchOwner: scratchOwner,
+		keepTemp:     opts.KeepTemp,
+		swept:        swept,
 	}, nil
+}
+
+// sweepTemporary collects the temporary directories of go-mutants runs that
+// died before they could remove their own.
+//
+// A failure is carried in the result rather than returned: a workspace that
+// could not tidy up after a previous run is still a perfectly good workspace,
+// and refusing to open one would turn somebody else's leftover permission
+// problem into this run's failure.
+func sweepTemporary(parent string) SweepResult {
+	if parent == "" {
+		parent = os.TempDir()
+	}
+	swept, err := tempowner.Sweep(parent, temporaryPrefixes, time.Now())
+	return SweepResult{
+		Removed:      swept.Removed,
+		RemovedBytes: swept.RemovedBytes,
+		Live:         swept.Live,
+		Kept:         swept.Kept,
+		Err:          err,
+	}
+}
+
+// Swept is what Open collected before it copied anything. It is the zero value
+// for a workspace that was never opened.
+func (w *Workspace) Swept() SweepResult {
+	if w == nil {
+		return SweepResult{}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.swept
+}
+
+// Preserved names the directories a [OpenOptions.KeepTemp] workspace left on
+// disk, in path order, and is empty before [Workspace.Close] and for every
+// workspace that kept nothing.
+func (w *Workspace) Preserved() []string {
+	if w == nil {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.preserved)
 }
 
 // Exec runs command against the frozen snapshot. It is available before
@@ -177,26 +258,47 @@ func (w *Workspace) Close() error {
 	session := w.session
 	snap := w.snapshot
 	scratch := w.scratch
+	scratchOwner := w.scratchOwner
+	keep := w.keepTemp
 	w.session = nil
 	w.snapshot = nil
 	w.scratch = ""
+	w.scratchOwner = nil
 	w.mu.Unlock()
 
 	var closeErr error
+	var preserved []string
 	if session != nil {
 		closeErr = session.Close()
+		preserved = append(preserved, session.preservedDirs()...)
 	}
 	if scratch != "" {
-		closeErr = errors.Join(closeErr, os.RemoveAll(scratch))
+		switch {
+		case keep:
+			closeErr = errors.Join(closeErr, scratchOwner.Keep())
+			preserved = append(preserved, scratch)
+		default:
+			// The lock is dropped before the removal, because on Windows the
+			// open handle inside the directory is what would refuse it.
+			closeErr = errors.Join(closeErr, scratchOwner.Release(), os.RemoveAll(scratch))
+		}
 	}
 	if snap != nil {
-		closeErr = errors.Join(closeErr, snap.Cleanup())
+		switch {
+		case keep:
+			closeErr = errors.Join(closeErr, snap.Keep())
+			preserved = append(preserved, snap.Dir())
+		default:
+			closeErr = errors.Join(closeErr, snap.Cleanup())
+		}
 	}
+	slices.Sort(preserved)
 	var result error
 	if closeErr != nil {
 		result = fmt.Errorf("gomutants: close workspace: %w", closeErr)
 	}
 	w.mu.Lock()
+	w.preserved = preserved
 	w.closeErr = result
 	close(done)
 	w.mu.Unlock()

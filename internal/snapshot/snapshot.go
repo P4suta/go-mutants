@@ -94,6 +94,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/glob"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/tempowner"
 )
 
 const (
@@ -103,8 +104,21 @@ const (
 
 	// DirPrefix is the os.MkdirTemp prefix of every snapshot directory. It is
 	// also load bearing: [Snapshot.Cleanup] refuses to delete a directory
-	// whose name does not start with it.
+	// whose name does not start with it, and internal/tempowner's sweep
+	// collects the abandoned ones by it.
 	DirPrefix = "go-mutants-snap-"
+
+	// TreeName is the subdirectory of a snapshot directory that holds the copy.
+	//
+	// The copy is one level down rather than at the top because the snapshot
+	// directory also carries its ownership files, and every byte under
+	// [Snapshot.Root] has to be a byte that came from the source tree.
+	// [Snapshot.Redigest] deliberately applies no exclusions, so an owner
+	// marker beside the sources would be reported as drift by every run that
+	// checks; and a snapshot of a snapshot — which is exactly how the probe
+	// tree is made — would copy the marker and hash a manifest that no longer
+	// described the tree it came from.
+	TreeName = "tree"
 
 	// DefaultReportDir is the conventional location of a run's reports, and is
 	// excluded from every snapshot whether or not it is the configured one.
@@ -154,7 +168,7 @@ type Snapshot struct {
 
 	// Root is the absolute path of the copy. Everything downstream — the
 	// build, the test binaries' working directories, the instrumented
-	// rewrites — happens under here.
+	// rewrites — happens under here. It is [TreeName] inside [Snapshot.Dir].
 	Root string
 
 	// Manifest lists every regular file in the snapshot, sorted by RelPath.
@@ -166,8 +180,22 @@ type Snapshot struct {
 	// package documentation.
 	WorkspaceDigest string
 
-	// destParent is the directory Root was created in, remembered for the
-	// Cleanup guard rather than re-derived, so that a caller mutating Root
+	// dir is the temporary directory this package owns: it holds the copy in
+	// TreeName and the internal/tempowner lock and marker beside it. It is the
+	// path Cleanup removes and the path the guard is about.
+	dir string
+
+	// owner is the lock and marker held for dir's whole lifetime. It is nil in
+	// a Snapshot a caller assembled by hand, which every method treats as
+	// "there is nothing to release".
+	owner *tempowner.Owner
+
+	// kept records a Keep, so that the deferred Cleanup calls this codebase is
+	// full of cannot undo a deliberate decision to preserve the directory.
+	kept bool
+
+	// destParent is the directory dir was created in, remembered for the
+	// Cleanup guard rather than re-derived, so that a caller mutating dir
 	// cannot talk Cleanup into removing something else.
 	destParent string
 
@@ -176,6 +204,28 @@ type Snapshot struct {
 	// the accessors below treat as "use the real thing".
 	remove func(string) error
 	sleep  func(time.Duration)
+}
+
+// Dir is the temporary directory this snapshot owns: [Snapshot.Root] and the
+// ownership files live in it, and [Snapshot.Cleanup] removes it whole.
+func (s *Snapshot) Dir() string {
+	if s == nil {
+		return ""
+	}
+	return s.dir
+}
+
+// Parent is the directory [Snapshot.Dir] was created in — the caller's
+// DestParent, or the operating system temporary directory when there was none.
+//
+// It is the answer to "where does a sibling of this snapshot belong", which is
+// a question the scratch directories beside it have to ask and must not answer
+// with filepath.Dir(Root): that is the snapshot's own directory.
+func (s *Snapshot) Parent() string {
+	if s == nil {
+		return ""
+	}
+	return s.destParent
 }
 
 // Create copies the tree rooted at srcRoot into a fresh temporary directory.
@@ -218,28 +268,45 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	if err != nil {
 		return nil, &Error{Code: CodeDestination, Path: opts.DestParent, Message: "cannot create the snapshot directory", Err: err}
 	}
-	// Root is absolute whatever DestParent was. A relative DestParent would
-	// otherwise produce a relative Root, which the Cleanup guard refuses on
-	// sight — the snapshot would be perfectly usable and impossible to delete.
-	// It also means every consumer downstream, which will hand this path to
-	// subprocesses running in their own working directories, gets a path that
-	// still means the same thing there.
-	root, err := filepath.Abs(created)
+	// The directory is absolute whatever DestParent was. A relative DestParent
+	// would otherwise produce a relative path, which the Cleanup guard refuses
+	// on sight — the snapshot would be perfectly usable and impossible to
+	// delete. It also means every consumer downstream, which will hand this
+	// path to subprocesses running in their own working directories, gets a
+	// path that still means the same thing there.
+	dir, err := filepath.Abs(created)
 	if err != nil {
 		_ = os.RemoveAll(created)
 		return nil, &Error{Code: CodeDestination, Path: created, Message: "cannot resolve the snapshot directory", Err: err}
 	}
+	// Claimed before a single byte is copied into it. A directory that holds a
+	// copy of somebody's module and says nothing about who is using it is
+	// exactly the orphan the sweep exists to collect, and the window in which
+	// it could be one is the window between these two lines.
+	owner, err := tempowner.Claim(dir, time.Now())
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, &Error{Code: CodeDestination, Path: dir, Message: "cannot claim the snapshot directory", Err: err}
+	}
 	s := &Snapshot{
 		SourceRoot: absSrc,
-		Root:       root,
+		Root:       filepath.Join(dir, TreeName),
+		dir:        dir,
+		owner:      owner,
 		// The directory the snapshot was created in, taken from the path that
 		// was actually created rather than from the option, so the guard
-		// compares against where Root really is and not where it was asked to
-		// be. os.MkdirTemp("") lands in the operating system temporary
-		// directory, which the guard allows in its own right.
-		destParent: filepath.Dir(root),
+		// compares against where the snapshot really is and not where it was
+		// asked to be. os.MkdirTemp("") lands in the operating system
+		// temporary directory, which the guard allows in its own right.
+		destParent: filepath.Dir(dir),
 		remove:     os.RemoveAll,
 		sleep:      time.Sleep,
+	}
+	// The tree is created explicitly rather than by the first MkdirAll below,
+	// so that a source tree with no subdirectories at all still produces a Root
+	// that exists.
+	if err := os.Mkdir(extendedPath(s.Root), 0o700); err != nil {
+		return nil, s.abandon(&Error{Code: CodeDestination, Path: s.Root, Message: "cannot create the snapshot tree", Err: err})
 	}
 
 	// Directories first, in sorted order, which puts every parent before its

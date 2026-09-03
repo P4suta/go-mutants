@@ -29,6 +29,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/tempowner"
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
@@ -77,6 +78,11 @@ const (
 	// shell would otherwise silently turn a mutant on inside the baseline.
 	envPrefix = "GO_MUTANTS_"
 )
+
+// tempPrefixes are the names a run creates directly in the temporary
+// directory, and so the only names its sweep is allowed to collect. Nothing
+// else in a directory shared with the whole machine is go-mutants' to touch.
+var tempPrefixes = []string{snapshot.DirPrefix, scratchPrefix}
 
 // tempKeys are the environment variables redirected at the scratch directory.
 // All three are set on every platform: TMPDIR is the POSIX spelling, TMP and
@@ -395,6 +401,12 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	// [snapshot.Options.Exclude] stays available as the escape hatch for a
 	// symlink or junction the copy refuses, but it has to come from a
 	// snapshot-scoped setting when one exists — never from a selection one.
+	// Before the copy, so that a machine holding the leftovers of a run that
+	// was killed has the disk back before this one asks for a module-sized
+	// piece of it. A directory another run is using holds its own lock and is
+	// left alone; see internal/tempowner.
+	s.sweepTemporary(os.TempDir())
+
 	snap, err := snapshot.Create(root, snapshot.Options{ReportDir: cfg.Report.Directory})
 	if err != nil {
 		return err
@@ -408,7 +420,7 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 		}
 	}()
 
-	scratch, err := os.MkdirTemp(filepath.Dir(snap.Root), scratchPrefix)
+	scratch, err := os.MkdirTemp(snap.Parent(), scratchPrefix)
 	if err != nil {
 		return &Error{
 			Code:    CodeScratchDir,
@@ -416,8 +428,19 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 			Err:     err,
 		}
 	}
+	scratchOwner, err := tempowner.Claim(scratch, time.Now())
+	if err != nil {
+		return &Error{
+			Code:    CodeScratchDir,
+			Message: "the per-run temporary directory could not be claimed",
+			Err:     errors.Join(err, os.RemoveAll(scratch)),
+		}
+	}
 	defer func() {
-		if removeErr := os.RemoveAll(scratch); removeErr != nil {
+		// The lock is dropped before the removal: on Windows an open handle
+		// inside a directory is exactly what makes RemoveAll fail.
+		removeErr := errors.Join(scratchOwner.Release(), os.RemoveAll(scratch))
+		if removeErr != nil {
 			s.warn(CodeScratchNotRemoved, "the per-run temporary directory could not be removed: "+removeErr.Error())
 		}
 	}()
@@ -1420,6 +1443,24 @@ func (s *session) emit(e Event) {
 		return
 	}
 	s.events <- e
+}
+
+// sweepTemporary collects the snapshot and scratch directories of runs that
+// died before they could remove their own.
+//
+// It warns rather than failing. A run that cannot tidy up after a previous one
+// is still a run whose measurements are sound, and turning somebody else's
+// leftover permission problem into this run's exit code would stop the work to
+// report the housekeeping.
+//
+// What it collected is deliberately not recorded anywhere. It is a fact about
+// the machine rather than about this workspace, and a report carrying it would
+// invite a reader to compare two runs by how much rubbish each of them found.
+func (s *session) sweepTemporary(parent string) {
+	if _, err := tempowner.Sweep(parent, tempPrefixes, time.Now()); err != nil {
+		s.warn(CodeOrphanNotRemoved,
+			"temporary directories left by earlier runs could not be removed: "+err.Error())
+	}
 }
 
 // warn records a warning and publishes it. Warnings are kept as well as sent so

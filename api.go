@@ -19,10 +19,51 @@ type OpenOptions struct {
 	// TempDirectory is the parent for the snapshot and all session scratch
 	// directories. Empty uses the operating system's temporary directory.
 	TempDirectory string
+	// KeepTemp preserves the snapshot, the probe tree and the scratch directory
+	// instead of removing them when the workspace closes.
+	//
+	// It is the escape hatch for the one question a removed directory cannot
+	// answer — what did the tree this mutant ran in actually look like — and it
+	// is deliberate in a way the next run can read: each preserved directory is
+	// marked kept, so [Open]'s sweep leaves it alone rather than collecting it
+	// as an orphan. [Workspace.Preserved] names them after [Workspace.Close].
+	//
+	// A kept snapshot is a full copy of the module and nothing will ever remove
+	// it. That is the price of the answer, and it is charged only when asked.
+	KeepTemp bool
 	// Env is the complete environment to freeze for child processes. Nil
 	// captures the current process environment. GO_MUTANTS_ and temporary
 	// directory variables are removed and replaced by the engine as needed.
 	Env []string
+}
+
+// SweepResult is what [Open] collected before it copied anything: the
+// temporary directories of go-mutants runs that were killed before they could
+// remove their own.
+//
+// It is returned by [Workspace.Swept] rather than being part of any report,
+// because it is a fact about the machine and not about the workspace. There is
+// no OpenReport to hang it on — [Open] returns a workspace or an error — and
+// inventing one to carry housekeeping would put a second thing in the way of
+// the call every consumer makes.
+type SweepResult struct {
+	// Removed holds the absolute path of every directory that was collected.
+	Removed []string
+	// RemovedBytes is what they held, as far as the sweep could measure.
+	RemovedBytes int64
+	// Live is how many directories a running go-mutants process still holds a
+	// lock on. They are somebody's workspace and are never touched.
+	Live int
+	// Kept is how many were preserved on purpose by a [OpenOptions.KeepTemp]
+	// run. They are never touched either, however old they are.
+	Kept int
+	// Err is why the sweep could not finish, or nil.
+	//
+	// It is carried here rather than returned by Open, because failing to
+	// collect somebody else's leftovers is not a reason to refuse to run: the
+	// workspace is fine, the disk is merely fuller than it should be, and a
+	// caller that wants to say so has the whole diagnosis in one place.
+	Err error
 }
 
 // Command is one shell-free process invocation in a frozen workspace.

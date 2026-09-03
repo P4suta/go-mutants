@@ -14,6 +14,35 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **An owner and a collector for every temporary directory, and
+  `OpenOptions.KeepTemp` to keep one on purpose.** A run copies the whole
+  module into the temporary area and removes the copy when it finishes, which
+  is a promise no process can keep: a SIGKILL, an out-of-memory kill or a
+  closed terminal leaves hundreds of megabytes behind that nothing will ever
+  delete. On the machine this was written for, nine such directories had piled
+  up at a quarter of a gigabyte each, beside the live ones of a run in
+  progress.
+
+  Every top-level directory go-mutants creates — the snapshot, the probe tree,
+  the per-run scratch — now carries an `owner.lock` held open for its whole
+  lifetime and an `owner.json` naming the schema, the process and the start
+  time. The lock is the liveness signal and the only one: it disappears when
+  the process does, however it died, which a pid cannot say on a machine that
+  reuses them. Before it copies anything, a run collects the directories under
+  its own prefixes whose lock is free — and, for one release, unowned ones that
+  nothing has touched for a day, which is the shape older versions left behind.
+  A directory somebody else is using holds its own lock and is never touched,
+  so concurrent runs in one process or several are safe; nothing else in the
+  temporary directory is ever looked at.
+
+  `OpenOptions.KeepTemp` is the other half. The sweep would otherwise make one
+  thing impossible — looking at the tree a failing mutant actually ran in — so
+  a kept directory is marked `kept` in its marker rather than merely left on
+  disk, which is what makes the next run's sweep leave it alone instead of
+  collecting it minutes later. `Workspace.Preserved()` names what was kept
+  after `Close`, and `Workspace.Swept()` reports what the workspace collected
+  on the way in. Neither appears in any report or schema: they are facts about
+  the machine, not about the run.
 - **A probe pass on the engine API: `Session.Probe`.** The probe tree below
   could record an infection and nothing ran it. This runs it. A session prepared
   with `PrepareOptions.Probe` builds that tree beside the mutant one, and one
@@ -1034,6 +1063,24 @@ Entries say *why* a change was made, not only what changed.
   `REUSE.toml` annotations for the files that cannot carry an inline SPDX
   header, plus `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md`, and
   `RELEASE_NOTES.md`.
+
+### Changed
+
+- A snapshot's copy of the module now lives in `tree` inside the directory
+  go-mutants creates for it, rather than at the top of it. The ownership files
+  described above need somewhere to live, and it cannot be beside the sources:
+  `snapshot.Redigest` deliberately applies no exclusions, so a marker there
+  would be reported as workspace drift by every run that checks, and the probe
+  tree — a snapshot of a snapshot — would copy the marker and hash a manifest
+  that no longer described the tree it came from. The visible consequence is
+  that paths printed for diagnostics now end in `…/go-mutants-snap-XXXX/tree`.
+- A run and an `Open` now remove the temporary directories abandoned by earlier
+  go-mutants runs before they create their own, which is a deletion neither of
+  them used to perform. It is confined to the directories go-mutants itself
+  creates, under its own name prefixes, and to those whose owner is provably
+  gone. When one cannot be removed, `run` publishes a `GOM4044` warning and
+  carries on: failing to collect somebody else's leftovers is not a reason to
+  refuse to measure anything.
 
 ### Fixed
 
