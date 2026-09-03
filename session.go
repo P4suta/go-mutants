@@ -893,11 +893,10 @@ func (s *Session) Close() error {
 		closeErr = os.RemoveAll(s.scratch)
 	}
 	if s.probeSnapshot != nil {
-		if s.keepTemp {
-			closeErr = errors.Join(closeErr, s.probeSnapshot.Keep())
+		kept, err := keepOrRemove(s.keepTemp, s.probeSnapshot.Keep, s.probeSnapshot.Cleanup)
+		closeErr = errors.Join(closeErr, err)
+		if kept {
 			s.preserved = append(s.preserved, s.probeSnapshot.Dir())
-		} else {
-			closeErr = errors.Join(closeErr, s.probeSnapshot.Cleanup())
 		}
 	}
 	if closeErr != nil {

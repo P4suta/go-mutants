@@ -273,23 +273,20 @@ func (w *Workspace) Close() error {
 		preserved = append(preserved, session.preservedDirs()...)
 	}
 	if scratch != "" {
-		switch {
-		case keep:
-			closeErr = errors.Join(closeErr, scratchOwner.Keep())
+		// The lock is dropped before a removal, because on Windows the open
+		// handle inside the directory is what would refuse it.
+		remove := func() error { return errors.Join(scratchOwner.Release(), os.RemoveAll(scratch)) }
+		kept, err := keepOrRemove(keep, scratchOwner.Keep, remove)
+		closeErr = errors.Join(closeErr, err)
+		if kept {
 			preserved = append(preserved, scratch)
-		default:
-			// The lock is dropped before the removal, because on Windows the
-			// open handle inside the directory is what would refuse it.
-			closeErr = errors.Join(closeErr, scratchOwner.Release(), os.RemoveAll(scratch))
 		}
 	}
 	if snap != nil {
-		switch {
-		case keep:
-			closeErr = errors.Join(closeErr, snap.Keep())
+		kept, err := keepOrRemove(keep, snap.Keep, snap.Cleanup)
+		closeErr = errors.Join(closeErr, err)
+		if kept {
 			preserved = append(preserved, snap.Dir())
-		default:
-			closeErr = errors.Join(closeErr, snap.Cleanup())
 		}
 	}
 	slices.Sort(preserved)
@@ -303,6 +300,21 @@ func (w *Workspace) Close() error {
 	close(done)
 	w.mu.Unlock()
 	return result
+}
+
+// keepOrRemove settles a temporary directory on the way out: kept when the
+// caller asked for that and the keep was recorded, removed otherwise. A keep
+// the marker did not record is not a keep — the next run's sweep would collect
+// the directory as an orphan — so it is removed now, its error reported, and
+// it is not among the directories the caller says it preserved.
+func keepOrRemove(keep bool, record, remove func() error) (kept bool, err error) {
+	if !keep {
+		return false, remove()
+	}
+	if err = record(); err != nil {
+		return false, errors.Join(err, remove())
+	}
+	return true, nil
 }
 
 func moduleDirectory(root, relative string) (string, error) {

@@ -35,14 +35,18 @@ const (
 //
 // A kept snapshot stays kept: [Snapshot.Cleanup] becomes a no-op afterwards, so
 // that the deferred cleanups this codebase is full of cannot undo the decision.
+// A keep the marker did not record is not a keep, though: the next run's sweep
+// would collect the directory as an orphan, so the error is returned and the
+// snapshot stays removable, for the deferred Cleanup to do now what that sweep
+// would have done later.
 func (s *Snapshot) Keep() error {
 	if s == nil {
 		return nil
 	}
-	s.kept = true
 	if err := s.owner.Keep(); err != nil {
 		return &Error{Code: CodeCleanupFailed, Path: s.dir, Message: "cannot mark the snapshot directory kept", Err: err}
 	}
+	s.kept = true
 	return nil
 }
 

@@ -159,10 +159,12 @@ func (o *Owner) Keep() error {
 	if o == nil {
 		return nil
 	}
-	o.marker.Kept = true
-	if err := writeMarker(o.dir, o.marker); err != nil {
+	marker := o.marker
+	marker.Kept = true
+	if err := writeMarker(o.dir, marker); err != nil {
 		return errors.Join(fmt.Errorf("keeping %s: %w", o.dir, err), o.Release())
 	}
+	o.marker = marker
 	return o.Release()
 }
 
