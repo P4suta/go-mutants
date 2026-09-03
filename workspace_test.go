@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
+	"github.com/P4suta/go-mutants/internal/snapshot"
 	"github.com/P4suta/go-mutants/internal/tempowner"
 )
 
@@ -179,6 +180,102 @@ func TestKeepTempPreservesTheTemporaryDirectories(t *testing.T) {
 			t.Errorf("a later run removed the kept directory %s: %v", directory, statErr)
 		}
 	}
+}
+
+// TestOpenTwiceYieldsTheSameSnapshotRootAcrossRuns is the workspace's half of
+// the stable snapshot name.
+//
+// The go command hashes the absolute directory of a package into every compile
+// action id unless -trimpath is passed, and go-mutants does not pass it — that
+// flag changes the program under test. A snapshot at a fresh random path per
+// run therefore shares nothing with the last run's build cache and leaves one
+// more full copy of the project's objects in it. Successive Opens of one root
+// consequently have to land on one path, and the module a consumer measures
+// every day is the same root every time.
+func TestOpenTwiceYieldsTheSameSnapshotRootAcrossRuns(t *testing.T) {
+	root := copyFixture(t, "simple")
+	parent := t.TempDir()
+
+	first := openedSnapshotName(t, root, parent)
+	second := openedSnapshotName(t, root, parent)
+	if second != first {
+		t.Errorf("two runs of %s snapshotted into %s and %s, want one directory", root, first, second)
+	}
+	if want := snapshot.StableName(root); first != want {
+		t.Errorf("the snapshot of %s is named %s, want %s", root, first, want)
+	}
+}
+
+// TestOpenWhileAnotherRunHoldsTheRootStillWorks is the price the stable name
+// is allowed to charge, and the one it is not.
+//
+// Two runs of one root at once cannot share a directory: they would instrument
+// each other's tree. So the second takes a random name, loses the build-cache
+// hits, and is otherwise a workspace like any other — and the sweep the second
+// Open runs first sees the first run's directories as live and leaves them
+// alone. Both close cleanly and neither leaves anything behind.
+func TestOpenWhileAnotherRunHoldsTheRootStillWorks(t *testing.T) {
+	root := copyFixture(t, "simple")
+	parent := t.TempDir()
+
+	first, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
+	if err != nil {
+		t.Fatalf("opening the first workspace: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
+	if err != nil {
+		t.Fatalf("opening a second workspace on the same root: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+
+	names := snapshotDirectories(t, parent)
+	if len(names) != 2 {
+		t.Fatalf("two concurrent workspaces hold %v, want two snapshot directories", names)
+	}
+	if stable := snapshot.StableName(root); !slices.Contains(names, stable) {
+		t.Errorf("neither of %v is the stable name %s", names, stable)
+	}
+	for _, name := range names {
+		if _, statErr := os.Stat(filepath.Join(parent, name, snapshot.TreeName, "go.mod")); statErr != nil {
+			t.Errorf("%s does not hold a usable copy of the module: %v", name, statErr)
+		}
+	}
+	// The first workspace's snapshot and scratch directories are both locked,
+	// which is what the second Open's sweep has to read as "somebody is using
+	// this" rather than as two orphans to reclaim.
+	if swept := second.Swept(); len(swept.Removed) != 0 || swept.Live != 2 {
+		t.Errorf("the second Open swept %+v, want nothing removed and two live directories", swept)
+	}
+
+	if err = second.Close(); err != nil {
+		t.Fatalf("closing the second workspace: %v", err)
+	}
+	if err = first.Close(); err != nil {
+		t.Fatalf("closing the first workspace: %v", err)
+	}
+	if left := temporaryDirectories(t, parent); len(left) != 0 {
+		t.Errorf("two closed workspaces left %v behind", left)
+	}
+}
+
+// openedSnapshotName opens a workspace, notes the name of the one snapshot
+// directory it created, and closes it again, so that two calls are two
+// successive runs rather than two live workspaces.
+func openedSnapshotName(t *testing.T, root, parent string) string {
+	t.Helper()
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	names := snapshotDirectories(t, parent)
+	if err = workspace.Close(); err != nil {
+		t.Fatalf("closing workspace: %v", err)
+	}
+	if len(names) != 1 {
+		t.Fatalf("Open created %v, want exactly one snapshot directory", names)
+	}
+	return names[0]
 }
 
 // claimAndAbandon leaves a directory in the state a SIGKILLed run leaves: the
