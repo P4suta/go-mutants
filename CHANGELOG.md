@@ -22,6 +22,11 @@ Entries say *why* a change was made, not only what changed.
   changed path. This keeps concurrent controls from sharing temporary state or
   silently changing the program their later mutation session claims to
   measure.
+- **Caller-owned generated-tree exclusions through
+  `OpenOptions.SnapshotExclude`.** Embedders can keep known output and report
+  trees out of the frozen mutation workspace instead of copying and hashing
+  bytes that are outside their assurance input boundary. Invalid patterns fail
+  before a temporary directory is created.
 - **Package-scoped mutation discovery through
   `PrepareOptions.DiscoveryPackages`.** Callers that build test binaries for a
   narrow package set can now type-check and discover only the packages that

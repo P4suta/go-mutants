@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/glob"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
@@ -76,6 +77,10 @@ func Open(ctx context.Context, root string, options ...OpenOptions) (*Workspace,
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("gomutants: open: %w", err)
 	}
+	exclude, err := compileSnapshotExclusions(opts.SnapshotExclude)
+	if err != nil {
+		return nil, err
+	}
 
 	base := opts.Env
 	if base == nil {
@@ -100,6 +105,7 @@ func Open(ctx context.Context, root string, options ...OpenOptions) (*Workspace,
 	snap, err := snapshot.Create(root, snapshot.Options{
 		ReportDir:  opts.ReportDirectory,
 		DestParent: opts.TempDirectory,
+		Exclude:    exclude,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gomutants: open snapshot: %w", err)
@@ -130,6 +136,18 @@ func Open(ctx context.Context, root string, options ...OpenOptions) (*Workspace,
 		keepTemp:     opts.KeepTemp,
 		swept:        swept,
 	}, nil
+}
+
+func compileSnapshotExclusions(patterns []string) ([]glob.Pattern, error) {
+	result := make([]glob.Pattern, 0, len(patterns))
+	for _, pattern := range patterns {
+		compiled, err := glob.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("gomutants: open snapshot exclusion %q: %w", pattern, err)
+		}
+		result = append(result, compiled)
+	}
+	return result, nil
 }
 
 // sweepTemporary collects the temporary directories of go-mutants runs that

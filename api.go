@@ -13,6 +13,9 @@ import (
 type OpenOptions struct {
 	// GoBinary selects the go executable. Empty resolves "go" through PATH.
 	GoBinary string
+	// SnapshotExclude holds module-relative '/'-separated glob patterns for
+	// generated trees that must not enter the frozen workspace.
+	SnapshotExclude []string
 	// ReportDirectory is a module-relative report directory to exclude from
 	// the snapshot in addition to go-mutants' conventional report directory.
 	ReportDirectory string

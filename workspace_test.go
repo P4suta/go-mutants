@@ -65,6 +65,55 @@ func TestOpenOwnsEveryTemporaryDirectory(t *testing.T) {
 	}
 }
 
+func TestOpenExcludesGeneratedSnapshotTrees(t *testing.T) {
+	root := copyFixture(t, "simple")
+	generated := filepath.Join(root, "generated")
+	if err := os.Mkdir(generated, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generated, "artifact.bin"), []byte("generated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parent := t.TempDir()
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
+		TempDirectory: parent, KeepTemp: true, SnapshotExclude: []string{"generated"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workspace.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var snapshotDirectory string
+	for _, directory := range workspace.Preserved() {
+		if strings.HasPrefix(filepath.Base(directory), snapshot.DirPrefix) {
+			snapshotDirectory = directory
+		}
+	}
+	if snapshotDirectory == "" {
+		t.Fatal("preserved workspace has no snapshot")
+	}
+	if _, err := os.Stat(filepath.Join(snapshotDirectory, snapshot.TreeName, "go.mod")); err != nil {
+		t.Fatalf("ordinary source missing from snapshot: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(snapshotDirectory, snapshot.TreeName, "generated")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("excluded tree remained in snapshot: %v", err)
+	}
+}
+
+func TestOpenRejectsAnInvalidSnapshotExclusionBeforeCreatingAnything(t *testing.T) {
+	parent := t.TempDir()
+	_, err := gomutants.Open(t.Context(), copyFixture(t, "simple"), gomutants.OpenOptions{
+		TempDirectory: parent, SnapshotExclude: []string{"generated/"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "snapshot exclusion") {
+		t.Fatalf("invalid snapshot exclusion error = %v", err)
+	}
+	if entries, readErr := os.ReadDir(parent); readErr != nil || len(entries) != 0 {
+		t.Fatalf("invalid exclusion created %v, err=%v", entries, readErr)
+	}
+}
+
 // TestOpenSweepsDeadTemporaryDirectoriesAndSparesTheRest is the second half:
 // what a killed process could not remove is removed by the next run, and
 // nothing else in the temporary directory is.
