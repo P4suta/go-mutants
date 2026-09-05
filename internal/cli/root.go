@@ -56,7 +56,7 @@ var Version = defaultVersion
 // cannot: by the time the process runs, the linker may already have replaced
 // it. [resolveVersion] compares the two, which is only possible while both
 // exist.
-const defaultVersion = "0.1.0-dev" // x-release-please-version
+const defaultVersion = "0.1.0" // x-release-please-version
 
 // init resolves [Version] exactly once, so that `--version`, `doctor`, every
 // report document and every cache key cannot disagree about what this build
