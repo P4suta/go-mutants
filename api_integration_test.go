@@ -297,6 +297,137 @@ func TestSessionBlocks(t *testing.T) {
 	}
 }
 
+// TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories pins the
+// contract baseline collectors depend on. Both commands must enter the test
+// before either is released; a serialized Workspace would leave the second
+// marker absent. The value in each marker is that command's TMPDIR, which must
+// also be distinct so concurrency cannot turn temporary files into shared
+// state.
+func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture.example/concurrent\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testSource := `package concurrent
+
+import (
+	"os"
+	"testing"
+	"time"
+)
+
+func TestBarrier(t *testing.T) {
+	if err := os.WriteFile(os.Getenv("MARKER"), []byte(os.Getenv("TMPDIR")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("RELEASE")); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("release was not created")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "concurrent_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+
+	coordination := t.TempDir()
+	release := filepath.Join(coordination, "release")
+	markers := []string{filepath.Join(coordination, "first"), filepath.Join(coordination, "second")}
+	results := make(chan error, len(markers))
+	for _, marker := range markers {
+		go func() {
+			result, execErr := workspace.Exec(t.Context(), gomutants.Command{
+				Argv: []string{"go", "test", "-run=^TestBarrier$", "."},
+				Env:  []string{"MARKER=" + marker, "RELEASE=" + release},
+			})
+			if execErr == nil && (result.TimedOut || result.ExitCode != 0) {
+				execErr = errors.New("barrier command did not pass: " + string(result.Output))
+			}
+			results <- execErr
+		}()
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		ready := 0
+		for _, marker := range markers {
+			if _, statErr := os.Stat(marker); statErr == nil {
+				ready++
+			}
+		}
+		if ready == len(markers) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d concurrent commands reached the barrier", ready, len(markers))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if writeErr := os.WriteFile(release, []byte("release"), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	for range markers {
+		if execErr := <-results; execErr != nil {
+			t.Error(execErr)
+		}
+	}
+	first, err := os.ReadFile(markers[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(markers[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) == 0 || len(second) == 0 || string(first) == string(second) {
+		t.Fatalf("concurrent TMPDIR values = %q and %q, want two private directories", first, second)
+	}
+}
+
+func TestPrepareRefusesDriftFromAWorkspaceCommand(t *testing.T) {
+	root := copyFixture(t, "simple")
+	testSource := `package simple
+
+import (
+	"os"
+	"testing"
+)
+
+func TestWriteSnapshot(t *testing.T) {
+	if err := os.WriteFile("command-artifact.txt", []byte("drift"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "write_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := gomutants.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	run, err := workspace.Exec(t.Context(), gomutants.Command{Argv: []string{"go", "test", "-run=^TestWriteSnapshot$", "."}})
+	if err != nil || run.TimedOut || run.ExitCode != 0 {
+		t.Fatalf("drifting command = (%+v, %v)", run, err)
+	}
+	if _, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{}); err == nil ||
+		!strings.Contains(err.Error(), "commands changed the frozen snapshot:\nadded command-artifact.txt") {
+		t.Fatalf("Prepare after drift = %v", err)
+	}
+}
+
 func findMutant(t *testing.T, catalog gomutants.Catalog, path, rule string) gomutants.Mutant {
 	t.Helper()
 	for _, mutant := range catalog.Mutants {

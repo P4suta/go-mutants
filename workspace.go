@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	commandTimeout = 10 * time.Minute
-	scratchPrefix  = "go-mutants-api-"
-	reservedPrefix = "GO_MUTANTS_"
+	commandTimeout      = 10 * time.Minute
+	scratchPrefix       = "go-mutants-api-"
+	workspaceExecPrefix = "exec-"
+	reservedPrefix      = "GO_MUTANTS_"
 )
 
 var temporaryKeys = []string{"TMP", "TEMP", "TMPDIR"}
@@ -35,9 +36,10 @@ var temporaryKeys = []string{"TMP", "TEMP", "TMPDIR"}
 var temporaryPrefixes = []string{snapshot.DirPrefix, scratchPrefix}
 
 // Workspace is a frozen disposable copy of one module. Its zero value is not
-// usable. Open constructs one and Close releases it.
+// usable. Open constructs one and Close releases it. Exec calls may run
+// concurrently; Prepare and Close wait until every one of them has finished.
 type Workspace struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	snapshot  *snapshot.Snapshot
 	toolchain gocmd.Toolchain
 	scratch   string
@@ -157,8 +159,8 @@ func (w *Workspace) Swept() SweepResult {
 	if w == nil {
 		return SweepResult{}
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	return w.swept
 }
 
@@ -169,26 +171,39 @@ func (w *Workspace) Preserved() []string {
 	if w == nil {
 		return nil
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	return slices.Clone(w.preserved)
 }
 
 // Exec runs command against the frozen snapshot. It is available before
 // Prepare; after instrumentation begins, commands belong to Session targets.
+//
+// Exec is safe to call concurrently. Every call receives a private temporary
+// directory, so commands cannot observe one another through TMP, TEMP or
+// TMPDIR. They deliberately share the frozen working tree: a command that
+// changes it is refused by Prepare's integrity gate rather than allowed to
+// become the source of a mutation session.
 func (w *Workspace) Exec(ctx context.Context, command Command) (CommandResult, error) {
 	if w == nil {
 		return CommandResult{}, errors.New("gomutants: exec: nil workspace")
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	if w.closed {
 		return CommandResult{}, errors.New("gomutants: exec: workspace is closed")
 	}
 	if w.prepared {
 		return CommandResult{}, errors.New("gomutants: exec: workspace is already prepared; execute test targets through its session")
 	}
-	return w.runCommand(ctx, command, w.env)
+	scratch, err := os.MkdirTemp(w.scratch, workspaceExecPrefix)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("gomutants: exec scratch: %w", err)
+	}
+	if !w.keepTemp {
+		defer func() { _ = os.RemoveAll(scratch) }()
+	}
+	return w.runCommand(ctx, command, sanitiseEnvironment(w.env, scratch))
 }
 
 func (w *Workspace) runCommand(ctx context.Context, command Command, base []string) (CommandResult, error) {
