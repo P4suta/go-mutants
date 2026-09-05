@@ -304,7 +304,10 @@ func TestWorkspaceExecBarrierHelper(t *testing.T) {
 	if os.Getenv("WORKSPACE_EXEC_BARRIER_HELPER") != "1" {
 		return
 	}
-	if err := os.WriteFile(os.Getenv("MARKER"), []byte(os.Getenv("TMPDIR")), 0o600); err != nil {
+	temporary := strings.Join([]string{
+		os.Getenv("TMP"), os.Getenv("TEMP"), os.Getenv("TMPDIR"),
+	}, "\n")
+	if err := os.WriteFile(os.Getenv("MARKER"), []byte(temporary), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(30 * time.Second)
@@ -380,16 +383,27 @@ func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing
 			t.Error(execErr)
 		}
 	}
-	first, err := os.ReadFile(markers[0])
+	firstBytes, err := os.ReadFile(markers[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := os.ReadFile(markers[1])
+	secondBytes, err := os.ReadFile(markers[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) == 0 || len(second) == 0 || string(first) == string(second) {
-		t.Fatalf("concurrent TMPDIR values = %q and %q, want two private directories", first, second)
+	first := strings.Split(string(firstBytes), "\n")
+	second := strings.Split(string(secondBytes), "\n")
+	keys := []string{"TMP", "TEMP", "TMPDIR"}
+	if len(first) != len(keys) || len(second) != len(keys) {
+		t.Fatalf("temporary variable markers = %q and %q", firstBytes, secondBytes)
+	}
+	for index, key := range keys {
+		if first[index] == "" || second[index] == "" || first[index] == second[index] {
+			t.Errorf("concurrent %s values = %q and %q, want two private directories", key, first[index], second[index])
+		}
+		if first[index] != first[0] || second[index] != second[0] {
+			t.Errorf("temporary variables do not agree within each command: first=%q second=%q", first, second)
+		}
 	}
 }
 
