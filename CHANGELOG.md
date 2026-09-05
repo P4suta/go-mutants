@@ -14,6 +14,14 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **Concurrent, isolated `Workspace.Exec` controls with a snapshot-integrity
+  gate.** Engine consumers may now run independent pre-preparation build and
+  baseline commands concurrently. Every call gets a private `TMP`, `TEMP` and
+  `TMPDIR`; `Prepare` and `Close` wait for in-flight calls, and `Prepare`
+  re-digests the frozen tree before discovery and refuses any added, removed or
+  changed path. This keeps concurrent controls from sharing temporary state or
+  silently changing the program their later mutation session claims to
+  measure.
 - **An owner and a collector for every temporary directory, and
   `OpenOptions.KeepTemp` to keep one on purpose.** A run copies the whole
   module into the temporary area and removes the copy when it finishes, which

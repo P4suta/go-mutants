@@ -104,10 +104,12 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("gomutants: prepare: %w", err)
 	}
-
 	resolved, err := resolvePrepareOptions(options)
 	if err != nil {
 		return nil, err
+	}
+	if pristineErr := checkPristineSnapshot(w.snapshot); pristineErr != nil {
+		return nil, pristineErr
 	}
 	rules, err := selectRules(resolved.Profile, resolved.Operators)
 	if err != nil {
@@ -283,6 +285,26 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	}
 	w.session = session
 	return session, nil
+}
+
+// checkPristineSnapshot is the barrier between arbitrary pre-preparation
+// commands and mutation discovery. Commands may be used for build, vet and
+// baseline controls, but none may silently rewrite the frozen program those
+// controls are meant to justify. Prepare holds the Workspace write lock here,
+// so Redigest cannot observe an Exec halfway through a write.
+func checkPristineSnapshot(snap *snapshot.Snapshot) error {
+	drifts, err := snap.Redigest()
+	if err != nil {
+		return fmt.Errorf("gomutants: prepare snapshot integrity: %w", err)
+	}
+	if len(drifts) == 0 {
+		return nil
+	}
+	changes := make([]string, len(drifts))
+	for index, change := range drifts {
+		changes[index] = change.Kind.String() + " " + change.RelPath
+	}
+	return fmt.Errorf("gomutants: prepare commands changed the frozen snapshot:\n%s", strings.Join(changes, "\n"))
 }
 
 // failPrepare returns a preparation failure, removing the probe tree first when

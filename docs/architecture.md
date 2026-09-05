@@ -416,6 +416,13 @@ reports a failing target as "no facts" per call, so a suite-wide gate would buy
 what the per-call rule already gives and cost a full test run to get it. The
 tree lives as long as the session and `Session.Close` removes it.
 
+Before that ordering begins, `Prepare` takes the workspace's exclusive lock and
+re-digests the frozen snapshot. `Workspace.Exec` uses the shared side of the
+same lock, so independent controls can run concurrently and both `Prepare` and
+`Close` wait for every one. Each call has its own temporary directory; any
+change it leaves in the shared frozen tree is a deterministic preparation
+failure, never an input silently accepted by discovery.
+
 One call is one target against however many binaries `ProbeRequest.Package`
 selects, each started exactly as a mutant's is — same working directory, same
 paired timeouts, same arguments, since evidence about a mutant run is only

@@ -297,6 +297,149 @@ func TestSessionBlocks(t *testing.T) {
 	}
 }
 
+// TestWorkspaceExecBarrierHelper is the subprocess body used below. Reusing
+// the already-built test executable keeps this concurrency test independent
+// of a platform's Go build-cache scheduling and cold compilation speed.
+func TestWorkspaceExecBarrierHelper(t *testing.T) {
+	if os.Getenv("WORKSPACE_EXEC_BARRIER_HELPER") != "1" {
+		return
+	}
+	temporary := strings.Join([]string{
+		os.Getenv("TMP"), os.Getenv("TEMP"), os.Getenv("TMPDIR"),
+	}, "\n")
+	if err := os.WriteFile(os.Getenv("MARKER"), []byte(temporary), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := os.Stat(os.Getenv("RELEASE")); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("release was not created")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories pins the
+// contract baseline collectors depend on. Both commands must enter the helper
+// before either is released; a serialized Workspace would leave the second
+// marker absent. The value in each marker is that command's TMPDIR, which must
+// also be distinct so concurrency cannot turn temporary files into shared
+// state.
+func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing.T) {
+	root := copyFixture(t, "simple")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+
+	coordination := t.TempDir()
+	release := filepath.Join(coordination, "release")
+	markers := []string{filepath.Join(coordination, "first"), filepath.Join(coordination, "second")}
+	results := make(chan error, len(markers))
+	for _, marker := range markers {
+		go func() {
+			result, execErr := workspace.Exec(t.Context(), gomutants.Command{
+				Argv: []string{executable, "-test.run=^TestWorkspaceExecBarrierHelper$"},
+				Env: []string{
+					"WORKSPACE_EXEC_BARRIER_HELPER=1", "MARKER=" + marker, "RELEASE=" + release,
+				},
+			})
+			if execErr == nil && (result.TimedOut || result.ExitCode != 0) {
+				execErr = errors.New("barrier command did not pass: " + string(result.Output))
+			}
+			results <- execErr
+		}()
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		ready := 0
+		for _, marker := range markers {
+			if _, statErr := os.Stat(marker); statErr == nil {
+				ready++
+			}
+		}
+		if ready == len(markers) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d concurrent commands reached the barrier", ready, len(markers))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if writeErr := os.WriteFile(release, []byte("release"), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	for range markers {
+		if execErr := <-results; execErr != nil {
+			t.Error(execErr)
+		}
+	}
+	firstBytes, err := os.ReadFile(markers[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBytes, err := os.ReadFile(markers[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Split(string(firstBytes), "\n")
+	second := strings.Split(string(secondBytes), "\n")
+	keys := []string{"TMP", "TEMP", "TMPDIR"}
+	if len(first) != len(keys) || len(second) != len(keys) {
+		t.Fatalf("temporary variable markers = %q and %q", firstBytes, secondBytes)
+	}
+	for index, key := range keys {
+		if first[index] == "" || second[index] == "" || first[index] == second[index] {
+			t.Errorf("concurrent %s values = %q and %q, want two private directories", key, first[index], second[index])
+		}
+		if first[index] != first[0] || second[index] != second[0] {
+			t.Errorf("temporary variables do not agree within each command: first=%q second=%q", first, second)
+		}
+	}
+}
+
+func TestPrepareRefusesDriftFromAWorkspaceCommand(t *testing.T) {
+	root := copyFixture(t, "simple")
+	testSource := `package simple
+
+import (
+	"os"
+	"testing"
+)
+
+func TestWriteSnapshot(t *testing.T) {
+	if err := os.WriteFile("command-artifact.txt", []byte("drift"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(root, "write_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := gomutants.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	run, err := workspace.Exec(t.Context(), gomutants.Command{Argv: []string{"go", "test", "-run=^TestWriteSnapshot$", "."}})
+	if err != nil || run.TimedOut || run.ExitCode != 0 {
+		t.Fatalf("drifting command = (%+v, %v)", run, err)
+	}
+	if _, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{}); err == nil ||
+		!strings.Contains(err.Error(), "commands changed the frozen snapshot:\nadded command-artifact.txt") {
+		t.Fatalf("Prepare after drift = %v", err)
+	}
+}
+
 func findMutant(t *testing.T, catalog gomutants.Catalog, path, rule string) gomutants.Mutant {
 	t.Helper()
 	for _, mutant := range catalog.Mutants {

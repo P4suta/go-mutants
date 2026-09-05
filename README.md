@@ -314,6 +314,12 @@ compile-validates, instruments, and builds the selected test binaries once.
 `Session.Exec` can then reuse those binaries for any number of mutant and
 top-level test or fuzz-target combinations.
 
+Independent `Workspace.Exec` calls may run concurrently. Each receives a
+private temporary directory, while `Prepare` and `Close` wait for all calls to
+finish. `Prepare` also re-digests the frozen snapshot and refuses any path a
+baseline command changed, so parallel control work cannot silently become the
+program mutation discovery measures.
+
 ```go
 workspace, err := gomutants.Open(ctx, ".")
 if err != nil {
