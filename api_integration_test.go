@@ -297,30 +297,17 @@ func TestSessionBlocks(t *testing.T) {
 	}
 }
 
-// TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories pins the
-// contract baseline collectors depend on. Both commands must enter the test
-// before either is released; a serialized Workspace would leave the second
-// marker absent. The value in each marker is that command's TMPDIR, which must
-// also be distinct so concurrency cannot turn temporary files into shared
-// state.
-func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture.example/concurrent\n\ngo 1.26\n"), 0o644); err != nil {
-		t.Fatal(err)
+// TestWorkspaceExecBarrierHelper is the subprocess body used below. Reusing
+// the already-built test executable keeps this concurrency test independent
+// of a platform's Go build-cache scheduling and cold compilation speed.
+func TestWorkspaceExecBarrierHelper(t *testing.T) {
+	if os.Getenv("WORKSPACE_EXEC_BARRIER_HELPER") != "1" {
+		return
 	}
-	testSource := `package concurrent
-
-import (
-	"os"
-	"testing"
-	"time"
-)
-
-func TestBarrier(t *testing.T) {
 	if err := os.WriteFile(os.Getenv("MARKER"), []byte(os.Getenv("TMPDIR")), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if _, err := os.Stat(os.Getenv("RELEASE")); err == nil {
 			return
@@ -331,8 +318,17 @@ func TestBarrier(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
-`
-	if err := os.WriteFile(filepath.Join(root, "concurrent_test.go"), []byte(testSource), 0o644); err != nil {
+
+// TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories pins the
+// contract baseline collectors depend on. Both commands must enter the helper
+// before either is released; a serialized Workspace would leave the second
+// marker absent. The value in each marker is that command's TMPDIR, which must
+// also be distinct so concurrency cannot turn temporary files into shared
+// state.
+func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing.T) {
+	root := copyFixture(t, "simple")
+	executable, err := os.Executable()
+	if err != nil {
 		t.Fatal(err)
 	}
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
@@ -348,8 +344,10 @@ func TestBarrier(t *testing.T) {
 	for _, marker := range markers {
 		go func() {
 			result, execErr := workspace.Exec(t.Context(), gomutants.Command{
-				Argv: []string{"go", "test", "-run=^TestBarrier$", "."},
-				Env:  []string{"MARKER=" + marker, "RELEASE=" + release},
+				Argv: []string{executable, "-test.run=^TestWorkspaceExecBarrierHelper$"},
+				Env: []string{
+					"WORKSPACE_EXEC_BARRIER_HELPER=1", "MARKER=" + marker, "RELEASE=" + release,
+				},
 			})
 			if execErr == nil && (result.TimedOut || result.ExitCode != 0) {
 				execErr = errors.New("barrier command did not pass: " + string(result.Output))
@@ -358,7 +356,7 @@ func TestBarrier(t *testing.T) {
 		}()
 	}
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		ready := 0
 		for _, marker := range markers {
