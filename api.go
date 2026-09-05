@@ -103,8 +103,9 @@ type PrepareOptions struct {
 	Operators []string
 	// Include and Exclude are module-relative mutation glob patterns. Excludes
 	// win. They select candidates and never remove files from the snapshot.
-	Include []string
-	Exclude []string
+	Include           []string
+	Exclude           []string
+	DiscoveryPackages []string
 	// Packages are relative Go package patterns whose test binaries are built.
 	// Empty selects ./....
 	Packages []string

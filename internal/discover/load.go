@@ -62,7 +62,10 @@ type loadResult struct {
 }
 
 // load runs the package loader over the whole snapshot.
-func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv []string) (*loadResult, error) {
+func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv, patterns []string) (*loadResult, error) {
+	if len(patterns) == 0 {
+		patterns = []string{"./..."}
+	}
 	fset := token.NewFileSet()
 	cfg := &packages.Config{
 		Context: ctx,
@@ -76,7 +79,7 @@ func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv [
 		// place some packages are used at all.
 		Tests: true,
 	}
-	loaded, err := packages.Load(cfg, "./...")
+	loaded, err := packages.Load(cfg, patterns...)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, &Error{Code: CodeLoadFailed, Message: "discovery was cancelled", Err: ctxErr}

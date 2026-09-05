@@ -131,6 +131,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		Rules:        rules,
 		Include:      include,
 		Exclude:      exclude,
+		Packages:     slices.Clone(resolved.DiscoveryPackages),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gomutants: prepare discovery: %w", err)
@@ -184,6 +185,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		Jobs:         resolved.Jobs,
 		BuildTimeout: resolved.BuildTimeout,
 		Env:          validationEnv,
+		Packages:     resolved.DiscoveryPackages,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("gomutants: prepare validation: %w", err))
@@ -235,17 +237,18 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	}
 
 	probeOptions, probeBinaries, probed, err := prepareProbeTree(ctx, probeTreeOptions{
-		snap:         probeSnap,
-		catalog:      catalog,
-		hints:        hints,
-		modulePath:   found.ModulePath,
-		toolchain:    w.toolchain,
-		jobs:         resolved.Jobs,
-		buildTimeout: resolved.BuildTimeout,
-		packages:     resolved.Packages,
-		env:          w.env,
-		validateEnv:  validationEnv,
-		scratch:      scratch,
+		snap:               probeSnap,
+		catalog:            catalog,
+		hints:              hints,
+		modulePath:         found.ModulePath,
+		toolchain:          w.toolchain,
+		jobs:               resolved.Jobs,
+		buildTimeout:       resolved.BuildTimeout,
+		packages:           resolved.Packages,
+		validationPackages: resolved.DiscoveryPackages,
+		env:                w.env,
+		validateEnv:        validationEnv,
+		scratch:            scratch,
 	})
 	if err != nil {
 		return fail(err)
@@ -327,17 +330,18 @@ func failPrepare(probeSnap *snapshot.Snapshot, err error) (*Session, error) {
 // probeTreeOptions is what [prepareProbeTree] needs, gathered so that the one
 // caller reads as the decision it is making rather than as eleven arguments.
 type probeTreeOptions struct {
-	snap         *snapshot.Snapshot
-	catalog      *mutation.Catalog
-	hints        instrument.Hints
-	modulePath   string
-	toolchain    gocmd.Toolchain
-	jobs         int
-	buildTimeout time.Duration
-	packages     []string
-	env          []string
-	validateEnv  []string
-	scratch      string
+	snap               *snapshot.Snapshot
+	catalog            *mutation.Catalog
+	hints              instrument.Hints
+	modulePath         string
+	toolchain          gocmd.Toolchain
+	jobs               int
+	buildTimeout       time.Duration
+	packages           []string
+	validationPackages []string
+	env                []string
+	validateEnv        []string
+	scratch            string
 }
 
 // prepareProbeTree instruments, validates and builds the probe tree, and
@@ -382,6 +386,7 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 		BuildTimeout: opts.buildTimeout,
 		Env:          opts.validateEnv,
 		Mode:         instrument.ModeProbe,
+		Packages:     opts.validationPackages,
 	})
 	if err != nil {
 		return execute.Options{}, nil, nil, fmt.Errorf("gomutants: prepare probe validation: %w", err)
@@ -446,9 +451,17 @@ func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
 	if len(opts.Packages) == 0 {
 		opts.Packages = []string{"./..."}
 	}
+	if len(opts.DiscoveryPackages) == 0 {
+		opts.DiscoveryPackages = []string{"./..."}
+	}
 	for _, pattern := range opts.Packages {
 		if !relativePackagePattern(pattern) {
 			return PrepareOptions{}, fmt.Errorf("gomutants: prepare package pattern %q is not module-relative", pattern)
+		}
+	}
+	for _, pattern := range opts.DiscoveryPackages {
+		if !relativePackagePattern(pattern) {
+			return PrepareOptions{}, fmt.Errorf("gomutants: prepare discovery package pattern %q is not module-relative", pattern)
 		}
 	}
 	if len(opts.Verify.Argv) == 0 {

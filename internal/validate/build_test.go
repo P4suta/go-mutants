@@ -32,23 +32,25 @@ func TestBuildArgsSendTheOutputToTheNullDevice(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		jobs int
-		want []string
+		name     string
+		jobs     int
+		packages []string
+		want     []string
 	}{
-		{"no parallelism chosen", 0, []string{"build", "-o", os.DevNull, "./..."}},
-		{"a negative parallelism", -3, []string{"build", "-o", os.DevNull, "./..."}},
-		{"one job", 1, []string{"build", "-o", os.DevNull, "-p", "1", "./..."}},
-		{"eight jobs", 8, []string{"build", "-o", os.DevNull, "-p", "8", "./..."}},
+		{"no parallelism chosen", 0, nil, []string{"build", "-o", os.DevNull, "./..."}},
+		{"a negative parallelism", -3, nil, []string{"build", "-o", os.DevNull, "./..."}},
+		{"one job", 1, nil, []string{"build", "-o", os.DevNull, "-p", "1", "./..."}},
+		{"eight jobs", 8, nil, []string{"build", "-o", os.DevNull, "-p", "8", "./..."}},
+		{"selected packages", 8, []string{"./a", "./b"}, []string{"build", "-o", os.DevNull, "-p", "8", "./a", "./b"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildArgs(c.jobs)
+			got := buildArgs(c.jobs, c.packages)
 			if !slices.Equal(got, c.want) {
-				t.Fatalf("buildArgs(%d) = %s, want %s",
-					c.jobs, strings.Join(got, " "), strings.Join(c.want, " "))
+				t.Fatalf("buildArgs(%d, %q) = %s, want %s",
+					c.jobs, c.packages, strings.Join(got, " "), strings.Join(c.want, " "))
 			}
 		})
 	}

@@ -22,6 +22,12 @@ Entries say *why* a change was made, not only what changed.
   changed path. This keeps concurrent controls from sharing temporary state or
   silently changing the program their later mutation session claims to
   measure.
+- **Package-scoped mutation discovery through
+  `PrepareOptions.DiscoveryPackages`.** Callers that build test binaries for a
+  narrow package set can now type-check and discover only the packages that
+  may contain candidates and compile-validate only that instrumented package
+  closure, while keeping the test-binary package set independent. Empty still
+  selects `./...`.
 - **An owner and a collector for every temporary directory, and
   `OpenOptions.KeepTemp` to keep one on purpose.** A run copies the whole
   module into the temporary area and removes the copy when it finishes, which

@@ -6,6 +6,7 @@ package gomutants
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/discover"
@@ -13,6 +14,32 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
+
+func TestResolvePrepareOptionsScopesDiscoveryIndependently(t *testing.T) {
+	t.Parallel()
+	resolved, err := resolvePrepareOptions(PrepareOptions{
+		DiscoveryPackages: []string{"./candidate"},
+		Packages:          []string{"./tests"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(resolved.DiscoveryPackages, []string{"./candidate"}) ||
+		!slices.Equal(resolved.Packages, []string{"./tests"}) {
+		t.Fatalf("resolved package scopes = discovery %q tests %q", resolved.DiscoveryPackages, resolved.Packages)
+	}
+	defaults, err := resolvePrepareOptions(PrepareOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(defaults.DiscoveryPackages, []string{"./..."}) ||
+		!slices.Equal(defaults.Packages, []string{"./..."}) {
+		t.Fatalf("default package scopes = discovery %q tests %q", defaults.DiscoveryPackages, defaults.Packages)
+	}
+	if _, err := resolvePrepareOptions(PrepareOptions{DiscoveryPackages: []string{"../outside"}}); err == nil {
+		t.Fatal("outside discovery package was accepted")
+	}
+}
 
 // macOS exposes its temporary directory through both /var and /private/var.
 // Go subprocesses may canonicalise that spelling even though os.MkdirTemp did

@@ -61,6 +61,8 @@ type Options struct {
 	// Exclude lists the patterns that remove a file again. Excludes are
 	// applied after includes, so an exclude always wins.
 	Exclude []glob.Pattern
+
+	Packages []string
 }
 
 // A Located is one candidate plus where a human would look for it.
@@ -495,7 +497,7 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	loaded, err := load(ctx, root, opts.Toolchain, opts.Env)
+	loaded, err := load(ctx, root, opts.Toolchain, opts.Env, opts.Packages)
 	if err != nil {
 		return Result{}, err
 	}
