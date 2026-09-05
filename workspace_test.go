@@ -11,12 +11,19 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/internal/snapshot"
 	"github.com/P4suta/go-mutants/internal/tempowner"
+)
+
+const (
+	workspaceExecParticipants = 2
+	workspaceExecTimeout      = 2 * time.Second
+	workspaceExecPollInterval = 5 * time.Millisecond
 )
 
 // TestOpenOwnsEveryTemporaryDirectory is the first half of the promise that
@@ -111,6 +118,80 @@ func TestOpenRejectsAnInvalidSnapshotExclusionBeforeCreatingAnything(t *testing.
 	}
 	if entries, readErr := os.ReadDir(parent); readErr != nil || len(entries) != 0 {
 		t.Fatalf("invalid exclusion created %v, err=%v", entries, readErr)
+	}
+}
+
+func TestWorkspaceExecRunsIndependentCommandsConcurrently(t *testing.T) {
+	root := copyFixture(t, "simple")
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	rendezvous := t.TempDir()
+	results := make(chan gomutants.CommandResult, workspaceExecParticipants)
+	errors := make(chan error, workspaceExecParticipants)
+	var workers sync.WaitGroup
+	for _, participant := range []string{"first", "second"} {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			result, execErr := workspace.Exec(t.Context(), gomutants.Command{
+				Argv: []string{os.Args[0], "-test.run=^TestWorkspaceExecRendezvousProcess$", "-test.count=1"},
+				Env: []string{
+					"MUTANTS_TEST_EXEC_RENDEZVOUS=" + rendezvous,
+					"MUTANTS_TEST_EXEC_PARTICIPANT=" + participant,
+				},
+				Timeout: workspaceExecTimeout,
+			})
+			results <- result
+			errors <- execErr
+		}()
+	}
+	workers.Wait()
+	close(results)
+	close(errors)
+	for execErr := range errors {
+		if execErr != nil {
+			t.Fatal(execErr)
+		}
+	}
+	for result := range results {
+		if result.TimedOut || result.ExitCode != 0 {
+			t.Fatalf("concurrent execution = %+v", result)
+		}
+	}
+}
+
+func TestWorkspaceExecRendezvousProcess(t *testing.T) {
+	rendezvous := os.Getenv("MUTANTS_TEST_EXEC_RENDEZVOUS")
+	if rendezvous == "" {
+		return
+	}
+	participant := os.Getenv("MUTANTS_TEST_EXEC_PARTICIPANT")
+	if participant == "" {
+		t.Fatal("participant is empty")
+	}
+	if err := os.WriteFile(filepath.Join(rendezvous, participant), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	timer := time.NewTimer(workspaceExecTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(workspaceExecPollInterval)
+	defer ticker.Stop()
+	for {
+		entries, err := os.ReadDir(rendezvous)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) == workspaceExecParticipants {
+			return
+		}
+		select {
+		case <-timer.C:
+			t.Fatalf("saw %d of %d participants", len(entries), workspaceExecParticipants)
+		case <-ticker.C:
+		}
 	}
 }
 
