@@ -394,7 +394,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	// updates it. Deepest first, so that stamping a parent is not undone by
 	// stamping the child inside it. Like the file times, this exists so the go
 	// command sees a tree that looks its age rather than one that looks new.
-	if failedPath, err := stampDirectoryTimes(w.dirs, s.Root); err != nil {
+	if failedPath, err := stampDirectoryTimes(w.dirs, absSrc, s.Root); err != nil {
 		return nil, s.abandon(&Error{Code: CodeCopy, Path: failedPath, Message: "cannot set the directory's times in the snapshot", Err: err})
 	}
 	s.Manifest = entries
@@ -402,20 +402,28 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	return s, nil
 }
 
-func stampDirectoryTimes(dirs []record, root string) (string, error) {
+func stampDirectoryTimes(dirs []record, sourceRoot, root string) (string, error) {
 	for index := len(dirs) - 1; index >= 0; index-- {
-		source := dirs[index].abs
-		info, err := os.Stat(extendedPath(source))
-		if err != nil {
-			return dirs[index].rel, err
-		}
-		modified := info.ModTime()
-		target := extendedPath(filepath.Join(root, filepath.FromSlash(dirs[index].rel)))
-		if err := os.Chtimes(target, modified, modified); err != nil {
+		if err := stampOneDirectory(dirs[index].abs, filepath.Join(root, filepath.FromSlash(dirs[index].rel))); err != nil {
 			return dirs[index].rel, err
 		}
 	}
+	// The root is not among the walked directories — the walk starts inside it
+	// — and it holds the top-level packages, so it needs the same stamp last of
+	// all, once everything written into it is done.
+	if err := stampOneDirectory(sourceRoot, root); err != nil {
+		return ".", err
+	}
 	return "", nil
+}
+
+func stampOneDirectory(source, target string) error {
+	info, err := os.Stat(extendedPath(source))
+	if err != nil {
+		return err
+	}
+	modified := info.ModTime()
+	return os.Chtimes(extendedPath(target), modified, modified)
 }
 
 type snapshotFileCopy func(string, string, fs.FileMode) (int64, string, error)
