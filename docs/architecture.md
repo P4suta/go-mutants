@@ -804,6 +804,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/schemas` | Embedded JSON Schemas, validation before writing | catalog, run report, doctor |
 | `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes | test-only support |
 | `internal/testkit/mutantkit` | The same for helpers that need go-mutants' own types | test-only support, planned (T2) |
+| `internal/devtools/testcache` | The test-owned build cache: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `vendor-assets` | The vendored viewer bundle and its digest check | implemented |
 
 Pure packages have no filesystem or process access, which is what makes the
@@ -815,6 +816,15 @@ registrations, into `go-mutants` — and it may never import anything from this
 module, so a pure package's unit tests can use it without pulling the engine in
 behind them. Helpers that do need engine types live in `internal/testkit/mutantkit`
 and are imported only from external test packages.
+
+That rule is why the test-owned build cache's location, and the name of the
+ownership marker that licenses emptying it, are written down twice: once in
+`internal/testkit` for the suites, and once in `internal/devtools/testcache` —
+a production `main`, which may not import the harness. `TestPathAgreesWithTestkit`
+and `TestMarkerNamesAgreeWithTestcache` run the tool and compare what it prints
+with what the harness resolved, so the copies cannot drift apart in silence.
+Drift would not fail anywhere else: the suites would fill one directory and the
+collector would empty another.
 
 ## Documented v1 limitations
 

@@ -28,6 +28,11 @@ description = "Build every package and run the vet gate"
 run = ["go build ./...", "go vet ./..."]
 
 [tasks.test]
+# Deliberately not wrapped in `testcache exec`: this task compiles go-mutants
+# itself, and that belongs in the developer's own build cache like every other
+# `go test` they run. The suites' *child* `go` commands still go to the test
+# cache, because internal/testkit points GOCACHE there in every environment it
+# composes -- which is where the bloat came from in the first place.
 description = "Run the unit test suite"
 run = "go test ./..."
 
@@ -35,8 +40,79 @@ run = "go test ./..."
 # The engine's integration suite alone runs 8-10 minutes of real toolchain
 # work; Go's default per-package 10m alarm fires under load, so the budget
 # is stated explicitly.
+#
+# The `testcache exec` wrapper is what keeps this suite's rubble out of
+# ~/.cache/go-build. It exports GOCACHE and GO_MUTANTS_TEST_GOCACHE into the
+# child -- the first for every `go` command below it, the second so that a test
+# composing a hermetic environment of its own resolves the same directory
+# instead of falling back to the default -- prints the size and the growth to
+# stderr when the suite ends, and exits with the suite's own status, so the gate
+# is exactly as strict as it was without it. (`go run` reports any non-zero
+# status as 1, as it does for every other `go run` task here, so what reaches
+# mise is "the suite failed" rather than the suite's exact code.)
+#
+# Why one persistent dedicated cache rather than either obvious alternative:
+#
+#   not the user's cache  The suites drive thousands of child `go build`,
+#                         `go test -c` and `go list` commands against fixtures,
+#                         synthesized modules and instrumented snapshots, each
+#                         living at an absolute path that exists for a single
+#                         run -- so every entry is keyed on a path nothing will
+#                         ever look up again. That took ~/.cache/go-build to
+#                         14 GB and filled the disk twice.
+#   not a cache per test  A GOCACHE under t.TempDir() is hermetic and
+#                         recompiles the standard library once per test binary,
+#                         which is minutes per package.
+#
+# --budget 4GiB is the ceiling that makes the persistent directory safe to keep:
+# the cache is emptied *after* a run, and only when it is over the budget, so
+# the run that paid to fill it is the run that benefits from it and no machine
+# grows an unbounded one. `mise run test-cache-status` says where it is and how
+# big it is; `mise run test-clean` empties it.
 description = "Run the toolchain-backed integration suite"
-run = "go test -tags integration -timeout 40m ./..."
+run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -tags integration -timeout 40m ./..."
+
+[tasks.test-cache-status]
+# The last line of a long run, and the first thing to look at when a disk fills.
+# It prints both directories the harness owns outside a temporary directory: the
+# shared build cache, and the root a kept-on-failure scratch directory is filed
+# under. Both are named by GO_MUTANTS_TEST_GOCACHE and GO_MUTANTS_TEST_KEEP_DIR
+# when those are set, and both live under <os.UserCacheDir()>/go-mutants-test
+# otherwise, so a developer who wants everything this harness ever wrote can
+# delete that one parent.
+description = "Print where the test-owned build cache is and how much it holds"
+run = "go run ./internal/devtools/testcache status"
+
+[tasks.test-clean]
+# `go clean -cache` against the test-owned GOCACHE, then a removal of whatever
+# the go command leaves behind, then the kept scratch root. The go command's own
+# eviction runs first because it takes the cache's lock, so a `go build`
+# finishing in another terminal sees an emptied cache rather than a tree being
+# deleted underneath it.
+#
+# Two things can stop a directory being emptied, and they end this task
+# differently on purpose:
+#
+#   refused, exit 1   The directory does not carry the harness's marker file, so
+#                     it is not emptied at all -- not even partly, and
+#                     `go clean -cache` is not run against it either.
+#                     `GO_MUTANTS_TEST_GOCACHE=$HOME` is an absolute path like
+#                     any other, so ownership is a file rather than a promise:
+#                     the harness writes it when a test resolves the cache, and
+#                     this task reports and fails rather than deleting something
+#                     it cannot show it made. `mise run test-cache-status` says
+#                     which directories are stamped.
+#   unfinished, exit 0  A file the removal could not unlink -- an antivirus
+#                     scanner, a test binary Windows has not finished unmapping
+#                     -- is retried once, then reported, and the task still
+#                     succeeds. A collector that fails a run because a directory
+#                     it wanted to delete is still there has done more damage
+#                     than the directory ever would.
+#
+# So a non-zero exit from this task means "I was pointed at something that is
+# not mine", and never "the disk was busy". Both cases print what happened.
+description = "Empty the test-owned build cache and the kept scratch root"
+run = "go run ./internal/devtools/testcache clean"
 
 [tasks.fmt]
 # `gofmt -l` exits 0 even when it lists files, so the offenders have to be
@@ -114,9 +190,32 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # the two commands it issues against that tree -- the instrumented baseline and
 # the per-package `go test -c` -- and leaves the pristine baseline vetted, so a
 # real finding in this repository's own source still fails this job.
+#
+# The run goes through `testcache exec` for the same reason the integration
+# suite does, and rather more urgently: a mutation run compiles a per-package
+# test binary for every mutant it schedules, each against a snapshot at an
+# absolute path that exists for that run alone, so it is the single biggest
+# producer of cache entries nothing will ever look up again. The wrapper exports
+# GOCACHE and GO_MUTANTS_TEST_GOCACHE into the run, prints the size and the
+# growth to stderr when it ends, empties the cache if the run left it over
+# 4GiB, and exits with the run's own status -- so --strict still fails this job
+# on one undeclared survivor.
+#
+# One consequence is worth stating rather than discovering: the inner
+# `go run ./cmd/go-mutants` compiles go-mutants *itself* into the test cache,
+# which is exactly what the note on [tasks.test] above says that task avoids.
+# The trade is accepted here because the alternative is worse in both
+# directions. Compiling the CLI into the developer's own cache while its
+# thousands of grandchildren compile into the test one would split a single run
+# across two caches, so a `test-clean` would leave half of it behind and the
+# reported growth would be missing its first hundred megabytes; and there is no
+# way to point only the grandchildren at a different GOCACHE, because they
+# inherit the environment this process is started with. go-mutants' own
+# compilation is a rounding error next to what the run then does, and the whole
+# lot is trimmed by the same budget.
 description = "Mutation-test this repository with go-mutants itself"
 env = { RAPID_SEED = "1" }
-run = "go run ./cmd/go-mutants run --strict --profile balanced"
+run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./cmd/go-mutants run --strict --profile balanced"
 
 [tasks.package]
 # Snapshot artifacts, so that the packaging path is exercised on every CI run

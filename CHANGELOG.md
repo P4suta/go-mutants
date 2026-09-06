@@ -40,8 +40,8 @@ Entries say *why* a change was made, not only what changed.
   commands are pointed at one dedicated build cache (`GO_MUTANTS_TEST_GOCACHE`)
   rather than the developer's, which had reached 14 GB of entries keyed on
   absolute paths that existed for a single run. That cache defaults to
-  `<os.UserCacheDir()>/go-mutants-test/go-build`; until `mise run test-clean`
-  exists it is emptied with `go clean -cache` run with `GOCACHE` set to it.
+  `<os.UserCacheDir()>/go-mutants-test/go-build`, and `mise run test-clean`
+  empties it.
 
   Nothing that ships may import the harness — that would link `testing`, and its
   flag registrations, into `go-mutants` — and the harness may not import
@@ -113,6 +113,67 @@ Entries say *why* a change was made, not only what changed.
   that turns a recording into a file come in the changes after this one. What
   landed here is the guarantee that when they do, no command can be missing from
   the account.
+- **The test suites' `go` commands no longer fill the developer's own build
+  cache, and one command now shows and empties the one they do fill.** The
+  bloat was never go-mutants compiling itself: the suites drive thousands of
+  child `go build`, `go test -c` and `go list` commands against fixtures,
+  synthesized modules and instrumented snapshots, each living at an absolute
+  path that exists for a single run, so every entry they produce is keyed on a
+  path nothing will ever look up again. That is what took `~/.cache/go-build`
+  to 14 GB and filled a disk twice, from the direction nobody was watching. The
+  obvious fix is the opposite failure — a `GOCACHE` under `t.TempDir()` is
+  perfectly hermetic and recompiles the standard library once per test binary —
+  so there is exactly one cache instead: shared, persistent, outside every
+  temporary directory a test owns, and budgeted.
+
+  `internal/devtools/testcache` is what names it and what cleans up after it.
+  `mise run test-cache-status` (also `just test-cache-status`) prints both
+  directories the harness owns outside a temporary directory — the build cache
+  and the root a kept-on-failure scratch directory is filed under — with their
+  sizes in both spellings and their file counts; `mise run test-clean` empties
+  both. `mise run test-integration` and `mise run dogfood` now run through
+  `testcache exec --budget 4GiB`, which exports `GOCACHE` and
+  `GO_MUTANTS_TEST_GOCACHE` into the child, reports the growth on stderr when it
+  ends, empties the cache only if the run left it over budget, and exits with
+  the child's own status — so both gates are exactly as strict as they were.
+  `mise run test` deliberately stays on the developer's cache, because it
+  compiles go-mutants itself. CI points `GO_MUTANTS_TEST_GOCACHE` at the
+  runner's temporary area, which dies with the runner and is never restored from
+  an actions cache, and ends both jobs with a `status` step that runs even when
+  the job failed.
+
+  Nothing is removed without a marker. This is a tool that empties directories
+  and is pointed at them by an environment variable, and
+  `GO_MUTANTS_TEST_GOCACHE=$HOME` is an absolute path like any other — nothing
+  in a path says who made it. So ownership is written down: the harness stamps
+  the cache with `.go-mutants-testcache` when a test resolves it, `exec` stamps
+  it before the run it wraps, and nothing removes a directory that does not
+  carry that file. Two details make the scheme hold rather than merely exist. A
+  stamp is never written into a directory that already holds files that are not
+  the harness's — otherwise `exec` would issue itself the permission slip on the
+  way in — so only an absent or empty directory is claimed, and anything else is
+  reported and left alone. And three directories are refused whatever they
+  contain, before anything is measured, created or removed: a filesystem root,
+  the user's home, and the go command's own `<cache>/go-build`, the last because
+  it is the exact directory this exists to keep the suites out of. The failure
+  mode of the whole arrangement is a cache that grows, which is the problem it
+  was written to notice rather than one it can cause.
+
+  The two ways a directory does not get emptied end differently, and the
+  difference is the point. A directory that carries no marker is *refused*:
+  nothing is run against it and `mise run test-clean` exits non-zero, because
+  being pointed at something that is not ours is the answer to the question the
+  person asked. A directory that was ours and could not be finished — a file
+  held open by an antivirus scanner, or a test binary Windows has not finished
+  unmapping — is retried once, reported, and forgiven with a zero exit, because
+  a collector that turns a green run red over a directory it wanted to delete
+  has done more damage than the directory ever would. `trim` and `exec` forgive
+  both, since they are housekeeping around somebody else's run.
+
+  One more rule is deliberately the opposite of tidy: a trim never touches the
+  kept scratch root, which holds the evidence of runs that failed — deleting a
+  failing run's diagnostics because a *cache* grew is the one thing this tool
+  must not do.
 - **`Workspace.ToolchainVersion()`.** A workspace already resolves the
   toolchain it froze the module against, and every consumer that needed the
   version was running its own `go version` to learn something the workspace was

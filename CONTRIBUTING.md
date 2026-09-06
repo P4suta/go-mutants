@@ -27,6 +27,11 @@ supported setup that installs these tools some other way.
 
 - Run `mise run check` before submitting; run `mise run test-integration` when
   you touch snapshotting, the runner, or anything that shells out to `go`.
+- The suites' child `go` commands compile into a build cache of the harness's
+  own rather than into yours, because they key every entry on a path that exists
+  for a single run. `mise run test-cache-status` says where it is and how much
+  it holds; `mise run test-clean` empties it. `test-integration` and `dogfood`
+  run through a wrapper that empties it after a run that left it over 4 GiB.
 - Keep `internal/mutation`, `internal/interval`, and `internal/glob` pure: no
   filesystem, no processes, no clock. That purity is what makes golden ID
   vectors and property tests meaningful.

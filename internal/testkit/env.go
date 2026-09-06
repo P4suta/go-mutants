@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"go/build"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +32,29 @@ const (
 	BuildCacheEnv = "GO_MUTANTS_TEST_GOCACHE"
 	// RequireToolsEnv turns a missing `go` or `git` from a skip into a failure.
 	RequireToolsEnv = "GO_MUTANTS_TEST_REQUIRE_TOOLS"
+	// KeepDirEnv names the root a kept scratch directory is filed under. The keep
+	// policy itself is not here yet; the variable is, because
+	// internal/devtools/testcache already reports and empties that root, and the
+	// two have to agree about where it is.
+	KeepDirEnv = "GO_MUTANTS_TEST_KEEP_DIR"
 )
+
+// BuildCacheMarker is the file that says the build cache is the harness's.
+//
+// Nothing in a path says who made it. `GO_MUTANTS_TEST_GOCACHE=$HOME` is an
+// absolute path like any other, and a collector that trusted the variable would
+// run `go clean -cache` and os.RemoveAll against a home directory. So ownership
+// is written down: whatever resolves the cache creates it and leaves this file
+// in it, and internal/devtools/testcache removes nothing that does not carry
+// one. The harness is the owner; that tool is the collector.
+//
+// The name is duplicated there, because a test-only package cannot be imported
+// from production code — the same reason [BuildCache]'s rule is duplicated. Two
+// spellings would fail silently in the worst possible direction: the harness
+// would write one file, the collector would look for another, and the only
+// symptom would be a cache that was never emptied. TestMarkerNamesAgreeWithTestcache
+// runs `testcache path --marker` and compares.
+const BuildCacheMarker = ".go-mutants-testcache"
 
 // The identity every repository a test builds commits under.
 //
@@ -82,9 +105,11 @@ type Environment struct {
 //	GITHUB_STEP_SUMMARY                   blank
 //	PATH and everything else              inherited
 //
-// The build cache directory is named rather than created: the go command creates
-// its own GOCACHE, and a harness that created it would leave an empty directory
-// behind on every machine that ever ran a test without running a `go` command.
+// The build cache directory is created and stamped with [BuildCacheMarker],
+// because that file is what licenses the collector to empty it later: a
+// directory nothing claims is a directory `mise run test-clean` will refuse to
+// remove. The one exception is a directory that already holds files that are not
+// ours, which is left exactly as it was — see [stampBuildCache].
 //
 // The hermetic value wins on conflict: a developer who exports GOFLAGS gets
 // -mod=readonly here, and a test that needs -mod=mod passes it on the command
@@ -109,6 +134,8 @@ func Env(t testing.TB, opts ...EnvOption) *Environment {
 	if err != nil {
 		t.Fatalf("resolving the test build cache: %v", err)
 	}
+
+	stampBuildCache(t, gocache)
 
 	p := policy{scratch: t.TempDir(), gocache: gocache}
 	if !cfg.keepHome {
@@ -209,6 +236,7 @@ func Compose(t testing.TB, scratch string) []string {
 	if err != nil {
 		t.Fatalf("resolving the test build cache: %v", err)
 	}
+	stampBuildCache(t, gocache)
 	p := policy{scratch: scratch, gocache: gocache, home: filepath.Join(scratch, "home")}
 	createPrivateHome(t, p.home)
 	return composeFrom(os.Environ(), p, &envConfig{})
@@ -263,6 +291,74 @@ func BuildCache() (string, error) {
 	return filepath.Join(pinned.userCache, "go-mutants-test", "go-build"), nil
 }
 
+// stampBuildCache creates the build cache and leaves [BuildCacheMarker] in it.
+//
+// Three states, and only two of them get a file. A directory that does not exist
+// is created and stamped, which is the first run on any machine. One that is
+// empty is stamped, because that is a `mkdir -p` in a CI step or a shell. One
+// that already holds files that are not ours is left completely alone — and that
+// exception is the whole reason this is not four lines. A stamp written into
+// whatever the variable happened to name would be a permission slip the harness
+// issues on somebody else's behalf: point GO_MUTANTS_TEST_GOCACHE at a directory
+// full of work, run any test in this repository, and `mise run test-clean` would
+// then delete it with the marker's blessing. Refusing to stamp costs a cache
+// nothing ever empties, which is the half of the trade worth keeping.
+//
+// A directory that cannot be created stops the test: every child `go` command is
+// about to fail on the same directory, and it will not say why nearly as
+// clearly. A marker that cannot be written does not, because the run works
+// without it and only the collector is worse off.
+func stampBuildCache(t testing.TB, dir string) {
+	t.Helper()
+	marker := filepath.Join(dir, BuildCacheMarker)
+	if _, err := os.Lstat(marker); err == nil {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
+			t.Fatalf("creating the test build cache %s (every child `go` command is about to use it): %v", dir, mkErr)
+		}
+	case err != nil:
+		t.Logf("testkit: the test build cache %s cannot be read, so it was not stamped and nothing will "+
+			"collect it: %v", dir, err)
+		return
+	case len(entries) > 0:
+		t.Logf("testkit: %s already holds files that are not this harness's, so it was not stamped as "+
+			"the test build cache and `mise run test-clean` will refuse to empty it. If it is a cache "+
+			"from before this file existed, delete it once and the next run will make it again; "+
+			"otherwise point %s at a directory of its own.", dir, BuildCacheEnv)
+		return
+	}
+
+	// O_EXCL, so that two tests arriving together produce one winner and one
+	// no-op rather than two writers truncating the same file.
+	file, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if !errors.Is(err, fs.ErrExist) {
+			t.Logf("testkit: the test build cache %s could not be stamped, so nothing will collect it: %v", dir, err)
+		}
+		return
+	}
+	_, writeErr := file.WriteString(buildCacheMarkerBody)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		t.Logf("testkit: the test build cache marker %s could not be written: %v", marker, err)
+	}
+}
+
+// buildCacheMarkerBody is what a person who finds the file reads. It is the only
+// explanation they get, so it says what the directory is, what writes it, what
+// empties it, and that losing it costs nothing but a recompile.
+const buildCacheMarkerBody = "This directory is the go-mutants test harness's build cache.\n" +
+	"It exists so that the test suites' `go` commands do not fill your own build cache.\n" +
+	"`mise run test-cache-status` reports it; `mise run test-clean` empties it.\n" +
+	"Nothing in it is precious: deleting it costs one recompile.\n" +
+	"This file is also what tells the collector the directory is safe to remove,\n" +
+	"which is why nothing removes a directory that does not have one.\n"
+
 // pinnedBuildCache is [BuildCacheEnv] as the process started with it.
 var pinnedBuildCache = os.Getenv(BuildCacheEnv)
 
@@ -278,6 +374,16 @@ var pinnedBuildCache = os.Getenv(BuildCacheEnv)
 // value the process started with. The middle one is why a `t.Setenv` before
 // [Env] still decides, and the last one is why a CI job's workflow-level `env:`
 // still decides after it.
+//
+// An explicitly empty value is an answer rather than a missing one, at every
+// layer. t.Setenv cannot remove a variable, so `t.Setenv(name, "")` is the only
+// way a test can say "as if nobody had named one" — and if an empty live or
+// stripped value fell through to what the process started with, a test that
+// cleared the variable would get the job's directory back from under itself and
+// compare its own answer against a different question.
+// TestAnExplicitlyEmptyBuildCacheOverrideMeansTheDefault pins that, because the
+// failure it prevents is invisible anywhere except on a machine where CI has
+// named a cache for the whole job.
 func harnessSetting(name, atStart string) string {
 	if value, ok := os.LookupEnv(name); ok {
 		return value
