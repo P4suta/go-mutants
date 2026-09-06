@@ -22,10 +22,11 @@ Entries say *why* a change was made, not only what changed.
   and then deleted, so the permanent record was the one document that could not
   explain itself.
 
-  Six additions, all optional in `run-report-v1`, each written when the run
-  measured it: a run interrupted before validation has no `validation`, and a
-  document says nothing rather than publishing a zero that reads as a
-  measurement.
+  Six additions, all optional in `run-report-v1`. A run-level section is
+  written when the run measured it — a run interrupted before validation has
+  no `validation`, and a document says nothing rather than publishing a zero
+  that reads as a measurement — while a mutant's `executions` is always there,
+  `[]` for one that was cached, uncovered or never run.
   `timing` is the run's own timeline: `phases[]` and `stages[]` with the same
   names, the same durations and the same `succeeded`/`failed`/`skipped`
   vocabulary the recording uses, so a reader holding both is not reconciling two
