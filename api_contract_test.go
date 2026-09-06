@@ -272,6 +272,15 @@ func TestProbeResultInvariants(t *testing.T) {
 // directions — a killed or timed-out result names the package that decided it,
 // and every other outcome names nothing — and a consumer rendering "killed by"
 // from an empty string, or ignoring the one it was given, needs both halves.
+//
+// Output has the same two-directional shape and is checked here for the same
+// reason: a kill carries the deciding binary's capture, and a survivor carries
+// nothing at all. The survivor half is the one worth a test at this level. It
+// is not an accident of the execution phase that a caller may stop relying on —
+// it is a promise about memory, because a survivor's output is thousands of
+// lines of nothing having gone wrong multiplied by every mutant in a run, and
+// the day it starts arriving is the day a consumer holding every result runs a
+// machine out of it.
 func TestMutantResultInvariants(t *testing.T) {
 	t.Parallel()
 	prepared := probeable(t)
@@ -325,6 +334,28 @@ func TestMutantResultInvariants(t *testing.T) {
 			if decided != (result.KilledBy != "") {
 				t.Errorf("outcome %s carries KilledBy %q; a package is named exactly for a kill"+
 					" and a timeout", result.Outcome, result.KilledBy)
+			}
+			if test.want == gomutants.OutcomeSurvived {
+				if result.Output != nil {
+					t.Errorf("a survivor carries %d bytes of Output, want none: holding it for every"+
+						" mutant in a run is how a consumer runs out of memory", len(result.Output))
+				}
+				if result.Truncated || result.TotalBytes != 0 {
+					t.Errorf("a survivor reports Truncated = %v and TotalBytes = %d, want false and 0",
+						result.Truncated, result.TotalBytes)
+				}
+				return
+			}
+			if len(result.Output) == 0 {
+				t.Fatal("a kill carries no Output, so the evidence for it cannot be shown")
+			}
+			if want := lastLines(result.Output, 50); result.OutputTail != want {
+				t.Errorf("OutputTail = %q, want the last 50 lines of Output with the carriage"+
+					" returns stripped: %q", result.OutputTail, want)
+			}
+			if result.TotalBytes < int64(len(result.Output)) {
+				t.Errorf("TotalBytes = %d, want at least the %d bytes that were kept",
+					result.TotalBytes, len(result.Output))
 			}
 		})
 	}

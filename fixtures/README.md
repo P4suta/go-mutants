@@ -146,7 +146,13 @@ the soundness statement of the whole infection layer, and the fixture's three
 returns exist to make it checkable by reading the file. Adding a fourth
 mutable expression, or letting `Width` or `Label` ever return the constant its
 mutant returns, would leave the module compiling, the suite green, and a probe
-recorded as silent about a site it did reach.
+recorded as silent about a site it did reach. Its `TestPrintsALot` is the one
+target in the fixture that is not about probing at all: it prints two thousand
+short lines so that the same suite can watch a pass run into
+`ProbeRequest.OutputLimit`. It lives in the fixture rather than being written
+into the tree by the test that needs it, because that session is prepared once
+and shared, so no test using it can add a file — and it reaches no probed site,
+which is what keeps it out of every claim above.
 
 `vetsuspect/` is the one whose tally is the least interesting part of it. What
 that test asserts is that the mutants *executed* at all: `bools` is one of the

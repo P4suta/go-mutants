@@ -14,6 +14,46 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **Truncation is a fact now, and every call can say how much output it will
+  hold.** Three separate holes, all of them about the same bytes.
+
+  A capture that hit its limit said so in a notice line — `[go-mutants] output
+  truncated: …` — and nowhere else, so a consumer that needed to know whether
+  it was holding all of a command's output had to match that sentence. A
+  diagnostic written for a person had become a wire format nobody could reword,
+  and a consumer had hard-coded it. `CommandResult`, `MutantResult`,
+  `ProbeResult` and `*VerificationError` now carry `Truncated` and
+  `TotalBytes`: the flag is the contract, `TotalBytes` is everything the child
+  wrote whether kept or not, and the prefix stays exported as
+  `gomutants.OutputTruncatedPrefix` for the renderers that style the notice and
+  the consumers that were matching it. On `MutantResult` the notice was usually
+  lost outright, because `OutputTail` is a *tail* and the notice sits at the
+  top of a capped capture.
+
+  Mutant and probe runs silently took internal/runner's one-mebibyte default
+  with no way to raise or lower it, which is both far more than a console wants
+  and far less than a consumer archiving the evidence of a kill might.
+  `ExecRequest.OutputLimit` and `ProbeRequest.OutputLimit` are
+  `Command.OutputLimit` for the two session calls, with the same defaults: the
+  1 MiB when they are not positive, and a 256-byte floor so the notice still
+  fits inside the budget.
+
+  And the three result types carried output three different ways: a `[]byte` on
+  `CommandResult` and `ProbeResult`, a fifty-line `OutputTail` string on
+  `MutantResult`, and nothing at all beside it. `MutantResult.Output` is now the
+  bounded combined output of the *deciding* binary, with `OutputTail` unchanged
+  beside it as the summary a console prints — so a consumer that renders the
+  tail needs no change, and one that wants the evidence no longer has to choose
+  between fifty lines and running the mutant again. It is empty for a survivor,
+  exactly as `OutputTail` has always been: a survivor's output is thousands of
+  lines of nothing having gone wrong, multiplied by every mutant in a run, and
+  holding it is how a mutation run runs a machine out of memory.
+
+  The `probeable/` fixture gained a `TestPrintsALot` target for this, which is a
+  corpus change and is recorded in `fixtures/README.md`. The probe session that
+  fixture backs is prepared once and shared across the API suite, so a test
+  needing a chatty target cannot write one into the tree. It reaches no probed
+  site, so no claim the fixture already carried has moved.
 - **`Catalog.PreparedDigest`, `Mutant.EndLine`, and a probe log the engine
   checks against its own catalogue.** All three close gaps a consumer was
   filling in by hand, and getting subtly wrong.

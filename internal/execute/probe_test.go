@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/instrument"
@@ -387,6 +388,46 @@ func TestRunProbeComposesTheChildInvocation(t *testing.T) {
 	}
 	if want := "/snapshot/example.com/a"; seen[0].Dir != want {
 		t.Errorf("working directory = %q, want %q", seen[0].Dir, want)
+	}
+}
+
+// TestRunProbePassesTheOutputLimit is [RunOne]'s output budget applied to the
+// probe pass, and it is the same claim for the same reason: a pass whose
+// binaries print in a loop must not take a run's memory with it, and a caller
+// that raised or lowered the cap must be the one deciding that.
+//
+// The pass also reports what it could not keep. A probe's capture is what a
+// reader of a `test-failed` or a `timed-out` pass has to work from, and one
+// silently missing a megabyte reads exactly like a suite that said little.
+func TestRunProbePassesTheOutputLimit(t *testing.T) {
+	deciding := runner.Result{
+		ExitCode:    1,
+		Duration:    time.Millisecond,
+		Output:      []byte(runner.OutputTruncatedPrefix + ": …\n--- FAIL: TestA\n"),
+		OutputBytes: 1 << 20,
+		Truncated:   true,
+	}
+	f := &fake{respond: func(context.Context, call) runner.Result { return deciding }}
+	run := probeRun(filepath.Join(t.TempDir(), "infection.log"))
+	run.OutputLimit = 777
+
+	attempt := execute.RunProbe(t.Context(), options(f, 1), run, testBins("example.com/a"))
+
+	seen := f.seen()
+	if len(seen) != 1 {
+		t.Fatalf("started %d processes, want 1", len(seen))
+	}
+	if seen[0].OutputLimit != 777 {
+		t.Errorf("spec OutputLimit = %d, want the pass's 777", seen[0].OutputLimit)
+	}
+	if attempt.Outcome != execute.ProbeTestFailed {
+		t.Fatalf("outcome = %s, want %s (%v)", attempt.Outcome, execute.ProbeTestFailed, attempt.Err)
+	}
+	if !attempt.Truncated {
+		t.Error("Truncated = false although the deciding capture lost bytes")
+	}
+	if attempt.OutputBytes != deciding.OutputBytes {
+		t.Errorf("OutputBytes = %d, want the deciding binary's %d", attempt.OutputBytes, deciding.OutputBytes)
 	}
 }
 

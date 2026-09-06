@@ -72,6 +72,12 @@ var (
 	// accessor is the contract.
 	_ func(error) string = gomutants.DiagnosticCode
 
+	// The notice a renderer styles and a consumer matched before there was a
+	// flag to read. It stays exported and stays a string constant, so that the
+	// consumers that were matching the text keep compiling — the flag beside
+	// every capture is what they should be reading instead.
+	_ string = gomutants.OutputTruncatedPrefix
+
 	// Every typed error is used through the error interface, and every one of
 	// them is reached with errors.As from outside this module.
 	_ error = (*gomutants.MutantSelectionError)(nil)
@@ -121,11 +127,13 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 	}
 	_ = gomutants.DriftError{Stage: "", Changes: nil}
 	_ = gomutants.VerificationError{
-		Command:  gomutants.Command{},
-		ExitCode: 0,
-		TimedOut: false,
-		Duration: 0,
-		Output:   nil,
+		Command:    gomutants.Command{},
+		ExitCode:   0,
+		TimedOut:   false,
+		Duration:   0,
+		Output:     nil,
+		Truncated:  false,
+		TotalBytes: 0,
 	}
 	_ = gomutants.BuildError{
 		Phase:    gomutants.PreparePhaseBinaryBuild,
@@ -204,6 +212,15 @@ func TestPublicDataTypes(t *testing.T) {
 	// name is the contract and not only the type.
 	_ = gomutants.Catalog{PreparedDigest: ""}
 	_ = gomutants.Mutant{EndLine: 0}
+
+	// How much output a call is willing to hold, and what every result says
+	// about what it could not keep. A consumer reads the flag rather than the
+	// notice, so the names are the contract on all three result types at once.
+	_ = gomutants.ExecRequest{OutputLimit: 0}
+	_ = gomutants.ProbeRequest{OutputLimit: 0}
+	_ = gomutants.CommandResult{Output: nil, Truncated: false, TotalBytes: 0}
+	_ = gomutants.MutantResult{Output: nil, Truncated: false, TotalBytes: 0, OutputTail: ""}
+	_ = gomutants.ProbeResult{Output: nil, Truncated: false, TotalBytes: 0}
 
 	// The named fields, not only the type: a consumer reads these by name and a
 	// rename is a breaking change whatever the shape of the struct stays.

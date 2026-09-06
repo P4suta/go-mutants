@@ -46,6 +46,13 @@ type ProbeRun struct {
 	// is reserved for the same reason.
 	Args []string
 
+	// OutputLimit caps the combined output kept from each binary of the pass,
+	// exactly as [MutantRun.OutputLimit] does and with the same defaults. A
+	// probe pass runs the same tests as a mutant run does, so a caller that
+	// bounded one and not the other would be holding a megabyte it had already
+	// said it did not want.
+	OutputLimit int
+
 	// LogPath is the file the probe runtime appends its infection log to, as
 	// [instrument.ProbeEnv] names it. It is required: a pass with nowhere to
 	// record would exit zero having written nothing, which reads exactly like a
@@ -114,7 +121,16 @@ type ProbeAttempt struct {
 	// Duration is the wall-clock time the child processes took, summed over the
 	// binaries this pass actually ran.
 	Duration time.Duration
-	Output   []byte
+	// Output is what [ProbeRun.OutputLimit] kept of the deciding binary's
+	// combined output, OutputBytes is everything that binary wrote whether kept
+	// or not, and Truncated reports that the cap dropped some of it — in which
+	// case Output begins with [runner.OutputTruncatedPrefix].
+	//
+	// A pass that could not be made at all carries none of the three, as it
+	// carries no outcome: it is the pass, and not one binary of it, that failed.
+	Output      []byte
+	OutputBytes int64
+	Truncated   bool
 	// Binaries are the test binaries this pass started, in launch order, by
 	// import path, and ExecSeqs the `exec` events they were recorded at. They
 	// are [Attempt.Binaries] and [Attempt.ExecSeqs] exactly, and mean the same
@@ -199,10 +215,12 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 			return attempt.failed(probeInterrupted(ctx, "", nil))
 		}
 
-		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env, p.Timeout, p.Args)
+		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env, p.Timeout, p.Args, p.OutputLimit)
 		attempt.Duration += result.Duration
 		attempt.ExitCode = result.ExitCode
 		attempt.Output = slices.Clone(result.Output)
+		attempt.OutputBytes = result.OutputBytes
+		attempt.Truncated = result.Truncated
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)

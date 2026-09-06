@@ -254,6 +254,16 @@ type VerificationError struct {
 	// Output is the bounded combined output — what the user has to be shown,
 	// because it is their failure.
 	Output []byte
+	// Truncated reports that Output lost bytes to [Command.OutputLimit], in
+	// which case it begins with [OutputTruncatedPrefix]; TotalBytes is
+	// everything the verification wrote, kept or not.
+	//
+	// They matter more here than anywhere else in this API. This output is the
+	// evidence handed to a user whose suite is red, and a capture that quietly
+	// lost the first megabyte — where a panic or a build failure would be —
+	// reads exactly like a suite that failed for the reason shown at the end.
+	Truncated  bool
+	TotalBytes int64
 }
 
 // Error renders the two sentences preparation has always printed for a failed

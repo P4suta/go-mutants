@@ -6,7 +6,25 @@ package gomutants
 import (
 	"errors"
 	"time"
+
+	"github.com/P4suta/go-mutants/internal/runner"
 )
+
+// OutputTruncatedPrefix begins the first line of a capture that lost bytes to
+// its output limit — [CommandResult.Output], [MutantResult.Output] and
+// [ProbeResult.Output] alike.
+//
+// It is exported for renderers, which style the notice differently from the
+// process's own output, and for the consumers that were matching this text
+// before there was anything else to match. It is not the way to *ask* whether
+// output was lost: the `Truncated` beside each of those fields is the fact, and
+// a consumer that branches on it keeps working the day this sentence is
+// reworded.
+//
+// It is defined from internal/runner's own constant rather than repeated, so
+// that the string a renderer matches and the string the engine writes cannot
+// come to differ.
+const OutputTruncatedPrefix = runner.OutputTruncatedPrefix
 
 // OpenOptions controls how [Open] freezes a workspace. Its zero value is the
 // ordinary local invocation.
@@ -83,8 +101,13 @@ type Command struct {
 	// Timeout bounds the whole process tree. Zero uses a ten-minute safety
 	// default. A negative duration is invalid.
 	Timeout time.Duration
-	// OutputLimit caps retained combined stdout and stderr. The runner's safe
-	// default is used when this is not positive.
+	// OutputLimit caps retained combined stdout and stderr, in bytes. Zero or
+	// negative selects the engine's default of 1 MiB; a positive value below
+	// 256 is raised to 256, so that the truncation notice still fits inside the
+	// budget and len(Output) <= OutputLimit stays satisfiable.
+	//
+	// This is the field [ExecRequest.OutputLimit] and [ProbeRequest.OutputLimit]
+	// refer to; all three mean the same thing and default the same way.
 	OutputLimit int
 }
 
@@ -94,7 +117,21 @@ type CommandResult struct {
 	ExitCode int
 	TimedOut bool
 	Duration time.Duration
-	Output   []byte
+	// Output is the retained combined stdout and stderr, capped at the
+	// effective [Command.OutputLimit] by keeping the tail. len(Output) never
+	// exceeds that limit, the truncation notice included.
+	Output []byte
+	// Truncated reports that Output lost bytes to the limit, in which case it
+	// begins with [OutputTruncatedPrefix]. It is true exactly when TotalBytes
+	// exceeds the effective limit, and it is the field to branch on: the notice
+	// is a line written for a person to read, and a consumer matching its text
+	// makes a diagnostic into a wire format nobody can reword.
+	Truncated bool
+	// TotalBytes is everything the command wrote to both streams, kept or not.
+	// It is the same number whether or not anything was dropped, so a caller
+	// reporting how much a command produced never has to ask which case it is
+	// in.
+	TotalBytes int64
 }
 
 // PreparePhase identifies one timed stage of session preparation.
@@ -439,6 +476,17 @@ type ExecRequest struct {
 	// Timeout overrides PrepareOptions.MutantTimeout when positive. A negative
 	// duration is invalid.
 	Timeout time.Duration
+	// OutputLimit caps the retained combined output of each test binary this
+	// execution starts, as [Command.OutputLimit] does: the engine's 1 MiB
+	// default when it is not positive, and a floor of 256 bytes so that the
+	// truncation notice still fits inside the budget.
+	//
+	// It is per request because one prepared session serves callers that want
+	// different amounts out of the same binaries: a console wants a screenful,
+	// and a consumer archiving the evidence of a kill wants all of it. Before
+	// this field there was no way to say either, and every execution silently
+	// took the default.
+	OutputLimit int
 }
 
 // Outcome is the stable result vocabulary returned by [Session.Exec].
@@ -456,12 +504,34 @@ const (
 
 // MutantResult is one execution of one mutant against the selected binaries.
 type MutantResult struct {
-	ID         string
-	DisplayID  string
-	Outcome    Outcome
-	KilledBy   string
-	Duration   time.Duration
+	ID        string
+	DisplayID string
+	Outcome   Outcome
+	KilledBy  string
+	Duration  time.Duration
+	// OutputTail is the last 50 lines of the deciding binary's combined output,
+	// with carriage returns stripped. It is what a console prints, and it is
+	// kept as it was: a consumer that renders it needs no change.
+	//
+	// Being a tail, it usually loses the truncation notice, which sits at the
+	// *top* of a capped capture. Truncated is where that fact lives now.
 	OutputTail string
+	// Output is the bounded combined output of the deciding binary — the
+	// failing one for a kill, the timed-out one for a timeout, the one that
+	// would not run for an error — capped at the effective
+	// [ExecRequest.OutputLimit]. OutputTail summarises exactly these bytes.
+	//
+	// It is empty for a survivor, as OutputTail is. A survivor's output is
+	// thousands of lines of nothing having gone wrong, multiplied by every
+	// mutant in a run, and holding it is how a mutation run runs a machine out
+	// of memory.
+	Output []byte
+	// Truncated reports that Output lost bytes to the limit, in which case it
+	// begins with [OutputTruncatedPrefix]; TotalBytes is everything the deciding
+	// binary wrote, kept or not. Both are false and zero wherever Output is
+	// empty.
+	Truncated  bool
+	TotalBytes int64
 	Artifacts  []Artifact
 }
 
@@ -492,6 +562,12 @@ type ProbeRequest struct {
 	// Timeout overrides PrepareOptions.MutantTimeout when positive. A negative
 	// duration is invalid.
 	Timeout time.Duration
+	// OutputLimit caps the retained combined output of each test binary this
+	// pass starts, exactly as [ExecRequest.OutputLimit] does and with the same
+	// defaults. A probe pass runs the same tests the same way, so a caller that
+	// bounded an execution and not a pass would be holding output it had
+	// already said it did not want.
+	OutputLimit int
 }
 
 // ProbeOutcome is how one [Session.Probe] pass ended.
@@ -567,8 +643,16 @@ type ProbeResult struct {
 	ExitCode int
 	// Duration is the wall-clock time the child processes took.
 	Duration time.Duration
-	// Output is the bounded combined output of the deciding test binary.
+	// Output is the bounded combined output of the deciding test binary, capped
+	// at the effective [ProbeRequest.OutputLimit]. It is there for every
+	// outcome, including the ones that carry no Infected, because a pass that
+	// proves nothing is exactly the one whose output has to be readable.
 	Output []byte
+	// Truncated reports that Output lost bytes to the limit, in which case it
+	// begins with [OutputTruncatedPrefix]; TotalBytes is everything the deciding
+	// binary wrote, kept or not.
+	Truncated  bool
+	TotalBytes int64
 }
 
 // Artifact is one bounded standard fuzz-corpus file captured before a target's
