@@ -4,8 +4,10 @@
 package testkit
 
 import (
+	"errors"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -177,6 +179,176 @@ func TestBuildCacheHonoursTheNamedDirectory(t *testing.T) {
 	} else if !strings.Contains(err.Error(), BuildCacheEnv) {
 		t.Errorf("the error does not name the variable: %v", err)
 	}
+}
+
+// TestPathAgreesWithTestkit is the seam between this package and the tool that
+// cleans up after it.
+//
+// internal/devtools/testcache resolves the same directory from the same rule,
+// and it may not import this package to do it: it is a production `main`, and
+// nothing that ships may link the testing package. So the rule exists twice —
+// once here for the suites, once there for `mise run test-clean`,
+// `test-cache-status` and the `exec` wrapper the long tasks run through — and
+// this is what keeps the two copies the same. If they ever drift, one half of
+// the feature fills a directory the other half never empties, and the only
+// symptom is a disk that fills up a month later.
+//
+// The home is kept rather than moved, and that is the point of the test rather
+// than a shortcut: the tool resolves os.UserCacheDir in its own process, this
+// package pins the real one at init() before any test redirects it, and the two
+// answers can only be compared under the home they were both derived from.
+func TestPathAgreesWithTestkit(t *testing.T) {
+	t.Run("the default directory", func(t *testing.T) {
+		e := Env(t, KeepHome())
+		want, err := BuildCache()
+		if err != nil {
+			t.Fatalf("BuildCache: %v", err)
+		}
+		if got := testcacheSays(t, e.Vars(), "path"); !SamePath(got, want) {
+			t.Errorf("`testcache path` printed %s, but testkit resolved %s: the two copies of the "+
+				"rule have drifted, and the suites are filling a directory nothing empties", got, want)
+		}
+	})
+
+	t.Run("the named directory", func(t *testing.T) {
+		e := Env(t, KeepHome())
+		named := filepath.Join(t.TempDir(), "named-cache")
+		// Named after [Env] rather than before it, so that the `go run` which
+		// builds the tool still compiles into the shared build cache: what is
+		// being compared here is the rule, not how long a cold cache takes to
+		// fill. The child is then handed the variable explicitly, which is
+		// exactly the arrangement CI runs in — the job names a directory, and
+		// every test redirects its own environment underneath it.
+		t.Setenv(BuildCacheEnv, named)
+		want, err := BuildCache()
+		if err != nil {
+			t.Fatalf("BuildCache with %s set: %v", BuildCacheEnv, err)
+		}
+		if want != named {
+			t.Fatalf("BuildCache resolved %s rather than the named %s, so this test would compare "+
+				"the tool against the wrong answer", want, named)
+		}
+		if got := testcacheSays(t, e.With(BuildCacheEnv+"="+named), "path"); !SamePath(got, want) {
+			t.Errorf("`testcache path` printed %s, but testkit resolved the named %s", got, want)
+		}
+	})
+
+	t.Run("the kept scratch root", func(t *testing.T) {
+		e := Env(t, KeepHome())
+
+		// T5: replace with testkit.KeepRoot(). Until the keep policy exists there
+		// is no function here to compare against, so the rule is written out once
+		// — and writing it out is itself the point: when KeepRoot arrives it has
+		// to produce this, and this test is where the two meet.
+		want := filepath.Join(pinned.userCache, "go-mutants-test", "kept")
+		if got := testcacheSays(t, e.Vars(), "path", "--kept"); !SamePath(got, want) {
+			t.Errorf("`testcache path --kept` printed %s, want %s", got, want)
+		}
+
+		named := filepath.Join(t.TempDir(), "named-kept")
+		if got := testcacheSays(t, e.With(KeepDirEnv+"="+named), "path", "--kept"); !SamePath(got, named) {
+			t.Errorf("`testcache path --kept` printed %s, want the named %s", got, named)
+		}
+	})
+}
+
+// TestMarkerNamesAgreeWithTestcache is the second half of the ownership rule,
+// and the half that decides whether the first half does anything at all.
+//
+// The harness stamps the build cache it resolves, and the collector removes only
+// a directory carrying that stamp. Two spellings of the file name would not fail
+// anywhere: the harness would write one file, the collector would look for
+// another, `mise run test-clean` would politely refuse to empty a cache that had
+// been the harness's all along, and the only symptom would be a directory that
+// grew until somebody noticed. Neither package can import the other, so this is
+// what holds them together.
+func TestMarkerNamesAgreeWithTestcache(t *testing.T) {
+	e := Env(t, KeepHome())
+
+	if got := testcacheSays(t, e.Vars(), "path", "--marker"); got != BuildCacheMarker {
+		t.Errorf("`testcache path --marker` printed %q, but this package writes %q", got, BuildCacheMarker)
+	}
+	// The kept root's marker is the tool's business alone until the keep policy
+	// lands, so this asserts only that it is a different file: one name for both
+	// would make emptying a build cache license emptying the kept diagnostics.
+	kept := testcacheSays(t, e.Vars(), "path", "--kept", "--marker")
+	if kept == BuildCacheMarker || kept == "" {
+		t.Errorf("the kept scratch marker is %q, want a name of its own", kept)
+	}
+}
+
+// TestEnvStampsTheBuildCacheItOwns is the harness taking responsibility for the
+// directory it names.
+//
+// Nothing in a path says who made it. `GO_MUTANTS_TEST_GOCACHE=$HOME` is an
+// absolute path like any other, and a collector that trusted the variable would
+// run `go clean -cache` and os.RemoveAll against a home directory. So ownership
+// is written down: whatever resolves this directory creates it and leaves a file
+// saying what it is, and internal/devtools/testcache removes nothing that does
+// not carry that file. The harness is the owner and the tool is the collector,
+// which is why the stamp is written here rather than only there — a developer
+// who has run the suites once has a cache the collector can empty, without
+// having run the collector first.
+func TestEnvStampsTheBuildCacheItOwns(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "go-build")
+	t.Setenv(BuildCacheEnv, cache)
+
+	e := Env(t)
+	if e.GoCache != cache {
+		t.Fatalf("Env used %s rather than the named %s", e.GoCache, cache)
+	}
+	marker := filepath.Join(cache, BuildCacheMarker)
+	first := ReadFile(t, marker)
+	if len(first) == 0 {
+		t.Errorf("%s is empty, and it is the only explanation whoever finds this directory gets", marker)
+	}
+
+	// Idempotent, because every test in the repository calls one of these.
+	Env(t)
+	_ = Compose(t, t.TempDir())
+	if got := ReadFile(t, marker); string(got) != string(first) {
+		t.Errorf("a second resolution rewrote the marker:\n%s", got)
+	}
+}
+
+// TestEnvDoesNotStampADirectoryItDidNotMake is the sharp edge of that rule.
+//
+// A stamp written into whatever the variable happened to name would be a
+// permission slip the harness issues to the collector on somebody else's
+// behalf: point the variable at a directory full of work, run any test in this
+// repository, and `mise run test-clean` would then delete it with the marker's
+// blessing. A directory that already holds files that are not ours is left
+// exactly as it is — the cache still works, and nothing will ever remove it,
+// which is the right half of the trade to keep.
+func TestEnvDoesNotStampADirectoryItDidNotMake(t *testing.T) {
+	occupied := t.TempDir()
+	WriteFile(t, filepath.Join(occupied, "thesis.txt"), []byte("chapter one\n"))
+	t.Setenv(BuildCacheEnv, occupied)
+
+	Env(t)
+
+	if _, err := os.Lstat(filepath.Join(occupied, BuildCacheMarker)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the harness stamped a directory full of somebody else's files: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(occupied, "thesis.txt")); err != nil {
+		t.Errorf("the file that was already there is gone: %v", err)
+	}
+}
+
+// testcacheSays runs the devtool and returns the single line it prints.
+//
+// `go run` rather than a built binary, because the tool has no install step and
+// every task in mise.toml invokes it exactly this way: what is tested is what
+// runs. It is the only child in this file, and it obeys the same skip-or-fail
+// policy as everything else that needs a toolchain — a developer without `go`
+// skips, and a CI job without one fails.
+func testcacheSays(t testing.TB, env []string, args ...string) string {
+	t.Helper()
+	gobin := GoBinary(t)
+	argv := append([]string{gobin, "run", "./internal/devtools/testcache"}, args...)
+	result := Exec(t, Root(t), env, argv...)
+	RequireExit(t, result, 0, "`go run ./internal/devtools/testcache "+strings.Join(args, " ")+"`")
+	return strings.TrimSpace(string(result.Stdout))
 }
 
 // TestEnvStripsActivationAndPinsTheGoSettings is the rule production already

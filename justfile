@@ -21,6 +21,12 @@ test:
 test-integration:
     mise run test-integration
 
+test-cache-status:
+    mise run test-cache-status
+
+test-clean:
+    mise run test-clean
+
 fmt:
     mise run fmt
 

@@ -72,6 +72,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
+      # The suites' child `go` commands key their entries on absolute paths that
+      # exist for one run, so the cache they fill is rubble by the time the job
+      # ends. It lives under the runner's own temporary area: that directory
+      # dies with the runner and is deliberately never restored by
+      # actions/cache, so a job can never inherit yesterday's gigabytes.
+      #
+      # Published through $GITHUB_ENV rather than the job's `env:` because the
+      # `runner` context is not available there, and a job-level value is what
+      # this has to be: every step below reads it, the last one included. Under
+      # bash on Windows $RUNNER_TEMP is a `D:\a\_temp` path, so the value is
+      # absolute with mixed separators -- which both copies of the rule (testkit
+      # and internal/devtools/testcache) normalise with filepath.Clean.
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -80,6 +97,18 @@ jobs:
       - run: mise run build
       - run: mise run test
       - run: mise run test-integration
+      # What the suite left behind, on every platform and whatever the suite
+      # did. It is the only measurement of this that anybody sees, and a run
+      # that failed is exactly when the number is interesting -- so it reports
+      # rather than gates: `continue-on-error` keeps a broken report from
+      # failing the job, and `success() || failure()` runs it after a failed
+      # suite but not after a cancellation, where the numbers would be about
+      # half a run. Through mise rather than a bare `go run`, so that the task
+      # definition stays the single place this command is written down.
+      - name: Test build cache
+        if: success() || failure()
+        continue-on-error: true
+        run: mise run test-cache-status
 
   # Snapshot artifacts for all six targets, plus the smoke that proves the
   # version was stamped. Packaging breaks quietly -- a renamed ldflags target,
@@ -121,12 +150,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
+      # A mutation run compiles a per-package test binary for every mutant it
+      # schedules, against a snapshot at a path that exists for that run alone,
+      # so it is the single biggest producer of cache entries nothing will ever
+      # look up again. Same rule and the same reason for the same shape as
+      # platform-tests: the runner's temporary area, never restored from an
+      # actions cache, published through $GITHUB_ENV because the `runner`
+      # context is not available in a job's `env:`.
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
           install: true
           cache: true
       - run: mise run dogfood
+      # As in platform-tests: a report, never a gate.
+      - name: Test build cache
+        if: success() || failure()
+        continue-on-error: true
+        run: mise run test-cache-status
       # The run report is the source of truth for the score, and reading the
       # HTML beats scrolling the log when the gate does fail.
       - name: Upload the mutation report
