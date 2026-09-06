@@ -307,6 +307,15 @@ Reach all of these with `errors.As`.
   Never a statement about the tests — a killed, survived or timed-out mutant is
   a result and comes back as one.
 
+  `Package` is the import path of the binary the failure was about, whenever
+  the failure named one. It falls back to the request's `Package` for the
+  failures that are about the pass rather than about one binary — an unreadable
+  infection log, say. The request's field is a *selector*: it may be a
+  module-relative directory, and it is empty for the ordinary request that
+  measures every prepared binary, so a caller grouping failures by package
+  wants the failing binary's own path and gets it whenever the execution phase
+  knew it.
+
   It covers what the execution phase reports, not everything the two calls can
   fail at. A session scratch directory that could not be created, an
   environment or instrumentation overlay that could not be composed, a fuzz

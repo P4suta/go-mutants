@@ -196,7 +196,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 		// Nothing is running at this point — whatever came before has been
 		// reaped — so the failure names no command.
 		if ctx.Err() != nil {
-			return attempt.failed(probeInterrupted(ctx, nil))
+			return attempt.failed(probeInterrupted(ctx, "", nil))
 		}
 
 		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env, p.Timeout, p.Args)
@@ -224,8 +224,12 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 				Err:     result.Err,
 				// The same reasoning as [CodeMutantStart]'s: an import path names
 				// no process, and the probe tree's binaries are as temporary as
-				// the mutants'.
+				// the mutants'. The package is carried for the reason it is
+				// there too — it is the half of the diagnosis that outlives the
+				// tree, and it is this binary's rather than the pass's subject,
+				// which names nothing when a pass spans several packages.
 				Invocation: runner.CommandOf(spec, result),
+				Package:    bin.ImportPath,
 			})
 
 		case result.TimedOut:
@@ -234,7 +238,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 		case result.ExitCode == runner.ExitCodeUnavailable:
 			// This one *was* running when the signal arrived, so it is named.
-			return attempt.failed(probeInterrupted(ctx, runner.CommandOf(spec, result)))
+			return attempt.failed(probeInterrupted(ctx, bin.ImportPath, runner.CommandOf(spec, result)))
 
 		case result.ExitCode == instrument.ProbeUnavailableExit:
 			// The generated runtime refusing to run because it cannot record.
@@ -363,16 +367,18 @@ func selectProbeBinaries(p ProbeRun, bins []TestBinary) ([]TestBinary, error) {
 // cause stays reachable, which is how a caller tells a Ctrl-C from a machine
 // that broke.
 //
-// command is the binary that was cut off, and nil when the pass stopped between
-// binaries with nothing running. Naming the command it was *about* to start
-// would be the one kind of wrong a diagnostic must never be: a reader would go
-// looking for a process that never existed.
-func probeInterrupted(ctx context.Context, command *runner.Invocation) error {
+// pkg and command are the binary that was cut off, and are empty and nil when
+// the pass stopped between binaries with nothing running. Naming the command it
+// was *about* to start would be the one kind of wrong a diagnostic must never
+// be: a reader would go looking for a process that never existed, and the same
+// goes for its package.
+func probeInterrupted(ctx context.Context, pkg string, command *runner.Invocation) error {
 	return &Error{
 		Code:       CodeInterrupted,
 		Message:    "the probe pass was interrupted",
 		Err:        context.Cause(ctx),
 		Invocation: command,
+		Package:    pkg,
 	}
 }
 

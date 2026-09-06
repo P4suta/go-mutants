@@ -391,8 +391,15 @@ type ExecutionError struct {
 	// Call is "exec" or "probe": which of the session's two measurements
 	// failed.
 	Call string
-	// Package is [ExecRequest.Package] or [ProbeRequest.Package] as the request
-	// gave it, and empty where the request selected every prepared binary.
+	// Package is the import path of the test binary the failure was about,
+	// whenever the failure named one — the binary that would not start, the one
+	// whose runtime refused the activation, the one a cancellation cut off.
+	//
+	// It falls back to [ExecRequest.Package] or [ProbeRequest.Package] as the
+	// request gave it for the failures that are about the pass rather than about
+	// one binary, and is empty when neither says anything: the request's field
+	// is a *selector*, which may be a module-relative directory and is empty for
+	// the ordinary request that measures every prepared binary.
 	Package string
 	// Code is the stable diagnostic code, for example "GOM7513".
 	Code string
@@ -421,10 +428,21 @@ func (e *ExecutionError) Unwrap() error { return e.cause }
 
 // executionError types one measurement failure. Like [buildError] it leaves an
 // error no internal package produced exactly as it was.
-func executionError(call, pkg string, err error) error {
+//
+// selector is the request's package, and it is the fallback rather than the
+// answer: it selects which binaries to measure and says nothing about which one
+// broke — it may be a module-relative directory, and it is empty for the
+// ordinary request that measures all of them. The execution phase names the
+// binary it could not start, so that import path wins whenever there is one.
+func executionError(call, selector string, err error) error {
 	code := execute.CodeOf(err)
 	if code == "" {
 		return err
+	}
+	pkg := selector
+	var failure *execute.Error
+	if errors.As(err, &failure) && failure.Package != "" {
+		pkg = failure.Package
 	}
 	return &ExecutionError{
 		Call:    call,

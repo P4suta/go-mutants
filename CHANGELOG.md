@@ -47,6 +47,18 @@ Entries say *why* a change was made, not only what changed.
   answer and kept `Unexpected` for the CLI, and `execute.Error` and
   `validate.Error` grew the fields the public types report — `Package`,
   `ExitCode`, `TimedOut` — where the failure knew them.
+
+  `*ExecutionError.Package` is the failing binary's import path rather than the
+  request's. `ExecRequest.Package` and `ProbeRequest.Package` are selectors: one
+  may be a module-relative directory, and both are empty for the ordinary
+  request that measures every prepared binary — so a consumer grouping
+  infrastructure failures by package would have been grouping most of them under
+  the empty string. Every execution failure that names a binary now carries that
+  binary's import path on `execute.Error.Package`: the start failure, the stale
+  catalogue, the probe start failure, and the two cancellations, which name the
+  binary that was cut off and nothing at all when the pass stopped between
+  binaries with none running. The request's selector is the fallback, for the
+  failures that are about a pass rather than about one binary.
 - **`engine.Options.TempDirectory`: a run can name the parent of its own
   temporary directories.** The engine put its snapshot, and the scratch
   directory beside it, under `os.TempDir()`, and swept that same directory for

@@ -435,6 +435,52 @@ func TestBuildErrorTypesAnyCodeItIsGiven(t *testing.T) {
 	}
 }
 
+// TestExecutionErrorNamesTheFailingPackage is the difference between a request
+// and a failure.
+//
+// [ExecRequest.Package] is a *selector*: it may be a module-relative directory,
+// and it is empty for the request that measures every prepared binary — which
+// is the ordinary one. The failure knows better than that, because the
+// execution phase names the binary it could not start, so the concrete import
+// path is what a caller is told when there is one. The selector is the fallback
+// for the failures that are about the pass rather than about one binary.
+func TestExecutionErrorNamesTheFailingPackage(t *testing.T) {
+	t.Parallel()
+
+	named := executionError("exec", "", fmt.Errorf("gomutants: session exec: %w", &execute.Error{
+		Code:    execute.CodeMutantStart,
+		Message: "the test binary for example.com/a could not be run",
+		Output:  "fork/exec: permission denied",
+		Package: "example.com/a",
+	}))
+	var execution *ExecutionError
+	if !errors.As(named, &execution) {
+		t.Fatalf("executionError = %v, want an *ExecutionError", named)
+	}
+	if execution.Package != "example.com/a" {
+		t.Errorf("Package = %q, want the failing binary's import path, not the request's selector",
+			execution.Package)
+	}
+	if execution.Call != "exec" || execution.Code != "GOM7513" || execution.Output == "" {
+		t.Errorf("ExecutionError = %+v, want the call, the code and the output the failure carried", execution)
+	}
+
+	// A failure about the pass rather than about one binary — an infection log
+	// that cannot be read — names no package of its own, and the request's
+	// selector is better than nothing.
+	fallback := executionError("probe", "example.com/a/pkg",
+		fmt.Errorf("gomutants: session probe: %w", &execute.Error{
+			Code:    execute.CodeProbeLog,
+			Message: "the infection log cannot be read against the catalogue it was written for",
+		}))
+	if !errors.As(fallback, &execution) {
+		t.Fatalf("executionError = %v, want an *ExecutionError", fallback)
+	}
+	if execution.Package != "example.com/a/pkg" {
+		t.Errorf("Package = %q, want the request's package where the failure named none", execution.Package)
+	}
+}
+
 // TestHandBuiltErrorsSayWhatTheyAreWithoutACause pins what a value a consumer
 // constructed — in a double, in a table of its own — prints. Neither type may
 // panic on a nil cause, and neither may print the wire spelling of a phase at

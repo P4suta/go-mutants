@@ -244,6 +244,12 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 				// nothing to reproduce. The runner's own error already named the
 				// command; this reuses it rather than describing it twice.
 				Invocation: runner.CommandOf(spec, result),
+				// And the import path beside it, because that is the part that
+				// outlives the snapshot: a caller reports, groups and looks up a
+				// package, and it is *this* binary's rather than whatever the
+				// caller selected — a request may name a directory, or nothing at
+				// all and mean every prepared binary.
+				Package: bin.ImportPath,
 			}
 			return attempt
 
@@ -275,6 +281,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 				Output:     tail(result.Output),
 				Err:        context.Cause(ctx),
 				Invocation: runner.CommandOf(spec, result),
+				Package:    bin.ImportPath,
 			}
 			return attempt
 
@@ -301,6 +308,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 				// they can paste — and reproducing the mutant itself is what
 				// `explain` is for.
 				Invocation: runner.CommandOf(spec, result),
+				Package:    bin.ImportPath,
 			}
 			return attempt
 

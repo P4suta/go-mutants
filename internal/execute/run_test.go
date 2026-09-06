@@ -518,6 +518,14 @@ func TestMutantStartFailureCarriesTheBinarysInvocation(t *testing.T) {
 			if command.Dir != bins[0].Dir {
 				t.Errorf("Command().Dir = %q, want the package directory %q", command.Dir, bins[0].Dir)
 			}
+			// The import path as well as the command. An argv names a file in a
+			// directory that is deleted when the run ends; the package is what
+			// a caller can report, group by, and look up afterwards, and it is
+			// the binary that failed rather than whatever the request selected.
+			if failure.Package != bins[0].ImportPath {
+				t.Errorf("Package = %q, want the failing binary's import path %q",
+					failure.Package, bins[0].ImportPath)
+			}
 		})
 	}
 }
@@ -580,6 +588,9 @@ func TestRunOneNamesTheBinaryACancellationCutOff(t *testing.T) {
 		if !slices.Equal(command.Argv, started[0].Argv) || command.Dir != bins[0].Dir {
 			t.Errorf("Command() = %+v, want the argv and directory the binary was started with %q in %q",
 				command, started[0].Argv, bins[0].Dir)
+		}
+		if failure.Package != bins[0].ImportPath {
+			t.Errorf("Package = %q, want the binary that was cut off %q", failure.Package, bins[0].ImportPath)
 		}
 		if got := failure.RetainedOutput(); !strings.Contains(got, "TestSlow") {
 			t.Errorf("RetainedOutput() = %q, want what the killed child had printed", got)
