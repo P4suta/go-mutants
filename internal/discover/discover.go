@@ -452,6 +452,43 @@ type Skip struct {
 	Count int
 }
 
+// A SkipSite is one suppressed candidate, at the coordinates discovery saw it
+// at.
+//
+// [Skip] answers "how much of this file was passed over, and why"; this answers
+// "which of it". They are two views of one event and are recorded together, so
+// grouping the sites of a pass by file and reason reproduces its [Skip] rows
+// exactly — which is the invariant that lets the report go on carrying the
+// aggregate alone.
+//
+// The pair is therefore not a redundancy to collapse. A run report is a
+// document other tools read and diff, and forty coordinates per file is a
+// document nobody would; a listing is read once, by the person who asked why
+// their catalogue is smaller than they expected, and "somewhere in this file"
+// is not an answer for them.
+//
+// One site is one *candidate*, not one expression: two rules proposing an edit
+// at the same position in a suppressed context are two sites at one coordinate,
+// because two edits really were declined there. That is what keeps the sites
+// summing to the counts.
+type SkipSite struct {
+	// Path is the '/'-normalized module-relative path of the file.
+	Path string
+	// Reason is why discovery passed it over.
+	Reason SkipReason
+	// Line is the 1-based line the suppressed candidate's edit would have
+	// started on, or 0 for a whole-file reason ([SkipGenerated], [SkipCgo],
+	// [SkipExcluded]). Such a file was never opened, so there is no site in it
+	// to name and a coordinate here would be an invention — 0 says so.
+	Line int
+	// Column is the 1-based, byte-counted column of that position, or 0 for a
+	// whole-file reason. It is the unadjusted position, exactly as
+	// [Located.Column] is: a `//line` directive relocates a compiler
+	// diagnostic, and this coordinate has to name the byte in the file the
+	// snapshot holds.
+	Column int
+}
+
 // A Result is everything one discovery pass learned.
 type Result struct {
 	// Candidates are the proposed edits, in (path, span start, rule registry
@@ -459,6 +496,9 @@ type Result struct {
 	Candidates []Located
 	// Skips are the recorded reasons, in (path, reason) order.
 	Skips []Skip
+	// SkipSites are the same suppressions one candidate at a time, in
+	// (path, line, column, reason) order. See [SkipSite].
+	SkipSites []SkipSite
 	// ModulePath is the module path of the main module at the snapshot root.
 	ModulePath string
 	// GoVersion is that module's `go` directive — "1.26", not "go1.26.5". It
@@ -533,6 +573,7 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 	return Result{
 		Candidates: d.sortedCandidates(),
 		Skips:      d.sortedSkips(),
+		SkipSites:  d.sortedSkipSites(),
 		ModulePath: module.Path,
 		GoVersion:  module.GoVersion,
 	}, nil
@@ -578,6 +619,9 @@ type discovery struct {
 
 	candidates []Located
 	skips      map[skipKey]int
+	// sites is the same record one suppression at a time, appended in walk
+	// order and sorted on the way out. See [SkipSite].
+	sites []SkipSite
 	// seen deduplicates files across the package variants go/packages returns
 	// for one directory: a package and its "[pkg.test]" twin share every
 	// non-test file.
@@ -596,6 +640,27 @@ func (d *discovery) record(path string, reason SkipReason, n int) {
 		return
 	}
 	d.skips[skipKey{path: path, reason: reason}] += n
+}
+
+// recordSite records one suppression, aggregate and coordinates alike.
+//
+// It is the only way either record is written, and that is the point: the
+// counts and the sites are two views of one event, so a call site that could
+// add to one without the other is a call site where they can drift. Every
+// suppression goes through here, and [SkipSite] carries the invariant that
+// falls out of it.
+func (d *discovery) recordSite(path string, reason SkipReason, line, column int) {
+	d.record(path, reason, 1)
+	d.sites = append(d.sites, SkipSite{Path: path, Reason: reason, Line: line, Column: column})
+}
+
+// recordFile records a whole-file suppression, which has no coordinates.
+//
+// The file was never opened — that is what a whole-file reason means — so
+// nothing here knows where in it a candidate would have been, and line 0 says
+// exactly that rather than pointing at the package clause.
+func (d *discovery) recordFile(path string, reason SkipReason) {
+	d.recordSite(path, reason, 0, 0)
 }
 
 // run walks every package the main module owns, in a fixed order.
@@ -658,6 +723,35 @@ func (d *discovery) sortedSkips() []Skip {
 		return strings.Compare(string(x.Reason), string(y.Reason))
 	})
 	return out
+}
+
+// sortedSkipSites returns the sites in (path, line, column, reason) order.
+//
+// Reading order, and for the same reason `list --explain` prints them: a user
+// who has just been told a file holds four suppressed const expressions wants
+// them in the order they would scroll past, not grouped by a reason they have
+// already been given. The reason is the last key rather than an absent one so
+// that the comparison is total — two rules can propose an edit at one position
+// and be declined for one reason each — and so two passes over the same bytes
+// produce the same bytes here.
+func (d *discovery) sortedSkipSites() []SkipSite {
+	out := slices.Clone(d.sites)
+	slices.SortFunc(out, compareSkipSites)
+	return out
+}
+
+// compareSkipSites is the order [Result.SkipSites] promises.
+func compareSkipSites(x, y SkipSite) int {
+	if c := strings.Compare(x.Path, y.Path); c != 0 {
+		return c
+	}
+	if c := x.Line - y.Line; c != 0 {
+		return c
+	}
+	if c := x.Column - y.Column; c != 0 {
+		return c
+	}
+	return strings.Compare(string(x.Reason), string(y.Reason))
 }
 
 // BuildCatalog feeds a result into the catalogue builder.

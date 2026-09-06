@@ -44,7 +44,7 @@ Discovered → Snapshotted → BaselinePassed → Validated → Instrumented →
 ```
 
 ```text
-packages.Load + types walk        (candidates, skips with reasons)
+packages.Load + types walk        (candidates, skips with reasons+sites)
             |
             v
 sorted snapshot + manifest digest (symlink/junction rejected)
@@ -885,7 +885,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/mutation` | Pure: spans, stable IDs, rules, catalog, score | implemented |
 | `internal/interval` | Pure: interval forest | implemented |
 | `internal/glob` | Pure: `**` glob semantics, fuzzed | implemented |
-| `internal/discover` | `packages.Load`, types walk, candidates, skips | 2 families |
+| `internal/discover` | `packages.Load`, types walk, candidates, skips with their sites | 2 families |
 | `internal/instrument` | Forms S/C/D, flattener, runtime codegen, splicer | implemented |
 | `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
 | `internal/tempowner` | Temporary-directory lock, marker, and orphan sweep | implemented |

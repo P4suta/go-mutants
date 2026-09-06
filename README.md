@@ -297,6 +297,15 @@ compiler's own words and every suppressed site by reason. It is the answer to
 "why is this smaller than I expected", and it cannot be combined with `--json`:
 everything it prints is already in the document.
 
+`go-mutants list --explain` goes a row finer and prints `path:line:col` for
+every suppressed site, so "*which* of the forty expressions in this file was
+passed over" is a question you can answer without reading the file and
+guessing. A file discovery never opened — generated, cgo, or removed by
+`mutation.include` or `mutation.exclude` — has no position to give and is
+printed as the bare path.
+`run --explain` keeps the count per file: the run report carries the aggregate,
+and a document other tools diff should not grow forty positions per file.
+
 `--no-tui` is the escape hatch for a terminal you would rather read as lines —
 a `script` session, a recorded demo. It changes nothing about what the run
 measures. An editor's output pane needs no flag: it is a pipe rather than a

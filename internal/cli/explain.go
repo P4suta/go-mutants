@@ -24,6 +24,11 @@ import (
 // sites for the same reasons, so a user who has learned to read one has learned
 // to read the other.
 //
+// They differ in one row and say so. A listing has the whole discovery pass in
+// memory and prints the coordinates of every suppressed site; a run is
+// rendering a report, which keeps the count per file, so it prints the file and
+// names the command that has the rest.
+//
 // Everything printed here is already in the JSON documents, which is why
 // `--explain` and `--json` are refused together rather than combined: the
 // document is the machine-readable form and this is the human one, and a
@@ -83,9 +88,14 @@ func newExplainer(w io.Writer, color bool) *explainer {
 }
 
 // explainListing writes the skip detail underneath a listing.
-func explainListing(w io.Writer, color bool, skips []catalogSkip) error {
+//
+// The sites come from the discovery pass rather than from the document, and
+// deliberately so: the catalogue document carries the aggregate, exactly as the
+// run report does, and a listing is the one place with a whole pass still in
+// memory to ask for the coordinates.
+func explainListing(w io.Writer, color bool, skips []catalogSkip, sites []discover.SkipSite) error {
 	e := newExplainer(w, color)
-	e.skips(catalogSkipRows(skips))
+	e.skipSites(catalogSkipRows(skips), sites)
 	return e.out.Flush()
 }
 
@@ -125,22 +135,78 @@ func (e *explainer) rejections(rejected []report.Rejected) {
 	}
 }
 
-// skips writes the per-reason breakdown and the files underneath each reason.
+// skips writes the per-reason breakdown with one row per file, which is as
+// much as a run can say.
+//
+// A run report carries the aggregate and nothing finer. That is a decision
+// about a document rather than about the walk: the coordinates exist — every
+// suppression is recorded with them, and `list --explain` prints them — but a
+// document other tools read and diff should not grow forty positions per file
+// for a phase whose output nobody consumes per site. So this names the file and
+// points at the command that names the line, which is a workspace away rather
+// than a re-run away.
+func (e *explainer) skips(rows []skipRow) {
+	e.skipSection(rows,
+		"the report keeps the count per file; `go-mutants list --explain` prints the line and column of each one",
+		func(reason string) {
+			for _, row := range rows {
+				if row.reason == reason {
+					e.printf("  %s  %s\n", row.path, e.paint(styleExplainDetail, countNoun(row.count, "site")))
+				}
+			}
+		})
+}
+
+// skipSites writes the same breakdown with one row per suppressed site.
+//
+// Coordinates are what makes the section answer the question it is read with —
+// which of the forty expressions in this file was passed over, and where do I
+// go to look at it. They cost one position lookup at a place discovery is
+// already holding the token position, which is why the earlier argument against
+// them ("carrying a list the length of the file's expressions") was an argument
+// about a cost that is not paid: the list is the suppressions, not the
+// expressions, and it is already being counted one at a time.
+//
+// One row is one suppressed *candidate*, so a position that two rules both
+// proposed an edit at is printed twice. That is what keeps the rows summing to
+// the count above them, and it is true: two edits really were declined there.
+func (e *explainer) skipSites(rows []skipRow, sites []discover.SkipSite) {
+	e.skipSection(rows, "", func(reason string) {
+		for _, site := range sites {
+			if string(site.Reason) == reason {
+				e.printf("  %s\n", siteLocation(site))
+			}
+		}
+	})
+}
+
+// siteLocation renders one site as `path:line:col`, or as the bare path for a
+// whole-file reason.
+//
+// `path:0:0` would be a position, and there is none: a generated, cgo or
+// excluded file is never opened, so nothing here knows where in it a candidate
+// would have been. The bare path says exactly that.
+func siteLocation(site discover.SkipSite) string {
+	if site.Line == 0 {
+		return site.Path
+	}
+	return site.Path + ":" + strconv.Itoa(site.Line) + ":" + strconv.Itoa(site.Column)
+}
+
+// skipSection writes the heading and one block per reason, with the rows of a
+// block written by the caller.
 //
 // Reasons are the outer grouping because a reason is the actionable half: "this
 // tree has forty constant expressions in it" is one decision to understand,
-// while forty file names are the evidence for it. Within a reason the files
-// keep the report's order, which is (path, reason) — already sorted, already
-// diffable — so two runs over one workspace produce the same block.
+// while forty locations are the evidence for it. Within a reason the rows keep
+// the order their source is already sorted in — (path, reason) for a document's
+// skips, (path, line, column) for a pass's sites — so two runs over one
+// workspace produce the same block and the two can be diffed.
 //
-// Line numbers are deliberately absent. Discovery aggregates its suppressions
-// per file and per reason as it walks, which is what keeps a skip cheap enough
-// to record for every site; keeping the coordinates of each one would mean
-// carrying a list the length of the file's expressions through a phase whose
-// output nobody reads per site. The file and the reason are enough to find
-// them, and inventing precision the input does not have would be worse than
-// leaving it out.
-func (e *explainer) skips(rows []skipRow) {
+// The preamble is the one line that differs between the two commands, and it is
+// written under the heading rather than at the end of the section: it says what
+// kind of rows are about to be read, which is of no use after they have been.
+func (e *explainer) skipSection(rows []skipRow, preamble string, body func(reason string)) {
 	if len(rows) == 0 {
 		return
 	}
@@ -152,6 +218,9 @@ func (e *explainer) skips(rows []skipRow) {
 		"suppressed sites ("+strconv.Itoa(total)+")"))
 	e.printf("%s\n", e.paint(styleExplainDetail,
 		"discovery passed these over; they are never candidates, so they are in no score"))
+	if preamble != "" {
+		e.printf("%s\n", e.paint(styleExplainDetail, preamble))
+	}
 
 	for _, reason := range reasonsOf(rows) {
 		count := 0
@@ -164,11 +233,7 @@ func (e *explainer) skips(rows []skipRow) {
 		if explanation := discover.SkipReason(reason).Explanation(); explanation != "" {
 			e.printf("%s\n", e.paint(styleExplainDetail, "  "+explanation))
 		}
-		for _, row := range rows {
-			if row.reason == reason {
-				e.printf("  %s  %s\n", row.path, e.paint(styleExplainDetail, countNoun(row.count, "site")))
-			}
-		}
+		body(reason)
 	}
 }
 

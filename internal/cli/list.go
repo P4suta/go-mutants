@@ -202,7 +202,10 @@ func (o *listOptions) execute(cmd *cobra.Command, args []string) error {
 	if o.json {
 		return writeCatalogJSON(out, doc)
 	}
-	return o.writeListing(out, doc)
+	// The sites travel beside the document rather than in it: the catalogue is
+	// a published schema carrying the aggregate, and `--explain` is the human
+	// half, which is the half with room for a row per suppressed site.
+	return o.writeListing(out, doc, found.result.SkipSites)
 }
 
 // listOverlay turns the flags the user actually typed into a configuration
@@ -704,7 +707,7 @@ func writeCatalogJSON(w io.Writer, doc catalogDocument) error {
 // same buffer, so that a listing somebody is reading is on the screen before
 // the explanation of what it left out — and so that a failure to write the
 // explanation cannot lose the listing.
-func (o *listOptions) writeListing(w io.Writer, doc catalogDocument) error {
+func (o *listOptions) writeListing(w io.Writer, doc catalogDocument, sites []discover.SkipSite) error {
 	color := console.ColorEnabled(w, o.noColor)
 	r := &listRenderer{
 		out:   bufio.NewWriter(w),
@@ -718,7 +721,7 @@ func (o *listOptions) writeListing(w io.Writer, doc catalogDocument) error {
 	if !o.explain {
 		return nil
 	}
-	return explainListing(w, color, doc.Skips)
+	return explainListing(w, color, doc.Skips, sites)
 }
 
 // The listing styles. As in internal/console these are the eight ANSI colours

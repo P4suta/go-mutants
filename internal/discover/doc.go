@@ -52,6 +52,14 @@
 // that is the region a walker would have declined to descend into, so it is
 // the reason that stays true no matter what happens inside it.
 //
+// Each of those is recorded twice over, by one call so that the two cannot
+// disagree: as a [Skip], the count per file and reason that the catalogue
+// document and the run report carry, and as a [SkipSite], the line and column
+// of the individual suppression that `list --explain` prints. Grouping the
+// sites of a pass by file and reason therefore reproduces its [Skip] rows
+// exactly. A whole-file reason has no coordinates to give — the file was never
+// opened — and its site says so with line 0 rather than pointing at line 1.
+//
 // [SkipUnnameableDeclType] is the widest of those, and deliberately so: it is
 // one reason with one string, and it covers every site v1's guard forms cannot
 // express. Beyond the type that cannot be spelled that it is named for, the
@@ -118,10 +126,11 @@
 //
 // Two discoveries over the same bytes produce identical results, field for
 // field. Candidates are emitted in (path, span start, rule registry position)
-// order and skips in (path, reason) order, both compared byte-wise with no
-// locale involved. Nothing downstream — the catalog, the dense runtime
-// indices, a shard assignment — can drift because a map was ranged over or a
-// directory was read in a different order.
+// order, skips in (path, reason) order and skip sites in (path, line, column,
+// reason) order, all compared byte-wise with no locale involved. Nothing
+// downstream — the catalog, the dense runtime indices, a shard assignment —
+// can drift because a map was ranged over or a directory was read in a
+// different order.
 //
 // # The go command
 //
