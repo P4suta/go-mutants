@@ -128,7 +128,8 @@ account of its cost is in it.
 
 Every key in this section is **optional**: a document an older build wrote does
 not have it and still validates, which is why none of this needed a schema
-version. Every one of them is written by every run, and **omitted by
+version. Each is written when the run measured it (an interrupted run has no
+`validation` to report), and every one of them is **omitted by
 `report merge`** — see the merge rule below.
 
 | Field | Contents |
