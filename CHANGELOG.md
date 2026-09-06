@@ -14,6 +14,40 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`run -v` and `-vv` answer "where did the time go, and why did this mutant
+  get that outcome" without a trace file.** `-v` adds a
+  `phase <name>: done (<duration>)` line to every phase, `killed by <import
+  path>` and `(<n> attempts)` to the end of a result line, and under a survivor
+  the suites that ran the line and did not notice — `covered by: …`, or
+  `no test binary` when nothing runs it at all. It also states what a sweep
+  reclaimed, and the *whole* reason a coverage-guided run had no coverage rather
+  than the one line the warning folds it onto. `-vv` prints one line for every
+  event the run records, indented two spaces, with durations in place of the
+  timestamps: the trace as it happens, with no directory written. Recorded lines
+  keep their recorded order among themselves and every one of them is indented,
+  so `grep '^  '` reads the account and `grep -v '^  '` reads the run without
+  it; where they interleave with the run's own lines is up to scheduling, and a
+  line is as wide as the command it quotes, because an argument vector is meant
+  to be pasted back into a shell.
+
+  Verbosity is a renderer, not a second source of truth. Every one of those
+  facts was already on the engine's event stream or in the recording the run
+  keeps of itself whether or not anybody asked, so `-v` renders events the
+  console had been dropping and `-vv` asks the engine to fan its recording onto
+  the same stream (`Options.PublishTrace`, whose published branch is digested,
+  so watching a run costs no copy of any captured output) — no new event, no
+  second path from the engine to a console, and nothing computed by the renderer
+  that the report could disagree with. The one field that was added is
+  `engine.Warning.Detail`, which carries the whole reason a coverage-guided run
+  had no coverage so that `-v` prints it under the warning it explains rather
+  than wherever the recording happened to reach the console. A run at the
+  default verbosity is byte-identical to what it printed before the flag
+  existed, traced or not, which is what a golden in internal/console now pins.
+
+  `-v` implies `--no-tui`: the lines exist to be scrolled back through, grepped
+  and diffed, and a dashboard erases what it draws. It is refused with `--quiet`
+  — the two directions of one dial — and with `--json`, on the same terms as
+  `--explain`. Deeper than `-vv` is `-vv`.
 - **A failed run leaves enough behind to be diagnosed without running it again,
   and `run --keep-temp` leaves the tree it ran in.** Two halves of one
   complaint: a run that failed in CI could only be investigated by reproducing

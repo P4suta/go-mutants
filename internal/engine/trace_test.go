@@ -845,3 +845,66 @@ func TestNotesAreRecordedRightAfterRunStart(t *testing.T) {
 		}
 	}
 }
+
+// TestAPublishedRecordingCarriesTheDigestAndNotTheBytes is the price of `-vv`,
+// held down.
+//
+// A recorded execution carries the captured output so that the sink writing it
+// to disk can preserve it beside the stream. The fan-out onto the event stream
+// is a copy for a screen: it deep-copies every event, the renderer never prints
+// those bytes — an `exec` line is the exit status, the duration and the argument
+// vector — and a mutant run can capture a megabyte of them. Publishing them
+// would make watching a run cost a copy of every test binary's output.
+func TestAPublishedRecordingCarriesTheDigestAndNotTheBytes(t *testing.T) {
+	t.Parallel()
+
+	captured := []byte(strings.Repeat("--- FAIL: TestClamp (0.00s)\n", 64))
+	events := make(chan Event, 16)
+	s := &session{events: events}
+	kept := trace.NewMemorySink(0)
+	s.trace = trace.New(s.sink(Options{TraceSink: kept, PublishTrace: true}), tickingClock(),
+		trace.StartRecord{Kind: trace.StartKindRun, RunID: "20260907T120000Z-abcd"})
+	s.trace.Exec(trace.ExecRecord{
+		Kind:   trace.ExecKindMutantRun,
+		Argv:   []string{"/tmp/go-mutants-tmp-1/clamp.test", "-test.timeout=10s"},
+		Output: captured,
+	})
+	s.trace.MutantExec(trace.MutantRecord{ID: strings.Repeat("a", 64), Attempt: 1, OutputTail: "--- FAIL"})
+	s.drainPublished()
+	close(events)
+
+	var published []trace.Event
+	for e := range events {
+		if traced, ok := e.(Traced); ok {
+			published = append(published, traced.Event)
+		}
+	}
+
+	var execs int
+	for _, e := range published {
+		if e.Type == trace.TypeExec {
+			execs++
+			if len(e.Exec.Output) != 0 {
+				t.Errorf("a published exec carries %d bytes of captured output", len(e.Exec.Output))
+			}
+			if e.Exec.OutputBytes != len(captured) || e.Exec.OutputSHA256 == "" {
+				t.Errorf("the published exec lost the digest of what it captured: %d bytes, sha %q",
+					e.Exec.OutputBytes, e.Exec.OutputSHA256)
+			}
+		}
+		if e.Type == trace.TypeMutantExec && e.Mutant.OutputTail != "" {
+			t.Errorf("a published attempt carries the killing binary's output: %q", e.Mutant.OutputTail)
+		}
+	}
+	if execs != 1 {
+		t.Fatalf("published %d exec events, want 1: %v", execs, typesOf(published))
+	}
+
+	// The sink that was asked to keep the bytes still has them, which is what
+	// makes this a property of the fan-out rather than of the recorder.
+	for _, e := range kept.Events() {
+		if e.Type == trace.TypeExec && len(e.Exec.Output) != len(captured) {
+			t.Errorf("the run's own recording kept %d of %d bytes", len(e.Exec.Output), len(captured))
+		}
+	}
+}

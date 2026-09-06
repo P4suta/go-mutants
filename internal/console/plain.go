@@ -84,6 +84,17 @@ type PlainRenderer struct {
 	// survivors again, so nothing actionable is lost. Errors are not this
 	// type's to print and are unaffected.
 	Quiet bool
+	// Verbosity is how much of the run's own account to draw: [VerbosityNormal],
+	// [VerbosityDetail] for `-v`, or [VerbosityTrace] for `-vv`. A deeper value
+	// is the deepest level.
+	//
+	// It is a field rather than a fifth argument to [NewPlain] because the zero
+	// value is the whole of the contract: a caller that says nothing about
+	// verbosity gets exactly what this package printed before the levels
+	// existed, byte for byte. It is the opposite of Quiet and the two are never
+	// both set — internal/cli refuses the pair — so this type never has to
+	// decide which of them wins.
+	Verbosity int
 }
 
 // NewPlain returns a renderer writing buffered lines to out.
@@ -147,12 +158,12 @@ func (r *PlainRenderer) Run(ctx context.Context, events <-chan engine.Event) err
 // the other direction: the mutant was reached and abandoned when the run was
 // cut short, which the closing counts state once rather than a line at a time.
 //
-// The last two are the run's account of itself rather than its findings.
-// [engine.PhaseCompleted] and [engine.Traced] are what `-v` and `-vv` render,
-// and a run at the default verbosity is byte-identical whether or not it was
-// traced: a recorded subprocess per line would bury the handful of survivors
-// this output exists to show. They are cases here rather than the default so
-// that the choice is a line somebody reviewed.
+// The last two are the run's account of itself rather than its findings, and
+// they are the two [PlainRenderer.Verbosity] turns on. [engine.PhaseCompleted]
+// and [engine.Traced] print nothing at [VerbosityNormal], so a run at the
+// default verbosity is byte-identical whether or not it was traced: a recorded
+// subprocess per line would bury the handful of survivors this output exists to
+// show. See [PlainRenderer.phaseCompleted] and [PlainRenderer.traced].
 //
 // [engine.DirectoryKept] is the opposite judgement and prints even under
 // --quiet: it names a directory the user explicitly asked go-mutants to leave
@@ -226,10 +237,10 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 		return "", false
 
 	case engine.PhaseCompleted:
-		return "", false
+		return r.phaseCompleted(e)
 
 	case engine.Traced:
-		return "", false
+		return r.traced(e.Event)
 
 	case engine.DirectoryKept:
 		// A path the run produced, so it reads like the report block's paths and
@@ -247,7 +258,10 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 		return r.result(e.Result)
 
 	case engine.Warning:
-		return r.paint(styleWarning, "warning "+e.Code+":") + " " + e.Message, true
+		// The message at every verbosity, and under `-v` whatever else the
+		// warning had to say — which is nothing at all for every warning but
+		// one. See [PlainRenderer.warningDetail].
+		return r.paint(styleWarning, "warning "+e.Code+":") + " " + e.Message + r.warningDetail(e), true
 
 	case engine.ReportPublished:
 		return publishedPaths(e), true
@@ -302,6 +316,11 @@ func publishedPaths(e engine.ReportPublished) string {
 // settles, and again in the closing block — rather than only to the first of
 // them. A rule that depended on where the line was printed would leave a quiet
 // run, which prints no live results, showing survivors with nothing to act on.
+//
+// `-v` adds to both ends of it and moves nothing: [PlainRenderer.attribution]
+// after the duration, and [PlainRenderer.covering] under the diff. At
+// [VerbosityNormal] both are empty, which is what keeps this line the line it
+// has always been.
 func (r *PlainRenderer) result(m engine.MutantResult) (string, bool) {
 	label := ResultLabel(m.Outcome, m.Uncovered)
 	if label == "" {
@@ -312,13 +331,15 @@ func (r *PlainRenderer) result(m engine.MutantResult) (string, bool) {
 		m.Path + ":" + strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
 		r.paint(styleRule, m.Rule) + "  " +
 		FormatText(m.Original) + " -> " + FormatText(m.Replacement) + "  " +
-		r.paint(styleDetail, "("+FormatDuration(m.Duration)+cachedSuffix(m)+")")
+		r.paint(styleDetail, "("+FormatDuration(m.Duration)+cachedSuffix(m)+")") +
+		r.attribution(m)
 	if m.Outcome != mutation.OutcomeSurvived {
 		return line, true
 	}
 	return line + "\n" +
 		diffIndent + r.paint(styleRemoved, "- "+FormatText(m.Original)) + "\n" +
-		diffIndent + r.paint(styleAdded, "+ "+FormatText(m.Replacement)), true
+		diffIndent + r.paint(styleAdded, "+ "+FormatText(m.Replacement)) +
+		r.covering(m), true
 }
 
 // cachedSuffix marks a result this run adopted rather than measured.

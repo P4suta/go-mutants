@@ -103,6 +103,13 @@ GO_MUTANTS_KEEP_TEMP=1|true|always|on-failure asks for the same. It is off by
 default because a kept snapshot is a whole copy of your module and nothing will
 ever remove it.
 
+-v prints the same run in more detail: how long each phase took, which test
+binary killed each mutant, how many attempts it took, and which suites cover a
+survivor — or that none does. -vv adds one line for every event the run records,
+which is the trace printed as it happens rather than read back afterwards, so
+two runs can be diffed without either of them writing a file. Both print lines
+rather than the dashboard, and neither can be combined with --quiet or --json.
+
 A completed run exits 0 unless a policy gate the user opted into failed. Nothing
 here fails a build by default: --strict and policy.minimum_score are how you ask
 for one.`
@@ -124,6 +131,7 @@ type runOptions struct {
 	keepTemp  string
 	jobs      int
 	timeout   time.Duration
+	verbose   int
 	strict    bool
 	noStrict  bool
 	json      bool
@@ -138,6 +146,25 @@ type runOptions struct {
 	// failed run writes is assembled from it after everything else is done.
 	recording *traceRecording
 }
+
+// verbosity is the level `-v` asked for, clamped to what the renderer has.
+//
+// Deeper than the deepest level is the deepest level. `-vvv` is a typo with one
+// obvious meaning, and refusing it — or, worse, accepting it as a level nothing
+// implements — would be pedantry in front of somebody who is already trying to
+// see more.
+func (o *runOptions) verbosity() int { return min(o.verbose, console.MaxVerbosity) }
+
+// publishTrace reports whether the engine should fan its recording out onto the
+// event stream.
+//
+// Every verbose level needs it, not only `-vv`. What `-v` prints of the
+// recording is two events — what a sweep reclaimed, and the whole reason
+// coverage was given up — and both are recorded rather than published as engine
+// events, because they are the account of the run rather than its findings. The
+// alternative was a second path for those two facts to reach a console by,
+// which is two sources of truth for one sentence.
+func (o *runOptions) publishTrace() bool { return o.verbosity() >= console.VerbosityDetail }
 
 // The `--keep-temp` modes, as they are written on the command line.
 //
@@ -183,8 +210,11 @@ func parseKeepTemp(value string) (engine.KeepTemp, error) {
 }
 
 // newRunCommand builds the `run` command.
-func newRunCommand() *cobra.Command {
-	o := &runOptions{}
+func newRunCommand() *cobra.Command { return newRunCommandWith(&runOptions{}) }
+
+// newRunCommandWith builds it around one flag destination, so that a test can
+// read what a command line filled in without driving a whole run.
+func newRunCommandWith(o *runOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [flags] [-- test argv ...]",
 		Short: "Snapshot the workspace, prove the baseline, and run the mutants",
@@ -276,6 +306,13 @@ func newRunCommand() *cobra.Command {
 		"after the summary, print every rejected mutant with the compiler's own words, and the suppressed sites by reason")
 	flags.BoolVarP(&o.quiet, "quiet", "q", false,
 		"print only the baseline summary, warnings, and the closing summary block")
+	// A count rather than a level: `-v` and `-vv` are what a user types, and a
+	// `--verbose=2` that had to be spelled out would be a level nobody reaches
+	// for. It is the opposite end of the same axis as --quiet, which is why the
+	// two are refused together rather than resolved.
+	flags.CountVarP(&o.verbose, "verbose", "v",
+		"print more: -v adds phase durations, what killed each mutant, and which suites cover a survivor; "+
+			"-vv adds one line per recorded event. Implies --no-tui")
 	flags.BoolVar(&o.noColor, "no-color", false,
 		"never colourise output, even on a terminal; implies --no-tui")
 	flags.BoolVar(&o.noTUI, "no-tui", false,
@@ -302,6 +339,9 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if err = checkExplain(o.explain, o.json); err != nil {
+		return err
+	}
+	if err = checkVerbose(o.verbose, o.quiet, o.json); err != nil {
 		return err
 	}
 	// Checked before a workspace is copied and a baseline is measured. A prefix
@@ -413,7 +453,9 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		dashboard = tui.New(rendered, dashboardInput(cmd.InOrStdin()), Version, cancel)
 		renderer = dashboard
 	} else {
-		renderer = console.NewPlain(rendered, Version, color, o.quiet)
+		plain := console.NewPlain(rendered, Version, color, o.quiet)
+		plain.Verbosity = o.verbosity()
+		renderer = plain
 	}
 
 	// The renderer starts first and is joined last: the engine's sends block,
@@ -443,6 +485,7 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		RunID:          runID,
 		TraceSink:      recording.sink,
 		TraceDirectory: recording.directory,
+		PublishTrace:   o.publishTrace(),
 		Notes:          recording.notes,
 		KeepTemp:       keepTemp,
 	})
@@ -667,6 +710,41 @@ func checkExplain(explain, asJSON bool) error {
 		Message: "--explain and --json cannot be combined: everything --explain prints is already in the document, " +
 			"and mixing prose into it would make the output neither readable nor parsable",
 		Hint: "drop --explain and read `rejected[]` and `skips[]` out of the document, or drop --json for the prose",
+	}
+}
+
+// checkVerbose refuses `-v` alongside the two flags that mean the opposite of
+// it.
+//
+// `--quiet` asks for less of the same output and `-v` for more of it: they are
+// two ends of one axis, and a command line that names both has no reading that
+// is not a guess about which the user meant. `--json` is the same judgement as
+// `--explain` with `--json` — the document is the whole of what that flag
+// writes, and prose interleaved with it would make the output neither readable
+// nor parsable. Both are semantic checks rather than cobra's
+// MarkFlagsMutuallyExclusive for the reason [checkExplain] is: neither flag is
+// wrong on its own, and the reason is worth a sentence.
+func checkVerbose(verbose int, quiet, asJSON bool) error {
+	if verbose == 0 {
+		return nil
+	}
+	switch {
+	case quiet:
+		return &Error{
+			Code: CodeConflictingFlags,
+			Message: "--verbose and --quiet cannot be combined: they are the two directions of the same dial, " +
+				"and a run cannot print both more and less than it usually does",
+			Hint: "drop --quiet for the detail, or drop -v for the shortened output",
+		}
+	case asJSON:
+		return &Error{
+			Code: CodeConflictingFlags,
+			Message: "--verbose and --json cannot be combined: the run report is the whole of what --json writes, " +
+				"and the verbose lines are prose about how it was arrived at",
+			Hint: "drop -v for the document, or drop --json and add --trace to keep the account this prints on disk",
+		}
+	default:
+		return nil
 	}
 }
 

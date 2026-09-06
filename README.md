@@ -277,6 +277,7 @@ go-mutants trace summary
 | `--jobs N`, `--timeout D` | how many mutants at once, and how long each may take |
 | `--strict`, `--no-strict` | whether an unexpected survivor exits 1 |
 | `--json`, `--explain`, `--quiet` | the document, the detail underneath it, or less of it |
+| `-v`, `-vv` | more of it: `-v` adds phase durations, what killed each mutant and which suites cover a survivor; `-vv` adds one line per recorded event. Implies `--no-tui`, and refused with `--quiet` or `--json` |
 | `--no-color`, `--no-tui` | plain text, and plain lines instead of the dashboard |
 
 `--changed` executes only the mutants sitting on lines you have changed since a
@@ -307,6 +308,36 @@ guessing. A file discovery never opened — generated, cgo, or removed by
 printed as the bare path.
 `run --explain` keeps the count per file: the run report carries the aggregate,
 and a document other tools diff should not grow forty positions per file.
+
+`-v` answers "where did the time go, and why did this mutant get that
+outcome" without a trace file. It adds a `phase <name>: done (<duration>)` line
+to each phase, `killed by <import path>` and `(<n> attempts)` to the end of a
+result line, and under a survivor the suites that ran the line and did not
+notice — `covered by: …`, or `no test binary` when nothing runs it at all.
+`-vv` adds one line for every event the run records, indented two spaces, so a
+run can be diffed against the run before it:
+
+```text
+  exec go-test-c killable exit 0 231ms /usr/bin/go test -c -o …/88723483.test
+  coverage-map 5d500fbf covered by [fixture.example/killable]
+  cache lookup 5d500fbf hit
+  exec mutant-run 4fcc205c exit 1 2ms …/88723483.test -test.timeout=20s
+  attempt 1 4fcc205c worker 0 killed 2ms [fixture.example/killable]
+```
+
+That is the trace, printed as it happens rather than read back afterwards: the
+same events `--trace` writes, rendered by the same console the run is already
+using. Durations, never timestamps, and one line per event. The recorded lines
+keep their recorded order among themselves, but where they fall among the run's
+own lines is up to scheduling — they arrive through a forwarder that never makes
+the run wait for a terminal — so the two streams are separated by their
+indentation: `grep '^  '` is the account, `grep -v '^  '` is the run without it.
+A line is as wide as the command it quotes, because an argument vector is meant
+to be pasted back into a shell, and it carries no sequence number; `--trace`
+writes the numbered stream. Paths naming the run's own temporary directory are
+new every run, so two `-vv` logs differ there whatever else they agree on. Both
+levels print lines rather than the dashboard, and neither can be combined with
+`--quiet` or `--json`.
 
 `--no-tui` is the escape hatch for a terminal you would rather read as lines —
 a `script` session, a recorded demo. It changes nothing about what the run
