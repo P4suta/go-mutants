@@ -221,9 +221,10 @@ whether it is *shown*, and the two are independent. What a line carries is the
 payload's own fields, with durations in place of the timestamps (a console that
 printed the stamps would make every line of two runs differ) and every line
 break in the finished line spent on a space, so that counting lines counts
-events. The lines carry no `seq`: this stream is the numbered one. They keep
-their recorded order among themselves, but where they fall among the run's own
-output is up to scheduling — they reach the console through a forwarder that
+events. The lines carry no `seq`; the numbered stream is the `trace.jsonl` that
+`--trace` writes, and a console line matches it by content, not number. They
+keep their recorded order among themselves, but where they fall among the run's
+own output is up to scheduling — they reach the console through a forwarder that
 never makes a run wait for a terminal — so the indentation is what separates the
 two streams, and `grep '^  '` or `grep -v '^  '` is how. A line is as wide as the
 command it quotes rather than wrapped, because an argument vector is worth
