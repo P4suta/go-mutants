@@ -219,7 +219,12 @@ func Schedule(
 	if retried > 0 {
 		retryStage = opts.Trace.Stage("retry", countNoun(retried, "timeout"))
 	}
-	skipped := false
+	// Whether the pass left a mutant unretried. Two different things reach it:
+	// a mutant the pass never started, and one whose retry a cancellation cut
+	// off. The second is invisible in the control flow below — the context was
+	// clear when the attempt began and [RunOne] reports a killed child as
+	// not-run rather than as an error — so it is read off the attempt.
+	unretried := false
 	for i := range mutants {
 		if !pending[i] {
 			continue
@@ -230,7 +235,7 @@ func Schedule(
 			// pretend the run measured something it did not.
 			results[i].Final = mutation.OutcomeNotRun
 			hooks.finish(results[i])
-			skipped = true
+			unretried = true
 			continue
 		}
 
@@ -238,16 +243,22 @@ func Schedule(
 		attempt := RunOne(ctx, retryOpts, mutants[i], bins)
 		record(&results[i], attempt)
 		opts.Trace.MutantExec(attemptRecord(mutants[i], attempt, retryAttempt, retryWorker))
+		if attempt.Outcome == mutation.OutcomeNotRun {
+			// Started and killed. Nothing else produces this outcome here: a
+			// retry that ran is killed, survived or timed out, and a failure of
+			// go-mutants itself is errored.
+			unretried = true
+		}
 		confirm(&results[i], attempt)
 		hooks.finish(results[i])
 	}
 	// Succeeded says the pass ran to its end, which it does whether or not the
 	// retries reproduced anything: what each one decided is the attempt's own
 	// event, and a stage that reported a mutant's verdict would be a second,
-	// coarser answer to a question already answered. A pass a cancellation left
-	// mutants unretried in did not do the one thing it exists for — those
-	// mutants stay not-run — and says so.
-	retryStage(stageResult(skipped))
+	// coarser answer to a question already answered. A pass that left a mutant
+	// unretried did not do the one thing it exists for — that mutant's timeout
+	// was never reproduced and its verdict stays not-run — and says so.
+	retryStage(stageResult(unretried))
 
 	if ctx.Err() != nil {
 		interrupted := &Error{
@@ -309,9 +320,9 @@ func attemptRecord(m MutantRun, attempt Attempt, number, worker int) trace.Mutan
 }
 
 // stageResult is what the retry pass came to: failed when it left a mutant
-// unretried, succeeded when it reached every one of them.
-func stageResult(skipped bool) string {
-	if skipped {
+// unretried, succeeded when it reproduced every timeout it was given.
+func stageResult(unretried bool) string {
+	if unretried {
 		return trace.ResultFailed
 	}
 	return trace.ResultSucceeded

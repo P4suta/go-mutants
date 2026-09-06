@@ -1110,6 +1110,53 @@ func TestScheduleRecordsARetryPassACancellationSkippedAsFailed(t *testing.T) {
 	}
 }
 
+// TestScheduleRecordsARetryPassACancellationCutOffAsFailed is the same claim
+// about the retry that *did* start.
+//
+// A retry the signal killed mid-suite is not visible in the pass's own control
+// flow: the loop asked the context before starting it and got no cancellation,
+// and [RunOne] comes back with the not-run outcome rather than with an error.
+// The mutant is left exactly as unretried as one the pass never reached — its
+// timeout was never reproduced and its verdict is not-run — so the stage has to
+// close the same way, or a run stopped during its last retry would read as a
+// pass that finished.
+func TestScheduleRecordsARetryPassACancellationCutOffAsFailed(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	attempts := newAttemptCounter()
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if attempts.next(activeOf(c)) == 1 {
+			return timedOut()
+		}
+		// The retry started, and the signal arrived while it was running.
+		cancel()
+		return cancelled()
+	}}
+	opts, sink := traced(t, f, options(f, 1))
+
+	results, err := execute.Schedule(ctx, opts,
+		mutants(mutantTimeout, "slow"), testBins("example.com/a"), execute.Hooks{})
+	if got := execute.CodeOf(err); got != execute.CodeInterrupted {
+		t.Fatalf("Schedule failed with %q, want %q: %v", got, execute.CodeInterrupted, err)
+	}
+	if got := len(results[0].Attempts); got != 2 {
+		t.Fatalf("the mutant kept %d attempts, want the timeout and the retry that was cut off", got)
+	}
+	if got := results[0].Final; got != mutation.OutcomeNotRun {
+		t.Fatalf("the cut-off mutant settled as %s, want %s", got, mutation.OutcomeNotRun)
+	}
+
+	stages := eventsOf(sink, trace.TypeStage)
+	if len(stages) != 2 {
+		t.Fatalf("the recording holds %d stage events, want the retry pass's started/finished pair", len(stages))
+	}
+	if got := stages[1].Stage.Result; got != trace.ResultFailed {
+		t.Errorf("the retry pass finished as %q, want %q: the mutant it started is still unretried",
+			got, trace.ResultFailed)
+	}
+}
+
 // TestScheduleRecordsNoRetryStageWhenNothingTimedOut keeps the stage a
 // statement about work that happened. A run in which nothing timed out has no
 // serial pass, and a zero-length "retry" in every recording would be a line
