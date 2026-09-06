@@ -771,3 +771,77 @@ func TestSweepReadsTheRunsOwnClock(t *testing.T) {
 			got.Removed, []string{legacy})
 	}
 }
+
+// TestNotesAreRecordedRightAfterRunStart puts the caller's notes where they
+// happened.
+//
+// The two things worth recording about a recording are decided outside the run:
+// a trace directory refused before the engine was called, and the collection of
+// older recordings that ran before this one opened its own. Both are facts about
+// the moment the recording began, so they belong immediately after the run-start
+// and nowhere else — not appended to the end, where they would have to displace
+// the run-end a reader relies on being the last line, and not left on a console
+// where the account of the run does not have them.
+//
+// The recorder stamps them, which is the other half: a note carries the sequence
+// number, timestamp and elapsed time of the moment it was recorded, exactly like
+// every other event, rather than a moment its author had to invent.
+func TestNotesAreRecordedRightAfterRunStart(t *testing.T) {
+	t.Parallel()
+
+	notes := []trace.NoteRecord{
+		{Kind: trace.NoteTraceUnavailable, Detail: "the trace directory was refused"},
+		{Kind: trace.NoteTraceGC, Code: "GOM1013", Detail: "removed 2 recordings"},
+	}
+	base := func() Options {
+		return Options{
+			Config:        config.Defaults(),
+			WorkspaceRoot: "   ",
+			RunID:         "20260907T120000Z-abcd",
+			now:           tickingClock(),
+		}
+	}
+
+	opts := base()
+	sink := trace.NewMemorySink(0)
+	opts.TraceSink = sink
+	opts.Notes = notes
+	if _, _, err := recording(t, opts); CodeOf(err) != CodeWorkspaceRoot {
+		t.Fatalf("Run = %v, want the workspace root refusal", err)
+	}
+
+	events := sink.Events()
+	if len(events) < 1+len(notes) {
+		t.Fatalf("the run recorded %d events, want at least the run-start and %d notes", len(events), len(notes))
+	}
+	if events[0].Type != trace.TypeRunStart {
+		t.Fatalf("the recording opens with a %s, want a run-start", events[0].Type)
+	}
+	for i, want := range notes {
+		event := events[1+i]
+		if event.Type != trace.TypeNote || event.Note == nil {
+			t.Fatalf("event %d is a %s, want the note %q right after the run-start", event.Seq, event.Type, want.Kind)
+		}
+		if *event.Note != want {
+			t.Errorf("event %d recorded %+v, want %+v", event.Seq, *event.Note, want)
+		}
+		if event.Seq != int64(2+i) || event.Timestamp == "" {
+			t.Errorf("event %d is stamped %d/%q, want the recorder's own numbering and clock",
+				event.Seq, event.Seq, event.Timestamp)
+		}
+	}
+
+	// And a run given none records none: the notes are the caller's, not a
+	// section of every recording.
+	plain := base()
+	plainSink := trace.NewMemorySink(0)
+	plain.TraceSink = plainSink
+	if _, _, err := recording(t, plain); CodeOf(err) != CodeWorkspaceRoot {
+		t.Fatalf("Run = %v, want the workspace root refusal", err)
+	}
+	for _, event := range plainSink.Events() {
+		if event.Type == trace.TypeNote {
+			t.Errorf("a run with no notes recorded %+v", *event.Note)
+		}
+	}
+}

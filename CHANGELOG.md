@@ -58,6 +58,81 @@ Entries say *why* a change was made, not only what changed.
   runtime write about a catalogue that is not this one and have it read as an
   ordinary rejection. A consumer can delete its own catalogue validation and its
   unknown-index defences.
+- **`run --trace` and `GO_MUTANTS_TRACE`, with a directory go-mutants owns and
+  collects — and every run recording whether or not you ask.** The engine has
+  been able to account for itself since the change below; nothing asked it to.
+  Now `run --trace` does, `--trace=DIR` names somewhere else, and
+  `GO_MUTANTS_TRACE=1|true|DIR` asks for the same thing from the invocation you
+  cannot add a flag to. The variable becomes the flag inside `cli.Execute` and
+  nowhere else, so there is one description of what the option means and one
+  place its precedence is decided; an explicit flag always wins, and nothing is
+  ever inserted after `--`, where the argument vector belongs to your test
+  command.
+
+  The part that is not opt-in is the point. A run that passes no flag still
+  records, into a 4096-event ring in memory, because the failure nobody expected
+  is exactly the failure nobody thought to pass `--trace` for — and an account
+  that exists only when somebody predicted they would need it is an account of
+  the runs that went fine. The ring costs a bounded amount once, writes no file,
+  and is what the diagnostics bundle of a failed run will be assembled from.
+
+  A recording lands in `<report.directory>/trace/<run-id>/`, named by the same id
+  the report carries so that the two can be paired afterwards. That directory is
+  not a matter of taste: `snapshot.Create` excludes `report.directory` and
+  nothing else in the workspace, and a recording grows while the run digests the
+  tree — so a stream written anywhere else inside the workspace would make the
+  tree change under the run, and the run would report drift it caused itself. A
+  `--trace=DIR` inside the workspace and outside that directory is therefore
+  refused, symbolic links resolved on the longest existing prefix so that a name
+  is judged by where it lands rather than by how it was spelled. The refusal
+  costs a `trace-unavailable` note in the recording and a `warning GOM1013` on
+  standard error; the run goes on, into the ring, and exits on its own verdict.
+  A diagnostic that can fail the run it is a diagnostic of inverts the point of
+  having one.
+
+  Every byte a run writes has an owner and a collector, and this one has both. A
+  traced run prunes its trace root to the newest ten recordings *as it opens its
+  own*, and records what it removed as a `trace-gc` note. Collecting before the
+  run's own directory exists is what keeps the rule free of an exception
+  protecting the recording being written. `go-mutants trace clean [--keep N]` is
+  the same collector run by hand, and it takes the trace directory itself away
+  with the last recording in it, so a cleaned workspace looks like one that was
+  never traced.
+
+  Two things are never collected. Only a directory named by a run id and holding
+  a `trace.jsonl` is a recording at all, so a file or a directory somebody else
+  keeps beside them survives. And a recording whose stream does not end with its
+  `run-end` is left alone — a run in progress, or one that died — because the
+  account of the crash is the one you most want, and a collector that took it
+  while keeping ten accounts of runs that went fine would be collecting exactly
+  backwards. It is also what makes a live run safe from a concurrent
+  `trace clean` rather than only from being the newest name in the root;
+  `trace clean --all` is how somebody who has read them says so. Nothing is
+  added under `TMPDIR`: a recording is something you attach to a bug report, and
+  a run's temporary parent is swept by the next run of the same root.
+
+  The two notes the command line contributes — the refusal and the collection —
+  are handed to the run through the new `engine.Options.Notes` rather than
+  written into the stream by the CLI, and the recorder emits them immediately
+  after the `run-start`, which is the moment they are about. Sequence numbers,
+  timestamps and the position of the last line belong to the recorder: a caller
+  splicing an event into a stream it does not number is a caller that can break
+  every one of them.
+
+  `go-mutants trace list|summary|diff|validate|clean` reads what was written.
+  `summary` says where a run went — phases and stages with their durations, the
+  subprocesses tallied by kind, the mutant outcomes — and both it and `list` say
+  first whether the recording is complete, lossy, or interrupted, which is the
+  thing to know before reading a count out of one. `validate` checks every line
+  against the published schema rather than the first, because a recording is a
+  stream and a file that breaks halfway through is worse than one that never
+  parsed at all. `--trace` is refused on every command that measures nothing.
+
+  Nothing about an untraced run's output changed, byte for byte. A traced one
+  gains one line, `trace: <dir>`, in the block that already names where the
+  report went — it rides on `engine.ReportPublished` as `TracePath`, so it is
+  laid out like the other paths, kept by `--quiet` like the other paths, and
+  replayed into the scrollback after a dashboard run like the other paths.
 - **Typed errors on the engine API, with every message unchanged.** A consumer
   driving `Workspace` and `Session` had to tell three things apart and could
   only do it by matching text: the user's test suite failing on the instrumented

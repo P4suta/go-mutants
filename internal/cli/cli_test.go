@@ -31,13 +31,13 @@ func execute(t *testing.T, args ...string) (code int, stdout, stderr string) {
 
 // TestCodesAreUniqueAndInBlock holds this package inside the ranges it owns.
 //
-// There are four. GOM10xx is the command line itself; GOM80xx, GOM81xx and
-// GOM82xx belong to one command each — `doctor`, `init`, and the three
-// run-history commands — because none of their failures is a mistake in an
-// invocation, and a user reading one should see at a glance which of the three
-// places the remedy is in. Each block is checked rather than merely allowed, so
-// that a doctor code cannot drift into the history range or a usage code into
-// either.
+// There are five. GOM10xx is the command line itself; GOM80xx, GOM81xx, GOM82xx
+// and GOM83xx belong to one command each — `doctor`, `init`, the three
+// run-history commands, and the `trace` commands — because none of their
+// failures is a mistake in an invocation, and a user reading one should see at a
+// glance which of the places the remedy is in. Each block is checked rather than
+// merely allowed, so that a doctor code cannot drift into the history range or a
+// usage code into either.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	blocks := map[Code]string{
 		CodeEnvironmentUnusable:     "GOM80",
@@ -47,6 +47,9 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 		CodeConfigurationStale:      "GOM81",
 		CodeNotAModuleRoot:          "GOM82",
 		CodeNoStoredRun:             "GOM82",
+		CodeNoTraceRecorded:         "GOM83",
+		CodeUnreadableTrace:         "GOM83",
+		CodeTraceNotRemoved:         "GOM83",
 	}
 	seen := map[Code]bool{}
 	for _, code := range Codes() {
@@ -190,6 +193,37 @@ func TestReportHelpListsTheHistoryCommands(t *testing.T) {
 		if !strings.Contains(stdout, "\n  "+name+" ") {
 			t.Errorf("`report`'s help does not offer %q:\n%s", name, stdout)
 		}
+	}
+}
+
+// TestTraceIsRefusedOnListDoctorReportAndCache keeps `--trace` to the one
+// command that runs anything.
+//
+// A recording is the account of a run, and none of these commands performs one:
+// `list` prints a catalogue, `doctor` inspects the machine, `report` and `cache`
+// read what earlier runs left. A flag accepted there would either do nothing or
+// invite somebody to believe it did something, so it is an unknown flag — which
+// is also why [withEnvironmentFlags] adds the flag to `run` alone: exporting
+// GO_MUTANTS_TRACE must not make every other command refuse to work.
+func TestTraceIsRefusedOnListDoctorReportAndCache(t *testing.T) {
+	commands := [][]string{
+		{"list"},
+		{"doctor"},
+		{"report", "latest"},
+		{"cache", "status"},
+		{"init"},
+	}
+	for _, args := range commands {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			code, _, stderr := execute(t, append(slices.Clone(args), "--trace")...)
+			if code != int(mutation.ExitInfrastructure) {
+				t.Errorf("exit = %d, want 2", code)
+			}
+			if !strings.Contains(stderr, "error "+string(CodeUsage)+": unknown flag: --trace") {
+				t.Errorf("stderr = %q, want an unknown-flag usage error", stderr)
+			}
+		})
 	}
 }
 

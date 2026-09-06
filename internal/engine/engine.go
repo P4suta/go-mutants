@@ -218,6 +218,28 @@ type Options struct {
 	// recording to forward.
 	PublishTrace bool
 
+	// Notes are what the caller learned about the recording before the run
+	// began, recorded immediately after the run-start.
+	//
+	// Two things belong here and both are decided outside the engine: a trace
+	// directory that was refused, and the collection of older recordings that
+	// ran before this one opened its own. Each is a fact about the moment the
+	// recording began, which is where it is recorded — a note appended
+	// afterwards would have to displace the run-end that a reader relies on
+	// being the last line of a recording. The recorder stamps them like every
+	// other event, so a note carries the sequence number and the clock of the
+	// moment it went in rather than a moment its author had to invent.
+	Notes []trace.NoteRecord
+
+	// TraceDirectory is where the caller opened this run's recording, and is
+	// informational: the engine writes nothing there and reads nothing from it.
+	//
+	// It is published in [ReportPublished.TracePath] so that where the account
+	// of a run went is printed beside where its documents went, by the one
+	// renderer that already knows how to print a run's paths — which is also
+	// what makes it obey --quiet without a second rule about when to print.
+	TraceDirectory string
+
 	// now is the run's clock, and the seam this package's own tests move by
 	// hand. Nil is [time.Now], which is what every caller outside this package
 	// gets. It is unexported for the reason [execute.Options]'s run seam is: a
@@ -418,6 +440,11 @@ func Run(ctx context.Context, opts Options) (RunOutcome, error) {
 		Root:        opts.WorkspaceRoot,
 		Args:        slices.Clone(os.Args),
 	})
+	// Right after the run-start, which is where they happened: see
+	// [Options.Notes].
+	for _, note := range opts.Notes {
+		s.trace.Note(note.Kind, note.Code, note.Detail)
+	}
 
 	err := idErr
 	if err == nil {
@@ -1560,6 +1587,7 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		LatestPath:     latestPath,
 		ProjectionPath: artifacts.ProjectionPath,
 		HTMLPath:       artifacts.HTMLPath,
+		TracePath:      opts.TraceDirectory,
 	})
 	if artifactErr != nil {
 		return artifactErr
