@@ -8,19 +8,21 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 func TestPrepareTraceReportsSuccessFailureAndSkip(t *testing.T) {
 	const measuredDuration = 17 * time.Millisecond
-	clock := []time.Time{time.Unix(0, 0), time.Unix(0, 0).Add(measuredDuration)}
+	// A ticking clock rather than a scripted pair of instants: what this test is
+	// about is that a span lasts exactly one measured duration, and it says so
+	// once for every phase below instead of once per clock read.
+	clock := testkit.NewClock(time.Unix(0, 0))
+	clock.Tick(measuredDuration)
 	var events []PrepareEvent
 	trace := prepareTrace{
 		emit: func(event PrepareEvent) { events = append(events, event) },
-		now: func() time.Time {
-			instant := clock[0]
-			clock = clock[1:]
-			return instant
-		},
+		now:  clock.Now,
 	}
 	if err := trace.run(PreparePhaseDiscovery, func() error { return nil }); err != nil {
 		t.Fatal(err)
@@ -39,7 +41,6 @@ func TestPrepareTraceReportsSuccessFailureAndSkip(t *testing.T) {
 	}
 
 	failure := errors.New("phase failed")
-	clock = []time.Time{time.Unix(0, 0), time.Unix(0, 0).Add(measuredDuration)}
 	events = nil
 	if err := trace.run(PreparePhaseMainValidation, func() error { return failure }); !errors.Is(err, failure) {
 		t.Fatalf("failure = %v, want %v", err, failure)
@@ -79,22 +80,17 @@ func TestPreparePhaseSpanCanFinishAfterAnotherPhase(t *testing.T) {
 	probeStarted := mainStarted.Add(time.Millisecond)
 	probeFinished := probeStarted.Add(time.Millisecond)
 	mainFinished := probeFinished.Add(time.Millisecond)
-	instants := []time.Time{
-		mainStarted,
-		probeStarted,
-		probeFinished,
-		mainFinished,
-	}
+	// A script rather than a tick: this test's subject is the *gaps*, so each
+	// instant is named in the assertion below and the clock hands them out in
+	// the order the code reads them.
+	clock := testkit.NewClock(time.Time{})
+	clock.Sequence(mainStarted, probeStarted, probeFinished, mainFinished)
 	var events []PrepareEvent
 	trace := prepareTrace{
 		emit: func(event PrepareEvent) {
 			events = append(events, event)
 		},
-		now: func() time.Time {
-			instant := instants[0]
-			instants = instants[1:]
-			return instant
-		},
+		now: clock.Now,
 	}
 	main := trace.begin(PreparePhaseBinaryBuild)
 	if err := trace.run(PreparePhaseProbeValidation, func() error { return nil }); err != nil {

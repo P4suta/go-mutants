@@ -17,6 +17,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // The probe tree's return form.
@@ -219,14 +220,7 @@ func TestProbeGolden(t *testing.T) {
 			result := probeSnapshotWith(t, root, catalog, c.hints)
 			out := readFile(t, filepath.Join(root, sampleFile))
 
-			golden := filepath.Join("testdata", c.name+".golden")
-			if *updateGolden {
-				writeFile(t, golden, out)
-			}
-			if want := readFile(t, golden); !bytes.Equal(out, want) {
-				t.Errorf("the probe tree of %s does not match its fixture\n--- got ---\n%s\n--- want ---\n%s",
-					c.name, out, want)
-			}
+			testkit.Golden(t, c.name+".golden", out)
 
 			assertProbeWellFormed(t, in, out, catalog)
 			if got := result.GuardsByFile[sampleFile]; got != c.sites {

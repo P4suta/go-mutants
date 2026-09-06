@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // TestBuildRefuses walks every way a caller can hand [report.Build] something
@@ -246,7 +247,7 @@ func TestBuildFillsInWhatItCan(t *testing.T) {
 	if r.Test.TimeoutSource != report.TimeoutDerived {
 		t.Errorf("timeout_source = %q, want %q for an unconfigured timeout", r.Test.TimeoutSource, report.TimeoutDerived)
 	}
-	if err := schemas.Validate(schemas.RunReportV1, mustMarshal(t, r)); err != nil {
+	if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, r)); err != nil {
 		t.Fatalf("the filled-in report does not satisfy the schema: %v", err)
 	}
 }
@@ -352,7 +353,7 @@ func TestPolicyFailureIsTheFirstReason(t *testing.T) {
 			if got != c.want {
 				t.Errorf("policy.failure = %q, want %q", got, c.want)
 			}
-			if err := schemas.Validate(schemas.RunReportV1, mustMarshal(t, r)); err != nil {
+			if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, r)); err != nil {
 				t.Fatalf("the report does not satisfy the schema: %v", err)
 			}
 		})
@@ -376,7 +377,7 @@ func TestEmptyRunIsAWholeDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	encoded := string(mustMarshal(t, r))
+	encoded := string(mutantkit.MustMarshal(t, r))
 	for _, empty := range []string{
 		`"mutants": []`, `"rejected": []`, `"skips": []`,
 		`"expectations": []`, `"warnings": []`, `"durations_ms": []`,
@@ -480,7 +481,7 @@ func TestCatalogueOrderIsTheDocumentOrder(t *testing.T) {
 	}) {
 		t.Errorf("the mutants are not in (path, start_byte) order: %+v", r.Mutants)
 	}
-	if !slices.Equal(mustMarshal(t, r), mustMarshal(t, buildFixture(t))) {
+	if !slices.Equal(mutantkit.MustMarshal(t, r), mutantkit.MustMarshal(t, buildFixture(t))) {
 		t.Error("reversing discovery's output changed the document")
 	}
 }

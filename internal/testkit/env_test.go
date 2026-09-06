@@ -858,17 +858,38 @@ func TestWithFoldsTheNameOnlyWhereTheEnvironmentDoes(t *testing.T) {
 	}
 }
 
+// AllowedThirdPartyImports is every import outside the standard library the
+// harness may reach for, and the list is deliberately one entry long.
+//
+// github.com/google/go-cmp is on it because [Golden] prints a diff, and a diff
+// of two multi-line documents written by hand is either wrong or is go-cmp
+// again. It is already a direct dependency of this module, it pulls nothing in
+// behind it, and it is test-only in practice everywhere it is used.
+//
+// A second entry is a decision rather than an import: the harness is linked into
+// the test binary of every pure package in this repository, so its dependencies
+// are dependencies those packages' tests compile and run.
+var AllowedThirdPartyImports = []string{"github.com/google/go-cmp"}
+
 // TestTheHarnessImportsNothingFromThisModule is the second half of the layering
 // rule, and it is the half no other test can see.
 //
 // The first half — that production code does not import the harness — is
-// enforced by parsing the tree. This one is about the harness's own import list:
-// if internal/testkit imported an engine package, the harness would become part
-// of the graph it exists to observe. A change to internal/mutation would rebuild
-// it, and the tests of that change would be written with helpers compiled from
-// the code under test. It is also what keeps a pure package's unit tests free of
-// the engine: internal/mutation's tests can use this package without linking
-// internal/snapshot behind it.
+// enforced by parsing the tree. This one is about the harness's own import list,
+// and it makes two claims.
+//
+// Nothing from this module. If internal/testkit imported an engine package, the
+// harness would become part of the graph it exists to observe: a change to
+// internal/mutation would rebuild it, and the tests of that change would be
+// written with helpers compiled from the code under test. It is also what keeps
+// a pure package's unit tests free of the engine — internal/mutation's tests can
+// use this package without linking internal/snapshot behind it.
+//
+// And nothing outside the standard library except what
+// [AllowedThirdPartyImports] names. The harness is linked into the test binary
+// of every pure package here, so a dependency it takes is a dependency all of
+// them compile; the list is short so that adding to it is a decision somebody
+// makes rather than an import somebody writes.
 //
 // internal/testkit/mutantkit is deliberately outside the scan: it exists to hold
 // the helpers that do need engine types, and it is imported only from external
@@ -897,12 +918,44 @@ func TestTheHarnessImportsNothingFromThisModule(t *testing.T) {
 			if err != nil {
 				t.Fatalf("reading the import path %s in %s: %v", spec.Path.Value, path, err)
 			}
-			if strings.HasPrefix(imported, ModulePath+"/") {
+			switch {
+			case strings.HasPrefix(imported, ModulePath+"/"):
 				t.Errorf("%s imports %s: the harness may not import the module it tests",
 					entry.Name(), imported)
+			case !standardLibrary(imported) && !allowedThirdParty(imported):
+				t.Errorf("%s imports %s, which is neither the standard library nor one of %v. "+
+					"Every test binary in this repository that links the harness would compile it: "+
+					"add it to AllowedThirdPartyImports on purpose, or do without",
+					entry.Name(), imported, AllowedThirdPartyImports)
 			}
 		}
 	}
+}
+
+// standardLibrary reports whether an import path names a standard library
+// package.
+//
+// The rule is the go command's own: a path whose first element has no dot in it
+// is in the standard library, because a module path's first element is a
+// hostname. It needs no toolchain and no package list, which is what the unit
+// tier requires of it.
+func standardLibrary(path string) bool {
+	first, _, _ := strings.Cut(path, "/")
+	return !strings.Contains(first, ".")
+}
+
+// allowedThirdParty reports whether a non-standard import is on the list.
+//
+// Prefixes are matched rather than exact paths, because a module publishes
+// packages: go-cmp is `github.com/google/go-cmp/cmp` today and could grow a
+// second package tomorrow, and the decision was about the module.
+func allowedThirdParty(path string) bool {
+	for _, allowed := range AllowedThirdPartyImports {
+		if path == allowed || strings.HasPrefix(path, allowed+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // lookupEnv reads one variable out of a composed environment, the way a child

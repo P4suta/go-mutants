@@ -113,8 +113,9 @@ func moduleRoot(start string) (string, error) {
 // string when the file is not there.
 //
 // The parse is deliberately the one line it needs rather than golang.org/x/mod:
-// this package's import list is the standard library, because it is imported by
-// the tests of the pure packages and its own weight would otherwise travel with
+// this package's import list holds nothing from this module, and outside the
+// standard library only github.com/google/go-cmp, because it is imported by the
+// tests of the pure packages and its own weight would otherwise travel with
 // them.
 func modulePathOf(gomod string) (string, error) {
 	data, err := os.ReadFile(gomod)

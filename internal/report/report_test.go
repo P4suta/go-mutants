@@ -5,10 +5,6 @@ package report_test
 
 import (
 	"bytes"
-	"encoding/json"
-	"flag"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,20 +13,24 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// updateGolden rewrites the golden document instead of comparing against it.
-// The document is generated rather than typed, and it is read by eye before it
-// is committed — which is the whole point of a golden file.
-var updateGolden = flag.Bool("update", false, "rewrite the golden run report")
-
-// goldenPath is the committed document the fixture run must marshal to, byte
-// for byte.
-var goldenPath = filepath.Join("testdata", "run-report.golden.json")
-
-// coverageGoldenPath is the same for a coverage-guided run, which publishes two
-// fields an `off` run leaves out entirely.
-var coverageGoldenPath = filepath.Join("testdata", "run-report-coverage.golden.json")
+// The committed documents the fixture runs must marshal to, byte for byte. The
+// second is a coverage-guided run, which publishes two fields an `off` run
+// leaves out entirely.
+//
+// They are names rather than paths because [testkit.Golden] resolves them
+// against testdata/, and the comparison, the diff on a mismatch and the single
+// repository-wide `-update` flag all live there. This package used to register
+// an `-update` flag of its own; internal/instrument registered a second, and a
+// third in any package linking either would have panicked "flag redefined"
+// before a test ran.
+const (
+	goldenReport         = "run-report.golden.json"
+	goldenCoverageReport = "run-report-coverage.golden.json"
+)
 
 // TestGoldenReport pins every byte of a complete run report.
 //
@@ -46,19 +46,7 @@ func TestGoldenReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if *updateGolden {
-		if writeErr := os.WriteFile(goldenPath, got, 0o644); writeErr != nil {
-			t.Fatalf("rewriting %s: %v", goldenPath, writeErr)
-		}
-	}
-	want, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", goldenPath, err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("the marshalled report does not match %s\n--- got ---\n%s\n--- want ---\n%s",
-			goldenPath, got, want)
-	}
+	testkit.Golden(t, goldenReport, got)
 }
 
 // TestGoldenReportValidates checks the committed document against the published
@@ -66,10 +54,7 @@ func TestGoldenReport(t *testing.T) {
 func TestGoldenReportValidates(t *testing.T) {
 	t.Parallel()
 
-	doc, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", goldenPath, err)
-	}
+	doc := testkit.ReadFile(t, testkit.GoldenPath(goldenReport))
 	if err := schemas.Validate(schemas.RunReportV1, doc); err != nil {
 		t.Fatalf("the golden report does not satisfy its own schema: %v", err)
 	}
@@ -90,19 +75,9 @@ func TestGoldenCoverageReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if *updateGolden {
-		if writeErr := os.WriteFile(coverageGoldenPath, got, 0o644); writeErr != nil {
-			t.Fatalf("rewriting %s: %v", coverageGoldenPath, writeErr)
-		}
-	}
-	want, err := os.ReadFile(coverageGoldenPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", coverageGoldenPath, err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Errorf("the marshalled report does not match %s\n--- got ---\n%s\n--- want ---\n%s",
-			coverageGoldenPath, got, want)
-	}
+	testkit.Golden(t, goldenCoverageReport, got)
+
+	want := testkit.ReadFile(t, testkit.GoldenPath(goldenCoverageReport))
 	if err := schemas.Validate(schemas.RunReportV1, want); err != nil {
 		t.Fatalf("the golden coverage report does not satisfy its own schema: %v", err)
 	}
@@ -394,7 +369,7 @@ func TestScoreIsNullWhenNothingWasMeasured(t *testing.T) {
 	if r.Summary.ScorePercent != nil {
 		t.Errorf("score_percent = %v, want null", *r.Summary.ScorePercent)
 	}
-	encoded := string(mustMarshal(t, r))
+	encoded := string(mutantkit.MustMarshal(t, r))
 	if !strings.Contains(encoded, `"score_percent": null`) {
 		t.Error("an undefined score was not written as null")
 	}
@@ -491,20 +466,20 @@ func TestEverySkipReasonIsInTheSchema(t *testing.T) {
 	if len(reasons) == 0 {
 		t.Fatal("discovery reports no skip reasons, so this guard is checking nothing")
 	}
-	base := decode(t, mustMarshal(t, buildFixture(t)))
+	base := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
 	for _, reason := range reasons {
-		doc := decode(t, mustMarshal(t, buildFixture(t)))
+		doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
 		doc["skips"] = []any{map[string]any{"path": "x.go", "reason": string(reason), "count": 1.0}}
-		if err := schemas.Validate(schemas.RunReportV1, encode(t, doc)); err != nil {
+		if err := schemas.Validate(schemas.RunReportV1, mutantkit.EncodeJSON(t, doc)); err != nil {
 			t.Errorf("the schema rejects the skip reason %q that discovery emits: %v", reason, err)
 		}
 	}
 	// The reserved reasons instrumentation will emit are in the enumeration
 	// too, so that landing them is a code change and not a schema change.
 	for _, reserved := range []string{"struct-tag", "label-or-goto", "unnameable-decl-type"} {
-		doc := decode(t, mustMarshal(t, buildFixture(t)))
+		doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
 		doc["skips"] = []any{map[string]any{"path": "x.go", "reason": reserved, "count": 1.0}}
-		if err := schemas.Validate(schemas.RunReportV1, encode(t, doc)); err != nil {
+		if err := schemas.Validate(schemas.RunReportV1, mutantkit.EncodeJSON(t, doc)); err != nil {
 			t.Errorf("the schema rejects the reserved skip reason %q: %v", reserved, err)
 		}
 	}
@@ -529,7 +504,7 @@ func TestEveryEnumeratedValueIsInTheSchema(t *testing.T) {
 	t.Parallel()
 
 	for _, mode := range report.SelectionModes() {
-		doc := decode(t, mustMarshal(t, buildFixture(t)))
+		doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
 		selection := object(doc, "selection")
 		selection["mode"] = string(mode)
 		// The two modes that come with a fact attached carry it, since the
@@ -540,7 +515,7 @@ func TestEveryEnumeratedValueIsInTheSchema(t *testing.T) {
 		if mode == report.ModeChanged {
 			selection["changed_ref"] = "origin/main"
 		}
-		if err := schemas.Validate(schemas.RunReportV1, encode(t, doc)); err != nil {
+		if err := schemas.Validate(schemas.RunReportV1, mutantkit.EncodeJSON(t, doc)); err != nil {
 			t.Errorf("the schema rejects the selection mode %q this package writes: %v", mode, err)
 		}
 	}
@@ -555,9 +530,9 @@ func TestEveryEnumeratedValueIsInTheSchema(t *testing.T) {
 		t.Fatal("the fixture has no not-run mutant, so this guard is checking nothing")
 	}
 	for _, reason := range report.NotRunReasons() {
-		doc := decode(t, mustMarshal(t, buildFixture(t)))
+		doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
 		object(doc, "mutants", notRun)["not_run_reason"] = string(reason)
-		if err := schemas.Validate(schemas.RunReportV1, encode(t, doc)); err != nil {
+		if err := schemas.Validate(schemas.RunReportV1, mutantkit.EncodeJSON(t, doc)); err != nil {
 			t.Errorf("the schema rejects the not-run reason %q this package writes: %v", reason, err)
 		}
 	}
@@ -781,7 +756,7 @@ func TestSchemaRejects(t *testing.T) {
 		},
 	}
 
-	valid := mustMarshal(t, buildFixture(t))
+	valid := mutantkit.MustMarshal(t, buildFixture(t))
 	if err := schemas.Validate(schemas.RunReportV1, valid); err != nil {
 		t.Fatalf("the unedited fixture is already invalid: %v", err)
 	}
@@ -789,9 +764,9 @@ func TestSchemaRejects(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			doc := decode(t, valid)
+			doc := mutantkit.DecodeJSON(t, valid)
 			c.mutate(doc)
-			err := schemas.Validate(schemas.RunReportV1, encode(t, doc))
+			err := schemas.Validate(schemas.RunReportV1, mutantkit.EncodeJSON(t, doc))
 			if err == nil {
 				t.Fatal("the schema accepted the document")
 			}
@@ -817,48 +792,7 @@ func marshal(t *testing.T, opts report.Options) []byte {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	return mustMarshal(t, r)
-}
-
-// mustMarshal marshals a report and checks it against the published schema.
-//
-// The check is here rather than in a test of its own so that it is impossible
-// to forget: every document any test in this package produces goes through this
-// helper, and therefore through the same validator a consumer would use. The
-// tests that need an invalid document build one by editing the bytes this
-// returns.
-func mustMarshal(t *testing.T, r *report.Report) []byte {
-	t.Helper()
-	data, err := r.Marshal()
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := schemas.Validate(schemas.RunReportV1, data); err != nil {
-		t.Fatalf("the report does not satisfy its own schema: %v\n%s", err, data)
-	}
-	return data
-}
-
-// decode reads a document back into a generic tree, so a test can edit one
-// field of an otherwise valid document.
-func decode(t *testing.T, data []byte) map[string]any {
-	t.Helper()
-	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("decoding the document: %v", err)
-	}
-	return doc
-}
-
-// encode writes an edited tree back out. Map keys are sorted by encoding/json,
-// so the bytes do not depend on iteration order.
-func encode(t *testing.T, doc map[string]any) []byte {
-	t.Helper()
-	data, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatalf("encoding the document: %v", err)
-	}
-	return data
+	return mutantkit.MustMarshal(t, r)
 }
 
 // workspace returns the workspace object of a decoded document.

@@ -5,7 +5,6 @@ package instrument_test
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -17,13 +16,8 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
-
-// updateGolden rewrites the fixtures instead of comparing against them. The
-// fixtures are byte-exact instrumented output, so they are generated rather
-// than typed; every one of them is still read by eye before it is committed,
-// which is the whole point of a golden file.
-var updateGolden = flag.Bool("update", false, "rewrite the golden instrumentation fixtures")
 
 const (
 	// testModule is the module path the fixtures are instrumented against. It
@@ -266,14 +260,7 @@ func TestInstrumentGolden(t *testing.T) {
 				}
 			}
 
-			golden := filepath.Join("testdata", c.name+".golden")
-			if *updateGolden {
-				writeFile(t, golden, out)
-			}
-			if want := readFile(t, golden); !bytes.Equal(out, want) {
-				t.Errorf("instrumented %s does not match its fixture\n--- got ---\n%s\n--- want ---\n%s",
-					c.name, out, want)
-			}
+			testkit.Golden(t, c.name+".golden", out)
 
 			assertWellFormed(t, in, out, catalog)
 			if got := result.GuardsByFile[sampleFile]; got != c.guards {

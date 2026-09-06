@@ -8,11 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // The tests in this package need real processes: a process that exits with a
@@ -38,95 +39,40 @@ const (
 	// understand its own arguments, or cannot set itself up. It is distinct
 	// from every status the tests ask for, so a misuse can never be mistaken
 	// for a pass.
-	helperMisuse = 97
-	// helperCoverRootEnv names the directory each helper process carves its own
-	// coverage output directory out of. See isolateCoverageOutput.
-	helperCoverRootEnv = "GO_MUTANTS_RUNNER_TEST_COVERDIR_ROOT"
-	// coverDirEnv is the variable the Go coverage runtime reads at exit.
-	coverDirEnv = "GOCOVERDIR"
+	helperMisuse = testkit.HelperMisuse
 	// helperDeafMarker is what the "deaf" verb prints once it is ignoring
 	// SIGTERM, so a test can tell that outcome apart from the signal having
 	// arrived before the disposition was installed.
 	helperDeafMarker = "deaf\n"
 )
 
+// TestMain turns this binary into the requested helper when helperEnv is set,
+// and otherwise runs the suite.
+//
+// The switch, the private GOCOVERDIR every helper process needs, and the
+// removal of the directory they are carved out of all live in
+// [testkit.Helper]. The coverage isolation in particular is not a detail: a
+// helper is this very test binary re-executed, so under `go test -cover` its
+// exit hook writes covmeta.<hash> into the single GOCOVERDIR `go test` exports
+// under a name derived from the binary — identical for every helper — and the
+// concurrent atomic renames collide. On Windows the loser prints "coverage
+// meta-data emit failed: ... Access is denied" onto the very stderr the tests
+// here assert the exact bytes of.
 func TestMain(m *testing.M) {
-	if os.Getenv(helperEnv) == "" {
-		os.Exit(runTests(m))
-	}
-	if err := isolateCoverageOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "helper: %v\n", err)
-		os.Exit(helperMisuse)
-	}
-	os.Exit(runHelper(os.Args[1:]))
-}
-
-// runTests runs the suite proper.
-//
-// It is a function rather than the body of [TestMain] because the coverage root
-// has to be removed on the way out and TestMain ends in os.Exit, which runs no
-// deferred function.
-func runTests(m *testing.M) int {
-	root, err := os.MkdirTemp("", "go-mutants-runner-cover-")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "creating the helper coverage root: %v\n", err)
-		return helperMisuse
-	}
-	defer func() { _ = os.RemoveAll(root) }()
-
-	// Published into this process's own environment rather than only into the
-	// one helperEnviron composes, so that a child which deliberately inherits
-	// — TestEnvIsTheWholeEnvironment runs one with a nil Spec.Env — finds it
-	// too.
-	if err := os.Setenv(helperCoverRootEnv, root); err != nil {
-		fmt.Fprintf(os.Stderr, "publishing the helper coverage root: %v\n", err)
-		return helperMisuse
-	}
-	return m.Run()
-}
-
-// isolateCoverageOutput points this helper's coverage output at a directory
-// nothing else writes to.
-//
-// A helper is this very test binary re-executed, so under `go test -cover` it
-// is coverage-instrumented — and because it exits from [TestMain] without ever
-// running the testing package's "the profile is already written" call, the
-// coverage runtime's exit hook fires. Left alone that hook writes
-// covmeta.<hash> into the single GOCOVERDIR that `go test` exports, under a
-// name derived from the binary and therefore identical for every helper. The
-// concurrent atomic renames then collide: on Windows the loser prints
-// "error: coverage meta-data emit failed: ... Access is denied" on stderr, the
-// runner faithfully captures it, and every assertion about exact captured bytes
-// fails. Unsetting the variable is not the fix — measured, the hook then prints
-// "warning: GOCOVERDIR not set, no coverage data emitted" to the same stderr.
-// A private directory is the only quiet answer, and it has the second virtue of
-// keeping helper counters out of the parent's own coverage profile.
-//
-// This runs in the helper rather than in helperEnviron so that it covers every
-// helper process there is: the ones handed a composed environment, the one that
-// inherits, and the grandchild the "tree" verb spawns.
-func isolateCoverageOutput() error {
-	root := os.Getenv(helperCoverRootEnv)
-	if root == "" {
-		return fmt.Errorf("%s is unset, so this helper has nowhere private to write coverage output", helperCoverRootEnv)
-	}
-	// The pid is unique among the processes that are alive at the same time,
-	// which is exactly the set that could collide.
-	dir := filepath.Join(root, strconv.Itoa(os.Getpid()))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	return os.Setenv(coverDirEnv, dir)
+	os.Exit(testkit.Helper(m, helperEnv, runHelper))
 }
 
 // helperCommand builds the argv that re-executes this binary as a helper.
+//
+// It is [testkit.HelperArgv]'s sibling rather than a call to it: that one
+// selects a *test function* with `-test.run`, and this helper is a program run
+// from TestMain, so what follows the binary is the helper flag and a verb. Both
+// resolve the binary through [testkit.TestBinary], which prefers os.Executable
+// over os.Args[0] — a child started in another directory cannot resolve a
+// relative argv[0] against ours.
 func helperCommand(t *testing.T, args ...string) []string {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatalf("locating the test binary: %v", err)
-	}
-	return append([]string{exe, helperFlag}, args...)
+	return append([]string{testkit.TestBinary(), helperFlag}, args...)
 }
 
 // helperEnviron is the environment a helper child needs: this process's own,

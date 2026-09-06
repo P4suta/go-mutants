@@ -21,6 +21,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // TestProbeRuntimeGolden pins the generated probe package for the same
@@ -47,13 +48,7 @@ func TestProbeRuntimeGolden(t *testing.T) {
 	generated := filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go")
 	out := readFile(t, generated)
 
-	golden := filepath.Join("testdata", "proberuntime.golden")
-	if *updateGolden {
-		writeFile(t, golden, out)
-	}
-	if want := readFile(t, golden); !bytes.Equal(out, want) {
-		t.Errorf("the generated probe runtime does not match its fixture\n--- got ---\n%s\n--- want ---\n%s", out, want)
-	}
+	testkit.Golden(t, "proberuntime.golden", out)
 
 	if _, err := parser.ParseFile(token.NewFileSet(), generated, out, parser.SkipObjectResolution); err != nil {
 		t.Errorf("the generated probe runtime does not parse: %v", err)

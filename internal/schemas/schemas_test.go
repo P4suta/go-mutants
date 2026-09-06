@@ -527,6 +527,13 @@ func TestEscapeToken(t *testing.T) {
 
 // decode reads a document into a mutable tree, keeping numbers as
 // [json.Number] so that re-encoding cannot turn 88 into 88.0.
+//
+// internal/testkit/mutantkit offers the same pair, and this is the one place
+// that cannot use them: mutantkit imports this package to validate a report, so
+// a test in `package schemas` that imported mutantkit would be an import cycle.
+// The tests here reach for unexported names — displayPointer, escapeToken,
+// jsonPointer — so they cannot move to an external test package either. The copy
+// is deliberate, and it is the only one left.
 func decode(t *testing.T, document string) map[string]any {
 	t.Helper()
 	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(document))
