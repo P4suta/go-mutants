@@ -352,7 +352,11 @@
           "type": "string",
           "minLength": 1
         },
-        "argv": { "type": "array", "items": { "type": "string" } },
+        "argv": {
+          "description": "The complete argument vector, exactly as the child received it: argv[0] is the executable, and the rest are the arguments it was given. Never null — a command that could not be run is recorded with the vector as it was given, which is the empty one when it had none.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "dir": { "type": "string" },
         "env_names": {
           "description": "Environment variable names alone, sorted and deduplicated: an item holding a value is not a trace.",

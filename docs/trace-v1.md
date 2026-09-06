@@ -244,7 +244,7 @@ and its result are one line.
 | --- | --- |
 | `kind` | what the command was; see below |
 | `subject` | what it was about: a mutant id, an import path, a pattern |
-| `argv` | the argument vector, verbatim; `[]` and never `null`, even for a command that could not be run |
+| `argv` | the complete argument vector, executable first, exactly as the child received it; `[]` and never `null`, even for a command that could not be run |
 | `dir` | the working directory |
 | `env_names` | the environment variable *names*, sorted and deduplicated |
 | `timeout_ms` | the timeout the command was given |
@@ -319,13 +319,14 @@ own mutant record.
 "survived twice" are different facts about a flaky test: attempt 1 is the
 concurrent pass and attempt 2 the serial retry a survivor is given.
 
-A test binary has two names, and the contract uses each in one place. `argv` on
-an `exec` is the file the run executed, because it is the command that ran.
-`binaries`, `killed_by` and a `coverage-map`'s `covering` are the *import path*
-of the package the binary was built from — the name the run report's `killed_by`
-and `covering_test_packages` use, and the one that outlives the temporary
-directory the file lived in. `killed_by` is therefore always one of `binaries`,
-and a reader may join the two directly.
+A test binary has two names, and the contract uses each in one place. `argv[0]`
+on an `exec` is the file the run executed — `argv` itself is the whole vector,
+that executable followed by every argument it was given, exactly as the child
+received it. `binaries`, `killed_by` and a `coverage-map`'s `covering` are the
+*import path* of the package the binary was built from — the name the run
+report's `killed_by` and `covering_test_packages` use, and the one that outlives
+the temporary directory the file lived in. `killed_by` is therefore always one
+of `binaries`, and a reader may join the two directly.
 
 `exec_seqs` is the join into the commands underneath the attempt, and therefore
 into their preserved output: a reader with an attempt in hand has the argv, the

@@ -709,10 +709,19 @@ func TestBinariesAndKilledByNameTestBinariesTheSameWay(t *testing.T) {
 		case trace.TypeCoverageMap:
 			assertImportPaths(t, "coverage.covering", event.Coverage.Covering)
 		case trace.TypeExec:
-			// The other half of the contract: an argv is the command that ran,
-			// so it is a file path and stays one.
-			if argv := event.Exec.Argv; len(argv) > 0 && !strings.HasPrefix(argv[0], "/") && argv[0] != "go" {
+			// The other half of the contract: argv[0] is the file that ran, and
+			// stays a file path — argv itself is the whole vector, that
+			// executable followed by the arguments it was given.
+			argv := event.Exec.Argv
+			if argv == nil {
+				t.Error("exec argv is null")
+				continue
+			}
+			if len(argv) > 0 && !strings.HasPrefix(argv[0], "/") && argv[0] != "go" {
 				t.Errorf("exec argv %v does not begin with a command", argv)
+			}
+			if len(argv) < 2 {
+				t.Errorf("exec argv %v carries no arguments after the executable", argv)
 			}
 		}
 	}

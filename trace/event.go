@@ -142,8 +142,14 @@ type ExecRecord struct {
 	// scope pattern — or empty when the kind says everything there is to say.
 	Subject string `json:"subject,omitempty"`
 
+	// Argv is the complete argument vector, exactly as the child received it:
+	// Argv[0] is the executable, and the rest are the arguments it was given.
+	// It is never null — a command that could not be run is recorded with the
+	// vector as it was given, which is the empty one when it had none — so a
+	// reader may iterate it without checking it first.
 	Argv []string `json:"argv"`
-	Dir  string   `json:"dir,omitempty"`
+
+	Dir string `json:"dir,omitempty"`
 
 	// EnvNames is the environment the command could see, as names alone,
 	// sorted and deduplicated. A caller may hand [Recorder.Exec] the whole
