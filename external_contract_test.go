@@ -4,6 +4,7 @@
 package gomutants_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,14 @@ var (
 	// consumers that were matching the text keep compiling — the flag beside
 	// every capture is what they should be reading instead.
 	_ string = gomutants.OutputTruncatedPrefix
+
+	// Which engine build a consumer is running. Every consumer used to write
+	// this scan over runtime/debug itself, so the accessors are the contract —
+	// and so is ModulePath's value, which is what a consumer keeping its own
+	// scan matches build-info entries against.
+	_ func() (gomutants.BuildInfo, bool) = gomutants.ReadBuildInfo
+	_ func() string                      = gomutants.Version
+	_ string                             = gomutants.ModulePath
 
 	// Every typed error is used through the error interface, and every one of
 	// them is reached with errors.As from outside this module.
@@ -188,6 +197,32 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 	}
 }
 
+// TestTheEngineIsAbsentFromAConsumerTestBinary is the surprise, pinned where a
+// consumer will meet it.
+//
+// The go command fills build information in before a test binary's imports are
+// known, so a test binary records its main module and no dep lines at all --
+// go version -m on one proves it. From inside this consumer's own go test,
+// therefore, the engine it requires and links is simply not named: the reading
+// succeeds, the answer is the zero value, and Version() says "unknown". A
+// consumer that wants to record which engine produced its evidence has to read
+// it from a built program, which the engine module's own suite does.
+func TestTheEngineIsAbsentFromAConsumerTestBinary(t *testing.T) {
+	if gomutants.ModulePath != "github.com/P4suta/go-mutants" {
+		t.Errorf("ModulePath = %q; a consumer scanning build info for it would find nothing", gomutants.ModulePath)
+	}
+	info, ok := gomutants.ReadBuildInfo()
+	if !ok {
+		t.Fatal("a test binary the go command built carries no build information at all")
+	}
+	if info != (gomutants.BuildInfo{}) {
+		t.Errorf("a test binary named the engine: %+v", info)
+	}
+	if got := gomutants.Version(); got != "unknown" {
+		t.Errorf("Version() = %q, want unknown", got)
+	}
+}
+
 func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.OpenOptions{}
 	_ = gomutants.Command{}
@@ -221,6 +256,21 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.CommandResult{Output: nil, Truncated: false, TotalBytes: 0}
 	_ = gomutants.MutantResult{Output: nil, Truncated: false, TotalBytes: 0, OutputTail: ""}
 	_ = gomutants.ProbeResult{Output: nil, Truncated: false, TotalBytes: 0}
+
+	// Every field of the build identity, by name: a consumer records what it
+	// linked and decides on Auditable, so a rename here changes what somebody's
+	// stored evidence is keyed on.
+	_ = gomutants.BuildInfo{
+		Version:        "",
+		Sum:            "",
+		Replaced:       false,
+		ReplacePath:    "",
+		ReplaceVersion: "",
+		Main:           false,
+		VCSRevision:    "",
+		VCSModified:    false,
+		Auditable:      false,
+	}
 
 	// The named fields, not only the type: a consumer reads these by name and a
 	// rename is a breaking change whatever the shape of the struct stays.
@@ -460,25 +510,202 @@ func TestPublicTraceTypes(t *testing.T) {
 	})
 }
 
-// compileConsumer writes a synthetic consumer module and runs its tests with
-// the module proxy disabled, so that a compile which needed a download fails
-// here rather than in somebody's pipeline.
-func compileConsumer(t *testing.T, goBinary string, files map[string]string) {
-	t.Helper()
-	consumer := t.TempDir()
-	for name, contents := range files {
-		if writeErr := os.WriteFile(filepath.Join(consumer, name), []byte(contents), 0o644); writeErr != nil {
-			t.Fatal(writeErr)
-		}
+// TestABuiltConsumerNamesTheEngineItLinked is the identity contract, proved
+// the only way it can be: by building a consumer program and running it.
+//
+// A test binary names no dependency (see
+// TestTheEngineIsAbsentFromAConsumerTestBinary), so an assertion made inside
+// one would hold just as well against a stub that returned nothing. This
+// builds a real program against a directory replacement -- the way every
+// consumer develops against an unreleased engine -- and reads what it says
+// about itself. That case is also the one the contract is sharpest about: the
+// require line names v0.0.0 and the code that compiled is a working tree, so
+// the engine must report the replacement and refuse to call itself auditable,
+// leaving the identity of the running bytes to the consumer.
+func TestABuiltConsumerNamesTheEngineItLinked(t *testing.T) {
+	goBinary, err := exec.LookPath("go")
+	if err != nil {
+		t.Skipf("Go toolchain is unavailable: %v", err)
 	}
-	command := exec.CommandContext(t.Context(), goBinary, "test", "-mod=mod", "./...")
-	command.Dir = consumer
-	command.Env = append(os.Environ(),
+	repository, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := `module consumer.example/identity
+
+go 1.26.0
+
+require github.com/P4suta/go-mutants v0.0.0
+
+replace github.com/P4suta/go-mutants => ` + filepath.ToSlash(repository) + "\n"
+	program := `package main
+
+import (
+	"encoding/json"
+	"os"
+
+	gomutants "github.com/P4suta/go-mutants"
+)
+
+func main() {
+	info, ok := gomutants.ReadBuildInfo()
+	record := struct {
+		OK             bool
+		Version        string
+		Sum            string
+		Replaced       bool
+		ReplacePath    string
+		ReplaceVersion string
+		Main           bool
+		VCSRevision    string
+		VCSModified    bool
+		Auditable      bool
+		Reported       string
+		ModulePath     string
+	}{
+		OK:             ok,
+		Version:        info.Version,
+		Sum:            info.Sum,
+		Replaced:       info.Replaced,
+		ReplacePath:    info.ReplacePath,
+		ReplaceVersion: info.ReplaceVersion,
+		Main:           info.Main,
+		VCSRevision:    info.VCSRevision,
+		VCSModified:    info.VCSModified,
+		Auditable:      info.Auditable,
+		Reported:       gomutants.Version(),
+		ModulePath:     gomutants.ModulePath,
+	}
+	if encodeErr := json.NewEncoder(os.Stdout).Encode(record); encodeErr != nil {
+		os.Exit(1)
+	}
+}
+`
+	consumer := writeConsumer(t, map[string]string{
+		"go.mod":               module,
+		"cmd/identity/main.go": program,
+	})
+	binary := filepath.Join(consumer, "identity")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	// -buildvcs=false: what the consumer program says about *itself* is not
+	// under test, and a temporary directory that happens to sit under somebody
+	// else's repository would otherwise make this a test of that repository's
+	// VCS status.
+	build := exec.CommandContext(t.Context(), goBinary, "build", "-mod=mod", "-buildvcs=false", "-o", binary, "./cmd/identity")
+	build.Dir = consumer
+	build.Env = consumerEnvironment()
+	if output, buildErr := build.CombinedOutput(); buildErr != nil {
+		t.Fatalf("consumer program did not build with %s/%s: %v\n%s", runtime.GOOS, runtime.GOARCH, buildErr, strings.TrimSpace(string(output)))
+	}
+	run := exec.CommandContext(t.Context(), binary)
+	run.Dir = consumer
+	output, runErr := run.Output()
+	if runErr != nil {
+		t.Fatalf("consumer program failed: %v\n%s", runErr, strings.TrimSpace(string(output)))
+	}
+	var identity struct {
+		OK             bool
+		Version        string
+		Sum            string
+		Replaced       bool
+		ReplacePath    string
+		ReplaceVersion string
+		Main           bool
+		VCSRevision    string
+		VCSModified    bool
+		Auditable      bool
+		Reported       string
+		ModulePath     string
+	}
+	if decodeErr := json.Unmarshal(output, &identity); decodeErr != nil {
+		t.Fatalf("consumer program printed %q: %v", output, decodeErr)
+	}
+	if !identity.OK {
+		t.Fatalf("a program the go command built carries no build information: %+v", identity)
+	}
+	if identity.ModulePath != "github.com/P4suta/go-mutants" {
+		t.Errorf("ModulePath = %q; a consumer scanning build info for it would find nothing", identity.ModulePath)
+	}
+	if !identity.Replaced {
+		t.Errorf("Replaced = false under a directory replacement: %+v", identity)
+	}
+	if !sameDirectory(identity.ReplacePath, repository) {
+		t.Errorf("ReplacePath = %q, want %q", identity.ReplacePath, repository)
+	}
+	// A directory has no version of its own, and the go command writes its
+	// placeholder rather than an empty string.
+	if identity.ReplaceVersion != "(devel)" {
+		t.Errorf("ReplaceVersion = %q, want (devel)", identity.ReplaceVersion)
+	}
+	if identity.Version != "v0.0.0" || identity.Reported != "v0.0.0" {
+		t.Errorf("Version = %q and Version() = %q, want the required version twice", identity.Version, identity.Reported)
+	}
+	if identity.Sum != "" {
+		t.Errorf("Sum = %q under a replacement; that checksum would cover the replacement", identity.Sum)
+	}
+	if identity.Main {
+		t.Errorf("Main = true for an engine a consumer imported: %+v", identity)
+	}
+	if identity.Auditable {
+		t.Errorf("a directory-replaced engine reported itself auditable: %+v", identity)
+	}
+}
+
+// sameDirectory compares two paths the way a test on three operating systems
+// has to: the go command records a cleaned absolute path, and a temporary
+// directory reached through a symlink (macOS /var, for one) is the same
+// directory under two names.
+func sameDirectory(recorded, want string) bool {
+	recorded = filepath.Clean(filepath.FromSlash(recorded))
+	want = filepath.Clean(want)
+	if recorded == want {
+		return true
+	}
+	resolvedRecorded, recordedErr := filepath.EvalSymlinks(recorded)
+	resolvedWant, wantErr := filepath.EvalSymlinks(want)
+	return recordedErr == nil && wantErr == nil && resolvedRecorded == resolvedWant
+}
+
+// consumerEnvironment is what every synthetic consumer builds under. GOPROXY
+// is disabled so that a compile which needed a download fails here rather than
+// in somebody's pipeline.
+func consumerEnvironment() []string {
+	return append(os.Environ(),
 		"GOWORK=off",
 		"GOTOOLCHAIN=local",
 		"GOPROXY=off",
 		"GOSUMDB=off",
 	)
+}
+
+// writeConsumer writes a synthetic consumer module into a temporary directory
+// and returns it. File names are slash-separated and may name a subdirectory.
+func writeConsumer(t *testing.T, files map[string]string) string {
+	t.Helper()
+	consumer := t.TempDir()
+	for name, contents := range files {
+		path := filepath.Join(consumer, filepath.FromSlash(name))
+		if mkdirErr := os.MkdirAll(filepath.Dir(path), 0o755); mkdirErr != nil {
+			t.Fatal(mkdirErr)
+		}
+		if writeErr := os.WriteFile(path, []byte(contents), 0o644); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	return consumer
+}
+
+// compileConsumer writes a synthetic consumer module and runs its tests with
+// the module proxy disabled, so that a compile which needed a download fails
+// here rather than in somebody's pipeline.
+func compileConsumer(t *testing.T, goBinary string, files map[string]string) {
+	t.Helper()
+	consumer := writeConsumer(t, files)
+	command := exec.CommandContext(t.Context(), goBinary, "test", "-mod=mod", "./...")
+	command.Dir = consumer
+	command.Env = consumerEnvironment()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("external module did not compile with %s/%s: %v\n%s", runtime.GOOS, runtime.GOARCH, err, strings.TrimSpace(string(output)))

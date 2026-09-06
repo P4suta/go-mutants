@@ -30,6 +30,12 @@
 // account for is [ErrProbeInconsistent], which is always an engine bug and
 // never a measurement.
 //
+// [ReadBuildInfo] names the engine build itself — the version, any replacement
+// in effect, and [BuildInfo.Auditable], which is true only when that version
+// names one immutable set of sources — so that stored evidence can record
+// which go-mutants produced it without every consumer rewriting the scan over
+// [runtime/debug.BuildInfo] and its fail-closed rules.
+//
 // docs/library.md is the long form: the lifecycle and its locking, every option
 // field with its default, the invariants of every result, the guarantees the
 // engine makes about temporary directories, reserved variables and paired

@@ -14,6 +14,65 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`ReadBuildInfo`, `Version` and `ModulePath`: which engine build a consumer
+  is running.** Evidence about a mutant is evidence about the engine that
+  produced it, so every consumer storing any needs to know which go-mutants it
+  linked — and until now every one of them wrote the same scan over
+  `runtime/debug.BuildInfo`, with the same rules to get wrong: no build
+  information at all, the module absent from it, the module named twice,
+  `"(devel)"` read as if it were a version, a `replace` nobody noticed, and —
+  since go1.24 stamps a main module built out of a checkout with a
+  pseudo-version — a `+dirty` suffix on an edited tree, which looks exactly
+  like a version and is served by no proxy. Most of those produce a string
+  that looks like a version and is not one, so getting them wrong is not an
+  error anybody sees; it is a cache that hits across two different engines.
+
+  `ReadBuildInfo` does that scan once and reports what build information says:
+  `Version`, `Sum`, `Replaced` with `ReplacePath`/`ReplaceVersion`, `Main`, and
+  the `vcs.revision`/`vcs.modified` settings — read only for a main module,
+  because that is the only module they describe. `Auditable` is the field a
+  consumer decides on: `Version` names one immutable set of sources, meaning a
+  tag or pseudo-version that is not replaced, or a main module with a clean
+  revision — and never a version carrying build metadata, `+incompatible`
+  aside, because `+dirty` and `vcs.modified` are stamped from the same status
+  and build information that contradicts itself is answered closed. `ok` is
+  false only when the program carries no build information at all; build
+  information that does not name this module, or names it twice, is
+  a successful reading whose answer is "nothing nameable" — the zero value,
+  `Auditable` false — because build information contradicting itself cannot be
+  answered with one of its two versions without picking one. `Version()` is the
+  label to print, `"unknown"` when there is none, and never the value to decide
+  on.
+
+  One reading is absent rather than wrong, and it is written out on the
+  function, in docs/library.md and in the contract test because a consumer will
+  meet it first: a **test binary names no dependency at all**. The go command
+  fills build information in before a test binary's imports are known, so from
+  inside a consumer's own `go test` the engine it requires and links is simply
+  not there — the zero value, `"unknown"` — and only a built program names what
+  it linked. The engine's own contract test therefore builds a consumer program
+  against a directory replacement and reads what it prints, because the same
+  assertions made inside a test binary would hold against a stub that returned
+  nothing.
+
+  There is no `Identity()` and no embedded source digest, deliberately. The
+  case that would want one is a `replace` pointing at a working tree, which is
+  how every consumer develops against an unreleased engine, and it is the case
+  such a digest gets wrong: anything computed here describes the sources that
+  were committed, not the edited tree that actually compiled, so it would read
+  as a proof exactly when it lies. The running executable's digest is the only
+  content identity covering the bytes that ran, and it is the consumer's to
+  take — only the consumer knows which file it launched. What the engine owes
+  it is an honest `Auditable` false. docs/library.md's "Identity" section
+  writes out the order to key stored evidence on: `Catalog.PreparedDigest` for
+  the session, `BuildInfo.Version` when `Auditable`, the executable's SHA-256
+  otherwise.
+
+  The `go-mutants` command's own version string is unchanged: `--version`,
+  report documents and cache keys still print `internal/cli.Version` — the
+  goreleaser stamp, falling back to the module version without its leading "v"
+  — while the library's `Version()` reports what build information says,
+  verbatim, "(devel)" and all.
 - **`list --explain` names every suppressed site by line and column.** The skip
   record was an aggregate — "four `const-decl` sites in this file" — and
   *which* four was a question nothing could answer. A user who wanted to look

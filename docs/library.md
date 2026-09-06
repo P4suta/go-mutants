@@ -656,6 +656,88 @@ differ, and must not read that miss as "the source changed". The same goes for
 `Profile` and the package set: a narrower preparation of one tree is not
 interchangeable with a wider one, and the digest says so.
 
+## Identity: which engine build produced the evidence
+
+`PreparedDigest` names the prepared *session*. It does not name the *engine*,
+and it cannot: two builds of go-mutants with different mutation rules can
+prepare the same tree with the same toolchain and agree on every field it
+hashes. A consumer storing mutation evidence needs both halves, and the second
+one is here:
+
+```go
+// gomutants.ModulePath is the module path it looks for.
+info, ok := gomutants.ReadBuildInfo()
+```
+
+`ok` is false in exactly one case: the program carries no build information at
+all — a binary the go command did not build, or one built with it stripped. It
+is **not** about go-mutants being named. Build information that reads fine and
+simply does not mention this module returns the zero `BuildInfo` with `ok`
+true, because the reading succeeded and what it says is "not here". Build
+information that names the module **twice** returns the same thing: it
+contradicts itself, no single version can be read out of it, and answering with
+one of the two would be picking a version rather than reading one. In both
+cases `Version` is `""`, `Version()` says `"unknown"`, and `Auditable` is
+false.
+
+**A test binary names no dependency at all**, and a consumer will meet this
+before anything else on this page. The go command fills build information in
+before a test binary's imports are known, so `go version -m` on one shows its
+main module and no `dep` lines — which means that from inside a consumer's own
+`go test`, go-mutants is *absent*: `ok` is true, the `BuildInfo` is the zero
+value, and `Version()` says `"unknown"`, however firmly that consumer's go.mod
+requires the engine. Only a built program names what it linked. A consumer
+recording which engine produced its evidence therefore reads the identity in
+the program that does the measuring, and a test asserting anything about the
+engine's identity from inside a test binary is asserting about nothing.
+
+| Field | What it says |
+|---|---|
+| `Version` | the version build information names: a tag, a pseudo-version, `"(devel)"`, or `""` when the module is not named. Since go1.24 a main module built out of a VCS checkout is itself stamped with a pseudo-version — with `+dirty` appended when the tree had edits — so `"(devel)"` now means the go command could not stamp one at all (see below). Under a replacement this is the version that was *required*, which is not the code that ran |
+| `Sum` | the module checksum, when there is one. `""` under a replacement (the checksum recorded there covers the replacement), and `""` whenever the go command had none — a working-tree build, a vendored one. A main module is not automatically without one: `go install example.com/tool@v1.0.0` stamps what the proxy served |
+| `Replaced`, `ReplacePath`, `ReplaceVersion` | a `replace` was in effect and where it pointed. A directory has no version of its own, and the go command writes its placeholder rather than an empty string, so `ReplaceVersion` is `"(devel)"` there |
+| `Main` | go-mutants is the running program's main module — the command itself, or this module's own tests — rather than a dependency |
+| `VCSRevision`, `VCSModified` | the `vcs.revision` and `vcs.modified` build settings, read **only** when `Main`, because build settings describe the main module and no other. Both are zero under `-buildvcs=false`, and a `vcs.modified` value that will not parse counts as modified |
+| `Auditable` | `Version` names one immutable set of sources: a tag or pseudo-version that is not replaced, or a main module with a clean revision. A version carrying build metadata — anything after a `+` other than `+incompatible` — is never one, whatever the settings beside it say |
+
+**Which builds still say `"(devel)"`**, now that a VCS checkout is stamped: a
+test binary, which the go command never stamps; a build with `-buildvcs=false`;
+a tree under no version control; and a build from a git **worktree**, because
+the go command wants `.git` to be a directory and in a worktree it is a file.
+The dirty case is the one to watch: `go build` in an edited checkout stamps
+something like `v0.0.0-20260906202401-5950bb89fe10+dirty`, which looks exactly
+like a pseudo-version, is served by no proxy, and is why `Auditable` refuses
+build metadata outright rather than trusting `vcs.modified` beside it.
+
+`Version()` is the same string with `"unknown"` for the empty case. It is the
+label to print in a header or a log line, never the value to decide on:
+`"(devel)"`, a `+dirty` stamp and a replaced module's required version all come
+back looking like versions, and only `Auditable` says whether any of them names
+any sources.
+
+**What to key stored evidence on**, in order:
+
+1. `Catalog.PreparedDigest` for everything about one prepared session — the
+   mutants, the tree, the toolchain, the packages.
+2. `BuildInfo.Version` **when `Auditable`** — a released or pseudo-versioned
+   engine, or one whose main module has a clean revision, is a name that will
+   mean the same thing tomorrow.
+3. Otherwise the SHA-256 of the running executable, which is the consumer's to
+   take.
+
+**There is deliberately no `Identity()` and no embedded source digest.** The
+case that would need one is the replaced one — a `replace` pointing at a
+working tree, which is how every consumer develops against an unreleased
+engine — and it is exactly the case such a digest gets wrong. Anything this
+package could hash about itself would describe the sources somebody *committed*
+(or shipped in the module zip), not the edited tree that actually compiled, so
+it would read as a proof precisely when it is a lie, and a consumer's cache
+would hit across two different engines. The bytes actually running are the
+executable's, and taking that digest is the consumer's job because only the
+consumer knows which file it launched, whether that file is still where it was,
+and whether reading it is worth the cost. What this package owes it is an
+honest `Auditable` false, which is what it returns.
+
 ## Selecting by line range
 
 `Mutant.EndLine` is the 1-based line the edit ends on: `Line` plus the number of
