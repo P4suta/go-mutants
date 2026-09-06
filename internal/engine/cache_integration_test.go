@@ -19,7 +19,6 @@
 package engine
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -28,39 +27,25 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// cacheWorkspace copies a fixture module into a temporary directory, so that a
-// test may edit it. The fixtures in the repository are read by every other
-// integration test and are never written to.
-func cacheWorkspace(t *testing.T, name string) string {
-	t.Helper()
-	root := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("creating the workspace: %v", err)
-	}
-	if err := os.CopyFS(root, os.DirFS(fixture(t, name))); err != nil {
-		t.Fatalf("copying the %s fixture: %v", name, err)
-	}
-	return root
-}
-
-// cacheOptions is [options] against a workspace of the test's own, with the
-// outcome cache pointed at a directory shared between the runs of one test and
-// nowhere near the developer's own.
+// cacheOptions is [optionsAt] with the cache on, against a workspace and a
+// cache directory the caller owns.
+//
+// Both travel in rather than being made here, and both are the subject. Every
+// test in this file runs the engine two or three times over *one* tree: a
+// second copy would be a second workspace with a digest of its own, which is
+// exactly what the cache keys on, and a per-run cache root — which is what
+// [optionsAt] gives, and the right answer everywhere else — would make every
+// run a cold one.
 func cacheOptions(t *testing.T, root, cacheRoot string) Options {
 	t.Helper()
-	cfg := config.Defaults()
-	cfg.Test.BaselineRuns = 1
-	cfg.Execution.Jobs = 2
-	cfg.Cache.Mode = config.CacheOn
-	return Options{
-		Config:        cfg,
-		WorkspaceRoot: root,
-		ToolVersion:   testToolVersion,
-		HistoryRoot:   t.TempDir(),
-		CacheRoot:     cacheRoot,
-	}
+	opts := optionsAt(t, root)
+	opts.Config.Execution.Jobs = 2
+	opts.Config.Cache.Mode = config.CacheOn
+	opts.CacheRoot = cacheRoot
+	return opts
 }
 
 // runCached runs the engine and returns the report, failing the test if the run
@@ -120,8 +105,8 @@ func cachedRows(r *report.Report) map[string]report.Outcome {
 // verdict is identical, which is what makes it trustworthy. A cache that were
 // only fast would be worse than no cache at all.
 func TestTheSecondRunOfAnUnchangedWorkspaceExecutesNothing(t *testing.T) {
-	privateTempDir(t)
-	root := cacheWorkspace(t, "killable")
+	t.Parallel()
+	root := testkit.Copy(t, "killable")
 	cacheRoot := t.TempDir()
 
 	first := runCached(t, cacheOptions(t, root, cacheRoot))
@@ -204,8 +189,8 @@ func TestTheSecondRunOfAnUnchangedWorkspaceExecutesNothing(t *testing.T) {
 // reuse across it — which is exactly the temptation that produces a wrong
 // answer the first time somebody edits a line the key was not watching.
 func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
-	privateTempDir(t)
-	root := cacheWorkspace(t, "killable")
+	t.Parallel()
+	root := testkit.Copy(t, "killable")
 	cacheRoot := t.TempDir()
 
 	first := runCached(t, cacheOptions(t, root, cacheRoot))
@@ -214,13 +199,13 @@ func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
 	}
 
 	path := filepath.Join(root, "untested.go")
-	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	if err = os.WriteFile(path, append(source, "\n// One comment, and every key has moved.\n"...), 0o644); err != nil {
-		t.Fatalf("editing %s: %v", path, err)
-	}
+	source := testkit.ReadFile(t, path)
+	testkit.WriteFile(t, path, append(source, "\n// One comment, and every key has moved.\n"...))
+	// Aged after every edit, because the go command indexes a package directory
+	// only when every file in it is at least two seconds old: a workspace this
+	// test hands to three runs in a row would otherwise behave differently in
+	// each of them for reasons that have nothing to do with the cache.
+	testkit.AgeTree(t, root)
 
 	second := runCached(t, cacheOptions(t, root, cacheRoot))
 	if second.Workspace.WorkspaceDigest == first.Workspace.WorkspaceDigest {
@@ -239,9 +224,8 @@ func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
 	// The old entries are not wrong, only unreachable — which is what makes the
 	// cache need no invalidation pass at all. Coming back to the original
 	// content finds them again.
-	if err = os.WriteFile(path, source, 0o644); err != nil {
-		t.Fatalf("restoring %s: %v", path, err)
-	}
+	testkit.WriteFile(t, path, source)
+	testkit.AgeTree(t, root)
 	restored := runCached(t, cacheOptions(t, root, cacheRoot))
 	if restored.Cache.Hits != first.Cache.Writes {
 		t.Errorf("the restored workspace had %d hits, want the %d the first run stored",
@@ -256,8 +240,8 @@ func TestAnEditedSourceFileIsAllMisses(t *testing.T) {
 // on which runner measured it — so a shard run after a whole run finds exactly
 // its own share already answered.
 func TestAShardReusesWhatTheWholeRunProved(t *testing.T) {
-	privateTempDir(t)
-	root := cacheWorkspace(t, "killable")
+	t.Parallel()
+	root := testkit.Copy(t, "killable")
 	cacheRoot := t.TempDir()
 
 	whole := runCached(t, cacheOptions(t, root, cacheRoot))
@@ -310,8 +294,8 @@ func TestAShardReusesWhatTheWholeRunProved(t *testing.T) {
 // meets a real toolchain: `auto` stands down, says so with GOM7901, and the run
 // reaches the same verdicts by measuring everything.
 func TestTheCacheIsOffForACustomTestCommandUnderAuto(t *testing.T) {
-	privateTempDir(t)
-	root := cacheWorkspace(t, "killable")
+	t.Parallel()
+	root := testkit.Copy(t, "killable")
 	cacheRoot := t.TempDir()
 
 	opts := cacheOptions(t, root, cacheRoot)

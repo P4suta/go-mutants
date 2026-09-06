@@ -15,28 +15,18 @@ package engine
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
-)
-
-// The identity the scripted repository commits under. It is set through the
-// environment rather than through `git config`, so that the engine's own git —
-// which runs with this process's environment and not with a set the test
-// composed — reads exactly the same configuration the test does.
-const (
-	gitAuthor    = "go-mutants tests"
-	gitEmail     = "tests@go-mutants.invalid"
-	gitTimestamp = "2026-02-18T09:15:00+00:00"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // touchedFile and its test are the new work a `--changed` run should find. They
@@ -82,76 +72,65 @@ func TestTouched(t *testing.T) {
 `
 )
 
-// gitRepo copies a fixture module into a temporary directory and makes it a
-// repository with one commit, returning the root and the base commit.
+// gitRepo makes the workspace a repository holding the fixture in one commit,
+// under an environment the run's own git reads the same way, and returns that
+// commit.
 //
-// The whole environment is redirected rather than a private one composed for
-// the test's own commands: the engine resolves the diff through its own git,
-// with this process's environment, so a `~/.gitconfig` that the test neutered
-// only for itself would still be able to change what the engine sees.
-func gitRepo(t *testing.T, fixtureName string) (root, base string) {
+// The redirection is of the whole process rather than of a set composed for the
+// test's own commands, and it is the reason the three `--changed` tests do not
+// run in parallel where the rest of this file does. internal/engine resolves
+// the diff through internal/gitdiff without naming an environment, so the git
+// the run drives is this process's git with this process's variables: a
+// developer's ~/.gitconfig that a test neutralised only for its own commands
+// would still be read by the code under test, and `diff.noprefix` alone changes
+// what the engine has to parse.
+//
+// It is [testkit.Env]'s whole policy rather than the two configuration
+// variables strictly needed here, because a second, narrower spelling of "a
+// hermetic environment" in this package is how the copies came to disagree in
+// the first place.
+func gitRepo(t *testing.T, root string) string {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git is not on PATH, so --changed cannot be exercised here: %v", err)
-	}
-	root = filepath.Join(t.TempDir(), fixtureName)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("creating the workspace: %v", err)
-	}
-	if err := os.CopyFS(root, os.DirFS(fixture(t, fixtureName))); err != nil {
-		t.Fatalf("copying the %s fixture: %v", fixtureName, err)
-	}
-
-	configDir := t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(configDir, "absent-global-config"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(configDir, "absent-system-config"))
-	t.Setenv("GIT_AUTHOR_NAME", gitAuthor)
-	t.Setenv("GIT_AUTHOR_EMAIL", gitEmail)
-	t.Setenv("GIT_AUTHOR_DATE", gitTimestamp)
-	t.Setenv("GIT_COMMITTER_NAME", gitAuthor)
-	t.Setenv("GIT_COMMITTER_EMAIL", gitEmail)
-	t.Setenv("GIT_COMMITTER_DATE", gitTimestamp)
-
-	git(t, root, "init", "--quiet")
-	git(t, root, "add", "--all")
-	git(t, root, "commit", "--quiet", "--message", "the fixture as it was")
-	return root, git(t, root, "rev-parse", "HEAD")
+	testkit.Env(t)
+	return testkit.GitInit(t, root)
 }
 
-// git runs one command in the repository, failing the test if it does not
-// succeed.
-func git(t *testing.T, dir string, args ...string) string {
+// ageWrites puts files just written into a tree, and the directory holding
+// them, an hour into the past.
+//
+// It is [testkit.AgeTree] narrowed to what was written, and the narrowing is the
+// whole reason it exists here: this tree is a git repository, and ageing all of
+// it would reach into `.git`, where the index git decides what is dirty from is
+// a table of the stat data of every file. Rewriting timestamps underneath that
+// to answer a question the go command asks is no way to ask git a question.
+//
+// The directory is aged with the files because cmd/go indexes a package
+// directory only when everything it reads there is at least two seconds old, and
+// writing a file into a directory stamps the directory too.
+func ageWrites(t *testing.T, dir string, names ...string) {
 	t.Helper()
-	argv := append([]string{"-C", dir, "-c", "commit.gpgsign=false"}, args...)
-	out, err := exec.Command("git", argv...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	when := time.Now().Add(-testkit.TreeAge)
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatalf("ageing %s: %v", path, err)
+		}
 	}
-	return strings.TrimSpace(string(out))
-}
-
-// writeWorkFile adds a file to the working tree.
-func writeWorkFile(t *testing.T, root, name, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
-		t.Fatalf("writing %s: %v", name, err)
+	if err := os.Chtimes(dir, when, when); err != nil {
+		t.Fatalf("ageing %s: %v", dir, err)
 	}
 }
 
-// gitOptions is [options] against a workspace of the test's own rather than
-// against the fixture in the repository, since a `--changed` run has to be able
-// to write a commit into the tree it reads.
-func gitOptions(t *testing.T, root string) Options {
+// changedOptions is [optionsAt] for a `--changed` run: two workers, because
+// these tests assert on the document rather than on the order of the events,
+// and a diff against the commit the workspace started from.
+func changedOptions(t *testing.T, root, base string) Options {
 	t.Helper()
-	cfg := config.Defaults()
-	cfg.Test.BaselineRuns = 1
-	cfg.Execution.Jobs = 2
-	return Options{
-		Config:        cfg,
-		WorkspaceRoot: root,
-		ToolVersion:   testToolVersion,
-		HistoryRoot:   t.TempDir(),
-	}
+	opts := optionsAt(t, root)
+	opts.Config.Execution.Jobs = 2
+	opts.Changed = true
+	opts.ChangedRef = base
+	return opts
 }
 
 // TestChangedRunExecutesOnlyTheMutantsOnEditedLines is the whole of `--changed`
@@ -164,17 +143,15 @@ func gitOptions(t *testing.T, root string) Options {
 // still cover the whole module, so the ids here are the ids a full run would
 // mint and the two reports can be compared.
 func TestChangedRunExecutesOnlyTheMutantsOnEditedLines(t *testing.T) {
-	privateTempDir(t)
-	root, base := gitRepo(t, "families")
-	writeWorkFile(t, root, touchedFile, touchedSource)
-	writeWorkFile(t, root, touchedTest, touchedTestSource)
-	git(t, root, "add", "--all")
-	git(t, root, "commit", "--quiet", "--message", "the work this run is about")
+	root := testkit.Copy(t, "families")
+	base := gitRepo(t, root)
 
-	opts := gitOptions(t, root)
-	opts.Changed = true
-	opts.ChangedRef = base
-	outcome, _, err := collect(t, t.Context(), opts)
+	testkit.WriteFile(t, filepath.Join(root, touchedFile), []byte(touchedSource))
+	testkit.WriteFile(t, filepath.Join(root, touchedTest), []byte(touchedTestSource))
+	ageWrites(t, root, touchedFile, touchedTest)
+	testkit.GitCommit(t, root, "the work this run is about")
+
+	outcome, _, err := collect(t, t.Context(), changedOptions(t, root, base))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -241,13 +218,10 @@ func TestChangedRunExecutesOnlyTheMutantsOnEditedLines(t *testing.T) {
 // diff is empty measures nothing and says so, rather than falling back to
 // measuring everything.
 func TestChangedRunWithNothingChanged(t *testing.T) {
-	privateTempDir(t)
-	root, base := gitRepo(t, "killable")
+	root := testkit.Copy(t, "killable")
+	base := gitRepo(t, root)
 
-	opts := gitOptions(t, root)
-	opts.Changed = true
-	opts.ChangedRef = base
-	outcome, _, err := collect(t, t.Context(), opts)
+	outcome, _, err := collect(t, t.Context(), changedOptions(t, root, base))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -267,20 +241,15 @@ func TestChangedRunWithNothingChanged(t *testing.T) {
 // `--changed` run that cannot read a diff stops rather than quietly measuring
 // everything or nothing.
 func TestChangedRunFailsWithoutARepository(t *testing.T) {
-	privateTempDir(t)
+	// The same hermetic environment the two repositories above are scripted in,
+	// for the same reason: the engine's git is this process's git. The workspace
+	// is a copy under the test's own directory and no repository is made in it,
+	// which is the whole of the arrangement — the corpus module itself lives
+	// inside go-mutants' repository and would resolve a diff.
+	testkit.Env(t)
 	opts := options(t, "killable")
 	opts.Changed = true
 	opts.ChangedRef = "HEAD"
-	// The fixture lives inside go-mutants' own repository, so the run is pointed
-	// at a copy outside one.
-	root := filepath.Join(t.TempDir(), "killable")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("creating the workspace: %v", err)
-	}
-	if err := os.CopyFS(root, os.DirFS(fixture(t, "killable"))); err != nil {
-		t.Fatalf("copying the fixture: %v", err)
-	}
-	opts.WorkspaceRoot = root
 
 	outcome, _, err := collect(t, t.Context(), opts)
 	if err == nil {
@@ -307,7 +276,7 @@ func TestChangedRunFailsWithoutARepository(t *testing.T) {
 // is mutant for mutant rather than score against score: two runs can reach one
 // score by disagreeing about two mutants in opposite directions.
 func TestShardedRunsMergeIntoTheUnshardedOne(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 
 	whole, _, err := collect(t, t.Context(), options(t, "killable"))
 	if err != nil {

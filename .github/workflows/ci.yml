@@ -97,6 +97,43 @@ jobs:
       - run: mise run build
       - run: mise run test
       - run: mise run test-integration
+      # The corpus is an input, never an output. Every integration suite runs
+      # against a disposable copy of a fixture module, because a run writes
+      # `reports/mutation/` into the tree it is pointed at and several tests
+      # read the same module at once -- so a fixture that has changed means a
+      # suite wrote where it reads, whatever it then went on to assert.
+      #
+      # It gates rather than reports, and it is a step of its own rather than a
+      # test, because a test that ran inside a dirty tree is exactly the test
+      # that cannot be trusted to notice. It runs after a failed suite as well
+      # as after a green one -- a run that wrote into the corpus and then failed
+      # is the case most worth naming -- but not after a cancellation, where
+      # half a suite has written half of what it would have.
+      #
+      # `--ignored` is what makes this a gate rather than a formality. The files
+      # a stray run leaves are the ones .gitignore covers:
+      # `**/reports/mutation/` is ignored precisely so that a manual run inside
+      # a fixture cannot be committed, and `*.test` and `*.out` are ignored for
+      # the same kind of reason. Without it the step would pass over every one
+      # of them and only ever catch an edited fixture. The runner starts from a
+      # fresh checkout, so anything ignored under fixtures/ was written here --
+      # which is what makes the strict reading affordable in CI and not on a
+      # developer's machine, where the same directory may be a fortnight old.
+      #
+      # `--` separates the pathspec from any revision of the same name, and the
+      # listing is printed before the failure: "the corpus changed" without
+      # saying how is a message that sends the reader back to the runner to find
+      # out.
+      - name: The corpus is unchanged
+        if: success() || failure()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # What the suite left behind, on every platform and whatever the suite
       # did. It is the only measurement of this that anybody sees, and a run
       # that failed is exactly when the number is interesting -- so it reports

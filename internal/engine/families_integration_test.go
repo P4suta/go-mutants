@@ -96,7 +96,7 @@ const (
 // because that is the only tier that selects every family; the tiers themselves
 // are the next test's subject.
 func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	opts := options(t, "families")
 	opts.Config.Mutation.Profile = mutation.TierAll
 	// Four workers rather than the harness's one. Everything asserted here is a
@@ -352,7 +352,7 @@ type tierSelection struct {
 // a fixture edit, a deduplication change, a rule that stopped firing — while the
 // family sets name the three operators a profile is actually about.
 func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 
 	seen := make(map[mutation.Tier]tierSelection, len(mutation.Tiers()))
 	for _, tier := range mutation.Tiers() {
