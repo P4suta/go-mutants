@@ -194,6 +194,15 @@ func (w *Workspace) Preserved() []string {
 	return slices.Clone(w.preserved)
 }
 
+func (w *Workspace) ToolchainVersion() string {
+	if w == nil {
+		return ""
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.toolchain.Version.Raw
+}
+
 // Exec runs command against the frozen snapshot. It is available before
 // Prepare; after instrumentation begins, commands belong to Session targets.
 //

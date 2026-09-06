@@ -26,6 +26,24 @@ const (
 	workspaceExecPollInterval = 5 * time.Millisecond
 )
 
+func TestWorkspaceReportsTheToolchainVersionResolvedByOpen(t *testing.T) {
+	workspace, err := gomutants.Open(t.Context(), copyFixture(t, "simple"), gomutants.OpenOptions{TempDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	version := workspace.ToolchainVersion()
+	if !strings.HasPrefix(version, "go version go") {
+		t.Fatalf("ToolchainVersion = %q", version)
+	}
+	if err := workspace.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if workspace.ToolchainVersion() != version {
+		t.Fatalf("ToolchainVersion after Close = %q, want %q", workspace.ToolchainVersion(), version)
+	}
+}
+
 // TestOpenOwnsEveryTemporaryDirectory is the first half of the promise that
 // nothing a run writes outlives it: every top-level directory Open creates
 // carries a marker saying whose it is and holds a lock saying it is still in
