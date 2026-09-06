@@ -444,40 +444,83 @@ func TestBuildErrorTypesAnyCodeItIsGiven(t *testing.T) {
 // execution phase names the binary it could not start, so the concrete import
 // path is what a caller is told when there is one. The selector is the fallback
 // for the failures that are about the pass rather than about one binary.
+//
+// The middle case is the one that pins the rule rather than a symptom of it: a
+// selector that is present *and disagrees* has to lose. An implementation that
+// merely filled in a blank would satisfy the first case and still hand a caller
+// a directory pattern where it asked which package broke.
 func TestExecutionErrorNamesTheFailingPackage(t *testing.T) {
 	t.Parallel()
 
-	named := executionError("exec", "", fmt.Errorf("gomutants: session exec: %w", &execute.Error{
-		Code:    execute.CodeMutantStart,
-		Message: "the test binary for example.com/a could not be run",
-		Output:  "fork/exec: permission denied",
-		Package: "example.com/a",
-	}))
-	var execution *ExecutionError
-	if !errors.As(named, &execution) {
-		t.Fatalf("executionError = %v, want an *ExecutionError", named)
+	cases := []struct {
+		name     string
+		call     string
+		selector string
+		failure  *execute.Error
+		want     string
+	}{
+		{
+			name:     "a request that measured every prepared binary",
+			call:     "exec",
+			selector: "",
+			failure: &execute.Error{
+				Code:    execute.CodeMutantStart,
+				Message: "the test binary for example.com/a could not be run",
+				Output:  "fork/exec: permission denied",
+				Package: "example.com/a",
+			},
+			want: "example.com/a",
+		},
+		{
+			name:     "a request that named a directory the failure disagrees with",
+			call:     "exec",
+			selector: "./internal/...",
+			failure: &execute.Error{
+				Code: execute.CodeStaleCatalog,
+				Message: "the generated runtime in example.com/m/internal/store does not know the mutant; " +
+					"the catalogue and the instrumented snapshot disagree",
+				Output:  "unknown mutant",
+				Package: "example.com/m/internal/store",
+			},
+			want: "example.com/m/internal/store",
+		},
+		{
+			name:     "a failure about the pass rather than about one binary",
+			call:     "probe",
+			selector: "example.com/a/pkg",
+			failure: &execute.Error{
+				Code:    execute.CodeProbeLog,
+				Message: "the infection log cannot be read against the catalogue it was written for",
+			},
+			want: "example.com/a/pkg",
+		},
 	}
-	if execution.Package != "example.com/a" {
-		t.Errorf("Package = %q, want the failing binary's import path, not the request's selector",
-			execution.Package)
-	}
-	if execution.Call != "exec" || execution.Code != "GOM7513" || execution.Output == "" {
-		t.Errorf("ExecutionError = %+v, want the call, the code and the output the failure carried", execution)
-	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 
-	// A failure about the pass rather than about one binary — an infection log
-	// that cannot be read — names no package of its own, and the request's
-	// selector is better than nothing.
-	fallback := executionError("probe", "example.com/a/pkg",
-		fmt.Errorf("gomutants: session probe: %w", &execute.Error{
-			Code:    execute.CodeProbeLog,
-			Message: "the infection log cannot be read against the catalogue it was written for",
-		}))
-	if !errors.As(fallback, &execution) {
-		t.Fatalf("executionError = %v, want an *ExecutionError", fallback)
-	}
-	if execution.Package != "example.com/a/pkg" {
-		t.Errorf("Package = %q, want the request's package where the failure named none", execution.Package)
+			wrapped := fmt.Errorf("gomutants: session %s: %w", c.call, c.failure)
+			err := executionError(c.call, c.selector, wrapped)
+			var execution *ExecutionError
+			if !errors.As(err, &execution) {
+				t.Fatalf("executionError = %v, want an *ExecutionError", err)
+			}
+			if execution.Package != c.want {
+				t.Errorf("Package = %q, want %q", execution.Package, c.want)
+			}
+			if execution.Call != c.call {
+				t.Errorf("Call = %q, want %q", execution.Call, c.call)
+			}
+			if execution.Code != c.failure.Code.String() {
+				t.Errorf("Code = %q, want the failure's own %q", execution.Code, c.failure.Code)
+			}
+			if execution.Output != c.failure.Output {
+				t.Errorf("Output = %q, want the failure's own %q", execution.Output, c.failure.Output)
+			}
+			if got := err.Error(); got != wrapped.Error() {
+				t.Errorf("message = %q, want the cause's own %q", got, wrapped.Error())
+			}
+		})
 	}
 }
 
