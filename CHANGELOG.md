@@ -1548,6 +1548,63 @@ Entries say *why* a change was made, not only what changed.
   gone. When one cannot be removed, `run` publishes a `GOM4044` warning and
   carries on: failing to collect somebody else's leftovers is not a reason to
   refuse to measure anything.
+- **The engine's own integration suite now runs against disposable copies of
+  the corpus, and in parallel.** Every run was pointed straight at
+  `fixtures/<name>` in this repository, which cost two things at once. The
+  project artefacts had to be turned off — `report.formats` was emptied in the
+  suite's options constructor — because a default `json,html` writes
+  `reports/mutation/` into the workspace, so the one code path that writes into
+  a user's own tree was exercised nowhere in the package that owns it; and
+  proving that a run leaves nothing behind meant redirecting `TMPDIR`, `TMP` and
+  `TEMP`, which are process-wide, so no test in the file could run beside
+  another. The two end-to-end tests that drive the built command line did write
+  the artefacts, into `fixtures/killable/`, where `.gitignore` hid them.
+
+  Each run now works on a copy made through `internal/testkit` and is given a
+  temporary parent, a history root and a cache root of its own, so the default
+  formats are back on and the artefacts land where a user's would.
+  `TestRunsNeverWriteIntoTheCorpus` is the guard — the copy holds
+  `reports/mutation/mutation.json` and it validates, no corpus module grew a
+  report directory while the suite ran, and `git status --porcelain -- fixtures`
+  is empty — and CI runs a corpus check as a step of its own after the
+  integration suite, because a test that ran inside a dirty tree is the test
+  least able to notice. That step reads `--ignored`, since the files a stray run
+  leaves are exactly the ones `.gitignore` covers, and it runs after a failed
+  suite as well as a green one. The test compares the corpus before the run with
+  the corpus after it rather than demanding an empty one: a `reports/` somebody
+  left in a fixture a fortnight ago is not this run's doing, and a guard that
+  blamed it is a guard people learn to delete.
+  `TestRunLeavesNothingUnderItsTempDirectory` is the leftover assertion, made
+  against `Options.TempDirectory` rather than against a redirected global.
+
+  The CI step caught something on its first run, in another package.
+  internal/cli's `--explain` tests started a real `run --explain` inside
+  `fixtures/rejectable` — `run` writes its artefacts into the directory it is
+  started in — and had been leaving a `reports/` there on every machine that
+  ever ran the suite, seen by nobody because `.gitignore` covers it. Those
+  tests, and the listing tests that shared the arrangement, now `t.Chdir` into a
+  copy. The rest of internal/cli's harness is a later migration's.
+
+  Everything but four tests then took `t.Parallel()`, and the suite went from
+  around 120s to around 30s — around 40s at `-parallel 2`. The four that stay
+  serial redirect the environment for the whole process, and each says why:
+  `TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps` is about the difference
+  between the named temporary parent and the operating system's own, and the
+  three `--changed` tests script a git repository whose configuration the run's
+  own `git` reads — internal/engine resolves a diff through internal/gitdiff
+  without naming an environment, so the git it drives is this process's. Those
+  repositories are now built with the harness's git helpers, which pin the
+  identity, the branch and the dates and point the configuration files at paths
+  that do not exist, rather than with the `-c commit.gpgsign=false` the suite
+  used to pass — which is precisely what the signing wrappers some developers
+  install refuse, and which made those tests unrunnable on such a machine.
+  `testkit.GitInit` gives the branch it makes no upstream, which costs these
+  tests nothing because each names the commit it diffs against; the suites that
+  exercise a bare `--changed`, and so resolve `@{upstream}`, will need one.
+  Ageing a tree that is a repository is narrowed here to the files just written,
+  for a related reason: `testkit.AgeTree` walks everything under the root, `.git`
+  included, and rewriting the timestamps git keeps its stat cache on is no way to
+  ask git a question. Teaching it to skip `.git` would be the general fix.
 
 ### Fixed
 

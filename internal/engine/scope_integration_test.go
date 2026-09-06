@@ -26,6 +26,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // The coverage fixture's two test packages, which are the whole point of using
@@ -53,7 +54,7 @@ const (
 // same answer the run would reach by building every binary and watching the
 // scoped ones pass.
 func TestScopedTestCommandBuildsAndRunsOnlyTheScopedPackage(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	opts := options(t, "coverage")
 	opts.TestArgv = []string{"go", "test", "./core/..."}
 
@@ -192,19 +193,15 @@ func TestScopedTestCommandBuildsAndRunsOnlyTheScopedPackage(t *testing.T) {
 // after a build, three timed test runs and an instrumentation pass would be
 // several minutes spent to report it.
 func TestScopePatternThatMatchesNothingStopsBeforeTheBaseline(t *testing.T) {
-	privateTempDir(t)
-	root := scopeWorkspace(t, "coverage")
-	// A real directory that holds no Go package, which is what makes this the
-	// exit-zero case rather than the missing-directory one.
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
-		t.Fatalf("creating the fixture's docs directory: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "docs", "notes.md"), []byte("notes\n"), 0o600); err != nil {
-		t.Fatalf("writing the fixture's docs file: %v", err)
-	}
-
+	t.Parallel()
 	opts := options(t, "coverage")
-	opts.WorkspaceRoot = root
+	// A real directory that holds no Go package, which is what makes this the
+	// exit-zero case rather than the missing-directory one. It is written into
+	// the run's own copy and the tree is aged again, so that every file the go
+	// command meets is on the far side of its two-second index cutoff.
+	testkit.WriteFile(t, filepath.Join(opts.WorkspaceRoot, "docs", "notes.md"), []byte("notes\n"))
+	testkit.AgeTree(t, opts.WorkspaceRoot)
+
 	opts.TestArgv = []string{"go", "test", "./core/...", "./docs/..."}
 
 	outcome, _, err := collect(t, t.Context(), opts)
@@ -231,23 +228,15 @@ func TestScopePatternThatMatchesNothingStopsBeforeTheBaseline(t *testing.T) {
 // empty list, every mutant comes back survived, and the run publishes a score of
 // zero as though it had looked.
 func TestScopeWithNoTestFilesInItIsRefused(t *testing.T) {
-	privateTempDir(t)
-	root := scopeWorkspace(t, "coverage")
-	if err := os.MkdirAll(filepath.Join(root, "extra"), 0o755); err != nil {
-		t.Fatalf("creating the fixture's extra package: %v", err)
-	}
-	source := "// SPDX-FileCopyrightText: 2026 go-mutants contributors\n" +
-		"// SPDX-License-Identifier: MIT OR Apache-2.0\n\n" +
-		"// Package extra is a real package with no test file in it.\n" +
-		"package extra\n\n" +
-		"// Sum adds two numbers.\n" +
-		"func Sum(a, b int) int { return a + b }\n"
-	if err := os.WriteFile(filepath.Join(root, "extra", "extra.go"), []byte(source), 0o600); err != nil {
-		t.Fatalf("writing the fixture's extra package: %v", err)
-	}
-
+	t.Parallel()
 	opts := options(t, "coverage")
-	opts.WorkspaceRoot = root
+	testkit.WriteSource(t, filepath.Join(opts.WorkspaceRoot, "extra"), "extra.go",
+		"// Package extra is a real package with no test file in it.\n"+
+			"package extra\n\n"+
+			"// Sum adds two numbers.\n"+
+			"func Sum(a, b int) int { return a + b }\n")
+	testkit.AgeTree(t, opts.WorkspaceRoot)
+
 	opts.TestArgv = []string{"go", "test", "./extra/..."}
 
 	_, _, err := collect(t, t.Context(), opts)
@@ -257,19 +246,4 @@ func TestScopeWithNoTestFilesInItIsRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), "./extra/...") {
 		t.Errorf("the refusal does not name the scope: %v", err)
 	}
-}
-
-// scopeWorkspace copies a fixture module into a temporary directory, so that a
-// test may add a file to it. The fixtures in the repository are read by every
-// other integration test and are never written to.
-func scopeWorkspace(t *testing.T, name string) string {
-	t.Helper()
-	root := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("creating the workspace: %v", err)
-	}
-	if err := os.CopyFS(root, os.DirFS(fixture(t, name))); err != nil {
-		t.Fatalf("copying the %s fixture: %v", name, err)
-	}
-	return root
 }

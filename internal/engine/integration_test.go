@@ -14,6 +14,18 @@
 // Run it with `mise run test-integration`, or:
 //
 //	go test -tags integration ./internal/engine/...
+//
+// Every test here runs on a disposable copy of a corpus module and takes
+// t.Parallel(), except the four that redirect this process's environment and
+// say so in their own comments: [TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps]
+// and the three `--changed` tests in selection_integration_test.go. t.Setenv is
+// a process-wide write, and the go testing package refuses it in a parallel
+// test — so the rule is simply "no redirection, no serialisation", and the way
+// to keep a new test parallel is to give the run a directory rather than to
+// move a variable. Measured on an eight-core Linux box, best of five: 29s at
+// the default -parallel (GOMAXPROCS) and 40s at -parallel 2, against 120s for
+// the same suite before it copied anything. They are wall-clock readings from a
+// machine doing other work, quoted for their ratio rather than their precision.
 package engine
 
 import (
@@ -38,6 +50,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // testToolVersion is the version string the engine records in a test report.
@@ -45,21 +58,9 @@ import (
 // parts of a report independent of what internal/cli currently says.
 const testToolVersion = "0.0.0-test"
 
-// fixture returns the absolute path of a corpus module.
-func fixture(t *testing.T, name string) string {
-	t.Helper()
-	path, err := filepath.Abs(filepath.Join("..", "..", "fixtures", name))
-	if err != nil {
-		t.Fatalf("resolving the fixture path: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(path, "go.mod")); err != nil {
-		t.Fatalf("fixture %s is not a module: %v", name, err)
-	}
-	return path
-}
-
 // options returns the engine options for one fixture run: one baseline
-// observation, one worker, and a history store of the test's own.
+// observation, one worker, and a disposable copy of a corpus module to run
+// against.
 //
 // Both numbers are about the tests rather than about the engine. One baseline
 // run is all a fixture needs to prove its suite is green, and the derived
@@ -67,30 +68,53 @@ func fixture(t *testing.T, name string) string {
 // result events deterministic, which is what lets a test assert the sequence
 // rather than a set.
 //
-// The history root is the load-bearing one. Every run files a report, and the
-// default store is the developer's own operating system cache directory: a test
-// suite that wrote there would leave a directory per fixture behind on every
-// machine that ever ran it.
-//
-// `report.formats` is the second of the same kind, and it is emptied for a
-// reason worth stating. The project artefacts are the only files a run writes
-// into the *workspace*, and these tests run against the corpus modules in this
-// repository rather than against copies of them — so a default `json,html`
-// would commit a `reports/mutation/` under `fixtures/` on every developer's
-// machine, in a directory `.gitignore` does not cover. The artefacts are
-// exercised end to end where they belong: by the tests that copy a fixture
-// somewhere disposable first, which is what a user's own tree is.
+// The copy is the load-bearing part, and it is what this suite used not to
+// make. A run writes into the tree it is pointed at — `reports/mutation/` is
+// the one place go-mutants touches a user's own files — so a suite that ran in
+// `fixtures/` had to turn `report.formats` off to keep the corpus committable,
+// which left the single code path that writes into a user's tree exercised
+// nowhere in this package. Running against a copy costs a directory and buys
+// the default back; [TestRunsNeverWriteIntoTheCorpus] is the assertion that the
+// arrangement holds.
 func options(t *testing.T, name string) Options {
+	t.Helper()
+	return optionsAt(t, testkit.Copy(t, name))
+}
+
+// optionsAt is [options] against a workspace the caller made, for the tests
+// that have to reach into the tree themselves — script a git history into it,
+// add a package to it, edit a byte between two runs and compare.
+//
+// The three directories are all named for the same reason: every default is a
+// directory of the developer's own. The history store is
+// <os.UserCacheDir>/go-mutants, so a suite that let it default would file a run
+// report per fixture into the cache directory of every machine that ever ran
+// the tests; the outcome cache falls back to the history root and would follow
+// it there. The temporary parent is the one that also buys something back —
+// with the run's snapshot and scratch directory under a directory of the test's
+// own, "the run left nothing behind" is checkable without redirecting TMPDIR,
+// which is a process-wide global and therefore a lock on the whole package.
+// That is what lets these tests run in parallel.
+func optionsAt(t *testing.T, root string) Options {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Test.BaselineRuns = 1
 	cfg.Execution.Jobs = 1
-	cfg.Report.Formats = nil
+
+	private := t.TempDir()
+	// Created, because the snapshot is made with os.MkdirTemp inside it. The
+	// other two are created by whatever writes into them.
+	temp := filepath.Join(private, "temp")
+	if err := os.MkdirAll(temp, 0o755); err != nil {
+		t.Fatalf("creating the run's temporary directory: %v", err)
+	}
 	return Options{
 		Config:        cfg,
-		WorkspaceRoot: fixture(t, name),
+		WorkspaceRoot: root,
 		ToolVersion:   testToolVersion,
-		HistoryRoot:   t.TempDir(),
+		TempDirectory: temp,
+		HistoryRoot:   filepath.Join(private, "history"),
+		CacheRoot:     filepath.Join(private, "cache"),
 	}
 }
 
@@ -153,40 +177,6 @@ func results(events []Event) []string {
 	return out
 }
 
-// privateTempDir points this process's temporary directory at a fresh one for
-// the length of the test, and returns it.
-//
-// The engine creates its snapshot and its scratch directory under
-// os.TempDir(), so redirecting that is what makes "nothing was left behind" an
-// assertion rather than a guess: the shared temporary directory of a machine
-// running `go test ./...` has several packages writing into it at once, and a
-// leak of one is indistinguishable from a leak of another.
-func privateTempDir(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	// os.TempDir reads TMPDIR on POSIX and TMP then TEMP on Windows, so all
-	// three are set rather than guessing which platform is reading.
-	t.Setenv("TMPDIR", dir)
-	t.Setenv("TMP", dir)
-	t.Setenv("TEMP", dir)
-	return dir
-}
-
-// entries lists the names directly under a directory, sorted.
-func entries(t *testing.T, dir string) []string {
-	t.Helper()
-	found, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("reading %s: %v", dir, err)
-	}
-	names := make([]string, 0, len(found))
-	for _, e := range found {
-		names = append(names, e.Name())
-	}
-	slices.Sort(names)
-	return names
-}
-
 // runDirNames lists the directories a go-mutants run creates directly under
 // dir, sorted, and says nothing about whatever else is in there.
 //
@@ -230,12 +220,20 @@ const runDirPrefix = "go-mutants-"
 // other test in the suite is free to take the option instead, which is the
 // point of it.
 func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
-	// Before the redirection, so that the history root and the parent below are
-	// this test's own directories rather than entries in the one being watched.
+	// Before the redirection, so that the copy, the history root and the parent
+	// the run is given are this test's own directories rather than entries in
+	// the one being watched.
 	opts := options(t, "simple")
-	parent := t.TempDir()
-	system := privateTempDir(t)
-	opts.TempDirectory = parent
+	parent := opts.TempDirectory
+	system := t.TempDir()
+	// os.TempDir reads TMPDIR on POSIX and TMP then TEMP on Windows, so all
+	// three are set rather than guessing which platform is reading. This is the
+	// process-wide global the option exists to make unnecessary, and it is
+	// redirected here alone: this is the one test whose subject is the
+	// difference between the two parents.
+	t.Setenv("TMPDIR", system)
+	t.Setenv("TMP", system)
+	t.Setenv("TEMP", system)
 
 	// A snapshot directory whose owner is gone: the leftovers of a run that was
 	// killed, and the only thing in a temporary directory a run may collect.
@@ -276,7 +274,7 @@ func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
 	}
 
 	owned := filepath.Dir(outcome.SnapshotRoot)
-	if filepath.Base(outcome.SnapshotRoot) != snapshot.TreeName || filepath.Dir(owned) != parent {
+	if filepath.Base(outcome.SnapshotRoot) != snapshot.TreeName || !testkit.SamePath(filepath.Dir(owned), parent) {
 		t.Errorf("the snapshot was created at %s, want %s below a directory the run owns in %s",
 			outcome.SnapshotRoot, snapshot.TreeName, parent)
 	}
@@ -284,7 +282,7 @@ func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
 		t.Errorf("the orphan %s in the run's own temporary directory was not swept (stat error %v)",
 			orphan, statErr)
 	}
-	if left := entries(t, parent); len(left) != 0 {
+	if left := testkit.Entries(t, parent); len(left) != 0 {
 		t.Errorf("the run left %v behind in the temporary directory it was given", left)
 	}
 	if after := runDirNames(system); len(after) != 0 {
@@ -296,7 +294,7 @@ func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
 }
 
 func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
-	tempRoot := privateTempDir(t)
+	t.Parallel()
 	opts := options(t, "simple")
 	opts.Config.Test.BaselineRuns = 2
 
@@ -432,21 +430,12 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		t.Errorf("a clean run published %v", outcome.Warnings)
 	}
 
-	// The snapshot is gone, and so is the scratch directory beside it — the
-	// compiled test binaries and the per-worker temporary directories included.
-	// The copy is the tree below the directory the run owns, and that directory
-	// is directly under the temporary directory the run was told to use.
-	owned := filepath.Dir(outcome.SnapshotRoot)
-	if filepath.Base(outcome.SnapshotRoot) != snapshot.TreeName || filepath.Dir(owned) != tempRoot {
-		t.Errorf("the snapshot was created at %s, want %s below a directory the run owns in the redirected temporary directory %s",
-			outcome.SnapshotRoot, snapshot.TreeName, tempRoot)
-	}
-	if _, err := os.Stat(owned); !os.IsNotExist(err) {
-		t.Errorf("the snapshot directory %s survived the run (stat error %v)", owned, err)
-	}
-	if left := entries(t, tempRoot); len(left) != 0 {
-		t.Errorf("the run left %v behind in the temporary directory", left)
-	}
+	// What the run left behind is deliberately not asserted here any more. It
+	// was, back when every test in this file redirected TMPDIR and this one was
+	// as good a place as any to look; now that each run is given a temporary
+	// parent of its own the promise has a test whose whole subject it is, and
+	// stating it twice would mean two tests to read after a change to one
+	// cleanup path — see [TestRunLeavesNothingUnderItsTempDirectory].
 }
 
 // TestKillableRunReachesTheFixturesPredeterminedFates is the whole pipeline
@@ -460,7 +449,7 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 // stopped compiling, and one where everything lived would be activation that
 // never happened.
 func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	outcome, events, err := collect(t, t.Context(), options(t, "killable"))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -580,7 +569,7 @@ func TestKillableRunReachesTheFixturesPredeterminedFates(t *testing.T) {
 // unmutated tree passes a vetted `go test` — which is what the run does before
 // it instruments anything.
 func TestVetSuspectGuardShapesStillReachExecution(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	outcome, events, err := collect(t, t.Context(), options(t, "vetsuspect"))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -673,7 +662,7 @@ func TestVetSuspectGuardShapesStillReachExecution(t *testing.T) {
 // after, that each worker writes only its own result slot, and that no hook
 // touches the warning list.
 func TestParallelWorkersReachTheSameTally(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	opts := options(t, "killable")
 	opts.Config.Execution.Jobs = 4
 
@@ -715,7 +704,7 @@ func TestParallelWorkersReachTheSameTally(t *testing.T) {
 // TestStrictFailsOnTheSurvivorItWasNotToldAbout is the same run with the one
 // gate this fixture can trip.
 func TestStrictFailsOnTheSurvivorItWasNotToldAbout(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	opts := options(t, "killable")
 	opts.Config.Policy.Strict = true
 
@@ -743,7 +732,7 @@ func TestStrictFailsOnTheSurvivorItWasNotToldAbout(t *testing.T) {
 // `list --mutant`: a run must narrow to one mutant, and everything else is
 // still catalogued and reported as not-run.
 func TestMutantSelectsExactlyOne(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 
 	// The id comes from a run rather than from a constant: a mutant's identity
 	// is a digest over the fixture's bytes, so a hard-coded one would turn every
@@ -783,7 +772,7 @@ func TestMutantSelectsExactlyOne(t *testing.T) {
 }
 
 func TestMutantThatSelectsNothingIsRefused(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	opts := options(t, "killable")
 	// Well formed and not a prefix of any digest of this fixture.
 	opts.MutantPrefix = strings.Repeat("0", 32)
@@ -808,7 +797,7 @@ func TestMutantThatSelectsNothingIsRefused(t *testing.T) {
 // the job it exists for: survivors somebody has looked at, explained, and
 // signed off stop being a reason to fail.
 func TestExpectedSurvivorLeavesAStrictRunGreen(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	first, _, err := collect(t, t.Context(), options(t, "killable"))
 	if err != nil {
 		t.Fatalf("the run that sources the id: %v", err)
@@ -857,7 +846,7 @@ func TestExpectedSurvivorLeavesAStrictRunGreen(t *testing.T) {
 // to whoever reads it, and a stale ledger is worse than none — so it escalates
 // past the opt-in gates to exit 2.
 func TestExpectingAKilledMutantIsAContractFailure(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	first, _, err := collect(t, t.Context(), options(t, "killable"))
 	if err != nil {
 		t.Fatalf("the run that sources the id: %v", err)
@@ -905,7 +894,7 @@ func TestExpectingAKilledMutantIsAContractFailure(t *testing.T) {
 // already cancelled by the time it publishes anything else — which makes this a
 // test of the drain-and-publish path rather than a race with a timer.
 func TestCancellationMidRunStillPublishesAPartialReport(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
@@ -985,7 +974,7 @@ func TestCancellationMidRunStillPublishesAPartialReport(t *testing.T) {
 // — and their presence in the killed set rather than the rejected one is the
 // improvement asserted where it can fail.
 func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	outcome, events, err := collect(t, t.Context(), options(t, "rejectable"))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -1077,7 +1066,7 @@ func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
 // whole-catalogue run reports three of them and stays green — so the fix is to
 // say the thing out loud, not to invent a gate for it.
 func TestMutantThatWasRejectedSaysSo(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 
 	// The id comes from a run for the reason survivorOf gives: a mutant's
 	// identity is a digest over the fixture's bytes.
@@ -1167,6 +1156,7 @@ func TestMutantThatWasRejectedSaysSo(t *testing.T) {
 }
 
 func TestRunStopsOnAFailingBaseline(t *testing.T) {
+	t.Parallel()
 	outcome, events, err := collect(t, t.Context(), options(t, "failing-baseline"))
 	if err == nil {
 		t.Fatal("Run succeeded against a workspace whose tests fail")
@@ -1229,7 +1219,7 @@ func TestRunStopsOnAFailingBaseline(t *testing.T) {
 // the same number of different files — and it is here to name the invariant
 // phases 9 and 10 will depend on, where the file count alone would not say why.
 func TestMutationExcludeChangesNeitherTheSnapshotNorItsDigest(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	plain, _, err := collect(t, t.Context(), options(t, "simple"))
 	if err != nil {
 		t.Fatalf("Run with no excludes: %v", err)
@@ -1264,6 +1254,7 @@ func TestMutationExcludeChangesNeitherTheSnapshotNorItsDigest(t *testing.T) {
 // the consequence a user meets: a red suite stays red however the mutation
 // candidates are selected.
 func TestMutationExcludeCannotHideAFailingBaseline(t *testing.T) {
+	t.Parallel()
 	opts := options(t, "failing-baseline")
 	opts.Config.Mutation.Exclude = []string{"**/*_test.go"}
 
@@ -1285,6 +1276,7 @@ func TestMutationExcludeCannotHideAFailingBaseline(t *testing.T) {
 }
 
 func TestExplicitTimeoutBelowTheBaselineIsRefused(t *testing.T) {
+	t.Parallel()
 	opts := options(t, "simple")
 	// One nanosecond is below any real measurement, so the rejection cannot
 	// depend on how fast this machine is.
@@ -1306,6 +1298,7 @@ func TestExplicitTimeoutBelowTheBaselineIsRefused(t *testing.T) {
 }
 
 func TestCancellationBeforeAnythingIsCataloguedPublishesNothing(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
@@ -1341,14 +1334,9 @@ func TestCancellationBeforeAnythingIsCataloguedPublishesNothing(t *testing.T) {
 // than off a Verdict: a survivor exists, --strict was asked for, and the answer
 // has to be 1.
 func TestCommandLineEndToEnd(t *testing.T) {
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skipf("no go executable on PATH: %v", err)
-	}
-	repo, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolving the repository root: %v", err)
-	}
+	t.Parallel()
+	goBin := testkit.GoBinary(t)
+	repo := testkit.Root(t)
 
 	binary := filepath.Join(t.TempDir(), "go-mutants")
 	if runtime.GOOS == "windows" {
@@ -1373,7 +1361,10 @@ func TestCommandLineEndToEnd(t *testing.T) {
 	}
 
 	run := exec.CommandContext(t.Context(), binary, "run", "--strict")
-	run.Dir = fixture(t, "killable")
+	// A copy, never the corpus module itself: this is a real `go-mutants run`
+	// with the default `report.formats`, so it writes `reports/mutation/` into
+	// whatever directory it is started in.
+	run.Dir = testkit.Copy(t, "killable")
 	// Hermetic here means "nothing of go-mutants' own leaks in", not "an empty
 	// environment": the child has to find the same `go`, the same module cache,
 	// and on Windows the same SystemRoot this process did, or it fails for
@@ -1443,14 +1434,9 @@ func TestCommandLineEndToEnd(t *testing.T) {
 // TestJSONWritesTheDocumentAloneOnStandardOutput is the machine-readable half
 // of the same wiring, checked against the shipped schema.
 func TestJSONWritesTheDocumentAloneOnStandardOutput(t *testing.T) {
-	goBin, err := exec.LookPath("go")
-	if err != nil {
-		t.Skipf("no go executable on PATH: %v", err)
-	}
-	repo, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolving the repository root: %v", err)
-	}
+	t.Parallel()
+	goBin := testkit.GoBinary(t)
+	repo := testkit.Root(t)
 	binary := filepath.Join(t.TempDir(), "go-mutants")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
@@ -1462,7 +1448,10 @@ func TestJSONWritesTheDocumentAloneOnStandardOutput(t *testing.T) {
 	}
 
 	run := exec.CommandContext(t.Context(), binary, "run", "--json")
-	run.Dir = fixture(t, "killable")
+	// A copy, never the corpus module itself: this is a real `go-mutants run`
+	// with the default `report.formats`, so it writes `reports/mutation/` into
+	// whatever directory it is started in.
+	run.Dir = testkit.Copy(t, "killable")
 	cache := t.TempDir()
 	run.Env = append(childEnv(t.TempDir()),
 		"NO_COLOR=1", "LOCALAPPDATA="+cache, "XDG_CACHE_HOME="+cache, "HOME="+cache)
@@ -1635,7 +1624,7 @@ func killedOf(t *testing.T, r *report.Report) report.Mutant {
 // mutant of all three, which is what makes the run's narrowing a fact about
 // coverage rather than a coincidence of the catalogue.
 func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	outcome, events, err := collect(t, t.Context(), options(t, "coverage"))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -1783,7 +1772,7 @@ func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 // slower when they changed `test.command`. The same fixture then executes every
 // mutant, including the one nothing covers, and reaches the same verdicts.
 func TestCustomTestCommandTurnsCoverageOffAndSaysSo(t *testing.T) {
-	privateTempDir(t)
+	t.Parallel()
 	opts := options(t, "coverage")
 	// Verbatim `go test ./...` with one flag added, which is exactly the shape
 	// of a real project's reason for setting the command at all.

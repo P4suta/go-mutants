@@ -15,11 +15,10 @@ package cli
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
@@ -29,15 +28,17 @@ import (
 // It is the fixture `run --explain` needs: the section under test is the
 // rejections, and a module with none would let every assertion here pass
 // against an empty block.
+//
+// A copy, and not the corpus module itself. `run --explain` is a run: it writes
+// `reports/mutation/` into the directory it is started in, and this helper's
+// whole job is to start it inside a fixture. Pointing it at the checked-in
+// module left a `fixtures/rejectable/reports/` behind on every machine that ran
+// the suite — hidden from `git status` by the .gitignore entry that exists so a
+// manual run cannot be committed, and found by the corpus gate the engine's
+// suite grew.
 func inRejectableFixture(t *testing.T) string {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", "..", "fixtures", "rejectable"))
-	if err != nil {
-		t.Fatalf("resolving the fixture path: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("fixtures/rejectable is not a module: %v", err)
-	}
+	root := testkit.Copy(t, "rejectable")
 	temp := t.TempDir()
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
