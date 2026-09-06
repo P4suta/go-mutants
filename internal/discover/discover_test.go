@@ -23,14 +23,26 @@ import (
 	"github.com/P4suta/go-mutants/internal/glob"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // toolchain locates the Go toolchain the fixtures are loaded with.
+//
+// [testkit.GoBinary] first, because the skip policy belongs to the harness
+// rather than to this file: it skips on a machine without Go and *fails* under
+// GO_MUTANTS_TEST_REQUIRE_TOOLS, which every CI test job sets. The bare
+// t.Skipf this replaces was the exact failure that policy exists to catch — a
+// runner whose toolchain went missing would have retired seventy-four tests
+// and reported a green build.
+//
+// A Locate that then fails is a real failure rather than a second skip: `go` is
+// on PATH, so a version probe that will not answer is a fact worth reporting.
 func toolchain(t *testing.T) gocmd.Toolchain {
 	t.Helper()
+	testkit.GoBinary(t)
 	located, err := gocmd.Locate(gocmd.Options{})
 	if err != nil {
-		t.Skipf("no Go toolchain on PATH, so go/packages cannot run: %v", err)
+		t.Fatalf("locating the Go toolchain go/packages will load the fixtures with: %v", err)
 	}
 	return located
 }

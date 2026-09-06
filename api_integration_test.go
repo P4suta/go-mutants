@@ -1,6 +1,22 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//go:build integration
+
+// The engine API's toolchain-backed suite, and the shared sessions the rest of
+// the tagged root files read.
+//
+// Every test in this file opens a workspace, which snapshots a module, probes a
+// `go` toolchain and compiles it; most of them go on to prepare a session,
+// which instruments two trees, validates both and builds four test binaries.
+// None of it can run on a machine without Go, and all of it is measured in tens
+// of seconds — so it is the integration tier, and `go test .` is the compiler
+// alone.
+//
+// TestMain lives here and moves with the tag, which is correct rather than
+// convenient: the only thing it does is release the sessions this file prepares,
+// so a unit tier without those sessions needs no TestMain at all.
+
 package gomutants_test
 
 import (
@@ -11,12 +27,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
+	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
@@ -39,6 +57,186 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// sessionBlockEnv switches the injected fixture's blocking test on. Its value,
+// not merely its presence, is what the test reads, so that an inherited
+// SESSION_BLOCK= from some other tool cannot turn it on by accident.
+//
+// The gate is the same pattern fixtures/probeable uses for its own TestBlocks,
+// and for the same reason. Two of the executions below want a target that
+// outlives its timeout, and the only way to write one is a sleep — but an
+// ungated sleep is paid by everything else that runs the package: the baseline
+// `go test ./...` at the top of this file, the verification run inside Prepare,
+// and every whole-package target. Ten seconds bought twice over, so that two
+// assertions about a timeout could have a target to time out.
+//
+// The gate is also what lets the sleep be a full minute rather than the ten
+// seconds it was. Nothing pays for it now except the two executions that ask,
+// and both of those kill it inside a second — so the length is free, and a long
+// one is what gives [cleanupBound] somewhere to sit.
+const sessionBlockEnv = "SESSION_BLOCK"
+
+// sessionBlockPIDFileEnv names a file the blocking target writes its own pid
+// into, which is how this file proves a target was killed rather than merely
+// waited for.
+//
+// It is written from the fixture's init() rather than from the test function,
+// because init() is the earliest point at which a Go program can do anything at
+// all: it runs before the testing package parses a flag, so the pid is on disk
+// well before the supervisor's budget expires. Recording it inside
+// TestSessionBlocks would race the very timeout the target exists to overrun.
+//
+// The variable is only set by the two executions that need the proof, so every
+// other run of this package — the baseline, the verification, every
+// whole-package target — writes nothing.
+const sessionBlockPIDFileEnv = "SESSION_BLOCK_PIDFILE"
+
+// targetDeathBound is how long a killed target is given to actually be gone.
+//
+// A kill is asynchronous with respect to the wait that returned: internal/runner
+// signals a process group, or ends a job object, and the operating system tears
+// the tree down on its own schedule. Five seconds is far more than that takes
+// and far less than the minute the target would otherwise sleep, so a survivor
+// is still caught with room to spare.
+const targetDeathBound = 5 * time.Second
+
+// targetDeathPoll is how often the probe asks. Fifty milliseconds is short
+// enough that the ordinary case costs one or two reads and long enough not to
+// spin.
+const targetDeathPoll = 50 * time.Millisecond
+
+// cleanupBound is how long a target that was cut off — by its own timeout, or
+// by its caller walking away — may take to come back.
+//
+// It is a promptness check and not a cleanup proof, and the difference is worth
+// stating because the two used to be confused here. What this bound rules out is
+// a call that *returned late*: a supervisor that waited for a tree it should
+// have killed, or a cancellation that stopped being delivered. What it cannot
+// rule out is the tree surviving. If SIGKILL or TerminateJobObject silently
+// stopped working, Exec would still come back inside
+// [runner.TerminationGrace] + [runner.IODrainGrace] — Cmd.WaitDelay closes the
+// pipe whatever the child is doing — while the target went on sleeping for the
+// rest of its minute, and every elapsed check below would pass. That is what
+// [requireTargetIsGone] is for: it asks the operating system whether the pid the
+// target recorded still exists.
+//
+// It is the supervisor's own worst case plus room to start a process, written
+// as that sum rather than as a round number, because a round number cannot say
+// what it rules out. internal/runner gives a process group
+// [runner.TerminationGrace] after SIGTERM before it sends SIGKILL, and then
+// bounds the wait for the output pipe to reach EOF by [runner.IODrainGrace] —
+// which is Cmd.WaitDelay, so it is enforced rather than hoped for. A target
+// that came back later than those two together did not come back late because
+// the supervisor let it: it came back because nothing killed it and it ran to
+// its own end.
+//
+// The two numbers are the two failures it has to sit between, and both of them
+// moved to make room:
+//
+//	twenty seconds of margin  A process start is not free on a loaded Windows
+//	                          runner — Defender reads a fresh binary before it
+//	                          runs — and this bound is not about how fast a
+//	                          process starts. Three seconds put it near enough
+//	                          to that noise for one Windows job to fail on it
+//	                          and the next to pass.
+//	a sixty-second sleep      The failure being ruled out is a target nothing
+//	                          killed, which runs to its own end. Ten seconds
+//	                          left no room above the noise, so the injected
+//	                          TestSessionBlocks now sleeps for a minute — free,
+//	                          because it is gated and nothing else runs it.
+//
+// So 24 seconds is far above any process start and far below the minute an
+// unkilled target costs, which is the gap this assertion lives in. It is also
+// below the 30-second budget the cancelled execution below carries, so a
+// cancellation that stopped working is caught by the same line.
+//
+// Every number this replaces was wrong in one direction or the other. Fifteen
+// seconds was past the old ten-second sleep, so it ruled out nothing whatsoever;
+// five was 750 ms above the escalation ceiling, so it measured the runner's load
+// whenever SIGTERM was actually ignored.
+const cleanupBound = runner.TerminationGrace + runner.IODrainGrace + 20*time.Second
+
+// hostEnvWithoutSessionBlock is this process's environment with
+// [sessionBlockEnv] taken out of it.
+//
+// gomutants.Open freezes an environment — the one it is handed, or os.Environ()
+// when it is handed none — and every command and target the workspace goes on to
+// run inherits that frozen copy. So a developer who exported SESSION_BLOCK once,
+// or a runner that inherited it from some other tool, would have the injected
+// TestSessionBlocks sleep for a minute in every execution that did not ask
+// for it: the baseline `go test ./...`, the verification inside Prepare, and the
+// ungated half of TestSessionBlocksOnlyWhenAsked, which would then fail for a
+// reason nothing in its output would mention.
+//
+// Removing the entry rather than appending an empty one, because "the last
+// duplicate wins" is a rule about os/exec that this file should not have to
+// rely on. The comparison folds case because the Windows environment does: a
+// `session_block` set in a shell there is the same variable os.Getenv finds.
+func hostEnvWithoutSessionBlock() []string {
+	return slices.DeleteFunc(os.Environ(), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return strings.EqualFold(name, sessionBlockEnv)
+	})
+}
+
+// requireTargetIsGone is the cleanup proof: the process the target recorded is
+// no longer running.
+//
+// It polls rather than asking once, because the kill is asynchronous with
+// respect to the wait that returned — internal/runner signals a process group or
+// ends a job object, and the tree comes down on the operating system's schedule,
+// not before Exec's last statement.
+//
+// A missing pid file is reported rather than passed over. It means the target
+// was cut off before it executed a single line of Go, which is not a failure of
+// cleanup — but a proof that quietly skipped itself is the exact shape of defect
+// this whole file is about, so it says so instead.
+func requireTargetIsGone(t *testing.T, pidFile, what string) {
+	t.Helper()
+
+	recorded, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Errorf("the %s target recorded no pid (%v), so its cleanup is unproven: "+
+			"it was cut off before it ran, or %s never reached it", what, err, sessionBlockPIDFileEnv)
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(recorded)))
+	if err != nil {
+		t.Errorf("the %s target wrote %q into its pid file, which is not a pid: %v", what, recorded, err)
+		return
+	}
+
+	started := time.Now()
+	for {
+		gone, probeErr := processIsGone(pid)
+		if probeErr != nil {
+			t.Errorf("asking whether the %s target (pid %d) is still running: %v", what, pid, probeErr)
+			return
+		}
+		if gone {
+			return
+		}
+		if elapsed := time.Since(started); elapsed > targetDeathBound {
+			t.Errorf("the %s target (pid %d) was still running %s after Exec returned, "+
+				"so the call was bounded but the process tree was not killed", what, pid, elapsed)
+			return
+		}
+		time.Sleep(targetDeathPoll)
+	}
+}
+
+// blockGateBound is how long the same target may take when nothing asked it to
+// block.
+//
+// Five seconds rather than a tighter number for the same reason: what this
+// rules out is a target that slept when nothing asked it to, and any bound
+// comfortably between a process start and the session's own ten-second default
+// budget proves the gate held. A two-second bound would additionally assert
+// that the runner was not busy, which is not a claim about go-mutants. It is
+// deliberately unmoved by the minute the gated sleep now lasts: an ungated
+// target that slept would be cut off at that default long before the minute
+// was up, and would fail this line either way.
+const blockGateBound = 5 * time.Second
+
 // killableExtraTests is the source fixtures/killable is extended with for the
 // tests below.
 //
@@ -52,10 +250,20 @@ const killableExtraTests = `package killable
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func init() {
+	if os.Getenv("SESSION_BLOCK") != "yes" {
+		return
+	}
+	if path := os.Getenv("SESSION_BLOCK_PIDFILE"); path != "" {
+		_ = os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o600)
+	}
+}
 
 // TestPrintsALot is the chatty target the output-budget tests need: 2000 lines
 // of 64 characters, which is over a hundred kilobytes and thirty times the
@@ -112,7 +320,10 @@ func FuzzSessionClamp(f *testing.F) {
 }
 
 func TestSessionBlocks(t *testing.T) {
-	time.Sleep(10 * time.Second)
+	if os.Getenv("SESSION_BLOCK") != "yes" {
+		return
+	}
+	time.Sleep(60 * time.Second)
 }
 `
 
@@ -131,7 +342,10 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 	root := killableRoot(t)
 
 	parent := t.TempDir()
-	env := append(os.Environ(),
+	// Without sessionBlockEnv, for the reason spelled out on
+	// hostEnvWithoutSessionBlock: an inherited one would be paid a minute at a
+	// time by the baseline below and by the verification inside Prepare.
+	env := append(hostEnvWithoutSessionBlock(),
 		"GO_MUTANTS_ACTIVE=must-be-scrubbed",
 		"FROZEN_AT_OPEN=before",
 	)
@@ -197,12 +411,28 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 		t.Fatalf("freshly prepared snapshot already changed: %+v", changes)
 	}
 
+	// Each blocking execution gets a pid file of its own, so that the second
+	// proof cannot be satisfied by what the first target wrote.
+	//
+	// Two seconds rather than the quarter of one this used to allow, because the
+	// target now has something to do before it is cut off: a freshly written test
+	// binary on a Windows runner is scanned before it runs, and a budget that
+	// expired during the loader would leave the pid unrecorded and the proof
+	// vacuous. It is still two orders below the minute the target sleeps for.
+	const blockingBudget = 2 * time.Second
+	timeoutPIDFile := filepath.Join(t.TempDir(), "timed-out.pid")
+	cancelPIDFile := filepath.Join(t.TempDir(), "cancelled.pid")
+
 	timeoutStarted := time.Now()
 	timedOut, err := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:  untested.ID,
 		Package: ".",
 		Args:    []string{"-test.run=^TestSessionBlocks$"},
-		Timeout: 250 * time.Millisecond,
+		Timeout: blockingBudget,
+		Env: []string{
+			sessionBlockEnv + "=yes",
+			sessionBlockPIDFileEnv + "=" + timeoutPIDFile,
+		},
 	})
 	if err != nil {
 		t.Fatalf("executing a bounded target: %v", err)
@@ -210,18 +440,23 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 	if timedOut.Outcome != gomutants.OutcomeTimedOut || timedOut.KilledBy != "fixture.example/killable" {
 		t.Errorf("bounded target result = %+v, want a package-local timeout", timedOut)
 	}
-	if elapsed := time.Since(timeoutStarted); elapsed > 5*time.Second {
+	if elapsed := time.Since(timeoutStarted); elapsed > cleanupBound {
 		t.Errorf("bounded target returned after %s, want prompt process-tree cleanup", elapsed)
 	}
+	requireTargetIsGone(t, timeoutPIDFile, "bounded")
 
 	cancelContext, cancel := context.WithCancel(t.Context())
-	cancelTimer := time.AfterFunc(250*time.Millisecond, cancel)
+	cancelTimer := time.AfterFunc(blockingBudget, cancel)
 	cancelStarted := time.Now()
 	cancelled, cancelErr := session.Exec(cancelContext, gomutants.ExecRequest{
 		Mutant:  untested.ID,
 		Package: ".",
 		Args:    []string{"-test.run=^TestSessionBlocks$"},
 		Timeout: 30 * time.Second,
+		Env: []string{
+			sessionBlockEnv + "=yes",
+			sessionBlockPIDFileEnv + "=" + cancelPIDFile,
+		},
 	})
 	cancelTimer.Stop()
 	cancel()
@@ -231,9 +466,10 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 	if cancelled.Outcome != gomutants.OutcomeNotRun {
 		t.Errorf("cancelled target result = %+v, want not_run", cancelled)
 	}
-	if elapsed := time.Since(cancelStarted); elapsed > 5*time.Second {
+	if elapsed := time.Since(cancelStarted); elapsed > cleanupBound {
 		t.Errorf("cancelled target returned after %s, want prompt process-tree cleanup", elapsed)
 	}
+	requireTargetIsGone(t, cancelPIDFile, "cancelled")
 
 	killed, err := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:  clamp.DisplayID,
@@ -254,6 +490,16 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 			"-test.fuzz=^FuzzSessionClamp$",
 			"-test.fuzztime=5s",
 		},
+		// Six times the fuzz budget, stated here rather than inherited from the
+		// session, because this is the one execution in the file whose target
+		// has a budget of its own. `-test.fuzztime=5s` is five seconds of
+		// *fuzzing*, and the binary still has to start, seed the corpus,
+		// schedule its workers and write the crasher it finds; on a loaded CI
+		// runner that overhead put the whole thing past a tighter bound and the
+		// step failed with `context deadline exceeded` rather than with
+		// anything about mutation (PR #21, run 34030895957). A timeout whose
+		// margin is a guess belongs next to the number it is a margin over.
+		Timeout: 30 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("fuzzing the clamp mutant: %v", err)
@@ -478,6 +724,86 @@ func lastLines(output []byte, n int) string {
 		lines[i] = strings.TrimRight(lines[i], "\r")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// TestSessionBlocksOnlyWhenAsked is the gate on the injected sleep, as a fact
+// rather than as a comment.
+//
+// fixtures/killable gets a test that sleeps for a minute, because two of the
+// assertions above need a target that outlives its timeout and a sleep is the
+// only way to write one. Every other execution of that package would pay for it
+// unless it is gated — the baseline, the verification inside Prepare, every
+// whole-package target — which is where a third of this file's minutes used to
+// go, and a deleted `if` would put them straight back without failing anything.
+//
+// So both directions are asserted. Without the variable the target returns
+// promptly and the mutant survives; with it, the same target and the same
+// mutant time out. A gate that was removed fails the first half, and a gate
+// whose variable was renamed on one side fails the second.
+//
+// The session is prepared without verification, which is what keeps this test
+// affordable: nothing here needs the fixture's own suite to have been run
+// against the instrumented tree, only a binary to execute.
+func TestSessionBlocksOnlyWhenAsked(t *testing.T) {
+	root := killableRoot(t)
+	// A hostile host environment, set on purpose. Open freezes an environment
+	// at the moment it is called and every execution below inherits it, so a
+	// developer or a runner with SESSION_BLOCK already exported would turn the
+	// ungated half of this test into the gated one — and it would read as the
+	// engine failing to kill a target rather than as an inherited variable.
+	// Setting it here is what makes hostEnvWithoutSessionBlock's removal a
+	// claim this test can fail rather than a precaution nobody exercises.
+	t.Setenv(sessionBlockEnv, "yes")
+
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
+		TempDirectory: t.TempDir(),
+		Env:           hostEnvWithoutSessionBlock(),
+	})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+	session, err := workspace.Prepare(t.Context(), gomutants.PrepareOptions{
+		Operators:  []string{"comparison"},
+		SkipVerify: true,
+	})
+	if err != nil {
+		t.Fatalf("preparing session: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	mutant := mutantkit.APIMutantAt(t, session.Catalog(), "untested.go", "neq-to-eq")
+
+	started := time.Now()
+	quiet, err := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  mutant.ID,
+		Package: ".",
+		Args:    []string{"-test.run=^TestSessionBlocks$"},
+	})
+	if err != nil {
+		t.Fatalf("executing the ungated target: %v", err)
+	}
+	if quiet.Outcome != gomutants.OutcomeSurvived {
+		t.Errorf("ungated target = %+v, want a survivor: the injected TestSessionBlocks slept without being asked to", quiet)
+	}
+	if elapsed := time.Since(started); elapsed > blockGateBound {
+		t.Errorf("ungated target returned after %s, want under %s: the sleep is no longer gated on %s",
+			elapsed, blockGateBound, sessionBlockEnv)
+	}
+
+	blocked, err := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  mutant.ID,
+		Package: ".",
+		Args:    []string{"-test.run=^TestSessionBlocks$"},
+		Timeout: 250 * time.Millisecond,
+		Env:     []string{sessionBlockEnv + "=yes"},
+	})
+	if err != nil {
+		t.Fatalf("executing the gated target: %v", err)
+	}
+	if blocked.Outcome != gomutants.OutcomeTimedOut {
+		t.Errorf("gated target = %+v, want a timeout: %s no longer reaches the target that reads it",
+			blocked, sessionBlockEnv)
+	}
 }
 
 // TestWorkspaceExecBarrierHelper is the subprocess body used below. Reusing

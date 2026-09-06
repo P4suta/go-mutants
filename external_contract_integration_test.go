@@ -1,6 +1,17 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//go:build integration
+
+// The consumer-side contract: a different module compiling and running against
+// the published API.
+//
+// It writes a module, points it at this checkout with a replace directive and
+// runs a real `go test` inside it, which is the only way to prove that the
+// bridge is usable without an internal package — and is a full toolchain
+// invocation per test, so it belongs in the integration tier. The file was
+// named external_contract_test.go until the tiering.
+
 package gomutants_test
 
 import (

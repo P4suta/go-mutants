@@ -1,6 +1,15 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//go:build integration
+
+// The typed errors, proved by provoking each of them against a real toolchain.
+//
+// A verification failure needs a suite that is red on the instrumented tree, a
+// build failure needs a mutant the compiler refuses: both are facts about what
+// a `go` command did, so this file was named for the integration tier from the
+// start and now carries the constraint that puts it there.
+
 package gomutants_test
 
 import (

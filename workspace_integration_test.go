@@ -1,6 +1,16 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//go:build integration
+
+// Workspace lifecycle against a real toolchain: what Open owns, what it sweeps,
+// what two concurrent runs do to each other, and what Close leaves behind.
+//
+// Every test here is a gomutants.Open over a copied fixture — a snapshot, a
+// version probe and a temporary tree — which is the integration tier by
+// definition. The file was named workspace_test.go until the tiering, and its
+// eleven tests were most of what `go test .` was paying for.
+
 package gomutants_test
 
 import (

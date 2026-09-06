@@ -18,8 +18,29 @@ build:
 test:
     mise run test
 
+test-race:
+    mise run test-race
+
 test-integration:
     mise run test-integration
+
+test-integration-race:
+    mise run test-integration-race
+
+test-cost:
+    mise run test-cost
+
+test-cost-integration:
+    mise run test-cost-integration
+
+cover:
+    mise run cover
+
+cover-integration:
+    mise run cover-integration
+
+bench:
+    mise run bench
 
 test-cache-status:
     mise run test-cache-status

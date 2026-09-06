@@ -28,13 +28,53 @@ description = "Build every package and run the vet gate"
 run = ["go build ./...", "go vet ./..."]
 
 [tasks.test]
+# The tier a developer runs on every save, and the one CI runs on three
+# operating systems: everything that needs a compiler and nothing else. What
+# needs a real toolchain -- a `go build`, a `go test -c`, a mutation run --
+# carries `//go:build integration` and is [tasks.test-integration] below.
+#
+# The split is worth stating because it was not free to get wrong. Forty
+# toolchain-driving tests sat in this tier until the root suite was tiered, and
+# nothing about that failed: the tests passed, on every platform, and only the
+# clock said anything. The root package alone went from 28 seconds to 0.2.
+# internal/testkit/tiers_test.go is what keeps it that way -- one test asks the
+# root package's unit-tier binary which tests it contains, and the other scans
+# every `_test.go` in the tree for a `go` command started outside the tag.
+#
 # Deliberately not wrapped in `testcache exec`: this task compiles go-mutants
 # itself, and that belongs in the developer's own build cache like every other
 # `go test` they run. The suites' *child* `go` commands still go to the test
 # cache, because internal/testkit points GOCACHE there in every environment it
 # composes -- which is where the bloat came from in the first place.
+#
+# 15m is the whole run's budget rather than a target. This tier is seconds on a
+# warm machine and a couple of minutes cold; the alarm exists so that a suite
+# that hangs is reported as a suite that hung, in under a quarter of an hour,
+# rather than as a job the runner cancelled after six.
 description = "Run the unit test suite"
-run = "go test ./..."
+run = "go test -timeout 15m ./..."
+
+[tasks.test-race]
+# The unit tier under the race detector.
+#
+# It had never been run. That is the entire justification: this repository
+# schedules mutants across a worker pool, fans a snapshot copy out over
+# goroutines, merges coverage from concurrent readers and cancels process trees
+# from a supervisor -- and the one tool that finds a data race in any of it was
+# not part of any gate. A race that only shows up under load is otherwise found
+# by a user, once, in a report nobody can reproduce.
+#
+# Ubuntu only in CI, and the reason is cgo rather than taste: -race links the
+# C runtime, so it needs a working C toolchain, and the Windows runner's is a
+# different compiler with different behaviour to debug when it breaks. A race
+# is a property of the Go code and not of the platform, so one platform proves
+# it and three would only cost three times as much.
+#
+# 30m rather than 15m because instrumentation costs a factor of two to ten in
+# both compilation and execution, and a budget that fits the uninstrumented run
+# would turn a slow job into a red one.
+description = "Run the unit test suite under the race detector"
+run = "go test -race -timeout 30m ./..."
 
 [tasks.test-integration]
 # The engine's integration suite alone runs 8-10 minutes of real toolchain
@@ -71,6 +111,187 @@ run = "go test ./..."
 # big it is; `mise run test-clean` empties it.
 description = "Run the toolchain-backed integration suite"
 run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -tags integration -timeout 40m ./..."
+
+[tasks.test-integration-race]
+# The integration tier under the race detector, which is the pairing that finds
+# what neither half finds alone.
+#
+# The unit tier's races are in pure code and [tasks.test-race] finds them in
+# minutes. The ones that matter most in this repository are not there: they are
+# in the scheduler that runs mutants concurrently, the copier that fans a
+# snapshot out over goroutines, the supervisor that kills a process tree while
+# its output is still being read. All of that only runs when a real toolchain
+# does, which is this tier -- and instrumenting it costs the better part of an
+# hour, which is why this is a nightly job rather than a pull-request gate.
+#
+# 90m for the same reason [tasks.test-race] takes 30m, applied to a suite that
+# already takes 40. Through `testcache exec` for the same reason
+# [tasks.test-integration] is: an instrumented run compiles everything twice
+# over and is the last run anybody wants filling their own build cache.
+description = "Run the integration suite under the race detector"
+run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -race -tags integration -timeout 90m ./..."
+
+[tasks.test-cost]
+# The unit tier, with a table saying where its time went and what did not run.
+#
+# The command underneath is exactly [tasks.test], so this is not a second gate:
+# internal/devtools/testcost reads the machine-readable form of the same run,
+# prints one Markdown table sorted by elapsed time, and exits with the run's own
+# verdict.
+#
+# testcost *runs* `go test` rather than being piped its output, and that is the
+# difference between a gate and a formatter. A pipeline reports its last
+# command's status in every shell there is, so a report on the end of one turns
+# a red suite green -- and `set -o pipefail` is not an answer here, because
+# these two tasks run under `sh` on Linux and macOS and under `cmd /c` on
+# Windows, where the pipeline's status is the report's and nothing else.
+# Worse than the shell: the only failures a piped reader can see are the ones
+# cmd/go wrote into the stream, and a `go` command that fell over before it
+# started testing -- a module it cannot resolve, a toolchain it cannot download
+# -- writes plain text on stderr and nothing on stdout. The verdict would then
+# be "nothing failed" about a run that never happened. Starting the child means
+# its status is read rather than discarded, and the two verdicts are combined:
+# the task fails if `go test` failed *or* if the stream carried a failure.
+#
+# One `run` string rather than an array for the same reason: mise runs a task's
+# script under `set -e` and stops an array after the first failing entry, so a
+# red suite would take the report with it.
+#
+# It exists because both of the numbers that decide what a suite costs are
+# invisible in an ordinary log. `ok <pkg> <elapsed>` is printed once per
+# package, interleaved with forty others, so a package that grew from two
+# seconds to ninety is noticed months later by somebody complaining about CI.
+# And a skip prints nothing at all without -v, so a test that quietly stopped
+# running -- a missing tool, an unset variable, a symlink the filesystem
+# refused -- reads exactly like a test that passed.
+#
+# -count=1 because this task measures. A cached package emits no test events at
+# all -- cmd/go replays `ok <pkg> (cached)` and nothing else -- so without it the
+# table would report zero tests in zero seconds for every package that had not
+# changed, which is a truthful answer to a question nobody asked and a useless
+# one to "what does this suite cost".
+#
+# In CI the table is appended to $GITHUB_STEP_SUMMARY and rendered on the run's
+# own page; here it goes to stdout.
+#
+# --no-skips is *not* passed, here or in CI, and that is a decision rather than
+# an omission. The flag exists -- `mise run test-cost` piped through it by hand
+# is the audit -- but as a gate it would be red on every platform for reasons
+# that are facts about the runner: a `t.Skip` grep over this repository finds
+# about twenty-five call sites and every one of them is a platform-capability
+# guard (a symlink or a named pipe the filesystem refuses, a read-only mode,
+# running as root, Windows job objects against POSIX process groups) or a fuzz
+# body rejecting an input. At least one fires on each of the three operating
+# systems, ubuntu included. The skips this gate was really wanted for are the
+# ones where a *tool* is missing, and those are already fatal in CI through
+# GO_MUTANTS_TEST_REQUIRE_TOOLS=1. So the table names every skipped test
+# instead, which makes a new one visible on the summary page the day it appears
+# rather than invisible until somebody greps for it.
+description = "Run the unit test suite and print a per-package cost table"
+run = "go run ./internal/devtools/testcost -- go test -json -count=1 -timeout 15m ./..."
+
+[tasks.test-cost-integration]
+# [tasks.test-cost] over the integration tier, through `testcache exec` for the
+# same reason [tasks.test-integration] is.
+#
+# This is the table that is actually worth reading: the unit tier is seconds
+# and the integration tier is tens of minutes, so it is the one that says which
+# suite to look at when a job starts timing out.
+#
+# The nesting reads oddly and is the right way round. `testcache exec` exports
+# GOCACHE into everything below it, so it has to be outermost; testcost is next,
+# because it is the one that has to see `go test` exit; and `go test` is the
+# child. Two `--` separators, one per wrapper, each meaning "everything after
+# this is the command". The wrapper's size and growth lines go to stderr and the
+# run's JSON to stdout, so neither is in the other's way.
+description = "Run the integration suite and print a per-package cost table"
+run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./internal/devtools/testcost -- go test -json -count=1 -tags integration -timeout 40m ./..."
+
+[tasks.cover]
+# Coverage of the unit tier: a profile, a browsable HTML rendering, and the one
+# total line worth pasting into a pull request.
+#
+# It is a signal and never a gate, and the distinction is the reason this task
+# has no threshold in it. A coverage percentage is a measure of which lines ran,
+# not of which behaviour is checked, and a number defended by a gate is a number
+# people write tests for. This repository already has a gate on whether the
+# tests *catch* anything, and it is a far stricter one: `mise run dogfood` runs
+# go-mutants against go-mutants with --strict, so an undeclared survivor fails
+# the build. Coverage is here to answer "what did nobody even run", which
+# mutation cannot answer cheaply -- a line no test executes produces mutants
+# nothing can kill, and reading the HTML is faster than reading the survivors.
+#
+# -covermode=atomic rather than the default `set`, because the counters are
+# incremented from several goroutines in this repository's own tests, and the
+# non-atomic modes are documented as unsafe there.
+#
+# The `|| echo` on the first line is the whole difference between a coverage
+# task and a second test gate, and it is written out rather than left to a `;`
+# because mise runs a task's script under `set -e`: a bare `a; b; c` stops at a
+# failing `a` just as `a && b && c` would. `go test` writes the profile whether
+# or not the suite passed, and a red suite is exactly when somebody wants to see
+# what ran -- so stopping there would withhold the rendering at the only moment
+# it was interesting, and would do it silently.
+#
+# So a red suite is tolerated *here* and said out loud. It is not tolerated
+# anywhere that matters: `mise run test` and CI's platform-tests job are where a
+# failing suite fails the build, and this task's own CI job carries no verdict
+# at all (`continue-on-error`). What still fails this task is a profile that
+# could not be rendered, which is a real failure of the thing it is for.
+#
+# `tail` makes this task POSIX-only, which matches where it runs: the CI
+# coverage job is ubuntu, like the race jobs, because there is nothing
+# platform-specific about which lines a test executed.
+description = "Measure unit-tier coverage and render it, as a signal and never a gate"
+run = [
+  "go test -covermode=atomic -coverprofile=cover.out -timeout 15m ./... || echo 'cover: the suite failed; the profile below is of the run that failed' >&2",
+  "go tool cover -html=cover.out -o cover.html",
+  "go tool cover -func=cover.out | tail -1",
+]
+
+[tasks.cover-integration]
+# [tasks.cover] over the integration tier, which is where most of this
+# repository's lines are actually executed.
+#
+# -coverpkg=./... is what makes the number mean anything here. Without it a
+# package is credited only for the lines its own tests ran, and the integration
+# tier's whole shape is one package's test driving five other packages through
+# a real toolchain -- so the engine's suite would report nothing at all for
+# internal/instrument, internal/execute or internal/validate, which is exactly
+# what it exercises hardest.
+#
+# A red suite is tolerated and reported for the same reason as [tasks.cover].
+#
+# One honest limitation, worth knowing before reading the HTML: this measures
+# the *test process*. A suite that starts a child `go test` -- and this tier is
+# full of them -- gets no credit for what that child ran, because the child is
+# a different binary with no counters in it. So the number is a floor.
+description = "Measure integration-tier coverage across every package"
+run = [
+  "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -covermode=atomic -coverprofile=cover.out -coverpkg=./... -tags integration -timeout 90m ./... || echo 'cover-integration: the suite failed; the profile below is of the run that failed' >&2",
+  "go tool cover -html=cover.out -o cover.html",
+  "go tool cover -func=cover.out | tail -1",
+]
+
+[tasks.bench]
+# The three packages with benchmarks, into a file the nightly job keeps.
+#
+# Named one by one rather than `./...` for the same reason [tasks.golden-update]
+# names its packages: `-bench .` over the whole tree would compile and link
+# every test binary in the repository to discover that most of them have no
+# benchmarks, and the two minutes that costs are two minutes of nothing.
+#
+# -run '^$' keeps the tests out of the measurement -- `go test -bench` runs both
+# by default, and a benchmark file's neighbours are not what is being timed.
+# -benchmem because every one of these three is about allocation as much as
+# time: the glob matcher and the TOML parser are on the hot path of a run, and
+# internal/snapshot copies a repository.
+#
+# bench.txt rather than stdout because the numbers are only useful compared with
+# yesterday's, and `benchstat old.txt new.txt` is how that comparison is made.
+# The nightly job uploads it; the file is git-ignored.
+description = "Run the benchmarks and write bench.txt"
+run = "go test -run '^$' -bench . -benchmem ./internal/glob ./internal/config ./internal/snapshot > bench.txt"
 
 [tasks.test-cache-status]
 # The last line of a long run, and the first thing to look at when a disk fills.

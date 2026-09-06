@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# The test files that start a real `go` or `git` command in the unit tier on
+# purpose.
+#
+# internal/testkit/tiers_test.go::TestEveryToolchainDrivingTestIsIntegrationTagged
+# reads this file. Every other test file that starts one has to carry
+# `//go:build integration`; the ones below are the exceptions, and each is here
+# because tagging it would leave a package with no evidence for the one thing it
+# exists to do.
+#
+# The list is a ledger, not a configuration. A stale entry is reported as loudly
+# as an offender, so it shrinks when a suite is tagged and grows only when
+# somebody writes a path down and says why underneath it.
+#
+# One path per line, relative to the module root, `/`-separated. `#` comments
+# and blank lines are ignored.
+
+# internal/gocmd is the package that locates and runs the `go` command. Its
+# subject is the toolchain: a version probe that answers garbage, one that exits
+# non-zero, one that hangs. Tagging it would leave the wrapper every other
+# package depends on with no unit-tier evidence at all, and the commands it runs
+# are `go version` and `go env` rather than a build.
+internal/gocmd/gocmd_test.go
+
+# internal/discover loads the fixture modules with go/packages, which drives a
+# real toolchain by construction: the questions this package answers — the
+# universe's `true` against a shadowed one, a type argument against a map index,
+# a cgo file on a machine with cgo switched off — are facts about go/types that
+# a fake would have to invent, so there would be nothing left to test behind a
+# mock. It is the most expensive entry in this ledger at about five seconds, and
+# it is the one whose skip used to be silent: its helper now goes through
+# testkit.GoBinary, so a runner that lost its toolchain fails the job instead of
+# retiring seventy-four tests and reporting green.
+internal/discover/discover_test.go
+internal/discover/skipsites_test.go
+
+# internal/instrument generates Go source, and the only claim that matters about
+# generated source is that it is a program. These three compile what the
+# instrumenter produced — the mutated tree, the probe rewrite, the probe sites —
+# and a suite that asserted on the text instead would pass on output no compiler
+# accepts. That is the defect class this package has actually shipped.
+internal/instrument/compile_test.go
+internal/instrument/probe_test.go
+internal/instrument/probesites_test.go
+
+# The harness's own tests are the toolchain policy's tests.
+#
+# internal/testkit is what decides which tools a test may reach, what happens
+# when one is missing, and what environment a child `go` command is handed — and
+# none of that can be checked without running one. tools_test.go is the policy
+# itself: skip without a toolchain, fail under GO_MUTANTS_TEST_REQUIRE_TOOLS,
+# and the same for git. env_test.go and module_test.go run a real `go` over a
+# composed environment and a synthesized module, because "GOFLAGS reached the
+# child" and "this module builds" are claims about a `go` command rather than
+# about a []string. tiers_test.go runs the two `go test -list` invocations that
+# prove this very tiering.
+#
+# They are named here rather than exempt by construction, which is why the three
+# harness needles are matched unqualified: written as `testkit.GoBinary(` they
+# would never match a call from inside package testkit, and the one package
+# whose subject is the tier policy would be the one package outside it.
+internal/testkit/env_test.go
+internal/testkit/module_test.go
+internal/testkit/tiers_test.go
+internal/testkit/tools_test.go
