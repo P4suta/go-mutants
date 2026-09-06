@@ -97,8 +97,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/glob"
@@ -384,17 +386,56 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 		}
 	}
 
-	entries := make([]Entry, 0, len(w.files))
-	for _, f := range w.files {
-		size, sum, err := copyFile(f.abs, s.pathOf(f.rel), f.mode)
-		if err != nil {
-			return nil, s.abandon(&Error{Code: CodeCopy, Path: f.rel, Message: "cannot copy the file into the snapshot", Err: err})
-		}
-		entries = append(entries, Entry{RelPath: f.rel, Size: size, SHA256: sum})
+	entries, failedPath, err := copySnapshotFiles(w.files, s.Root, snapshotCopyJobs(len(w.files)), copyFile)
+	if err != nil {
+		return nil, s.abandon(&Error{Code: CodeCopy, Path: failedPath, Message: "cannot copy the file into the snapshot", Err: err})
 	}
 	s.Manifest = entries
 	s.WorkspaceDigest = WorkspaceDigest(entries)
 	return s, nil
+}
+
+type snapshotFileCopy func(string, string, fs.FileMode) (int64, string, error)
+
+func snapshotCopyJobs(files int) int {
+	return min(max(runtime.GOMAXPROCS(0), 1), max(files, 1))
+}
+
+func copySnapshotFiles(files []record, root string, jobs int, copyFile snapshotFileCopy) ([]Entry, string, error) {
+	if len(files) == 0 {
+		return nil, "", nil
+	}
+	entries := make([]Entry, len(files))
+	errorsByPath := make([]error, len(files))
+	workerCount := min(max(jobs, 1), len(files))
+	work := make(chan int, workerCount)
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for index := range work {
+				file := files[index]
+				size, sum, err := copyFile(file.abs, filepath.Join(root, filepath.FromSlash(file.rel)), file.mode)
+				if err != nil {
+					errorsByPath[index] = err
+					continue
+				}
+				entries[index] = Entry{RelPath: file.rel, Size: size, SHA256: sum}
+			}
+		}()
+	}
+	for index := range files {
+		work <- index
+	}
+	close(work)
+	workers.Wait()
+	for index, err := range errorsByPath {
+		if err != nil {
+			return nil, files[index].rel, err
+		}
+	}
+	return entries, "", nil
 }
 
 // abandon removes a half-built snapshot and returns the error that caused it

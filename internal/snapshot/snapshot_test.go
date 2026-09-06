@@ -12,8 +12,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/P4suta/go-mutants/internal/glob"
+)
+
+const (
+	snapshotCopyTestFiles = 3
+	snapshotCopyDeadline  = time.Second
 )
 
 // writeTree creates every file in files under root, making parent directories
@@ -173,6 +179,68 @@ func TestCreateManifestIsSortedByPath(t *testing.T) {
 	want := []string{"B.go", "a-b.go", "a.go", "a/b.go", "a/c.go", "z/y/x.go"}
 	if got := relPaths(snap.Manifest); !slices.Equal(got, want) {
 		t.Errorf("manifest paths = %v, want %v", got, want)
+	}
+}
+
+func TestCopySnapshotFilesRunsConcurrentlyAndKeepsPathOrder(t *testing.T) {
+	files := []record{
+		{rel: "a.go", abs: "a.go"},
+		{rel: "b.go", abs: "b.go"},
+		{rel: "c.go", abs: "c.go"},
+	}
+	started := make(chan string, snapshotCopyTestFiles)
+	release := make(chan struct{})
+	type result struct {
+		entries []Entry
+		path    string
+		err     error
+	}
+	root := t.TempDir()
+	done := make(chan result, 1)
+	go func() {
+		entries, path, err := copySnapshotFiles(files, root, len(files), func(source, _ string, _ fs.FileMode) (int64, string, error) {
+			started <- source
+			<-release
+			return int64(len(source)), "digest-" + source, nil
+		})
+		done <- result{entries: entries, path: path, err: err}
+	}()
+	for range snapshotCopyTestFiles {
+		select {
+		case <-started:
+		case <-time.After(snapshotCopyDeadline):
+			close(release)
+			<-done
+			t.Fatal("snapshot file copies did not overlap")
+		}
+	}
+	close(release)
+	copied := <-done
+	if copied.err != nil || copied.path != "" || !slices.Equal(relPaths(copied.entries), []string{"a.go", "b.go", "c.go"}) {
+		t.Fatalf("copySnapshotFiles = (%+v, %q, %v)", copied.entries, copied.path, copied.err)
+	}
+}
+
+func TestCopySnapshotFilesReturnsTheFirstPathError(t *testing.T) {
+	first := errors.New("first")
+	second := errors.New("second")
+	files := []record{
+		{rel: "a.go", abs: "a.go"},
+		{rel: "b.go", abs: "b.go"},
+		{rel: "c.go", abs: "c.go"},
+	}
+	entries, path, err := copySnapshotFiles(files, t.TempDir(), len(files), func(source, _ string, _ fs.FileMode) (int64, string, error) {
+		switch source {
+		case "a.go":
+			return 0, "", first
+		case "c.go":
+			return 0, "", second
+		default:
+			return int64(len(source)), "digest-" + source, nil
+		}
+	})
+	if entries != nil || path != "a.go" || !errors.Is(err, first) {
+		t.Fatalf("copySnapshotFiles = (%+v, %q, %v), want a.go error %v", entries, path, err, first)
 	}
 }
 
