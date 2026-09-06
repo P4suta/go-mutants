@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ go 1.26.0
 
 require github.com/P4suta/go-mutants v0.0.0
 
-replace github.com/P4suta/go-mutants => ` + filepath.ToSlash(repository) + "\n"
+replace github.com/P4suta/go-mutants => ` + strconv.Quote(filepath.ToSlash(repository)) + "\n"
 	source := `package engineapi_test
 
 import (
@@ -73,19 +74,10 @@ var (
 	// accessor is the contract.
 	_ func(error) string = gomutants.DiagnosticCode
 
-	// The notice a renderer styles and a consumer matched before there was a
-	// flag to read. It stays exported and stays a string constant, so that the
-	// consumers that were matching the text keep compiling — the flag beside
-	// every capture is what they should be reading instead.
-	_ string = gomutants.OutputTruncatedPrefix
-
 	// Which engine build a consumer is running. Every consumer used to write
-	// this scan over runtime/debug itself, so the accessors are the contract —
-	// and so is ModulePath's value, which is what a consumer keeping its own
-	// scan matches build-info entries against.
+	// this scan over runtime/debug itself, so the accessors are the contract.
 	_ func() (gomutants.BuildInfo, bool) = gomutants.ReadBuildInfo
 	_ func() string                      = gomutants.Version
-	_ string                             = gomutants.ModulePath
 
 	// Every typed error is used through the error interface, and every one of
 	// them is reached with errors.As from outside this module.
@@ -365,7 +357,7 @@ go 1.26.0
 
 require github.com/P4suta/go-mutants v0.0.0
 
-replace github.com/P4suta/go-mutants => ` + filepath.ToSlash(repository) + "\n"
+replace github.com/P4suta/go-mutants => ` + strconv.Quote(filepath.ToSlash(repository)) + "\n"
 	source := `package traceapi_test
 
 import (
@@ -374,6 +366,19 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/trace"
+)
+
+// Two constants, declared as constants: a package variable of type string
+// would satisfy a var assignment just as well, and a consumer is free to use
+// either in a constant expression or a switch case.
+//
+// OutputTruncatedPrefix is the notice a renderer styles and a consumer matched
+// before there was a flag to read; it stays exported and stays a constant so
+// that the consumers matching the text keep compiling. ModulePath's value is
+// what a consumer keeping its own build-info scan matches entries against.
+const (
+	_ string = gomutants.OutputTruncatedPrefix
+	_ string = gomutants.ModulePath
 )
 
 var (
@@ -537,7 +542,7 @@ go 1.26.0
 
 require github.com/P4suta/go-mutants v0.0.0
 
-replace github.com/P4suta/go-mutants => ` + filepath.ToSlash(repository) + "\n"
+replace github.com/P4suta/go-mutants => ` + strconv.Quote(filepath.ToSlash(repository)) + "\n"
 	program := `package main
 
 import (
