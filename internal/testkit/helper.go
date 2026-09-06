@@ -60,22 +60,39 @@ func HelperArgv(testName string) []string {
 	return []string{TestBinary(), "-test.run=^" + regexp.QuoteMeta(testName) + "$"}
 }
 
-// TestBinary is the path of the running test binary, for a caller building an
-// argv that re-executes it.
+// TestBinary is the absolute path of the running test binary, for a caller
+// building an argv that re-executes it.
 //
-// os.Executable is preferred over os.Args[0] and the difference is not
-// theoretical. os.Args[0] is whatever the parent passed, so it can be relative —
-// and a child started in another directory resolves a relative argv[0] against
-// *its* working directory, which is exactly what happens when a helper is run
-// through a Workspace: the command is executed inside the snapshot. os.Executable
-// answers with an absolute path or with an error, and the error case falls back
-// rather than failing, because a caller with no way to name the binary is no
-// worse off than it was.
+// Absolute is the whole contract, and the difference is not theoretical. A
+// helper child runs in a directory the parent chose — a snapshot, a fixture
+// copy, a scratch tree — so a relative argv[0] is resolved against the *child's*
+// working directory and names nothing. That is exactly what happens when a
+// helper goes through a Workspace, which executes its command inside the
+// snapshot.
+//
+// os.Executable answers absolutely, which is why it is preferred. Its failure is
+// the case worth writing down: os.Args[0] is whatever the parent passed, and
+// `go test -exec` wrappers, a debugger, and a hand-built binary run as
+// `./pkg.test` all pass a relative one — so the fallback is made absolute
+// before it is handed out. Only a filesystem that cannot answer at all yields
+// the raw value, and a caller with no way to name the binary is then no worse
+// off than it was.
 func TestBinary() string {
-	if exe, err := os.Executable(); err == nil {
+	exe, err := os.Executable()
+	return testBinaryFrom(exe, err, os.Args[0])
+}
+
+// testBinaryFrom is [TestBinary] with the answers passed in, so that the
+// fallback can be driven: os.Executable does not fail on any platform this is
+// tested on, which is exactly what makes the branch worth pinning.
+func testBinaryFrom(exe string, err error, arg0 string) string {
+	if err == nil {
 		return exe
 	}
-	return os.Args[0]
+	if absolute, absErr := filepath.Abs(arg0); absErr == nil {
+		return absolute
+	}
+	return arg0
 }
 
 // HelperEnabled reports whether this process was started as the helper the

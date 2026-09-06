@@ -15,14 +15,21 @@ import (
 //
 // It is how an assertion helper's *message* gets tested, which is the only part
 // of it that matters: every helper here exists because the message it prints is
-// what somebody reads in CI. The embedded TB supplies the interface's unexported
-// methods and nothing else — every method a helper here calls is overridden
-// below, so a helper that started calling another one panics on a nil embedded
-// value rather than quietly passing.
+// what somebody reads in CI.
 //
-// It is a copy of internal/testkit's own rather than an export of it, and
-// deliberately so: a recorder any package could hand a real helper is a way to
-// make a failing assertion pass.
+// The embedded TB is left nil, and that is the load-bearing part. It is there to
+// supply the interface's unexported methods and nothing else: every method the
+// helpers in this package reach for — Helper, Fatalf, Errorf, Logf, Context — is
+// overridden below, so a helper that grew a call to a sixth one panics here,
+// loudly, naming the line. Embedding the parent's *testing.T instead would route
+// that call to the real test, where a Fatalf inside a recorded call would fail
+// the very test that was checking a helper refuses — quietly turning a
+// behavioural assertion into whatever the parent did next.
+//
+// It is written out rather than shared with internal/testkit's, deliberately: a
+// recorder any package could hand to a real helper is a way to make a failing
+// assertion pass. The harness's own copy does embed its parent, because two of
+// its call sites drive [testkit.Env], which reaches for t.TempDir and t.Setenv.
 type recorder struct {
 	testing.TB
 	stop   bool
@@ -41,7 +48,7 @@ type recorder struct {
 // would carry straight on into the work the helper had just refused.
 func expectFatal(t testing.TB, call func(testing.TB)) *recorder {
 	t.Helper()
-	rec := &recorder{TB: t, stop: true}
+	rec := &recorder{stop: true}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

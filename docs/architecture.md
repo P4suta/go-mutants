@@ -819,11 +819,6 @@ and are imported only from external test packages; the import gate treats that
 tree as part of the harness, so it may import `internal/testkit` while nothing
 outside the harness may import either.
 
-The `-update` flag for golden files is registered once, in `internal/testkit`,
-and is therefore the same flag in every test binary that links the harness.
-`mise run golden-update` names the packages holding goldens explicitly, and
-`TestGoldenPackagesAreNamedByTheUpdateTask` fails when that list goes stale.
-
 That rule is why the test-owned build cache's location, and the name of the
 ownership marker that licenses emptying it, are written down twice: once in
 `internal/testkit` for the suites, and once in `internal/devtools/testcache` —
@@ -832,6 +827,11 @@ and `TestMarkerNamesAgreeWithTestcache` run the tool and compare what it prints
 with what the harness resolved, so the copies cannot drift apart in silence.
 Drift would not fail anywhere else: the suites would fill one directory and the
 collector would empty another.
+
+The `-update` flag for golden files is registered once, in `internal/testkit`,
+and is therefore the same flag in every test binary that links the harness.
+`mise run golden-update` names the packages holding goldens explicitly, and
+`TestGoldenPackagesAreNamedByTheUpdateTask` fails when that list goes stale.
 
 ## Documented v1 limitations
 

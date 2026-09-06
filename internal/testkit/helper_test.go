@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -198,6 +199,40 @@ func TestHelperIsolatesCoverageOutputPerProcess(t *testing.T) {
 	if seen[0] == seen[1] {
 		t.Errorf("two helper processes shared %s = %q, which is the collision this exists to prevent",
 			CoverDirEnv, seen[0])
+	}
+}
+
+// TestTestBinaryIsAlwaysAnAbsolutePath is the promise the argv makes to a child
+// that starts somewhere else.
+//
+// A child is run in a directory the parent chose — a snapshot, a fixture copy, a
+// scratch tree — and a relative argv[0] is resolved by the *child's* working
+// directory, not ours. os.Executable answers absolutely, so the ordinary path is
+// safe; the fallback is the one that is not. os.Args[0] is whatever the parent
+// passed, and `go test -exec` wrappers, `dlv test` and a hand-built binary run
+// as `./pkg.test` all pass a relative one — so the fallback resolves it before
+// handing it out, and only a filesystem that cannot answer at all gets the raw
+// value.
+func TestTestBinaryIsAlwaysAnAbsolutePath(t *testing.T) {
+	t.Parallel()
+
+	if got := testBinaryFrom("/opt/bin/pkg.test", nil, "ignored"); got != "/opt/bin/pkg.test" {
+		t.Errorf("testBinaryFrom with a usable os.Executable = %q, want it used unchanged", got)
+	}
+
+	failed := errors.New("os.Executable is not supported here")
+	relative := filepath.Join(".", "pkg.test")
+	got := testBinaryFrom("", failed, relative)
+	if !filepath.IsAbs(got) {
+		t.Errorf("testBinaryFrom fell back to %q, which a child in another directory cannot resolve", got)
+	}
+	if filepath.Base(got) != "pkg.test" {
+		t.Errorf("testBinaryFrom fell back to %q, which no longer names the test binary", got)
+	}
+
+	absolute := filepath.Join(t.TempDir(), "pkg.test")
+	if fellBack := testBinaryFrom("", failed, absolute); fellBack != absolute {
+		t.Errorf("testBinaryFrom rewrote an already absolute argv[0]: %q, want %q", fellBack, absolute)
 	}
 }
 
