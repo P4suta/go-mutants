@@ -512,3 +512,69 @@ func TestAnUnreadableRootIsReportedAsUnreadableRatherThanAsUndeleted(t *testing.
 		t.Errorf("the failure talks about removing something:\n%s", stderr)
 	}
 }
+
+// withDirectoryListing points the collector's directory reads at a listing of
+// the test's own, for the length of one test.
+func withDirectoryListing(t *testing.T, list func(string) ([]os.DirEntry, error)) {
+	t.Helper()
+	t.Cleanup(func() { readDir = os.ReadDir })
+	readDir = list
+}
+
+// TestARootThatIsNotADirectoryIsRefusedOnEveryPlatform pins the classification
+// to something other than what the operating system happens to say.
+//
+// A file where the trace root belongs is a read failure on Unix, where
+// os.ReadDir reports ENOTDIR, and *is not one* on Windows: Go's readdir there
+// asks the handle for directory information, and on two of the error codes it
+// can come back with it breaks out of its loop and returns `names, dirents,
+// infos, nil` — the error it was holding is discarded, so the caller is handed
+// an empty directory and no failure at all. `trace clean` then said "nothing to
+// remove: no recording here" about a root it had not been able to read, which
+// is the one thing a command that deletes must never say.
+//
+// So the rule is stated here rather than inherited: a root that exists and is
+// not a directory is a failure, and the listing is never reached. The injected
+// listing is Windows' own answer — no entries, no error — and the refusal has to
+// survive it.
+func TestARootThatIsNotADirectoryIsRefusedOnEveryPlatform(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(filepath.Dir(traceRoot), 0o755); err != nil {
+		t.Fatalf("creating the report directory: %v", err)
+	}
+	if err := os.WriteFile(traceRoot, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("occupying the trace root: %v", err)
+	}
+	withDirectoryListing(t, func(string) ([]os.DirEntry, error) { return nil, nil })
+
+	code, stdout, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if strings.Contains(stdout, "nothing to remove") {
+		t.Errorf("a root that could not be read was reported as one holding nothing:\n%s", stdout)
+	}
+	// And it is still there, which is what the misclassification *cost* rather
+	// than merely misreported. A root read as empty goes on to the os.Remove
+	// that takes an emptied trace directory away, and os.Remove is perfectly
+	// happy to unlink a file — so `trace clean` deleted somebody's file and
+	// called it "removed the empty trace directory". What is not ours is never
+	// removed, and that is the promise this command is built around.
+	if _, err := os.Stat(traceRoot); err != nil {
+		t.Errorf("`trace clean` deleted the file sitting where the trace root belongs: %v", err)
+	}
+
+	// And the other half of the rule, which the same listing must not take
+	// away: a root that is not there at all holds nothing, which is an answer
+	// rather than a failure — it is what a workspace that has never traced a run
+	// looks like.
+	absent := traceRootAt(filepath.Join(t.TempDir(), "never-traced"))
+	names, err := namesIn(absent)
+	if err != nil || len(names) != 0 {
+		t.Errorf("namesIn(a root that was never made) = %q/%v, want nothing and no failure", names, err)
+	}
+}
