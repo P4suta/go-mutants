@@ -182,7 +182,7 @@ func refusedRecording(refusal error) *traceRecording {
 // because a note in every recording reporting that nothing happened is noise in
 // the one place a reader is looking for signal.
 func collectionNotes(root string) []trace.NoteRecord {
-	removed, err := pruneTraceRoot(root, retention{keep: trace.RetainRuns})
+	removed, err := collect(root, retention{keep: trace.RetainRuns})
 	switch {
 	case err != nil:
 		return []trace.NoteRecord{{Kind: trace.NoteTraceGC, Detail: "collecting " + root + ": " + err.Error()}}
@@ -299,13 +299,18 @@ type retention struct {
 	unfinished bool
 }
 
-// pruneTraceRoot removes the recordings in root that a retention collects, and
-// returns what it removed, oldest first.
-func pruneTraceRoot(root string, keep retention) ([]string, error) {
-	found, err := planSweep(root, keep)
-	if err != nil {
-		return nil, err
-	}
+// pruneTraceRoot removes the recordings a sweep collected, and returns what it
+// removed, oldest first.
+//
+// It takes the plan rather than the retention that produced it, and that is the
+// whole of what keeps one sweep to one look at the directory. A collector that
+// decided what to remove and then decided again as it removed would be acting
+// on a directory it had not measured: a run finishing in between is protected
+// by the first decision and collectable by the second, so it would be deleted
+// having never been counted, and a recording appearing in between moves which
+// ones the newest N are. Separating the decision from the action makes that
+// race unexpressible rather than merely unlikely.
+func pruneTraceRoot(root string, found sweep) ([]string, error) {
 	removed := make([]string, 0, len(found.stale))
 	for _, name := range found.stale {
 		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
@@ -317,6 +322,21 @@ func pruneTraceRoot(root string, keep retention) ([]string, error) {
 		return nil, nil
 	}
 	return removed, nil
+}
+
+// collect plans one sweep of a trace root and carries it out.
+//
+// It is for the caller that has nothing to measure — the collector a run runs
+// as it opens its recording, which reports a count and no bytes. `trace clean`
+// deliberately does not use it: it plans, sizes what the plan names, and then
+// prunes that same plan, which is three steps precisely so that the sizes and
+// the deletions are of one observation.
+func collect(root string, keep retention) ([]string, error) {
+	found, err := planSweep(root, keep)
+	if err != nil {
+		return nil, err
+	}
+	return pruneTraceRoot(root, found)
 }
 
 // A sweep is what a retention found in a trace root.

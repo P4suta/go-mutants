@@ -469,7 +469,11 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	for _, name := range found.stale {
 		sizes[name] = directorySize(filepath.Join(root, name))
 	}
-	removed, removeErr := pruneTraceRoot(root, keep)
+	// The plan that was just measured, rather than a fresh one: every count in
+	// the report below — what was held, what was a candidate, what went, and
+	// what it took up — then describes one look at the directory. See
+	// [pruneTraceRoot].
+	removed, removeErr := pruneTraceRoot(root, found)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "trace root: %s\n", root)

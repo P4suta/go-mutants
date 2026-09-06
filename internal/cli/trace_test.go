@@ -372,9 +372,9 @@ func TestTracePruningKeepsTheNewestRunsAndNeverTouchesForeignNames(t *testing.T)
 		t.Fatalf("writing the stray file: %v", err)
 	}
 
-	removed, err := pruneTraceRoot(root, retention{keep: trace.RetainRuns})
+	removed, err := collect(root, retention{keep: trace.RetainRuns})
 	if err != nil {
-		t.Fatalf("pruneTraceRoot: %v", err)
+		t.Fatalf("collect: %v", err)
 	}
 	want := recordings[:len(recordings)-trace.RetainRuns]
 	if !slices.Equal(removed, want) {
@@ -396,6 +396,73 @@ func TestTracePruningKeepsTheNewestRunsAndNeverTouchesForeignNames(t *testing.T)
 		if slices.Contains(left, name) {
 			t.Errorf("the recording %q survived and is older than the newest %d", name, trace.RetainRuns)
 		}
+	}
+}
+
+// TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater keeps one sweep to
+// one look at the directory.
+//
+// A collector that decided what to remove and then decided again as it removed
+// would be acting on a directory it had not measured. A run finishing between
+// the two looks is enough: its recording is protected by the first decision and
+// collectable by the second, so it would be deleted having never been counted —
+// `trace clean` would report the bytes of everything else and, with nothing else
+// to remove, "removed 1 recording (0 B)". A recording appearing between them
+// moves which ones the newest N are, so a `--keep` could take one the first
+// decision had kept.
+//
+// So planning is a decision and pruning is an action, and the action takes the
+// plan. The race is then not one that is unlikely to happen; it is one that
+// cannot be expressed.
+func TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater(t *testing.T) {
+	root := filepath.Join(resolvedTempDir(t), "trace")
+	finished := "20260901T120000Z-0001"
+	running := "20260902T120000Z-0002"
+	record(t, root, finished, false, nil)
+	recordUnfinished(t, root, running)
+
+	// The decision: everything collectable goes, which is the finished
+	// recording and not the one still being written.
+	plan, err := planSweep(root, retention{keep: 0})
+	if err != nil {
+		t.Fatalf("planSweep: %v", err)
+	}
+	if !slices.Equal(plan.stale, []string{finished}) {
+		t.Fatalf("the plan collects %q, want only the finished recording %q", plan.stale, finished)
+	}
+
+	// And then the run that was in progress finishes, which is exactly what a
+	// concurrent go-mutants does between one command's two looks at a
+	// directory.
+	finishTheRecording(t, root, running)
+
+	removed, err := pruneTraceRoot(root, plan)
+	if err != nil {
+		t.Fatalf("pruneTraceRoot: %v", err)
+	}
+	if !slices.Equal(removed, plan.stale) {
+		t.Errorf("the sweep removed %q, want the plan it was given (%q)", removed, plan.stale)
+	}
+	if left := entriesOf(t, root); !slices.Contains(left, running) {
+		t.Errorf("the trace root holds %q; the recording that finished after the plan was made "+
+			"was removed without ever being measured", left)
+	}
+}
+
+// finishTheRecording appends the run-end a recording still being written has not
+// reached yet, which is what makes it collectable.
+func finishTheRecording(t *testing.T, root, runID string) {
+	t.Helper()
+	stream := filepath.Join(root, runID, trace.FileName)
+	file, err := os.OpenFile(stream, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("opening %s: %v", stream, err)
+	}
+	defer func() { _ = file.Close() }()
+	line := `{"seq":3,"type":"run-end","timestamp":"2026-09-02T12:00:02Z","elapsed_ms":2,` +
+		`"run":{"verdict":"ok","exit_code":0,"events_emitted":2,"events_dropped":0}}` + "\n"
+	if _, err = file.WriteString(line); err != nil {
+		t.Fatalf("finishing %s: %v", stream, err)
 	}
 }
 
