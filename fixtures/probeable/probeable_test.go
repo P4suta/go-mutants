@@ -4,16 +4,28 @@
 package probeable
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
+)
+
+const (
+	childGoTestEnvironment = "PROBEABLE_CHILD_GO_TEST"
+	childGoTestParent      = "parent"
+	childGoTestNested      = "nested"
+	expectedWidth          = 3
 )
 
 // TestWidth pins Width and nothing else, which is what makes it usable as the
 // "test A" of a probe pass: it reaches exactly one probed site.
 func TestWidth(t *testing.T) {
-	if got := Width(); got != 3 {
-		t.Errorf("Width() = %d, want 3", got)
+	if got := Width(); got != expectedWidth {
+		t.Errorf("Width() = %d, want %d", got, expectedWidth)
 	}
 }
 
@@ -33,18 +45,54 @@ func TestReady(t *testing.T) {
 	}
 }
 
-// TestFlagged fails when the environment says to, and passes otherwise.
-//
-// A probe pass has to classify a failing test as "no facts", and the failure
-// has to be one the fixture can be asked for rather than one it always has:
-// every session prepared over this module verifies it with `go test ./...`
-// first, so a test that failed unconditionally would fail the preparation
-// instead of the probe. It calls neither probed function, which is what makes
-// the empty result it produces attributable to the failure rather than to
-// having reached nothing.
 func TestFlagged(t *testing.T) {
 	if os.Getenv("PROBEABLE_FAIL") == "yes" {
 		t.Fatal("PROBEABLE_FAIL asked this test to fail")
+	}
+}
+
+func TestSourceTreeIsPristine(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "gomutants_rt") {
+			t.Fatalf("generated runtime is visible at %s", entry.Name())
+		}
+	}
+	_, caller, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime caller is unavailable")
+	}
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(caller), "probeable.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("__gm")) {
+		t.Fatal("instrumentation is visible in probeable.go")
+	}
+	if !bytes.Contains(data, []byte("return 3")) {
+		t.Fatal("probeable.go is not the pristine source")
+	}
+}
+
+func TestChildGoTestUsesSessionOverlay(t *testing.T) {
+	switch os.Getenv(childGoTestEnvironment) {
+	case childGoTestNested:
+		if got := Width(); got != expectedWidth {
+			t.Fatalf("Width() = %d, want %d", got, expectedWidth)
+		}
+		return
+	case childGoTestParent:
+	default:
+		return
+	}
+	command := exec.Command("go", "test", "-run=^TestChildGoTestUsesSessionOverlay$", ".")
+	command.Env = append(os.Environ(), childGoTestEnvironment+"="+childGoTestNested)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("child go test failed: %v\n%s", err, output)
 	}
 }
 

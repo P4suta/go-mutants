@@ -59,6 +59,10 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.OpenOptions{}
 	_ = gomutants.Command{}
 	_ = gomutants.CommandResult{}
+	_ = gomutants.PrepareEvent{}
+	_ = gomutants.PreparePhaseDiscovery
+	_ = gomutants.PrepareEventStarted
+	_ = gomutants.PreparePhaseSucceeded
 	_ = gomutants.PrepareOptions{}
 	_ = gomutants.Catalog{}
 	_ = gomutants.Mutant{}

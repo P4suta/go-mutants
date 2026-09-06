@@ -5,7 +5,10 @@ package gomutants
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/discover"
@@ -13,6 +16,77 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
+
+func TestInstrumentationEnvironmentSupportsOverlayPathWithWhitespace(t *testing.T) {
+	t.Parallel()
+	goBinary, err := exec.LookPath("go")
+	if err != nil {
+		t.Skipf("Go toolchain is unavailable: %v", err)
+	}
+	root := filepath.Join(t.TempDir(), "module root")
+	if mkdirErr := os.MkdirAll(root, privateDirectoryMode); mkdirErr != nil {
+		t.Fatal(mkdirErr)
+	}
+	for name, contents := range map[string]string{
+		"go.mod":                "module fixture.example/space\n\ngo 1.26.0\n",
+		"value.go":              "package space\n",
+		"overlay manifest.json": `{"Replace":{}}`,
+	} {
+		if writeErr := os.WriteFile(filepath.Join(root, name), []byte(contents), privateFileMode); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	overlay := filepath.Join(root, "overlay manifest.json")
+	environment, err := instrumentationEnvironment(os.Environ(), overlay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), goBinary, "list", "./...")
+	command.Dir = root
+	command.Env = append(environment, "GOWORK=off", "GOTOOLCHAIN=local", "GOPROXY=off")
+	output, err := command.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(output)) != "fixture.example/space" {
+		t.Fatalf("go list through spaced overlay = (%q, %v)", output, err)
+	}
+}
+
+func TestResolvePrepareOptionsScopesDiscoveryIndependently(t *testing.T) {
+	t.Parallel()
+	resolved, err := resolvePrepareOptions(PrepareOptions{
+		DiscoveryPackages:  []string{"./candidate"},
+		Packages:           []string{"./tests"},
+		ProbeCoverPackages: []string{"example.com/module/..."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(resolved.DiscoveryPackages, []string{"./candidate"}) ||
+		!slices.Equal(resolved.Packages, []string{"./tests"}) ||
+		!slices.Equal(resolved.ProbeCoverPackages, []string{"example.com/module/..."}) {
+		t.Fatalf("resolved package scopes = discovery %q tests %q", resolved.DiscoveryPackages, resolved.Packages)
+	}
+	defaults, err := resolvePrepareOptions(PrepareOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(defaults.DiscoveryPackages, []string{"./..."}) ||
+		!slices.Equal(defaults.Packages, []string{"./..."}) {
+		t.Fatalf("default package scopes = discovery %q tests %q", defaults.DiscoveryPackages, defaults.Packages)
+	}
+	if _, outsideErr := resolvePrepareOptions(PrepareOptions{DiscoveryPackages: []string{"../outside"}}); outsideErr == nil {
+		t.Fatal("outside discovery package was accepted")
+	}
+	if _, commaErr := resolvePrepareOptions(PrepareOptions{ProbeCoverPackages: []string{"a,b"}}); commaErr == nil {
+		t.Fatal("comma-separated probe coverage package was accepted")
+	}
+	skipped, err := resolvePrepareOptions(PrepareOptions{SkipVerify: true})
+	if err != nil || len(skipped.Verify.Argv) != 0 {
+		t.Fatalf("skip verify resolved as (%q, %v)", skipped.Verify.Argv, err)
+	}
+	if _, err := resolvePrepareOptions(PrepareOptions{SkipVerify: true, Verify: Command{Argv: []string{"go", "test"}}}); err == nil {
+		t.Fatal("skip verify accepted a verification command")
+	}
+}
 
 // macOS exposes its temporary directory through both /var and /private/var.
 // Go subprocesses may canonicalise that spelling even though os.MkdirTemp did

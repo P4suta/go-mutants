@@ -93,6 +93,8 @@ type Options struct {
 	// [Result] that answered it would invite exactly the code that reads the
 	// answer instead of knowing it.
 	Mode instrument.Mode
+
+	Packages []string
 }
 
 // A Rejection is one catalogued mutant that cannot be compiled, and the
@@ -187,6 +189,7 @@ func Validate(ctx context.Context, opts Options) (Result, error) {
 		catalog:   opts.Catalog,
 		hints:     opts.Hints,
 		mode:      opts.Mode,
+		packages:  slices.Clone(opts.Packages),
 		toolchain: opts.Toolchain,
 		jobs:      opts.Jobs,
 		timeout:   opts.BuildTimeout,
@@ -240,6 +243,7 @@ type validator struct {
 	// would produce a tree that turned back into the other the moment anything
 	// was bisected.
 	mode      instrument.Mode
+	packages  []string
 	toolchain gocmd.Toolchain
 	jobs      int
 	timeout   time.Duration
@@ -508,7 +512,7 @@ func (v *validator) instrumentFile(path string, subset []mutation.Mutant) error 
 func (v *validator) buildSnapshot(ctx context.Context) (verdict, error) {
 	v.builds++
 
-	spec := v.toolchain.Command(buildArgs(v.jobs)...)
+	spec := v.toolchain.Command(buildArgs(v.jobs, v.packages)...)
 	spec.Dir = v.root
 	spec.Env = v.env
 	spec.Timeout = v.timeout
@@ -578,13 +582,16 @@ func (v *validator) buildSnapshot(ctx context.Context) (verdict, error) {
 // an executable after and writes nothing whatever this vector says. The flag is
 // what makes that a property of the phase instead of a property of the tree it
 // happens to be pointed at.
-func buildArgs(jobs int) []string {
-	args := make([]string, 0, 6)
+func buildArgs(jobs int, packages []string) []string {
+	args := make([]string, 0, 5+len(packages))
 	args = append(args, "build", "-o", os.DevNull)
 	if jobs > 0 {
 		args = append(args, "-p", strconv.Itoa(jobs))
 	}
-	return append(args, "./...")
+	if len(packages) == 0 {
+		packages = []string{"./..."}
+	}
+	return append(args, packages...)
 }
 
 // result assembles what the snapshot now holds, starting from what the full

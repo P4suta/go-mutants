@@ -61,6 +61,24 @@ func discoverFixture(t *testing.T, name string, opts Options) Result {
 	return result
 }
 
+func TestDiscoverLoadsOnlySelectedPackages(t *testing.T) {
+	t.Parallel()
+	result := discoverFixture(t, "mainmod", Options{Packages: []string{"./arith"}})
+	if len(result.Candidates) == 0 {
+		t.Fatal("selected package produced no candidates")
+	}
+	for _, candidate := range result.Candidates {
+		if !strings.HasPrefix(candidate.Path, "arith/") {
+			t.Fatalf("selected discovery returned %q", candidate.Path)
+		}
+	}
+	for _, skipped := range result.Skips {
+		if !strings.HasPrefix(skipped.Path, "arith/") {
+			t.Fatalf("selected discovery skipped %q", skipped.Path)
+		}
+	}
+}
+
 // patterns compiles test patterns, which are fixed at authoring time.
 func patterns(t *testing.T, sources ...string) []glob.Pattern {
 	t.Helper()

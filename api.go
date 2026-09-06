@@ -13,6 +13,9 @@ import (
 type OpenOptions struct {
 	// GoBinary selects the go executable. Empty resolves "go" through PATH.
 	GoBinary string
+	// SnapshotExclude holds module-relative '/'-separated glob patterns for
+	// generated trees that must not enter the frozen workspace.
+	SnapshotExclude []string
 	// ReportDirectory is a module-relative report directory to exclude from
 	// the snapshot in addition to go-mutants' conventional report directory.
 	ReportDirectory string
@@ -94,6 +97,48 @@ type CommandResult struct {
 	Output   []byte
 }
 
+// PreparePhase identifies one timed stage of session preparation.
+type PreparePhase string
+
+const (
+	PreparePhaseDiscovery          PreparePhase = "discovery"
+	PreparePhaseProbeSnapshot      PreparePhase = "probe_snapshot"
+	PreparePhaseMainValidation     PreparePhase = "main_validation"
+	PreparePhaseMainRestoration    PreparePhase = "main_restoration"
+	PreparePhaseVerification       PreparePhase = "verification"
+	PreparePhaseBinaryBuild        PreparePhase = "binary_build"
+	PreparePhaseProbeValidation    PreparePhase = "probe_validation"
+	PreparePhaseProbeCoverageBuild PreparePhase = "probe_coverage_build"
+	PreparePhaseProbeRestoration   PreparePhase = "probe_restoration"
+)
+
+// PrepareEventState distinguishes phase entry from phase completion.
+type PrepareEventState string
+
+const (
+	PrepareEventStarted  PrepareEventState = "started"
+	PrepareEventFinished PrepareEventState = "finished"
+)
+
+// PreparePhaseResult records how a finished phase ended.
+type PreparePhaseResult string
+
+const (
+	PreparePhaseSucceeded PreparePhaseResult = "succeeded"
+	PreparePhaseFailed    PreparePhaseResult = "failed"
+	PreparePhaseSkipped   PreparePhaseResult = "skipped"
+)
+
+// PrepareEvent is emitted synchronously in deterministic dependency order.
+// Independent phases may overlap, but callbacks are serialized and every phase
+// starts before it finishes.
+type PrepareEvent struct {
+	Phase    PreparePhase
+	State    PrepareEventState
+	Result   PreparePhaseResult
+	Duration time.Duration
+}
+
 // PrepareOptions selects and prepares a reusable mutation session.
 type PrepareOptions struct {
 	// Profile is balanced, strong, or all. Empty selects balanced.
@@ -105,10 +150,14 @@ type PrepareOptions struct {
 	// win. They select candidates and never remove files from the snapshot.
 	Include []string
 	Exclude []string
+	// DiscoveryPackages are module-relative package patterns whose source is mutated.
+	DiscoveryPackages []string
 	// Packages are relative Go package patterns whose test binaries are built.
 	// Empty selects ./....
 	Packages []string
-	// Jobs bounds concurrent test-binary builds. Zero uses min(NumCPU, 8).
+	// ProbeCoverPackages are package patterns included in probe coverage.
+	ProbeCoverPackages []string
+	// Jobs bounds concurrent test-binary builds. Zero uses the configured worker default.
 	Jobs int
 	// BuildTimeout bounds each validation and test-binary build. Zero uses ten
 	// minutes. A negative duration is invalid.
@@ -116,21 +165,14 @@ type PrepareOptions struct {
 	// MutantTimeout is the default outer timeout used by Session.Exec. Zero
 	// uses ten seconds. An ExecRequest may override it with a positive value.
 	MutantTimeout time.Duration
-	// Verify is run once after instrumentation with no mutant active. Its zero
-	// value means `go test ./...`. Vet is disabled only for this generated tree.
+	// Verify runs once against pristine files with instrumented Go builds. Its zero value means `go test ./...`.
 	Verify Command
-	// Probe also builds the probe tree: a second instrumented snapshot of the
-	// same source in which no mutant is ever active and each site it has a form
-	// for reports, without side effects, whether the mutated value would have
-	// differed. [Session.Probe] measures against it, and [Mutant.Probed] says
-	// which mutants it speaks for.
-	//
-	// It is off by default because it is not free — a second instrumentation, a
-	// second compile validation and a second set of test binaries — and because
-	// a caller that never asks the infection question should not pay for the
-	// answer. Nothing about the mutant tree, the catalogue or [Session.Exec]
-	// changes either way.
+	// SkipVerify omits Verify when the caller runs prepared controls separately.
+	SkipVerify bool
+	// Probe prepares binaries that record whether probed mutant values differ.
 	Probe bool
+	// Trace receives serialized phase start and finish events synchronously.
+	Trace func(PrepareEvent)
 }
 
 // Catalog is the immutable public description of one prepared session.
@@ -351,9 +393,8 @@ type ProbeResult struct {
 	ExitCode int
 	// Duration is the wall-clock time the child processes took.
 	Duration time.Duration
-	// OutputTail is the last lines the deciding binary printed, and is empty
-	// for a measured pass.
-	OutputTail string
+	// Output is the bounded combined output of the deciding test binary.
+	Output []byte
 }
 
 // Artifact is one bounded standard fuzz-corpus file captured before a target's

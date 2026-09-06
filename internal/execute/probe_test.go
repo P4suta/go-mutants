@@ -88,6 +88,9 @@ func TestRunProbeMapsExitCodesToOutcomes(t *testing.T) {
 			if got := execute.CodeOf(attempt.Err); got != c.code {
 				t.Errorf("code = %q, want %q (%v)", got, c.code, attempt.Err)
 			}
+			if c.code == "" && len(attempt.Output) == 0 {
+				t.Error("probe output is empty")
+			}
 			switch {
 			case c.facts && attempt.Infected == nil:
 				t.Error("a measured pass carries nil rather than a set of indices")
