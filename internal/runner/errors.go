@@ -51,7 +51,26 @@ type Error struct {
 	// Err is the underlying cause, if any. It is unwrapped, so errors.Is and
 	// errors.As reach syscall errors and os/exec sentinels through it.
 	Err error
+
+	// Invocation is the command the failure was about. [Run] sets it on every
+	// error it returns, the refused spec included; it is nil on an error built
+	// anywhere else, because a failure that named no command should say so
+	// rather than name an invented one.
+	//
+	// It is not part of [Error.Error], and that is deliberate: the message is a
+	// stable one-liner that two runs of the same failure render identically,
+	// while a command carries absolute paths and a temporary directory. The
+	// renderer asks for it separately and prints it under the message.
+	Invocation *Invocation
 }
+
+// Command returns the command this failure was about, or nil when there is
+// none.
+//
+// It is an accessor rather than a bare field so that a renderer can ask any
+// error for its command through a one-method interface, without importing the
+// package that produced it or knowing how many such packages there are.
+func (e *Error) Command() *Invocation { return e.Invocation }
 
 // Error renders the code, the message, and the cause.
 func (e *Error) Error() string {

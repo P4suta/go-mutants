@@ -43,7 +43,13 @@
 // that behaves like `go`, not merely something that exists.
 //
 // The probe runs through internal/runner rather than through os/exec, so a
-// toolchain that hangs is killed like anything else this tool starts.
+// toolchain that hangs is killed like anything else this tool starts — and so
+// it is recorded like anything else this tool starts, as an `exec` event of
+// kind `go-version`, which makes it the first command in a run's recording.
+// When it fails, the error keeps what the probe printed and the command that
+// printed it: a binary that is not a Go toolchain explains itself in its own
+// output, and an error that dropped those bytes would leave the reader to run
+// the command again by hand.
 //
 // The parser is deliberately loose about the middle of the line and strict
 // about its ends. `go version` has grown fields over the years — a devel

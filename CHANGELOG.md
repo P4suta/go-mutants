@@ -76,6 +76,43 @@ Entries say *why* a change was made, not only what changed.
   what is recorded into it is recorded against a contract. Documented in
   `docs/trace-v1.md`, published as `schema/trace-v1.schema.json`, and reasoned
   about in `docs/adr/0001-trace-is-not-evidence.md`.
+- **Every subprocess is recorded where it is started, and every failure carries
+  the command it was about.** go-mutants starts processes from a dozen places —
+  the `go version` probe, both baselines, a compile per package, the coverage
+  pass, each validation build, a run per mutant — and asking each of them to
+  remember to record itself would be a rule with a dozen chances to be broken
+  silently, in exactly the run somebody is trying to diagnose. So the account of
+  a run starts at the choke point instead: `runner.Run` records exactly one
+  `exec` event per call, after the child has been reaped and its output
+  captured, and returns the sequence it was recorded at as `Result.TraceSeq`. A
+  call site can no longer forget to record a command; it can only forget to
+  *label* one, and the schema's `kind` enum makes an unlabelled command a
+  recording that does not validate. A spec the runner refuses and a command that
+  could not be started are recorded too — a command that never became a process
+  is precisely what a reader needs to be told, and it is the one case a missing
+  event would make indistinguishable from a command nobody issued.
+
+  The second half is the error that used to arrive as "could not start
+  /tmp/go-build123/b001/pkg.test" with no working directory, no arguments and
+  nothing to reproduce it with. Every `runner.Error` now carries the
+  `Invocation` it was about — argv, directory, label, and the trace sequence
+  that leads to the whole output — and a `gocmd.Error` from a failed `go
+  version` carries the probe's invocation and what the probe printed, because a
+  binary that is not a Go toolchain explains itself in its own output. The
+  messages themselves are unchanged, so two runs of the same failure still
+  render the same line; what is new is what a renderer can ask for and print
+  underneath it. Environment variables reach the recording as names and never as
+  values, output is digested rather than serialised, and a recorder that is nil
+  records nothing and costs a zero sequence, so a traced run and an untraced one
+  take the same path.
+
+  Nothing hands the choke point a recorder yet. The runner records into whatever
+  `Spec.Trace` it is given, and today every production call site still gives it
+  nil — only the `go version` probe names a kind (`go-version`) at all. The
+  engine's labels, the options that carry a recorder down to them, and the sink
+  that turns a recording into a file come in the changes after this one. What
+  landed here is the guarantee that when they do, no command can be missing from
+  the account.
 - **`Workspace.ToolchainVersion()`.** A workspace already resolves the
   toolchain it froze the module against, and every consumer that needed the
   version was running its own `go version` to learn something the workspace was
