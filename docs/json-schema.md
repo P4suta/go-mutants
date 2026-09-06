@@ -467,7 +467,9 @@ deterministic, and how a recording joins a consumer's own — is
 
 ## Compatibility rules
 
-- Consumers must branch on `document_type` and `schema_version`.
+- Consumers of the result documents must branch on `document_type` and
+  `schema_version`. A trace consumer reads the format identity from the
+  `schema` field of the `run-start` line instead.
 - New fields are additive within a schema version; removing or retyping a field
   requires a version bump.
 - Unknown fields are rejected by the schemas on purpose: a typo in a generated

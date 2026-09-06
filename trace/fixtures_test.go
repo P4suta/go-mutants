@@ -41,9 +41,13 @@ const (
 	fixtureNoteDetail   = "the coverage profile was empty"
 	fixtureMutantID     = "4b2f8c1d0e6a39571c84fb02de7a6519cf3b48d20a71e6c95f803b4d17ea92c6"
 	fixtureDisplayID    = "4b2f8c1d0e6a39571c84"
-	fixturePackage      = "github.com/P4suta/go-mutants/internal/mutation"
-	fixtureBinary       = "/tmp/go-mutants-tmp-1/mutation.test"
-	fixtureDigest       = "07c5a1e94b83d26f0a1b7c8de95243f60b8a17d3e42c9b058f1d6a723c40e9b8"
+	// A test binary has two names: the import path of the package it was built
+	// from, which is what `binaries`, `killed_by` and `covering` carry, and the
+	// file the run executed, which is what an `argv` carries.
+	fixturePackage       = "github.com/P4suta/go-mutants/internal/mutation"
+	fixtureOtherPackage  = "github.com/P4suta/go-mutants/internal/interval"
+	fixtureBinaryCommand = "/tmp/go-mutants-tmp-1/mutation.test"
+	fixtureDigest        = "07c5a1e94b83d26f0a1b7c8de95243f60b8a17d3e42c9b058f1d6a723c40e9b8"
 	// fixtureContextKey is a cache context key: sixteen hex characters, the
 	// truncation `cache.ContextKeyLength` names an entry's directory by. It is
 	// deliberately a value nothing could mistake for a real one, because a
@@ -100,7 +104,7 @@ func fixtureExecRecord() trace.ExecRecord {
 	return trace.ExecRecord{
 		Kind:      trace.ExecKindMutantRun,
 		Subject:   fixtureMutantID,
-		Argv:      []string{fixtureBinary, "-test.timeout=30s"},
+		Argv:      []string{fixtureBinaryCommand, "-test.timeout=30s"},
 		Dir:       fixtureRoot,
 		EnvNames:  []string{"PATH=/usr/bin", "GO_MUTANTS_ACTIVE=" + fixtureMutantID, "PATH=/bin"},
 		TimeoutMS: 30000,
@@ -112,7 +116,7 @@ func fixtureExecRecord() trace.ExecRecord {
 func fixtureProbeExecRecord() trace.ExecRecord {
 	return trace.ExecRecord{
 		Kind:       trace.ExecKindProbeRun,
-		Argv:       []string{fixtureBinary, "-test.timeout=30s"},
+		Argv:       []string{fixtureBinaryCommand, "-test.timeout=30s"},
 		Dir:        "/tmp/go-mutants-probe-1",
 		EnvNames:   []string{"PATH=/usr/bin"},
 		TimeoutMS:  30000,
@@ -139,7 +143,7 @@ func fixtureMutantRecord() trace.MutantRecord {
 		Attempt:    1,
 		Worker:     3,
 		Package:    fixturePackage,
-		Binaries:   []string{fixtureBinary},
+		Binaries:   []string{fixturePackage, fixtureOtherPackage},
 		Args:       []string{"-test.timeout=30s"},
 		TimeoutMS:  30000,
 		Outcome:    trace.OutcomeKilled,
@@ -153,7 +157,7 @@ func fixtureMutantRecord() trace.MutantRecord {
 func fixtureProbeRecord() trace.ProbeRecord {
 	return trace.ProbeRecord{
 		Package:    fixturePackage,
-		Binaries:   []string{fixtureBinary},
+		Binaries:   []string{fixturePackage},
 		Args:       []string{"-test.timeout=30s"},
 		TimeoutMS:  30000,
 		Outcome:    trace.ProbeOutcomeMeasured,
@@ -337,7 +341,7 @@ func scriptedFailureEvents(t *testing.T) []trace.Event {
 	requireSeq(t, fixtureFailureProbeExecSeq, recorder.Exec(timedOut), "timed-out probe exec")
 	recorder.ProbeExec(trace.ProbeRecord{
 		Package:    fixturePackage,
-		Binaries:   []string{fixtureBinary},
+		Binaries:   []string{fixturePackage},
 		Args:       []string{"-test.timeout=30s"},
 		TimeoutMS:  30000,
 		ExitCode:   -1,

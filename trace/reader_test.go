@@ -5,6 +5,7 @@ package trace_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -122,6 +123,35 @@ func TestReadRejectsUnknownFieldsTrailingDataAndTwoPayloads(t *testing.T) {
 			}
 		})
 	}
+
+	// The one case the two readers answer differently. "There is no recording
+	// for that run" is an answer a summary can give, and [Summary.Missing] is
+	// where it gives it; Read has no such field, so a caller who mistyped a
+	// path would read the empty slice as a run that recorded nothing.
+	t.Run("a recording that does not exist", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), trace.FileName)
+		events, err := trace.Read(path)
+		if err == nil {
+			t.Fatalf("Read accepted a recording that does not exist and returned %d events", len(events))
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("Read failed with %v, want an error a caller can match against os.ErrNotExist", err)
+		}
+		if !strings.Contains(err.Error(), path) {
+			t.Errorf("Read failed with %v, which does not name the path it could not open", err)
+		}
+		if events != nil {
+			t.Errorf("Read returned %d events beside its error", len(events))
+		}
+		summary, err := trace.ReadSummary(path)
+		if err != nil {
+			t.Fatalf("ReadSummary: %v", err)
+		}
+		if !summary.Missing {
+			t.Error("ReadSummary stopped reporting a missing recording as missing")
+		}
+	})
 }
 
 func TestReadSummaryReportsMissingIncompleteAndLossyRecordings(t *testing.T) {

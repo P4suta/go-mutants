@@ -83,9 +83,12 @@
 // command recorded in both streams is the same `(argv, dir, output_sha256)` in
 // both. One payload is named differently on each side: goatest spells what this
 // package calls `note` a `progress` record, with the same `kind` and `detail`
-// fields, so a consumer joining the streams reads the two as one kind of line. An embedder that hands [github.com/P4suta/go-mutants.OpenOptions] a
-// sink of its own gets one timeline across two tools rather than two timelines
-// to reconcile.
+// fields, so a consumer joining the streams reads the two as one kind of line.
+//
+// There is no hook yet for handing go-mutants a sink of your own: the option
+// that takes one arrives with the rest of the wiring in a later change. What
+// the alignment already fixes is the part that would be expensive to change
+// afterwards — the field names — so a consumer can write the join now.
 //
 // # Concurrency
 //

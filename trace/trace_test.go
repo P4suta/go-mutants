@@ -680,3 +680,50 @@ func TestFailureRecordingPinsItsJSONFieldNamesAndOrder(t *testing.T) {
 		t.Errorf("events_emitted = %d, want %d", last.Run.EventsEmitted, want)
 	}
 }
+
+// TestBinariesAndKilledByNameTestBinariesTheSameWay pins the one join a reader
+// makes inside a single event.
+//
+// A test binary has two names: the file the run executed, and the import path
+// of the package it was built from. `argv` is the first, because it is the
+// command that ran; `binaries`, `killed_by` and `covering` are the second,
+// because that is the name the run report uses and the name that survives a
+// temporary directory being deleted. Mixing them would leave `killed_by`
+// matching nothing in `binaries` on the very event a reader opens to ask what
+// killed a mutant.
+func TestBinariesAndKilledByNameTestBinariesTheSameWay(t *testing.T) {
+	t.Parallel()
+
+	for _, event := range slices.Concat(scriptedEvents(t), scriptedFailureEvents(t)) {
+		switch event.Type {
+		case trace.TypeMutantExec:
+			assertImportPaths(t, "mutant.binaries", event.Mutant.Binaries)
+			if killedBy := event.Mutant.KilledBy; killedBy != "" {
+				assertImportPaths(t, "mutant.killed_by", []string{killedBy})
+				if !slices.Contains(event.Mutant.Binaries, killedBy) {
+					t.Errorf("killed_by %q names nothing in binaries %v", killedBy, event.Mutant.Binaries)
+				}
+			}
+		case trace.TypeProbeExec:
+			assertImportPaths(t, "probe.binaries", event.Probe.Binaries)
+		case trace.TypeCoverageMap:
+			assertImportPaths(t, "coverage.covering", event.Coverage.Covering)
+		case trace.TypeExec:
+			// The other half of the contract: an argv is the command that ran,
+			// so it is a file path and stays one.
+			if argv := event.Exec.Argv; len(argv) > 0 && !strings.HasPrefix(argv[0], "/") && argv[0] != "go" {
+				t.Errorf("exec argv %v does not begin with a command", argv)
+			}
+		}
+	}
+}
+
+// assertImportPaths fails for a name that is a file rather than a package.
+func assertImportPaths(t *testing.T, field string, names []string) {
+	t.Helper()
+	for _, name := range names {
+		if strings.HasPrefix(name, "/") || strings.HasSuffix(name, ".test") || strings.HasSuffix(name, ".exe") {
+			t.Errorf("%s carries %q, which is a file rather than an import path", field, name)
+		}
+	}
+}

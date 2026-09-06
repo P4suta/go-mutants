@@ -378,12 +378,16 @@ func Digested(inner Sink) Sink {
 type digestedSink struct {
 	inner Sink
 
-	// dropped counts what the inner sink refused. The wrapper has to count it
-	// itself: a sink that answers Dropped() is authoritative, so a wrapper
-	// that reported zero for an inner sink which counts nothing would make the
-	// recorder prefer that zero over its own tally of refusals — and a
-	// [TeeSink] around the wrapper would stop counting the branch too. The
-	// recording would then lose every event and say it lost none.
+	// dropped counts what an inner sink that keeps no tally of its own refused.
+	//
+	// The wrapper has to count that case itself, because a sink answering
+	// Dropped() is authoritative: a wrapper that reported zero for an inner
+	// sink which counts nothing would make the recorder prefer that zero over
+	// its own tally of refusals, and a [TeeSink] around the wrapper would stop
+	// counting the branch too — a recording that lost every event and said it
+	// lost none. It has to count only that case for the mirror-image reason: an
+	// inner sink that does keep a tally has already counted the refusal it
+	// returned, so counting it here as well would report one loss as two.
 	dropped atomic.Int64
 }
 
@@ -410,20 +414,24 @@ func (sink *digestedSink) Emit(event Event) error {
 	}
 	err := sink.inner.Emit(event)
 	if err != nil {
-		sink.dropped.Add(1)
+		// A sink that counts its own losses is authoritative, so counting the
+		// same refusal here as well would report it twice. [TeeSink.Emit]
+		// makes the same distinction for the same reason.
+		if _, counts := sink.inner.(Dropper); !counts {
+			sink.dropped.Add(1)
+		}
 	}
 	return err
 }
 
 func (sink *digestedSink) Close() error { return sink.inner.Close() }
 
-// Dropped is what the wrapper and the sink it wraps lost between them: the
-// inner sink's own accounting where it keeps one, plus every event this wrapper
-// could not hand it.
+// Dropped is what the recording lost behind this wrapper: the inner sink's own
+// accounting where it keeps one, and the wrapper's tally of refusals where it
+// does not. Never both, because both would be the same losses counted twice.
 func (sink *digestedSink) Dropped() int64 {
-	total := sink.dropped.Load()
 	if dropper, ok := sink.inner.(Dropper); ok {
-		total += dropper.Dropped()
+		return dropper.Dropped()
 	}
-	return total
+	return sink.dropped.Load()
 }

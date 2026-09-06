@@ -528,8 +528,10 @@ func TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn(t *testing.T) 
 		t.Errorf("run-end reported %d drops, want the 2 taken before it was written", last.Run.EventsDropped)
 	}
 
-	// A wrapper around a sink that does count itself reports both: the ring's
-	// own overflow and whatever the wrapper could not hand it.
+	// A wrapper around a sink that does count itself reports that sink's count
+	// and nothing of its own, because the two would otherwise be the same
+	// refusal counted twice. The ring below loses events both ways: silently,
+	// by overflowing, and with an error, once it is closed.
 	bounded := trace.NewMemorySink(2)
 	wrapped := trace.Digested(bounded)
 	for seq := int64(1); seq <= 4; seq++ {
@@ -537,15 +539,44 @@ func TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	if bounded.Dropped() == 0 {
+		t.Fatal("the bounded ring dropped nothing, so the test proves nothing")
+	}
+	if err := wrapped.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapped.Emit(trace.Event{Seq: 5, Type: trace.TypeArtifact}); err == nil {
+		t.Fatal("the closed ring accepted an event")
+	}
 	dropper, ok := wrapped.(trace.Dropper)
 	if !ok {
 		t.Fatal("Digested does not count its drops at all")
 	}
 	if got := dropper.Dropped(); got != bounded.Dropped() {
-		t.Errorf("the wrapper reported %d drops, want the ring's %d", got, bounded.Dropped())
+		t.Errorf("the wrapper reported %d drops, want exactly the ring's %d", got, bounded.Dropped())
 	}
-	if bounded.Dropped() == 0 {
-		t.Fatal("the bounded ring dropped nothing, so the test proves nothing")
+
+	// The same for a directory sink, which counts every event it could not
+	// write. A wrapper that added its own tally would make a run-end report
+	// more losses than the stream had.
+	file, err := trace.NewDirSink(t.TempDir(), fixtureRunID, trace.Filesystem{})
+	if err != nil {
+		t.Fatalf("NewDirSink: %v", err)
+	}
+	stream := trace.Digested(file)
+	if closeErr := stream.Close(); closeErr != nil {
+		t.Fatalf("Close: %v", closeErr)
+	}
+	for seq := int64(1); seq <= 3; seq++ {
+		if emitErr := stream.Emit(trace.Event{Seq: seq, Type: trace.TypeArtifact}); emitErr == nil {
+			t.Fatal("the closed stream accepted an event")
+		}
+	}
+	if file.Dropped() != 3 {
+		t.Fatalf("the stream counted %d refusals, want 3", file.Dropped())
+	}
+	if got := stream.(trace.Dropper).Dropped(); got != file.Dropped() {
+		t.Errorf("the wrapper reported %d drops, want exactly the stream's %d", got, file.Dropped())
 	}
 }
 

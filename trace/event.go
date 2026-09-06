@@ -197,14 +197,26 @@ type MutantRecord struct {
 	// Worker is which execution slot ran it, from zero.
 	Worker int `json:"worker"`
 
-	Package   string   `json:"package,omitempty"`
-	Binaries  []string `json:"binaries,omitempty"`
+	Package string `json:"package,omitempty"`
+
+	// Binaries are the test binaries this attempt ran, in order, by the import
+	// path of the package each was built from — never the file that was
+	// executed, which is what the `argv` of the [ExecRecord] underneath it
+	// carries. The import path is the name the run report uses and the one that
+	// outlives the temporary directory the file lived in.
+	Binaries []string `json:"binaries,omitempty"`
+
 	Args      []string `json:"args,omitempty"`
 	TimeoutMS int64    `json:"timeout_ms,omitempty"`
 
-	Outcome    string `json:"outcome,omitempty"`
-	KilledBy   string `json:"killed_by,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+
+	// KilledBy is the test binary that detected the mutant, by the same import
+	// path Binaries uses and the same one the run report's `killed_by` carries.
+	// It is one of Binaries, so a reader can join the two.
+	KilledBy string `json:"killed_by,omitempty"`
+
+	DurationMS int64 `json:"duration_ms,omitempty"`
 
 	// ExecSeqs are the `exec` events of the binaries this attempt ran, in
 	// order. They are how an attempt is joined to the commands underneath it,
@@ -222,8 +234,12 @@ type MutantRecord struct {
 // ProbeRecord is one pass through the prepared probe tree, where no mutant is
 // active and what is measured is which mutants' sites ever differed.
 type ProbeRecord struct {
-	Package   string   `json:"package,omitempty"`
-	Binaries  []string `json:"binaries,omitempty"`
+	Package string `json:"package,omitempty"`
+
+	// Binaries are the test binaries the pass ran, by import path, exactly as
+	// [MutantRecord.Binaries] names them.
+	Binaries []string `json:"binaries,omitempty"`
+
 	Args      []string `json:"args,omitempty"`
 	TimeoutMS int64    `json:"timeout_ms,omitempty"`
 
@@ -305,7 +321,9 @@ type CoverageRecord struct {
 	StartLine int `json:"start_line"`
 	EndLine   int `json:"end_line"`
 
-	// Covering are the test binaries that execute that block.
+	// Covering are the test binaries whose coverage profile reaches that block,
+	// by import path — the same identity [MutantRecord.Binaries] uses, and the
+	// same one the run report's `covering_test_packages` carries.
 	Covering []string `json:"covering,omitempty"`
 
 	// Uncovered is the same statement as an empty Covering, recorded

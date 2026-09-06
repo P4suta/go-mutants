@@ -129,12 +129,22 @@ type SummaryDiff struct {
 // recording rather than an invalid one — [Summary.MissingSequences] is where it
 // says so.
 //
+// A recording that does not exist is an error wrapping [os.ErrNotExist] and
+// naming the path, rather than no events and no error. "There is no recording
+// for that run" is an answer, but it is one this function has no field to give:
+// a caller who mistyped a path would read the empty slice as a run that
+// recorded nothing. [ReadSummary] is the one that can say it, in
+// [Summary.Missing].
+//
 // path may name the stream or the run directory that holds it.
 func Read(path string) ([]Event, error) {
 	var events []Event
-	_, err := readStream(path, func(event Event) { events = append(events, event) })
+	summary, err := readStream(path, func(event Event) { events = append(events, event) })
 	if err != nil {
 		return nil, err
+	}
+	if summary.Missing {
+		return nil, fmt.Errorf("go-mutants: open trace %s: %w", summary.Path, os.ErrNotExist)
 	}
 	return events, nil
 }

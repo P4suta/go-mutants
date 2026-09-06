@@ -411,7 +411,7 @@
         },
         "package": { "type": "string" },
         "binaries": {
-          "description": "The test binaries this attempt ran, in order.",
+          "description": "The test binaries this attempt ran, in order, by the import path of the package each was built from — never the file that was executed, which is what the argv of the exec event underneath it carries. The import path is the name the run report uses and the one that outlives the temporary directory the file lived in.",
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
         },
@@ -422,7 +422,11 @@
           "type": "string",
           "minLength": 1
         },
-        "killed_by": { "type": "string", "minLength": 1 },
+        "killed_by": {
+          "description": "The test binary that detected the mutant, by the same import path binaries uses and the same one the run report's killed_by carries. It is one of binaries, so a reader can join the two.",
+          "type": "string",
+          "minLength": 1
+        },
         "duration_ms": { "$ref": "#/$defs/milliseconds" },
         "exec_seqs": {
           "description": "The exec events of the binaries this attempt ran, in order. They are how an attempt is joined to the commands underneath it, and therefore to their preserved output.",
@@ -444,7 +448,11 @@
       "required": ["exit_code"],
       "properties": {
         "package": { "type": "string" },
-        "binaries": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "binaries": {
+          "description": "The test binaries the pass ran, by import path, exactly as a mutant record names them.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
         "args": { "type": "array", "items": { "type": "string" } },
         "timeout_ms": { "$ref": "#/$defs/milliseconds" },
         "outcome": {
@@ -539,7 +547,12 @@
           "minimum": 0
         },
         "end_line": { "type": "integer", "minimum": 0 },
-        "covering": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "covering": {
+          "description": "The test binaries whose coverage profile reaches that block, by import path — the same identity a mutant record's binaries uses, and the same one the run report's covering_test_packages carries.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
         "uncovered": {
           "description": "The same statement as an empty covering set, recorded explicitly so that a reader is not asked to infer a decision from an omitted array.",
           "type": "boolean"

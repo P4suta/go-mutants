@@ -305,11 +305,11 @@ own mutant record.
 | `attempt` | which attempt this is, from one |
 | `worker` | which execution slot ran it, from zero |
 | `package` | the package the mutant belongs to |
-| `binaries` | the test binaries this attempt ran, in order |
+| `binaries` | the test binaries this attempt ran, in order, by import path |
 | `args` | the arguments the execution ran with |
 | `timeout_ms` | the timeout the execution was given |
 | `outcome` | `killed`, `survived`, `timed_out`, `inconclusive`, `errored`, or `not_run` |
-| `killed_by` | the test binary that detected it, when one did |
+| `killed_by` | the test binary that detected it, by import path; one of `binaries` |
 | `duration_ms` | how long the attempt took |
 | `exec_seqs` | the `exec` events of the binaries it ran, in order |
 | `output_tail` | the tail of the killing binary's output |
@@ -318,6 +318,14 @@ own mutant record.
 `attempt` is recorded rather than collapsed into a count, because "survived" and
 "survived twice" are different facts about a flaky test: attempt 1 is the
 concurrent pass and attempt 2 the serial retry a survivor is given.
+
+A test binary has two names, and the contract uses each in one place. `argv` on
+an `exec` is the file the run executed, because it is the command that ran.
+`binaries`, `killed_by` and a `coverage-map`'s `covering` are the *import path*
+of the package the binary was built from — the name the run report's `killed_by`
+and `covering_test_packages` use, and the one that outlives the temporary
+directory the file lived in. `killed_by` is therefore always one of `binaries`,
+and a reader may join the two directly.
 
 `exec_seqs` is the join into the commands underneath the attempt, and therefore
 into their preserved output: a reader with an attempt in hand has the argv, the
@@ -341,7 +349,7 @@ measured is which mutants' sites ever differed.
 | Field | Meaning |
 | --- | --- |
 | `package` | the package the pass ran |
-| `binaries` | the test binaries it ran |
+| `binaries` | the test binaries it ran, by import path |
 | `args` | the arguments it ran with |
 | `timeout_ms` | the timeout it was given |
 | `outcome` | `measured`, `test-failed`, `timed-out`, or `unavailable` |
@@ -407,7 +415,7 @@ How coverage placed one mutant.
 | `path` | the mutated file |
 | `start_line` | the first line of the coverage block the mutation was mapped into |
 | `end_line` | the last line of it |
-| `covering` | the test binaries that execute that block |
+| `covering` | the test binaries whose profile reaches that block, by import path |
 | `uncovered` | `true` when none does |
 
 The lines are the *block's*, not the mutation's own span: a reader asking "why
@@ -582,9 +590,12 @@ A command that appears in both streams is the same `(argv, dir, output_sha256)`
 in both — the argument vector, the directory it ran in, and the digest of what
 it printed — so two recordings of one execution can be matched without either
 tool knowing about the other's sequence numbers. `prepare` is identical field
-for field, so a preparation timeline reads the same wherever it is read. An
-embedder that hands `OpenOptions` a sink of its own therefore gets one timeline
-across two tools rather than two timelines to reconcile.
+for field, so a preparation timeline reads the same wherever it is read. There
+is no hook yet for handing go-mutants a sink of your own: `OpenOptions` gains
+one in a later change, alongside the `--trace` flag. What the alignment already
+fixes is the part that would be expensive to change afterwards — the field
+names — so a consumer can write the join now and get one timeline across two
+tools rather than two timelines to reconcile.
 
 ## Validating and reading
 
