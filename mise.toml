@@ -356,7 +356,7 @@ run = "go run ./internal/devtools/testcache clean"
 # `go test -update ./internal/report` runs the package in the working directory
 # with two arguments it ignores — silently, and with every golden left alone.
 description = "Rewrite the committed golden files, to be read before committing"
-run = "go test ./internal/instrument ./internal/report ./trace -update"
+run = "go test ./internal/console ./internal/instrument ./internal/report ./trace -update"
 
 [tasks.fmt]
 # `gofmt -l` exits 0 even when it lists files, so the offenders have to be

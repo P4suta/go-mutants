@@ -175,10 +175,10 @@ func NewRootCommand() *cobra.Command {
 	// clean`.
 	root.SuggestionsMinimumDistance = 2
 	// Registered here rather than left to cobra, which would give --version the
-	// -v shorthand because nothing has claimed it yet. -v belongs to verbosity
-	// (-q/-v/-vv), and a shorthand that means "print the version" for one
-	// release and "be verbose" for the next is worse than no shorthand at all.
-	// Cobra honours a --version flag it finds already defined.
+	// -v shorthand because nothing had claimed it yet. -v belongs to verbosity,
+	// which `run` now spells -q/-v/-vv, and a shorthand that means "print the
+	// version" for one release and "be verbose" for the next is worse than no
+	// shorthand at all. Cobra honours a --version flag it finds already defined.
 	root.Flags().Bool("version", false, "print the version and exit")
 	root.SetHelpTemplate(root.HelpTemplate() + exitCodeHelp)
 	root.SetVersionTemplate("go-mutants {{.Version}}\n")

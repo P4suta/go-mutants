@@ -68,6 +68,21 @@
 // the run never reached — are counted in the closing block instead; see
 // [OutcomeLabel].
 //
+// # Verbosity
+//
+// [PlainRenderer.Verbosity] adds to the run above without moving any of it.
+// [VerbosityDetail] — `run -v` — states how long each phase took, which test
+// binary killed each mutant and how many attempts it needed, and under a
+// survivor the suites that cover it or the fact that none does.
+// [VerbosityTrace] — `run -vv` — draws the run's own recording as well, one
+// event to a line, indented two spaces. Those lines keep their recorded order
+// among themselves; where they fall among the run's own is up to scheduling,
+// because the recording reaches this renderer through a forwarder that never
+// makes a run wait for a terminal, and the indentation is what separates the two
+// streams for an eye or for a `grep`. Nothing is invented for either level: both
+// draw events the engine already publishes, and the default verbosity is the
+// same bytes it always was, traced or not.
+//
 // # Colour
 //
 // Colour is opt-in and triple-gated: it is used only when the destination is a

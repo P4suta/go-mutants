@@ -225,8 +225,8 @@ type Options struct {
 	TraceSink trace.Sink
 
 	// PublishTrace also publishes every recorded event on Events, as [Traced].
-	// It is what `-vv` asks for, and it does nothing without a sink: there is no
-	// recording to forward.
+	// It is what `run -v` and `-vv` ask for, and it does nothing without a sink:
+	// there is no recording to forward.
 	PublishTrace bool
 
 	// Notes are what the caller learned about the recording before the run
@@ -517,12 +517,19 @@ func Run(ctx context.Context, opts Options) (RunOutcome, error) {
 // publish pays nothing for the option: no wrapper, no clone per event, no send.
 // The caller's own sink is never closed by the tee either, because the engine
 // never closes the tee.
+//
+// The published branch is wrapped in [trace.Digested] for the reason a bounded
+// ring is: captured output grows with the run rather than with what reads it,
+// and this branch is a copy for a screen. A renderer prints an execution's exit
+// status, duration and argument vector and never its bytes, so publishing them
+// would deep-copy up to a megabyte per mutant for nobody. The size and the
+// digest stay, which is everything a reader joins on.
 func (s *session) sink(opts Options) trace.Sink {
 	if opts.TraceSink == nil || !opts.PublishTrace {
 		return opts.TraceSink
 	}
 	s.published = newEventSink(s)
-	return trace.NewTeeSink(opts.TraceSink, s.published)
+	return trace.NewTeeSink(opts.TraceSink, trace.Digested(s.published))
 }
 
 // publishBuffer is how many recorded events wait between the recorder and the
@@ -2118,7 +2125,20 @@ func (s *session) warn(code Code, message string) {
 // two identifiers on one condition and put a GOM76xx value in a type documented
 // to hold GOM40xx ones. The event and the report carry a string either way.
 func (s *session) warnCode(code, message string) {
-	w := Warning{Code: code, Message: message}
+	s.warnDetail(code, message, "")
+}
+
+// warnDetail is [session.warnCode] for the warning that has more to say than
+// one line, and knows it at the moment it says it.
+//
+// The detail is carried on the event beside the message rather than only in the
+// recording, so that the console showing it puts it under the line it explains;
+// see [Warning.Detail]. The recording's own note stays the one-line message,
+// because the recording already holds the whole reason in the note the caller
+// wrote for it — `note{coverage-unavailable}` — and a second copy under
+// `note{warning}` would be the same paragraph recorded twice.
+func (s *session) warnDetail(code, message, detail string) {
+	w := Warning{Code: code, Message: message, Detail: detail}
 	s.warnings = append(s.warnings, w)
 	// Into the recording as well as onto the stream, because a recording is
 	// meant to be the whole account of a run: a warning a user scrolled past on

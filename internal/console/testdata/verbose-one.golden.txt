@@ -1,0 +1,45 @@
+go-mutants 0.1.0-dev (run 20260819T101112Z-a1b2)
+phase discover: locating the Go toolchain and copying the workspace
+phase discover: done (1.25s)
+phase baseline: building the snapshot, then 3 timed runs of go test ./...
+baseline run 1/3: 152ms
+baseline ok: avg 152ms, slowest 152ms, timeout 10s (derived)
+phase baseline: done (2.34s)
+phase mutate: discovering candidates, validating them, then executing the mutants
+discovered 4 candidates, 12 skips
+validated 4 mutants, 0 rejections
+warning GOM4102: coverage-guided selection is off because the coverage profile was empty; every mutant will be measured against every test binary, which is slower and never wrong
+    the coverage profile was empty
+    go: no test binaries were built for ./internal/...
+sweep: removed 2 directories (256.0 MiB)
+KILLED     1a2b3c4d  clamp.go:12:9  lt-to-le  < -> <=  (181ms) killed by github.com/example/clamp
+TIMEOUT    5e4d3c2b  slow.go:31:4  cond-to-true  ok -> true  (20s) hung in github.com/example/slow (2 attempts)
+SURVIVED   9f8e7d6c  untested.go:9:12  neq-to-eq  != -> ==  (176ms)
+    - !=
+    + ==
+    covered by: github.com/example/clamp, github.com/example/untested
+SURVIVED (uncovered)  0c1d2e3f  orphan.go:9:12  neq-to-eq  != -> ==  (0s)
+    - !=
+    + ==
+    no test binary
+phase mutate: done (4.56s)
+phase report: writing the run report
+kept snapshot: /tmp/go-mutants-snap-1
+report run: /cache/go-mutants/workspaces/1a2b/runs/20260819T101112Z-a1b2.json
+report latest: /cache/go-mutants/workspaces/1a2b/latest.json
+trace: /w/reports/mutation/trace/20260819T101112Z-a1b2
+phase report: done (90ms)
+TIMEOUT    5e4d3c2b  slow.go:31:4  cond-to-true  ok -> true  (20s) hung in github.com/example/slow (2 attempts)
+SURVIVED   9f8e7d6c  untested.go:9:12  neq-to-eq  != -> ==  (176ms)
+    - !=
+    + ==
+    covered by: github.com/example/clamp, github.com/example/untested
+SURVIVED (uncovered)  0c1d2e3f  orphan.go:9:12  neq-to-eq  != -> ==  (0s)
+    - !=
+    + ==
+    no test binary
+mutants 4  killed 1  survived 2  timeout 1  inconclusive 0  errored 0  not-run 0  rejected 0  uncovered 1
+score 50.00%
+warnings 1
+skip const-decl 12
+run 20260819T101112Z-a1b2  exit 0

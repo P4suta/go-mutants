@@ -200,8 +200,9 @@ type PhaseCompleted struct {
 
 // Traced carries one event of the run's own recording onto the event stream.
 //
-// It is published only when [Options.PublishTrace] is set, which is what `-vv`
-// asks for: the verbose renderer draws the recording, and the recording already
+// It is published only when [Options.PublishTrace] is set, which is what a
+// verbose run asks for: the verbose renderer draws the recording — every event
+// under `-vv`, two of them in prose under `-v` — and the recording already
 // travels through a channel a renderer is draining. Publishing each event as it
 // is recorded makes the two orders one order — a renderer printing them as they
 // arrive is printing the recording — and it costs a run that did not ask for
@@ -506,6 +507,23 @@ type Warning struct {
 	Code string
 	// Message is a one-line explanation that does not repeat the code.
 	Message string
+	// Detail is everything there is to say about the same condition, and is
+	// empty whenever the message already says all of it.
+	//
+	// It exists because one line is the right length for a run that is about to
+	// carry on and succeed, and the wrong length for the person asking why: the
+	// coverage fallback's real reason is a compiler's output, and folding that
+	// onto the warning would print a diagnostic blob at every user who did not
+	// ask. It travels on the event rather than only in the recording so that the
+	// renderer showing it — which is `-v` — can put it under the line it
+	// explains, on every run, including one whose recording could not be opened
+	// and which therefore publishes no [Traced] at all.
+	//
+	// It may be several lines. A renderer that ignores it prints exactly what it
+	// printed before this field existed, which is what every renderer does below
+	// `-v`. It is deliberately absent from the run report: [report.Warning] is a
+	// published format, and this is prose for a console.
+	Detail string
 }
 
 // ReportPublished reports that the run report is on disk and complete.

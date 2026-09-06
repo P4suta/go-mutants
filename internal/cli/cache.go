@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/cache"
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/console"
 )
 
 const cacheLong = `Work with the outcomes go-mutants has proven before.
@@ -275,27 +275,12 @@ func formatMoment(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// byteUnits are the suffixes [formatBytes] steps through, in powers of 1024.
-var byteUnits = []string{"KiB", "MiB", "GiB", "TiB"}
-
-// formatBytes renders a size for a human.
+// formatBytes renders a size for a human, and is this package's spelling of
+// [console.FormatBytes].
 //
-// Powers of 1024 with the unambiguous suffixes, because the number beside them
-// is going to be compared against what a file manager says. Bytes are printed
-// exactly and everything above them to one decimal place: the difference
-// between 4.0 and 4.1 MiB is worth seeing and the digits after it are not.
-func formatBytes(n int64) string {
-	if n < 1024 {
-		return strconv.FormatInt(n, 10) + " B"
-	}
-	value := float64(n) / 1024
-	unit := byteUnits[0]
-	for _, next := range byteUnits[1:] {
-		if value < 1024 {
-			break
-		}
-		value /= 1024
-		unit = next
-	}
-	return strconv.FormatFloat(value, 'f', 1, 64) + " " + unit
-}
+// The rendering lives in internal/console because a `run -v` prints one too —
+// what a sweep reclaimed before the run started — and a size printed one way by
+// `cache status` and another by a run would be two implementations of the same
+// decision. It cannot live here: internal/console must not import the command
+// layer.
+func formatBytes(n int64) string { return console.FormatBytes(n) }

@@ -54,6 +54,10 @@ func detectTerminal(w io.Writer) (bool, colorprofile.Profile) {
 //   - --json hands standard output to the report document. A dashboard would
 //     draw over the thing the user asked for.
 //   - --quiet asks for less output, not for a different kind of it.
+//   - -v asks for more of it, and for output that survives the run: the verbose
+//     lines exist to be scrolled back through, grepped, and diffed against the
+//     run before this one. A dashboard erases what it draws, so answering a
+//     request for detail with one would be throwing the answer away.
 //   - --no-color and NO_COLOR ask for output that is text and nothing else. A
 //     dashboard is cursor movement before it is colour, and its survivor diff
 //     is red and green before it is anything: what is left of it in monochrome
@@ -67,7 +71,7 @@ func detectTerminal(w io.Writer) (bool, colorprofile.Profile) {
 // The environment is read here rather than passed in because internal/console
 // reads it the same way for the same decision; see [console.ColorEnabled].
 func wantsDashboard(w io.Writer, o *runOptions, probe terminalProbe) bool {
-	if o.noTUI || o.json || o.quiet || o.noColor {
+	if o.noTUI || o.json || o.quiet || o.noColor || o.verbose > 0 {
 		return false
 	}
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("CI") != "" {

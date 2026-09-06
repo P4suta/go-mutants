@@ -428,18 +428,29 @@ func (s *session) unavailable(why string) {
 }
 
 // unavailableInFull is [session.unavailable] for the one caller with more to
-// say to a recording than to a console.
+// say than fits on a console line.
 //
 // The two texts are deliberately different lengths. `why` is folded onto one
 // line, because the run is about to carry on and succeed and a console during a
 // successful run does not print a compiler blob at the user; `whole` is
-// everything there is, because the recording is where somebody who asked why
-// goes to look. Every path that gives coverage up goes through here, so
-// `note{coverage-unavailable}` means one thing whichever of them it was.
+// everything there is, for the reader who is asking why. Every path that gives
+// coverage up goes through here, so `note{coverage-unavailable}` means one thing
+// whichever of them it was.
+//
+// `whole` goes onto the warning as well as into the recording, so that `run -v`
+// can print it under the warning it belongs to without reading the stream. It is
+// carried only when it says more than the message already does: when the whole
+// reason is the line the message was built from, a detail would be the same
+// sentence printed twice.
 func (s *session) unavailableInFull(why, whole string) {
-	s.warnCode(string(coverage.CodeUnavailable),
+	detail := whole
+	if whole == firstLine(why) {
+		detail = ""
+	}
+	s.warnDetail(string(coverage.CodeUnavailable),
 		"coverage-guided selection is off because "+strings.TrimSuffix(firstLine(why), ".")+
-			"; every mutant will be measured against every test binary, which is slower and never wrong")
+			"; every mutant will be measured against every test binary, which is slower and never wrong",
+		detail)
 	s.trace.Note(trace.NoteCoverageUnavailable, "", whole)
 }
 

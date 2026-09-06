@@ -592,3 +592,43 @@ func TestUsableProfilesRefusesASetThatSaysNothing(t *testing.T) {
 		})
 	}
 }
+
+// TestTheCoverageWarningCarriesTheWholeReasonWhenThereIsMoreOfIt is what lets a
+// console print the compiler's own words under the one-line warning without
+// reading the recording.
+//
+// The two texts are deliberately different lengths — see
+// [session.unavailableInFull] — and the long one had nowhere to go but the
+// trace. Carrying it on the event is what anchors it to the warning it
+// explains: a `-v` console prints it directly underneath, deterministically,
+// and a run whose recording could not be opened still gets it.
+//
+// A reason that already fits on the warning line carries no detail at all,
+// because a detail identical to the message would print one sentence twice.
+func TestTheCoverageWarningCarriesTheWholeReasonWhenThereIsMoreOfIt(t *testing.T) {
+	t.Parallel()
+
+	const whole = "the test binaries do not compile with coverage instrumentation\n" +
+		"# example.com/m [example.com/m.test]\n" +
+		"./m_test.go:9:2: undefined: helper"
+
+	s := &session{}
+	s.unavailableInFull("the test binaries do not compile with coverage instrumentation", whole)
+	if len(s.warnings) != 1 {
+		t.Fatalf("published %d warnings, want 1", len(s.warnings))
+	}
+	if got := s.warnings[0].Detail; got != whole {
+		t.Errorf("Detail = %q, want the whole reason %q", got, whole)
+	}
+	// The message stays the folded line it was: a console at the default
+	// verbosity prints exactly what it printed before this field existed.
+	if strings.ContainsAny(s.warnings[0].Message, "\n\r") {
+		t.Errorf("the message grew the detail: %q", s.warnings[0].Message)
+	}
+
+	short := &session{}
+	short.unavailable("`go tool covdata` is not in this toolchain.")
+	if got := short.warnings[0].Detail; got != "" {
+		t.Errorf("Detail = %q for a reason the message already states in full", got)
+	}
+}
