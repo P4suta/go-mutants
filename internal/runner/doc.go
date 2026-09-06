@@ -111,6 +111,33 @@
 // exceeds the effective [Spec.OutputLimit], truncation marker included; see
 // [OutputTruncatedPrefix].
 //
+// # Every process is recorded here
+//
+// [Run] records exactly one `exec` event into [Spec.Trace] per call, after the
+// child has been reaped and its output captured, and it attaches the
+// [Invocation] to every error it returns. That is deliberately a property of
+// this package rather than of its callers. go-mutants starts processes from a
+// dozen places — the toolchain probe, two baselines, a compile per package, a
+// coverage pass, a validation build, a run per mutant — and a rule that each of
+// them must remember to record would be a rule with a dozen chances to be
+// broken silently, in exactly the run somebody is trying to diagnose. Recorded
+// at the choke point, a call site can only forget to *label* a command, which
+// the schema's `kind` enum turns into a recording that does not validate.
+//
+// A refused [Spec] is recorded too, and so is a command a cancellation arrived
+// too late for. A command that was never started is one of the things a reader
+// most needs to be told, and it is the only case where a missing event would
+// look exactly like a command nobody issued. Neither floods a recording: the
+// execution phase asks its own context before it asks for a process, so a
+// drained Ctrl-C costs one abandoned event per worker rather than one per
+// queued mutant.
+//
+// The recorder reduces the environment to variable names and digests the
+// captured output, and neither reduction happens here: this package hands over
+// the entries and the bytes, so no future caller can undo them by passing
+// something already reduced. A nil recorder records nothing and yields a zero
+// [Result.TraceSeq], so the traced and the untraced paths are one path.
+//
 // # Stragglers after a normal exit
 //
 // If the child exits but a descendant it left behind still holds the output

@@ -6,9 +6,13 @@ package runner
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // ExitCodeUnavailable is [Result.ExitCode] when there is no exit status to
@@ -58,6 +62,72 @@ type Spec struct {
 	// selects [DefaultOutputLimit]; anything positive below [MinOutputLimit]
 	// is raised to it so the truncation notice still fits inside the budget.
 	OutputLimit int
+
+	// Trace is where this execution is recorded. It is the run's own recorder,
+	// handed down through the options of every layer rather than reached for
+	// through a global, so two runs in one process record into two recordings.
+	//
+	// A nil recorder is the disabled trace and every method on it is safe to
+	// call, which is why [Run] records unconditionally: a traced run and an
+	// untraced one take the same path, and there is no branch for a verdict to
+	// come to depend on.
+	Trace *trace.Recorder
+
+	// Kind is what this command is, from [trace.ExecKinds]. It is the one thing
+	// about an execution this package cannot know — `go test -c` and a mutant's
+	// test binary are the same syscall from here — so it is the one thing a
+	// call site has to supply.
+	//
+	// An empty Kind is accepted: the recorder stores what it is given, and the
+	// schema is where an unlabelled command is refused. That division is
+	// deliberate. A runner that rejected an unlabelled spec would turn a
+	// missing diagnostic into a failed run, which is the one thing a diagnostic
+	// must never do.
+	Kind string
+
+	// Subject is what the command is about: a mutant id, an import path, a
+	// scope pattern. It is empty when the kind says everything there is to say.
+	Subject string
+}
+
+// An Invocation is the command a failure was about: what was run, where, under
+// which label, and where the recording kept it.
+//
+// It exists because [Result] deliberately carries no argument vector, and an
+// error that travelled up three layers therefore arrived saying that something
+// could not be started without saying what. The command is attached where it is
+// still known — here — rather than reconstructed by a renderer that would have
+// to guess at the working directory and the environment.
+type Invocation struct {
+	// Argv is a copy of the argument vector. It is copied rather than shared
+	// because a caller may reuse its buffer for the next command, and an error
+	// already handed over is not a place for a later write to arrive.
+	Argv []string
+
+	// Dir is the directory the command was to run in. Empty means this
+	// process's own, which is what a reader reproducing the failure needs to
+	// know rather than guess.
+	Dir string
+
+	// Kind is [Spec.Kind], so a rendered failure can say what the command was
+	// for as well as what it was.
+	Kind string
+
+	// TraceSeq is the `exec` event this execution was recorded at, or zero when
+	// nothing was recorded. It is what turns a one-line rendered failure into
+	// the whole command's preserved output in the recording.
+	TraceSeq int64
+}
+
+// InvocationOf names the command a spec described, recorded at the sequence its
+// result came back with.
+func InvocationOf(spec Spec, result Result) Invocation {
+	return Invocation{
+		Argv:     slices.Clone(spec.Argv),
+		Dir:      spec.Dir,
+		Kind:     spec.Kind,
+		TraceSeq: result.TraceSeq,
+	}
 }
 
 // Result is what one [Run] produced.
@@ -91,8 +161,18 @@ type Result struct {
 	// Err is set only when the process could not be started or could not be
 	// supervised — never when it ran and failed. A non-zero ExitCode is data
 	// about the test; Err means go-mutants itself could not do its job, and
-	// every Err carries a stable GOM72xx code (see [CodeOf]).
+	// every Err carries a stable GOM72xx code (see [CodeOf]) and the
+	// [Invocation] it was about (see [Error.Command]).
 	Err error
+
+	// TraceSeq is the sequence number of the `exec` event this execution was
+	// recorded at, or zero when [Spec.Trace] was nil and nothing was recorded.
+	//
+	// It is how the rest of a recording points at a command: a mutant attempt
+	// names the executions it ran, a validation step names the compile it
+	// spent, and both are joins onto a line that carries the argv, the timing
+	// and the digest of the output.
+	TraceSeq int64
 }
 
 // OK reports whether the process ran to completion with a zero exit status.
@@ -108,7 +188,106 @@ func (r Result) OK() bool {
 // released, and on Windows releasing it kills whatever is still inside the job.
 //
 // Run is safe for concurrent use and shares no mutable state between calls.
+//
+// Every call records exactly one `exec` event into [Spec.Trace], and every
+// error it returns carries the [Invocation] it was about. Both happen here, at
+// the one place in go-mutants that starts a process, because a rule enforced at
+// the choke point is a rule no future call site can forget: a caller can forget
+// to *label* a command, and the schema's `kind` enum catches that, but it
+// cannot forget to record one.
 func Run(ctx context.Context, spec Spec) Result {
+	return record(spec, runProcess(ctx, spec))
+}
+
+// record hands the finished execution to the recorder and stamps what came back
+// onto the result and onto the failure, if there was one.
+//
+// It runs after the child has been reaped and its output captured, so the
+// execution and its outcome are one line rather than two that a reader has to
+// pair up. It is a wrapper around [runProcess] rather than a defer inside it
+// for one reason: a single exit through the recorder cannot be skipped by an
+// early return somebody adds later.
+func record(spec Spec, result Result) Result {
+	result.TraceSeq = spec.Trace.Exec(trace.ExecRecord{
+		Kind:      spec.Kind,
+		Subject:   spec.Subject,
+		Argv:      spec.Argv,
+		Dir:       spec.Dir,
+		EnvNames:  environmentOf(spec),
+		TimeoutMS: milliseconds(spec.Timeout),
+		ExitCode:  result.ExitCode,
+		TimedOut:  result.TimedOut,
+		// Duration is [Run]'s own outer measurement, supervision and any time
+		// spent killing the tree included, which is the number a reader
+		// comparing two runs wants.
+		DurationMS: milliseconds(result.Duration),
+		// The retained capture, which is what the recorder sizes and digests
+		// and what a directory sink preserves: the tail this package kept,
+		// truncation notice included, and not the total the child produced.
+		// That total is a separate fact and gets a field of its own when
+		// something needs it.
+		Output: result.Output,
+		Error:  errorText(result.Err),
+	})
+	// Nothing to attach on the path a run usually takes, and the errors.As
+	// below would otherwise force the pointer onto the heap for every process
+	// go-mutants starts.
+	if result.Err == nil {
+		return result
+	}
+	// Every error this package produces is freshly allocated by the call that
+	// failed, so filling the invocation in here cannot be seen by anybody else.
+	// It is filled in only when it is empty, so that an inner failure which
+	// already named its own command keeps it.
+	var failure *Error
+	if errors.As(result.Err, &failure) && failure.Invocation == nil {
+		invocation := InvocationOf(spec, result)
+		failure.Invocation = &invocation
+	}
+	return result
+}
+
+// environmentOf is the environment the child could see, handed to the recorder
+// as whole entries because reducing them to names is the recorder's job and
+// belongs in one place rather than at every call site.
+//
+// A nil [Spec.Env] is os/exec's "inherit", so what the child got is this
+// process's own environment and that is what is recorded. Leaving the field
+// empty instead would say the command ran with no environment at all, which is
+// a different and false statement. The copy is paid for only by the one-shot
+// probes that inherit — every command the engine issues composes its
+// environment explicitly — and it is paid whether or not anybody is recording,
+// which is the price of having no branch here for a verdict to depend on.
+func environmentOf(spec Spec) []string {
+	if spec.Env != nil {
+		return spec.Env
+	}
+	return os.Environ()
+}
+
+// milliseconds renders a duration the way every duration in the trace contract
+// is recorded: whole milliseconds, never negative. Zero therefore means both
+// "under a millisecond" and, for a timeout, "none", which is what [Spec.Timeout]
+// already means by zero.
+func milliseconds(d time.Duration) int64 {
+	if ms := d.Milliseconds(); ms > 0 {
+		return ms
+	}
+	return 0
+}
+
+// errorText renders a failure for the recording, and nothing for the absence of
+// one.
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// runProcess is [Run] without the recording: it starts the process, supervises
+// it, and returns what happened.
+func runProcess(ctx context.Context, spec Spec) Result {
 	started := time.Now()
 
 	if err := validate(spec); err != nil {

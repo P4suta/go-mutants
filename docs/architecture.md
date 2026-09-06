@@ -576,6 +576,31 @@ the outcome cache.
 - **Direct binary launch.** Test binaries are executed directly, bypassing the
   `go test` result cache entirely, with the working directory set to the
   package directory inside the snapshot so `testdata` paths behave.
+- **Every subprocess is recorded at the runner.** *The choke point records; the
+  labels and the sink are not wired yet.* `runner.Run` records exactly one
+  `exec` event per call into whatever recorder its `Spec.Trace` names — argv,
+  directory, environment *names*, timeout, exit code, duration, and the size
+  and SHA-256 of the retained output — after the child has been reaped, and
+  hands back the sequence it was recorded at as `Result.TraceSeq`. Today every
+  production call site still passes a nil recorder and only the `go version`
+  probe names a kind; the engine's labels, the options that carry a recorder
+  down to them, and the sink that writes a recording out arrive with the trace
+  flag. Processes are started from
+  a dozen places (the `go version` probe, both baselines, a compile per
+  package, the coverage pass, each validation build, a run per mutant), and a
+  rule that every one of them must remember to record would have a dozen
+  chances to be broken silently in exactly the run somebody is trying to
+  diagnose. Recorded at the choke point, a call site can only forget to
+  *label* its command with a `Spec.Kind`, which the schema's `kind` enum turns
+  into a recording that does not validate. A refused spec and a command that
+  could not be started are recorded too, with `exit_code: -1` and the refusal
+  as the event's `error`: a command that never became a process is precisely
+  what a reader needs to be told. Every `runner.Error` — and every
+  `gocmd.Error` from a failed version probe, together with the output that
+  probe produced — carries the `Invocation` it was about, so a failure that
+  travelled up three layers can still say which command it was, where it ran,
+  and where the recording kept its output. A nil recorder records nothing and
+  costs a zero `TraceSeq`, so the traced and the untraced paths are one path.
 - **One shared snapshot.** Activation is per-process, so N workers share it. A
   test that writes into its package directory is caught by re-digesting the
   manifest after the instrumented baseline; drift is exit 2 with the offending
@@ -764,7 +789,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
 | `internal/tempowner` | Temporary-directory lock, marker, and orphan sweep | implemented |
 | `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
-| `internal/runner` | One process, timed and supervised; tree kill | implemented |
+| `internal/runner` | One process, timed, supervised and recorded; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping | implemented |
 | `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |

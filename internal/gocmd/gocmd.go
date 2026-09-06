@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // DefaultProbeTimeout bounds `go version`. The command does no work beyond
@@ -48,6 +49,11 @@ type Options struct {
 
 	// Timeout bounds the version probe. Zero selects [DefaultProbeTimeout].
 	Timeout time.Duration
+
+	// Trace is where the version probe is recorded. Like every other recorder
+	// in go-mutants it arrives through the options of the layer that owns it,
+	// and nil records nothing.
+	Trace *trace.Recorder
 }
 
 // Toolchain is a located Go toolchain.
@@ -119,36 +125,64 @@ func LocateContext(ctx context.Context, opts Options) (Toolchain, error) {
 	spec := Toolchain{GoBin: goBin}.Command("version")
 	spec.Env = opts.Env
 	spec.Timeout = timeout
+	spec.Trace = opts.Trace
+	spec.Kind = trace.ExecKindGoVersion
 
 	result := runner.Run(ctx, spec)
+	// The probe is the one command this package issues, so every way it can
+	// fail names the same invocation and keeps the same output. Both are
+	// attached here rather than in each branch, because a branch added later
+	// would otherwise be the one failure a reader cannot reproduce.
+	//
+	// The non-zero-status message below quotes the first 200 bytes of that same
+	// output, and the overlap is deliberate rather than an oversight. The
+	// message is one line that has to stand alone in a log, so it carries a
+	// quoted, escaped head; [Error.RetainedOutput] carries the whole retained
+	// tail, multi-line and unescaped, which is the copy somebody actually reads.
+	// A renderer prints it once, underneath the message, so the duplication
+	// costs one line of quoted text rather than two dumps of the same bytes.
+	invocation := runner.InvocationOf(spec, result)
+	probed := func(failure *Error) error {
+		failure.Invocation = &invocation
+		failure.Output = string(result.Output)
+		return failure
+	}
+
 	switch {
 	case result.Err != nil:
-		return Toolchain{}, &Error{
+		return Toolchain{}, probed(&Error{
 			Code:    CodeVersionProbeFailed,
 			Message: "could not run `" + goBin + " version`",
 			Err:     result.Err,
-		}
+		})
 	case result.TimedOut:
-		return Toolchain{}, &Error{
+		return Toolchain{}, probed(&Error{
 			Code:    CodeVersionProbeFailed,
 			Message: "`" + goBin + " version` did not answer within " + timeout.String(),
-		}
+		})
 	case ctx.Err() != nil:
-		return Toolchain{}, &Error{
+		return Toolchain{}, probed(&Error{
 			Code:    CodeVersionProbeFailed,
 			Message: "`" + goBin + " version` was cancelled",
 			Err:     ctx.Err(),
-		}
+		})
 	case result.ExitCode != 0:
-		return Toolchain{}, &Error{
+		return Toolchain{}, probed(&Error{
 			Code: CodeVersionProbeFailed,
 			Message: "`" + goBin + " version` exited with status " +
 				strconv.Itoa(result.ExitCode) + ": " + quote(string(result.Output)),
-		}
+		})
 	}
 
 	version, err := parseVersion(string(result.Output))
 	if err != nil {
+		// An unreadable version line is a probe that failed too, however
+		// successfully the process exited: what answered is not a Go toolchain,
+		// and the reader needs the same command and the same bytes to see why.
+		var unparsable *Error
+		if errors.As(err, &unparsable) {
+			return Toolchain{}, probed(unparsable)
+		}
 		return Toolchain{}, err
 	}
 	return Toolchain{GoBin: goBin, Version: version}, nil

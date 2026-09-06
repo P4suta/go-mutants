@@ -3,7 +3,11 @@
 
 package gocmd
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/P4suta/go-mutants/internal/runner"
+)
 
 // Stable error codes for this package.
 //
@@ -45,7 +49,32 @@ type Error struct {
 	Message string
 	// Err is the underlying cause, if any.
 	Err error
+
+	// Invocation is the version probe this failure was about, present on every
+	// failure that got as far as running one. It is nil for a toolchain that
+	// was never found, because there was no command to run.
+	Invocation *runner.Invocation
+
+	// Output is what the probe printed, as the runner retained it.
+	//
+	// It is kept out of [Error.Error] on purpose: the message is a stable
+	// one-liner, and however many lines some other program decided to print is
+	// not. The renderer asks for it separately and prints it underneath.
+	Output string
 }
+
+// RetainedOutput returns the output the failing command produced, or an empty
+// string when there was none.
+//
+// It is what makes a probe failure diagnosable: a binary that is not a Go
+// toolchain explains itself in what it printed, and an error that dropped those
+// bytes would leave the user to run the command again by hand.
+func (e *Error) RetainedOutput() string { return e.Output }
+
+// Command returns the version probe this failure was about, or nil when no
+// command was run. It mirrors [runner.Error.Command] so that one renderer can
+// ask either package's error the same question.
+func (e *Error) Command() *runner.Invocation { return e.Invocation }
 
 // Error renders the code, the message, and the cause.
 func (e *Error) Error() string {

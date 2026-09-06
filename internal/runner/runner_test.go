@@ -6,12 +6,17 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +25,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // The tests that kill a process tree share one hazard, and these constants and
@@ -1073,5 +1079,430 @@ func TestErrorCodesAreDistinct(t *testing.T) {
 			t.Errorf("%s and %s share the code %q", name, other, code)
 		}
 		seen[code] = name
+	}
+}
+
+// The tests below are about the one promise this package makes on behalf of
+// the whole tool: every subprocess go-mutants starts is recorded here, at the
+// choke point, so no call site can forget to record one. A call site can only
+// forget to *label* one, and the schema's `kind` enum is what catches that.
+
+// newRecording opens a recorder over an unbounded ring and returns both, so a
+// test can assert on exactly what the runner handed the recorder.
+func newRecording(t *testing.T) (*trace.Recorder, *trace.MemorySink) {
+	t.Helper()
+	sink := trace.NewMemorySink(0)
+	recorder := trace.New(sink, time.Now, trace.StartRecord{
+		Kind:        trace.StartKindRun,
+		ToolVersion: "test",
+		PID:         os.Getpid(),
+		Root:        t.TempDir(),
+	})
+	if recorder == nil {
+		t.Fatal("trace.New returned no recorder for a real sink")
+	}
+	return recorder, sink
+}
+
+// onlyExec returns the one exec event of a recording, and fails when there is
+// any other number of them: "exactly one per call" is the claim being made.
+func onlyExec(t *testing.T, sink *trace.MemorySink) trace.Event {
+	t.Helper()
+	found := execEvents(sink)
+	if len(found) != 1 {
+		t.Fatalf("the recording holds %d exec events, want exactly one per Run", len(found))
+	}
+	if found[0].Exec == nil {
+		t.Fatalf("the exec event carries no exec payload: %+v", found[0])
+	}
+	return found[0]
+}
+
+// execEvents is every exec event the sink kept, in order.
+func execEvents(sink *trace.MemorySink) []trace.Event {
+	var found []trace.Event
+	for _, event := range sink.Events() {
+		if event.Type == trace.TypeExec {
+			found = append(found, event)
+		}
+	}
+	return found
+}
+
+// TestRunRecordsOneExecEventPerProcessWithItsKindSubjectAndDigest is the happy
+// path of the whole recording contract: what ran, where, under which label,
+// what it produced, and the sequence the caller can point at it by.
+func TestRunRecordsOneExecEventPerProcessWithItsKindSubjectAndDigest(t *testing.T) {
+	t.Parallel()
+
+	recorder, sink := newRecording(t)
+	dir := t.TempDir()
+	const (
+		marker  = "GO_MUTANTS_RUNNER_TRACE_MARKER"
+		value   = "a-value-no-event-may-carry"
+		subject = "8f14e45fceea167a"
+		stdout  = "recorded stdout\n"
+		stderr  = "recorded stderr\n"
+	)
+
+	spec := runner.Spec{
+		Argv:    helperCommand(t, "emit", stdout, stderr),
+		Dir:     dir,
+		Env:     helperEnviron(marker + "=" + value),
+		Trace:   recorder,
+		Kind:    trace.ExecKindMutantRun,
+		Subject: subject,
+	}
+	result := runner.Run(t.Context(), spec)
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil", result.Err)
+	}
+
+	event := onlyExec(t, sink)
+	rec := event.Exec
+	if rec.Kind != trace.ExecKindMutantRun {
+		t.Errorf("kind = %q, want %q", rec.Kind, trace.ExecKindMutantRun)
+	}
+	if rec.Subject != subject {
+		t.Errorf("subject = %q, want %q", rec.Subject, subject)
+	}
+	if !slices.Equal(rec.Argv, spec.Argv) {
+		t.Errorf("argv = %q, want %q", rec.Argv, spec.Argv)
+	}
+	if rec.Dir != dir {
+		t.Errorf("dir = %q, want %q", rec.Dir, dir)
+	}
+	if rec.ExitCode != 0 {
+		t.Errorf("exit_code = %d, want 0", rec.ExitCode)
+	}
+	if rec.TimedOut {
+		t.Error("timed_out is set for a child that ran to completion")
+	}
+
+	// The digest is over the bytes the runner captured, which is the join key a
+	// reader uses to pair an event with the output preserved beside the stream.
+	if !strings.Contains(string(result.Output), stdout) {
+		t.Fatalf("Output = %q, want it to contain the child's stdout %q", result.Output, stdout)
+	}
+	digest := sha256.Sum256(result.Output)
+	if want := hex.EncodeToString(digest[:]); rec.OutputSHA256 != want {
+		t.Errorf("output_sha256 = %q, want %q, the digest of the captured bytes", rec.OutputSHA256, want)
+	}
+	if rec.OutputBytes != len(result.Output) {
+		t.Errorf("output_bytes = %d, want %d", rec.OutputBytes, len(result.Output))
+	}
+
+	if !slices.Contains(rec.EnvNames, marker) {
+		t.Errorf("env_names = %q, want it to name %q, which the child could see", rec.EnvNames, marker)
+	}
+	if slices.Contains(rec.EnvNames, marker+"="+value) {
+		t.Errorf("env_names = %q, want names alone and never an entry", rec.EnvNames)
+	}
+
+	if result.TraceSeq != event.Seq {
+		t.Errorf("TraceSeq = %d, want the recorded sequence %d", result.TraceSeq, event.Seq)
+	}
+}
+
+// TestRunRecordsATimeoutAsTimedOutWithTheKilledExitCode pins the one outcome a
+// reader cannot infer from an exit status: a killed tree leaves a status that
+// says nothing, so the recording has to say it instead.
+func TestRunRecordsATimeoutAsTimedOutWithTheKilledExitCode(t *testing.T) {
+	t.Parallel()
+
+	recorder, sink := newRecording(t)
+	const timeout = 250 * time.Millisecond
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv:    helperCommand(t, "sleep", "60000"),
+		Env:     helperEnviron(),
+		Timeout: timeout,
+		Trace:   recorder,
+		Kind:    trace.ExecKindBaselineTest,
+	})
+	if !result.TimedOut {
+		t.Fatalf("TimedOut = false (exit %d, err %v), want the child to have run out of time",
+			result.ExitCode, result.Err)
+	}
+
+	rec := onlyExec(t, sink).Exec
+	if !rec.TimedOut {
+		t.Error("timed_out = false, want true")
+	}
+	if rec.ExitCode != runner.ExitCodeUnavailable {
+		t.Errorf("exit_code = %d, want ExitCodeUnavailable (%d)", rec.ExitCode, runner.ExitCodeUnavailable)
+	}
+	if rec.TimeoutMS != timeout.Milliseconds() {
+		t.Errorf("timeout_ms = %d, want %d", rec.TimeoutMS, timeout.Milliseconds())
+	}
+	if rec.Kind != trace.ExecKindBaselineTest {
+		t.Errorf("kind = %q, want %q", rec.Kind, trace.ExecKindBaselineTest)
+	}
+}
+
+// TestRunRecordsAStartFailureWithTheErrorAndNoOutput covers the command that
+// never became a process. It is recorded because "it was never started" is one
+// of the things a reader of a recording most needs to be told, and it is the
+// one case where a missing event would look exactly like a missing command.
+func TestRunRecordsAStartFailureWithTheErrorAndNoOutput(t *testing.T) {
+	t.Parallel()
+
+	recorder, sink := newRecording(t)
+	missing := filepath.Join(t.TempDir(), "no-such-executable")
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv:  []string{missing},
+		Trace: recorder,
+		Kind:  trace.ExecKindGoTestC,
+	})
+	if got := runner.CodeOf(result.Err); got != runner.CodeProcessStartFailed {
+		t.Fatalf("CodeOf(Err) = %q (err %v), want %q", got, result.Err, runner.CodeProcessStartFailed)
+	}
+
+	rec := onlyExec(t, sink).Exec
+	if rec.ExitCode != runner.ExitCodeUnavailable {
+		t.Errorf("exit_code = %d, want ExitCodeUnavailable (%d)", rec.ExitCode, runner.ExitCodeUnavailable)
+	}
+	if rec.Error != result.Err.Error() {
+		t.Errorf("error = %q, want the failure the caller was given, %q", rec.Error, result.Err)
+	}
+	if rec.OutputBytes != 0 || rec.OutputSHA256 != "" {
+		t.Errorf("output_bytes = %d and output_sha256 = %q, want nothing: the process never wrote",
+			rec.OutputBytes, rec.OutputSHA256)
+	}
+}
+
+// TestRunRecordsAnInvalidSpecBeforeRefusingIt is the refusal path. A spec the
+// runner will not run is still a command somebody meant to issue, and a
+// recording that dropped it would leave the caller's own event pointing at
+// nothing.
+func TestRunRecordsAnInvalidSpecBeforeRefusingIt(t *testing.T) {
+	t.Parallel()
+
+	recorder, sink := newRecording(t)
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv:  nil,
+		Trace: recorder,
+		Kind:  trace.ExecKindGoList,
+	})
+	if got := runner.CodeOf(result.Err); got != runner.CodeSpecInvalid {
+		t.Fatalf("CodeOf(Err) = %q (err %v), want %q", got, result.Err, runner.CodeSpecInvalid)
+	}
+
+	event := onlyExec(t, sink)
+	rec := event.Exec
+	if rec.Argv == nil || len(rec.Argv) != 0 {
+		t.Errorf("argv = %#v, want the vector as it was given, which is the empty one", rec.Argv)
+	}
+	if rec.ExitCode != runner.ExitCodeUnavailable {
+		t.Errorf("exit_code = %d, want ExitCodeUnavailable (%d)", rec.ExitCode, runner.ExitCodeUnavailable)
+	}
+	if !strings.Contains(rec.Error, runner.CodeSpecInvalid) {
+		t.Errorf("error = %q, want it to name the refusal %q", rec.Error, runner.CodeSpecInvalid)
+	}
+	if result.TraceSeq != event.Seq {
+		t.Errorf("TraceSeq = %d, want the recorded sequence %d", result.TraceSeq, event.Seq)
+	}
+
+	var failure *runner.Error
+	if !errors.As(result.Err, &failure) {
+		t.Fatalf("Err = %v, want a *runner.Error", result.Err)
+	}
+	if failure.Command() == nil {
+		t.Fatal("Command() = nil, want the refused invocation")
+	}
+	if failure.Command().TraceSeq != event.Seq {
+		t.Errorf("Command().TraceSeq = %d, want the recorded sequence %d", failure.Command().TraceSeq, event.Seq)
+	}
+}
+
+// TestRunWithoutARecorderRecordsNothingAndReturnsSeqZero pins the disabled
+// trace: a spec that names no recorder records nothing anywhere, and says so
+// with a zero sequence rather than with a number pointing at another run's
+// event.
+func TestRunWithoutARecorderRecordsNothingAndReturnsSeqZero(t *testing.T) {
+	t.Parallel()
+
+	// A recording exists; this spec simply does not name it.
+	_, sink := newRecording(t)
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv: helperCommand(t, "exit", "0"),
+		Env:  helperEnviron(),
+	})
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil", result.Err)
+	}
+	if result.TraceSeq != 0 {
+		t.Errorf("TraceSeq = %d, want 0 for an untraced run", result.TraceSeq)
+	}
+	if got := execEvents(sink); len(got) != 0 {
+		t.Errorf("the recording holds %d exec events, want none: the runner records only into Spec.Trace", len(got))
+	}
+}
+
+// TestRunNeverHandsTheRecorderAnEnvironmentValue is the leak test.
+//
+// An environment carries credentials, tokens and paths a developer would not
+// attach to a bug report, and a trace is meant to be attached to bug reports.
+// The reduction to names happens inside the recorder, so this test watches what
+// the runner hands it *and* what the sink is asked to serialise: a name with an
+// `=` in it, or the value appearing anywhere in the marshalled event, is a leak
+// however it got there.
+func TestRunNeverHandsTheRecorderAnEnvironmentValue(t *testing.T) {
+	t.Parallel()
+
+	const (
+		marker = "GO_MUTANTS_RUNNER_TRACE_SECRET"
+		value  = "s3cr3t-value-that-must-not-be-recorded"
+	)
+	spy := &spySink{}
+	recorder := trace.New(spy, time.Now, trace.StartRecord{Kind: trace.StartKindRun, ToolVersion: "test"})
+
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv:  helperCommand(t, "exit", "0"),
+		Env:   helperEnviron(marker + "=" + value),
+		Trace: recorder,
+		Kind:  trace.ExecKindMutantRun,
+	})
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil", result.Err)
+	}
+
+	events, lines, err := spy.recorded()
+	if err != nil {
+		t.Fatalf("marshalling a recorded event: %v", err)
+	}
+	var named bool
+	for _, event := range events {
+		if event.Exec == nil {
+			continue
+		}
+		for _, name := range event.Exec.EnvNames {
+			if strings.Contains(name, "=") {
+				t.Errorf("env_names holds %q, which is an entry rather than a name", name)
+			}
+			if name == marker {
+				named = true
+			}
+		}
+	}
+	if !named {
+		t.Errorf("no exec event named %q, so this test would pass on a recorder that recorded no environment at all", marker)
+	}
+	for _, line := range lines {
+		if strings.Contains(line, value) {
+			t.Errorf("a recorded event carries the environment value %q:\n%s", value, line)
+		}
+	}
+}
+
+// TestRunWithAFailingSinkStillReturnsTheChildResult is the invariant that makes
+// tracing safe to leave on: a diagnostic that could change a verdict would
+// invert the point of having one.
+func TestRunWithAFailingSinkStillReturnsTheChildResult(t *testing.T) {
+	t.Parallel()
+
+	spec := runner.Spec{
+		Argv: helperCommand(t, "emit", "out\n", "err\n"),
+		Dir:  t.TempDir(),
+		Env:  helperEnviron(),
+	}
+	untraced := runner.Run(t.Context(), spec)
+
+	traced := spec
+	traced.Kind = trace.ExecKindMutantRun
+	traced.Trace = trace.New(refusingSink{}, time.Now, trace.StartRecord{Kind: trace.StartKindRun})
+	got := runner.Run(t.Context(), traced)
+
+	if got.TraceSeq == 0 {
+		t.Error("TraceSeq = 0, want the sequence the recorder assigned: the sink refused the event, not the recording")
+	}
+	// The whole Result is compared, rather than the fields somebody thought to
+	// list, so that a field added to Result later cannot quietly fall outside
+	// the invariant. Exactly two are exempt and both by construction: Duration
+	// is a measurement two runs of the same command are never expected to agree
+	// on, and TraceSeq is the one field recording is meant to change.
+	if !reflect.DeepEqual(comparableResult(got), comparableResult(untraced)) {
+		t.Errorf("a traced run produced %+v with output %q, want the untraced %+v with output %q: "+
+			"recording changed the result",
+			comparableResult(got), got.Output, comparableResult(untraced), untraced.Output)
+	}
+}
+
+// comparableResult clears the two fields a traced and an untraced run of the
+// same command are allowed to disagree on. Every other field, including any
+// added later, is compared as it stands.
+func comparableResult(result runner.Result) runner.Result {
+	result.Duration = 0
+	result.TraceSeq = 0
+	return result
+}
+
+// spySink keeps every event and the bytes it would have written, so a test can
+// assert about what a sink is asked to serialise rather than only about what
+// the recorder was handed.
+type spySink struct {
+	mu     sync.Mutex
+	events []trace.Event
+	lines  []string
+	err    error
+}
+
+func (s *spySink) Emit(event trace.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	line, err := json.Marshal(event)
+	if err != nil && s.err == nil {
+		s.err = err
+	}
+	s.events = append(s.events, event.Clone())
+	s.lines = append(s.lines, string(line))
+	return nil
+}
+
+func (s *spySink) Close() error { return nil }
+
+func (s *spySink) recorded() ([]trace.Event, []string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.events), slices.Clone(s.lines), s.err
+}
+
+// refusingSink is the full disk: every event costs nothing but itself.
+type refusingSink struct{}
+
+func (refusingSink) Emit(trace.Event) error { return errors.New("this sink keeps nothing") }
+func (refusingSink) Close() error           { return nil }
+
+// TestRunRecordsACommandItWasTooLateToStart is the fourth way out of Run, and
+// the one whose event carries no failure: a run that was cancelled before the
+// child started reports no error, because a drained Ctrl-C is not an
+// infrastructure fault. It is still recorded, so a reader of an interrupted
+// run's recording can see which commands were abandoned rather than infer their
+// absence.
+func TestRunRecordsACommandItWasTooLateToStart(t *testing.T) {
+	t.Parallel()
+
+	recorder, sink := newRecording(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	result := runner.Run(ctx, runner.Spec{
+		Argv:  helperCommand(t, "exit", "0"),
+		Env:   helperEnviron(),
+		Trace: recorder,
+		Kind:  trace.ExecKindMutantRun,
+	})
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil: a cancellation is not this package's failure", result.Err)
+	}
+
+	event := onlyExec(t, sink)
+	if event.Exec.ExitCode != runner.ExitCodeUnavailable {
+		t.Errorf("exit_code = %d, want ExitCodeUnavailable (%d)", event.Exec.ExitCode, runner.ExitCodeUnavailable)
+	}
+	if event.Exec.Error != "" {
+		t.Errorf("error = %q, want none", event.Exec.Error)
+	}
+	if result.TraceSeq != event.Seq {
+		t.Errorf("TraceSeq = %d, want the recorded sequence %d", result.TraceSeq, event.Seq)
 	}
 }

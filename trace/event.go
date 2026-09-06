@@ -162,8 +162,19 @@ type ExecRecord struct {
 
 	DurationMS int64 `json:"duration_ms,omitempty"`
 
-	// OutputBytes and OutputSHA256 cover the whole capture and are set by the
-	// recorder, so two runs are compared on what their commands produced.
+	// OutputBytes and OutputSHA256 cover the whole of [ExecRecord.Output] and
+	// are set by the recorder, so two runs are compared on what their commands
+	// produced.
+	//
+	// "The whole" is the *retained* capture rather than everything the child
+	// wrote. A caller that caps what it keeps — internal/runner keeps the tail
+	// and pays for a truncation notice out of the same budget — hands over the
+	// bytes it kept, notice included, and these two fields describe exactly
+	// those: the same bytes a [DirSink] preserves beside the stream, which is
+	// what makes the digest the join between an event and its
+	// `output/<seq>.txt`. How much the command produced in total is a different
+	// fact and gets a field of its own when something needs it, rather than
+	// being folded into these two and making them mean neither thing.
 	OutputBytes  int    `json:"output_bytes,omitempty"`
 	OutputSHA256 string `json:"output_sha256,omitempty"`
 
@@ -182,8 +193,9 @@ type ExecRecord struct {
 
 	Error string `json:"error,omitempty"`
 
-	// Output is the captured output, carried to whichever sink preserves it
-	// and never serialised into the event.
+	// Output is the retained capture, carried to whichever sink preserves it
+	// and never serialised into the event. It is the bytes
+	// [ExecRecord.OutputBytes] and [ExecRecord.OutputSHA256] describe.
 	Output []byte `json:"-"`
 }
 
