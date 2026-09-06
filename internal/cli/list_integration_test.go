@@ -32,6 +32,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // fixtureModule is the module path of the corpus module these tests list.
@@ -150,8 +151,14 @@ var wantSkips = []catalogSkip{
 	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 5},
 }
 
-// inFixture points the process at the discovery fixture for the length of one
-// test, with its own temporary directory.
+// inFixture points the process at a copy of the discovery fixture for the
+// length of one test, with its own temporary directory.
+//
+// A copy rather than the corpus module, though `list` writes nothing into a
+// workspace: the difference between a command that writes and one that does not
+// is a fact about today's implementation, and this helper is what puts a
+// process's working directory inside a checked-in module. Copying costs one
+// directory and takes the question away.
 //
 // The temporary directory is redirected so that "the snapshot was removed" is
 // an assertion rather than a guess: the machine's shared temporary directory
@@ -159,13 +166,7 @@ var wantSkips = []catalogSkip{
 // from another. It returns the redirected directory.
 func inFixture(t *testing.T) string {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", "..", "fixtures", "discovery"))
-	if err != nil {
-		t.Fatalf("resolving the fixture path: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("fixtures/discovery is not a module: %v", err)
-	}
+	root := testkit.Copy(t, "discovery")
 	temp := t.TempDir()
 	// os.TempDir reads TMPDIR on POSIX and TMP then TEMP on Windows, so all
 	// three are set rather than guessing which platform is reading.

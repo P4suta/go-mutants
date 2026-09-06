@@ -1577,6 +1577,14 @@ Entries say *why* a change was made, not only what changed.
   `TestRunLeavesNothingUnderItsTempDirectory` is the leftover assertion, made
   against `Options.TempDirectory` rather than against a redirected global.
 
+  The CI step caught something on its first run, in another package.
+  internal/cli's `--explain` tests started a real `run --explain` inside
+  `fixtures/rejectable` — `run` writes its artefacts into the directory it is
+  started in — and had been leaving a `reports/` there on every machine that
+  ever ran the suite, seen by nobody because `.gitignore` covers it. Those
+  tests, and the listing tests that shared the arrangement, now `t.Chdir` into a
+  copy. The rest of internal/cli's harness is a later migration's.
+
   Everything but four tests then took `t.Parallel()`, and the suite went from
   around 120s to around 30s — around 40s at `-parallel 2`. The four that stay
   serial redirect the environment for the whole process, and each says why:
