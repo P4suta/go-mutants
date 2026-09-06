@@ -59,6 +59,12 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 # the trace golden is JSON Lines, where a header would be a line the reader is
 # contractually obliged to reject, and the console goldens are the exact bytes a
 # terminal shows, where an added line would be a line the renderer never wrote.
+#
+# `run-report-v1-before-timing.json` is the odd one out and is annotated here
+# because it is the same kind of file: a run report, in the same format with the
+# same lack of comments. Nothing regenerates it — it is a document an older
+# build wrote, frozen to prove that the additive fields really are optional —
+# which is why it is not named by the `golden-update` task.
 [[annotations]]
 path = [
   "internal/console/testdata/verbose-one.golden.txt",
@@ -66,6 +72,7 @@ path = [
   "internal/report/testdata/mutation-report.golden.json",
   "internal/report/testdata/run-report.golden.json",
   "internal/report/testdata/run-report-coverage.golden.json",
+  "internal/report/testdata/run-report-v1-before-timing.json",
   "trace/testdata/events.golden.jsonl",
   "trace/testdata/events-failure.golden.jsonl",
 ]

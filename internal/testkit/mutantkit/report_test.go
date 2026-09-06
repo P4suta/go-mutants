@@ -52,6 +52,60 @@ var varyingFields = map[string]string{
 	// pointer is listed because it is a measured duration, not because the
 	// fixture happens to make it move.
 	"/mutants/6/duration_ms": "0",
+	// The toolchain that ran the tests. Its path is a different one on every
+	// machine and its version line changes with every Go release, so both are
+	// facts about the run — and `test.resolved_command` is the same path again,
+	// because it is `test.command` with that executable in place of `go`.
+	"/test/toolchain/go_bin":   mutantkit.NormalizedPath,
+	"/test/toolchain/version":  mutantkit.NormalizedToolchainVersion,
+	"/test/resolved_command/0": mutantkit.NormalizedPath,
+	// One row per attempt of every mutant this run executed: how long the pass
+	// took, and which scheduler slot made it. The worker is here because it is
+	// a fact about the run in the strongest sense — which goroutine won the
+	// race to the queue — so two runs on one machine differ in it; several of
+	// the fixture's rows already say 0 and are listed anyway, because a field
+	// that happens not to move is covered by nothing otherwise. The `binaries`
+	// beside them are deliberately absent: which binaries a pass started is
+	// what the run did, and it is the same every time.
+	"/mutants/1/executions/0/duration_ms": "0",
+	"/mutants/1/executions/0/worker":      "0",
+	"/mutants/3/executions/0/duration_ms": "0",
+	"/mutants/3/executions/0/worker":      "0",
+	"/mutants/3/executions/1/duration_ms": "0",
+	"/mutants/3/executions/1/worker":      "0",
+	"/mutants/4/executions/0/duration_ms": "0",
+	"/mutants/4/executions/0/worker":      "0",
+	"/mutants/5/executions/0/duration_ms": "0",
+	"/mutants/5/executions/0/worker":      "0",
+	"/mutants/7/duration_ms":              "0",
+	"/mutants/7/executions/0/duration_ms": "0",
+	"/mutants/7/executions/0/worker":      "0",
+	"/mutants/7/executions/1/duration_ms": "0",
+	"/mutants/7/executions/1/worker":      "0",
+	// The timeline. Every phase and every stage is a measured duration; their
+	// names are not, and stay.
+	"/timing/phases/0/duration_ms": "0",
+	"/timing/phases/1/duration_ms": "0",
+	"/timing/phases/2/duration_ms": "0",
+	"/timing/phases/3/duration_ms": "0",
+	"/timing/stages/0/duration_ms": "0",
+	"/timing/stages/1/duration_ms": "0",
+	"/timing/stages/2/duration_ms": "0",
+	"/timing/stages/3/duration_ms": "0",
+	"/timing/stages/4/duration_ms": "0",
+	"/timing/stages/5/duration_ms": "0",
+	"/timing/stages/6/duration_ms": "0",
+	"/timing/stages/7/duration_ms": "0",
+	"/timing/stages/8/duration_ms": "0",
+	// The one measured duration that is not a field of its own: `go test`
+	// writes how long each test took into the output beside its name, and
+	// `output_tail` carries that output verbatim. The fixture's tail already
+	// reads `(0.00s)`, so it does not move — and it is listed for exactly that
+	// reason, because a rule whose only evidence is a value that was already
+	// right is a rule nothing checks.
+	// [TestNormalizeRunReportFlattensGoTestElapsedTimes] drives it with a tail
+	// that does.
+	"/mutants/0/output_tail": "--- FAIL: TestAdd " + mutantkit.NormalizedElapsed,
 }
 
 // TestNormalizeRunReportFixesOnlyTheVaryingFields is the claim that makes a
@@ -127,23 +181,56 @@ func valueAt(doc map[string]any, pointer string) (string, bool) {
 // TestNormalizeRunReportIsIdempotent is what lets a normalised document be
 // compared with a normalised golden: normalising the golden again has to be a
 // no-op, or the comparison is against a moving target.
+//
+// The committed golden is one document to run it over and a weak one: every
+// field of it is already at the value normalisation would give it, so a rule
+// that rewrote a value into something it then rewrote again would still pass.
+// The second case is that golden with a real machine's facts edited into it —
+// an absolute toolchain path, and a loaded runner's elapsed times inside a
+// failing test's output — so the rules that actually fire have to land on a
+// fixed point.
 func TestNormalizeRunReportIsIdempotent(t *testing.T) {
 	t.Parallel()
 
 	original := testkit.ReadFile(t, filepath.Join(testkit.Root(t), "internal", "report", "testdata", "run-report.golden.json"))
-	once := mutantkit.NormalizeRunReport(t, original)
-	twice := mutantkit.NormalizeRunReport(t, once)
+	for _, c := range []struct {
+		name string
+		edit func(doc map[string]any)
+	}{
+		{name: "the committed golden", edit: func(map[string]any) {}},
+		{
+			name: "a document holding what a real run puts in it",
+			edit: func(doc map[string]any) {
+				doc["test"].(map[string]any)["command"] = []any{"/home/somebody/sdk/go1.26.6/bin/go", "test", "./..."}
+				mutant(doc, 0)["output_tail"] = "--- FAIL: TestClamp (0.01s)\n    clamp_test.go:14: want 3"
+				mutant(doc, 2)["output_tail"] = "--- FAIL: TestSlow (12.34s)"
+			},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 
-	if !bytes.Equal(once, twice) {
-		t.Errorf("normalising twice is not normalising once:\n%s", string(twice))
+			doc := mutantkit.DecodeJSON(t, original)
+			c.edit(doc)
+			once := mutantkit.NormalizeRunReport(t, mutantkit.EncodeJSON(t, doc))
+			twice := mutantkit.NormalizeRunReport(t, once)
+
+			if !bytes.Equal(once, twice) {
+				t.Errorf("normalising twice is not normalising once:\n%s", string(twice))
+			}
+			if err := schemas.Validate(schemas.RunReportV1, once); err != nil {
+				t.Errorf("the normalised document does not satisfy its own schema: %v", err)
+			}
+		})
 	}
 }
 
-// TestNormalizeRunReportReplacesAToolchainPathAndATimestamp drives the fields
-// the committed golden cannot: it holds no absolute path, because the fixture is
-// hand-written, and a real run's `test.command` starts with the located `go`
-// binary — which is `/usr/local/go/bin/go` on one machine and
-// `C:\hostedtoolcache\...` on another.
+// TestNormalizeRunReportReplacesAToolchainPathAndATimestamp drives the one path
+// the committed golden cannot: a real run's `test.command` starts with the
+// located `go` binary — which is `/usr/local/go/bin/go` on one machine and
+// `C:\hostedtoolcache\...` on another — while the fixture's is the `go` the
+// user wrote. (The golden's own absolute paths, in `test.toolchain.go_bin` and
+// `test.resolved_command`, are in the ledger above.)
 func TestNormalizeRunReportReplacesAToolchainPathAndATimestamp(t *testing.T) {
 	t.Parallel()
 
@@ -164,6 +251,56 @@ func TestNormalizeRunReportReplacesAToolchainPathAndATimestamp(t *testing.T) {
 	if !strings.Contains(normalized, `"./..."`) {
 		t.Errorf("the package pattern was rewritten as if it were a path:\n%s", normalized)
 	}
+}
+
+// TestNormalizeRunReportFlattensGoTestElapsedTimes closes the last way two
+// reports of one run can differ.
+//
+// `output_tail` is the deciding test binary's own output, and `go test` prints
+// how long each test took beside its name: `--- FAIL: TestClamp (0.01s)`. That
+// number is the loaded CI runner's, not the program's — the same failure is
+// `(0.00s)` on a quiet machine and `(0.01s)` on a busy one — and it is the one
+// measured duration in the document that is not a field of its own but free
+// text in the middle of somebody else's output. It cost a green CI run before
+// this rule existed.
+//
+// Only the parenthesised form `go test` writes is rewritten. Everything else in
+// the tail is what the program under test printed, and a normaliser that went
+// after every number in it would be rewriting the evidence.
+func TestNormalizeRunReportFlattensGoTestElapsedTimes(t *testing.T) {
+	t.Parallel()
+
+	original := testkit.ReadFile(t, filepath.Join(testkit.Root(t), "internal", "report", "testdata", "run-report.golden.json"))
+	doc := mutantkit.DecodeJSON(t, original)
+	tail := strings.Join([]string{
+		"--- FAIL: TestClamp (0.01s)",
+		"    clamp_test.go:14: want 3, got 4 after 0.25s",
+		"--- FAIL: TestSlow (12.34s)",
+		"panic: test timed out after 10s",
+		"    retried (twice) with go1.26.6 in (0.5) and (1.5 s)",
+	}, "\n")
+	mutant(doc, 0)["output_tail"] = tail
+
+	normalized := mutantkit.DecodeJSON(t, mutantkit.NormalizeRunReport(t, mutantkit.EncodeJSON(t, doc)))
+	got, ok := mutant(normalized, 0)["output_tail"].(string)
+	if !ok {
+		t.Fatalf("output_tail = %v, want the normalised text", mutant(normalized, 0)["output_tail"])
+	}
+	want := strings.Join([]string{
+		"--- FAIL: TestClamp " + mutantkit.NormalizedElapsed,
+		"    clamp_test.go:14: want 3, got 4 after 0.25s",
+		"--- FAIL: TestSlow " + mutantkit.NormalizedElapsed,
+		"panic: test timed out after 10s",
+		"    retried (twice) with go1.26.6 in (0.5) and (1.5 s)",
+	}, "\n")
+	if got != want {
+		t.Errorf("output_tail =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// mutant returns one row of a decoded document's mutants array.
+func mutant(doc map[string]any, i int) map[string]any {
+	return doc["mutants"].([]any)[i].(map[string]any)
 }
 
 // TestNormalizeRunReportFixesTheHostPlatform is what makes one committed report
@@ -291,6 +428,28 @@ func walkJSON(t *testing.T, pointer string, before, after any, changed *[]string
 	default:
 		if fmt.Sprintf("%v", before) != fmt.Sprintf("%v", after) {
 			*changed = append(*changed, pointer)
+		}
+	}
+}
+
+// TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines pins the shape rule: the
+// duration `go test` writes beside a test's name or a package's summary is
+// flattened, and a duration the program under test printed itself is evidence
+// and stays exactly as written.
+func TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ in, want string }{
+		{"--- FAIL: TestClamp (0.01s)", "--- FAIL: TestClamp (0.00s)"},
+		{"    --- PASS: TestClamp/inside (12.34s)", "    --- PASS: TestClamp/inside (0.00s)"},
+		{"--- SKIP: TestLater (0.50s)", "--- SKIP: TestLater (0.00s)"},
+		{"ok  \tfixture.example/killable\t0.123s", "ok  \tfixture.example/killable\t0.00s"},
+		{"FAIL\tfixture.example/killable\t0.002s", "FAIL\tfixture.example/killable\t0.00s"},
+		{"    clamp_test.go:14: request completed (0.25s)", "    clamp_test.go:14: request completed (0.25s)"},
+		{"--- FAIL: TestClamp (0.01s) trailing", "--- FAIL: TestClamp (0.01s) trailing"},
+		{"waited (1.5 s) then (0.5)", "waited (1.5 s) then (0.5)"},
+	} {
+		if got := mutantkit.NormalizeText(c.in); got != c.want {
+			t.Errorf("normalizeText(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

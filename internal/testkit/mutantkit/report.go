@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/report"
@@ -34,6 +35,11 @@ const (
 	// test, which is a fact about the fixture's go.mod as the toolchain of the
 	// day reads it.
 	NormalizedGoVersion = "0.0"
+	// NormalizedToolchainVersion stands in for what `go version` printed, which
+	// is a fact about the machine's toolchain and moves with every release. It
+	// keeps the shape of the real line so that a reader of a normalised
+	// document sees a plausible one rather than wondering what broke.
+	NormalizedToolchainVersion = "go version go0.0.0 normalized/normalized"
 	// NormalizedOS and NormalizedArch stand in for the host a run happened on.
 	//
 	// They are what makes one committed report golden usable on all three
@@ -53,11 +59,28 @@ const (
 	// the schema's milliseconds type has a minimum of zero and because "no time
 	// passed" is unmistakably not a measurement.
 	NormalizedDurationMS = 0
+	// NormalizedElapsed stands in for the elapsed time `go test` prints beside
+	// a test's name — `--- FAIL: TestClamp (0.01s)` — wherever it appears
+	// inside the free text a report carries. It is a real marker rather than a
+	// placeholder because the text around it is the program's own output and
+	// has to go on reading like it.
+	NormalizedElapsed = "(0.00s)"
+	// NormalizedWorker stands in for the scheduler slot that executed one
+	// attempt. Which worker claimed a mutant is decided by whichever goroutine
+	// reached the queue first, so two runs of one workspace differ in it and
+	// mean the same thing — the same reason internal/execute's own scheduling
+	// test sets it aside before comparing two runs. Zero is a real worker
+	// number, which is unavoidable: the field has no value that is not one.
+	NormalizedWorker = 0
 )
 
-// normalizedDuration is [NormalizedDurationMS] as a document carries it, built
-// once so that the constant and the value written can never disagree.
-var normalizedDuration = json.Number(strconv.Itoa(NormalizedDurationMS))
+// normalizedDuration and normalizedWorker are [NormalizedDurationMS] and
+// [NormalizedWorker] as a document carries them, built once so that the
+// constants and the values written can never disagree.
+var (
+	normalizedDuration = json.Number(strconv.Itoa(NormalizedDurationMS))
+	normalizedWorker   = json.Number(strconv.Itoa(NormalizedWorker))
+)
 
 // MustMarshal marshals a report and checks it against the published schema.
 //
@@ -121,11 +144,17 @@ func EncodeJSON(t testing.TB, doc map[string]any) []byte {
 // A run report is mostly the second kind — which mutants there are, what
 // happened to each of them, what the policy decided — and that is the part a
 // golden can pin. The first kind is the tool's version, the module's go
-// directive, the host's GOOS and GOARCH, the wall clock at both ends, every
-// measured duration, and every absolute path: the located toolchain, the
-// snapshot root, the report directory. A golden that carried them would fail on
-// the next machine, on the next toolchain, on the other two platforms CI runs,
-// and on the second run of the same day.
+// directive, the toolchain's own version line, the host's GOOS and GOARCH, the
+// wall clock at both ends, every measured duration — the run's, each mutant's,
+// each of its attempts', and every phase and stage of the timeline — the
+// scheduler slot each attempt ran in, every absolute path (the located
+// toolchain, in `test.command` and in `test.resolved_command` and in
+// `test.toolchain.go_bin`, the snapshot root, the report directory), and the
+// elapsed times `go test` writes into the output a report carries. A golden
+// that kept them would fail on the next machine, on the next toolchain, on the
+// other two platforms CI runs, and on the second run of the same day — the last
+// of them on nothing more than a busy runner, which is exactly how it was
+// found.
 //
 // Two things are deliberately *not* normalised. Mutant ids and workspace digests
 // are content-addressed: they are derived from the bytes of the program under
@@ -147,16 +176,54 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 	setNumber(doc, "test", "timeout_ms")
 	setNumber(doc, "test", "baseline", "slowest_ms")
 	setNumberSlice(doc, "test", "baseline", "durations_ms")
+	setString(doc, NormalizedToolchainVersion, "test", "toolchain", "version")
 	for _, mutant := range array(doc, "mutants") {
 		setNumber(mutant, "duration_ms")
+		// One row per attempt: how long the pass took, and which of the
+		// scheduler's slots made it. The worker is a fact about the run in the
+		// strongest sense — it is which goroutine won the race to the queue, so
+		// two runs of one workspace on one machine differ in it — and the
+		// binaries beside it are left alone, because which binaries a pass
+		// started is what the run *did* and is the same every time.
+		for _, execution := range array(mutant, "executions") {
+			setNumber(execution, "duration_ms")
+			setValue(execution, normalizedWorker, "worker")
+		}
+	}
+	// The timeline, which is every measured duration there is left. The phase
+	// and stage *names* stay: which steps a run took is a fact about the
+	// pipeline, and a golden that could not see a stage appear or disappear
+	// would be pinning nothing worth pinning.
+	if timing, ok := doc["timing"].(map[string]any); ok {
+		for _, phase := range array(timing, "phases") {
+			setNumber(phase, "duration_ms")
+		}
+		for _, stage := range array(timing, "stages") {
+			setNumber(stage, "duration_ms")
+		}
 	}
 
-	// The paths are replaced last and by a walk rather than by name, because
-	// they turn up in fields nothing can enumerate: a command's argv, a
-	// warning's message, the tail of a failing test's output.
-	replacePaths(doc)
+	// The free text is rewritten last and by a walk rather than by name; see
+	// [rewriteText] for what it does and why it is not a list of fields.
+	rewriteText(doc)
 	return EncodeJSON(t, doc)
 }
+
+// goTestElapsed matches the elapsed time `go test` prints beside a test's own
+// name, on the line where it prints it, and nothing else.
+//
+// The line shape is the whole of the discrimination: `go test` writes
+// `--- PASS: TestName (0.01s)`, `--- FAIL: …` and `--- SKIP: …` for every test
+// and subtest, and `ok  \tpkg\t0.123s` or `FAIL\tpkg\t0.002s` for every package.
+// A parenthesised duration anywhere else is the program's own output, where a
+// number is evidence — `request completed (0.25s)` printed by the code under
+// test must survive normalisation exactly as it was written, or a golden could
+// accept an output tail that is wrong.
+var goTestElapsed = regexp.MustCompile(`(?m)^([ \t]*--- (?:PASS|FAIL|SKIP|BENCH): .*?) \([0-9]+\.[0-9]+s\)$`)
+
+// goTestPackageElapsed matches the elapsed time on `go test`'s per-package
+// summary line, `ok  \tpkg\t0.123s` and `FAIL\tpkg\t0.002s`.
+var goTestPackageElapsed = regexp.MustCompile(`(?m)^((?:ok|FAIL)[ \t]+\S+[ \t]+)[0-9]+\.[0-9]+s$`)
 
 // absolutePath matches a POSIX or Windows absolute path inside a string value.
 //
@@ -168,33 +235,46 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 // or an opening bracket.
 var absolutePath = regexp.MustCompile(`(^|[\s"'=(\[])((?:[A-Za-z]:)?[\\/][^\s"'\[\]()]+)`)
 
-// replacePaths rewrites every absolute path in every string of a decoded
-// document, in place.
-func replacePaths(value any) {
+// rewriteText normalises every string of a decoded document, in place.
+//
+// It is a walk rather than a list of fields because both of the things it
+// rewrites turn up in text nothing can enumerate: an absolute path appears in a
+// command's argv, in a warning's message and in the tail of a failing test's
+// output, and a `go test` elapsed marker appears wherever a test binary's own
+// output is carried. Today that is `mutants[].output_tail` alone — the other
+// free text in the document is compiler diagnostics (`rejected[].diagnostic`,
+// `coverage.unavailable_reason`), engine-composed warnings, and the user's own
+// expectation reasons, none of which is a test binary talking, and
+// `executions[]` carries no free text at all — but a walk is what keeps the
+// next field that does from being a green CI run away from a red one.
+func rewriteText(value any) {
 	switch node := value.(type) {
 	case map[string]any:
 		for key, child := range node {
 			if text, ok := child.(string); ok {
-				node[key] = normalizePathsIn(text)
+				node[key] = normalizeText(text)
 				continue
 			}
-			replacePaths(child)
+			rewriteText(child)
 		}
 	case []any:
 		for i, child := range node {
 			if text, ok := child.(string); ok {
-				node[i] = normalizePathsIn(text)
+				node[i] = normalizeText(text)
 				continue
 			}
-			replacePaths(child)
+			rewriteText(child)
 		}
 	}
 }
 
-// normalizePathsIn replaces the absolute paths in one string, keeping the
-// character that preceded each one.
-func normalizePathsIn(text string) string {
-	return absolutePath.ReplaceAllString(text, "${1}"+NormalizedPath)
+// normalizeText replaces the absolute paths in one string, keeping the
+// character that preceded each one, and flattens every `go test` elapsed time
+// it holds.
+func normalizeText(text string) string {
+	text = absolutePath.ReplaceAllString(text, "${1}"+NormalizedPath)
+	text = goTestElapsed.ReplaceAllString(text, "${1} "+NormalizedElapsed)
+	return goTestPackageElapsed.ReplaceAllString(text, "${1}"+strings.Trim(NormalizedElapsed, "()"))
 }
 
 // setString replaces a string at a path of keys, when it is there.
@@ -213,9 +293,15 @@ func setString(doc map[string]any, value string, keys ...string) {
 
 // setNumber replaces a measured duration with [NormalizedDurationMS].
 func setNumber(doc map[string]any, keys ...string) {
+	setValue(doc, normalizedDuration, keys...)
+}
+
+// setValue replaces whatever is at a path of keys, when it is there. A missing
+// key is not an error, for the reason [setString] gives.
+func setValue(doc map[string]any, value any, keys ...string) {
 	if node, key, ok := parentOf(doc, keys); ok {
 		if _, present := node[key]; present {
-			node[key] = normalizedDuration
+			node[key] = value
 		}
 	}
 }

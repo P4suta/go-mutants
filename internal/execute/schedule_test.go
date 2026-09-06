@@ -1224,6 +1224,14 @@ func TestScheduleWithoutARecorderIsUnchanged(t *testing.T) {
 					untraced[i].ID, j+1, untraced[i].Attempts[j].ExecSeqs)
 			}
 			recorded[i].Attempts[j].ExecSeqs = nil
+			// The worker is set aside for the same reason, and it is not the
+			// same reason: it is a real field of both runs, and which of two
+			// workers claimed a mutant is decided by whichever goroutine got to
+			// the queue first. It is a fact about the scheduling and not about
+			// the measurement, so two runs of one queue may differ in it and be
+			// the same measurement — which is exactly what this test is about.
+			recorded[i].Attempts[j].Worker = 0
+			untraced[i].Attempts[j].Worker = 0
 		}
 	}
 	if !reflect.DeepEqual(recorded, untraced) {

@@ -125,6 +125,18 @@ type MergeOptions struct {
 // rather than pretending they were one measurement. The platform is taken the
 // same way, and is safe to: a genuinely different build would have produced a
 // different catalogue, which is checked.
+//
+// The run facts are dropped rather than taken from the first shard, which is
+// the difference between a field that may vary and one that has no single
+// value at all. `timing`, `validation`, `workspace.snapshot`, `test.toolchain`,
+// `test.resolved_command`, the coverage fallback pair, and every mutant's
+// `executions` describe *one* run: which phases it spent its minutes in, how
+// many builds its bisection cost, whose `go` ran it, which worker executed
+// which mutant. Four shards are four runs on four machines, so quoting the
+// first one's would present one machine's clock and one machine's toolchain as
+// the run's — and unlike the baseline, these are the fields somebody reads
+// precisely to explain a cost. A merged document says nothing about them, which
+// is the one honest answer; each shard's own document still has them.
 func MergeShards(opts MergeOptions) (*Report, error) {
 	if len(opts.Shards) == 0 {
 		return nil, &Error{
@@ -170,7 +182,12 @@ func MergeShards(opts MergeOptions) (*Report, error) {
 
 	mutants := make([]Mutant, 0, len(first.Mutants))
 	for i, m := range first.Mutants {
-		mutants = append(mutants, owners[mutation.ShardIndex(m.ID, total)].Mutants[i])
+		row := owners[mutation.ShardIndex(m.ID, total)].Mutants[i]
+		// The per-attempt rows stay in the shard document that measured them.
+		// They name a worker and a duration on one machine, and a merged
+		// document describes no machine: see the note on the run facts above.
+		row.Executions = nil
+		mutants = append(mutants, row)
 	}
 
 	// The ledger is judged again, against the whole run this time. In a shard's
@@ -201,11 +218,11 @@ func MergeShards(opts MergeOptions) (*Report, error) {
 		StartedAt:     FormatTimestamp(started),
 		FinishedAt:    FormatTimestamp(finished),
 		DurationMS:    milliseconds(finished.Sub(started)),
-		Workspace:     first.Workspace,
+		Workspace:     withoutSnapshot(first.Workspace),
 		Selection:     mergedSelection(opts.Shards),
 		Shard:         nil,
 		Merge:         &Merge{Shards: total},
-		Test:          first.Test,
+		Test:          withoutToolchain(first.Test),
 		Coverage:      coverage,
 		Cache:         cache,
 		Mutants:       mutants,
@@ -232,6 +249,25 @@ func MergeShards(opts MergeOptions) (*Report, error) {
 	// asked this function to referee.
 	merged.Summary = summaryOf(tally, policyOf(first.Summary.Policy), false, expectations, mutants)
 	return merged, nil
+}
+
+// withoutSnapshot is the first shard's workspace with the facts about its copy
+// of it removed. What tree was read is the same in every shard, and is checked;
+// how many files one machine copied into its own temporary directory, and
+// whether that directory could take the stable name, is that machine's.
+func withoutSnapshot(workspace Workspace) Workspace {
+	workspace.Snapshot = nil
+	return workspace
+}
+
+// withoutToolchain is the first shard's test block with the facts about the
+// executable that ran it removed, for the reason [withoutSnapshot] removes the
+// snapshot: the command is the run's and is checked, the `go` that resolved it
+// is one machine's.
+func withoutToolchain(test Test) Test {
+	test.Toolchain = nil
+	test.ResolvedCommand = nil
+	return test
 }
 
 // congruent proves that every document describes the same run of the same code,

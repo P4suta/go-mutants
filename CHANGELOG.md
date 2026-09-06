@@ -14,6 +14,69 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The run report explains its own cost, and every mutant's execution, without
+  a trace.** A report said what happened to each mutant and almost nothing about
+  how: `attempts: 2` was the whole of what a reader got about a mutant that took
+  eleven seconds, and *why was this run slow* was unanswerable from the file at
+  all. Both answers existed — in the trace, which is opt-in, kept for ten runs
+  and then deleted, so the permanent record was the one document that could not
+  explain itself.
+
+  Six additions, all optional in `run-report-v1`. A run-level section is
+  written when the run measured it — a run interrupted before validation has
+  no `validation`, and a document says nothing rather than publishing a zero
+  that reads as a measurement — while a mutant's `executions` is always there,
+  `[]` for one that was cached, uncovered or never run.
+  `timing` is the run's own timeline: `phases[]` and `stages[]` with the same
+  names, the same durations and the same `succeeded`/`failed`/`skipped`
+  vocabulary the recording uses, so a reader holding both is not reconciling two
+  accounts of one run. `validation.builds` is how many compiles establishing the
+  catalogue cost — one is the ordinary case, and anything more is a bisection
+  and is where the minutes went. `workspace.snapshot` says whether the
+  disposable copy took the tree's stable name, which is what decides whether the
+  Go build cache was warm, and how many files it held. `test.toolchain` and
+  `test.resolved_command` say *which* `go` ran the tests, which
+  `workspace.go_version` — the module's own directive — cannot: under a
+  toolchain manager the two disagree. `coverage.build_fallback` and
+  `coverage.unavailable_reason` record the coverage-instrumented build that
+  would not compile, in the length somebody investigating needs rather than the
+  one line the console prints. And `mutants[].executions[]` is `attempts` in
+  detail: one row per pass over the test binaries, with the worker that made it,
+  what it observed, which binary caught the mutant, how long it took and which
+  binaries it started. A confirmed timeout is now visibly two passes that both
+  timed out, and an inconclusive one visibly a pass that timed out and a pass
+  that did not — the shape no count of attempts could show.
+
+  Nothing here changes a mutant id, an outcome, a score, the cache key, or how
+  history matches one run to another, and `schema_version` stays 1: every key is
+  optional, so a document an older build wrote still validates and still parses.
+  `executions` is `[]` — present and empty — for a cached, uncovered or not-run
+  mutant, none of which had a process started for it by this run; a cached
+  mutant keeps the attempt count of the run that did measure it, which is the
+  one place the two numbers legitimately differ, and `report.Build` refuses
+  every other disagreement between them rather than publishing a document that
+  contradicts itself.
+
+  `report merge` omits all of it. A merged document is four shards from four
+  machines, so there is no single timeline, no one snapshot, no one toolchain
+  and no worker that ran a given mutant — and unlike the baseline timings, which
+  a merge takes from the first shard and says so, these are the fields somebody
+  reads precisely to explain a cost. Quoting one machine's would be worse than
+  saying nothing; each shard's own document still has all of it. A matrix whose
+  runners are on different go-mutants versions has to be merged by the *newer*
+  binary: an older one reads the shard documents with `DisallowUnknownFields`
+  and rejects the new keys outright, which is the same forward-compatibility
+  policy the schemas state.
+
+  One trace API change comes with it, and it is why the two documents can be
+  believed together: `Recorder.PhaseStart`'s closer and `Recorder.Stage`'s now
+  return the `time.Duration` they recorded, and the engine publishes *that*
+  number in the report. They were two independent readings of one clock before
+  — the recorder's pair around the work and the engine's pair around the
+  recorder's — so a phase that really took 88.7 ms could be written down as 88
+  in one document and 89 in the other, roughly once in a hundred runs on a busy
+  machine. A nil recorder's closer returns zero and an untraced run times
+  itself, so nothing about a run without a recording changes.
 - **`run -v` and `-vv` answer "where did the time go, and why did this mutant
   get that outcome" without a trace file.** `-v` adds a
   `phase <name>: done (<duration>)` line to every phase, `killed by <import

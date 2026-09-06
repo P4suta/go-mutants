@@ -51,12 +51,12 @@ document rather than second opinions.
 | `run_id` | `YYYYMMDDThhmmssZ-xxxx`, also the history file name |
 | `status` | `completed`, `interrupted`, or `failed` |
 | `started_at`, `finished_at`, `duration_ms` | RFC 3339 UTC to the second, and the elapsed milliseconds |
-| `workspace` | `module_path`, `go_version`, `workspace_digest`, `platform.{os,arch}` |
+| `workspace` | `module_path`, `go_version`, `workspace_digest`, `platform.{os,arch}`, and the optional `snapshot` |
 | `selection` | `mode`, `changed_ref`, `profile`, `operators`, `include`, `exclude`, `candidates`, `rejected`, `selected` |
 | `shard` | Which shard of a split run this is, or `null`; see below |
 | `merge` | Present only on a document `report merge` wrote; see below |
-| `test` | `command` argv, `baseline`, `timeout_ms`, `timeout_source` |
-| `coverage` | `mode`, and in `package` mode `binaries` and `mutants_uncovered` |
+| `test` | `command` argv, `baseline`, `timeout_ms`, `timeout_source`, and the optional `toolchain` and `resolved_command` |
+| `coverage` | `mode`, in `package` mode `binaries` and `mutants_uncovered`, and the optional `build_fallback` and `unavailable_reason` |
 | `cache` | `mode`, `hits`, `misses`, `writes`; see below |
 | `summary` | The counters, `score_percent`, and `policy` |
 | `mutants[]` | One entry per executed or not-run mutant; see below |
@@ -64,6 +64,8 @@ document rather than second opinions.
 | `skips[]` | Reason-coded static skips, aggregated per file |
 | `expectations[]` | Each `[[mutation.expect]]` row, evaluated |
 | `warnings[]` | `GOMnnnn` code plus message |
+| `timing` | Optional: where the run's wall clock went, phase by phase and stage by stage |
+| `validation` | Optional: `builds`, how many compiles establishing the catalogue cost |
 
 `selection.mode` is `all`, `mutant`, `changed`, or `shard`; `candidates` equals
 `rejected` plus the length of `mutants[]`, and `selected` is how many the run
@@ -116,6 +118,66 @@ shard total and assignment; every index from 1 to `total` must be present
 exactly once; and every row must belong to the shard that reported it. The first
 discrepancy is named and nothing is written, because the whole point of a merged
 document is that somebody is going to trust it.
+
+### Run facts: `timing`, `validation`, `workspace.snapshot`, `test.toolchain`
+
+A report should be able to answer *why was this slow* and *what actually ran
+this* with nothing beside it. A trace answers both and is opt-in, kept for ten
+runs, and thrown away; the report is the permanent record, so the run's own
+account of its cost is in it.
+
+Every key in this section is **optional**: a document an older build wrote does
+not have it and still validates, which is why none of this needed a schema
+version. Each run-level section is written when the run measured it (an
+interrupted run has no `validation` to report); `mutants[].executions` is the
+exception and is always present, as `[]` for a cached, uncovered or not-run
+mutant. Every one of them is **omitted by `report merge`** — see the merge rule
+below.
+
+| Field | Contents |
+| --- | --- |
+| `timing.phases[]` | `name` and `duration_ms` for each engine phase the run finished, in the order they closed |
+| `timing.stages[]` | `phase`, `name`, `duration_ms` and `result` for each step inside a phase, in the order they closed |
+| `validation.builds` | How many `go build` invocations it took to establish which catalogued mutants compile |
+| `workspace.snapshot.stable_dir` | The disposable copy carried the tree's own derived name, so two runs of one workspace share a Go build cache |
+| `workspace.snapshot.files` | How many regular files were copied |
+| `test.toolchain.go_bin` | The resolved absolute path of the `go` that compiled and ran the tests |
+| `test.toolchain.version` | What `go version` printed, verbatim |
+| `test.resolved_command` | The argv that was really started: `command` with `go_bin` in place of a bare `go` |
+| `coverage.build_fallback` | The coverage-instrumented build failed and the run compiled plain test binaries instead |
+| `coverage.unavailable_reason` | The whole failure that made it do so: the coded message and the compiler's diagnostics under it |
+| `mutants[].executions[]` | One row per pass over the test binaries; see [`mutants[]`](#mutants) |
+
+`timing.stages[].result` is `succeeded`, `failed`, or `skipped` — the trace's
+own vocabulary, so a reader holding both documents is not reconciling two
+accounts of one run, and the durations are the same numbers the recording's
+`phase-end` and `stage` events carry. A `failed` stage is not a failed run: a
+coverage-instrumented build that will not compile is exactly that, and the run
+carries on. The phases do not add up to `duration_ms`, because a run is more
+than its phases, and the report is written *during* the `report` phase — so the
+phase it is in and its own stages are in the recording and not in the document.
+
+`test.toolchain` is not `workspace.go_version`: that is the `go` directive of
+the module under test, and this is the executable that ran it. Under a
+toolchain manager the two disagree, and only one of them says which `go` to
+blame. `workspace.snapshot` is about the *copy* rather than about the code,
+which is why neither field is in `workspace_digest`: a run whose copy could not
+take the stable name pays for a cold build cache, and that is a fact about the
+machine's temporary directory.
+
+`coverage.build_fallback` and `coverage.unavailable_reason` are absent — not
+`false` and `null` — from the runs that did not fall back, which is nearly all
+of them. They are the same event as the `GOM7602` warning beside them, at the
+length a person investigating needs rather than the one line a console prints.
+
+**`report merge` omits every field in this section, and every mutant's
+`executions`.** A merged document is four shards from four machines: there is
+no single timeline, no single validation bisection, no one snapshot, no one
+toolchain, and no worker that executed a given mutant. Reporting the first
+shard's would present one machine as the run — and unlike the baseline timings,
+which are taken from the first shard and documented as such, these are the
+fields somebody reads *precisely* to explain a cost. Each shard's own document
+still carries all of it.
 
 ### `coverage`
 
@@ -191,9 +253,9 @@ Each entry carries the full 64-hex `id` and the 20-hex `display_id`, `path`,
 `package`, `family`, `rule`, `rule_version`, `line`, `column`, `start_byte`,
 `end_byte`, `original`, `replacement`, `outcome`, `not_run_reason`,
 `duration_ms`, `killed_by`, `attempts`, `output_tail`,
-`covering_test_packages`, `uncovered`, and `cached`. One more key, `branch`, is
-optional and appears only on the mutants go-mutants could prove something extra
-about; see [`branch`](#branch) below.
+`covering_test_packages`, `uncovered`, and `cached`. Two more keys are
+optional: `branch`, which appears only on the mutants go-mutants could prove
+something extra about — see [`branch`](#branch) below — and `executions`.
 
 `cached` says the outcome was adopted from the outcome cache rather than
 measured by this run, so `duration_ms`, `attempts`, `killed_by` and
@@ -208,6 +270,37 @@ failed, or the one it hung — and is `null` for an outcome that detected
 nothing, and for a detection whose output named no binary. `attempts` is 0 for
 a mutant the run never reached, 1 for an outcome settled first time, and 2 for
 a confirmed timeout.
+
+`executions[]` is `attempts` in detail: one row per pass this run made over the
+test binaries, in attempt order.
+
+| Field | Contents |
+| --- | --- |
+| `attempt` | Which pass this was, counting from 1, and the row's own position |
+| `worker` | The scheduler slot that made it, counting from 0; the serial timeout retry is worker 0 |
+| `outcome` | What this pass observed: `killed`, `survived`, `timed-out` or `errored`. The schema's enum here is narrower than a mutant's on purpose — `inconclusive` is a judgement about two passes and `not-run` is what a mutant nobody measured is, and neither is a thing one pass can see |
+| `killed_by` | The binary that detected the mutant on this pass; absent when it detected nothing |
+| `duration_ms` | The wall-clock time this pass took, summed over the binaries it ran |
+| `binaries[]` | The test binaries it started, in launch order, stopping where the pass stopped |
+
+There are exactly `attempts` rows for a mutant this run executed, and the list
+is `[]` — present and empty — for a `cached`, `uncovered` or `not-run` mutant:
+none of them had a process started for it by this run. Two of those keep an
+attempt count with no rows under it — a cached mutant keeps the count of the run
+that *did* measure it, and a mutant that timed out once and was interrupted
+before the serial retry reports the one pass it made — and they are the only
+ways the two numbers differ. A confirmed timeout is two rows that both timed
+out; an `inconclusive` mutant is a row that timed out and a row that did not,
+which is the shape no summary could show. The whole key is absent from a
+document an older build wrote, and from a merged one.
+
+The schema cannot state any of that: JSON Schema can require the rows to be
+well formed, and it cannot say that a `cached` mutant must have none of them or
+that a run's row count must equal its own `attempts`. `report.Build` enforces
+both and refuses to write a document that breaks either (`GOM5121`), so no
+go-mutants run can produce one — but a hand-edited file that claims three
+executions for a cached mutant is still a *valid* run-report v1, and a consumer
+that cares should check the pairing rather than assume it.
 
 `covering_test_packages` is the sorted import paths of the test binaries whose
 coverage profile reaches the mutant's lines, and `uncovered` says the run

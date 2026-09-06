@@ -126,6 +126,12 @@ const (
 	// CodeEncodeFailed reports a report that could not be encoded as JSON.
 	CodeEncodeFailed Code = "GOM5120"
 
+	// CodeInvalidExecutions reports a mutant whose per-attempt rows contradict
+	// the rest of its row: executions on a mutant this run never executed —
+	// cached, uncovered or not-run — or a count that disagrees with the attempt
+	// count beside it. See [checkExecutions].
+	CodeInvalidExecutions Code = "GOM5121"
+
 	// CodeCacheUnavailable reports an operating system that will not say where
 	// its cache directory is, so there is nowhere to keep run history.
 	CodeCacheUnavailable Code = "GOM5130"
@@ -301,6 +307,7 @@ var codes = []Code{
 	CodeHistoryUnreadable,
 	CodeHistoryNotRemoved,
 	CodeEncodeFailed,
+	CodeInvalidExecutions,
 	CodeCacheUnavailable,
 	CodeHistoryDirectory,
 	CodeHistoryWrite,

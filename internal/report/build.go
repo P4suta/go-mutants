@@ -59,6 +59,17 @@ type MutantResult struct {
 	// OutputTail is the tail of the test output kept for a human. Empty becomes
 	// null.
 	OutputTail string
+	// Executions are the passes this run made over the test binaries for this
+	// mutant, in attempt order. Nil becomes the empty list, which is what a
+	// mutant nothing executed carries.
+	//
+	// [Build] refuses them on a cached, uncovered or not-run mutant, and
+	// refuses a count that disagrees with Attempts. Both refusals are about the
+	// same thing: an execution is a pass *this* run made, so a document
+	// carrying one for a mutant this run never started, or carrying three of
+	// them beside an attempt count of one, would be stating in detail something
+	// its own summary contradicts.
+	Executions []Execution
 	// CoveringTestPackages are the import paths of the test binaries whose
 	// coverage profile reaches this mutant's lines. Nil becomes the empty list,
 	// which is what a run with coverage off carries for every mutant.
@@ -169,6 +180,12 @@ type Options struct {
 	// is recorded only in [CoveragePackage] mode; an `off` run states no number
 	// rather than a zero it never measured.
 	CoverageBinaries int
+	// CoverageUnavailableReason is the whole failure that made the run give up
+	// coverage-instrumented test binaries, and CoverageBuildFallback says it
+	// did. Empty and false are the ordinary run, which says nothing about a
+	// fallback that did not happen. See [Coverage].
+	CoverageUnavailableReason string
+	CoverageBuildFallback     bool
 
 	// CacheMode is the mode the outcome cache operated in. The zero value is
 	// [CacheOff], which is what a run with the cache configured off, a run that
@@ -182,6 +199,24 @@ type Options struct {
 	// and the rows underneath it cannot disagree. See [Cache].
 	CacheMisses int
 	CacheWrites int
+
+	// Timing is where the run's wall-clock time went, Validation is what
+	// establishing which mutants compile cost it, Snapshot is what the copy of
+	// the workspace turned out to be, Toolchain is the Go that ran the tests,
+	// and ResolvedCommand is the argv that was really started.
+	//
+	// All five are the facts a reader needs to explain a run's cost without a
+	// recording beside it, and all five may be nil: a caller that did not
+	// measure one says nothing rather than publishing a zero that reads as a
+	// measurement. Every run internal/engine performs supplies all of them, so
+	// every document a run writes carries them; `report merge` builds its
+	// document without them, because four shards are four runs and there is no
+	// single answer to give. See [Timing].
+	Timing          *Timing
+	Validation      *Validation
+	Snapshot        *SnapshotFacts
+	Toolchain       *ToolchainFacts
+	ResolvedCommand []string
 
 	// Warnings are the warnings the run published, in publication order.
 	Warnings []Warning
@@ -263,14 +298,17 @@ func Build(opts Options) (*Report, error) {
 			GoVersion:       or(opts.GoVersion, unknownValue),
 			WorkspaceDigest: opts.WorkspaceDigest,
 			Platform:        platformOf(opts.Platform),
+			Snapshot:        snapshotOf(opts.Snapshot),
 		},
 		Selection: selection,
 		Shard:     shard,
 		Test: Test{
-			Command:       command,
-			Baseline:      baselineOf(opts.Baseline),
-			TimeoutMS:     milliseconds(opts.Timeout),
-			TimeoutSource: timeoutSource(opts),
+			Command:         command,
+			Baseline:        baselineOf(opts.Baseline),
+			TimeoutMS:       milliseconds(opts.Timeout),
+			TimeoutSource:   timeoutSource(opts),
+			Toolchain:       toolchainOf(opts.Toolchain),
+			ResolvedCommand: resolvedCommand(opts.ResolvedCommand),
 		},
 		Coverage:     coverage,
 		Cache:        cache,
@@ -280,8 +318,69 @@ func Build(opts Options) (*Report, error) {
 		Skips:        skipsOf(opts.Skips),
 		Expectations: expectations,
 		Warnings:     warningsOf(opts.Warnings),
+		Timing:       timingOf(opts.Timing),
+		Validation:   validationOf(opts.Validation),
 	}
 	return r, nil
+}
+
+// timingOf copies the caller's timeline, so that the document shares no slice
+// with the run that may still be writing one.
+func timingOf(timing *Timing) *Timing {
+	if timing == nil {
+		return nil
+	}
+	return &Timing{
+		Phases: append(make([]PhaseTiming, 0, len(timing.Phases)), timing.Phases...),
+		Stages: append(make([]StageTiming, 0, len(timing.Stages)), timing.Stages...),
+	}
+}
+
+// validationOf copies the validation facts.
+func validationOf(validation *Validation) *Validation {
+	if validation == nil {
+		return nil
+	}
+	facts := *validation
+	return &facts
+}
+
+// snapshotOf copies the snapshot facts.
+func snapshotOf(snapshot *SnapshotFacts) *SnapshotFacts {
+	if snapshot == nil {
+		return nil
+	}
+	facts := *snapshot
+	return &facts
+}
+
+// toolchainOf copies the toolchain facts, filling in what the run does not know
+// and saying nothing at all when it knows neither.
+//
+// A run that failed before it located a toolchain has no honest answer here,
+// and "" is not one: the schema wants a name, and failing a whole run at the
+// very last step over a display field would throw away everything it measured.
+// So a half-known toolchain says "unknown" for the half it does not have,
+// exactly as the workspace block does, and an entirely unknown one is absent.
+func toolchainOf(toolchain *ToolchainFacts) *ToolchainFacts {
+	if toolchain == nil || (toolchain.GoBin == "" && toolchain.Version == "") {
+		return nil
+	}
+	return &ToolchainFacts{
+		GoBin:   or(toolchain.GoBin, unknownValue),
+		Version: or(toolchain.Version, unknownValue),
+	}
+}
+
+// resolvedCommand copies the argv that was really started, or nothing when the
+// caller did not resolve one. It is nil rather than `[]` for absent, because
+// the key is then omitted rather than written empty: an empty argv is not a
+// command anybody ran.
+func resolvedCommand(argv []string) []string {
+	if len(argv) == 0 {
+		return nil
+	}
+	return slices.Clone(argv)
 }
 
 // checkIdentity refuses a report that cannot be trusted to name itself: the run
@@ -418,6 +517,9 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 		if err != nil {
 			return nil, nil, err
 		}
+		if err = checkExecutions(m, result, outcome); err != nil {
+			return nil, nil, err
+		}
 		mutants = append(mutants, Mutant{
 			ID:           m.ID,
 			DisplayID:    m.DisplayID,
@@ -442,6 +544,7 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			// document that looks fine; the schema refuses it, which is where a
 			// value this package cannot interpret belongs.
 			Attempts:             result.Attempts,
+			Executions:           executionsOf(result.Executions),
 			OutputTail:           text(result.OutputTail),
 			CoveringTestPackages: stringList(result.CoveringTestPackages),
 			Uncovered:            result.Uncovered,
@@ -488,6 +591,90 @@ func notRunReasonOf(m mutation.Mutant, result MutantResult, outcome Outcome) (*s
 		}
 	}
 	return text(string(reason)), nil
+}
+
+// checkExecutions holds one mutant's per-attempt rows to what the rest of its
+// row says about it.
+//
+// Two things are refused and both are statements a document must never be able
+// to make. An execution on a cached, uncovered or not-run mutant would be this
+// run claiming a pass over the test binaries it never made: a cached outcome
+// was read out of a file, an uncovered one was settled by a coverage profile
+// before any process started, and a not-run one was never reached. And a count
+// that disagrees with `attempts` would be one document stating two different
+// numbers of attempts — the summary a consumer counts, and the rows the same
+// consumer would count by hand.
+//
+// The rows are not *required*: a caller that recorded no per-attempt detail
+// passes none, and the document says `[]` rather than inventing rows. What is
+// refused is a pair that contradicts itself.
+func checkExecutions(m mutation.Mutant, result MutantResult, outcome Outcome) error {
+	if len(result.Executions) == 0 {
+		return nil
+	}
+	switch {
+	case result.Cached:
+		return &Error{
+			Code: CodeInvalidExecutions,
+			Message: fmt.Sprintf("mutant %s is marked cached and carries %s: an outcome adopted from the cache was measured by another run",
+				m.DisplayID, countNoun(len(result.Executions), "execution")),
+		}
+	case result.Uncovered:
+		return &Error{
+			Code: CodeInvalidExecutions,
+			Message: fmt.Sprintf("mutant %s is marked uncovered and carries %s: coverage settles a mutant without starting a process",
+				m.DisplayID, countNoun(len(result.Executions), "execution")),
+		}
+	case outcome == OutcomeNotRun:
+		return &Error{
+			Code: CodeInvalidExecutions,
+			Message: fmt.Sprintf("mutant %s was not run and carries %s: a mutant nothing measured has nothing to show for it",
+				m.DisplayID, countNoun(len(result.Executions), "execution")),
+		}
+	case len(result.Executions) != result.Attempts:
+		return &Error{
+			Code: CodeInvalidExecutions,
+			Message: fmt.Sprintf("mutant %s reports %s and %s: the two are the same fact at two resolutions",
+				m.DisplayID, countNoun(result.Attempts, "attempt"), countNoun(len(result.Executions), "execution")),
+		}
+	}
+	for i, execution := range result.Executions {
+		if !execution.Outcome.Observed() {
+			return &Error{
+				Code: CodeInvalidExecutions,
+				Message: fmt.Sprintf("attempt %d of mutant %s is %s, which is a verdict about several passes rather than something one pass saw: expected one of %s",
+					i+1, m.DisplayID, execution.Outcome, joinObservations()),
+			}
+		}
+	}
+	return nil
+}
+
+// joinObservations lists what a pass can observe, so that the list in an error
+// and the enum in the schema cannot drift apart.
+func joinObservations() string {
+	names := make([]string, 0, len(Observations()))
+	for _, outcome := range Observations() {
+		names = append(names, string(outcome))
+	}
+	return strings.Join(names, ", ")
+}
+
+// executionsOf copies the per-attempt rows, numbering them from one and giving
+// every row a binary list that is `[]` rather than null.
+//
+// The attempt numbers are imposed here rather than trusted, for the reason the
+// skips are sorted here: the rows are in attempt order by contract, so the
+// numbering is a function of the position, and a caller that got it wrong would
+// publish a document whose rows disagree with their own order.
+func executionsOf(executions []Execution) []Execution {
+	out := make([]Execution, 0, len(executions))
+	for i, execution := range executions {
+		execution.Attempt = i + 1
+		execution.Binaries = stringList(execution.Binaries)
+		out = append(out, execution)
+	}
+	return out
 }
 
 // joinReasons lists the not-run reasons for a message, so that the list in an
@@ -737,7 +924,16 @@ func shardOf(opts Options) (*Shard, error) {
 // in, so the number in the summary and the rows a reader would count by hand
 // are the same number by construction.
 func coverageOf(opts Options, mutants []Mutant) (Coverage, error) {
-	return coverageBlock(opts.CoverageMode, opts.CoverageBinaries, mutants)
+	coverage, err := coverageBlock(opts.CoverageMode, opts.CoverageBinaries, mutants)
+	if err != nil {
+		return Coverage{}, err
+	}
+	// The fallback is a fact about this run rather than about the narrowing, so
+	// it is filled in here and not in the block `report merge` shares: a merged
+	// document has several runs' worth of it and reports none.
+	coverage.UnavailableReason = text(opts.CoverageUnavailableReason)
+	coverage.BuildFallback = opts.CoverageBuildFallback
+	return coverage, nil
 }
 
 // coverageBlock is [coverageOf] over the two values rather than over the whole
