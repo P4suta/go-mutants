@@ -59,6 +59,71 @@ Entries say *why* a change was made, not only what changed.
   binary that was cut off and nothing at all when the pass stopped between
   binaries with none running. The request's selector is the fallback, for the
   failures that are about a pass rather than about one binary.
+- **The engine accounts for what it did, into a trace nobody passes yet.**
+  `engine.Options` gains `RunID`, `TraceSink` and `PublishTrace`, and a run now
+  records itself: each of the four phases and every stage inside them, every
+  subprocess it starts under a label (`go-version`, `scope-list`,
+  `baseline-build`, `baseline-test`, `instrumented-baseline`,
+  `covdata-textfmt`, and everything internal/execute and internal/validate
+  already labelled), the snapshot it froze, the leftovers it swept, one coverage
+  decision per mapped mutant, every cache lookup and write-back, each file it
+  wrote, and every warning it published.
+
+  All of it goes into the `gomutants-trace-v1` stream, which is where a question
+  like "why did that run take eleven minutes" or "which binary killed this
+  mutant" becomes answerable. Until now the only account of a run was its report,
+  and a report is a statement about the *code*: it says which mutants there are
+  and what became of each, and deliberately says nothing about the work. Between
+  the two there was nowhere to put "validation spent nine builds", "the coverage
+  profiles named no file inside the module", "the sweep reclaimed four
+  gigabytes" — facts about the run rather than about the program, every one of
+  which was either dropped on the floor or reduced to a single console line.
+
+  Nothing passes a sink yet: `--trace` is the next change, and the report gains
+  none of this until the one after that. What lands here is the recording itself
+  and the invariant it lives or dies by, which is that a trace is a diagnostic
+  and never evidence. No trace option enters the cache key, the workspace digest,
+  the catalogue or a mutant id, and a sink that refuses every event costs the
+  events and nothing else: the same mutants, the same verdicts, the same exit
+  status, the same document byte for byte. `cache.Context`'s field set is now
+  pinned by a test of its own, so that a future option cannot drift into the key
+  unnoticed and silently empty every user's cache.
+
+  Three consequences of that invariant are worth naming, because each is a way a
+  diagnostic could have cost a run. A sink that *panics* is now counted exactly
+  as one that returned an error: a `Sink` is an interface, an embedder's
+  implementation of it is ordinary Go code, and the panic would otherwise unwind
+  through the recorder on whichever goroutine was recording — during execution,
+  one of the workers — and take the process with it. Publishing the trace onto
+  the event stream goes through a bounded buffer and one forwarding goroutine, so
+  the recorder's lock is never held across a send onto a channel a terminal is
+  draining; without that, asking to watch a run would have made every worker
+  queue behind the screen. And the disabled recorder allocates nothing: taking a
+  record's address inside a method the compiler inlines was moving the caller's
+  copy to the heap, at eighty to a hundred and twelve bytes per mutant, per cache
+  lookup and per mapped mutant, on runs that record nothing at all.
+
+  `engine.Options.RunID` is checked against the form `NewRunID` mints —
+  `RunIDPattern`, now exported because `internal/cli` will read it back off a
+  directory listing — and a value that is not a run id is refused with the new
+  `GOM4005` before the workspace is copied. It is refused rather than replaced:
+  the id names files, and a caller that minted one has something of its own filed
+  under it, so running under a quietly different id would leave the two unable to
+  find each other.
+
+  Three things a renderer could not previously say are on the event stream as
+  well. `engine.PhaseCompleted` answers every `PhaseChanged` with the phase's
+  duration — including the last phase of a run, which has no next one to be
+  followed by and is now closed on every path out of it, the failure and the
+  interruption included. `engine.Traced` carries the recording itself, published
+  only when `PublishTrace` asks for it, which is how `-vv` will draw a run
+  without opening a second recording of it. And `engine.MutantResult` gains
+  `KilledBy`, `Attempts` and `CoveringTestPackages`: all three were in the
+  document and in none of the events, so a console could not say which suite
+  caught a mutant, how many attempts it took, or which suites ran a survivor's
+  line and did not notice. `RunOutcome` gains `Timing`, `Validation`, `Snapshot`
+  and `CoverageFallback` for the same reason — the run measured them and had
+  nowhere to put them.
 - **`engine.Options.TempDirectory`: a run can name the parent of its own
   temporary directories.** The engine put its snapshot, and the scratch
   directory beside it, under `os.TempDir()`, and swept that same directory for

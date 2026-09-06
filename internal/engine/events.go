@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // A Phase names one stage of a run. Phases are ordered, they are entered at
@@ -178,6 +179,44 @@ type PhaseChanged struct {
 	Detail string
 }
 
+// PhaseCompleted reports that the run has left a phase, and how long it was in
+// it. It is emitted once per phase, on exit, immediately before the
+// [PhaseChanged] of the next one — and for the last phase of a run, on every
+// path out of it, including a failure and an interruption.
+//
+// It is the other half of [PhaseChanged] and exists because a phase's duration
+// is the coarsest useful thing a run can say about where its time went. A
+// renderer could time the gap between two PhaseChanged events itself, but the
+// last phase has no next one to be followed by, and a run that stopped in the
+// middle of one would leave that phase untimed exactly when the timing matters
+// most.
+type PhaseCompleted struct {
+	// Phase is the phase being left, and is always the one the most recent
+	// [PhaseChanged] announced.
+	Phase Phase
+	// Duration is the wall-clock time spent in it.
+	Duration time.Duration
+}
+
+// Traced carries one event of the run's own recording onto the event stream.
+//
+// It is published only when [Options.PublishTrace] is set, which is what `-vv`
+// asks for: the verbose renderer draws the recording, and the recording already
+// travels through a channel a renderer is draining. Publishing each event as it
+// is recorded makes the two orders one order — a renderer printing them as they
+// arrive is printing the recording — and it costs a run that did not ask for
+// them exactly nothing, because the fan-out is only built when somebody did.
+//
+// The event is a deep copy taken at the moment it was recorded, so a renderer
+// may keep it. Unlike every other event in this file it is published from
+// whichever goroutine recorded it, execution workers included; that is already
+// the contract for [MutantStarted] and [MutantFinished] and it is why the engine
+// publishes its reproducible summary in [RunCompleted] instead.
+type Traced struct {
+	// Event is the recorded event, exactly as the sink received it.
+	Event trace.Event
+}
+
 // BaselineProgress reports one completed baseline run.
 //
 // It is published twice over in a complete run: once per configured
@@ -343,6 +382,41 @@ type MutantResult struct {
 	// recorded. It is only ever set on an outcome the cache stores — killed,
 	// survived, or a confirmed timeout — and never alongside Uncovered.
 	Cached bool
+	// KilledBy is the import path of the test binary that detected the mutant —
+	// the one that failed, or the one it hung — and is empty for every other
+	// outcome. It is the same identity the report's `killed_by` carries.
+	//
+	// A renderer needs it to answer the first question a kill raises, which is
+	// which suite caught it: on a module with forty test binaries, "killed"
+	// alone leaves a reader with forty places to go and look.
+	KilledBy string
+	// Attempts is how many passes over the test binaries the mutant took: one
+	// for a mutant that settled first time, two for one that timed out and was
+	// retried serially, and zero for an uncovered mutant.
+	//
+	// It is carried rather than collapsed into the outcome because "survived"
+	// and "survived twice" are different facts about a flaky test, and because a
+	// confirmed timeout is only distinguishable from an unconfirmed one by
+	// whether the second pass happened.
+	Attempts int
+	// CoveringTestPackages are the import paths of the test binaries whose
+	// coverage profile reaches this mutant's lines, sorted, exactly as the
+	// report's `covering_test_packages` carries them.
+	//
+	// It is empty for a run with coverage off, where nothing was measured, and
+	// empty for an uncovered mutant, where the measurement is what established
+	// that nothing reaches it — [MutantResult.Uncovered] is what tells those two
+	// apart. For a survivor that *was* covered it is the actionable half of the
+	// finding: these are the suites that ran the line and did not notice.
+	CoveringTestPackages []string
+}
+
+// clone returns a copy that shares no slice with the receiver, so that a
+// renderer holding the result cannot observe the engine reusing a list it read
+// out of the coverage mapping.
+func (m MutantResult) clone() MutantResult {
+	m.CoveringTestPackages = slices.Clone(m.CoveringTestPackages)
+	return m
 }
 
 // MutantStarted reports that an attempt at one mutant has begun.
@@ -581,6 +655,8 @@ type RunCompleted struct {
 
 func (RunPlanned) event()        {}
 func (PhaseChanged) event()      {}
+func (PhaseCompleted) event()    {}
+func (Traced) event()            {}
 func (BaselineProgress) event()  {}
 func (BaselineCompleted) event() {}
 func (Discovered) event()        {}

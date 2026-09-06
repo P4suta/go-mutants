@@ -147,6 +147,22 @@ func (recorder *Recorder) Prepare(phase, state, result string, duration time.Dur
 	recorder.emit(Event{Type: TypePrepare, Prepare: &record})
 }
 
+// Every method below that takes a record struct is split in two: a wrapper
+// holding nothing but the nil check, and a body marked `//go:noinline` that
+// takes the record's address.
+//
+// The split is what makes the disabled recorder free, and it is worth stating
+// because it reads as an indirection nobody needs. Call sites record
+// unconditionally, so every one of these runs on every run whether or not a
+// recording was asked for. Taking `&record` inside a method the compiler then
+// inlines moves the *caller's* copy to the heap — escape analysis decides per
+// variable rather than per branch — so a nil recorder was costing an allocation
+// of eighty to a hundred and twelve bytes per mutant, per cache lookup and per
+// mapped mutant, on a run that records nothing at all. With the address taken in
+// a body that is never inlined into the wrapper, the record is copied onto that
+// body's frame and escapes there, and the nil path never reaches it.
+// TestNilRecorderCostsNoAllocation is the pin.
+
 // Exec records one executed command and returns the sequence number it was
 // recorded at, or zero when nothing was recorded.
 //
@@ -159,6 +175,11 @@ func (recorder *Recorder) Exec(record ExecRecord) int64 {
 	if recorder == nil {
 		return 0
 	}
+	return recorder.recordExec(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordExec(record ExecRecord) int64 {
 	// An argument vector is the one field of an exec event a reader may
 	// iterate without checking it first, so it is never null. The refusal path
 	// is why: a spec that could not be run is recorded with its argv as it was
@@ -184,6 +205,11 @@ func (recorder *Recorder) MutantExec(record MutantRecord) {
 	if recorder == nil {
 		return
 	}
+	recorder.recordMutantExec(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordMutantExec(record MutantRecord) {
 	recorder.emit(Event{Type: TypeMutantExec, Mutant: &record})
 }
 
@@ -199,6 +225,11 @@ func (recorder *Recorder) ProbeExec(record ProbeRecord) {
 	if recorder == nil {
 		return
 	}
+	recorder.recordProbeExec(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordProbeExec(record ProbeRecord) {
 	if record.Outcome == ProbeOutcomeMeasured && record.Infected == nil {
 		record.Infected = []string{}
 	}
@@ -210,6 +241,11 @@ func (recorder *Recorder) Validate(record ValidateRecord) {
 	if recorder == nil {
 		return
 	}
+	recorder.recordValidate(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordValidate(record ValidateRecord) {
 	recorder.emit(Event{Type: TypeValidate, Validate: &record})
 }
 
@@ -218,6 +254,11 @@ func (recorder *Recorder) Coverage(record CoverageRecord) {
 	if recorder == nil {
 		return
 	}
+	recorder.recordCoverage(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordCoverage(record CoverageRecord) {
 	recorder.emit(Event{Type: TypeCoverageMap, Coverage: &record})
 }
 
@@ -226,6 +267,11 @@ func (recorder *Recorder) Cache(record CacheRecord) {
 	if recorder == nil {
 		return
 	}
+	recorder.recordCache(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordCache(record CacheRecord) {
 	recorder.emit(Event{Type: TypeCache, Cache: &record})
 }
 
@@ -234,6 +280,11 @@ func (recorder *Recorder) Snapshot(record SnapshotRecord) {
 	if recorder == nil {
 		return
 	}
+	recorder.recordSnapshot(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordSnapshot(record SnapshotRecord) {
 	recorder.emit(Event{Type: TypeSnapshot, Snapshot: &record})
 }
 
@@ -242,6 +293,11 @@ func (recorder *Recorder) Sweep(record SweepRecord) {
 	if recorder == nil {
 		return
 	}
+	recorder.recordSweep(record)
+}
+
+//go:noinline
+func (recorder *Recorder) recordSweep(record SweepRecord) {
 	recorder.emit(Event{Type: TypeSweep, Sweep: &record})
 }
 
@@ -315,10 +371,33 @@ func (recorder *Recorder) emitLocked(moment time.Time, event Event) int64 {
 	event.Timestamp = moment.UTC().Format(time.RFC3339Nano)
 	event.ElapsedMS = durationMS(moment.Sub(recorder.started))
 	recorder.attempts++
-	if err := recorder.sink.Emit(event); err != nil {
+	if !recorder.deliver(event) {
 		recorder.failures++
 	}
 	return event.Seq
+}
+
+// deliver hands one event to the sink and reports whether it was kept.
+//
+// A sink that panics is counted exactly as one that returned an error. That is
+// not defensiveness about this package's own sinks: a Sink is an interface, an
+// embedder's implementation of it is ordinary Go code, and ordinary Go code
+// panics. Without the recover the panic unwinds through this recorder — through
+// the lock, on whichever goroutine was recording, which during a mutation run is
+// one of the execution workers — and takes the whole process with it. A
+// diagnostic that can kill the run it is a diagnostic of inverts the point of
+// having one; see the fail-open argument in the package documentation.
+//
+// The lock is not released by the recover, and does not need to be: the caller
+// holds it and unlocks on its own deferred path, so a panicking sink costs the
+// event and leaves the recorder usable for the next one.
+func (recorder *Recorder) deliver(event Event) (kept bool) {
+	defer func() {
+		if recover() != nil {
+			kept = false
+		}
+	}()
+	return recorder.sink.Emit(event) == nil
 }
 
 // environmentNames reduces environment entries to their names, sorted and

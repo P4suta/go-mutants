@@ -12,6 +12,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // wholeModule is the package pattern that means every package in the snapshot.
@@ -185,7 +186,7 @@ func narrowed(patterns []string) bool {
 // for it. With `-e` the listing tolerates a package it cannot load and still
 // prints where it is, so a non-zero exit from here really is the go command
 // refusing to work in this snapshot at all — and its output is carried along.
-func resolveTestScope(
+func (s *session) resolveTestScope(
 	ctx context.Context,
 	toolchain gocmd.Toolchain,
 	root string,
@@ -197,6 +198,12 @@ func resolveTestScope(
 		spec.Dir = root
 		spec.Env = env
 		spec.Timeout = BaselineCap
+		spec.Trace = s.trace
+		spec.Kind = trace.ExecKindScopeList
+		// The subject is the pattern rather than the whole set, because one
+		// listing is issued per pattern precisely so that a failure names the
+		// one the user got wrong.
+		spec.Subject = pattern
 
 		result := runner.Run(ctx, spec)
 		if err := check(ctx, spec, result, CodeTestScope,

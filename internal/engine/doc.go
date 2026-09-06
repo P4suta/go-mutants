@@ -137,6 +137,36 @@
 //     because nothing started: there is no worker and no attempt, and inventing
 //     a start would be inventing a process. A renderer that tracks worker slots
 //     has to allow for it; see [MutantFinished] for the full contract.
+//   - Every [PhaseChanged] is answered by exactly one [PhaseCompleted] carrying
+//     the phase's duration, and the answer comes before the next phase is
+//     announced. The last phase of a run is closed on every path out of it, the
+//     failure and the interruption included, so a phase left open is a bug
+//     rather than a state to handle.
+//   - [Traced] is published only when [Options.PublishTrace] is set, and then
+//     from whichever goroutine recorded the event. A renderer that has no use
+//     for it should ignore it rather than switch it off: switching it off is the
+//     caller's decision, made once, by not asking for it.
+//
+// # The recording
+//
+// A run also accounts for itself into [Options.TraceSink]: every phase and
+// stage, every subprocess, the snapshot, the sweep, each coverage decision, each
+// cache decision, the files it wrote, and every warning. A nil sink is the
+// disabled trace and is what most callers pass; the engine records
+// unconditionally into a nil recorder, so a traced run and an untraced one take
+// the same path through this package.
+//
+// The recording is a diagnostic and never evidence. No option that affects it
+// enters [cache.Context], the workspace digest, the catalogue or a mutant id,
+// and a sink that fails costs the events rather than the run — the same mutants,
+// the same verdicts, the same exit status. See
+// `docs/adr/0001-trace-is-not-evidence.md`, and the tests that pin it:
+// TestTraceOptionsTakeNoPartInMutantIdsOrTheCacheKey and
+// TestATraceThatCannotBeWrittenChangesNothingAboutTheRun.
+//
+// The sink belongs to the caller. The engine writes to it up to and including
+// the `run-end` event and never closes it, because only the caller knows when
+// the last thing that will write to it is done.
 //
 // # Interruption
 //

@@ -235,9 +235,16 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // fold folds one engine event into the model.
 //
-// Every event the sealed interface defines is handled explicitly, so that one
-// added later shows up here as the default case and is ignored rather than
-// misread.
+// Every event this dashboard draws is handled explicitly; an event it does not
+// draw falls out of the switch and changes nothing about the frame, which is
+// what makes one added later safe rather than misread.
+//
+// Two are deliberately in that second group. [engine.PhaseCompleted] restates a
+// phase the frame is already showing, with a duration a live dashboard has no
+// column for; [engine.Traced] is one line per recorded subprocess, and
+// repainting thousands of times for facts nobody can read at that speed would
+// cost the frames the run's own progress is drawn in. Both belong to the plain
+// renderer's verbose modes, where a reader can scroll back over them.
 func (m model) fold(event engine.Event) (tea.Model, tea.Cmd) {
 	// The clock advances on an event as well as on a tick, so that a worker
 	// slot filled between two repaints is timed from when the mutant actually

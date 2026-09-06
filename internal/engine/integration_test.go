@@ -356,14 +356,21 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	// catalogue order, so this is a fact about the pipeline rather than about
 	// the machine — and it is the only assertion that would notice a phase
 	// quietly dropping out of the run.
+	//
+	// Every phase is announced and closed, and the close comes before the next
+	// announcement: [engine.PhaseCompleted] is what carries the phase's duration,
+	// and the last phase's arrives before the terminal event rather than after
+	// it, because a phase nothing closed would be a run that never left it.
 	wantKinds := []string{
 		"engine.RunPlanned",
-		"engine.PhaseChanged", // discover
-		"engine.PhaseChanged", // baseline
+		"engine.PhaseChanged",   // discover
+		"engine.PhaseCompleted", // discover
+		"engine.PhaseChanged",   // baseline
 		"engine.BaselineProgress",
 		"engine.BaselineProgress",
 		"engine.BaselineCompleted",
-		"engine.PhaseChanged", // mutate
+		"engine.PhaseCompleted", // baseline
+		"engine.PhaseChanged",   // mutate
 		"engine.Discovered",
 		"engine.Validated",
 		"engine.BaselineProgress", // the instrumented baseline
@@ -376,8 +383,10 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		wantKinds = append(wantKinds, "engine.MutantStarted", "engine.MutantFinished")
 	}
 	wantKinds = append(wantKinds,
-		"engine.PhaseChanged", // report
+		"engine.PhaseCompleted", // mutate
+		"engine.PhaseChanged",   // report
 		"engine.ReportPublished",
+		"engine.PhaseCompleted", // report
 		"engine.RunCompleted",
 	)
 	if got := kinds(events); !slices.Equal(got, wantKinds) {
@@ -388,12 +397,29 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	if planned := events[0].(RunPlanned); planned.RunID != outcome.RunID || planned.Workers != 1 {
 		t.Errorf("RunPlanned = %+v, want run %s and 1 worker", planned, outcome.RunID)
 	}
-	for i, phase := range []Phase{PhaseDiscover, PhaseBaseline} {
-		if got := events[1+i].(PhaseChanged); got.Phase != phase || got.Detail == "" {
-			t.Errorf("phase %d = %+v, want a described %s", i, got, phase)
+	// Each phase, announced and closed. The two indexes are written out rather
+	// than derived because the gap between them is the phase: `discover` closes
+	// on the next line and `baseline` closes three observations later, which is
+	// the whole point of timing them separately.
+	for _, span := range []struct {
+		phase         Phase
+		entered, left int
+	}{
+		{PhaseDiscover, 1, 2},
+		{PhaseBaseline, 3, 7},
+	} {
+		if got := events[span.entered].(PhaseChanged); got.Phase != span.phase || got.Detail == "" {
+			t.Errorf("event %d = %+v, want a described %s", span.entered, got, span.phase)
+		}
+		// Nothing here asserts how long the phase took — that is the machine's
+		// business — only that the run timed it rather than leaving the field
+		// at its zero value.
+		got := events[span.left].(PhaseCompleted)
+		if got.Phase != span.phase || got.Duration < 0 {
+			t.Errorf("event %d = %+v, want %s with a measured span", span.left, got, span.phase)
 		}
 	}
-	for i, index := range []int{3, 4} {
+	for i, index := range []int{4, 5} {
 		progress := events[index].(BaselineProgress)
 		if progress.Run != i+1 || progress.Of != 2 {
 			t.Errorf("progress %d = %+v, want run %d of 2", index, progress, i+1)
@@ -402,7 +428,7 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 			t.Errorf("progress %d reported %s, outcome recorded %s", index, progress.Duration, outcome.BaselineRuns[i])
 		}
 	}
-	completed := events[5].(BaselineCompleted)
+	completed := events[6].(BaselineCompleted)
 	if completed.Timeout != outcome.Timeout || completed.TimeoutSource != outcome.TimeoutSource {
 		t.Errorf("BaselineCompleted = %+v, want the outcome's timeout %s (%s)", completed, outcome.Timeout, outcome.TimeoutSource)
 	}
@@ -412,12 +438,12 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	// The instrumented baseline is the sole `1 of 1`, and it is what proves the
 	// rewrite preserved meaning: the suite passed with every guard in the tree
 	// and nothing activated.
-	if instrumented := events[9].(BaselineProgress); instrumented.Run != 1 || instrumented.Of != 1 {
+	if instrumented := events[11].(BaselineProgress); instrumented.Run != 1 || instrumented.Of != 1 {
 		t.Errorf("the instrumented baseline reported %+v, want run 1 of 1", instrumented)
 	}
 	// Coverage is on by default — the test command is the built-in one — and
 	// this fixture's every function is exercised, so nothing is skipped.
-	if mapped := events[10].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != simpleMutants || mapped.Uncovered != 0 {
+	if mapped := events[12].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != simpleMutants || mapped.Uncovered != 0 {
 		t.Errorf("CoverageMapped = %+v, want 1 binary covering all %d mutants", mapped, simpleMutants)
 	}
 	if mode := outcome.Report.Coverage.Mode; mode != report.CoveragePackage {

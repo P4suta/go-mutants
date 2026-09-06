@@ -137,7 +137,7 @@ func (r *PlainRenderer) Run(ctx context.Context, events <-chan engine.Event) err
 // the sealed interface later shows up here as the default case and prints
 // nothing rather than a Go struct dump.
 //
-// Three events deliberately print nothing in this renderer.
+// Five events deliberately print nothing in this renderer.
 // [engine.MutantStarted] exists so that a dashboard can show a worker slot
 // filling; a plain log that printed it would say everything twice, once when a
 // mutant began and once when it settled. [engine.CacheHit] is the same
@@ -146,6 +146,13 @@ func (r *PlainRenderer) Run(ctx context.Context, events <-chan engine.Event) err
 // twice. A [engine.MutantFinished] whose outcome is not-run is the judgement in
 // the other direction: the mutant was reached and abandoned when the run was
 // cut short, which the closing counts state once rather than a line at a time.
+//
+// The last two are the run's account of itself rather than its findings.
+// [engine.PhaseCompleted] and [engine.Traced] are what `-v` and `-vv` render,
+// and a run at the default verbosity is byte-identical whether or not it was
+// traced: a recorded subprocess per line would bury the handful of survivors
+// this output exists to show. They are cases here rather than the default so
+// that the choice is a line somebody reviewed.
 func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 	switch e := event.(type) {
 	case engine.RunPlanned:
@@ -211,6 +218,12 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 		return "", false
 
 	case engine.CacheHit:
+		return "", false
+
+	case engine.PhaseCompleted:
+		return "", false
+
+	case engine.Traced:
 		return "", false
 
 	case engine.MutantFinished:

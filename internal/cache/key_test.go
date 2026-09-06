@@ -4,6 +4,7 @@
 package cache_test
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -200,6 +201,46 @@ func TestContextKeyIsAPrefixOfTheKey(t *testing.T) {
 	}
 	if !strings.HasPrefix(key, short) {
 		t.Errorf("the context key %q is not a prefix of %q", short, key)
+	}
+}
+
+// TestContextFieldsAreExactlyTheKnownSet is the pin behind
+// `docs/adr/0001-trace-is-not-evidence.md`: a cached outcome depends on these
+// eight things and on nothing else, ever.
+//
+// The list is checked by name rather than by counting, and the two directions
+// catch opposite mistakes. A field *added* here — a trace sink, a keep-temp
+// mode, a verbosity — would split every context in two and silently empty the
+// cache of every user who ever passed the flag, while never changing a single
+// verdict: what makes a diagnostic option a diagnostic option is precisely that
+// it changes nothing about the run. A field *removed* is the worse direction,
+// because it lets two runs that measured different programs share a key.
+//
+// The tests around it check that each of these hashes; this one checks that
+// there is nothing else to hash. Growing the recipe is therefore a deliberate
+// edit in two places, which is the amount of friction a frozen key should have.
+func TestContextFieldsAreExactlyTheKnownSet(t *testing.T) {
+	t.Parallel()
+
+	want := []string{
+		"ToolVersion",
+		"ToolDigest",
+		"ToolchainVersion",
+		"WorkspaceDigest",
+		"CatalogDigest",
+		"TestCommand",
+		"ConfiguredTimeout",
+		"Env",
+	}
+	structure := reflect.TypeOf(cache.Context{})
+	got := make([]string, 0, structure.NumField())
+	for i := range structure.NumField() {
+		got = append(got, structure.Field(i).Name)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("cache.Context has the fields\n\t%v\nwant\n\t%v\n"+
+			"a field added to the key changes what every stored outcome is filed under, "+
+			"and a diagnostic option must never be one of them", got, want)
 	}
 }
 
