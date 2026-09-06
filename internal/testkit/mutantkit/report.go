@@ -58,6 +58,12 @@ const (
 	// the schema's milliseconds type has a minimum of zero and because "no time
 	// passed" is unmistakably not a measurement.
 	NormalizedDurationMS = 0
+	// NormalizedElapsed stands in for the elapsed time `go test` prints beside
+	// a test's name — `--- FAIL: TestClamp (0.01s)` — wherever it appears
+	// inside the free text a report carries. It is a real marker rather than a
+	// placeholder because the text around it is the program's own output and
+	// has to go on reading like it.
+	NormalizedElapsed = "(0.00s)"
 	// NormalizedWorker stands in for the scheduler slot that executed one
 	// attempt. Which worker claimed a mutant is decided by whichever goroutine
 	// reached the queue first, so two runs of one workspace differ in it and
@@ -140,11 +146,14 @@ func EncodeJSON(t testing.TB, doc map[string]any) []byte {
 // directive, the toolchain's own version line, the host's GOOS and GOARCH, the
 // wall clock at both ends, every measured duration — the run's, each mutant's,
 // each of its attempts', and every phase and stage of the timeline — the
-// scheduler slot each attempt ran in, and every absolute path: the located toolchain, in `test.command` and in
-// `test.resolved_command` and in `test.toolchain.go_bin`, the snapshot root,
-// the report directory. A golden that carried them would fail on the next
-// machine, on the next toolchain, on the other two platforms CI runs, and on
-// the second run of the same day.
+// scheduler slot each attempt ran in, every absolute path (the located
+// toolchain, in `test.command` and in `test.resolved_command` and in
+// `test.toolchain.go_bin`, the snapshot root, the report directory), and the
+// elapsed times `go test` writes into the output a report carries. A golden
+// that kept them would fail on the next machine, on the next toolchain, on the
+// other two platforms CI runs, and on the second run of the same day — the last
+// of them on nothing more than a busy runner, which is exactly how it was
+// found.
 //
 // Two things are deliberately *not* normalised. Mutant ids and workspace digests
 // are content-addressed: they are derived from the bytes of the program under
@@ -193,12 +202,22 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 		}
 	}
 
-	// The paths are replaced last and by a walk rather than by name, because
-	// they turn up in fields nothing can enumerate: a command's argv, a
-	// warning's message, the tail of a failing test's output.
-	replacePaths(doc)
+	// The free text is rewritten last and by a walk rather than by name; see
+	// [rewriteText] for what it does and why it is not a list of fields.
+	rewriteText(doc)
 	return EncodeJSON(t, doc)
 }
+
+// goTestElapsed matches the elapsed time `go test` prints beside a test's own
+// name, and nothing else.
+//
+// The parentheses and the decimal point are the whole of the discrimination,
+// and they are enough: `go test` writes `(0.01s)` after every `--- PASS` and
+// `--- FAIL` line, and the text around it is the program's own output, where a
+// number is evidence. `after 10s`, `go1.26.6`, `(0.5)` and `(1.5 s)` are all
+// left alone, which is what keeps this a rule about one tool's format rather
+// than a hunt for digits.
+var goTestElapsed = regexp.MustCompile(`\([0-9]+\.[0-9]+s\)`)
 
 // absolutePath matches a POSIX or Windows absolute path inside a string value.
 //
@@ -210,33 +229,45 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 // or an opening bracket.
 var absolutePath = regexp.MustCompile(`(^|[\s"'=(\[])((?:[A-Za-z]:)?[\\/][^\s"'\[\]()]+)`)
 
-// replacePaths rewrites every absolute path in every string of a decoded
-// document, in place.
-func replacePaths(value any) {
+// rewriteText normalises every string of a decoded document, in place.
+//
+// It is a walk rather than a list of fields because both of the things it
+// rewrites turn up in text nothing can enumerate: an absolute path appears in a
+// command's argv, in a warning's message and in the tail of a failing test's
+// output, and a `go test` elapsed marker appears wherever a test binary's own
+// output is carried. Today that is `mutants[].output_tail` alone — the other
+// free text in the document is compiler diagnostics (`rejected[].diagnostic`,
+// `coverage.unavailable_reason`), engine-composed warnings, and the user's own
+// expectation reasons, none of which is a test binary talking, and
+// `executions[]` carries no free text at all — but a walk is what keeps the
+// next field that does from being a green CI run away from a red one.
+func rewriteText(value any) {
 	switch node := value.(type) {
 	case map[string]any:
 		for key, child := range node {
 			if text, ok := child.(string); ok {
-				node[key] = normalizePathsIn(text)
+				node[key] = normalizeText(text)
 				continue
 			}
-			replacePaths(child)
+			rewriteText(child)
 		}
 	case []any:
 		for i, child := range node {
 			if text, ok := child.(string); ok {
-				node[i] = normalizePathsIn(text)
+				node[i] = normalizeText(text)
 				continue
 			}
-			replacePaths(child)
+			rewriteText(child)
 		}
 	}
 }
 
-// normalizePathsIn replaces the absolute paths in one string, keeping the
-// character that preceded each one.
-func normalizePathsIn(text string) string {
-	return absolutePath.ReplaceAllString(text, "${1}"+NormalizedPath)
+// normalizeText replaces the absolute paths in one string, keeping the
+// character that preceded each one, and flattens every `go test` elapsed time
+// it holds.
+func normalizeText(text string) string {
+	text = absolutePath.ReplaceAllString(text, "${1}"+NormalizedPath)
+	return goTestElapsed.ReplaceAllLiteralString(text, NormalizedElapsed)
 }
 
 // setString replaces a string at a path of keys, when it is there.
