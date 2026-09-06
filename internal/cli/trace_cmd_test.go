@@ -4,8 +4,11 @@
 package cli
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -470,5 +473,318 @@ func TestTraceDiffReportsTheDelta(t *testing.T) {
 	}
 	if !strings.Contains(stderr, string(CodeNoTraceRecorded)) {
 		t.Errorf("stderr = %q, want %s", stderr, CodeNoTraceRecorded)
+	}
+}
+
+// TestAnUnreadableRootIsReportedAsUnreadableRatherThanAsUndeleted keeps a
+// command that deletes from misdiagnosing the reason it did not.
+//
+// A root that cannot be read and a recording that will not go away are
+// different problems with different remedies — a permission or a path that is
+// not a directory, against a file somebody has open — and only one of them is
+// about deleting. Reporting the first as "a recording could not be removed:
+// … cannot be read" sends a reader looking for a locked file that does not
+// exist.
+//
+// So an already-coded failure travels out with the code it was given, and only
+// a removal that failed is wrapped as one.
+func TestAnUnreadableRootIsReportedAsUnreadableRatherThanAsUndeleted(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(filepath.Dir(traceRoot), 0o755); err != nil {
+		t.Fatalf("creating the report directory: %v", err)
+	}
+	// A file where the directory belongs: os.ReadDir refuses it, which is the
+	// same shape of failure a permission would produce and needs no privilege
+	// to arrange.
+	if err := os.WriteFile(traceRoot, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("occupying the trace root: %v", err)
+	}
+
+	code, _, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if strings.Contains(stderr, string(CodeTraceNotRemoved)) {
+		t.Errorf("a root that could not be read was reported as one that could not be deleted:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "removed") {
+		t.Errorf("the failure talks about removing something:\n%s", stderr)
+	}
+}
+
+// withDirectoryListing points the collector's directory reads at a listing of
+// the test's own, for the length of one test.
+func withDirectoryListing(t *testing.T, list func(*os.File) ([]os.DirEntry, error)) {
+	t.Helper()
+	restore := readDir
+	t.Cleanup(func() { readDir = restore })
+	readDir = list
+}
+
+// TestARootThatIsNotADirectoryIsRefusedOnEveryPlatform pins the classification
+// to something other than what the operating system happens to say.
+//
+// A file where the trace root belongs is a read failure on Unix, where
+// os.ReadDir reports ENOTDIR, and *is not one* on Windows: Go's readdir there
+// asks the handle for directory information, and on two of the error codes it
+// can come back with it breaks out of its loop and returns `names, dirents,
+// infos, nil` — the error it was holding is discarded, so the caller is handed
+// an empty directory and no failure at all. `trace clean` then said "nothing to
+// remove: no recording here" about a root it had not been able to read, which
+// is the one thing a command that deletes must never say.
+//
+// So the rule is stated here rather than inherited: a root that exists and is
+// not a directory is a failure, and the listing is never reached. The injected
+// listing is Windows' own answer — no entries, no error — and the refusal has to
+// survive it.
+func TestARootThatIsNotADirectoryIsRefusedOnEveryPlatform(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(filepath.Dir(traceRoot), 0o755); err != nil {
+		t.Fatalf("creating the report directory: %v", err)
+	}
+	if err := os.WriteFile(traceRoot, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("occupying the trace root: %v", err)
+	}
+	withDirectoryListing(t, func(*os.File) ([]os.DirEntry, error) { return nil, nil })
+
+	code, stdout, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if strings.Contains(stdout, "nothing to remove") {
+		t.Errorf("a root that could not be read was reported as one holding nothing:\n%s", stdout)
+	}
+	// And it is still there, which is what the misclassification *cost* rather
+	// than merely misreported. A root read as empty goes on to the os.Remove
+	// that takes an emptied trace directory away, and os.Remove is perfectly
+	// happy to unlink a file — so `trace clean` deleted somebody's file and
+	// called it "removed the empty trace directory". What is not ours is never
+	// removed, and that is the promise this command is built around.
+	if _, err := os.Stat(traceRoot); err != nil {
+		t.Errorf("`trace clean` deleted the file sitting where the trace root belongs: %v", err)
+	}
+
+	// And the other half of the rule, which the same listing must not take
+	// away: a root that is not there at all holds nothing, which is an answer
+	// rather than a failure — it is what a workspace that has never traced a run
+	// looks like.
+	absent := traceRootAt(filepath.Join(t.TempDir(), "never-traced"))
+	names, err := namesIn(absent)
+	if err != nil || len(names) != 0 {
+		t.Errorf("namesIn(a root that was never made) = %q/%v, want nothing and no failure", names, err)
+	}
+}
+
+// TestRemoveDirectoryRemovesOnlyDirectories is the primitive the collector's
+// last step rests on.
+//
+// [os.Remove] tries unlink before rmdir, so it takes a regular file as readily
+// as an empty directory — which is the wrong tool for "the root is empty now,
+// take it away": whether the path is still the directory that was measured is
+// exactly what a collector cannot know. rmdir can only ever remove a directory,
+// so the mistake is not one the timing can produce.
+func TestRemoveDirectoryRemovesOnlyDirectories(t *testing.T) {
+	parent := t.TempDir()
+
+	empty := filepath.Join(parent, "empty")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatalf("creating the empty directory: %v", err)
+	}
+	if err := removeDirectory(empty); err != nil {
+		t.Errorf("removeDirectory(an empty directory) = %v, want it removed", err)
+	}
+	if _, err := os.Stat(empty); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the empty directory survived (%v)", err)
+	}
+
+	file := filepath.Join(parent, "theirs")
+	if err := os.WriteFile(file, []byte("somebody else's file"), 0o600); err != nil {
+		t.Fatalf("writing the file: %v", err)
+	}
+	err := removeDirectory(file)
+	if !errors.Is(err, errNotDirectory) {
+		t.Errorf("removeDirectory(a file) = %v, want it refused as not a directory", err)
+	}
+	if _, statErr := os.Stat(file); statErr != nil {
+		t.Errorf("removeDirectory unlinked a file: %v", statErr)
+	}
+
+	full := filepath.Join(parent, "full")
+	if err := os.MkdirAll(filepath.Join(full, "inside"), 0o755); err != nil {
+		t.Fatalf("creating the directory that holds something: %v", err)
+	}
+	// A directory with something in it is refused too, and is neither of the two
+	// named kinds: it is the ordinary "there is still something here" the
+	// collector passes over in silence.
+	switch err := removeDirectory(full); {
+	case err == nil, errors.Is(err, errNotDirectory), errors.Is(err, errIsALink):
+		t.Errorf("removeDirectory(a directory holding something) = %v, want an ordinary refusal", err)
+	}
+	if _, statErr := os.Stat(full); statErr != nil {
+		t.Errorf("removeDirectory emptied a directory that was not empty: %v", statErr)
+	}
+
+	// And a link to a directory, which is the one the platforms disagree about:
+	// rmdir refuses it and Windows' RemoveDirectory would delete the link
+	// itself. It is refused as a link rather than as "not a directory", because
+	// a link is usually somebody's arrangement rather than somebody's mistake.
+	linked := filepath.Join(parent, "linked")
+	if err := os.Symlink(empty2(t, parent), linked); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("this machine will not create a directory symbolic link (%v); "+
+				"Windows needs SeCreateSymbolicLinkPrivilege or Developer Mode", err)
+		}
+		t.Fatalf("linking %s: %v", linked, err)
+	}
+	if err := removeDirectory(linked); !errors.Is(err, errIsALink) {
+		t.Errorf("removeDirectory(a link to a directory) = %v, want it refused as a link", err)
+	}
+	if info, statErr := os.Lstat(linked); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("removeDirectory removed the link itself (%v, %v)", info, statErr)
+	}
+}
+
+// empty2 is a second empty directory, for the link above to point at.
+func empty2(t *testing.T, parent string) string {
+	t.Helper()
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatalf("creating the directory the link points at: %v", err)
+	}
+	return target
+}
+
+// TestARootReplacedBetweenTheListingAndTheRemovalIsNotUnlinked closes the
+// window the two-call classification left open.
+//
+// Reading the kind and reading the contents used to be two moments: a stat that
+// said "directory", then a listing of whatever was at that path by the time the
+// listing happened. Something replacing the root with a file in between handed
+// the collector an empty listing — on Windows with no error at all — and the
+// step that takes an emptied root away then unlinked the file.
+//
+// Two things close it, and the second is what makes the first enough. The kind
+// and the listing now come from one open handle, so they describe one object;
+// and the removal is rmdir rather than unlink, so a file at that path cannot be
+// removed however the timing falls out.
+//
+// The injected listing is that race, performed rather than imagined: it swaps
+// the directory for a file and then reports the empty listing the run was about
+// to act on. It closes the handle first because Windows will not delete a
+// directory anything holds open — [namesIn]'s own deferred close ignores the
+// second one.
+func TestARootReplacedBetweenTheListingAndTheRemovalIsNotUnlinked(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(traceRoot, 0o755); err != nil {
+		t.Fatalf("creating the trace root: %v", err)
+	}
+
+	const theirs = "somebody else's file"
+	withDirectoryListing(t, func(f *os.File) ([]os.DirEntry, error) {
+		path := f.Name()
+		if err := f.Close(); err != nil {
+			return nil, err
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, []byte(theirs), 0o600); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+
+	code, stdout, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if strings.Contains(stdout, "removed the empty") {
+		t.Errorf("the command claims to have removed an empty directory that is a file:\n%s", stdout)
+	}
+	data, err := os.ReadFile(traceRoot)
+	if err != nil {
+		t.Fatalf("`trace clean` unlinked the file that replaced the trace root: %v", err)
+	}
+	if string(data) != theirs {
+		t.Errorf("the file at the trace root reads %q, want %q", data, theirs)
+	}
+}
+
+// TestADirectorySymlinkAtTheRootIsNeverTheThingRemoved is the other half of
+// "rmdir alone", and the half a platform can get wrong on its own.
+//
+// A link at the trace root reads through to its target, so the recordings
+// inside are collected exactly as they would be anywhere else. The link itself
+// is not a directory this command made and is not one it may remove — and the
+// removal step is where that has to be enforced, because by then the root may
+// not be what the listing saw.
+//
+// Windows is why this is a test rather than an argument. `RemoveDirectory`
+// removes a directory symbolic link or a junction *itself* rather than
+// refusing it, so the step that takes an emptied root away would delete the
+// replacement object; rmdir on every other platform already answers ENOTDIR.
+// The removal therefore opens the root without following reparse points and
+// refuses anything wearing one, which covers a junction and every other tag as
+// well as a symbolic link — a junction needs no separate case because the check
+// is on the attribute rather than on the tag.
+func TestADirectorySymlinkAtTheRootIsNeverTheThingRemoved(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(filepath.Dir(traceRoot), 0o755); err != nil {
+		t.Fatalf("creating the report directory: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "recordings")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("creating the directory the link points at: %v", err)
+	}
+	if err := os.Symlink(target, traceRoot); err != nil {
+		// Only for the one machine that cannot, and it says which one and why:
+		// a directory symbolic link on Windows needs SeCreateSymbolicLinkPrivilege
+		// or Developer Mode, and a CI runner may have neither.
+		if runtime.GOOS == "windows" {
+			t.Skipf("this machine will not create a directory symbolic link (%v); "+
+				"Windows needs SeCreateSymbolicLinkPrivilege or Developer Mode", err)
+		}
+		t.Fatalf("linking %s to %s: %v", traceRoot, target, err)
+	}
+
+	code, stdout, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if !strings.Contains(stderr, "is a link") {
+		t.Errorf("stderr = %q, want it to say the root is a link rather than a directory", stderr)
+	}
+	if strings.Contains(stdout, "removed the empty") {
+		t.Errorf("the command claims to have removed a link:\n%s", stdout)
+	}
+
+	// The link is still a link, and it still points where it did. Removing the
+	// link is what a platform does for us if we let it, and it is the object
+	// this command must never touch.
+	info, err := os.Lstat(traceRoot)
+	if err != nil {
+		t.Fatalf("`trace clean` removed the link at the trace root: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the trace root is %s, want it left as a symbolic link", info.Mode())
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("the directory the link pointed at is gone: %v", err)
 	}
 }

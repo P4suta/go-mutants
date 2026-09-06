@@ -372,7 +372,7 @@ func TestTracePruningKeepsTheNewestRunsAndNeverTouchesForeignNames(t *testing.T)
 		t.Fatalf("writing the stray file: %v", err)
 	}
 
-	removed, err := collect(root, retention{keep: trace.RetainRuns})
+	removed, err := collect(traceRootAt(root), retention{keep: trace.RetainRuns})
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater(t *testing.T) {
 
 	// The decision: everything collectable goes, which is the finished
 	// recording and not the one still being written.
-	plan, err := planSweep(root, retention{keep: 0})
+	plan, err := planSweep(traceRootAt(root), retention{keep: 0})
 	if err != nil {
 		t.Fatalf("planSweep: %v", err)
 	}
@@ -436,9 +436,9 @@ func TestPruningRemovesThePlanItWasGivenAndNotWhatItFindsLater(t *testing.T) {
 	// directory.
 	finishTheRecording(t, root, running)
 
-	removed, err := pruneTraceRoot(root, plan)
+	removed, err := prune(traceRootAt(root), plan)
 	if err != nil {
-		t.Fatalf("pruneTraceRoot: %v", err)
+		t.Fatalf("prune: %v", err)
 	}
 	if !slices.Equal(removed, plan.stale) {
 		t.Errorf("the sweep removed %q, want the plan it was given (%q)", removed, plan.stale)

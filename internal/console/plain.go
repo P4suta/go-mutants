@@ -153,6 +153,11 @@ func (r *PlainRenderer) Run(ctx context.Context, events <-chan engine.Event) err
 // traced: a recorded subprocess per line would bury the handful of survivors
 // this output exists to show. They are cases here rather than the default so
 // that the choice is a line somebody reviewed.
+//
+// [engine.DirectoryKept] is the opposite judgement and prints even under
+// --quiet: it names a directory the user explicitly asked go-mutants to leave
+// on their disk, and a run that keeps nothing never publishes one, so the
+// output of every run that did not ask is unchanged by its existence.
 func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 	switch e := event.(type) {
 	case engine.RunPlanned:
@@ -225,6 +230,15 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 
 	case engine.Traced:
 		return "", false
+
+	case engine.DirectoryKept:
+		// A path the run produced, so it reads like the report block's paths and
+		// is unstyled for the same reason: it is meant to be selected with a
+		// mouse and pasted into a shell. It survives --quiet because a directory
+		// the user asked to keep and then cannot find is the one thing --quiet
+		// must not take away, and because a run that keeps nothing — which is
+		// every run that did not ask — publishes none of these at all.
+		return "kept " + e.Kind + ": " + e.Path, true
 
 	case engine.MutantFinished:
 		if r.Quiet {

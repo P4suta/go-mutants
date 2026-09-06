@@ -287,6 +287,26 @@ so a caller reporting a size never has to ask which case it is in.
 recorded at, which carries the argument vector the child actually received —
 see [Tracing a session](#tracing-a-session).
 
+A **cancellation and a deadline are not the same thing**, and go-mutants tells
+them apart by the context's own cause rather than by which command happened to
+notice the expiry. `context.Canceled` in an error's chain is somebody stopping
+the run — a Ctrl-C, the dashboard's quit key, a caller calling `cancel` — and
+nothing went wrong: such a run reports itself as interrupted, keeps no temporary
+directory that `--keep-temp=on-failure` would otherwise have kept, and writes no
+diagnostics bundle. (`KeepTempAlways` still keeps: it is unconditional by name,
+and a caller who cancelled a run half way through is usually a caller who wants
+to look at the tree.) `context.DeadlineExceeded` is the run failing to finish
+inside the time it was given, which is a failure worth diagnosing: it reports as
+failed, it keeps what it was asked to keep, and the CLI writes the bundle every
+other failure gets.
+
+The division is worth stating, because only two of those three are the engine's.
+`engine.Interrupted` classifies the failure and the engine settles the
+directories; the bundle is `go-mutants run`'s, written from the outcome and the
+error after the run returns, and an embedder that wants one writes its own from
+the same two values. All three answer to one predicate, so the status, the keep
+and the bundle cannot come to disagree about one run.
+
 `Session.Changes` returns `Change{Kind, Path, BeforeSHA256, AfterSHA256}` in
 strict path order, `Kind` one of `added`, `removed`, `modified`.
 

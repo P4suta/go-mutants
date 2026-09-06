@@ -534,6 +534,7 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 		{engine.CacheHit{}, false},
 		{engine.PhaseCompleted{}, false},
 		{engine.Traced{}, false},
+		{engine.DirectoryKept{Kind: engine.KeptSnapshot, Path: "/tmp/go-mutants-snap-0000"}, true},
 		{engine.Warning{}, true},
 		{engine.ReportPublished{}, true},
 		{engine.RunCompleted{}, true},
@@ -544,6 +545,41 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 	for _, row := range rows {
 		if _, ok := r.line(row.event); ok != row.lines {
 			t.Errorf("%T rendered = %t, want %t", row.event, ok, row.lines)
+		}
+	}
+}
+
+// TestDirectoryKeptRendersAsKeptKindPath pins the one line a `--keep-temp` run
+// adds to a console.
+//
+// It is a path the run produced, so it reads like the other paths a run prints
+// — a label, a colon, and the path — and it is unstyled for the same reason the
+// report block is: these are paths to be selected with a mouse and pasted into
+// a shell, and colour in the middle of one is noise. It survives --quiet
+// because a directory the user asked to keep and cannot find is the one thing
+// --quiet must not take away.
+func TestDirectoryKeptRendersAsKeptKindPath(t *testing.T) {
+	const snapshotDir = "/tmp/go-mutants-snap-1a2b/tree"
+	const scratchDir = "/tmp/go-mutants-tmp-3c4d"
+
+	rows := []struct {
+		event engine.Event
+		want  string
+	}{
+		{engine.DirectoryKept{Kind: engine.KeptSnapshot, Path: snapshotDir}, "kept snapshot: " + snapshotDir},
+		{engine.DirectoryKept{Kind: engine.KeptScratch, Path: scratchDir}, "kept scratch: " + scratchDir},
+	}
+	for _, quiet := range []bool{false, true} {
+		r := NewPlain(nil, "0.1.0-dev", false, quiet)
+		r.Out = &bytes.Buffer{}
+		for _, row := range rows {
+			line, ok := r.line(row.event)
+			if !ok {
+				t.Fatalf("quiet=%t: %+v printed nothing", quiet, row.event)
+			}
+			if line != row.want {
+				t.Errorf("quiet=%t: %+v rendered %q, want %q", quiet, row.event, line, row.want)
+			}
 		}
 	}
 }

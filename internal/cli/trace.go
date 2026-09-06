@@ -182,7 +182,7 @@ func refusedRecording(refusal error) *traceRecording {
 // because a note in every recording reporting that nothing happened is noise in
 // the one place a reader is looking for signal.
 func collectionNotes(root string) []trace.NoteRecord {
-	removed, err := collect(root, retention{keep: trace.RetainRuns})
+	removed, err := collect(traceRootAt(root), retention{keep: trace.RetainRuns})
 	switch {
 	case err != nil:
 		return []trace.NoteRecord{{Kind: trace.NoteTraceGC, Detail: "collecting " + root + ": " + err.Error()}}
@@ -205,40 +205,102 @@ func (r *traceRecording) close() error {
 	return r.sink.Close()
 }
 
-// traceRoot decides where a run's recordings go, and refuses the directories
-// that would cost the run its evidence.
+// An exhaust is one kind of diagnostic output a run writes into
+// `report.directory`, and everything the rule that places it has to say.
 //
-// The default is `<workspace>/<report.directory>/trace/`, and that is not an
+// There are two — the recording and the diagnostics bundle — and they are
+// placed by one rule for one reason: the rule is a statement about the
+// workspace rather than about either of them. See [ownedRoot].
+type exhaust struct {
+	// noun is what the directory is called in a refusal.
+	noun string
+	// directory is its subdirectory of `report.directory`.
+	directory string
+	// written is what a refusal says would be read as part of the tree.
+	written string
+	// code is the warning a refusal is reported under.
+	code Code
+	// remedy composes the refusal's hint around the report directory.
+	remedy func(reports string) string
+}
+
+// The two kinds of exhaust a run produces.
+var (
+	traceExhaust = exhaust{
+		noun:      "trace",
+		directory: traceDirectoryName,
+		written:   "a recording",
+		code:      CodeTraceUnavailable,
+		remedy: func(reports string) string {
+			return "record under " + reports + ", or name a directory outside the workspace"
+		},
+	}
+	diagnosticsExhaust = exhaust{
+		noun:      "diagnostics",
+		directory: diagnosticsDirectoryName,
+		written:   "a bundle",
+		code:      CodeDiagnosticsUnavailable,
+		remedy: func(reports string) string {
+			return "let the bundle land under " + reports + ", or point report.directory outside the workspace"
+		},
+	}
+)
+
+// ownedRoot decides where one kind of a run's diagnostic exhaust goes, and
+// refuses the directories that would cost the run its evidence.
+//
+// The default is `<workspace>/<report.directory>/<kind>/`, and that is not an
 // arbitrary corner. internal/snapshot digests the workspace and excludes
 // `report.directory` and nothing else inside it, so it is the one place in a
 // user's tree a file may appear during a run. A recording grows while the run
-// measures: a stream written anywhere else in the workspace is a file that
-// changed under the run, and the run would fail with drift it caused itself.
-// Refusing the directory is what keeps the trace from failing the run.
+// measures and a bundle appears at the end of one: written anywhere else in the
+// workspace, either is a file that changed under the run, and the run would
+// fail with drift it caused itself. Refusing the directory is what keeps the
+// diagnostic from failing the run.
 //
 // A directory outside the workspace is nobody's source and is always accepted.
 // A relative one resolves against the workspace rather than against the process
 // working directory, so that `--trace=recordings` means the same thing wherever
 // the command was typed.
-func traceRoot(workspace, reportDirectory, requested string) (string, error) {
+//
+// The default is checked as well as a named one, which costs nothing and is not
+// vacuous: a symbolic link *at* the default directory, pointing back into the
+// tree, lands the files where the snapshot reads while spelling a path that
+// does not.
+func ownedRoot(kind exhaust, workspace, reportDirectory, requested string) (string, error) {
 	reports := filepath.Join(workspace, filepath.FromSlash(reportDirectory))
 	directory := strings.TrimSpace(requested)
-	if directory == "" || directory == traceDefaultDirectory {
-		return filepath.Join(reports, traceDirectoryName), nil
-	}
-	if !filepath.IsAbs(directory) {
+	switch {
+	case directory == "" || directory == traceDefaultDirectory:
+		directory = filepath.Join(reports, kind.directory)
+	case !filepath.IsAbs(directory):
 		directory = filepath.Join(workspace, directory)
 	}
 	directory = filepath.Clean(directory)
 	if digestedBySnapshot(workspace, reports, directory) {
 		return "", &Error{
-			Code: CodeTraceUnavailable,
-			Message: "the trace directory " + directory + " is inside the workspace and outside " + reports +
-				", where a recording would be read as part of the tree and reported as drift",
-			Hint: "record under " + reports + ", or name a directory outside the workspace",
+			Code: kind.code,
+			Message: "the " + kind.noun + " directory " + directory + " is inside the workspace and outside " +
+				reports + ", where " + kind.written + " would be read as part of the tree and reported as drift",
+			Hint: kind.remedy(reports),
 		}
 	}
 	return directory, nil
+}
+
+// traceRoot decides where a run's recordings go. See [ownedRoot] for the rule.
+func traceRoot(workspace, reportDirectory, requested string) (string, error) {
+	return ownedRoot(traceExhaust, workspace, reportDirectory, requested)
+}
+
+// diagnosticsRoot decides where a run's diagnostics bundles go.
+//
+// Nothing on the command line names one: a bundle is written for a failure
+// rather than requested, and a run that was traced puts it beside its recording
+// instead. The rule is still the trace's, applied to the default it always
+// resolves, because the refusal is about where the files land.
+func diagnosticsRoot(workspace, reportDirectory string) (string, error) {
+	return ownedRoot(diagnosticsExhaust, workspace, reportDirectory, "")
 }
 
 // digestedBySnapshot reports whether a directory would land where the snapshot
@@ -289,18 +351,110 @@ func existingPathOf(path string) string {
 	}
 }
 
-// A retention is how much of a trace root survives collection.
+// A retentionRoot is a directory a run fills one subdirectory of per run, with
+// a collector over it: the trace root, and the diagnostics root.
+//
+// The two are collected by one implementation because they are collected by one
+// rule — only a directory named by a run id and holding something of ours is
+// collectable at all, the newest [trace.RetainRuns] survive, and one nothing
+// finished writing is left alone. What differs between them is two predicates,
+// which is exactly what this type carries.
+//
+// The name is long on purpose: `root` is what half this package's functions call
+// the *path* of one of these, and a type sharing that name would be shadowed by
+// a local in most of the places it is used.
+type retentionRoot struct {
+	// path is the directory the run directories sit in.
+	path string
+	// label is what the root itself is called in a message: `trace root:`,
+	// `removed the empty diagnostics directory`.
+	label string
+	// noun is what one of the things in it is called.
+	noun string
+	// unfinished completes the sentence that says why a directory nothing
+	// finished writing was left alone, which is the one message a `trace clean`
+	// that removed nothing has to get right.
+	unfinished string
+	// marker is the file whose presence makes a subdirectory one of ours. A
+	// run-id-shaped directory without it belongs to somebody else, or to a run
+	// that has not written anything yet, and either way is not the collector's.
+	marker string
+	// finished reports whether nothing will be written into the directory
+	// again, which is what makes it a candidate for collection at all. A
+	// recording is finished when its stream ends with the run-end; a bundle is
+	// finished when its last file is there.
+	finished func(directory string) bool
+}
+
+// traceRootAt is the recordings in a trace root.
+//
+// A recording is finished when its stream ends with the run-end *and* whatever
+// else is in its directory is finished too — which for a traced run means the
+// diagnostics bundle, because that is written into the recording's own
+// directory rather than into the diagnostics root. Asking only about the stream
+// would call such a directory complete while half a bundle sat in it, and the
+// same half-written bundle in the diagnostics root is held back: the answer
+// would then depend on whether the run happened to be traced, which is not a
+// fact about how complete the account is.
+func traceRootAt(path string) retentionRoot {
+	return retentionRoot{
+		path:       path,
+		label:      "trace",
+		noun:       "recording",
+		unfinished: "ended with its run-end and finished the bundle beside it",
+		marker:     trace.FileName,
+		finished: func(directory string) bool {
+			return finishedRecording(filepath.Join(directory, trace.FileName)) &&
+				finishedBundle(directory)
+		},
+	}
+}
+
+// diagnosticsRootAt is the bundles in a diagnostics root.
+//
+// The marker is the first file a bundle writes and the finished-predicate is
+// the last, which is what makes a half-written bundle visible to `trace clean
+// --all` and invisible to the retention a run applies — the same asymmetry a
+// recording with no run-end has, and for the same reason: the account of the
+// crash is the one a reader most wants.
+func diagnosticsRootAt(path string) retentionRoot {
+	return retentionRoot{
+		path:       path,
+		label:      diagnosticsDirectoryName,
+		noun:       "bundle",
+		unfinished: "was finished, so each is a run that died while writing one",
+		marker:     errorFileName,
+		finished:   finishedBundle,
+	}
+}
+
+// finishedBundle reports whether a directory holds no bundle, or holds one
+// nothing will write to again.
+//
+// A directory with no [errorFileName] never had a bundle started in it, which is
+// every successful traced run and is finished as far as this question goes. One
+// that has the marker and not [preservedPathsFileName] is a run that died while
+// writing its diagnosis, and is exactly what a collector must leave alone.
+func finishedBundle(directory string) bool {
+	if _, err := os.Stat(filepath.Join(directory, errorFileName)); err != nil {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(directory, preservedPathsFileName))
+	return err == nil
+}
+
+// A retention is how much of a root survives collection.
 type retention struct {
 	// keep is how many of the newest candidates are left behind.
 	keep int
-	// unfinished makes a recording with no run-end a candidate. It is off for
-	// the collector a run runs and on only for `trace clean --all`; see
+	// unfinished makes a directory nothing finished writing a candidate. It is
+	// off for the collector a run runs and on only for `trace clean --all`; see
 	// [planSweep].
 	unfinished bool
 }
 
-// pruneTraceRoot removes the recordings a sweep collected, and returns what it
-// removed, oldest first.
+// prune removes the directories a sweep collected, and returns what it removed,
+// oldest first.
 //
 // It takes the plan rather than the retention that produced it, and that is the
 // whole of what keeps one sweep to one look at the directory. A collector that
@@ -310,10 +464,10 @@ type retention struct {
 // having never been counted, and a recording appearing in between moves which
 // ones the newest N are. Separating the decision from the action makes that
 // race unexpressible rather than merely unlikely.
-func pruneTraceRoot(root string, found sweep) ([]string, error) {
+func prune(r retentionRoot, found sweep) ([]string, error) {
 	removed := make([]string, 0, len(found.stale))
 	for _, name := range found.stale {
-		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+		if err := os.RemoveAll(filepath.Join(r.path, name)); err != nil {
 			return removed, err
 		}
 		removed = append(removed, name)
@@ -324,22 +478,22 @@ func pruneTraceRoot(root string, found sweep) ([]string, error) {
 	return removed, nil
 }
 
-// collect plans one sweep of a trace root and carries it out.
+// collect plans one sweep of a root and carries it out.
 //
 // It is for the caller that has nothing to measure — the collector a run runs
-// as it opens its recording, which reports a count and no bytes. `trace clean`
-// deliberately does not use it: it plans, sizes what the plan names, and then
-// prunes that same plan, which is three steps precisely so that the sizes and
-// the deletions are of one observation.
-func collect(root string, keep retention) ([]string, error) {
-	found, err := planSweep(root, keep)
+// as it opens its recording or writes its bundle, which reports a count and no
+// bytes. `trace clean` deliberately does not use it: it plans, sizes what the
+// plan names, and then prunes that same plan, which is three steps precisely so
+// that the sizes and the deletions are of one observation.
+func collect(r retentionRoot, keep retention) ([]string, error) {
+	found, err := planSweep(r, keep)
 	if err != nil {
 		return nil, err
 	}
-	return pruneTraceRoot(root, found)
+	return prune(r, found)
 }
 
-// A sweep is what a retention found in a trace root.
+// A sweep is what a retention found in a root.
 //
 // It carries all three counts rather than only the collectable ones, because
 // "there is nothing here" and "there is something here and I am keeping it" are
@@ -347,7 +501,7 @@ func collect(root string, keep retention) ([]string, error) {
 // the second: somebody reading that concludes their recordings are gone and
 // stops looking for the disk they are still sitting on.
 type sweep struct {
-	// held is every recording in the root, whatever the retention makes of it.
+	// held is everything of ours in the root, whatever the retention makes of it.
 	held int
 	// candidates is how many of those this retention would even consider — the
 	// finished ones, unless the caller asked for the rest as well.
@@ -356,33 +510,33 @@ type sweep struct {
 	stale []string
 }
 
-// planSweep works out what a retention collects from a trace root and what it
-// leaves behind. It is the one statement of the rule, so that what `trace clean`
-// measures and reports is exactly what [pruneTraceRoot] deletes.
+// planSweep works out what a retention collects from a root and what it leaves
+// behind. It is the one statement of the rule, so that what `trace clean`
+// measures and reports is exactly what [prune] deletes.
 //
-// A recording whose stream does not end with a run-end is not a candidate
-// unless the caller asked for one, and that exception is the point of the rule.
-// Such a recording is a run still in progress or a run that died, and the
-// second is the recording a reader most wants: a collector that removed the
-// account of the crash while keeping ten accounts of runs that went fine would
-// be collecting exactly backwards. It is also what makes a live run safe from a
-// concurrent collector, rather than only from being the newest name in the root.
-// `trace clean --all` is how somebody who has read them says so.
-func planSweep(root string, keep retention) (sweep, error) {
-	recordings, err := recordingsIn(root)
+// A directory nothing finished writing is not a candidate unless the caller
+// asked for one, and that exception is the point of the rule. Such a directory
+// is a run still in progress or a run that died, and the second is the account a
+// reader most wants: a collector that removed the record of the crash while
+// keeping ten records of runs that went fine would be collecting exactly
+// backwards. It is also what makes a live run safe from a concurrent collector,
+// rather than only from being the newest name in the root. `trace clean --all`
+// is how somebody who has read them says so.
+func planSweep(r retentionRoot, keep retention) (sweep, error) {
+	names, err := namesIn(r)
 	if err != nil {
 		return sweep{}, err
 	}
-	candidates := recordings
+	candidates := names
 	if !keep.unfinished {
 		candidates = nil
-		for _, name := range recordings {
-			if finishedRecording(filepath.Join(root, name, trace.FileName)) {
+		for _, name := range names {
+			if r.finished(filepath.Join(r.path, name)) {
 				candidates = append(candidates, name)
 			}
 		}
 	}
-	found := sweep{held: len(recordings), candidates: len(candidates)}
+	found := sweep{held: len(names), candidates: len(candidates)}
 	if keep.keep < 0 || len(candidates) <= keep.keep {
 		return found, nil
 	}
@@ -390,33 +544,94 @@ func planSweep(root string, keep retention) (sweep, error) {
 	return found, nil
 }
 
-// recordingsIn names the recordings in a trace root, oldest first.
+// The two ways a root can turn out not to be a directory this command may
+// remove, whichever step found out. [namesIn] raises the first and
+// [removeDirectory] returns either, so one condition gets one sentence wherever
+// it is noticed.
 //
-// os.ReadDir sorts by name and a run id sorts by the moment it was minted, so
+// A link is worth its own words rather than being folded into the first. It is
+// not a mistake — a trace root pointing out of the workspace is an arrangement
+// the refusal rule deliberately allows, and its recordings are collected through
+// it like anybody else's — it is only an object this command will not delete,
+// and telling somebody "is not a directory" about a link they made on purpose
+// would send them looking for a problem that is not there.
+var (
+	errNotDirectory = errors.New("is not a directory")
+	errIsALink      = errors.New("is a link, not a directory")
+)
+
+// describePath names a path in the words of the reason it was refused.
+func describePath(path string, reason error) error { return fmt.Errorf("%s %w", path, reason) }
+
+// readDir is how a collector reads an open root, and is a package variable for
+// the reason [traceFilesystem] is one: "a root that changed under the collector
+// is never unlinked" is a promise that can only be checked by changing one
+// under it. See the tests that inject a listing which does exactly that.
+//
+// It takes the handle rather than the path, because that is the protocol; see
+// [namesIn]. Nothing outside the suite assigns it.
+var readDir = func(f *os.File) ([]os.DirEntry, error) { return f.ReadDir(-1) }
+
+// namesIn names what a root holds of ours, oldest first.
+//
+// The listing sorts by name and a run id sorts by the moment it was minted, so
 // the order of the listing is the order of the runs. A root that does not exist
-// holds no recordings, which is an answer rather than a failure: it is what a
-// workspace that has never traced a run looks like.
-func recordingsIn(root string) ([]string, error) {
-	entries, err := os.ReadDir(root)
+// holds nothing, which is an answer rather than a failure: it is what a
+// workspace that has never traced or failed a run looks like.
+//
+// The protocol is **one handle to read, and rmdir alone to remove**, and both
+// halves are about the same window. Everything here — that the path is a
+// directory at all, and what is inside it — is read from a single [os.Open], so
+// the kind and the contents describe one object rather than whatever happened to
+// be at that path at two different moments. And [removeDirectory] is what takes
+// an emptied root away, so a path that became a regular file after this looked
+// at it cannot be unlinked however the timing falls out.
+//
+// Asking the listing what the root *is* would have been wrong even without the
+// race. Go's Windows readdir queries the handle for directory information and,
+// on two of the error codes that can come back, breaks out of its loop and
+// returns `names, dirents, infos, nil`: the error it was holding is dropped, so
+// a caller listing a *file* is handed an empty directory and no failure at all.
+// `trace clean` then reported "nothing to remove: no recording here" about a
+// root it had never read — and went on to remove it.
+func namesIn(r retentionRoot) ([]string, error) {
+	f, err := os.Open(r.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	var recordings []string
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, describePath(r.path, errNotDirectory)
+	}
+	entries, err := readDir(f)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
 	for _, entry := range entries {
 		if !entry.IsDir() || !recordingName.MatchString(entry.Name()) {
 			continue
 		}
-		if _, statErr := os.Stat(filepath.Join(root, entry.Name(), trace.FileName)); statErr != nil {
+		if _, statErr := os.Stat(filepath.Join(r.path, entry.Name(), r.marker)); statErr != nil {
 			continue
 		}
-		recordings = append(recordings, entry.Name())
+		names = append(names, entry.Name())
 	}
-	slices.Sort(recordings)
-	return recordings, nil
+	slices.Sort(names)
+	return names, nil
 }
+
+// recordingsIn names the recordings in a trace root, oldest first. It is
+// [namesIn] for the two `trace` subcommands that list rather than collect.
+func recordingsIn(path string) ([]string, error) { return namesIn(traceRootAt(path)) }
 
 // finishedRecording reports whether a stream ends with its run-end event, which
 // is what tells a recording somebody can read to the end from one that stops.

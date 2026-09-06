@@ -5,6 +5,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,21 +90,29 @@ event go-mutants records.
 Exits 0 when every line is valid, and 2 with the first violation and its JSON
 pointer when one is not.`
 
-const traceCleanLong = `Delete the recordings in this workspace.
+const traceCleanLong = `Delete the recordings and the diagnostics bundles in this workspace.
 
-It is the collector a traced run already runs, invoked by hand: --keep N leaves
-the newest N and removes the rest, and the default removes them all.
+It is the collector a run already runs, invoked by hand: --keep N leaves the
+newest N and removes the rest, and the default removes them all.
 
-Two things are never removed. A file or a directory somebody else keeps in the
-trace root is not a recording and is left exactly as it was found — only a
-directory named by a run id and holding a stream is ever deleted. And a
-recording whose stream does not end with its run-end event is left alone as
-well: that is a run still in progress, or one that died, and the second is the
-recording you most want to keep. --all says you have read them and removes those
-too; it takes no --keep, being the answer to "remove everything".
+Both roots are swept, because both are the exhaust of the same runs and a second
+command would be a second thing to remember and a second place to find a full
+disk. ` + "`report.directory/trace/`" + ` holds a recording per traced run and
+` + "`report.directory/diagnostics/`" + ` holds a bundle per failed one, and the rules
+below apply to each of them. ` + "`trace list`" + ` is unchanged: a listing answers
+"what recordings are there", and a bundle is not a recording.
 
-An empty trace directory goes with the last recording in it, so a workspace that
-has been cleaned looks like one that was never traced.
+Two things are never removed. A file or a directory somebody else keeps in
+either root is left exactly as it was found — only a directory named by a run id
+and holding go-mutants' own files is ever deleted. And one nothing finished
+writing is left alone as well: a recording whose stream does not end with its
+run-end event, or a bundle with no preserved-paths.txt, is a run still in
+progress or one that died, and the second is the account you most want to keep.
+--all says you have read them and removes those too; it takes no --keep, being
+the answer to "remove everything".
+
+An empty directory goes with the last thing in it, so a workspace that has been
+cleaned looks like one that was never traced.
 
 Deleting a recording loses a diagnostic and never a measurement. The reports and
 the outcome cache are untouched; those are ` + "`report clean`" + `'s and ` + "`cache clean`" + `'s.`
@@ -441,6 +450,12 @@ func checkCleanScope(keep, all bool) error {
 // use, for the same reason: deleting is the whole of what this command does, so
 // one that could not delete must not exit 0, and one that removed two
 // recordings before hitting a locked third should still say so.
+//
+// The failure travels out with the code [sweepRoot] gave it, and is never
+// re-coded here. A root that cannot be read and a recording that will not go
+// away are different problems with different remedies, and only one of them is
+// about deleting: wrapping the first as "a recording could not be removed: …
+// cannot be read" sends a reader looking for a locked file that does not exist.
 func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	if o.keep < 0 {
 		return usagef("--keep takes a number of recordings to keep, and %d is not one", o.keep)
@@ -448,18 +463,53 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	if err := checkCleanScope(cmd.Flags().Changed("keep"), o.all); err != nil {
 		return err
 	}
-	root, err := workspaceTraceRoot()
+	roots, err := workspaceRoots()
 	if err != nil {
 		return err
 	}
+
 	keep := retention{keep: o.keep, unfinished: o.all}
-	found, err := planSweep(root, keep)
+	var b strings.Builder
+	var failure error
+	for i, r := range roots {
+		// The trace root is always reported, because it is the root the command
+		// is named after and silence there would read as a command that did not
+		// run. The diagnostics root is reported only when it holds something: a
+		// workspace that has never failed a run has no bundles, and two lines
+		// saying so under every `trace clean` would be noise in the one place a
+		// reader is looking for what went.
+		if sweepErr := sweepRoot(&b, r, keep, i == 0); sweepErr != nil && failure == nil {
+			failure = sweepErr
+		}
+	}
+	if err = emit(cmd.OutOrStdout(), b.String()); err != nil && failure == nil {
+		return err
+	}
+	return failure
+}
+
+// sweepRoot collects one root and writes what it did into b.
+//
+// always asks for the root to be reported whatever it holds, which is the trace
+// root's arrangement; a root that holds nothing and was not asked for says
+// nothing at all.
+//
+// The two failures it can return are coded here and differently, because they
+// are different problems: a root that cannot be read is [CodeUnreadableTrace]
+// and is fixed by looking at the directory, while something that would not
+// delete is [CodeTraceNotRemoved] and is fixed by finding whatever is holding
+// it. The caller returns whichever it is unchanged.
+func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool) error {
+	found, err := planSweep(r, keep)
 	if err != nil {
 		return &Error{
 			Code:    CodeUnreadableTrace,
-			Message: "the trace directory " + root + " cannot be read",
+			Message: "the " + r.label + " directory " + r.path + " cannot be read",
 			Err:     err,
 		}
+	}
+	if !always && found.held == 0 {
+		return nil
 	}
 	// Measured before the sweep, because a directory that has been removed
 	// cannot be sized, and totalled afterwards over what actually went — so a
@@ -467,52 +517,63 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	// rather than the bytes it had meant to.
 	sizes := make(map[string]int64, len(found.stale))
 	for _, name := range found.stale {
-		sizes[name] = directorySize(filepath.Join(root, name))
+		sizes[name] = directorySize(filepath.Join(r.path, name))
 	}
 	// The plan that was just measured, rather than a fresh one: every count in
 	// the report below — what was held, what was a candidate, what went, and
-	// what it took up — then describes one look at the directory. See
-	// [pruneTraceRoot].
-	removed, removeErr := pruneTraceRoot(root, found)
+	// what it took up — then describes one look at the directory. See [prune].
+	removed, removeErr := prune(r, found)
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "trace root: %s\n", root)
+	fmt.Fprintf(b, "%s root: %s\n", r.label, r.path)
 	switch {
 	case len(removed) > 0:
 		var bytes int64
 		for _, name := range removed {
 			bytes += sizes[name]
 		}
-		fmt.Fprintf(&b, "removed %s (%s)\n", countNoun(len(removed), "recording"), formatBytes(bytes))
+		fmt.Fprintf(b, "removed %s (%s)\n", countNoun(len(removed), r.noun), formatBytes(bytes))
 	case found.held == 0:
-		fmt.Fprintf(&b, "nothing to remove: no recording in %s\n", root)
+		fmt.Fprintf(b, "nothing to remove: no %s in %s\n", r.noun, r.path)
 	case found.candidates == 0:
 		// The retention rule doing its job, which is worth a sentence of its
 		// own: a plain `trace clean` over a root of interrupted runs has removed
 		// nothing on purpose, and without the reason that is indistinguishable
 		// from a command that did not work.
-		fmt.Fprintf(&b, "nothing to remove: no recording in %s ended with its run-end; --all removes those too\n", root)
+		fmt.Fprintf(b, "nothing to remove: no %s in %s %s; --all removes those too\n",
+			r.noun, r.path, r.unfinished)
 	default:
 		// Kept by --keep, which is the only other way to collect nothing from a
-		// root that holds something. Saying "no recording" here would tell
-		// somebody their recordings are gone while they are still on the disk.
-		fmt.Fprintf(&b, "nothing to remove: every recording in %s is kept\n", root)
-	}
-	// And the directory itself, once the last recording in it has gone, so that
-	// a workspace somebody has cleaned looks like one that was never traced.
-	// os.Remove is the whole of the test: it refuses a directory with anything
-	// left in it, which is exactly the directory that has to stay.
-	if os.Remove(root) == nil {
-		fmt.Fprintf(&b, "removed the empty trace directory %s\n", root)
-	}
-	if err = emit(cmd.OutOrStdout(), b.String()); err != nil && removeErr == nil {
-		return err
+		// root that holds something. Saying "nothing here" would tell somebody
+		// their recordings are gone while they are still on the disk.
+		fmt.Fprintf(b, "nothing to remove: every %s in %s is kept\n", r.noun, r.path)
 	}
 	if removeErr != nil {
 		return &Error{
 			Code:    CodeTraceNotRemoved,
-			Message: "a recording in " + root + " could not be removed",
+			Message: "a " + r.noun + " in " + r.path + " could not be removed",
 			Err:     removeErr,
+		}
+	}
+	// And the directory itself, once the last thing in it has gone, so that a
+	// workspace somebody has cleaned looks like one that was never traced.
+	// Emptiness is not tested for: the removal refuses a directory with anything
+	// left in it, which is exactly the directory that has to stay — and it
+	// refuses anything that is not a directory this command may delete, which is
+	// what keeps a root replaced under the collector, by a file or by a link,
+	// from being the thing that goes. See [removeDirectory].
+	switch err := removeDirectory(r.path); {
+	case err == nil:
+		fmt.Fprintf(b, "removed the empty %s directory %s\n", r.label, r.path)
+	case errors.Is(err, errNotDirectory), errors.Is(err, errIsALink):
+		// Reported rather than passed over, both of them. Somebody whose root is
+		// a link has had every recording in it collected and is entitled to know
+		// why the directory itself stayed; somebody whose root is a file has had
+		// something replaced under a command that deletes, and that is the whole
+		// of what this refusal exists to catch.
+		return &Error{
+			Code:    CodeUnreadableTrace,
+			Message: "the " + r.label + " directory " + r.path + " cannot be read",
+			Err:     describePath(r.path, err),
 		}
 	}
 	return nil
@@ -523,9 +584,38 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 // It reads `report.directory` from the workspace's own configuration, so that
 // these commands look exactly where a run here would have written.
 func workspaceTraceRoot() (string, error) {
+	dir, cfg, err := workspaceConfig()
+	if err != nil {
+		return "", err
+	}
+	return traceRoot(dir, cfg.Report.Directory, traceDefaultDirectory)
+}
+
+// workspaceRoots is both directories a run started in this one fills, in the
+// order `trace clean` reports them: the recordings first, because that is what
+// the command is named after.
+func workspaceRoots() ([]retentionRoot, error) {
+	dir, cfg, err := workspaceConfig()
+	if err != nil {
+		return nil, err
+	}
+	recordings, err := traceRoot(dir, cfg.Report.Directory, traceDefaultDirectory)
+	if err != nil {
+		return nil, err
+	}
+	bundles, err := diagnosticsRoot(dir, cfg.Report.Directory)
+	if err != nil {
+		return nil, err
+	}
+	return []retentionRoot{traceRootAt(recordings), diagnosticsRootAt(bundles)}, nil
+}
+
+// workspaceConfig is this directory and the configuration a run started here
+// would resolve.
+func workspaceConfig() (string, config.Config, error) {
 	dir, err := os.Getwd()
 	if err != nil {
-		return "", &Error{
+		return "", config.Config{}, &Error{
 			Code:    CodeWorkingDirectory,
 			Message: "the current working directory cannot be read, so there is no workspace to find recordings in",
 			Err:     err,
@@ -533,9 +623,9 @@ func workspaceTraceRoot() (string, error) {
 	}
 	cfg, err := config.Load(filepath.Join(dir, config.FileName), config.Overlay{})
 	if err != nil {
-		return "", err
+		return "", config.Config{}, err
 	}
-	return traceRoot(dir, cfg.Report.Directory, traceDefaultDirectory)
+	return dir, cfg, nil
 }
 
 // readRecording resolves what the user named and reads it.

@@ -270,8 +270,10 @@ go-mutants trace summary
 | `--changed[=GIT_REF]` | execute only the mutants on lines changed since a ref |
 | `--shard K/N` | execute only shard K of N, assigned from the mutant id |
 | `--cache MODE` | reuse of outcomes go-mutants has already proven: `auto`, `on`, `off` |
-| `--report FORMATS` | what to publish into `report.directory`: `none`, `json`, `html` |
+| `--report FORMATS` | which documents to publish into `report.directory`: `none`, `json`, `html`. `none` does not switch off the trace or the diagnostics bundle, which are not reports |
 | `--trace[=DIR]` | record this run's diagnostic account under `report.directory`, or in `DIR`; `GO_MUTANTS_TRACE=1\|true\|DIR` asks for the same |
+| `--keep-temp[=MODE]` | leave the run's snapshot and scratch directory on disk: `always` (the bare flag) or `on-failure`; `GO_MUTANTS_KEEP_TEMP` asks for the same |
+| `--no-diagnostics` | do not write the bundle a failed run leaves behind; `GO_MUTANTS_DIAGNOSTICS=0` asks for the same |
 | `--jobs N`, `--timeout D` | how many mutants at once, and how long each may take |
 | `--strict`, `--no-strict` | whether an unexpected survivor exits 1 |
 | `--json`, `--explain`, `--quiet` | the document, the detail underneath it, or less of it |
@@ -330,6 +332,26 @@ exactly the failure nobody passed `--trace` for. And a trace is never evidence:
 it takes no part in a verdict, in a mutant identity, or in a cache key, and one
 that cannot be written costs a warning rather than the run. See
 [`docs/trace-v1.md`](docs/trace-v1.md).
+
+**A run that fails writes that account out**, into
+`<report.directory>/diagnostics/<run-id>/` — or into its trace directory when it
+was traced — beside the rendered failure and its typed chain, the environment's
+variable *names*, the `doctor` table for the machine, and the report if there
+was one. It is what makes a CI failure diagnosable from the artefacts instead of
+by asking somebody to reproduce it. The newest ten are kept, `trace clean`
+sweeps them with the recordings, an interrupted run writes none, and
+`--no-diagnostics` or `GO_MUTANTS_DIAGNOSTICS=0` turns it off. A bundle that
+cannot be written is a `GOM1014` warning and never a different exit code.
+
+`--keep-temp` is the other half of diagnosing a run you cannot reproduce: it
+leaves the snapshot and the scratch directory on disk, which is the only way to
+answer "what did the tree this mutant ran in actually look like". Bare
+`--keep-temp` keeps them whatever happened and `--keep-temp=on-failure` keeps
+them only when the run failed — never when it was interrupted — so a CI job can
+leave it on. The value takes an equals sign. Each kept directory is marked so
+the next run's sweep leaves it alone, and the run prints where they are. It is
+off by default because a kept snapshot is a whole copy of your module and
+nothing will ever remove it.
 
 With no arguments, help is printed. The v1 command tree is `run`, `list`,
 `doctor`, `init`, `report list|latest|validate|clean|merge`,

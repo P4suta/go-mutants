@@ -172,6 +172,17 @@ type Options struct {
 	// under the run's scratch either way; see [childEnv].
 	TempDirectory string
 
+	// KeepTemp preserves the run's snapshot and scratch directory instead of
+	// removing them: always, or only when the run failed. The zero value is
+	// [KeepTempNever], which is what every caller that never heard of the option
+	// gets and what every run did before it existed.
+	//
+	// It takes no part in a mutant identity, in a verdict, or in the key a
+	// cached outcome is stored under — a keep is a decision about a directory on
+	// the way out, taken after every mutant has been measured. See [KeepTemp]
+	// for why it is opt-in and [RunOutcome.Preserved] for what it leaves behind.
+	KeepTemp KeepTemp
+
 	// HistoryRoot overrides the directory the run history is written under.
 	// Empty is <os.UserCacheDir>/go-mutants, which is what every real run uses;
 	// the tests set it so that they never touch the developer's own cache.
@@ -268,9 +279,16 @@ type RunOutcome struct {
 	// Toolchain is the Go toolchain the run used.
 	Toolchain gocmd.Toolchain
 
-	// SnapshotRoot is where the disposable copy lived. It is already removed
-	// by the time Run returns; it is retained for diagnostics, and for the
-	// tests that prove the cleanup happened.
+	// SnapshotRoot is where the disposable copy lived: the tree itself, one
+	// level inside the directory internal/snapshot owns. It is already removed
+	// by the time Run returns unless [Options.KeepTemp] asked otherwise, and it
+	// is retained for diagnostics and for the tests that prove the cleanup
+	// happened.
+	//
+	// Preserved names that owning *directory* rather than this path, because
+	// that is what carries the lock and the marker and what a sweep collects.
+	// SnapshotRoot is the `tree` inside it; the two are deliberately different
+	// strings and neither is derivable from the other by a caller.
 	SnapshotRoot string
 	// SnapshotFiles is how many regular files the snapshot held.
 	SnapshotFiles int
@@ -309,6 +327,12 @@ type RunOutcome struct {
 	// value when no report was published, in which case the failure itself
 	// decides the exit status.
 	Verdict mutation.Verdict
+
+	// Preserved names the temporary directories [Options.KeepTemp] asked the
+	// run to leave behind, sorted by kind and then by path, and each also
+	// published as a [DirectoryKept]. It is empty for every run that kept
+	// nothing, which is every run that did not ask.
+	Preserved []PreservedDir
 
 	// Warnings are the warnings published during the run, in order.
 	Warnings []Warning
@@ -655,7 +679,7 @@ type state struct {
 
 // pipeline is the run proper, split out so that [Run] owns exactly two things:
 // the terminal event and the channel close, in that order.
-func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) error {
+func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (err error) {
 	cfg := opts.Config
 
 	root, err := workspaceRoot(opts.WorkspaceRoot)
@@ -729,6 +753,15 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	s.sweepTemporary(tempParent)
 	endSweep(nil)
 
+	// The one place the run's own temporary directories are settled, registered
+	// before either of them exists so that no path out of the pipeline can miss
+	// it. It replaced two independent deferred cleanups, and the merge is what
+	// makes [Options.KeepTemp] expressible: keeping is a decision about the
+	// *run*, and neither of those defers could see whether the run had failed.
+	// A zero field is a directory that was never made; see [session.release].
+	var temps temporaries
+	defer func() { s.release(&temps, opts.KeepTemp, out, err) }()
+
 	endSnapshot := s.stage("snapshot", root)
 	snapshotStarted := s.now()
 	snap, err := snapshot.Create(root, snapshot.Options{
@@ -744,11 +777,7 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	out.SnapshotFiles = len(snap.Manifest)
 	out.WorkspaceDigest = snap.WorkspaceDigest
 	out.Snapshot = SnapshotFacts{StableDir: snap.StableDir, Files: len(snap.Manifest)}
-	defer func() {
-		if removeErr := snap.Cleanup(); removeErr != nil {
-			s.warn(CodeSnapshotNotRemoved, "the snapshot directory could not be removed: "+removeErr.Error())
-		}
-	}()
+	temps.snapshot = snap
 
 	scratch, err := os.MkdirTemp(snap.Parent(), scratchPrefix)
 	if err != nil {
@@ -766,14 +795,9 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 			Err:     errors.Join(err, os.RemoveAll(scratch)),
 		}
 	}
-	defer func() {
-		// The lock is dropped before the removal: on Windows an open handle
-		// inside a directory is exactly what makes RemoveAll fail.
-		removeErr := errors.Join(scratchOwner.Release(), os.RemoveAll(scratch))
-		if removeErr != nil {
-			s.warn(CodeScratchNotRemoved, "the per-run temporary directory could not be removed: "+removeErr.Error())
-		}
-	}()
+	// Recorded only once the claim succeeded: a directory nobody owns cannot be
+	// marked kept, and the failure above has already removed it.
+	temps.scratch, temps.scratchOwner = scratch, scratchOwner
 	env := childEnv(scratch)
 
 	// The test command's own scope, proven before a single command is measured.
@@ -2146,6 +2170,18 @@ func check(ctx context.Context, spec runner.Spec, result runner.Result, code Cod
 			Output:     tail(result.Output),
 			Invocation: runner.CommandOf(spec, result),
 		}
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		// Before the interruption below, and reported as a failure rather than
+		// as one: the run did not finish inside the time it was given, and that
+		// is something to diagnose rather than something somebody decided. See
+		// [Interrupted].
+		return &Error{
+			Code:       CodeDeadlineExceeded,
+			Message:    what + ": the run's deadline expired",
+			Output:     tail(result.Output),
+			Err:        ctx.Err(),
+			Invocation: runner.CommandOf(spec, result),
+		}
 	case ctx.Err() != nil:
 		return &Error{
 			Code:       CodeInterrupted,
@@ -2164,18 +2200,42 @@ func check(ctx context.Context, spec runner.Spec, result runner.Result, code Cod
 	return nil
 }
 
-// interrupted reports whether err is the run being cancelled rather than the
-// run going wrong.
+// interrupted reports whether err is the run being stopped rather than the run
+// going wrong.
 //
-// Both spellings count. This package raises [CodeInterrupted] when it notices
-// the cancellation itself, but a cancellation that lands inside another package
-// comes back with that package's code — internal/gocmd reports a cancelled
-// version probe as a probe failure — and the only thing the two have in common
-// is context.Canceled somewhere in the chain. Asking for both is what keeps a
-// Ctrl-C during toolchain location from being reported as a broken toolchain.
+// The rule is [context.Canceled] in the chain and nothing else. A cancellation
+// is somebody's decision — a Ctrl-C, a dashboard's quit key, an embedder calling
+// cancel — taken at the moment it happened and needing no diagnosis; a deadline
+// expiring is the run failing to finish in the time it was given, which is
+// exactly the failure a kept tree and a diagnostics bundle exist for.
+//
+// The cause is asked for rather than the code, and that is what makes the answer
+// one answer. This package raises [CodeInterrupted] when it notices the context
+// itself, but the same context reaches internal/gocmd, internal/validate and
+// internal/execute too, and each reports it under a code of its own — so a
+// predicate that matched on [CodeInterrupted] gave a deadline two different
+// answers depending on which command happened to be in flight when the clock ran
+// out. Every one of those packages wraps the context's own cause, so asking for
+// the cause is both narrower and complete.
 func interrupted(err error) bool {
-	return CodeOf(err) == CodeInterrupted || errors.Is(err, context.Canceled)
+	return errors.Is(err, context.Canceled)
 }
+
+// Interrupted reports whether a failure from [Run] is the run being stopped
+// rather than the run going wrong.
+//
+// It is true for [context.Canceled] in the error's chain and for nothing else. A
+// deadline that expired is deliberately *not* an interruption: nobody decided it
+// at the moment it happened, and "the run ran out of time" is a question about
+// where the time went, which is the question a kept snapshot and a diagnostics
+// bundle are there to answer. Such a run reports [StatusFailed].
+//
+// It is exported because three decisions have to agree about one run: what
+// [RunOutcome.Status] says, whether [Options.KeepTemp] on-failure keeps the
+// temporary directories, and whether internal/cli writes a bundle. A second
+// implementation of "was this an interruption" is a second answer waiting to
+// disagree with this one.
+func Interrupted(err error) bool { return interrupted(err) }
 
 // deriveTimeout resolves the per-mutant timeout.
 //

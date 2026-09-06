@@ -478,6 +478,25 @@ type CacheHit struct {
 	Outcome mutation.Outcome
 }
 
+// DirectoryKept reports one temporary directory the run left behind because it
+// was asked to, and where it is.
+//
+// It is published on the way out of the run, once per preserved directory, in
+// [RunOutcome.Preserved]'s order — and only by a run that set
+// [Options.KeepTemp], so a run that keeps nothing publishes none of these and
+// its output is byte-identical to what it was before the option existed.
+//
+// It is a path the run produced rather than something that went wrong, which is
+// why it is its own event and not a [Warning]: the user asked for the directory
+// and got it, and a CI log parser that treats warnings as problems should not
+// see one here.
+type DirectoryKept struct {
+	// Kind is [KeptSnapshot] or [KeptScratch].
+	Kind string
+	// Path is the absolute path of the directory.
+	Path string
+}
+
 // Warning reports something the user should know that did not stop the run.
 //
 // Every warning carries a stable GOM#### code for the same reason every error
@@ -676,6 +695,7 @@ func (CoverageMapped) event()    {}
 func (MutantStarted) event()     {}
 func (MutantFinished) event()    {}
 func (CacheHit) event()          {}
+func (DirectoryKept) event()     {}
 func (Warning) event()           {}
 func (ReportPublished) event()   {}
 func (RunCompleted) event()      {}

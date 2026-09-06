@@ -14,6 +14,57 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A failed run leaves enough behind to be diagnosed without running it again,
+  and `run --keep-temp` leaves the tree it ran in.** Two halves of one
+  complaint: a run that failed in CI could only be investigated by reproducing
+  it, and by the time anybody looked, the snapshot every question was about had
+  been deleted.
+
+  A run that fails now writes one directory —
+  `<report.directory>/diagnostics/<run-id>/`, or its trace directory when it was
+  traced — holding the rendered failure exactly as the console printed it, then
+  the same error under `%+v`, then the typed chain one line per wrapped error;
+  the environment's variable *names*, never their values; the `doctor` table for
+  the machine it ran on; this run's own recording, taken out of the in-memory
+  ring every run already keeps; the run report when there was one; and
+  `preserved-paths.txt`. The stderr line `diagnostics: <dir>` is printed under
+  the failure, so a CI step can grep for it and attach the directory.
+
+  Nothing about it can change what a run reports. A bundle that cannot be
+  written is a `GOM1014` warning and the same exit status; a run that was
+  interrupted writes none, because nothing went wrong; `--no-diagnostics` and
+  `GO_MUTANTS_DIAGNOSTICS=0` switch it off. It is the rule
+  `docs/adr/0001-trace-is-not-evidence.md` states for the trace, applied to the
+  diagnostic that arrives on the failure path: one that can change a verdict
+  inverts the point of having it.
+
+  `run --keep-temp` preserves the snapshot and the scratch directory instead of
+  removing them — `--keep-temp=on-failure` only when the run failed, which is
+  the mode a CI job can leave switched on, and never when it was interrupted.
+  `GO_MUTANTS_KEEP_TEMP=1|true|always|on-failure` asks for the same without a
+  flag. Each kept directory carries the owner marker that makes the next run's
+  sweep leave it alone, so a keep survives the collector rather than lasting
+  until somebody else runs go-mutants, and the console prints
+  `kept <kind>: <path>` for each. `RunOutcome.Preserved` names them to a caller,
+  and each is recorded as a `kept-snapshot` or `kept-scratch` artifact.
+
+  Keeping is opt-in, and that is the whole reason it took a flag rather than a
+  default: a kept snapshot is a full copy of the module, nothing will ever
+  remove it, and unconditional keeping filled a developer's disk twice before
+  the option had a name. Neither option takes any part in a mutant identity, a
+  verdict, or a cache key — `cache.Context`'s field list is unchanged, and a run
+  that keeps everything reuses exactly the outcomes a run that keeps nothing
+  stored.
+
+  Both roots under `report.directory` are collected by one implementation now,
+  with one predicate swapped. A bundle is finished when its last file is there;
+  a recording is finished when its stream ends with `run-end` *and* the bundle
+  beside it — a traced run writes one into the recording's own directory — is
+  finished too, so a half-written bundle holds its recording back rather than
+  the answer depending on whether the run happened to be traced. The newest ten
+  survive in each, half-written ones are left alone in both, and `trace clean`
+  sweeps both — `trace list` still lists only recordings, because a bundle is
+  not one.
 - **A workspace records what it does, and every result says where.** goatest
   keeps a `goatest-trace-v1` recording of its own and had no way to line it up
   with the engine's: it could see that a mutant survived and not which binaries
@@ -1995,6 +2046,41 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **A run whose context ran out of time is a failure, not an interruption.**
+  It used to be both, depending on which command happened to be in flight: the
+  engine read any expired context as `GOM4030 the run was interrupted`, while
+  the same expiry surfacing from internal/gocmd, internal/validate or
+  internal/execute came back under those packages' own codes and was read as an
+  ordinary failure. One cause, two answers — and now that a keep and a
+  diagnostics bundle hang off the difference, the same deadline would have kept
+  the snapshot or not depending on the timing.
+
+  `engine.Interrupted` now asks for `context.Canceled` in the error's chain and
+  nothing else, and `RunOutcome.Status` is decided by that same predicate. A
+  cancellation is somebody's decision — a Ctrl-C, the dashboard's quit key, an
+  embedder calling `cancel` — and needs no explanation: it reports
+  `interrupted`, writes no bundle, keeps nothing that `--keep-temp=on-failure`
+  would have kept, and exits 130 or 143 exactly as before. `--keep-temp=always`
+  keeps after a cancellation as after anything else: it is the word the user
+  typed, and somebody stopping a run *because* they have seen enough is somebody
+  who wants the tree. A deadline is the run failing to finish in the time it was
+  given, which is a question about where the time went: it reports the new
+  `GOM4046`, exits 2, keeps what `--keep-temp=on-failure` was asked to keep, and
+  the CLI writes it a bundle. Every package that raises an interruption already
+  wrapped the context's own cause, so nothing about a real Ctrl-C moved.
+- **Every boolean environment variable reads the same spellings.**
+  `GO_MUTANTS_TRACE` used to accept only the literal `1` and `true` as a yes, so
+  `GO_MUTANTS_TRACE=TRUE` was read as a request to record into a directory named
+  `TRUE` — refused by the workspace rule, and reported as a `GOM1013` warning
+  about a trace nobody could see they had asked for. All three of
+  `GO_MUTANTS_TRACE`, `GO_MUTANTS_KEEP_TEMP` and `GO_MUTANTS_DIAGNOSTICS` now go
+  through `strconv.ParseBool` — `1`, `t`, `T`, `TRUE`, `true`, `True` and their
+  negatives — which is the vocabulary every Go program on the machine already
+  answers to. An unset variable still means "said nothing", and anything that is
+  not a boolean still means what it always did to the variable that accepts one:
+  a directory for `--trace`, a mode for `--keep-temp`, and a usage error for
+  `--no-diagnostics`. A user who learns the rule once should not find a third of
+  it untrue.
 - **The root suite is tiered, and one long sleep now happens only when it is
   asked for.** `api_integration_test.go`, `api_contract_test.go` and
   `errors_integration_test.go` carry `//go:build integration`;
