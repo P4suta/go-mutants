@@ -1103,7 +1103,6 @@ Entries say *why* a change was made, not only what changed.
   since writing a file into a directory updates it. Measured on a consumer's
   scoped verification, discovery and the two preparation builds fell from a
   combined 3.01s to 2.39s on one pair of runs and 2.42s to 2.33s on the next.
-
 - **`Prepare` overlaps its independent phases, and `PrepareEvent` now says
   so.** The main and probe binaries do not read each other's output, so
   compiling one after the other spent wall time on an order neither of them
