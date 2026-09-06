@@ -90,6 +90,19 @@ var (
 	_ error = (*gomutants.ReservedError)(nil)
 )
 
+// Two constants, declared as constants: a package variable of type string
+// would satisfy a var assignment just as well, and a consumer is free to use
+// either in a constant expression or a switch case.
+//
+// OutputTruncatedPrefix is the notice a renderer styles and a consumer matched
+// before there was a flag to read; it stays exported and stays a constant so
+// that the consumers matching the text keep compiling. ModulePath's value is
+// what a consumer keeping its own build-info scan matches entries against.
+const (
+	_ string = gomutants.OutputTruncatedPrefix
+	_ string = gomutants.ModulePath
+)
+
 // TestConsumerClassifiesEveryEngineFailure is the consumer-side half of the
 // error contract: the sentinels are comparable with errors.Is, every typed
 // error is reachable with errors.As through a wrapper of the consumer's own,
@@ -366,19 +379,6 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/trace"
-)
-
-// Two constants, declared as constants: a package variable of type string
-// would satisfy a var assignment just as well, and a consumer is free to use
-// either in a constant expression or a switch case.
-//
-// OutputTruncatedPrefix is the notice a renderer styles and a consumer matched
-// before there was a flag to read; it stays exported and stays a constant so
-// that the consumers matching the text keep compiling. ModulePath's value is
-// what a consumer keeping its own build-info scan matches entries against.
-const (
-	_ string = gomutants.OutputTruncatedPrefix
-	_ string = gomutants.ModulePath
 )
 
 var (
