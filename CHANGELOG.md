@@ -14,6 +14,33 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`list --explain` names every suppressed site by line and column.** The skip
+  record was an aggregate — "four `const-decl` sites in this file" — and
+  *which* four was a question nothing could answer. A user who wanted to look
+  at the expressions discovery had passed over had to open the file and guess
+  which of its forty constants the phase meant, which is the opposite of what
+  `--explain` exists for: it is read by somebody asking why their catalogue is
+  smaller than they expected, and "somewhere in this file" is not an answer for
+  them.
+
+  `internal/discover` now records a `SkipSite{Path, Reason, Line, Column}`
+  beside every count, taken at the one place the walk is already holding the
+  `token.Pos` of the edit it is declining, and `list --explain` prints one
+  `path:line:col` row per site underneath each reason. A file that was never
+  opened — generated, cgo, or removed by `mutation.include`/`mutation.exclude`
+  — has no position to give and is printed as the bare path rather than as
+  `:0:0`, which would read as a coordinate. Two rules declined at one position
+  are two rows, because two edits really were declined there, and that is what
+  keeps the rows summing to the count above them.
+
+  The counts themselves are unchanged, byte for byte. Both records are written
+  by one call, so grouping a pass's sites by file and reason reproduces its
+  `Skips` rows exactly, and the catalogue document, the run report and their
+  schemas carry the aggregate they always did. That split is deliberate rather
+  than incidental: a document other tools read and diff should not grow forty
+  positions per file for a phase nobody consumes per site, while a listing is
+  read once, by the person asking the question. `run --explain` therefore keeps
+  its per-file rows and says in one line where the finer ones live.
 - **Truncation is a fact now, and every call can say how much output it will
   hold.** Three separate holes, all of them about the same bytes.
 

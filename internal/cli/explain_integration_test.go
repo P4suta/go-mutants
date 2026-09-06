@@ -93,10 +93,10 @@ func TestListExplainExpandsEverySkipReason(t *testing.T) {
 			t.Errorf("the detail section does not mention %q:\n%s", want, detail)
 		}
 	}
-	// Counts travel with the rows, so that a reader can see which file
-	// accounted for how much of a reason's total.
-	if !strings.Contains(detail, "sites") {
-		t.Errorf("the detail section carries no counts:\n%s", detail)
+	// The count travels with the reason, which is where a reader meets it
+	// before the rows underneath say which places it accounted for.
+	if !strings.Contains(detail, "const-decl 4 sites") {
+		t.Errorf("the detail section carries no per-reason count:\n%s", detail)
 	}
 }
 
@@ -173,5 +173,27 @@ func TestRunWithoutExplainSaysNothingExtra(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "rejected mutants") {
 		t.Errorf("a run nobody asked to explain printed the detail section:\n%s", out.String())
+	}
+}
+
+// TestListExplainPrintsSkipCoordinates is the question the aggregate could not
+// answer: which of the sites in this file was suppressed.
+//
+// "four const-decl sites in suppressed.go" is a number a reader has to go
+// looking for; four `path:line:col` rows are four places they can jump to. The
+// comparison is exact, because the shape is what is being pinned — one row per
+// suppressed candidate, in source order, and a bare path for a file discovery
+// never opened.
+func TestListExplainPrintsSkipCoordinates(t *testing.T) {
+	inFixture(t)
+
+	plain, _ := list(t, "--no-color")
+	explained, _ := list(t, "--no-color", "--explain")
+	if !strings.HasPrefix(explained, plain) {
+		t.Fatalf("--explain changed the listing itself\n--- without ---\n%s\n--- with ---\n%s", plain, explained)
+	}
+
+	if detail := strings.TrimPrefix(explained, plain); detail != wantSkipDetail {
+		t.Errorf("the skip detail is not the expected one\n--- got ---\n%s\n--- want ---\n%s", detail, wantSkipDetail)
 	}
 }

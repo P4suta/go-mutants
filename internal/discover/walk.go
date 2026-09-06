@@ -46,10 +46,10 @@ func (d *discovery) recordCgoPackage(pkg *packages.Package) {
 		}
 		d.seen[ref.rel] = true
 		if reason, excluded := d.selection(ref.rel); excluded {
-			d.record(ref.rel, reason, 1)
+			d.recordFile(ref.rel, reason)
 			continue
 		}
-		d.record(ref.rel, SkipCgo, 1)
+		d.recordFile(ref.rel, SkipCgo)
 	}
 }
 
@@ -78,11 +78,11 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 	d.seen[rel] = true
 
 	if reason, excluded := d.selection(rel); excluded {
-		d.record(rel, reason, 1)
+		d.recordFile(rel, reason)
 		return nil
 	}
 	if isGenerated(file) {
-		d.record(rel, SkipGenerated, 1)
+		d.recordFile(rel, SkipGenerated)
 		return nil
 	}
 	if d.matchers.empty() {
@@ -719,7 +719,7 @@ func (s *fileScan) emitAt(
 	site *ReturnSite,
 ) error {
 	if reason, ok := s.suppressed(pos); ok {
-		s.record(s.rel, reason, 1)
+		s.recordAt(s.rel, reason, pos)
 		return nil
 	}
 	offset := s.tokFile.Offset(pos)
@@ -740,7 +740,7 @@ func (s *fileScan) emitAt(
 	}
 	guard, ok := s.guardFor(anchor, span)
 	if !ok {
-		s.record(s.rel, SkipUnnameableDeclType, 1)
+		s.recordAt(s.rel, SkipUnnameableDeclType, pos)
 		return nil
 	}
 	// The probe hint is attached after the guard and never instead of it: a
@@ -773,6 +773,20 @@ func (s *fileScan) emitAt(
 		Branch:    s.branchProof(rule, anchor),
 	})
 	return nil
+}
+
+// recordAt records one suppression at the position the edit would have sat at.
+//
+// The coordinates cost one [token.File.PositionFor] call, made where the
+// [token.Pos] is already in hand, and they are what turns "four const-decl
+// sites in this file" into four places a reader can go. The position is
+// unadjusted, exactly as the one [emitAt] stamps on a candidate is: both name a
+// byte in the snapshot's own copy of the file, and a `//line` directive that
+// relocated a skip while leaving the mutants beside it alone would make the two
+// halves of one listing disagree about where they are.
+func (s *fileScan) recordAt(rel string, reason SkipReason, pos token.Pos) {
+	position := s.tokFile.PositionFor(pos, false)
+	s.recordSite(rel, reason, position.Line, position.Column)
 }
 
 // guardFor resolves the rewrite site of one candidate, checking the one

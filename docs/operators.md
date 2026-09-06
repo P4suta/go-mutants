@@ -256,8 +256,11 @@ source.
 
 These are recorded as skips with a reason and never silently dropped.
 `go-mutants list` prints the breakdown, `--json` carries every skip with its
-reason, and `run --explain` prints the per-skip detail view underneath the
-summary:
+reason, and `--explain` prints the detail view underneath the summary.
+`list --explain` names each suppressed site as `path:line:col` — a whole-file
+reason as the bare path, because such a file is never opened — and
+`run --explain` names the file and its count, which is what the run report
+keeps:
 
 The reason strings below are the exact identifiers `internal/discover` emits
 (they appear verbatim in `list` output and in catalog/report JSON):
