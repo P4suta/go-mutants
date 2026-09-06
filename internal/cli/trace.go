@@ -544,14 +544,24 @@ func planSweep(r retentionRoot, keep retention) (sweep, error) {
 	return found, nil
 }
 
-// errNotDirectory is what the collector says about a path that exists and is
-// not a directory, whichever step found out. [namesIn] raises it through
-// [notADirectory] and [removeDirectory] returns it, so the two halves of the
-// protocol below give one answer in one sentence.
-var errNotDirectory = errors.New("is not a directory")
+// The two ways a root can turn out not to be a directory this command may
+// remove, whichever step found out. [namesIn] raises the first and
+// [removeDirectory] returns either, so one condition gets one sentence wherever
+// it is noticed.
+//
+// A link is worth its own words rather than being folded into the first. It is
+// not a mistake — a trace root pointing out of the workspace is an arrangement
+// the refusal rule deliberately allows, and its recordings are collected through
+// it like anybody else's — it is only an object this command will not delete,
+// and telling somebody "is not a directory" about a link they made on purpose
+// would send them looking for a problem that is not there.
+var (
+	errNotDirectory = errors.New("is not a directory")
+	errIsALink      = errors.New("is a link, not a directory")
+)
 
-// notADirectory names a path in [errNotDirectory]'s words.
-func notADirectory(path string) error { return fmt.Errorf("%s %w", path, errNotDirectory) }
+// describePath names a path in the words of the reason it was refused.
+func describePath(path string, reason error) error { return fmt.Errorf("%s %w", path, reason) }
 
 // readDir is how a collector reads an open root, and is a package variable for
 // the reason [traceFilesystem] is one: "a root that changed under the collector
@@ -599,7 +609,7 @@ func namesIn(r retentionRoot) ([]string, error) {
 		return nil, err
 	}
 	if !info.IsDir() {
-		return nil, notADirectory(r.path)
+		return nil, describePath(r.path, errNotDirectory)
 	}
 	entries, err := readDir(f)
 	if err != nil {

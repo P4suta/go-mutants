@@ -556,38 +556,27 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 	}
 	// And the directory itself, once the last thing in it has gone, so that a
 	// workspace somebody has cleaned looks like one that was never traced.
-	// Emptiness is not tested for: rmdir refuses a directory with anything left
-	// in it, which is exactly the directory that has to stay — and it refuses a
-	// path that is not a directory at all, which is what keeps a root somebody
-	// replaced under the collector from being unlinked. See [removeDirectory].
+	// Emptiness is not tested for: the removal refuses a directory with anything
+	// left in it, which is exactly the directory that has to stay — and it
+	// refuses anything that is not a directory this command may delete, which is
+	// what keeps a root replaced under the collector, by a file or by a link,
+	// from being the thing that goes. See [removeDirectory].
 	switch err := removeDirectory(r.path); {
 	case err == nil:
 		fmt.Fprintf(b, "removed the empty %s directory %s\n", r.label, r.path)
-	case errors.Is(err, errNotDirectory) && replacedByAFile(r.path):
+	case errors.Is(err, errNotDirectory), errors.Is(err, errIsALink):
+		// Reported rather than passed over, both of them. Somebody whose root is
+		// a link has had every recording in it collected and is entitled to know
+		// why the directory itself stayed; somebody whose root is a file has had
+		// something replaced under a command that deletes, and that is the whole
+		// of what this refusal exists to catch.
 		return &Error{
 			Code:    CodeUnreadableTrace,
 			Message: "the " + r.label + " directory " + r.path + " cannot be read",
-			Err:     notADirectory(r.path),
+			Err:     describePath(r.path, err),
 		}
 	}
 	return nil
-}
-
-// replacedByAFile reports whether a path rmdir refused is a regular file.
-//
-// rmdir refuses a symbolic link for the same reason it refuses a file, and the
-// two deserve different answers. A link at the trace root is somebody's
-// deliberate arrangement — the refusal rule resolves links precisely so that one
-// pointing out of the workspace is allowed — and this command has nothing to say
-// about it and does not remove it. A regular file where a directory was a moment
-// ago is the race, and is worth reporting.
-//
-// Asking after the refusal is safe in the way asking before it would not have
-// been: the removal has already happened or not, and rmdir could not have
-// unlinked either of them whatever this answers.
-func replacedByAFile(path string) bool {
-	info, err := os.Lstat(path)
-	return err == nil && info.Mode().IsRegular()
 }
 
 // workspaceTraceRoot is where a run started in this directory would record.

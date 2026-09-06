@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -620,15 +621,45 @@ func TestRemoveDirectoryRemovesOnlyDirectories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(full, "inside"), 0o755); err != nil {
 		t.Fatalf("creating the directory that holds something: %v", err)
 	}
-	// A directory with something in it is refused too, and is *not* the
-	// not-a-directory case: it is the ordinary "there is still something here"
-	// the collector passes over in silence.
-	if err := removeDirectory(full); err == nil || errors.Is(err, errNotDirectory) {
+	// A directory with something in it is refused too, and is neither of the two
+	// named kinds: it is the ordinary "there is still something here" the
+	// collector passes over in silence.
+	switch err := removeDirectory(full); {
+	case err == nil, errors.Is(err, errNotDirectory), errors.Is(err, errIsALink):
 		t.Errorf("removeDirectory(a directory holding something) = %v, want an ordinary refusal", err)
 	}
 	if _, statErr := os.Stat(full); statErr != nil {
 		t.Errorf("removeDirectory emptied a directory that was not empty: %v", statErr)
 	}
+
+	// And a link to a directory, which is the one the platforms disagree about:
+	// rmdir refuses it and Windows' RemoveDirectory would delete the link
+	// itself. It is refused as a link rather than as "not a directory", because
+	// a link is usually somebody's arrangement rather than somebody's mistake.
+	linked := filepath.Join(parent, "linked")
+	if err := os.Symlink(empty2(t, parent), linked); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("this machine will not create a directory symbolic link (%v); "+
+				"Windows needs SeCreateSymbolicLinkPrivilege or Developer Mode", err)
+		}
+		t.Fatalf("linking %s: %v", linked, err)
+	}
+	if err := removeDirectory(linked); !errors.Is(err, errIsALink) {
+		t.Errorf("removeDirectory(a link to a directory) = %v, want it refused as a link", err)
+	}
+	if info, statErr := os.Lstat(linked); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("removeDirectory removed the link itself (%v, %v)", info, statErr)
+	}
+}
+
+// empty2 is a second empty directory, for the link above to point at.
+func empty2(t *testing.T, parent string) string {
+	t.Helper()
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatalf("creating the directory the link points at: %v", err)
+	}
+	return target
 }
 
 // TestARootReplacedBetweenTheListingAndTheRemovalIsNotUnlinked closes the
@@ -688,5 +719,72 @@ func TestARootReplacedBetweenTheListingAndTheRemovalIsNotUnlinked(t *testing.T) 
 	}
 	if string(data) != theirs {
 		t.Errorf("the file at the trace root reads %q, want %q", data, theirs)
+	}
+}
+
+// TestADirectorySymlinkAtTheRootIsNeverTheThingRemoved is the other half of
+// "rmdir alone", and the half a platform can get wrong on its own.
+//
+// A link at the trace root reads through to its target, so the recordings
+// inside are collected exactly as they would be anywhere else. The link itself
+// is not a directory this command made and is not one it may remove — and the
+// removal step is where that has to be enforced, because by then the root may
+// not be what the listing saw.
+//
+// Windows is why this is a test rather than an argument. `RemoveDirectory`
+// removes a directory symbolic link or a junction *itself* rather than
+// refusing it, so the step that takes an emptied root away would delete the
+// replacement object; rmdir on every other platform already answers ENOTDIR.
+// The removal therefore opens the root without following reparse points and
+// refuses anything wearing one, which covers a junction and every other tag as
+// well as a symbolic link — a junction needs no separate case because the check
+// is on the attribute rather than on the tag.
+func TestADirectorySymlinkAtTheRootIsNeverTheThingRemoved(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(filepath.Dir(traceRoot), 0o755); err != nil {
+		t.Fatalf("creating the report directory: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "recordings")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("creating the directory the link points at: %v", err)
+	}
+	if err := os.Symlink(target, traceRoot); err != nil {
+		// Only for the one machine that cannot, and it says which one and why:
+		// a directory symbolic link on Windows needs SeCreateSymbolicLinkPrivilege
+		// or Developer Mode, and a CI runner may have neither.
+		if runtime.GOOS == "windows" {
+			t.Skipf("this machine will not create a directory symbolic link (%v); "+
+				"Windows needs SeCreateSymbolicLinkPrivilege or Developer Mode", err)
+		}
+		t.Fatalf("linking %s to %s: %v", traceRoot, target, err)
+	}
+
+	code, stdout, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if !strings.Contains(stderr, "is a link") {
+		t.Errorf("stderr = %q, want it to say the root is a link rather than a directory", stderr)
+	}
+	if strings.Contains(stdout, "removed the empty") {
+		t.Errorf("the command claims to have removed a link:\n%s", stdout)
+	}
+
+	// The link is still a link, and it still points where it did. Removing the
+	// link is what a platform does for us if we let it, and it is the object
+	// this command must never touch.
+	info, err := os.Lstat(traceRoot)
+	if err != nil {
+		t.Fatalf("`trace clean` removed the link at the trace root: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the trace root is %s, want it left as a symbolic link", info.Mode())
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("the directory the link pointed at is gone: %v", err)
 	}
 }

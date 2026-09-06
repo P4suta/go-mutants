@@ -293,7 +293,9 @@ notice the expiry. `context.Canceled` in an error's chain is somebody stopping
 the run — a Ctrl-C, the dashboard's quit key, a caller calling `cancel` — and
 nothing went wrong: such a run reports itself as interrupted, keeps no temporary
 directory that `--keep-temp=on-failure` would otherwise have kept, and writes no
-diagnostics bundle. `context.DeadlineExceeded` is the run failing to finish
+diagnostics bundle. (`KeepTempAlways` still keeps: it is unconditional by name,
+and a caller who cancelled a run half way through is usually a caller who wants
+to look at the tree.) `context.DeadlineExceeded` is the run failing to finish
 inside the time it was given, which is a failure worth diagnosing: it reports as
 failed, it keeps what it was asked to keep, and the CLI writes the bundle every
 other failure gets.

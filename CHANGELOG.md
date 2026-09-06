@@ -2059,12 +2059,15 @@ Entries say *why* a change was made, not only what changed.
   nothing else, and `RunOutcome.Status` is decided by that same predicate. A
   cancellation is somebody's decision — a Ctrl-C, the dashboard's quit key, an
   embedder calling `cancel` — and needs no explanation: it reports
-  `interrupted`, keeps nothing, writes no bundle, and exits 130 or 143 exactly
-  as before. A deadline is the run failing to finish in the time it was given,
-  which is a question about where the time went: it reports the new
+  `interrupted`, writes no bundle, keeps nothing that `--keep-temp=on-failure`
+  would have kept, and exits 130 or 143 exactly as before. `--keep-temp=always`
+  keeps after a cancellation as after anything else: it is the word the user
+  typed, and somebody stopping a run *because* they have seen enough is somebody
+  who wants the tree. A deadline is the run failing to finish in the time it was
+  given, which is a question about where the time went: it reports the new
   `GOM4046`, exits 2, keeps what `--keep-temp=on-failure` was asked to keep, and
-  gets a bundle. Every package that raises an interruption already wrapped the
-  context's own cause, so nothing about a real Ctrl-C moved.
+  the CLI writes it a bundle. Every package that raises an interruption already
+  wrapped the context's own cause, so nothing about a real Ctrl-C moved.
 - **Every boolean environment variable reads the same spellings.**
   `GO_MUTANTS_TRACE` used to accept only the literal `1` and `true` as a yes, so
   `GO_MUTANTS_TRACE=TRUE` was read as a request to record into a directory named

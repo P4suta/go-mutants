@@ -345,10 +345,14 @@ same rule for the same reason.
 
 `run --keep-temp` leaves the run's snapshot and its scratch directory on disk
 instead of removing them, which is the only way to answer "what did the tree
-this mutant ran in actually look like". A bare `--keep-temp` keeps them whatever
-became of the run; `--keep-temp=on-failure` keeps them only when it failed, and
-never when it was interrupted, which is the mode a CI job can leave switched on.
-`GO_MUTANTS_KEEP_TEMP=1|true|always|on-failure` asks for the same.
+this mutant ran in actually look like". A bare `--keep-temp` — `always` — keeps
+them whatever became of the run, a cancellation included: it is the word you
+typed, and stopping a run *because* you have seen enough is the moment you most
+want the tree. `--keep-temp=on-failure` keeps them only when the run failed,
+never when it succeeded and never when it was cancelled, which is the mode a CI
+job can leave switched on; a deadline that expired is a failure rather than a
+cancellation, so it keeps for one. `--keep-temp=never` is the default, said out
+loud. `GO_MUTANTS_KEEP_TEMP=1|true|always|on-failure|never` asks for the same.
 
 Each kept directory is recorded as an `artifact` — `kept-snapshot` and
 `kept-scratch` — and marked `kept` in its own owner marker, so the next run's
