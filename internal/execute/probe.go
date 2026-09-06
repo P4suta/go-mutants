@@ -316,6 +316,38 @@ func readInfection(p ProbeRun) ([]uint32, error) {
 	return infected, nil
 }
 
+// ProbePassRecord is one probe pass as the recording holds it.
+//
+// It is [AttemptRecord]'s sibling and exists for the same reason: a pass and
+// the summary of it are built in one place, so that no caller can record a pass
+// that ran three binaries as one that ran two. It is exported because the only
+// caller that records a pass is outside this package — the library API's
+// session — while everything the record says about the pass is this package's.
+//
+// Two fields are deliberately left to that caller, because this package does
+// not know them. `package` is what the *request* narrowed the pass to, which is
+// a fact about the call rather than about the children; and `infected` names
+// mutants by identity, while a pass records the catalogue indices it was
+// instrumented against. Both belong to the layer that owns the catalogue.
+func ProbePassRecord(p ProbeRun, attempt ProbeAttempt) trace.ProbeRecord {
+	record := trace.ProbeRecord{
+		// Cloned on the way in, for the reason [AttemptRecord] clones its own:
+		// the record is handed to a sink that may keep it, and the caller may
+		// reuse the arguments for the next pass.
+		Binaries:   slices.Clone(attempt.Binaries),
+		Args:       slices.Clone(p.Args),
+		TimeoutMS:  p.Timeout.Milliseconds(),
+		Outcome:    string(attempt.Outcome),
+		ExitCode:   attempt.ExitCode,
+		DurationMS: attempt.Duration.Milliseconds(),
+		ExecSeqs:   slices.Clone(attempt.ExecSeqs),
+	}
+	if attempt.Err != nil {
+		record.Error = attempt.Err.Error()
+	}
+	return record
+}
+
 // probeSubject names what a pass is about, for the recording.
 //
 // A probe pass is one measurement over the binaries it selected — the log every

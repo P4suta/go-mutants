@@ -44,6 +44,7 @@ import (
 	"testing"
 
 	gomutants "github.com/P4suta/go-mutants"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 var (
@@ -54,6 +55,17 @@ var (
 	_ func(*gomutants.Workspace) gomutants.SweepResult = (*gomutants.Workspace).Swept
 	_ func(*gomutants.Workspace) []string = (*gomutants.Workspace).Preserved
 	_ func(*gomutants.Workspace) string = (*gomutants.Workspace).ToolchainVersion
+
+	// The recording half of the workspace. A consumer either hands Open a sink
+	// of its own or reads the bounded ring back after Close, and both halves
+	// are named from outside this module.
+	_ trace.Sink = gomutants.OpenOptions{}.Trace
+	_ func(*gomutants.Workspace) []trace.Event = (*gomutants.Workspace).Recording
+
+	// The two paths a consumer needs to reproduce one execution by hand:
+	// GOFLAGS=-overlay=<manifest>, in the session's snapshot.
+	_ func(*gomutants.Session) string = (*gomutants.Session).OverlayManifest
+	_ func(*gomutants.Session) string = (*gomutants.Session).ProbeOverlayManifest
 	_ func(*gomutants.Session) gomutants.Catalog = (*gomutants.Session).Catalog
 	_ func(*gomutants.Session, context.Context, gomutants.ExecRequest) (gomutants.MutantResult, error) = (*gomutants.Session).Exec
 	_ func(*gomutants.Session, context.Context, gomutants.ProbeRequest) (gomutants.ProbeResult, error) = (*gomutants.Session).Probe
@@ -277,6 +289,17 @@ func TestPublicDataTypes(t *testing.T) {
 		Auditable:      false,
 	}
 
+	// The join into a recording, and the binaries a result was measured
+	// against. A consumer records its own trace and pairs the two on TraceSeq,
+	// so the names and the types are both the contract.
+	var (
+		_ int64    = gomutants.CommandResult{}.TraceSeq
+		_ []string = gomutants.MutantResult{}.Binaries
+		_ int64    = gomutants.MutantResult{}.TraceSeq
+		_ []string = gomutants.ProbeResult{}.Binaries
+		_ int64    = gomutants.ProbeResult{}.TraceSeq
+	)
+
 	// The named fields, not only the type: a consumer reads these by name and a
 	// rename is a breaking change whatever the shape of the struct stays.
 	_ = gomutants.SweepResult{
@@ -387,8 +410,8 @@ var (
 	_ func(*trace.Recorder, string, string) func(string)                    = (*trace.Recorder).Stage
 	_ func(*trace.Recorder, string, string, string, time.Duration)          = (*trace.Recorder).Prepare
 	_ func(*trace.Recorder, trace.ExecRecord) int64                         = (*trace.Recorder).Exec
-	_ func(*trace.Recorder, trace.MutantRecord)                             = (*trace.Recorder).MutantExec
-	_ func(*trace.Recorder, trace.ProbeRecord)                              = (*trace.Recorder).ProbeExec
+	_ func(*trace.Recorder, trace.MutantRecord) int64                       = (*trace.Recorder).MutantExec
+	_ func(*trace.Recorder, trace.ProbeRecord) int64                        = (*trace.Recorder).ProbeExec
 	_ func(*trace.Recorder, trace.ValidateRecord)                           = (*trace.Recorder).Validate
 	_ func(*trace.Recorder, trace.CoverageRecord)                           = (*trace.Recorder).Coverage
 	_ func(*trace.Recorder, trace.CacheRecord)                              = (*trace.Recorder).Cache

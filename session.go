@@ -32,6 +32,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/snapshot"
 	"github.com/P4suta/go-mutants/internal/testflag"
 	"github.com/P4suta/go-mutants/internal/validate"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 const (
@@ -79,8 +80,24 @@ type Session struct {
 	// its probe tree on disk and leaves its own scratch directory alone: the
 	// scratch lives inside the workspace's, which is being kept too.
 	keepTemp bool
-	// preserved names what Close left behind, for the Workspace to report.
-	preserved []string
+	// preserved names the durable directories a kept session left behind — its
+	// probe tree, and nothing else — for the Workspace to report and to record
+	// at Close. keptScratch names the per-call scratch of every execution and
+	// probe pass a kept session made; those are recorded where they are kept
+	// and only reported here.
+	//
+	// keptScratch has a lock of its own because Exec and Probe write it while
+	// holding the read half of the session's, which is what lets them run
+	// concurrently; a reader cannot take the writer without deadlocking itself.
+	keepMu      sync.Mutex
+	keptScratch []string
+	preserved   []keptDirectory
+
+	// recorder is the workspace's, so that one recording holds the preparation,
+	// the builds under it, and every execution and probe pass that follows. It
+	// is never nil for a session Prepare returned, and every method on it is
+	// safe on one that is.
+	recorder *trace.Recorder
 }
 
 type mainBuildResult struct {
@@ -103,8 +120,17 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	if w == nil {
 		return nil, errors.New("gomutants: prepare: nil workspace")
 	}
+	return w.prepare(ctx, options)
+}
+
+func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (session *Session, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// Everything above the recorder's note is a refusal rather than a
+	// preparation failure: a closed workspace, one already prepared, a
+	// cancelled context, an option that is not a value this engine accepts.
+	// None of them started a preparation, so a `prepare-failed` note about one
+	// would name no phase and describe nothing that happened.
 	if w.closed {
 		return nil, fmt.Errorf("gomutants: prepare: %w", ErrWorkspaceClosed)
 	}
@@ -112,17 +138,26 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		return nil, fmt.Errorf("gomutants: prepare: %w", ErrWorkspacePrepared)
 	}
 	w.prepared = true
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("gomutants: prepare: %w", err)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("gomutants: prepare: %w", ctxErr)
 	}
 	resolved, err := resolvePrepareOptions(options)
 	if err != nil {
 		return nil, err
 	}
+	phases := newPrepareTrace(resolved.Trace, w.recorder)
+	// From here on a failure is one this workspace had, and the recording says
+	// which phase it was in. Deferred rather than written at each return,
+	// because a preparation has a dozen of them and the one that would be
+	// forgotten is the one somebody is reading the recording to find.
+	defer func() {
+		if err != nil {
+			w.recorder.Note(trace.NotePrepareFailed, "", prepareFailedDetail(err))
+		}
+	}()
 	if pristineErr := checkPristineSnapshot(w.snapshot); pristineErr != nil {
 		return nil, pristineErr
 	}
-	trace := newPrepareTrace(resolved.Trace)
 	rules, err := selectRules(resolved.Profile, resolved.Operators)
 	if err != nil {
 		return nil, err
@@ -140,7 +175,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	var catalog *mutation.Catalog
 	var pristineSources map[string]sourceImage
 	var hints instrument.Hints
-	err = trace.run(PreparePhaseDiscovery, func() error {
+	err = phases.run(PreparePhaseDiscovery, func() error {
 		found, err = discover.Discover(ctx, discover.Options{
 			SnapshotRoot: w.snapshot.Root,
 			Toolchain:    w.toolchain,
@@ -185,10 +220,12 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	// the user's tree, which may have moved since Open froze it.
 	var probeSnap *snapshot.Snapshot
 	if resolved.Probe {
-		err = trace.run(PreparePhaseProbeSnapshot, func() error {
+		err = phases.run(PreparePhaseProbeSnapshot, func() error {
+			started := time.Now()
 			probeSnap, err = snapshot.Create(w.snapshot.Root, snapshot.Options{
 				DestParent: w.snapshot.Parent(),
 			})
+			recordSnapshot(w.recorder, trace.SnapshotKindProbe, w.snapshot.Root, probeSnap, time.Since(started), err)
 			if err != nil {
 				return fmt.Errorf("gomutants: prepare probe snapshot: %w", err)
 			}
@@ -203,7 +240,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			return failPrepare(probeSnap, err)
 		}
 	} else {
-		trace.skip(PreparePhaseProbeSnapshot)
+		phases.skip(PreparePhaseProbeSnapshot)
 	}
 	// Every return from here on goes through fail, so that a probe tree copied
 	// and then abandoned does not outlive the call that made it — as Open
@@ -211,7 +248,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	fail := func(err error) (*Session, error) { return failPrepare(probeSnap, err) }
 
 	var validated validate.Result
-	err = trace.run(PreparePhaseMainValidation, func() error {
+	err = phases.run(PreparePhaseMainValidation, func() error {
 		validated, err = validate.Validate(ctx, validate.Options{
 			Snap:         w.snapshot,
 			Catalog:      catalog,
@@ -222,6 +259,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			BuildTimeout: resolved.BuildTimeout,
 			Env:          validationEnv,
 			Packages:     resolved.DiscoveryPackages,
+			Trace:        w.recorder,
 		})
 		if err != nil {
 			return buildError(PreparePhaseMainValidation, fmt.Errorf("gomutants: prepare validation: %w", err))
@@ -233,7 +271,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	}
 	var scratch string
 	var overlayPath string
-	err = trace.run(PreparePhaseMainRestoration, func() error {
+	err = phases.run(PreparePhaseMainRestoration, func() error {
 		scratch, err = os.MkdirTemp(w.scratch, sessionPrefix)
 		if err != nil {
 			return fmt.Errorf("gomutants: prepare session scratch: %w", err)
@@ -242,6 +280,10 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		if err != nil {
 			return fmt.Errorf("gomutants: prepare instrumentation overlay: %w", err)
 		}
+		// The manifest is what a consumer needs to reproduce an execution by
+		// hand — `GOFLAGS=-overlay=<manifest>` in the snapshot — so it is in the
+		// recording as well as behind [Session.OverlayManifest].
+		w.recorder.Artifact(trace.ArtifactOverlayManifest, overlayPath)
 		if err = restoreInstrumentationSources(w.snapshot.Root, pristineSources, validated.Instrumented); err != nil {
 			return fmt.Errorf("gomutants: prepare restore source tree: %w", err)
 		}
@@ -255,7 +297,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	}
 
 	if !resolved.SkipVerify {
-		err = trace.run(PreparePhaseVerification, func() error {
+		err = phases.run(PreparePhaseVerification, func() error {
 			verify := resolved.Verify
 			verifyBase, verifyErr := overlayEnvironment(w.env, verify.Env)
 			if verifyErr != nil {
@@ -266,7 +308,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			if verifyErr != nil {
 				return fmt.Errorf("gomutants: prepare verification overlay: %w", verifyErr)
 			}
-			verified, verifyErr := w.runCommand(ctx, verify, verifyBase)
+			verified, verifyErr := w.runCommand(ctx, verify, verifyBase, trace.ExecKindVerify)
 			if verifyErr != nil {
 				return fmt.Errorf("gomutants: prepare instrumented verification: %w", verifyErr)
 			}
@@ -290,10 +332,10 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			return fail(err)
 		}
 	} else {
-		trace.skip(PreparePhaseVerification)
+		phases.skip(PreparePhaseVerification)
 	}
 
-	mainSpan := trace.begin(PreparePhaseBinaryBuild)
+	mainSpan := phases.begin(PreparePhaseBinaryBuild)
 	mainFinished := make(chan PrepareEvent, 1)
 	mainBuild, probeBuild, err := runPreparationBuilds(ctx,
 		func(ctx context.Context) (mainBuildResult, error) {
@@ -312,6 +354,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 					Env:          executionEnv,
 					Jobs:         resolved.Jobs,
 					Timeout:      resolved.BuildTimeout,
+					Trace:        w.recorder,
 				}
 				var binaryErr error
 				result.binaries, binaryErr = execute.BuildTestBinaries(ctx, result.options)
@@ -327,7 +370,11 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 				return nil
 			}()
 			mainFinished <- mainSpan.complete(buildErr)
-			return result, buildErr
+			// Tagged here rather than by [prepareTrace.run], because this is
+			// the one phase driven by a span of its own: it starts before the
+			// probe tree's three and finishes after them, so it cannot be a
+			// call that returns when the work does.
+			return result, inPhase(PreparePhaseBinaryBuild, buildErr)
 		},
 		func(ctx context.Context) (probeBuildResult, error) {
 			options, binaries, probed, overlay, probeErr := prepareProbeTree(ctx, probeTreeOptions{
@@ -345,12 +392,13 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 				validateEnv:        validationEnv,
 				scratch:            scratch,
 				pristineSources:    pristineSources,
-				trace:              trace,
+				phases:             phases,
+				recorder:           w.recorder,
 			})
 			return probeBuildResult{options: options, binaries: binaries, probed: probed, overlay: overlay}, probeErr
 		},
 	)
-	trace.finish(<-mainFinished)
+	phases.finish(<-mainFinished)
 	if err != nil {
 		return fail(err)
 	}
@@ -370,7 +418,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		probeBuild.probed,
 		mainBuild.binaries,
 	)
-	session := &Session{
+	session = &Session{
 		root:           w.snapshot.Root,
 		scratch:        scratch,
 		env:            slices.Clone(w.env),
@@ -388,6 +436,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		probeOptions:   probeBuild.options,
 		probeOverlay:   probeBuild.overlay,
 		keepTemp:       w.keepTemp,
+		recorder:       w.recorder,
 	}
 	w.session = session
 	return session, nil
@@ -492,7 +541,8 @@ type probeTreeOptions struct {
 	validateEnv        []string
 	scratch            string
 	pristineSources    map[string]sourceImage
-	trace              prepareTrace
+	phases             prepareTrace
+	recorder           *trace.Recorder
 }
 
 // prepareProbeTree instruments, validates and builds the probe tree, and
@@ -529,15 +579,15 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 	execute.Options, []execute.TestBinary, map[string]bool, string, error,
 ) {
 	if opts.snap == nil {
-		opts.trace.skip(PreparePhaseProbeValidation)
-		opts.trace.skip(PreparePhaseProbeCoverageBuild)
-		opts.trace.skip(PreparePhaseProbeRestoration)
+		opts.phases.skip(PreparePhaseProbeValidation)
+		opts.phases.skip(PreparePhaseProbeCoverageBuild)
+		opts.phases.skip(PreparePhaseProbeRestoration)
 		return execute.Options{}, nil, nil, "", nil
 	}
 
 	var validated validate.Result
 	var overlayPath string
-	err := opts.trace.run(PreparePhaseProbeValidation, func() error {
+	err := opts.phases.run(PreparePhaseProbeValidation, func() error {
 		var validateErr error
 		validated, validateErr = validate.Validate(ctx, validate.Options{
 			Snap:         opts.snap,
@@ -550,6 +600,7 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 			Env:          opts.validateEnv,
 			Mode:         instrument.ModeProbe,
 			Packages:     opts.validationPackages,
+			Trace:        opts.recorder,
 		})
 		if validateErr != nil {
 			return buildError(PreparePhaseProbeValidation,
@@ -562,6 +613,10 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 		if validateErr != nil {
 			return fmt.Errorf("gomutants: prepare probe instrumentation overlay: %w", validateErr)
 		}
+		// The probe tree's own manifest, recorded under a kind of its own: the
+		// two trees are reproduced with two different overlays, and one kind for
+		// both would leave a reader guessing which tree a path belongs to.
+		opts.recorder.Artifact(trace.ArtifactProbeOverlayManifest, overlayPath)
 		return nil
 	})
 	if err != nil {
@@ -577,9 +632,10 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 		Jobs:         opts.jobs,
 		Timeout:      opts.buildTimeout,
 		CoverPkg:     strings.Join(opts.coverPackages, ","),
+		Trace:        opts.recorder,
 	}
 	var binaries []execute.TestBinary
-	err = opts.trace.run(PreparePhaseProbeCoverageBuild, func() error {
+	err = opts.phases.run(PreparePhaseProbeCoverageBuild, func() error {
 		var buildErr error
 		binaries, buildErr = execute.BuildTestBinaries(ctx, probeOptions)
 		if buildErr != nil {
@@ -592,7 +648,7 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 		return execute.Options{}, nil, nil, "", err
 	}
 	var probeEnv []string
-	err = opts.trace.run(PreparePhaseProbeRestoration, func() error {
+	err = opts.phases.run(PreparePhaseProbeRestoration, func() error {
 		if restoreErr := restoreInstrumentationSources(opts.snap.Root, opts.pristineSources, validated.Instrumented); restoreErr != nil {
 			return fmt.Errorf("gomutants: prepare restore probe source tree: %w", restoreErr)
 		}
@@ -859,6 +915,90 @@ func (s *Session) Catalog() Catalog {
 	return cloneCatalog(s.publicCatalog)
 }
 
+// OverlayManifest is the `go` overlay this session's mutant tree is compiled
+// and executed through: the file `GOFLAGS=-overlay=<manifest>` names.
+//
+// It is the other half of reproducing an execution by hand, and it is exported
+// because there is no way to derive it — the manifest lives in a scratch
+// directory whose name is chosen when the session is prepared, and the
+// instrumented sources it points at live nowhere else.
+//
+// Rebuilding one of the session's test binaries with it is:
+//
+//	cd <snapshot> && GOFLAGS=-overlay=<manifest> go test -c -o mutant.test ./<package>
+//
+// and running it is the `exec` event's own `argv`, in the `exec` event's own
+// `dir`, with the mutant switched on:
+//
+//	cd <exec.dir> && GO_MUTANTS_ACTIVE=<mutant id> <exec.argv...>
+//
+// The directory is the *package's*, not the snapshot root: a Go test resolves
+// testdata relative to where it runs, so the engine starts every test binary in
+// the directory of the package it was built from and a reproduction started
+// anywhere else is running a different program.
+//
+// The path is absolute, and it stays valid for as long as the session does:
+// [Session.Close] removes the scratch directory it lives in unless
+// [OpenOptions.KeepTemp] asked for the tree to be kept, which is the option
+// this accessor is usually reached for beside.
+func (s *Session) OverlayManifest() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.overlayPath
+}
+
+// ProbeOverlayManifest is the same file for the session's probe tree, and is
+// empty for a session prepared without one.
+//
+// The two trees are separate copies compiled through separate overlays, so they
+// are two accessors rather than one: a caller reproducing a probe pass by hand
+// needs the probe tree's manifest and the probe tree's snapshot root, and
+// reaching for the mutant tree's would compile a program with no probe in it.
+//
+// A probe pass activates no mutant. What it needs instead is a log to record
+// into, which is [github.com/P4suta/go-mutants/internal/instrument.ProbeEnv] —
+// `GO_MUTANTS_PROBE` — naming a *file path* rather than any kind of index:
+//
+//	cd <exec.dir> && GO_MUTANTS_PROBE=/tmp/infection.log <exec.argv...>
+//
+// The path must be private to the pass. Every binary of one pass appends to one
+// log and the log is read once at the end, so a file two passes share is two
+// measurements nothing can tell apart.
+func (s *Session) ProbeOverlayManifest() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.probeOverlay
+}
+
+// keepScratch keeps one per-call scratch directory a [OpenOptions.KeepTemp]
+// session is preserving, exactly as [Workspace.keepExecScratch] keeps the
+// workspace's own: the artifact is recorded here, beside the execution or probe
+// pass it belonged to and never again at Close, and nothing is written into the
+// directory itself.
+func (s *Session) keepScratch(scratch string) {
+	s.recorder.Artifact(trace.ArtifactKeptExecScratch, scratch)
+	s.keepMu.Lock()
+	defer s.keepMu.Unlock()
+	s.keptScratch = append(s.keptScratch, scratch)
+}
+
+// keptScratchDirs is the per-call scratch a kept session left behind. They are
+// reported by [Workspace.Preserved] and were recorded where they were kept.
+func (s *Session) keptScratchDirs() []string {
+	if s == nil {
+		return nil
+	}
+	s.keepMu.Lock()
+	defer s.keepMu.Unlock()
+	return slices.Clone(s.keptScratch)
+}
+
 // Exec runs one mutant against a selected test or fuzz target without
 // rebuilding the prepared test binaries.
 func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, error) {
@@ -900,7 +1040,16 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	if err != nil {
 		return MutantResult{}, fmt.Errorf("gomutants: session exec scratch: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(scratch) }()
+	// Kept only once the execution has actually happened, and removed on every
+	// path that never reached one: a directory nothing ran in holds nothing to
+	// look at, and keeping it would put a path in Preserved that answers no
+	// question.
+	kept := false
+	defer func() {
+		if !kept {
+			_ = os.RemoveAll(scratch)
+		}
+	}()
 	targetArgs, err := sessionTargetArgs(request.Args, scratch, "exec")
 	if err != nil {
 		return MutantResult{}, err
@@ -918,7 +1067,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 			return MutantResult{}, fmt.Errorf("gomutants: session exec fuzz workspace: %w", err)
 		}
 	}
-	attempt := execute.RunOne(ctx, opts, execute.MutantRun{
+	run := execute.MutantRun{
 		ID:          mutant.ID,
 		DisplayID:   mutant.DisplayID,
 		Package:     s.packageOf(mutant),
@@ -926,7 +1075,18 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		Binaries:    binaryIndexes,
 		Args:        targetArgs,
 		OutputLimit: request.OutputLimit,
-	}, runBinaries)
+	}
+	attempt := execute.RunOne(ctx, opts, run, runBinaries)
+	// One attempt, on the caller's goroutine, with nothing else of this
+	// session's in flight that it shares a worker with: attempt 1 and worker 0
+	// are the facts rather than placeholders. The summary is built by
+	// internal/execute so that an attempt recorded through this API and one
+	// recorded by a run describe themselves the same way, field for field.
+	traceSeq := s.recorder.MutantExec(execute.AttemptRecord(run, attempt, 1, 0))
+	if s.keepTemp {
+		s.keepScratch(scratch)
+		kept = true
+	}
 	artifacts, artifactErr := captureFuzzArtifacts(artifactRoot)
 	// The capture is handed over rather than copied. internal/execute already
 	// cloned it out of the runner's buffer, and the attempt is a local value
@@ -943,6 +1103,8 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		Truncated:  attempt.Truncated,
 		TotalBytes: attempt.OutputBytes,
 		Artifacts:  artifacts,
+		Binaries:   attempt.Binaries,
+		TraceSeq:   traceSeq,
 	}
 	if artifactErr != nil {
 		return result, fmt.Errorf("gomutants: session exec artifacts: %w", artifactErr)
@@ -1077,10 +1239,17 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	if err != nil {
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe scratch: %w", err)
 	}
-	// The log lives and dies with the call. Two passes appending to one file
-	// would each read the other's indices as their own, and a file left behind
-	// would do the same to the next run over the same directory.
-	defer func() { _ = os.RemoveAll(scratch) }()
+	// The log lives and dies with the call. Every pass gets a directory of its
+	// own, so the file a kept one leaves behind is nobody else's to append to:
+	// what must never happen is two passes sharing one log, and two passes
+	// never share a directory. Without a keep it goes, because a pass a caller
+	// did not ask to preserve is a directory nothing will ever read.
+	kept := false
+	defer func() {
+		if !kept {
+			_ = os.RemoveAll(scratch)
+		}
+	}()
 	targetArgs, err := sessionTargetArgs(request.Args, scratch, "probe")
 	if err != nil {
 		return ProbeResult{}, err
@@ -1089,7 +1258,7 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	opts := s.probeOptions
 	opts.ScratchDir = scratch
 	opts.Env = env
-	attempt := execute.RunProbe(ctx, opts, execute.ProbeRun{
+	pass := execute.ProbeRun{
 		Timeout:     timeout,
 		Binaries:    binaryIndexes,
 		Args:        targetArgs,
@@ -1097,13 +1266,33 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		LogPath:     filepath.Join(scratch, infectionLogName),
 		Digest:      s.catalog.Digest(),
 		Mutants:     s.catalog.Len(),
-	}, s.probeBinaries)
+	}
+	attempt := execute.RunProbe(ctx, opts, pass, s.probeBinaries)
+	// Recorded before the failures below are turned into errors, so that a pass
+	// that could not be made is in the account of the session rather than only
+	// in the error one caller received. The infection set is named by mutant
+	// identity rather than by the catalogue index the runtime wrote, because an
+	// index means nothing outside this session and an identity is what the
+	// report, the cache and a consumer's own recording all key on.
+	traceSeq := s.recorder.ProbeExec(s.probePassRecord(pass, attempt, binaryIndexes))
+	if s.keepTemp {
+		s.keepScratch(scratch)
+		kept = true
+	}
+	// Everything below returns this rather than a zero value. A pass that
+	// reached an execution is in the recording whatever became of it, and
+	// TraceSeq is documented as the event that explains the result — so a
+	// failure that handed back a zero sequence would be the one case a consumer
+	// most wants to read about and the one case it cannot find. What it carries
+	// is what the pass established and nothing it did not: the binaries it
+	// started and the account of them, never an outcome or an infection set.
+	partial := ProbeResult{Binaries: attempt.Binaries, TraceSeq: traceSeq}
 	if attempt.Err != nil {
-		return ProbeResult{}, executionError("probe", request.Package,
+		return partial, executionError("probe", request.Package,
 			fmt.Errorf("gomutants: session probe: %w", attempt.Err))
 	}
 	if err := ctx.Err(); err != nil {
-		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", err)
+		return partial, fmt.Errorf("gomutants: session probe: %w", err)
 	}
 	// The set a caller receives is one it may index the catalogue with directly,
 	// and that promise is kept here rather than left to the runtime that wrote
@@ -1116,11 +1305,11 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	// drops an index outside the catalogue on its way to dropping the rejected
 	// ones — and those two are not the same thing at all.
 	if err := checkInfectedShape(attempt.Infected, len(s.publicCatalog.Mutants)); err != nil {
-		return ProbeResult{}, err
+		return partial, err
 	}
 	infected := filterInfected(attempt.Infected, s.publicCatalog.Mutants)
 	if err := checkInfectedProbed(infected, s.publicCatalog.Mutants); err != nil {
-		return ProbeResult{}, err
+		return partial, err
 	}
 	// The capture is handed over rather than copied, as [Session.Exec] hands
 	// over its own: internal/execute already cloned it out of the runner's
@@ -1133,7 +1322,50 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		Output:     attempt.Output,
 		Truncated:  attempt.Truncated,
 		TotalBytes: attempt.OutputBytes,
+		Binaries:   attempt.Binaries,
+		TraceSeq:   traceSeq,
 	}, nil
+}
+
+// probePassRecord is one pass as the recording holds it: what internal/execute
+// knows about it, plus the two things only this session can say.
+//
+// The package is named exactly when the pass *selected* one binary, which is the
+// rule the `probe-run` executions underneath it are stamped with — a pass over
+// several packages is a measurement of no single one, and picking a member of
+// the set would be worse than naming none. The selected set and not the started
+// one: a pass that stopped at its first binary of three was still a measurement
+// of three, and a session with exactly one prepared binary names it whether or
+// not the request narrowed anything.
+//
+// The infection set is the raw log's, mapped to identities and neither filtered
+// nor checked. Filtering happens afterwards and for a reason about the
+// *contract* — an index naming a mutant nothing will execute licenses no
+// skipping — while a recording is the account of what the pass recorded, and an
+// index dropped before it reached the recording would be a fact removed from
+// the one place a reader goes to find out why a pass said what it did. An index
+// outside this catalogue is left out rather than made up: the check that
+// refuses one runs next, and a recording is not the place to panic.
+func (s *Session) probePassRecord(
+	pass execute.ProbeRun, attempt execute.ProbeAttempt, binaryIndexes []int,
+) trace.ProbeRecord {
+	record := execute.ProbePassRecord(pass, attempt)
+	switch {
+	case binaryIndexes == nil && len(s.probeBinaries) == 1:
+		record.Package = s.probeBinaries[0].ImportPath
+	case len(binaryIndexes) == 1:
+		record.Package = s.probeBinaries[binaryIndexes[0]].ImportPath
+	}
+	if attempt.Infected != nil {
+		infected := make([]string, 0, len(attempt.Infected))
+		for _, index := range attempt.Infected {
+			if uint64(index) < uint64(len(s.publicCatalog.Mutants)) {
+				infected = append(infected, s.publicCatalog.Mutants[index].ID)
+			}
+		}
+		record.Infected = infected
+	}
+	return record
 }
 
 // filterInfected drops the indices of mutants the mutant tree's validation
@@ -1424,7 +1656,10 @@ func (s *Session) Close() error {
 		kept, err := keepOrRemove(s.keepTemp, s.probeSnapshot.Keep, s.probeSnapshot.Cleanup)
 		closeErr = errors.Join(closeErr, err)
 		if kept {
-			s.preserved = append(s.preserved, s.probeSnapshot.Dir())
+			s.keepMu.Lock()
+			s.preserved = append(s.preserved,
+				keptDirectory{kind: trace.ArtifactKeptProbeTree, path: s.probeSnapshot.Dir()})
+			s.keepMu.Unlock()
 		}
 	}
 	if closeErr != nil {
@@ -1433,20 +1668,22 @@ func (s *Session) Close() error {
 	return nil
 }
 
-// preserved names the directories this session left on disk, which is the probe
-// tree of a kept session and nothing otherwise. The session scratch is not
-// among them: it lives inside the workspace's scratch directory, which the
-// Workspace reports on its own.
+// preservedDirs names the durable directories this session left on disk, which
+// is the probe tree of a kept session and nothing else. The per-call scratch is
+// [Session.keptScratchDirs], recorded where it was kept; the session's own
+// scratch is neither, because it lives inside the workspace's, which the
+// Workspace settles on its own.
 //
 // It is unexported because [Workspace.Preserved] is the one place a caller asks
-// this question: a session whose probe tree was kept is always closed by, or
-// before, the workspace that owns it.
-func (s *Session) preservedDirs() []string {
+// this question: a session whose directories were kept is always closed by, or
+// before, the workspace that owns it. The artifact kind travels with each path
+// so that the workspace's recording can say what each one was.
+func (s *Session) preservedDirs() []keptDirectory {
 	if s == nil {
 		return nil
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.keepMu.Lock()
+	defer s.keepMu.Unlock()
 	return slices.Clone(s.preserved)
 }
 

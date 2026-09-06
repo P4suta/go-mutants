@@ -361,6 +361,40 @@ func TestMutantResultInvariants(t *testing.T) {
 	}
 }
 
+// TestResultsCarryTraceSeqAndBinaries pins the join and the measurement.
+//
+// The shape is the claim here, not any particular run's numbers: a consumer
+// reads `TraceSeq` to find the event that explains a result and `Binaries` to
+// know what the result was measured against, and both are read by name from
+// outside this module.
+// TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses is
+// where the values are checked against the events they point at.
+func TestResultsCarryTraceSeqAndBinaries(t *testing.T) {
+	t.Parallel()
+
+	pinType[int64](gomutants.CommandResult{}.TraceSeq)
+	pinType[[]string](gomutants.MutantResult{}.Binaries)
+	pinType[int64](gomutants.MutantResult{}.TraceSeq)
+	pinType[[]string](gomutants.ProbeResult{}.Binaries)
+	pinType[int64](gomutants.ProbeResult{}.TraceSeq)
+
+	// Zero and nil are what a call that never reached an execution reports, and
+	// they are the values a consumer has to be able to tell from a real one: a
+	// sequence of zero is not a sequence anything can be found at.
+	for name, seq := range map[string]int64{
+		"CommandResult": gomutants.CommandResult{}.TraceSeq,
+		"MutantResult":  gomutants.MutantResult{}.TraceSeq,
+		"ProbeResult":   gomutants.ProbeResult{}.TraceSeq,
+	} {
+		if seq != 0 {
+			t.Errorf("the zero %s carries TraceSeq %d, want 0", name, seq)
+		}
+	}
+	if (gomutants.MutantResult{}).Binaries != nil || (gomutants.ProbeResult{}).Binaries != nil {
+		t.Error("a zero result names test binaries it never ran")
+	}
+}
+
 // TestVocabulariesArePinned writes out every string constant a consumer may
 // have serialized, so that changing one is a decision rather than an accident.
 //
