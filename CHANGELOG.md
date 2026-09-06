@@ -14,6 +14,50 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`Catalog.PreparedDigest`, `Mutant.EndLine`, and a probe log the engine
+  checks against its own catalogue.** All three close gaps a consumer was
+  filling in by hand, and getting subtly wrong.
+
+  `Catalog.Digest` covers the *set of mutants* and deliberately nothing else —
+  not the module path, the toolchain, the profile, the test packages, the
+  workspace digest, `Mutant.Package`, `Mutant.Accepted`, `Mutant.Probed` or the
+  rejections. A consumer storing results per prepared session needs all of it,
+  so goatest hashed its own: one fingerprint over the mutants plus `Package` and
+  `Accepted`, a second over the probe status, because no single value it could
+  compute covered both. Those are two re-derived recipes nobody versions, which
+  go on hashing yesterday's fields the day the engine reports something new
+  about a prepared mutant — and go on hitting, with evidence gathered against a
+  session that is not this one. `PreparedDigest` is the engine's own answer: a
+  SHA-256 over the domain separator `go-mutants-prepared-catalog-v1`, `Digest`,
+  `WorkspaceDigest`, `ModulePath`, `GoVersion`, `Toolchain`, `Profile`, the test
+  packages, and per mutant its ID, package and three flag bytes, plus the
+  rejection IDs — length-prefixed with the mutant identity's own encoding, and
+  written out in full on the field and in `docs/library.md` because a value a
+  consumer keys a store on is a wire format. Line numbers, columns, display
+  identities, diagnostics and branch proofs stay outside it: each is a function
+  of what is hashed, and a key that moved when a line shifted above an untouched
+  mutant would be a cache that never hits.
+
+  `Mutant.EndLine` is the 1-based line the edit ends on — `Line` plus the
+  newlines in `Original`, the rule `go-mutants run --changed` already applies to
+  a diff. Without it a caller selecting by line range through the library had
+  only `Line`, and comparing that alone silently drops every multi-line edit
+  whose last line the range touches and whose first line it does not — which is
+  exactly the mutant a `--changed` run would have executed.
+
+  `Session.Probe` now proves the set it returns. `ProbeResult.Infected` has
+  always promised to be ascending, in range, and to name only probed mutants;
+  an index that failed one of those arrived as a fact, and a fact there licenses
+  a consumer *not* to execute a test. Such an index can only come from
+  go-mutants contradicting itself, so it is now `ErrProbeInconsistent` naming
+  the index rather than a repaired set handed over as a measurement — an engine
+  bug surfaces as an error, never as "no facts" and never as a fact. The shape
+  is proved over the *raw* log, before the indices of mutants the mutant tree
+  rejected are dropped: that filter has to tolerate an index outside the
+  catalogue in order not to panic on one, so checking after it would let the
+  runtime write about a catalogue that is not this one and have it read as an
+  ordinary rejection. A consumer can delete its own catalogue validation and its
+  unknown-index defences.
 - **Typed errors on the engine API, with every message unchanged.** A consumer
   driving `Workspace` and `Session` had to tell three things apart and could
   only do it by matching text: the user's test suite failing on the instrumented

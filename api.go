@@ -220,6 +220,14 @@ type PrepareOptions struct {
 
 // Catalog is the immutable public description of one prepared session.
 // Session.Catalog returns a deep copy.
+//
+// A caller may keep and edit that copy, and PreparedDigest does not follow it:
+// it is the value the engine computed for the session it prepared, not a
+// checksum of the struct in hand. Edit a copy and the field goes stale, still
+// naming the session the catalogue came from. That is usually what a caller
+// wants — evidence stays keyed to the preparation that produced it — but a
+// caller that has rewritten a catalogue and needs a key for what it now holds
+// has to hash it itself, from the recipe below.
 type Catalog struct {
 	WorkspaceDigest string
 	// Digest identifies the *set of mutants* and nothing else. It is the
@@ -240,25 +248,102 @@ type Catalog struct {
 	// So it answers exactly one question — are these two runs looking at the
 	// same mutants? — and a consumer that needs "are these two prepared
 	// sessions interchangeable?" must hash the rest itself.
-	Digest       string
-	ModulePath   string
-	GoVersion    string
-	Toolchain    string
-	Profile      string
-	Mutants      []Mutant
-	Rejections   []Rejection
-	TestPackages []string
+	Digest string
+	// PreparedDigest identifies the *prepared session*: everything that has to
+	// match before evidence gathered against one session may be reused against
+	// another. It is what Digest is not, and it exists because every consumer
+	// that needed the second question was hashing an approximation of it.
+	//
+	// It is the SHA-256 over these fields, each written as a four-byte
+	// big-endian byte length followed by its bytes — the encoding the mutant ID
+	// uses — in this order:
+	//
+	//   1. the domain separator "go-mutants-prepared-catalog-v1",
+	//   2. Digest,
+	//   3. WorkspaceDigest,
+	//   4. ModulePath,
+	//   5. GoVersion,
+	//   6. Toolchain,
+	//   7. Profile,
+	//   8. the decimal len(TestPackages), then every TestPackages element in
+	//      order,
+	//   9. the decimal len(Mutants), then per mutant in catalogue order:
+	//      [Mutant.ID], [Mutant.Package], and three flag bytes — 'a' or '-' for
+	//      [Mutant.Accepted], 'p' or '-' for [Mutant.Probed], 's' or '-' for
+	//      selection, which is 's' for every mutant until a selection can
+	//      narrow a session,
+	//  10. the decimal len(Rejections), then every [Rejection.ID] in order.
+	//
+	// Not hashed, and this list is exhaustive: [Mutant.Index],
+	// [Mutant.DisplayID], [Mutant.Path], [Mutant.Line], [Mutant.Column],
+	// [Mutant.EndLine], [Mutant.StartByte], [Mutant.EndByte], [Mutant.Family],
+	// [Mutant.Rule], [Mutant.RuleVersion], [Mutant.SourceDigest],
+	// [Mutant.Original], [Mutant.Replacement], [Mutant.Branch], and every field
+	// of a [Rejection] but its ID — [Rejection.DisplayID], [Rejection.Path],
+	// [Rejection.Line], [Rejection.Column], [Rejection.Rule] and
+	// [Rejection.Diagnostic].
+	//
+	// Every one of them is a function of something that *is* hashed. An index is
+	// a position, a display identity is a prefix of an ID, and the rule, the
+	// span, the text on both sides and the source digest are the very inputs
+	// [Mutant.ID] is computed from — so a change to any of them is a change to
+	// the ID, and the ID is in the recipe. The coordinates and the compiler's
+	// words follow from the source that digest names, and a branch proof is a
+	// lemma about the same span. Hashing them again would add nothing and would
+	// move the key every time a line shifted above an untouched mutant, and a key
+	// that moves for a session that has not changed is a cache that never hits.
+	//
+	// The recipe is written out because this is a wire format: a consumer keying
+	// a store on it has to be able to recompute it, recognise a value from an
+	// older engine, and say why two sessions differ. The order is the recipe's
+	// and is not free to change; a different order is a different digest, and it
+	// would come with a new domain separator.
+	PreparedDigest string
+	ModulePath     string
+	GoVersion      string
+	Toolchain      string
+	Profile        string
+	Mutants        []Mutant
+	Rejections     []Rejection
+	TestPackages   []string
 }
 
 // Mutant is one canonical, deduplicated source edit.
 type Mutant struct {
-	Index        uint32
-	ID           string
-	DisplayID    string
-	Path         string
-	Package      string
-	Line         int
-	Column       int
+	Index     uint32
+	ID        string
+	DisplayID string
+	Path      string
+	Package   string
+	Line      int
+	Column    int
+	// EndLine is the 1-based line Original ends on: Line plus the number of
+	// newlines in Original. A single-line edit has EndLine equal to Line.
+	//
+	// It is here so that selecting mutants by line range is one rule rather than
+	// two. `go-mutants run --changed` intersects a diff's ranges with
+	// `[Line, EndLine]`, and a caller narrowing the same catalogue through this
+	// API has to reach the same mutants — including the multi-line ones, which
+	// are exactly the mutants a Line-only comparison silently drops when the
+	// diff touches their last line and not their first.
+	//
+	// The count is exact rather than an estimate: Original is precisely the
+	// bytes the mutant's span covers, so its newlines are exactly the line
+	// breaks inside the span and no re-read of the source can disagree.
+	//
+	// One case is worth stating outright. An Original that *ends* in a newline
+	// counts that newline too, so EndLine is the line after the last one holding
+	// any of its bytes: an edit covering "return 0\n" on line 10 reports EndLine
+	// 11, and a range naming only line 11 selects it. That over-approximates by
+	// one line, deliberately. It is the rule `go-mutants run --changed` already
+	// applies, so the library and the CLI select the same mutants; and erring
+	// towards selecting a mutant costs an execution, while erring the other way
+	// drops one silently and reports a score higher than the truth.
+	//
+	// A carriage return is not a line break here. A CRLF file's break is one
+	// "\n" preceded by a byte that is not one, so "a\r\nb" spans two lines and
+	// not three.
+	EndLine      int
 	StartByte    uint32
 	EndByte      uint32
 	Family       string
@@ -461,6 +546,15 @@ type ProbeResult struct {
 	// as false. [Session.Probe] drops those indices before returning: an
 	// infection fact about a mutant nothing will execute licenses no skipping,
 	// and leaving it in would contradict the very field a caller reads it by.
+	//
+	// Every claim above is checked before this set is returned — ascending, in
+	// range, and probed. An index that survives the filtering and still fails
+	// one of them is go-mutants contradicting itself, and [Session.Probe]
+	// reports it as [ErrProbeInconsistent] rather than returning the set. A
+	// caller therefore never has to defend against a malformed one, which is the
+	// point: a bounds check nobody writes is a bounds check nobody gets wrong,
+	// and a set the engine repaired in silence would arrive here as a
+	// measurement licensing skips it cannot justify.
 	Infected []uint32
 	// ExitCode is the status of the test binary that decided the pass.
 	ExitCode int

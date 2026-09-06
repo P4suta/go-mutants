@@ -20,9 +20,15 @@
 // is defined: [PreparePhase] is an *open* vocabulary and an unknown phase must
 // be accepted rather than refused ([KnownPreparePhases] is what to pin);
 // [Catalog.Digest] identifies the set of mutants and nothing else, so two
-// sessions prepared over different modules or toolchains can share it; and
-// absence from [ProbeResult.Infected] licenses skipping an execution only for a
-// mutant whose [Mutant.Probed] is true.
+// sessions prepared over different modules or toolchains can share it and
+// [Catalog.PreparedDigest] is the value to key stored evidence on; and absence
+// from [ProbeResult.Infected] licenses skipping an execution only for a mutant
+// whose [Mutant.Probed] is true.
+//
+// [Session.Probe] proves that last set before returning it, so a caller needs
+// no defence of its own against a malformed one: an index the catalogue cannot
+// account for is [ErrProbeInconsistent], which is always an engine bug and
+// never a measurement.
 //
 // docs/library.md is the long form: the lifecycle and its locking, every option
 // field with its default, the invariants of every result, the guarantees the

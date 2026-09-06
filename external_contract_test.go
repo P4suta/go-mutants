@@ -104,6 +104,7 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 		gomutants.ErrAmbiguousMutant,
 		gomutants.ErrMutantRejected,
 		gomutants.ErrProbeNotPrepared,
+		gomutants.ErrProbeInconsistent,
 	} {
 		if !errors.Is(fmt.Errorf("wrapped: %w", sentinel), sentinel) {
 			t.Errorf("%v does not survive wrapping", sentinel)
@@ -195,6 +196,14 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.Artifact{}
 	_ = gomutants.Change{}
 	_ = gomutants.ErrProbeNotPrepared
+	_ = gomutants.ErrProbeInconsistent
+
+	// The two fields a consumer keys on. PreparedDigest is what evidence about a
+	// prepared session is stored under, and EndLine is what a line range is
+	// intersected with; both are read by name from outside this module, so the
+	// name is the contract and not only the type.
+	_ = gomutants.Catalog{PreparedDigest: ""}
+	_ = gomutants.Mutant{EndLine: 0}
 
 	// The named fields, not only the type: a consumer reads these by name and a
 	// rename is a breaking change whatever the shape of the struct stays.

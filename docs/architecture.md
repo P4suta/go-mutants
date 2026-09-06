@@ -449,11 +449,22 @@ sentence spelled in a way somebody would act on. `Infected` is non-nil exactly
 for a `measured` pass, so a caller that forgets to read the outcome ranges over
 nothing instead of over a set that means the opposite of what it looks like. An
 error — an unprepared session (`ErrProbeNotPrepared`), a malformed request, a
-process that would not start, an unreadable log — carries no result at all, for
-the same reason. The pass also stops at the first binary that does not exit
-zero: the indices the rest would append cannot be combined with a pass that has
-already failed, and the result would be a subset of the truth wearing the shape
-of the whole of it.
+process that would not start, an unreadable log, a log the catalogue cannot
+account for (`ErrProbeInconsistent`) — carries no result at all, for the same
+reason. The pass also stops at the first binary that does not exit zero: the
+indices the rest would append cannot be combined with a pass that has already
+failed, and the result would be a subset of the truth wearing the shape of the
+whole of it.
+
+`ErrProbeInconsistent` is the one of those that is nobody's request and nothing
+about the machine. The engine proves the shape of the raw log — strictly
+ascending, inside the catalogue — before it drops the rejected mutants' indices,
+and proves the survivors are `Probed` afterwards; the order matters, because the
+filter would otherwise swallow an index past the end of the catalogue as though
+it were an ordinary rejection. Anything either check refuses is go-mutants
+contradicting itself, and it is reported rather than repaired: a repaired set
+would be handed to a consumer as a measurement, and a measurement is a licence
+to skip executions.
 
 A **missing** log after a clean exit is the one absence that is a fact, and it
 is the empty set rather than a failure. The runtime writes its header in `init`,

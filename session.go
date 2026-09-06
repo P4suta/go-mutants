@@ -1001,6 +1001,16 @@ func (s *Session) packageOf(m mutation.Mutant) string {
 // code runs, so a binary that wrote no log linked no probe and ran no probed
 // site.
 //
+// One error is not about the request or the machine at all.
+// [ErrProbeInconsistent] is returned when the log names an index this session's
+// catalogue cannot account for — out of order, past the end of the catalogue,
+// or naming a mutant [Mutant.Probed] reports as unprobed. Nothing a caller does
+// can cause it: the indices are go-mutants' own, written against the catalogue
+// go-mutants prepared, so it is the engine contradicting itself and the answer
+// is a bug report. It is an error rather than a repaired set because a repaired
+// set would be handed over as a measurement, and a measurement is a licence to
+// skip executions.
+//
 // Each call gets its own scratch directory and its own log, which is what makes
 // the answer a statement about this target and this call. Probe is safe to call
 // concurrently with itself and with [Session.Exec]; the two share the session
@@ -1067,9 +1077,26 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	if err := ctx.Err(); err != nil {
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", err)
 	}
+	// The set a caller receives is one it may index the catalogue with directly,
+	// and that promise is kept here rather than left to the runtime that wrote
+	// the log. Anything either check refuses is a go-mutants bug, so it surfaces
+	// as an error: dropping the index would hand over a repaired set as a
+	// measurement, and reporting no facts would say the pass could not be
+	// vouched for, which is a different and equally untrue sentence.
+	//
+	// The shape is proved over the raw log, before filtering, because the filter
+	// drops an index outside the catalogue on its way to dropping the rejected
+	// ones — and those two are not the same thing at all.
+	if err := checkInfectedShape(attempt.Infected, len(s.publicCatalog.Mutants)); err != nil {
+		return ProbeResult{}, err
+	}
+	infected := filterInfected(attempt.Infected, s.publicCatalog.Mutants)
+	if err := checkInfectedProbed(infected, s.publicCatalog.Mutants); err != nil {
+		return ProbeResult{}, err
+	}
 	return ProbeResult{
 		Outcome:  ProbeOutcome(attempt.Outcome),
-		Infected: filterInfected(attempt.Infected, s.publicCatalog.Mutants),
+		Infected: infected,
 		ExitCode: attempt.ExitCode,
 		Duration: attempt.Duration,
 		Output:   slices.Clone(attempt.Output),
@@ -1425,6 +1452,7 @@ func makeCatalog(
 			Package:      where.Package,
 			Line:         where.Line,
 			Column:       where.Column,
+			EndLine:      endLine(where.Line, internal.Original),
 			StartByte:    internal.Span.StartByte,
 			EndByte:      internal.Span.EndByte,
 			Family:       string(internal.Rule.Family),
@@ -1468,7 +1496,7 @@ func makeCatalog(
 	for i, binary := range binaries {
 		packages[i] = binary.ImportPath
 	}
-	return Catalog{
+	public := Catalog{
 		WorkspaceDigest: workspaceDigest,
 		Digest:          catalog.Digest(),
 		ModulePath:      found.ModulePath,
@@ -1478,7 +1506,12 @@ func makeCatalog(
 		Mutants:         mutants,
 		Rejections:      rejections,
 		TestPackages:    packages,
-	}, rejectionIndex
+	}
+	// Last, over the finished value: the prepared digest is a function of every
+	// other field, so computing it anywhere but here would leave one of them
+	// free to move afterwards without the key noticing.
+	public.PreparedDigest = preparedDigest(public)
+	return public, rejectionIndex
 }
 
 // publicBranch converts discovery's branch proof into the public one. Nil
