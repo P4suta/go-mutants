@@ -234,11 +234,12 @@ Every run also publishes into your own tree, at `reports/mutation/`:
 `mutation.json`, the Stryker-ecosystem projection, and `mutation.html`, the
 self-contained viewer. The run prints where each went, one labelled path per
 line, so a CI step can grep for the one it wants to attach. They are the only
-files go-mutants writes into a workspace; `--report none` turns them off, and
-`--report json` or `--report html` asks for one of the two. The pair is
-published together or not at all — a `mutation.json` from this run beside a
-`mutation.html` from last week is worse than either alone — and both are
-written only after the run's own record is safely filed.
+files go-mutants writes into a workspace unless you ask for a trace;
+`--report none` turns them off, and `--report json` or `--report html` asks for
+one of the two. The pair is published together or not at all — a
+`mutation.json` from this run beside a `mutation.html` from last week is worse
+than either alone — and both are written only after the run's own record is
+safely filed.
 
 Other flags that work today:
 
@@ -251,13 +252,30 @@ go-mutants run --explain
 go-mutants run --changed=origin/main
 go-mutants run --shard 1/4
 go-mutants run --report none
+go-mutants run --trace
 go-mutants list --operator comparison --json
 go-mutants doctor --json
 go-mutants init --check
 go-mutants report latest
 go-mutants report merge shard-*.json --output mutation.json
 go-mutants report validate mutation.json
+go-mutants trace summary
 ```
+
+| Flag | What it does |
+| --- | --- |
+| `--include GLOB`, `--exclude GLOB` | which files are mutated; repeat for more |
+| `--operator NAME`, `--profile NAME` | which operators, from the catalogue or from a tier |
+| `--mutant ID_PREFIX` | measure exactly one mutant, and report the rest as not-run |
+| `--changed[=GIT_REF]` | execute only the mutants on lines changed since a ref |
+| `--shard K/N` | execute only shard K of N, assigned from the mutant id |
+| `--cache MODE` | reuse of outcomes go-mutants has already proven: `auto`, `on`, `off` |
+| `--report FORMATS` | what to publish into `report.directory`: `none`, `json`, `html` |
+| `--trace[=DIR]` | record this run's diagnostic account; `GO_MUTANTS_TRACE=1\|DIR` asks for the same |
+| `--jobs N`, `--timeout D` | how many mutants at once, and how long each may take |
+| `--strict`, `--no-strict` | whether an unexpected survivor exits 1 |
+| `--json`, `--explain`, `--quiet` | the document, the detail underneath it, or less of it |
+| `--no-color`, `--no-tui` | plain text, and plain lines instead of the dashboard |
 
 `--changed` executes only the mutants sitting on lines you have changed since a
 ref — the merge base of it and `HEAD`, so a branch is measured against the
@@ -284,9 +302,29 @@ a `script` session, a recorded demo. It changes nothing about what the run
 measures. An editor's output pane needs no flag: it is a pipe rather than a
 terminal, so it already gets the plain lines.
 
+`--trace` writes the run's diagnostic account into
+`reports/mutation/trace/<run-id>/`, named by the same id the report carries:
+every phase and step with its duration, every subprocess with its argument
+vector and the output it printed, how coverage placed each mutant, and what
+became of every execution. `go-mutants trace summary` reads the newest one and
+`trace diff` compares two. A traced run keeps the newest ten and collects the
+rest as it opens its own — never a recording that stops without its `run-end`,
+which is either a run still going or the one that crashed, and `trace clean
+--all` is how you say you have read those. `GO_MUTANTS_TRACE=1` asks for the
+same thing without a flag, for the invocation you cannot add one to; a directory
+names where to record instead.
+
+**Every run records whether or not you ask.** Without the flag the account is
+kept in memory rather than written, because the failure nobody expected is
+exactly the failure nobody passed `--trace` for. And a trace is never evidence:
+it takes no part in a verdict, in a mutant identity, or in a cache key, and one
+that cannot be written costs a warning rather than the run. See
+[`docs/trace-v1.md`](docs/trace-v1.md).
+
 With no arguments, help is printed. The v1 command tree is `run`, `list`,
-`doctor`, `init`, `report list|latest|validate|clean|merge`, and
-`cache status|gc|clean`, and all of it is built.
+`doctor`, `init`, `report list|latest|validate|clean|merge`,
+`cache status|gc|clean`, and `trace list|summary|diff|validate|clean`, and all
+of it is built.
 
 Everything after `--` is captured verbatim as the test command's argv; it is
 never handed to a shell. It replaces `test.command`, so a passthrough of

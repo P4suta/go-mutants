@@ -5,11 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Run trace v1
 
-**Status: the format, the recorder and the readers exist; nothing asks for a
-recording yet.** `trace/` is the public package, `schema/trace-v1.schema.json`
-is the contract, and this page describes both. The flag and the environment
-variable that open a recording, and the wiring that fills one, arrive in later
-changes; see [How to enable it](#how-to-enable-it).
+**Status: `run --trace` records and `go-mutants trace` reads.** `trace/` is the
+public package, `schema/trace-v1.schema.json` is the contract, and this page
+describes both. The library half — handing `OpenOptions` a sink of your own so
+that a `Workspace` records too — arrives in a later change; see
+[How to enable it](#how-to-enable-it).
 
 The first trace contract is `gomutants-trace-v1`. A trace is the diagnostic
 account of one run: the phases it passed through, the steps inside them, every
@@ -36,14 +36,130 @@ account of how the claim was arrived at.
 
 ## How to enable it
 
-Not yet. There is no `--trace` flag, no `GO_MUTANTS_TRACE` variable and no
-`trace` subcommand in this release: the format and its recorder landed first so
-that everything recorded into them is recorded against a contract rather than
-into a shape that is still moving.
+`run` accepts `--trace[=DIR]`. It is the only command that measures anything and
+therefore the only one that opens a recording; `list`, `doctor`, `init`,
+`report` and `cache` reject the flag rather than accepting one that would do
+nothing.
 
-What is already usable is the library surface. An embedder can hand
-`github.com/P4suta/go-mutants/trace` a sink of its own and read the recording
-back:
+| Form | Effect |
+| --- | --- |
+| `--trace` | record into the default directory |
+| `--trace=default` | the same; `default` is what `--help` shows the bare flag carrying |
+| `--trace=DIR` | record into `DIR`, resolved against the workspace when relative |
+| `--trace=` | refused: an empty directory is a shell variable that expanded to nothing |
+| `GO_MUTANTS_TRACE=1` or `true` | the same as a bare `--trace` |
+| `GO_MUTANTS_TRACE=DIR` | the same as `--trace=DIR` |
+| `GO_MUTANTS_TRACE` unset, empty, `0`, or `false` | no directory; the run records in memory |
+
+The value needs an equals sign, because it is optional: `--trace=recordings`,
+not `--trace recordings`. pflag can only express an optional value that way, and
+written with a space the directory becomes a positional argument — which `run`
+refuses, saying how to spell it, rather than quietly recording somewhere else.
+`--trace=` with nothing after it is refused for the same reason it would be a
+mistake to accept: in a script it is almost always `--trace=$TRACE_DIR` with the
+variable unset, and both other readings would record somewhere nobody named. An
+empty `GO_MUTANTS_TRACE` is not that — it is how a job switches an inherited
+request off, and it produces no flag at all. A directory genuinely named
+`default` is asked for as `--trace=./default`.
+
+An explicit flag always wins over the environment, so a job may ask for a trace
+it cannot add a flag to and a nested job may switch an inherited one off or send
+it elsewhere. The variable is read in `cli.Execute` alone, where it becomes the
+flag the command layer parses: no layer below the command line reads the
+environment, and a `--trace` after the `--` separator is an argument for the
+test binary and stays one.
+
+### Where a recording goes, and why there
+
+The default trace root is `<workspace>/<report.directory>/trace/`, which is
+`reports/mutation/trace/` unless the configuration says otherwise. Inside it,
+each run gets a directory named by its own run id — the same id the run report
+carries, so a recording and the document it explains can always be paired.
+
+```console
+$ go-mutants run --trace --no-tui
+…
+report json: reports/mutation/mutation.json
+trace: reports/mutation/trace/20260906T182240Z-735f
+```
+
+`report.directory` is not an arbitrary corner. internal/snapshot digests the
+workspace and excludes that directory and nothing else inside it, so it is the
+one place in your tree where a file may appear while a run is measuring. A
+recording grows as the run records into it: a stream written anywhere else in
+the workspace would make the tree change under the run, and the run would report
+drift it caused itself. `--report none` turns the two published documents off
+and does not move the trace, because the directory is where a recording may live
+for a reason about the snapshot rather than about formats.
+
+So two directories are refused, each with one `trace-unavailable` note in the
+recording, a `warning GOM1013` on standard error, and a run that goes on
+recording in memory: one inside the workspace but outside `report.directory`,
+and one that cannot be created or opened — which includes a run directory
+another recording already owns. Refusing the trace is what keeps the trace from
+failing the run.
+
+A directory is judged by where it lands rather than by how it was spelled, so a
+symbolic link is not a way past that refusal: `--trace=/tmp/alias/run` is
+refused when `/tmp/alias` resolves into the workspace. Only the part of the path
+that already exists can be resolved, which is the part that decides where the
+directory the sink is about to create will land. A directory outside the
+workspace is nobody's source and is always accepted.
+
+Nothing is written under `TMPDIR`. The trace root is the workspace's, which
+means it is somewhere a user can find, attach to a bug report, and delete — and
+`report.directory` is already in most projects' `.gitignore`, which is the whole
+of the ignore guidance this feature needs. If yours ignores `reports/mutation/`
+you are done; if it ignores only `reports/mutation/*.json`, add the directory.
+
+### Retention
+
+A traced run collects its trace root as it opens its own recording, keeping the
+newest `trace.RetainRuns` — ten — and removing the rest. What it removed is a
+`trace-gc` note in the recording that removed it. Collection is best effort: a
+directory that could not be tidied is a note and never the exit status, because
+the run is about to measure what it was asked to measure either way.
+
+Collecting *before* the run's own directory exists is what makes the rule simple:
+the recording being written cannot be a candidate for its own collector, so
+nothing has to be excepted from the rule to protect it.
+
+Two things are never collected. A file or a directory somebody else keeps in the
+trace root is not a recording — only a directory named by a run id and holding a
+`trace.jsonl` is. And a recording whose stream does not end with its `run-end` is
+left alone: that is a run still in progress, or one that died, and the second is
+the recording you most want to keep. A collector that removed the account of the
+crash while keeping ten accounts of runs that went fine would be collecting
+exactly backwards. `go-mutants trace clean --all` is how somebody who has read
+them says so.
+
+### Reading a recording
+
+```console
+go-mutants trace list                # every recording here, newest first
+go-mutants trace summary             # the newest one: where the run went
+go-mutants trace summary RUN-ID      # or one of the others, or a path
+go-mutants trace diff BEFORE AFTER   # what moved between two runs
+go-mutants trace validate FILE       # every line against the published schema
+go-mutants trace clean --keep 3      # the collector, run by hand
+go-mutants trace clean --all         # the unfinished recordings too
+```
+
+`trace clean` removes the trace directory itself once its last recording has
+gone, so a workspace somebody has cleaned looks like one that was never traced.
+
+`trace list` says of each recording whether it is `complete` — it ends with its
+`run-end` and lost nothing — `incomplete`, meaning it was interrupted, or
+`lossy`, meaning events are missing from the middle of it. That is the first
+thing to check before reading a count out of one. `trace summary` prints the
+phases and stages with their durations, the commands tallied by kind, and the
+mutant outcomes; `trace diff` prints the deltas between two, which is how a run
+that got slower is investigated without reading either stream by eye.
+
+### From a program
+
+An embedder can hand `github.com/P4suta/go-mutants/trace` a sink of its own and
+read the recording back:
 
 ```go
 ring := trace.NewMemorySink(trace.DefaultRingCapacity)
@@ -61,9 +177,6 @@ amount of memory, and captured output grows with the run instead of with the
 ring; the wrapper strips those bytes — and the `output_truncated` and
 `output_path` that describe the file they were preserved in — leaving the size
 and the digest a reader joins on.
-
-When the flag arrives it will write into the same format, through the same
-`DirSink`, so anything written against this page keeps working.
 
 ## Directory layout
 
@@ -90,6 +203,15 @@ completed event is written once and is immediately readable, so a run that
 hangs, is interrupted, or is killed leaves a readable prefix and only its
 `run-end` is missing. Normal shutdown syncs the stream once. An operating-system
 or storage failure may lose a recording and can never change a verdict.
+
+Nothing but the recorder ever writes into a stream. The two notes the command
+line contributes — a `trace-unavailable` for a directory it refused, and the
+`trace-gc` of the collection it ran — are handed to the run rather than spliced
+into its recording, and the recorder emits them immediately after the
+`run-start`, which is the moment they are about. Sequence numbers, timestamps
+and the position of the last line all belong to the recorder; a caller inserting
+an event into a stream it does not number is a caller that can break every one
+of them.
 
 `output/<seq>.txt` holds the captured output of the command recorded at that
 sequence number. Output is preserved beside the stream rather than serialised
@@ -601,8 +723,8 @@ in both — the argument vector, the directory it ran in, and the digest of what
 it printed — so two recordings of one execution can be matched without either
 tool knowing about the other's sequence numbers. `prepare` is identical field
 for field, so a preparation timeline reads the same wherever it is read. There
-is no hook yet for handing go-mutants a sink of your own: `OpenOptions` gains
-one in a later change, alongside the `--trace` flag. What the alignment already
+is no hook yet for handing go-mutants a sink of your own: `run --trace` opens
+one, and `OpenOptions` gains one in a later change. What the alignment already
 fixes is the part that would be expensive to change afterwards — the field
 names — so a consumer can write the join now and get one timeline across two
 tools rather than two timelines to reconcile.

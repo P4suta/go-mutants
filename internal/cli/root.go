@@ -135,7 +135,12 @@ operator catalogue is discovered, a run can be narrowed to a git diff
 (--changed) or to one shard of a matrix (--shard), outcomes it has proven are
 reused between runs (--cache), and every run publishes its report into
 reports/mutation/ as JSON and as a self-contained HTML page that opens from
-file:// with the network unplugged.`
+file:// with the network unplugged.
+
+Every run also keeps a diagnostic account of itself, in memory by default and in
+reports/mutation/trace/ under --trace, which ` + "`go-mutants trace`" + ` reads. A trace is
+never evidence: it takes no part in a verdict, in a mutant identity, or in a
+cache key.`
 
 // NewRootCommand builds the command tree.
 //
@@ -183,14 +188,24 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newReportCommand())
 	root.AddCommand(newCacheCommand())
+	root.AddCommand(newTraceCommand())
 	return root
 }
 
 // Execute runs the command tree against the process's arguments and streams,
 // and returns the exit status. It never calls os.Exit itself, so that the one
 // place the process ends is main.
+//
+// It is also the one place go-mutants reads the environment for an option:
+// [withEnvironmentFlags] turns GO_MUTANTS_TRACE into the flag the command tree
+// parses, so that there is one description of what the option means, one place
+// its precedence is decided, and nothing below the command line asking what is
+// exported. [ExecuteContext] is deliberately not given the same treatment — a
+// test drives that one, and a test whose result depended on the developer's own
+// environment would be a test of the machine.
 func Execute() int {
-	return ExecuteContext(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
+	return ExecuteContext(context.Background(),
+		withEnvironmentFlags(os.Args[1:], os.LookupEnv), os.Stdout, os.Stderr)
 }
 
 // ExecuteContext is [Execute] with everything injected, for tests and for any

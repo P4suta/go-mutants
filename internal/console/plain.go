@@ -246,15 +246,20 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 	}
 }
 
-// publishedPaths renders where one run's report went: the two history documents
-// always, and the project artefacts when the run was asked for them.
+// publishedPaths renders where one run's output went: the two history documents
+// always, the project artefacts when the run was asked for them, and the
+// recording when the run kept its account on disk.
 //
-// Four lines rather than a sentence, one path per line and each labelled, so
-// that the block can be read by a person and cut up by a script — a CI step
-// that wants the HTML to attach greps for `report html:` and takes the rest of
-// the line. A path is printed only when there is a file at the end of it: an
-// empty `report json:` would be a line about a file that does not exist, which
-// is worse than silence about a format nobody asked for.
+// One labelled path per line rather than a sentence, so that the block can be
+// read by a person and cut up by a script — a CI step that wants the HTML to
+// attach greps for `report html:` and takes the rest of the line. A path is
+// printed only when there is something at the end of it: an empty `report json:`
+// would be a line about a file that does not exist, which is worse than silence
+// about a format nobody asked for, and `trace:` is silent for every run that
+// kept its account in memory, which is most of them.
+//
+// The recording comes last because it is what somebody reaches for after the
+// documents rather than instead of them.
 //
 // It is not styled. These are paths to be selected with a mouse and pasted into
 // a browser or a `scp`, and colour in the middle of one is noise.
@@ -268,6 +273,9 @@ func publishedPaths(e engine.ReportPublished) string {
 	}
 	if e.HTMLPath != "" {
 		lines = append(lines, "report html: "+e.HTMLPath)
+	}
+	if e.TracePath != "" {
+		lines = append(lines, "trace: "+e.TracePath)
 	}
 	return strings.Join(lines, "\n")
 }

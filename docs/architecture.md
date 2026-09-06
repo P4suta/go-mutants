@@ -136,6 +136,55 @@ It marks each directory `kept` instead of removing it, so the next run's sweep
 obeys the decision rather than collecting it minutes later, and
 `Workspace.Preserved` names what was left behind.
 
+### What the report directory keeps, and what collects it
+
+The temporary parent is not the only place a run writes. `report.directory` —
+`reports/mutation/` by default — is the one directory *inside* a user's own tree
+that go-mutants may write into, and the same pair of questions applies to it:
+who owns each thing there, and what takes it away again.
+
+Two kinds of thing live there, and they are owned differently:
+
+- `mutation.json` and `mutation.html`, the published projections of one run.
+  There is one of each and the next run overwrites them, so they need no
+  collector. `--report none` writes neither.
+- `trace/<run-id>/`, the diagnostic account of one run, written only under
+  `--trace`. Each run adds a directory, so this one does need a collector: a
+  traced run prunes its trace root to the newest `trace.RetainRuns` — ten —
+  recordings *as it opens its own*, and `go-mutants trace clean` is that
+  collector run by hand. Collecting before the run's own directory exists is
+  what keeps the rule free of an exception protecting the recording being
+  written.
+
+  Two things are never collected, and both are the interesting half of the rule.
+  Only a directory named by `engine.RunIDPattern` and holding a `trace.jsonl` is
+  a recording at all, so a file or a directory somebody else keeps beside them
+  survives. And a recording whose stream does not end with its `run-end` is left
+  alone — a run in progress, or one that died — because the account of the crash
+  is the one a reader most wants, and a collector that took it while keeping ten
+  accounts of runs that went fine would be collecting exactly backwards. That is
+  also what makes a live run safe from a concurrent `trace clean`, rather than
+  only from being the newest name in the root. `trace clean --all` is how
+  somebody who has read them says so, and the empty directory goes with the last
+  recording in it.
+
+That everything diagnostic lands under `report.directory` rather than beside the
+snapshot in the temporary parent is forced rather than chosen, by the same fact
+that forced the snapshot marker one level down. `snapshot.Create` excludes
+`.git` and `report.directory` and nothing else in the workspace, so a recording
+written anywhere else in the tree would grow while the run digests the tree, and
+the run would report drift it caused itself — a diagnostic that fails the run it
+is a diagnostic of. That is why `--trace=DIR` refuses a directory inside the
+workspace and outside `report.directory`, symbolic links resolved on the longest
+existing prefix, and why the refusal costs a `trace-unavailable` note and a
+`GOM1013` warning rather than the run: the run then records into memory, exactly
+as an untraced run does.
+
+The other direction of the same rule is that nothing diagnostic is added under
+`TMPDIR`. A recording is something a user attaches to a bug report, and a run's
+temporary parent is swept by the next run of the same root: a diagnostic that
+disappears on the next invocation is not one anybody can hand over.
+
 ## Instrumentation: guard-based rewriting
 
 Status: implemented in `internal/instrument`. This is the hardest component and

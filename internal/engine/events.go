@@ -516,6 +516,16 @@ type ReportPublished struct {
 	// one self-contained page that opens from `file://` and fetches nothing.
 	// Empty on the same terms as ProjectionPath.
 	HTMLPath string
+	// TracePath is the directory this run recorded its diagnostic account into,
+	// and is empty for a run that kept its account in memory — which is every
+	// run that did not ask for a recording.
+	//
+	// It rides on this event rather than being printed by whoever opened the
+	// recording, because it is one more path a run produced and the renderers
+	// already know what to do with those: it is laid out like the rest, it is
+	// suppressed by --quiet like the rest, and a dashboard run replays it into
+	// the scrollback with the rest. See [Options.TraceDirectory].
+	TracePath string
 }
 
 // Counts is the counted breakdown of a run, as the closing summary states it.

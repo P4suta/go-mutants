@@ -834,6 +834,21 @@ func TestReportPublishedNamesEveryArtefactThatExists(t *testing.T) {
 			want: "report run: /c/runs/a.json\nreport latest: /c/latest.json\n" +
 				"report html: /w/reports/mutation/mutation.html\n",
 		},
+		// A recording is one more path the run produced, so it is one more
+		// labelled line in the same block — last, because it is what somebody
+		// reaches for after the documents rather than instead of them. An
+		// untraced run has none and prints none, on exactly the terms a format
+		// nobody asked for prints none.
+		"with a recording": {
+			event: engine.ReportPublished{
+				RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json",
+				ProjectionPath: "/w/reports/mutation/mutation.json",
+				TracePath:      "/w/reports/mutation/trace/20260819T101112Z-a1b2",
+			},
+			want: "report run: /c/runs/a.json\nreport latest: /c/latest.json\n" +
+				"report json: /w/reports/mutation/mutation.json\n" +
+				"trace: /w/reports/mutation/trace/20260819T101112Z-a1b2\n",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := render(t, NewPlain(nil, "0.1.0-dev", false, false), []engine.Event{tc.event})
@@ -846,14 +861,24 @@ func TestReportPublishedNamesEveryArtefactThatExists(t *testing.T) {
 
 // TestReportPublishedSurvivesQuiet keeps the one thing --quiet promises about
 // this block: where the report went is what a quiet run still needs.
+//
+// The recording is in it on the same terms as the documents, which is the whole
+// reason it is carried on this event rather than printed by whoever opened it: a
+// path that obeyed a different rule about --quiet would be a second rule to keep
+// in step, and the run that most wants its recording named is the awkward one
+// somebody is already running quietly in CI.
 func TestReportPublishedSurvivesQuiet(t *testing.T) {
 	got := render(t, NewPlain(nil, "0.1.0-dev", false, true), []engine.Event{
 		engine.ReportPublished{
 			RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json",
 			ProjectionPath: "/w/reports/mutation/mutation.json",
+			TracePath:      "/w/reports/mutation/trace/20260819T101112Z-a1b2",
 		},
 	})
 	if !strings.Contains(got, "report json: /w/reports/mutation/mutation.json") {
 		t.Errorf("--quiet dropped the artefact path:\n%q", got)
+	}
+	if !strings.Contains(got, "trace: /w/reports/mutation/trace/20260819T101112Z-a1b2") {
+		t.Errorf("--quiet dropped where the run recorded:\n%q", got)
 	}
 }

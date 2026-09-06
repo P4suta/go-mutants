@@ -18,12 +18,13 @@ import (
 // GOM10xx block: mistakes in how go-mutants was invoked, as opposed to mistakes
 // in what it was asked to do.
 //
-// It also owns three blocks that belong to one command each — GOM80xx to
-// `doctor`, GOM81xx to `init`, and GOM82xx to `report list|latest|clean` —
-// rather than more GOM10xx numbers. Those commands do not measure anything, so
-// none of their failures is a mistake in an invocation; a user reading one
-// should see at a glance that it is about the environment, the configuration
-// file, or the run history, and that the remedy is in that one place.
+// It also owns four blocks that belong to one command each — GOM80xx to
+// `doctor`, GOM81xx to `init`, GOM82xx to `report list|latest|clean`, and
+// GOM83xx to the `trace` commands — rather than more GOM10xx numbers. Those
+// commands do not measure anything, so none of their failures is a mistake in
+// an invocation; a user reading one should see at a glance that it is about the
+// environment, the configuration file, the run history, or a recording, and that
+// the remedy is in that one place.
 type Code string
 
 // The command line codes.
@@ -98,6 +99,14 @@ const (
 	// into an exit 2 would tell a CI job that the tool broke when the truth is
 	// that the tests missed something. See internal/cli's emitGitHub.
 	CodeGitHubSummary Code = "GOM1012"
+	// CodeTraceUnavailable reports a run that asked for a recording and could
+	// not have the directory it named: one inside the workspace and outside
+	// `report.directory`, where the stream would be read as part of the tree and
+	// reported as drift, or one that could not be created at all. It is printed
+	// as a warning and never returned. The run goes on recording into memory,
+	// which is what every untraced run does, and a diagnostic that could stop
+	// the run it is a diagnostic of would invert the point of having one.
+	CodeTraceUnavailable Code = "GOM1013"
 )
 
 // The `doctor` codes, which are the GOM80xx block. There is one, and that is
@@ -157,13 +166,36 @@ const (
 	CodeNoStoredRun Code = "GOM8202"
 )
 
+// The trace codes, which are the GOM83xx block: what `trace list|summary|diff
+// |validate|clean` refuse. The reader's own failures — a stream outside the
+// published contract, a line the schema rejects — keep their codes, because
+// this package does not re-code what the trace package and internal/schemas
+// decided.
+const (
+	// CodeNoTraceRecorded reports a recording that is not there: a workspace
+	// that has never traced a run, or a run id nothing was filed under. An
+	// empty *listing* is not this and exits 0; a `summary` or a `diff` with
+	// nothing to read is, because those commands' whole output is a recording
+	// and there is none.
+	CodeNoTraceRecorded Code = "GOM8301"
+	// CodeUnreadableTrace reports a file named on the command line that is not
+	// a recording this build can read: a path that does not exist, a directory
+	// with no stream in it, a stream whose events are outside the contract.
+	CodeUnreadableTrace Code = "GOM8302"
+	// CodeTraceNotRemoved reports a recording `trace clean` could not delete.
+	// Deleting is the whole of what that command does, so one that could not
+	// must not exit 0.
+	CodeTraceNotRemoved Code = "GOM8303"
+)
+
 // String returns the code as it is printed.
 func (c Code) String() string { return string(c) }
 
 // codes is every code this package can emit, in numeric order. The package
-// tests assert that the list is complete, unique, and inside one of the four
+// tests assert that the list is complete, unique, and inside one of the five
 // blocks this package owns: GOM10xx for the command line itself, GOM80xx for
-// `doctor`, GOM81xx for `init`, and GOM82xx for the run-history commands.
+// `doctor`, GOM81xx for `init`, GOM82xx for the run-history commands, and
+// GOM83xx for the `trace` commands.
 var codes = []Code{
 	CodeUsage,
 	CodeTestArgv,
@@ -177,6 +209,7 @@ var codes = []Code{
 	CodeUnreadableReport,
 	CodeInvalidReportDocument,
 	CodeGitHubSummary,
+	CodeTraceUnavailable,
 	CodeEnvironmentUnusable,
 	CodeConfigurationExists,
 	CodeConfigurationUnreadable,
@@ -184,6 +217,9 @@ var codes = []Code{
 	CodeConfigurationStale,
 	CodeNotAModuleRoot,
 	CodeNoStoredRun,
+	CodeNoTraceRecorded,
+	CodeUnreadableTrace,
+	CodeTraceNotRemoved,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric
@@ -358,6 +394,33 @@ func RenderError(w io.Writer, err error) {
 		}
 	}
 	_, _ = io.WriteString(w, b.String())
+}
+
+// renderWarning writes one "warning GOMxxxx: message" line, and the hint under
+// it, for the conditions this package has to report without failing the run.
+//
+// It is deliberately not [RenderError]. Nothing has failed: a run whose trace
+// directory was refused has measured everything it was asked to measure and is
+// about to exit on its own verdict, and an "error GOM1013" line would tell a CI
+// log parser that something went wrong with the run when what went wrong was
+// the diagnostic. The shape is the plain renderer's own, so that a warning this
+// package prints and a warning the engine published read as one kind of thing.
+//
+// The whole line is composed and written once, and the write's result is
+// dropped, for the reasons [RenderError] gives about both.
+func renderWarning(w io.Writer, err error) {
+	var coded *Error
+	if !errors.As(err, &coded) {
+		return
+	}
+	// coded.Error() already carries "GOMxxxx: " and the cause behind the
+	// message, which is the whole of what a reader needs and exactly what the
+	// error renders elsewhere.
+	line := "warning " + coded.Error() + "\n"
+	if coded.Hint != "" {
+		line += "hint: " + coded.Hint + "\n"
+	}
+	_, _ = io.WriteString(w, line)
 }
 
 // An outputCarrier is an error that kept what the failing command printed.

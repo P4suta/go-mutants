@@ -103,6 +103,7 @@ type runOptions struct {
 	shard     string
 	cache     string
 	report    string
+	trace     string
 	jobs      int
 	timeout   time.Duration
 	strict    bool
@@ -112,6 +113,11 @@ type runOptions struct {
 	quiet     bool
 	noColor   bool
 	noTUI     bool
+
+	// recording is the account the run kept of itself, filled in by [execute].
+	// It is held here rather than returned because the diagnostics bundle a
+	// failed run writes is assembled from it after everything else is done.
+	recording *traceRecording
 }
 
 // newRunCommand builds the `run` command.
@@ -162,6 +168,18 @@ func newRunCommand() *cobra.Command {
 		"outcome cache `MODE`: auto, on, or off (default: cache.mode, or auto — which reuses outcomes only for the built-in test command)")
 	flags.StringVar(&o.report, "report", "",
 		"project report `FORMATS` to write into report.directory: none, json, html, or json,html (default: report.formats, or json,html)")
+	flags.StringVar(&o.trace, "trace", "",
+		"record this run's diagnostic account into `DIR`; a bare --trace records under report.directory/trace, and the value takes an equals sign")
+	// The value is optional, which pflag expresses with NoOptDefVal — the same
+	// arrangement `--changed` has above, with the same consequence: `--trace DIR`
+	// with a space is not the same thing as `--trace=DIR`, and [passthrough]
+	// recognises the mistake and says how to write it instead.
+	//
+	// pflag renders the sentinel in `--help`, so it is a word rather than a
+	// path: `--trace DIR[="default"]` reads as what it is, and `--trace=default`
+	// means what a reader of that line would expect it to mean. See
+	// [traceDefaultDirectory].
+	flags.Lookup("trace").NoOptDefVal = traceDefaultDirectory
 	// The pflag default is zero and the real one is described in the usage
 	// text. Printing config.DefaultJobs() as the default would make `--help`
 	// say 8 on a laptop and 4 on a CI runner, and help output that depends on
@@ -221,6 +239,9 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	if err = checkSelectors(o.mutant, flags.Changed("changed"), o.shard); err != nil {
 		return err
 	}
+	if err = checkTraceDirectory(flags.Changed("trace"), o.trace); err != nil {
+		return err
+	}
 	// Parsed here rather than in the engine for the same reason: `--shard 3/2`
 	// is a mistake about the invocation, and it costs nothing to say so before
 	// the workspace is copied.
@@ -259,6 +280,33 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		rendered = cmd.ErrOrStderr()
 	}
 	color := console.ColorEnabled(rendered, o.noColor)
+
+	// The recording is opened before anything is measured, and the id it is
+	// named by is the one the report will be filed under: a trace and the
+	// document it explains have to be pairable afterwards, and the only way to
+	// guarantee that is for one identity to exist before either is written.
+	//
+	// Every run opens one, whether or not a recording was asked for. A run that
+	// asked for none keeps its last events in memory, which costs a bounded
+	// amount once and means the failure nobody expected — exactly the failure
+	// nobody thought to ask for a recording of — still has an account.
+	runID := engine.NewRunID(time.Now())
+	recording, traceErr := openTrace(traceRequest{
+		workspace:       root,
+		reportDirectory: cfg.Report.Directory,
+		requested:       o.trace,
+		runID:           runID,
+		hooks:           traceFilesystem,
+	})
+	o.recording = recording
+	defer func() { _ = recording.close() }()
+	// A warning rather than a returned error, and on standard error rather than
+	// through the renderer: the run is about to happen either way, and the
+	// dashboard would take the line with it when it closes the alternate
+	// screen. See [CodeTraceUnavailable].
+	if traceErr != nil {
+		renderWarning(cmd.ErrOrStderr(), traceErr)
+	}
 
 	ctx, watch, stop := watchSignals(cmd.Context())
 	defer stop()
@@ -301,17 +349,31 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	}()
 
 	outcome, runErr := engine.Run(ctx, engine.Options{
-		Config:        cfg,
-		WorkspaceRoot: root,
-		TestArgv:      testArgv,
-		ToolVersion:   Version,
-		MutantPrefix:  o.mutant,
-		Changed:       flags.Changed("changed"),
-		ChangedRef:    o.changed,
-		Shard:         shard,
-		Events:        events,
+		Config:         cfg,
+		WorkspaceRoot:  root,
+		TestArgv:       testArgv,
+		ToolVersion:    Version,
+		MutantPrefix:   o.mutant,
+		Changed:        flags.Changed("changed"),
+		ChangedRef:     o.changed,
+		Shard:          shard,
+		Events:         events,
+		RunID:          runID,
+		TraceSink:      recording.sink,
+		TraceDirectory: recording.directory,
+		Notes:          recording.notes,
 	})
 	wg.Wait()
+
+	// Best effort, and reported rather than returned: a stream that could not
+	// be synced has nothing to do with what the run measured.
+	if err := recording.close(); err != nil {
+		renderWarning(cmd.ErrOrStderr(), &Error{
+			Code:    CodeTraceUnavailable,
+			Message: "the recording of this run could not be closed cleanly",
+			Err:     err,
+		})
+	}
 
 	// Once the alternate screen is gone, the scrollback gets what was on it
 	// that still matters. A plain run has already printed all of this.
@@ -490,6 +552,30 @@ func checkSelectors(mutant string, changed bool, shard string) error {
 	}
 }
 
+// checkTraceDirectory refuses a `--trace` written with an empty directory.
+//
+// `--trace=` is a typed flag with nothing after the equals sign, which is
+// almost always a shell variable that expanded to nothing — `--trace=$TRACE_DIR`
+// in a script where the variable was never set. Reading it as a bare `--trace`
+// would silently record somewhere the author did not name, and reading it as the
+// workspace root would be refused for a reason that has nothing to do with the
+// mistake. Saying so is the only answer that helps.
+//
+// `GO_MUTANTS_TRACE=` is deliberately not this. An empty variable is how a job
+// switches an inherited request off, so it produces no flag at all and never
+// reaches here; see [traceFlag].
+func checkTraceDirectory(changed bool, directory string) error {
+	if !changed || strings.TrimSpace(directory) != "" {
+		return nil
+	}
+	return &Error{
+		Code:    CodeUsage,
+		Message: "--trace was given an empty directory",
+		Hint: "write `--trace` on its own to record under report.directory/trace, or `--trace=DIR` to name one; " +
+			"an unset shell variable expands to nothing",
+	}
+}
+
 // emitGitHub writes the GitHub Actions half of a run's output: the survivor
 // annotations to out, and the Markdown summary appended to the file
 // `$GITHUB_STEP_SUMMARY` names.
@@ -589,8 +675,17 @@ func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 // landing in the one about the separator, so both ask this to word the message.
 func positional(cmd *cobra.Command, got, what string) error {
 	err := usagef("%s (got %q)", what, got)
-	if cmd.Flags().Changed("changed") {
-		err.Hint = "--changed takes its ref with an equals sign: write `--changed=" + got + "`, not `--changed " + got + "`"
+	// `--trace` is the second flag of the same shape and makes the same mistake
+	// possible, with a worse outcome: the run records into the default
+	// directory instead of the one the user named, which they would only
+	// discover by looking for a recording that is not there. Refusing it here
+	// is the better of the two answers.
+	for _, flag := range []struct{ name, noun string }{{"changed", "ref"}, {"trace", "directory"}} {
+		if cmd.Flags().Changed(flag.name) {
+			err.Hint = "--" + flag.name + " takes its " + flag.noun + " with an equals sign: write `--" +
+				flag.name + "=" + got + "`, not `--" + flag.name + " " + got + "`"
+			return err
+		}
 	}
 	return err
 }
