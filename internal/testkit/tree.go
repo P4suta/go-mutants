@@ -275,7 +275,11 @@ func Entries(t testing.TB, dir string) []string {
 //
 // A path that cannot be resolved — most often because it does not exist — is
 // compared lexically after [filepath.Clean], which is the best answer available
-// and is exact whenever both paths were built from the same root.
+// and is exact whenever both paths were built from the same root. Note the
+// consequence for a caller comparing a path it expects to exist: an unresolvable
+// path is answered rather than reported, so two spellings of one *missing*
+// directory compare equal and two of a missing and a present one do not. A test
+// whose subject is whether the path is there asserts that separately.
 func SamePath(a, b string) bool {
 	return resolvePath(a) == resolvePath(b)
 }

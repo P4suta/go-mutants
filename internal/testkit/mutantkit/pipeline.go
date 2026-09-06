@@ -12,20 +12,44 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // Discover finds every mutation candidate in a snapshot.
 //
-// The environment is left to discovery's own default rather than composed here.
-// Discovery loads packages through go/packages, which runs `go list` itself, and
-// the four suites that wrote this call out all passed nothing: the snapshot is
-// already a copy, and what the loader needs — a module cache, a toolchain — is
-// exactly what the composed environment pins rather than replaces.
+// It composes a hermetic environment of its own, and that is not a convenience:
+// go/packages asks the go command for export data, so a discovery pass
+// *compiles* the module and everything below it. That makes discovery the
+// heaviest writer of build cache entries in every suite that drives it — heavier
+// than the builds those suites are usually about — and each entry is keyed on a
+// snapshot path that exists for a single run. Left on the process's own
+// environment it filled the developer's cache, which is the failure the harness
+// exists to prevent, so there is no form of this helper that does.
+//
+// A caller that already has an environment — because its later steps have to run
+// under the same one, which is every integration suite here — passes it to
+// [DiscoverWith] instead. Two composed environments differ only in their scratch
+// directory, so the difference is not correctness but a temporary directory
+// nobody needed.
 func Discover(t testing.TB, tc gocmd.Toolchain, snap *snapshot.Snapshot) discover.Result {
+	t.Helper()
+	return DiscoverWith(t, tc, snap, testkit.Compose(t, t.TempDir()))
+}
+
+// DiscoverWith finds every mutation candidate in a snapshot, with the loader
+// under the environment the caller is running its other steps with.
+//
+// GOWORK=off and the located toolchain's directory on PATH are forced by
+// discovery itself either way, so what a composed environment adds is the build
+// cache, the temporary directory, the private home and the stripped activation.
+// An empty env is not "inherit": it is the go command with no PATH and no HOME,
+// so a caller with nothing to share wants [Discover].
+func DiscoverWith(t testing.TB, tc gocmd.Toolchain, snap *snapshot.Snapshot, env []string) discover.Result {
 	t.Helper()
 	found, err := discover.Discover(t.Context(), discover.Options{
 		SnapshotRoot: snap.Root,
 		Toolchain:    tc,
+		Env:          env,
 	})
 	if err != nil {
 		t.Fatalf("discovering the candidates in %s: %v", snap.Root, err)
@@ -77,7 +101,14 @@ func Hints(t testing.TB, found discover.Result) instrument.Hints {
 // skip, a rejection or a coordinate — calls the steps itself.
 func Instrument(t testing.TB, tc gocmd.Toolchain, snap *snapshot.Snapshot) *mutation.Catalog {
 	t.Helper()
-	found := Discover(t, tc, snap)
+	return InstrumentWith(t, tc, snap, testkit.Compose(t, t.TempDir()))
+}
+
+// InstrumentWith is [Instrument] with the discovery pass under the environment
+// the caller's own steps run with, for the reason [DiscoverWith] gives.
+func InstrumentWith(t testing.TB, tc gocmd.Toolchain, snap *snapshot.Snapshot, env []string) *mutation.Catalog {
+	t.Helper()
+	found := DiscoverWith(t, tc, snap, env)
 	catalog := Catalog(t, found)
 	if _, err := instrument.Instrument(instrument.Options{
 		SnapshotRoot: snap.Root,

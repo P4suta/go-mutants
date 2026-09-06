@@ -291,6 +291,48 @@ func BuildCache() (string, error) {
 	return filepath.Join(pinned.userCache, "go-mutants-test", "go-build"), nil
 }
 
+// BuildCacheEntries counts the files a build cache holds that the go command put
+// there for something it compiled.
+//
+// Counting what is directly in the directory proves nothing: the go command
+// creates all 256 shard directories, a README and a trim record when it opens a
+// cache, before it has decided to write anything, so a top-level listing looks
+// the same for a cache that was merely opened as for one that took a build. A
+// test that wants to know where a compile went has to look one level down, and
+// this is the one implementation of that — two tests asking the same question
+// two ways is how the helpers this harness replaced came to disagree.
+//
+// A cache directory that does not exist is nought rather than a failure: not
+// existing is the answer for a cache nothing ever wrote to, which is exactly the
+// state such a test is asking about.
+func BuildCacheEntries(t testing.TB, dir string) int {
+	t.Helper()
+	count := 0
+	err := filepath.WalkDir(dir, func(_ string, entry fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case entry.IsDir():
+			return nil
+		}
+		// The bookkeeping a cache writes for itself, and this harness's own
+		// ownership marker, are not entries anybody compiled.
+		switch entry.Name() {
+		case "README", "trim.txt", "lock", BuildCacheMarker:
+			return nil
+		}
+		count++
+		return nil
+	})
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return 0
+	case err != nil:
+		t.Fatalf("walking the build cache %s: %v", dir, err)
+	}
+	return count
+}
+
 // stampBuildCache creates the build cache and leaves [BuildCacheMarker] in it.
 //
 // Three states, and only two of them get a file. A directory that does not exist

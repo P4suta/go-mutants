@@ -4,11 +4,7 @@
 package instrument_test
 
 import (
-	"bytes"
-	"errors"
 	"maps"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -17,6 +13,9 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // goModule is the module file every fixture module gets. The `go` directive is
@@ -50,9 +49,10 @@ go 1.21
 func TestInstrumentedTreeCompiles(t *testing.T) {
 	t.Parallel()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 
 	var candidates []mutation.Candidate
 	hints := instrument.Hints{}
@@ -82,13 +82,13 @@ func TestInstrumentedTreeCompiles(t *testing.T) {
 		// established.
 		{name: "namedbool", candidates: namedBoolEdits, hints: hintOptions{namedBool: namedBoolExprs()}},
 	} {
-		src := readFile(t, filepath.Join("testdata", fixture.name+".input"))
+		src := testkit.ReadFile(t, filepath.Join("testdata", fixture.name+".input"))
 		dir := "pkg/" + fixture.name
 		rel := dir + "/sample.go"
-		writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), src)
+		testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), src)
 		if fixture.sibling != "" {
-			writeFile(t, filepath.Join(root, filepath.FromSlash(dir), fixture.sibling),
-				readFile(t, filepath.Join("testdata", fixture.name+".sibling")))
+			testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(dir), fixture.sibling),
+				testkit.ReadFile(t, filepath.Join("testdata", fixture.name+".sibling")))
 		}
 		here := candidatesFor(t, fixture.candidates, src)
 		for i := range here {
@@ -102,9 +102,8 @@ func TestInstrumentedTreeCompiles(t *testing.T) {
 	}
 	instrumentSnapshotHinted(t, root, catalogOf(t, candidates), hints)
 
-	if out, err := goCommand(t, toolchain, root, "build", "./..."); err != nil {
-		t.Errorf("the instrumented tree does not build: %v\n%s", err, out)
-	}
+	build := goCommand(t, toolchain, root, env, "build", "./...")
+	mutantkit.RequireExit(t, build, 0, "`go build ./...` over the instrumented fixtures")
 }
 
 // TestInstrumentedBinaryActivatesOneMutant runs an instrumented program three
@@ -120,11 +119,12 @@ func TestInstrumentedTreeCompiles(t *testing.T) {
 func TestInstrumentedBinaryActivatesOneMutant(t *testing.T) {
 	t.Parallel()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
-	writeFile(t, filepath.Join(root, filepath.FromSlash("pkg/sample/sample.go")), []byte(runtimeSample))
-	writeFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")), []byte(`// SPDX-FileCopyrightText: 2026 go-mutants contributors
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("pkg/sample/sample.go")), []byte(runtimeSample))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")), []byte(`// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 // Command mini prints one comparison, so that a test can watch a mutant
@@ -153,13 +153,12 @@ func main() {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if out, err := goCommand(t, toolchain, root, "build", "-o", binary, "./cmd/mini"); err != nil {
-		t.Fatalf("building the instrumented program: %v\n%s", err, out)
-	}
+	mutantkit.RequireExit(t, goCommand(t, toolchain, root, env, "build", "-o", binary, "./cmd/mini"),
+		0, "building the instrumented program")
 
 	// The instrumented baseline: every guard takes the branch holding the
 	// original source, so `1 < 2` is still true.
-	if out, code := run(t, binary, ""); code != 0 || strings.TrimSpace(out) != "true" {
+	if out, code := run(t, env, binary, ""); code != 0 || strings.TrimSpace(out) != "true" {
 		t.Errorf("the instrumented baseline printed %q and exited %d, want \"true\" and 0", out, code)
 	}
 
@@ -167,13 +166,13 @@ func main() {
 	// false. Selecting it by its replacement rather than by index keeps the
 	// test readable when the catalogue's order changes.
 	flip := mutantWithReplacement(t, catalog, "==")
-	if out, code := run(t, binary, flip.ID); code != 0 || strings.TrimSpace(out) != "false" {
+	if out, code := run(t, env, binary, flip.ID); code != 0 || strings.TrimSpace(out) != "false" {
 		t.Errorf("mutant %s printed %q and exited %d, want \"false\" and 0", flip.DisplayID, out, code)
 	}
 
 	// A mutant this tree does not contain.
 	stale := strings.Repeat("0", len(flip.ID))
-	out, code := run(t, binary, stale)
+	out, code := run(t, env, binary, stale)
 	if code != 97 {
 		t.Errorf("an unknown mutant id exited %d, want 97", code)
 	}
@@ -202,7 +201,8 @@ func main() {
 func TestInstrumentedBinaryTakesEachStatementBranch(t *testing.T) {
 	t.Parallel()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	const src = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -220,10 +220,10 @@ func Total(values []int) int {
 }
 `
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	rel := "pkg/sample/sample.go"
-	writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(src))
-	writeFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")), []byte(`// SPDX-FileCopyrightText: 2026 go-mutants contributors
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(src))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")), []byte(`// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 // Command mini prints one total, so that a test can watch a mutant change it.
@@ -257,9 +257,8 @@ func main() {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if out, err := goCommand(t, toolchain, root, "build", "-o", binary, "./cmd/mini"); err != nil {
-		t.Fatalf("building the instrumented program: %v\n%s", err, out)
-	}
+	mutantkit.RequireExit(t, goCommand(t, toolchain, root, env, "build", "-o", binary, "./cmd/mini"),
+		0, "building the instrumented program")
 
 	for _, c := range []struct {
 		what        string
@@ -284,7 +283,7 @@ func main() {
 		if c.rule != "" {
 			active = mutantOf(t, catalog, c.rule, c.replacement).ID
 		}
-		out, code := run(t, binary, active)
+		out, code := run(t, env, binary, active)
 		if code != 0 || strings.TrimSpace(out) != c.want {
 			t.Errorf("with %s the program printed %q and exited %d, want %q and 0",
 				c.what, strings.TrimSpace(out), code, c.want)
@@ -311,7 +310,8 @@ func main() {
 func TestUncompilableMutantsAreLeftToTheValidationPhase(t *testing.T) {
 	t.Parallel()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	const src = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -325,9 +325,9 @@ func Zero(v int) int {
 }
 `
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	rel := "pkg/zero/sample.go"
-	writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(src))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(src))
 
 	candidates := editsIn(t, []byte(src), editSpec{rule: "mul-to-div", in: "v * 0", find: "*", with: "/"})
 	for i := range candidates {
@@ -339,12 +339,13 @@ func Zero(v int) int {
 	catalog := catalogOf(t, candidates)
 	instrumentSnapshotHinted(t, root, catalog, hintsOfCandidates(t, rel, []byte(src), candidates, hintOptions{}))
 
-	out, err := goCommand(t, toolchain, root, "build", "./...")
-	if err == nil {
-		t.Fatalf("the instrumented tree built, so this mutant is no longer the compiler's to reject:\n%s", out)
+	build := goCommand(t, toolchain, root, env, "build", "./...")
+	if build.ExitCode == 0 {
+		t.Fatalf("the instrumented tree built, so this mutant is no longer the compiler's to reject:\n%s",
+			build.Output)
 	}
-	if !strings.Contains(out, "division by zero") {
-		t.Errorf("the build failed for some other reason than the mutated copy:\n%s", out)
+	if !strings.Contains(string(build.Output), "division by zero") {
+		t.Errorf("the build failed for some other reason than the mutated copy:\n%s", build.Output)
 	}
 }
 
@@ -375,58 +376,39 @@ func mutantWithReplacement(t *testing.T, catalog *mutation.Catalog, replacement 
 	return mutation.Mutant{}
 }
 
-// locateToolchain finds the Go toolchain, skipping the test when there is
-// none. A machine without a toolchain can still run every other test in this
-// package: the instrumenter itself needs no go command.
-func locateToolchain(t *testing.T) gocmd.Toolchain {
+// goCommand runs one go command over a synthesized module.
+//
+// -buildvcs=false is on the command line rather than in the environment, and it
+// is a statement rather than a workaround. A fixture module lives in a temporary
+// directory and has no version control of its own, so stamping it can only ever
+// find somebody else's repository above it — and a stray or half-created .git in
+// the temporary root then decides whether these tests build, which is a fact
+// about the machine and not about the instrumented tree.
+//
+// -mod=mod is there for the neighbouring reason: the composed environment pins
+// GOFLAGS=-mod=readonly, which is the right default for a corpus module with a
+// go.sum, and these modules are written a file at a time by the test itself. The
+// harness's own doc says a test that needs the other mode passes it on the
+// command line, where it wins over GOFLAGS.
+func goCommand(t *testing.T, toolchain gocmd.Toolchain, dir string, env []string, verb string, args ...string) runner.Result {
 	t.Helper()
-	toolchain, err := gocmd.Locate(gocmd.Options{})
-	if err != nil {
-		t.Skipf("no Go toolchain on PATH, so the instrumented tree cannot be built: %v", err)
-	}
-	return toolchain
-}
-
-// goCommand runs one go command in the snapshot and returns its combined
-// output.
-func goCommand(t *testing.T, toolchain gocmd.Toolchain, dir string, args ...string) (string, error) {
-	t.Helper()
-	cmd := exec.Command(toolchain.GoBin, args...)
-	cmd.Dir = dir
-	// GOWORK and GOFLAGS are pinned so that whatever the developer's shell is
-	// configured with cannot decide what this build resolves against, and
-	// GOPROXY is off because a fixture module with no dependencies must never
-	// reach the network to build.
-	//
-	// -buildvcs=false is part of the same statement rather than a workaround. A
-	// fixture module lives in a temporary directory and has no version control
-	// of its own, so stamping it can only ever find somebody else's repository
-	// above it — and a stray or half-created .git in the temporary root then
-	// decides whether these tests build, which is a fact about the machine and
-	// not about the instrumented tree.
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod -buildvcs=false", "GOPROXY=off")
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	// The verb is a parameter of its own rather than the head of the argument
+	// slice, so that "the flags go after the subcommand" is a fact about the
+	// signature rather than an index that panics when a caller passes none.
+	return mutantkit.RunGo(t, toolchain, dir, env,
+		append([]string{verb, "-mod=mod", "-buildvcs=false"}, args...)...)
 }
 
 // run executes the instrumented binary with one mutant activated, returning
 // its combined output and exit status.
-func run(t *testing.T, binary, active string) (string, int) {
+func run(t *testing.T, env []string, binary, active string) (string, int) {
 	t.Helper()
-	cmd := exec.Command(binary)
-	cmd.Env = append(os.Environ(), "GO_MUTANTS_ACTIVE="+active)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	var exit *exec.ExitError
+	result := testkit.Exec(t, filepath.Dir(binary), mutantkit.Activate(env, active), binary)
 	switch {
-	case err == nil:
-		return out.String(), 0
-	case errors.As(err, &exit):
-		return out.String(), exit.ExitCode()
-	default:
-		t.Fatalf("running %s: %v", binary, err)
-		return "", 0
+	case result.Err != nil:
+		t.Fatalf("running %s: %v", binary, result.Err)
+	case result.TimedOut:
+		t.Fatalf("%s did not finish within its deadline:\n%s", binary, result.Output)
 	}
+	return string(result.Output), result.ExitCode
 }

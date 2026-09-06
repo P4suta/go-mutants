@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -165,13 +166,15 @@ func TestRunProbeReportsAnUnreadableLog(t *testing.T) {
 		write func(t *testing.T, path string)
 	}{
 		{
-			name:  "a log this catalogue's runtime did not write",
-			write: func(t *testing.T, path string) { writeFile(t, path, "gomutants-infection-v1 other 3\n") },
+			name: "a log this catalogue's runtime did not write",
+			write: func(t *testing.T, path string) {
+				testkit.WriteFile(t, path, []byte("gomutants-infection-v1 other 3\n"))
+			},
 		},
 		{
 			name: "a log whose last line was never finished",
 			write: func(t *testing.T, path string) {
-				writeFile(t, path, "gomutants-infection-v1 "+strings.Repeat("a", 64)+" 3\n1")
+				testkit.WriteFile(t, path, []byte("gomutants-infection-v1 "+strings.Repeat("a", 64)+" 3\n1"))
 			},
 		},
 		{

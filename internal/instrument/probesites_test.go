@@ -7,17 +7,15 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // The probe tree's return form.
@@ -212,13 +210,13 @@ func TestProbeGolden(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			in := readFile(t, filepath.Join("testdata", c.input))
+			in := testkit.ReadFile(t, filepath.Join("testdata", c.input))
 			root := t.TempDir()
-			writeFile(t, filepath.Join(root, sampleFile), in)
+			testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 			catalog := catalogOf(t, c.candidates(t, in))
 			result := probeSnapshotWith(t, root, catalog, c.hints)
-			out := readFile(t, filepath.Join(root, sampleFile))
+			out := testkit.ReadFile(t, filepath.Join(root, sampleFile))
 
 			testkit.Golden(t, c.name+".golden", out)
 
@@ -253,14 +251,14 @@ func TestProbeTreePreservesLines(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			in := readFile(t, filepath.Join("testdata", c.input))
+			in := testkit.ReadFile(t, filepath.Join("testdata", c.input))
 			root := t.TempDir()
-			writeFile(t, filepath.Join(root, sampleFile), in)
+			testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 			catalog := catalogOf(t, c.candidates(t, in))
 			hints := hintsFor(t, root, catalog, c.hints)
 			probeSnapshotHinted(t, root, catalog, hints)
-			out := readFile(t, filepath.Join(root, sampleFile))
+			out := testkit.ReadFile(t, filepath.Join(root, sampleFile))
 
 			if got, want := instrument.CountLines(out), instrument.CountLines(in); got != want {
 				t.Fatalf("the probe tree holds %d line breaks, the original holds %d", got, want)
@@ -333,15 +331,15 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			in := readFile(t, filepath.Join("testdata", c.name+".input"))
+			in := testkit.ReadFile(t, filepath.Join("testdata", c.name+".input"))
 			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
 
 			render := func(mode instrument.Mode) []byte {
 				root := t.TempDir()
-				writeFile(t, filepath.Join(root, sampleFile), in)
+				testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 				if c.sibling != "" {
-					writeFile(t, filepath.Join(root, c.sibling),
-						readFile(t, filepath.Join("testdata", c.name+".sibling")))
+					testkit.WriteFile(t, filepath.Join(root, c.sibling),
+						testkit.ReadFile(t, filepath.Join("testdata", c.name+".sibling")))
 				}
 				hints := hintsFor(t, root, catalog, c.hints)
 				if mode == instrument.ModeProbe {
@@ -349,11 +347,11 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 				} else {
 					instrumentSnapshotHinted(t, root, catalog, hints)
 				}
-				return readFile(t, filepath.Join(root, sampleFile))
+				return testkit.ReadFile(t, filepath.Join(root, sampleFile))
 			}
 
 			probed := render(instrument.ModeProbe)
-			if got, want := render(instrument.ModeMutant), readFile(t, filepath.Join("testdata", c.name+".golden")); !bytes.Equal(got, want) {
+			if got, want := render(instrument.ModeMutant), testkit.ReadFile(t, filepath.Join("testdata", c.name+".golden")); !bytes.Equal(got, want) {
 				t.Errorf("the mutant tree of %s changed\n--- got ---\n%s\n--- want ---\n%s", c.name, got, want)
 			}
 			if bytes.Contains(probed, []byte(".M[")) {
@@ -374,14 +372,14 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 func TestProbeSkipsAMutantWithoutAReturnSite(t *testing.T) {
 	t.Parallel()
 
-	in := readFile(t, filepath.Join("testdata", "comparison.input"))
+	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), in)
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 	catalog := catalogOf(t, candidatesFor(t, nil, in))
 	result := probeSnapshotWith(t, root, catalog, hintOptions{})
 
-	if got := readFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
+	if got := testkit.ReadFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
 		t.Errorf("a file whose every mutant is unprobed was rewritten:\n%s", got)
 	}
 	if len(result.FilesInstrumented) != 0 || len(result.GuardsByFile) != 0 {
@@ -400,13 +398,13 @@ func TestProbeSkipsAMutantWithoutAReturnSite(t *testing.T) {
 func TestProbeRefusesAnUnspellableResultType(t *testing.T) {
 	t.Parallel()
 
-	in := readFile(t, filepath.Join("testdata", "statement.input"))
+	in := testkit.ReadFile(t, filepath.Join("testdata", "statement.input"))
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), in)
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 	catalog := catalogOf(t, probeStatementEdits(t, in))
 	result := probeSnapshotWith(t, root, catalog, hintOptions{unprobed: []string{"return count, err"}})
-	out := readFile(t, filepath.Join(root, sampleFile))
+	out := testkit.ReadFile(t, filepath.Join(root, sampleFile))
 
 	if got := result.GuardsByFile[sampleFile]; got != 1 {
 		t.Errorf("GuardsByFile[%s] = %d, want 1: only the spellable statement is probed", sampleFile, got)
@@ -430,15 +428,15 @@ func TestProbeIsDeterministic(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			in := readFile(t, filepath.Join("testdata", c.input))
+			in := testkit.ReadFile(t, filepath.Join("testdata", c.input))
 			catalog := catalogOf(t, c.candidates(t, in))
 
 			run := func() (string, []byte, []byte) {
 				root := t.TempDir()
-				writeFile(t, filepath.Join(root, sampleFile), in)
+				testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 				result := probeSnapshotWith(t, root, catalog, c.hints)
-				runtime := readFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
-				return result.RuntimeImport, readFile(t, filepath.Join(root, sampleFile)), runtime
+				runtime := testkit.ReadFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
+				return result.RuntimeImport, testkit.ReadFile(t, filepath.Join(root, sampleFile)), runtime
 			}
 
 			firstImport, firstSource, firstRuntime := run()
@@ -470,16 +468,17 @@ func TestProbeIsDeterministic(t *testing.T) {
 func TestProbeTreeCompiles(t *testing.T) {
 	t.Parallel()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 
 	var candidates []mutation.Candidate
 	hints := instrument.Hints{}
 	for _, c := range probeCases() {
-		src := readFile(t, filepath.Join("testdata", c.input))
+		src := testkit.ReadFile(t, filepath.Join("testdata", c.input))
 		rel := "pkg/" + c.name + "/sample.go"
-		writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), src)
+		testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), src)
 
 		here := c.candidates(t, src)
 		for i := range here {
@@ -490,9 +489,8 @@ func TestProbeTreeCompiles(t *testing.T) {
 	}
 	probeSnapshotHinted(t, root, catalogOf(t, candidates), hints)
 
-	if out, err := goCommand(t, toolchain, root, "build", "./..."); err != nil {
-		t.Errorf("the probe tree does not build: %v\n%s", err, out)
-	}
+	mutantkit.RequireExit(t, goCommand(t, toolchain, root, env, "build", "./..."),
+		0, "`go build ./...` over the probe tree")
 }
 
 // TestProbeCapturesEveryResultOfAReturn runs a probe tree and reads back what
@@ -507,12 +505,13 @@ func TestProbeTreeCompiles(t *testing.T) {
 func TestProbeCapturesEveryResultOfAReturn(t *testing.T) {
 	t.Parallel()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	const rel = "pkg/sample/sample.go"
-	writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(divideSource))
-	writeFile(t, filepath.Join(root, filepath.FromSlash("pkg/sample/sample_test.go")), []byte(divideTest))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(divideSource))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("pkg/sample/sample_test.go")), []byte(divideTest))
 
 	candidates := editsIn(t, []byte(divideSource),
 		editSpec{rule: "return-err-to-nil", in: "return 0, ErrZero", find: "ErrZero", with: "nil"},
@@ -542,15 +541,12 @@ func TestProbeCapturesEveryResultOfAReturn(t *testing.T) {
 	}} {
 		t.Run(c.name, func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "infection.log")
-			out, err := goCommandWithEnv(t, toolchain, root,
-				[]string{instrument.ProbeEnv + "=" + log},
+			suite := goCommand(t, toolchain, root, append(slices.Clip(env), instrument.ProbeEnv+"="+log),
 				"test", "-count=1", "-run", c.test, "./pkg/sample")
-			if err != nil {
-				t.Fatalf("running the probe tree's suite: %v\n%s", err, out)
-			}
+			mutantkit.RequireExit(t, suite, 0, "running the probe tree's suite")
 
 			got, readErr := instrument.ReadInfectionLog(
-				bytes.NewReader(readFile(t, log)), catalog.Digest(), catalog.Len())
+				bytes.NewReader(testkit.ReadFile(t, log)), catalog.Digest(), catalog.Len())
 			if readErr != nil {
 				t.Fatalf("reading the infection log: %v", readErr)
 			}
@@ -647,24 +643,6 @@ func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catal
 			t.Errorf("mutant %s: nothing in the probe tree reports it", m.DisplayID)
 		}
 	}
-}
-
-// goCommandWithEnv is [goCommand] with extra environment for the child.
-//
-// It is spelled out rather than folded into that helper because the two are
-// asking for different things: goCommand pins the environment so that the
-// developer's shell cannot decide what a build resolves against, and this adds
-// the one variable a probe run is *about*. Everything else is the same pinning,
-// for the same reasons, stated there.
-func goCommandWithEnv(t *testing.T, toolchain gocmd.Toolchain, dir string, extra []string, args ...string) (string, error) {
-	t.Helper()
-
-	cmd := exec.Command(toolchain.GoBin, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod -buildvcs=false", "GOPROXY=off")
-	cmd.Env = append(cmd.Env, extra...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }
 
 // The catalogues of the probe fixtures. Each states the rule, the bytes it

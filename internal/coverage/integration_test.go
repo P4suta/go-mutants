@@ -17,7 +17,6 @@ package coverage_test
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -27,6 +26,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // commandCap bounds each toolchain command and each profiling run. Generous,
@@ -46,8 +47,6 @@ var recordPattern = regexp.MustCompile(`^.+:[0-9]+\.[0-9]+,[0-9]+\.[0-9]+ [0-9]+
 // deliberately different fates, and `caller` reaches exactly one of them.
 const (
 	fixtureModule = "cov.example/exp"
-
-	fixtureGoMod = "module " + fixtureModule + "\n\ngo 1.26\n"
 
 	dependencySource = `package dependency
 
@@ -102,11 +101,14 @@ func TestUse(t *testing.T) {
 
 // TestParsesWhatTheToolchainWrites is the round trip: build, run, render, read.
 func TestParsesWhatTheToolchainWrites(t *testing.T) {
-	toolchain := locate(t)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	root := writeFixtureModule(t)
 
-	dependencyProfile := collect(t, toolchain, root, "dependency")
-	callerProfile := collect(t, toolchain, root, "caller")
+	dependencyProfile := collect(t, toolchain, root, env, "dependency")
+	callerProfile := collect(t, toolchain, root, env, "caller")
 
 	for name, profile := range map[string]coverage.Profile{
 		"dependency": dependencyProfile,
@@ -148,10 +150,13 @@ func TestParsesWhatTheToolchainWrites(t *testing.T) {
 // The lines of dependency.go the assertions above are about, counted from the
 // source constant. They are named rather than written as numbers at the call
 // site so that editing the fixture moves one constant instead of five.
+// The three are counted from the top of the written file, which is the SPDX
+// header the harness puts on every Go file it writes into a module plus the
+// source constant below it.
 const (
-	clampLine      = 5  // `if v > lo` inside Clamp, reached by TestClamp
-	onlyCallerLine = 13 // `return a != b` in OnlyCaller
-	orphanLine     = 17 // `return a == b` in Orphan
+	clampLine      = 8  // `if v > lo` inside Clamp, reached by TestClamp
+	onlyCallerLine = 16 // `return a != b` in OnlyCaller
+	orphanLine     = 20 // `return a == b` in Orphan
 )
 
 // TestCommittedSampleStillDescribesTheFormat holds the checked-in fixture
@@ -163,14 +168,14 @@ const (
 // different module and would never match line for line — because the grammar is
 // the part the parser depends on.
 func TestCommittedSampleStillDescribesTheFormat(t *testing.T) {
-	toolchain := locate(t)
-	root := writeFixtureModule(t)
-	fresh := render(t, toolchain, root, "dependency")
+	t.Parallel()
 
-	committed, err := os.ReadFile(samplePath)
-	if err != nil {
-		t.Fatalf("reading the committed sample: %v", err)
-	}
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	root := writeFixtureModule(t)
+	fresh := render(t, toolchain, root, env, "dependency")
+
+	committed := testkit.ReadFile(t, samplePath)
 
 	freshLines := documentLines(string(fresh))
 	sampleLines := documentLines(string(committed))
@@ -199,51 +204,29 @@ func TestCommittedSampleStillDescribesTheFormat(t *testing.T) {
 	}
 }
 
-// locate finds the Go toolchain, or ends the test saying so.
-func locate(t *testing.T) gocmd.Toolchain {
-	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skipf("no go executable on PATH: %v", err)
-	}
-	toolchain, err := gocmd.LocateContext(t.Context(), gocmd.Options{})
-	if err != nil {
-		t.Fatalf("locating the Go toolchain: %v", err)
-	}
-	return toolchain
-}
-
 // writeFixtureModule writes the two-package module into a directory of the
 // test's own and returns its root.
 func writeFixtureModule(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
-	files := map[string]string{
-		"go.mod":                        fixtureGoMod,
-		"dependency/dependency.go":      dependencySource,
-		"dependency/dependency_test.go": dependencyTest,
-		"caller/caller.go":              callerSource,
-		"caller/caller_test.go":         callerTest,
-	}
-	for name, contents := range files {
-		path := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("creating %s: %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-			t.Fatalf("writing %s: %v", path, err)
-		}
-	}
-	return root
+	return testkit.NewModule(t).Module(fixtureModule).
+		Source("dependency/dependency.go", dependencySource).
+		Source("dependency/dependency_test.go", dependencyTest).
+		Source("caller/caller.go", callerSource).
+		Source("caller/caller_test.go", callerTest).
+		Root()
 }
 
 // render builds one package's test binary with coverage, runs it, and returns
 // the textfmt document the toolchain wrote.
-func render(t *testing.T, toolchain gocmd.Toolchain, root, pkg string) []byte {
+func render(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, pkg string) []byte {
 	t.Helper()
 	work := t.TempDir()
 	binary := filepath.Join(work, pkg+".test")
 	coverDir := filepath.Join(work, "cover")
 	profilePath := filepath.Join(work, pkg+".txt")
+	// Created and left empty: this is the directory the test binary is told to
+	// emit its coverage data into, and a file the test put there would be a file
+	// `go tool covdata` is asked to read as a profile.
 	if err := os.MkdirAll(coverDir, 0o755); err != nil {
 		t.Fatalf("creating %s: %v", coverDir, err)
 	}
@@ -251,6 +234,7 @@ func render(t *testing.T, toolchain gocmd.Toolchain, root, pkg string) []byte {
 	build := toolchain.Command("test", "-c", "-cover", "-coverpkg="+fixtureModule+"/...",
 		"-o", binary, "./"+pkg)
 	build.Dir = root
+	build.Env = env
 	build.Timeout = commandCap
 	mustRun(t, build, "building the "+pkg+" test binary")
 
@@ -261,26 +245,24 @@ func render(t *testing.T, toolchain gocmd.Toolchain, root, pkg string) []byte {
 	run := runner.Spec{
 		Argv:    []string{binary, "-test.gocoverdir=" + coverDir},
 		Dir:     filepath.Join(root, pkg),
+		Env:     env,
 		Timeout: commandCap,
 	}
 	mustRun(t, run, "running the "+pkg+" test binary")
 
 	textfmt := toolchain.Command("tool", "covdata", "textfmt", "-i="+coverDir, "-o="+profilePath)
 	textfmt.Dir = root
+	textfmt.Env = env
 	textfmt.Timeout = commandCap
 	mustRun(t, textfmt, "rendering the "+pkg+" profile")
 
-	document, err := os.ReadFile(profilePath)
-	if err != nil {
-		t.Fatalf("reading the rendered profile: %v", err)
-	}
-	return document
+	return testkit.ReadFile(t, profilePath)
 }
 
 // collect is [render] followed by the parser.
-func collect(t *testing.T, toolchain gocmd.Toolchain, root, pkg string) coverage.Profile {
+func collect(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, pkg string) coverage.Profile {
 	t.Helper()
-	profile, err := coverage.ParseTextfmt(strings.NewReader(string(render(t, toolchain, root, pkg))))
+	profile, err := coverage.ParseTextfmt(strings.NewReader(string(render(t, toolchain, root, env, pkg))))
 	if err != nil {
 		t.Fatalf("ParseTextfmt over the %s profile: %v", pkg, err)
 	}

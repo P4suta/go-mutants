@@ -30,31 +30,22 @@ package instrument_test
 import (
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/P4suta/go-mutants/internal/discover"
-	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
-	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 const (
 	// killableModule is the module path of the fixture this file drives.
 	killableModule = "fixture.example/killable"
-
-	// stepTimeout bounds every child process. Each step is a build or a run of a
-	// suite that takes well under a second once warm, so a minute is not a
-	// budget — it is the point past which something has hung rather than been
-	// slow, and a hung child is what the supervisor exists to end.
-	stepTimeout = 60 * time.Second
 
 	// boundaryCase names the fixture's high-bound row. It is the input at which
 	// `v < hi` and `v <= hi` disagree, so it is both the case that dies when
@@ -100,16 +91,13 @@ type kill struct {
 // variable — they say the mechanism dispatches, and the steps in between say it
 // does so without disturbing anything else.
 func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "killable")
+	t.Parallel()
 
-	found, discoverErr := discover.Discover(t.Context(), discover.Options{
-		SnapshotRoot: snap.Root,
-		Toolchain:    toolchain,
-	})
-	if discoverErr != nil {
-		t.Fatalf("discovering the killable fixture: %v", discoverErr)
-	}
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "killable")
+
+	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
 	if found.ModulePath != killableModule {
 		t.Fatalf("discovered module path = %q, want %q", found.ModulePath, killableModule)
 	}
@@ -120,7 +108,7 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	// one function per file and no repeated operator — not a coincidence, and
 	// if it ever stops holding this line says so before a step silently
 	// activates the wrong one.
-	catalog := catalogFrom(t, found)
+	catalog := mutantkit.Catalog(t, found)
 	wantCatalog := []string{
 		"clamp.go negate-condition v < hi -> !(v < hi)",
 		"clamp.go lt-to-le < -> <=",
@@ -136,7 +124,7 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		"untested.go return-false a != b -> false",
 		"untested.go neq-to-eq != -> ==",
 	}
-	if got := catalogLines(catalog); !slices.Equal(got, wantCatalog) {
+	if got := mutantkit.CatalogLines(catalog); !slices.Equal(got, wantCatalog) {
 		t.Fatalf("catalogue =\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(wantCatalog, "\n\t"))
 	}
@@ -144,15 +132,11 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	// The hints discovery just computed, carried across the phase boundary:
 	// which rewrite form each edit takes is a question about types, and this is
 	// the only pass that had a type checker.
-	hints, hintsErr := instrument.HintsOf(found.Candidates)
-	if hintsErr != nil {
-		t.Fatalf("indexing the guard hints: %v", hintsErr)
-	}
 	instrumented, instrumentErr := instrument.Instrument(instrument.Options{
 		SnapshotRoot: snap.Root,
 		ModulePath:   found.ModulePath,
 		Catalog:      catalog,
-		Hints:        hints,
+		Hints:        mutantkit.Hints(t, found),
 	})
 	if instrumentErr != nil {
 		t.Fatalf("instrumenting the snapshot: %v", instrumentErr)
@@ -207,11 +191,11 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 			intact:   "--- PASS: " + boundaryCase,
 		},
 	}
-	survivor := mutantAt(t, catalog, "untested.go", "neq-to-eq")
+	survivor := mutantkit.MutantAt(t, catalog, "untested.go", "neq-to-eq")
 
 	t.Run("the instrumented tree builds", func(t *testing.T) {
-		build := goInSnapshot(t, toolchain, snap.Root, "", "build", "./...")
-		requireExit(t, build, 0, "`go build ./...` in the instrumented snapshot")
+		build := mutantkit.RunGo(t, toolchain, snap.Root, env, "build", "./...")
+		mutantkit.RequireExit(t, build, 0, "`go build ./...` in the instrumented snapshot")
 	})
 
 	t.Run("the instrumented baseline passes", func(t *testing.T) {
@@ -220,25 +204,25 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		// bytes, so the suite has to pass exactly as it does in the fixture —
 		// and it has to actually run: `go test` over a tree with no tests left
 		// in it also exits 0, which is why the passing subtests are named.
-		baseline := runSuite(t, toolchain, snap.Root, "")
-		requireExit(t, baseline, 0, "the instrumented baseline")
-		requireOutput(t, baseline, "the instrumented baseline",
+		baseline := mutantkit.RunSuite(t, toolchain, snap.Root, env)
+		mutantkit.RequireExit(t, baseline, 0, "the instrumented baseline")
+		mutantkit.RequireOutput(t, baseline, "the instrumented baseline",
 			"--- PASS: "+boundaryCase, "--- PASS: TestIsReady")
 	})
 
 	for _, k := range kills {
 		t.Run("activating "+k.name+" kills the suite", func(t *testing.T) {
-			mutant := mutantAt(t, catalog, k.path, k.rule)
-			red := runSuite(t, toolchain, snap.Root, mutant.ID)
+			mutant := mutantkit.MutantAt(t, catalog, k.path, k.rule)
+			red := mutantkit.RunSuite(t, toolchain, snap.Root, mutantkit.Activate(env, mutant.ID))
 			what := "the suite with " + mutant.DisplayID + " (" + k.rule + " in " + k.path + ") active"
-			requireExit(t, red, 1, what)
+			mutantkit.RequireExit(t, red, 1, what)
 
 			// A red suite is not yet evidence, and neither is a FAIL line. The
 			// mutant's own signature is the wrong answer it produces at the one
 			// input where it differs from the original, so that is what gets
 			// asserted — together with the test that has to still be passing
 			// beside it.
-			requireOutput(t, red, what, k.evidence, "--- FAIL: "+k.failing, k.intact)
+			mutantkit.RequireOutput(t, red, what, k.evidence, "--- FAIL: "+k.failing, k.intact)
 
 			// And nothing else went red. A mutant that broke the whole suite
 			// would be a broken tree wearing a detection's clothes.
@@ -260,10 +244,10 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		// activated: an ID the generated runtime does not know exits 97 from
 		// init, which `go test` would report as a failed package. A survivor is
 		// a mutant that ran and changed nothing, not one that was never live.
-		survived := runSuite(t, toolchain, snap.Root, survivor.ID)
+		survived := mutantkit.RunSuite(t, toolchain, snap.Root, mutantkit.Activate(env, survivor.ID))
 		what := "the suite with " + survivor.DisplayID + " (" + survivor.Rule.Name + " in untested.go) active"
-		requireExit(t, survived, 0, what)
-		requireOutput(t, survived, what, "--- PASS: "+boundaryCase, "--- PASS: TestIsReady")
+		mutantkit.RequireExit(t, survived, 0, what)
+		mutantkit.RequireOutput(t, survived, what, "--- PASS: "+boundaryCase, "--- PASS: TestIsReady")
 	})
 
 	t.Run("an unknown mutant refuses to run the tests", func(t *testing.T) {
@@ -274,8 +258,8 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		// Compiled to a temporary directory outside the snapshot. A test binary
 		// written into the tree would be drift in the last step, and would be
 		// indistinguishable there from a test that wrote into its own package.
-		compile := goInSnapshot(t, toolchain, snap.Root, "", "test", "-c", "-o", binary, ".")
-		requireExit(t, compile, 0, "compiling the fixture's test binary")
+		compile := mutantkit.RunGo(t, toolchain, snap.Root, env, "test", "-c", "-o", binary, ".")
+		mutantkit.RequireExit(t, compile, 0, "compiling the fixture's test binary")
 
 		// An identity of the right shape — 64 hex characters — and a value no
 		// digest produces.
@@ -287,12 +271,12 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		refusal := runner.Run(t.Context(), runner.Spec{
 			Argv:    []string{binary},
 			Dir:     snap.Root,
-			Env:     fixtureEnv(unknown),
-			Timeout: stepTimeout,
+			Env:     mutantkit.Activate(env, unknown),
+			Timeout: mutantkit.StepTimeout,
 		})
 		what := "the test binary with an unknown mutant active"
-		requireExit(t, refusal, instrument.UnknownMutantExit, what)
-		requireOutput(t, refusal, what, "go-mutants", unknown, "stale")
+		mutantkit.RequireExit(t, refusal, instrument.UnknownMutantExit, what)
+		mutantkit.RequireOutput(t, refusal, what, "go-mutants", unknown, "stale")
 
 		// "Quickly" means the process refused before running anything, which is
 		// the property that matters and the only one that does not become a
@@ -327,180 +311,6 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 				strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 		}
 	})
-}
-
-// snapshotFixture copies a corpus module into a disposable directory and
-// registers its removal.
-//
-// The cleanup is registered the moment the snapshot exists, before the caller
-// can do anything that fails: every step after this one is entitled to call
-// t.Fatalf, and a snapshot that outlives the test is a copy of a tree left in
-// the temporary directory with nobody to remove it.
-func snapshotFixture(t *testing.T, name string) *snapshot.Snapshot {
-	t.Helper()
-	root, absErr := filepath.Abs(filepath.Join("..", "..", "fixtures", name))
-	if absErr != nil {
-		t.Fatalf("resolving the %s fixture: %v", name, absErr)
-	}
-	if _, statErr := os.Stat(filepath.Join(root, "go.mod")); statErr != nil {
-		t.Fatalf("fixture %s is not a module: %v", name, statErr)
-	}
-	// DestParent keeps the copy inside the test's own temporary directory, so a
-	// failure that skips the cleanup still leaves nothing behind for long.
-	snap, createErr := snapshot.Create(root, snapshot.Options{DestParent: t.TempDir()})
-	if createErr != nil {
-		t.Fatalf("snapshotting the %s fixture: %v", name, createErr)
-	}
-	t.Cleanup(func() {
-		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
-			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, cleanupErr)
-		}
-	})
-	return snap
-}
-
-// catalogFrom turns a discovery result into the catalogue everything after it
-// is indexed by: the builder validates and identifies each candidate, and Build
-// settles the canonical order the generated runtime's dense indices come from.
-func catalogFrom(t *testing.T, found discover.Result) *mutation.Catalog {
-	t.Helper()
-	builder := mutation.NewBuilder()
-	for _, located := range found.Candidates {
-		if err := builder.Add(located.Candidate); err != nil {
-			t.Fatalf("adding the candidate at %s:%d:%d: %v", located.Path, located.Line, located.Column, err)
-		}
-	}
-	catalog, buildErr := builder.Build()
-	if buildErr != nil {
-		t.Fatalf("building the catalogue: %v", buildErr)
-	}
-	return catalog
-}
-
-// catalogLines renders the catalogue in its own canonical order, one mutant per
-// line, in the terms this test is about: where it is, which rule proposed it,
-// and what it rewrites.
-//
-// Identities are left out deliberately. They are digests over the fixture's
-// bytes, so pinning them here would make every edit to a comment in the fixture
-// a failure in this file, while saying nothing this rendering does not.
-func catalogLines(catalog *mutation.Catalog) []string {
-	out := make([]string, 0, catalog.Len())
-	for _, m := range catalog.Mutants() {
-		out = append(out, fmt.Sprintf("%s %s %s -> %s", m.Path, m.Rule.Name, m.Original, m.Replacement))
-	}
-	return out
-}
-
-// mutantAt returns the one catalogued mutant of a rule in a file.
-//
-// Uniqueness is asserted rather than assumed, and the assertion is what turns
-// the fixture's layout into a contract: one function per file and no repeated
-// operator means a rule in a file names exactly one mutant, so a test can say
-// which mutant it means without knowing an identity or a catalogue position. A
-// second match would mean the fixture drifted and the steps below had been
-// activating whichever one happened to come first.
-func mutantAt(t *testing.T, catalog *mutation.Catalog, path, rule string) mutation.Mutant {
-	t.Helper()
-	var found []mutation.Mutant
-	for _, m := range catalog.Mutants() {
-		if m.Path == path && m.Rule.Name == rule {
-			found = append(found, m)
-		}
-	}
-	if len(found) != 1 {
-		t.Fatalf("the catalogue holds %d mutants of %s in %s, want exactly 1", len(found), rule, path)
-	}
-	return found[0]
-}
-
-// fixtureEnv builds the environment every child in this test receives, with one
-// mutant activated when active is not empty.
-//
-// It is composed rather than inherited, for the reason internal/engine composes
-// its own: a developer with GO_MUTANTS_ACTIVE exported in their shell would
-// otherwise have the instrumented baseline running a mutant, and the step that
-// proves semantic preservation would be proving nothing at all. The three go
-// settings are pinned for the neighbouring reason — a fixture with no
-// dependencies must never reach the network to build, a `go.work` above the
-// temporary directory must not join itself to the snapshot, and a GOFLAGS from
-// the developer's shell must not decide what any of this resolves against.
-func fixtureEnv(active string) []string {
-	base := os.Environ()
-	env := make([]string, 0, len(base)+4)
-	for _, entry := range base {
-		key, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(strings.ToUpper(key), "GO_MUTANTS_") {
-			continue
-		}
-		env = append(env, entry)
-	}
-	env = append(env, "GOWORK=off", "GOFLAGS=-mod=readonly", "GOPROXY=off")
-	if active != "" {
-		env = append(env, instrument.ActiveEnv+"="+active)
-	}
-	return env
-}
-
-// goInSnapshot runs one go command inside the snapshot, supervised by the same
-// package that will supervise thousands of them in a real run.
-func goInSnapshot(t *testing.T, toolchain gocmd.Toolchain, dir, active string, args ...string) runner.Result {
-	t.Helper()
-	spec := toolchain.Command(args...)
-	spec.Dir = dir
-	spec.Env = fixtureEnv(active)
-	spec.Timeout = stepTimeout
-	return runner.Run(t.Context(), spec)
-}
-
-// runSuite runs the fixture's whole test suite in the instrumented snapshot,
-// with one mutant activated or with none.
-//
-// The baseline, the kill, and the survival all go through this one function on
-// purpose. Written as three invocations they could differ in the single detail
-// that decides what they mean — a flag, a field, the spelling of the variable —
-// and then "the suite passed" would be evidence of a typo rather than of a
-// survivor.
-//
-// -count=1 defeats the go test result cache. The cache keys on the environment
-// a test binary reads, so it would very probably do the right thing here;
-// "very probably" is not a foundation for the one test that exists to prove
-// activation works. -v is what lets a step name the subtest that passed or
-// failed, rather than inferring it from an exit code.
-func runSuite(t *testing.T, toolchain gocmd.Toolchain, root, active string) runner.Result {
-	t.Helper()
-	return goInSnapshot(t, toolchain, root, active, "test", "-count=1", "-v", "./...")
-}
-
-// requireExit ends the step unless the child ran to completion with the status
-// the step expects, and quotes the child's output whenever it did not.
-//
-// The three cases are kept apart because they mean different things. Err is
-// go-mutants failing to run a process at all and is never a statement about the
-// tests; a timeout leaves no exit code to compare; only the third is the child
-// having answered.
-func requireExit(t *testing.T, result runner.Result, want int, what string) {
-	t.Helper()
-	switch {
-	case result.Err != nil:
-		t.Fatalf("%s could not be run: %v\n%s", what, result.Err, result.Output)
-	case result.TimedOut:
-		t.Fatalf("%s did not finish within %s:\n%s", what, stepTimeout, result.Output)
-	case result.ExitCode != want:
-		t.Fatalf("%s exited %d, want %d:\n%s", what, result.ExitCode, want, result.Output)
-	}
-}
-
-// requireOutput fails the step for each needle the child did not print, quoting
-// the whole output once per miss so a failure is readable without re-running.
-func requireOutput(t *testing.T, result runner.Result, what string, needles ...string) {
-	t.Helper()
-	out := string(result.Output)
-	for _, needle := range needles {
-		if !strings.Contains(out, needle) {
-			t.Errorf("%s did not print %q:\n%s", what, needle, out)
-		}
-	}
 }
 
 // driftLines renders what Redigest found, in the path order it returns.
@@ -649,35 +459,17 @@ func TestKept(t *testing.T) {
 // initialiser-less spec is cut out whole because it fits on one line, which is
 // the one place in the suite that cut is exercised end to end.
 func TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal(t *testing.T) {
-	toolchain := locateToolchain(t)
+	t.Parallel()
 
-	source := t.TempDir()
-	for name, content := range map[string]string{
-		"go.mod":          "module " + refusedModule + "\n\ngo 1.26\n",
-		"refused.go":      refusedSource,
-		"refused_test.go": refusedTest,
-	} {
-		if err := os.WriteFile(filepath.Join(source, name), []byte(content), 0o644); err != nil {
-			t.Fatalf("writing %s into the module: %v", name, err)
-		}
-	}
-	snap, createErr := snapshot.Create(source, snapshot.Options{DestParent: t.TempDir()})
-	if createErr != nil {
-		t.Fatalf("snapshotting the module: %v", createErr)
-	}
-	t.Cleanup(func() {
-		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
-			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, cleanupErr)
-		}
-	})
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 
-	found, discoverErr := discover.Discover(t.Context(), discover.Options{
-		SnapshotRoot: snap.Root,
-		Toolchain:    toolchain,
-	})
-	if discoverErr != nil {
-		t.Fatalf("discovering the module: %v", discoverErr)
-	}
+	source := testkit.NewModule(t).Module(refusedModule).
+		Source("refused.go", refusedSource).
+		Source("refused_test.go", refusedTest).
+		Root()
+	snap := mutantkit.SnapshotOf(t, source)
+	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
 
 	// Every edit inside one of the three declarations is a recorded skip, and
 	// the reason is the one the frozen contract reserves for a site no guard
@@ -691,7 +483,7 @@ func TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal(t *testing.T) {
 		t.Errorf("skips =\n\t%s\nwant\n\t%s", strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
 
-	catalog := catalogFrom(t, found)
+	catalog := mutantkit.Catalog(t, found)
 	wantCatalog := []string{
 		"refused.go return-zero-numeric scale(n) -> 0",
 		"refused.go add-to-sub + -> -",
@@ -708,29 +500,25 @@ func TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal(t *testing.T) {
 		"refused.go mul-to-div * -> /",
 		"refused.go return-zero-numeric total -> 0",
 	}
-	if lines := catalogLines(catalog); !slices.Equal(lines, wantCatalog) {
+	if lines := mutantkit.CatalogLines(catalog); !slices.Equal(lines, wantCatalog) {
 		t.Fatalf("catalogue =\n\t%s\nwant\n\t%s",
 			strings.Join(lines, "\n\t"), strings.Join(wantCatalog, "\n\t"))
 	}
 
-	hints, hintsErr := instrument.HintsOf(found.Candidates)
-	if hintsErr != nil {
-		t.Fatalf("indexing the guard hints: %v", hintsErr)
-	}
 	if _, instrumentErr := instrument.Instrument(instrument.Options{
 		SnapshotRoot: snap.Root,
 		ModulePath:   found.ModulePath,
 		Catalog:      catalog,
-		Hints:        hints,
+		Hints:        mutantkit.Hints(t, found),
 	}); instrumentErr != nil {
 		t.Fatalf("instrumenting the snapshot: %v", instrumentErr)
 	}
 
-	build := goInSnapshot(t, toolchain, snap.Root, "", "build", "./...")
-	requireExit(t, build, 0, "`go build ./...` in the instrumented snapshot")
+	build := mutantkit.RunGo(t, toolchain, snap.Root, env, "build", "./...")
+	mutantkit.RequireExit(t, build, 0, "`go build ./...` in the instrumented snapshot")
 
-	baseline := runSuite(t, toolchain, snap.Root, "")
-	requireExit(t, baseline, 0, "the instrumented baseline")
-	requireOutput(t, baseline, "the instrumented baseline",
+	baseline := mutantkit.RunSuite(t, toolchain, snap.Root, env)
+	mutantkit.RequireExit(t, baseline, 0, "the instrumented baseline")
+	mutantkit.RequireOutput(t, baseline, "the instrumented baseline",
 		"--- PASS: TestWiden", "--- PASS: TestShadow", "--- PASS: TestWrap", "--- PASS: TestKept")
 }

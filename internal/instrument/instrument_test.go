@@ -240,22 +240,22 @@ func TestInstrumentGolden(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			in := readFile(t, filepath.Join("testdata", c.name+".input"))
+			in := testkit.ReadFile(t, filepath.Join("testdata", c.name+".input"))
 			root := t.TempDir()
-			writeFile(t, filepath.Join(root, sampleFile), in)
+			testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 			var sibling []byte
 			if c.sibling != "" {
-				sibling = readFile(t, filepath.Join("testdata", c.name+".sibling"))
-				writeFile(t, filepath.Join(root, c.sibling), sibling)
+				sibling = testkit.ReadFile(t, filepath.Join("testdata", c.name+".sibling"))
+				testkit.WriteFile(t, filepath.Join(root, c.sibling), sibling)
 			}
 
 			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
 			result := instrumentSnapshotWith(t, root, catalog, c.hints)
-			out := readFile(t, filepath.Join(root, sampleFile))
+			out := testkit.ReadFile(t, filepath.Join(root, sampleFile))
 
 			if c.sibling != "" {
-				if got := readFile(t, filepath.Join(root, c.sibling)); !bytes.Equal(got, sibling) {
+				if got := testkit.ReadFile(t, filepath.Join(root, c.sibling)); !bytes.Equal(got, sibling) {
 					t.Errorf("the sibling holds no candidate and was rewritten anyway:\n%s", got)
 				}
 			}
@@ -302,15 +302,15 @@ func TestInstrumentPreservesCRLFOutsideTheGuards(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			in := toCRLF(readFile(t, filepath.Join("testdata", c.name+".input")))
+			in := toCRLF(testkit.ReadFile(t, filepath.Join("testdata", c.name+".input")))
 			root := t.TempDir()
-			writeFile(t, filepath.Join(root, sampleFile), in)
+			testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
 			instrumentSnapshot(t, root, catalog)
-			out := readFile(t, filepath.Join(root, sampleFile))
+			out := testkit.ReadFile(t, filepath.Join(root, sampleFile))
 
-			if want := toCRLF(readFile(t, filepath.Join("testdata", c.name+".golden"))); !bytes.Equal(out, want) {
+			if want := toCRLF(testkit.ReadFile(t, filepath.Join("testdata", c.name+".golden"))); !bytes.Equal(out, want) {
 				t.Errorf("instrumented CRLF output does not match the converted fixture\n--- got ---\n%q\n--- want ---\n%q",
 					out, want)
 			}
@@ -330,16 +330,16 @@ func TestInstrumentLeavesUncatalogedFilesAlone(t *testing.T) {
 	t.Parallel()
 
 	const untouched = "other.go"
-	in := readFile(t, filepath.Join("testdata", "comparison.input"))
-	other := toCRLF(readFile(t, filepath.Join("testdata", "unicode.input")))
+	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
+	other := toCRLF(testkit.ReadFile(t, filepath.Join("testdata", "unicode.input")))
 
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), in)
-	writeFile(t, filepath.Join(root, untouched), other)
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
+	testkit.WriteFile(t, filepath.Join(root, untouched), other)
 
 	result := instrumentSnapshot(t, root, catalogOf(t, candidatesFor(t, nil, in)))
 
-	if got := readFile(t, filepath.Join(root, untouched)); !bytes.Equal(got, other) {
+	if got := testkit.ReadFile(t, filepath.Join(root, untouched)); !bytes.Equal(got, other) {
 		t.Errorf("a file with no catalogued mutants was rewritten:\n%s", got)
 	}
 	if _, ok := result.GuardsByFile[untouched]; ok {
@@ -369,10 +369,10 @@ func TestInstrumentLeavesUncatalogedFilesAlone(t *testing.T) {
 func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 	t.Parallel()
 
-	in := readFile(t, filepath.Join("testdata", "comparison.input"))
+	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	root := t.TempDir()
 	target := filepath.Join(root, sampleFile)
-	writeFile(t, target, in)
+	testkit.WriteFile(t, target, in)
 
 	if err := os.Chmod(target, 0o444); err != nil {
 		t.Skipf("this filesystem does not take a read-only mode: %v", err)
@@ -388,8 +388,8 @@ func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 
 	// The same bytes a writable file produces: the mode decides how the write
 	// happens and nothing else about it.
-	out := readFile(t, target)
-	if want := readFile(t, filepath.Join("testdata", "comparison.golden")); !bytes.Equal(out, want) {
+	out := testkit.ReadFile(t, target)
+	if want := testkit.ReadFile(t, filepath.Join("testdata", "comparison.golden")); !bytes.Equal(out, want) {
 		t.Errorf("a read-only file instrumented to different bytes than a writable one\n--- got ---\n%s\n--- want ---\n%s", out, want)
 	}
 
@@ -445,15 +445,15 @@ func TestInstrumentIsDeterministic(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			in := readFile(t, filepath.Join("testdata", c.name+".input"))
+			in := testkit.ReadFile(t, filepath.Join("testdata", c.name+".input"))
 			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
 
 			run := func() (string, []byte, []byte) {
 				root := t.TempDir()
-				writeFile(t, filepath.Join(root, sampleFile), in)
+				testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 				result := instrumentSnapshotWith(t, root, catalog, c.hints)
-				runtime := readFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
-				return result.RuntimeImport, readFile(t, filepath.Join(root, sampleFile)), runtime
+				runtime := testkit.ReadFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
+				return result.RuntimeImport, testkit.ReadFile(t, filepath.Join(root, sampleFile)), runtime
 			}
 
 			firstImport, firstSource, firstRuntime := run()
@@ -480,12 +480,12 @@ func TestInstrumentReportsWhatItDid(t *testing.T) {
 	t.Parallel()
 
 	const second = "pkg/second.go"
-	first := readFile(t, filepath.Join("testdata", "comparison.input"))
-	other := readFile(t, filepath.Join("testdata", "nested.input"))
+	first := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
+	other := testkit.ReadFile(t, filepath.Join("testdata", "nested.input"))
 
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), first)
-	writeFile(t, filepath.Join(root, filepath.FromSlash(second)), other)
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), first)
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(second)), other)
 
 	candidates := candidatesFor(t, nil, first)
 	for _, c := range candidatesFor(t, nil, other) {
@@ -841,27 +841,6 @@ func lines(b []byte) []string {
 // toCRLF rewrites LF line endings as CRLF.
 func toCRLF(b []byte) []byte {
 	return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
-}
-
-// readFile reads a file or fails the test.
-func readFile(t *testing.T, path string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	return b
-}
-
-// writeFile writes a file, creating its directory, or fails the test.
-func writeFile(t *testing.T, path string, content []byte) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("creating %s: %v", filepath.Dir(path), err)
-	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
-		t.Fatalf("writing %s: %v", path, err)
-	}
 }
 
 // equalStrings compares two string slices element by element.
