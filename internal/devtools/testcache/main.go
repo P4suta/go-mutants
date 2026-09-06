@@ -322,10 +322,15 @@ func runClean(args []string, stdout, stderr io.Writer, env map[string]string, d 
 	if !removeTree(stdout, stderr, kept, keptUsed, d) {
 		removed = false
 	}
-	// A refusal is a failure *here*, and only here: `clean` is a person asking
-	// for a removal, so being unable to do it is the answer to their question.
-	// `trim` and `exec` report the same refusal and carry on, because they are
-	// housekeeping around somebody else\'s run.
+	// Exactly one thing fails this command, and it is worth being precise about
+	// which, because the two ways a removal does not happen deserve opposite
+	// answers. A directory this tool will not touch — no marker — is a refusal:
+	// `clean` is a person asking for a removal, so being unable to do it is the
+	// answer to their question, and it is reported and returned as a failure. A
+	// directory it tried and could not finish removing — a file still open — is
+	// reported and forgiven inside [removeTree], because a locked file is not a
+	// reason to fail a suite that has just gone green. `trim` and `exec` forgive
+	// both, because they are housekeeping around somebody else's run.
 	if !removed {
 		return exitFailure
 	}

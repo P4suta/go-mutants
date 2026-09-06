@@ -159,14 +159,21 @@ Entries say *why* a change was made, not only what changed.
   mode of the whole arrangement is a cache that grows, which is the problem it
   was written to notice rather than one it can cause.
 
-  Two more of its rules are deliberately the opposite of tidy. A removal it
-  cannot finish is retried once and then *reported*, with a zero exit: a file in
-  the cache can be held open by an antivirus scanner or by a test binary Windows
-  has not finished unmapping, and a collector that turns a green run red because
-  a directory it wanted to delete is still there has done more damage than the
-  directory ever would. And a trim never touches the kept scratch root, which
-  holds the evidence of runs that failed — deleting a failing run's diagnostics
-  because a *cache* grew is the one thing this tool must not do.
+  The two ways a directory does not get emptied end differently, and the
+  difference is the point. A directory that carries no marker is *refused*:
+  nothing is run against it and `mise run test-clean` exits non-zero, because
+  being pointed at something that is not ours is the answer to the question the
+  person asked. A directory that was ours and could not be finished — a file
+  held open by an antivirus scanner, or a test binary Windows has not finished
+  unmapping — is retried once, reported, and forgiven with a zero exit, because
+  a collector that turns a green run red over a directory it wanted to delete
+  has done more damage than the directory ever would. `trim` and `exec` forgive
+  both, since they are housekeeping around somebody else's run.
+
+  One more rule is deliberately the opposite of tidy: a trim never touches the
+  kept scratch root, which holds the evidence of runs that failed — deleting a
+  failing run's diagnostics because a *cache* grew is the one thing this tool
+  must not do.
 - **`Workspace.ToolchainVersion()`.** A workspace already resolves the
   toolchain it froze the module against, and every consumer that needed the
   version was running its own `go version` to learn something the workspace was

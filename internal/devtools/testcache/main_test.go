@@ -285,6 +285,12 @@ func TestCleanEmptiesTheCacheAndTheKeptRoot(t *testing.T) {
 // the last step of a suite, and a collector that turns a green run red because a
 // directory it wanted to delete is still there has done more damage than the
 // directory ever would.
+//
+// This is the half of the pair that exits 0. The other half is
+// TestWipeRefusesADirectoryItDoesNotOwn, where `clean` exits non-zero — the two
+// ways a directory does not get emptied are different questions and get opposite
+// answers, and reading either test without the other gives the wrong idea of
+// what a non-zero exit from `mise run test-clean` means.
 func TestCleanReportsARemovalItCannotFinish(t *testing.T) {
 	t.Parallel()
 
@@ -806,6 +812,10 @@ func TestMeasureCountsWhatItCanReadAndSaysWhatItCouldNot(t *testing.T) {
 // housekeeping around somebody else's run: they report and get out of the way,
 // because a collector that fails a green suite over a directory it did not
 // recognise is worse than the directory.
+//
+// A refusal is the *only* thing that makes `clean` exit non-zero. A removal it
+// began and could not finish is reported and forgiven — see
+// TestCleanReportsARemovalItCannotFinish, which is the other half of this pair.
 func TestWipeRefusesADirectoryItDoesNotOwn(t *testing.T) {
 	t.Parallel()
 

@@ -90,17 +90,27 @@ run = "go run ./internal/devtools/testcache status"
 # finishing in another terminal sees an emptied cache rather than a tree being
 # deleted underneath it.
 #
-# A file that cannot be removed -- an antivirus scanner, a test binary Windows
-# has not finished unmapping -- is retried once and then reported, and the task
-# still succeeds: a collector that fails a run because a directory it wanted to
-# delete is still there has done more damage than the directory ever would.
+# Two things can stop a directory being emptied, and they end this task
+# differently on purpose:
 #
-# It does fail on one thing, and only here: a directory that does not carry the
-# harness's marker file is not emptied at all. `GO_MUTANTS_TEST_GOCACHE=$HOME`
-# is an absolute path like any other, so ownership is a file rather than a
-# promise -- the harness writes it when a test resolves the cache, and this task
-# reports and exits non-zero rather than deleting something it cannot show it
-# made. `mise run test-cache-status` says which directories are stamped.
+#   refused, exit 1   The directory does not carry the harness's marker file, so
+#                     it is not emptied at all -- not even partly, and
+#                     `go clean -cache` is not run against it either.
+#                     `GO_MUTANTS_TEST_GOCACHE=$HOME` is an absolute path like
+#                     any other, so ownership is a file rather than a promise:
+#                     the harness writes it when a test resolves the cache, and
+#                     this task reports and fails rather than deleting something
+#                     it cannot show it made. `mise run test-cache-status` says
+#                     which directories are stamped.
+#   unfinished, exit 0  A file the removal could not unlink -- an antivirus
+#                     scanner, a test binary Windows has not finished unmapping
+#                     -- is retried once, then reported, and the task still
+#                     succeeds. A collector that fails a run because a directory
+#                     it wanted to delete is still there has done more damage
+#                     than the directory ever would.
+#
+# So a non-zero exit from this task means "I was pointed at something that is
+# not mine", and never "the disk was busy". Both cases print what happened.
 description = "Empty the test-owned build cache and the kept scratch root"
 run = "go run ./internal/devtools/testcache clean"
 
