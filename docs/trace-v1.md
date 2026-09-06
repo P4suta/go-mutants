@@ -323,6 +323,13 @@ leaves a recording with no `run-end`. The diagnostics root keeps the newest
 `trace.RetainRuns` — ten — collected as a bundle is written, and `go-mutants
 trace clean` sweeps it with the rule it sweeps the trace root with.
 
+Because a traced run's bundle lands *in* its recording's directory, the trace
+root's rule asks both questions: a recording is finished when its stream ends
+with `run-end` **and** the directory holds either no bundle or a finished one. A
+half-written bundle therefore holds its recording back exactly as it would hold
+itself back in the diagnostics root, instead of the answer depending on whether
+the run happened to be traced.
+
 Three runs write no bundle: one that succeeded, one that was interrupted, and
 one told not to with `run --no-diagnostics` or `GO_MUTANTS_DIAGNOSTICS=0`. A
 bundle that cannot be written costs a `GOM1014` warning and never the exit

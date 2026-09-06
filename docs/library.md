@@ -295,9 +295,15 @@ nothing went wrong: such a run reports itself as interrupted, keeps no temporary
 directory that `--keep-temp=on-failure` would otherwise have kept, and writes no
 diagnostics bundle. `context.DeadlineExceeded` is the run failing to finish
 inside the time it was given, which is a failure worth diagnosing: it reports as
-failed, it keeps what it was asked to keep, and it gets the bundle every other
-failure gets. It is one predicate, so the status, the keep and the bundle cannot
-come to disagree about one run.
+failed, it keeps what it was asked to keep, and the CLI writes the bundle every
+other failure gets.
+
+The division is worth stating, because only two of those three are the engine's.
+`engine.Interrupted` classifies the failure and the engine settles the
+directories; the bundle is `go-mutants run`'s, written from the outcome and the
+error after the run returns, and an embedder that wants one writes its own from
+the same two values. All three answer to one predicate, so the status, the keep
+and the bundle cannot come to disagree about one run.
 
 `Session.Changes` returns `Change{Kind, Path, BeforeSHA256, AfterSHA256}` in
 strict path order, `Kind` one of `added`, `removed`, `modified`.

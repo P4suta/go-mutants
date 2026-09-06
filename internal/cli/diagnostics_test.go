@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/engine"
@@ -904,5 +905,88 @@ func TestDiagnosticsDirectoryInsideTheWorkspaceOutsideTheReportDirectoryIsRefuse
 	var coded *Error
 	if !errors.As(err, &coded) || coded.Code != CodeDiagnosticsUnavailable {
 		t.Errorf("the refusal is %v, want an *Error coded %s", err, CodeDiagnosticsUnavailable)
+	}
+}
+
+// TestTheBundleDiagnosesTheMachineEvenWhenTheRunsContextIsDone is what makes
+// `doctor.txt` worth putting in a bundle at all.
+//
+// The bundle is written on the way out of a failed run, and one of the ways a
+// run fails is that its context expired — after which every probe `doctor`
+// makes against that context fails instantly. A bundle written that way records
+// six rows saying "context deadline exceeded", which is a diagnosis of the
+// bundle rather than of the machine, and it is worst exactly when it matters
+// most: a run that ran out of time is the one whose toolchain and configuration
+// somebody wants to see.
+//
+// So the bundle gets a context of its own: the run's, with the cancellation
+// detached and a bound of its own put back on, because a diagnostic may not
+// inherit a dead deadline and may not run forever either.
+func TestTheBundleDiagnosesTheMachineEvenWhenTheRunsContextIsDone(t *testing.T) {
+	root := inFailingBaseline(t)
+
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+	code, _, stderr := executeContext(t, ctx, "run", "--no-tui", "--no-color")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2: a deadline is a failure worth diagnosing\n%s", code, stderr)
+	}
+
+	bundleRoot := diagnosticsRootOf(root)
+	directory := filepath.Join(bundleRoot, onlyEntry(t, bundleRoot))
+	doctor := readBundleFile(t, directory, doctorFileName)
+
+	for _, line := range strings.Split(doctor, "\n") {
+		if !strings.Contains(line, checkToolchain) {
+			continue
+		}
+		if strings.Contains(line, "context deadline exceeded") || strings.Contains(line, "context canceled") {
+			t.Fatalf("the bundle diagnosed its own context instead of the machine:\n%s", doctor)
+		}
+		if !strings.HasPrefix(line, string(statusOK)) {
+			t.Errorf("the toolchain row is %q, want the toolchain this run actually used", line)
+		}
+		return
+	}
+	t.Errorf("%s has no %q row:\n%s", doctorFileName, checkToolchain, doctor)
+}
+
+// TestATracedBundleThatWasNeverFinishedHoldsItsRecording is the retention rule
+// applied to the one directory that holds both.
+//
+// A traced run's bundle is written *into* its recording's directory, so the two
+// share a collector — and a rule that asked only whether the stream ended with
+// its run-end would call such a directory finished while half a bundle sat in
+// it. The same half-written bundle in the diagnostics root is held back, so the
+// answer would depend on whether the run happened to be traced, which is not a
+// fact about how complete the account is.
+func TestATracedBundleThatWasNeverFinishedHoldsItsRecording(t *testing.T) {
+	root := filepath.Join(t.TempDir(), traceDirectoryName)
+	finished := "20260901T120000Z-0001"
+	interrupted := "20260902T120000Z-0002"
+	record(t, root, finished, false, nil)
+	// A recording that ran to its run-end and then began a bundle it never
+	// finished: the marker is there and the finished-flag is not.
+	directory := record(t, root, interrupted, false, nil)
+	testkit.WriteFile(t, filepath.Join(directory, errorFileName), []byte("error GOM4011: the baseline failed\n"))
+
+	removed, err := collect(traceRootAt(root), retention{keep: 0})
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if !slices.Equal(removed, []string{finished}) {
+		t.Errorf("removed %q, want only the recording whose account is whole (%q)", removed, finished)
+	}
+	if left := entriesOf(t, root); !slices.Contains(left, interrupted) {
+		t.Fatalf("the trace root holds %q; the recording whose bundle was never finished was collected", left)
+	}
+
+	// And --all removes it, which is how somebody who has read it says so.
+	removed, err = collect(traceRootAt(root), retention{keep: 0, unfinished: true})
+	if err != nil {
+		t.Fatalf("collect --all: %v", err)
+	}
+	if !slices.Equal(removed, []string{interrupted}) {
+		t.Errorf("--all removed %q, want the recording it was left holding (%q)", removed, interrupted)
 	}
 }

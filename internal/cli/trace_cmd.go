@@ -449,6 +449,12 @@ func checkCleanScope(keep, all bool) error {
 // use, for the same reason: deleting is the whole of what this command does, so
 // one that could not delete must not exit 0, and one that removed two
 // recordings before hitting a locked third should still say so.
+//
+// The failure travels out with the code [sweepRoot] gave it, and is never
+// re-coded here. A root that cannot be read and a recording that will not go
+// away are different problems with different remedies, and only one of them is
+// about deleting: wrapping the first as "a recording could not be removed: …
+// cannot be read" sends a reader looking for a locked file that does not exist.
 func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	if o.keep < 0 {
 		return usagef("--keep takes a number of recordings to keep, and %d is not one", o.keep)
@@ -463,8 +469,7 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 
 	keep := retention{keep: o.keep, unfinished: o.all}
 	var b strings.Builder
-	var removeErr error
-	var failed retentionRoot
+	var failure error
 	for i, r := range roots {
 		// The trace root is always reported, because it is the root the command
 		// is named after and silence there would read as a command that did not
@@ -472,21 +477,14 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 		// workspace that has never failed a run has no bundles, and two lines
 		// saying so under every `trace clean` would be noise in the one place a
 		// reader is looking for what went.
-		if sweepErr := sweepRoot(&b, r, keep, i == 0); sweepErr != nil && removeErr == nil {
-			removeErr, failed = sweepErr, r
+		if sweepErr := sweepRoot(&b, r, keep, i == 0); sweepErr != nil && failure == nil {
+			failure = sweepErr
 		}
 	}
-	if err = emit(cmd.OutOrStdout(), b.String()); err != nil && removeErr == nil {
+	if err = emit(cmd.OutOrStdout(), b.String()); err != nil && failure == nil {
 		return err
 	}
-	if removeErr != nil {
-		return &Error{
-			Code:    CodeTraceNotRemoved,
-			Message: "a " + failed.noun + " in " + failed.path + " could not be removed",
-			Err:     removeErr,
-		}
-	}
-	return nil
+	return failure
 }
 
 // sweepRoot collects one root and writes what it did into b.
@@ -494,6 +492,12 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 // always asks for the root to be reported whatever it holds, which is the trace
 // root's arrangement; a root that holds nothing and was not asked for says
 // nothing at all.
+//
+// The two failures it can return are coded here and differently, because they
+// are different problems: a root that cannot be read is [CodeUnreadableTrace]
+// and is fixed by looking at the directory, while something that would not
+// delete is [CodeTraceNotRemoved] and is fixed by finding whatever is holding
+// it. The caller returns whichever it is unchanged.
 func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool) error {
 	found, err := planSweep(r, keep)
 	if err != nil {
@@ -549,7 +553,14 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 	if os.Remove(r.path) == nil {
 		fmt.Fprintf(b, "removed the empty %s directory %s\n", r.label, r.path)
 	}
-	return removeErr
+	if removeErr != nil {
+		return &Error{
+			Code:    CodeTraceNotRemoved,
+			Message: "a " + r.noun + " in " + r.path + " could not be removed",
+			Err:     removeErr,
+		}
+	}
+	return nil
 }
 
 // workspaceTraceRoot is where a run started in this directory would record.

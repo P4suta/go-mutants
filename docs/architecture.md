@@ -194,6 +194,15 @@ reports/mutation/
   diagnostics root from being removed as well. `trace clean` sweeps both roots;
   `trace list` lists only recordings, because a bundle is not one.
 
+  A traced run's bundle lands in the recording's own directory, so the *trace*
+  root's predicate has to ask both questions: a recording is finished when its
+  stream ends with `run-end` **and** the directory holds either no bundle at all
+  or a finished one. Asking only about the stream would call such a directory
+  complete while half a bundle sat in it, while the same half-written bundle in
+  the diagnostics root is held back — so the answer would have depended on
+  whether the run happened to be traced, which is not a fact about how complete
+  the account is.
+
 That everything diagnostic lands under `report.directory` rather than beside the
 snapshot in the temporary parent is forced rather than chosen, by the same fact
 that forced the snapshot marker one level down. `snapshot.Create` excludes

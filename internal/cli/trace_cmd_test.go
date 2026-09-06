@@ -472,3 +472,43 @@ func TestTraceDiffReportsTheDelta(t *testing.T) {
 		t.Errorf("stderr = %q, want %s", stderr, CodeNoTraceRecorded)
 	}
 }
+
+// TestAnUnreadableRootIsReportedAsUnreadableRatherThanAsUndeleted keeps a
+// command that deletes from misdiagnosing the reason it did not.
+//
+// A root that cannot be read and a recording that will not go away are
+// different problems with different remedies — a permission or a path that is
+// not a directory, against a file somebody has open — and only one of them is
+// about deleting. Reporting the first as "a recording could not be removed:
+// … cannot be read" sends a reader looking for a locked file that does not
+// exist.
+//
+// So an already-coded failure travels out with the code it was given, and only
+// a removal that failed is wrapped as one.
+func TestAnUnreadableRootIsReportedAsUnreadableRatherThanAsUndeleted(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(filepath.Dir(traceRoot), 0o755); err != nil {
+		t.Fatalf("creating the report directory: %v", err)
+	}
+	// A file where the directory belongs: os.ReadDir refuses it, which is the
+	// same shape of failure a permission would produce and needs no privilege
+	// to arrange.
+	if err := os.WriteFile(traceRoot, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("occupying the trace root: %v", err)
+	}
+
+	code, _, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\n%s", code, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if strings.Contains(stderr, string(CodeTraceNotRemoved)) {
+		t.Errorf("a root that could not be read was reported as one that could not be deleted:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "removed") {
+		t.Errorf("the failure talks about removing something:\n%s", stderr)
+	}
+}

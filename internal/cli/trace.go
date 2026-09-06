@@ -387,15 +387,25 @@ type retentionRoot struct {
 }
 
 // traceRootAt is the recordings in a trace root.
+//
+// A recording is finished when its stream ends with the run-end *and* whatever
+// else is in its directory is finished too — which for a traced run means the
+// diagnostics bundle, because that is written into the recording's own
+// directory rather than into the diagnostics root. Asking only about the stream
+// would call such a directory complete while half a bundle sat in it, and the
+// same half-written bundle in the diagnostics root is held back: the answer
+// would then depend on whether the run happened to be traced, which is not a
+// fact about how complete the account is.
 func traceRootAt(path string) retentionRoot {
 	return retentionRoot{
 		path:       path,
 		label:      "trace",
 		noun:       "recording",
-		unfinished: "ended with its run-end",
+		unfinished: "ended with its run-end and finished the bundle beside it",
 		marker:     trace.FileName,
 		finished: func(directory string) bool {
-			return finishedRecording(filepath.Join(directory, trace.FileName))
+			return finishedRecording(filepath.Join(directory, trace.FileName)) &&
+				finishedBundle(directory)
 		},
 	}
 }
@@ -414,11 +424,23 @@ func diagnosticsRootAt(path string) retentionRoot {
 		noun:       "bundle",
 		unfinished: "was finished, so each is a run that died while writing one",
 		marker:     errorFileName,
-		finished: func(directory string) bool {
-			_, err := os.Stat(filepath.Join(directory, preservedPathsFileName))
-			return err == nil
-		},
+		finished:   finishedBundle,
 	}
+}
+
+// finishedBundle reports whether a directory holds no bundle, or holds one
+// nothing will write to again.
+//
+// A directory with no [errorFileName] never had a bundle started in it, which is
+// every successful traced run and is finished as far as this question goes. One
+// that has the marker and not [preservedPathsFileName] is a run that died while
+// writing its diagnosis, and is exactly what a collector must leave alone.
+func finishedBundle(directory string) bool {
+	if _, err := os.Stat(filepath.Join(directory, errorFileName)); err != nil {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(directory, preservedPathsFileName))
+	return err == nil
 }
 
 // A retention is how much of a root survives collection.

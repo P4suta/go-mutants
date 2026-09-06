@@ -527,7 +527,18 @@ func (o *runOptions) withDiagnostics(
 	if o.noDiags || engine.Interrupted(runErr) {
 		return reported
 	}
-	directory, err := writeDiagnostics(cmd.Context(), diagnosticsRequest{
+	// A context of the bundle's own, and the two halves of it are for opposite
+	// reasons. The cancellation is detached because the run's context is very
+	// often *done* by the time this runs — a deadline that expired is one of the
+	// ways a run fails, and it is exactly the run whose toolchain and
+	// configuration somebody wants to see — and a `doctor` probed through a dead
+	// context reports six rows of "context deadline exceeded", which diagnoses
+	// the bundle rather than the machine. A bound is then put back on, because a
+	// diagnostic that inherits no deadline is a diagnostic that can hang the
+	// process after the run it explains has finished.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), diagnosticsBudget)
+	defer cancel()
+	directory, err := writeDiagnostics(ctx, diagnosticsRequest{
 		workspace:       workspace,
 		reportDirectory: reportDirectory,
 		runID:           runID,

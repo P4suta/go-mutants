@@ -57,6 +57,14 @@ Entries say *why* a change was made, not only what changed.
   stored.
 
   Both roots under `report.directory` are collected by one implementation now,
+  with one predicate swapped. A bundle is finished when its last file is there;
+  a recording is finished when its stream ends with `run-end` *and* the bundle
+  beside it — a traced run writes one into the recording's own directory — is
+  finished too, so a half-written bundle holds its recording back rather than
+  the answer depending on whether the run happened to be traced. The newest ten
+  survive in each, half-written ones are left alone in both, and `trace clean`
+  sweeps both — `trace list` still lists only recordings, because a bundle is
+  not one.
   with one predicate swapped: a recording is finished when its stream ends with
   `run-end`, a bundle when its last file is there. The newest ten survive in
   each, half-written ones are left alone in both, and `trace clean` sweeps both

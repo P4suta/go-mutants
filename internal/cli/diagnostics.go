@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/gocmd"
@@ -54,6 +55,22 @@ const (
 	bundleDirPerm  fs.FileMode = 0o755
 	bundleFilePerm fs.FileMode = 0o644
 )
+
+// diagnosticsBudget bounds the whole bundle, and exists because the bundle does
+// not inherit the run's deadline.
+//
+// It cannot. A run whose context expired is one of the failures a bundle is most
+// worth having, and probing `doctor` through that dead context would record six
+// rows of "context deadline exceeded" — a diagnosis of the bundle rather than of
+// the machine, produced exactly when the machine is the question. So
+// [runOptions.withDiagnostics] detaches the cancellation and puts this bound
+// back on, because a diagnostic with no deadline at all can hang a process after
+// the run it explains has already finished.
+//
+// Thirty seconds is generous for what is inside it: two version probes and a
+// handful of writes, none of which touches the network. Anything approaching it
+// means the machine is not answering rather than that the bundle is large.
+const diagnosticsBudget = 30 * time.Second
 
 // A diagnosticsRequest is everything the bundle of one failed run is written
 // from.
