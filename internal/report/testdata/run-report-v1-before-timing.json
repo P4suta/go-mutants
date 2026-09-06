@@ -14,10 +14,6 @@
     "platform": {
       "os": "linux",
       "arch": "amd64"
-    },
-    "snapshot": {
-      "stable_dir": true,
-      "files": 128
     }
   },
   "selection": {
@@ -29,9 +25,9 @@
       "**/*.go"
     ],
     "exclude": [],
-    "candidates": 9,
+    "candidates": 8,
     "rejected": 1,
-    "selected": 8
+    "selected": 7
   },
   "shard": null,
   "test": {
@@ -50,37 +46,26 @@
       "slowest_ms": 1500
     },
     "timeout_ms": 10000,
-    "timeout_source": "derived",
-    "toolchain": {
-      "go_bin": "/usr/local/go/bin/go",
-      "version": "go version go1.26.0 linux/amd64"
-    },
-    "resolved_command": [
-      "/usr/local/go/bin/go",
-      "test",
-      "./..."
-    ]
+    "timeout_source": "derived"
   },
   "coverage": {
-    "mode": "off",
-    "unavailable_reason": "GOM7505: the test binaries do not compile\ninternal/alpha/alpha.go:12:9: undefined: coverdata",
-    "build_fallback": true
+    "mode": "off"
   },
   "cache": {
     "mode": "on",
     "hits": 2,
-    "misses": 6,
-    "writes": 3
+    "misses": 5,
+    "writes": 2
   },
   "summary": {
-    "total": 8,
+    "total": 7,
     "killed": 1,
     "survived": 2,
-    "timed_out": 2,
+    "timed_out": 1,
     "inconclusive": 1,
     "errored": 1,
     "not_run": 1,
-    "score_percent": 75,
+    "score_percent": 66.66666666666666,
     "policy": {
       "strict": false,
       "minimum_score": 0,
@@ -108,7 +93,6 @@
       "duration_ms": 120,
       "killed_by": "example.com/m/internal/alpha",
       "attempts": 1,
-      "executions": [],
       "output_tail": "--- FAIL: TestAdd (0.00s)",
       "covering_test_packages": [],
       "uncovered": false,
@@ -133,18 +117,6 @@
       "duration_ms": 95,
       "killed_by": null,
       "attempts": 1,
-      "executions": [
-        {
-          "attempt": 1,
-          "worker": 0,
-          "outcome": "survived",
-          "duration_ms": 95,
-          "binaries": [
-            "example.com/m/internal/alpha",
-            "example.com/m/internal/beta"
-          ]
-        }
-      ],
       "output_tail": null,
       "covering_test_packages": [],
       "uncovered": false,
@@ -169,7 +141,6 @@
       "duration_ms": 20000,
       "killed_by": "example.com/m/internal/alpha",
       "attempts": 2,
-      "executions": [],
       "output_tail": "panic: test timed out after 10s",
       "covering_test_packages": [],
       "uncovered": false,
@@ -194,28 +165,6 @@
       "duration_ms": 11000,
       "killed_by": null,
       "attempts": 2,
-      "executions": [
-        {
-          "attempt": 1,
-          "worker": 1,
-          "outcome": "timed-out",
-          "killed_by": "example.com/m/internal/alpha",
-          "duration_ms": 10000,
-          "binaries": [
-            "example.com/m/internal/alpha"
-          ]
-        },
-        {
-          "attempt": 2,
-          "worker": 0,
-          "outcome": "survived",
-          "duration_ms": 1000,
-          "binaries": [
-            "example.com/m/internal/alpha",
-            "example.com/m/internal/beta"
-          ]
-        }
-      ],
       "output_tail": null,
       "covering_test_packages": [],
       "uncovered": false,
@@ -240,18 +189,6 @@
       "duration_ms": 80,
       "killed_by": null,
       "attempts": 1,
-      "executions": [
-        {
-          "attempt": 1,
-          "worker": 1,
-          "outcome": "survived",
-          "duration_ms": 80,
-          "binaries": [
-            "example.com/m/internal/alpha",
-            "example.com/m/internal/beta"
-          ]
-        }
-      ],
       "output_tail": null,
       "covering_test_packages": [],
       "uncovered": false,
@@ -276,17 +213,6 @@
       "duration_ms": 4,
       "killed_by": null,
       "attempts": 1,
-      "executions": [
-        {
-          "attempt": 1,
-          "worker": 1,
-          "outcome": "errored",
-          "duration_ms": 4,
-          "binaries": [
-            "example.com/m/internal/beta"
-          ]
-        }
-      ],
       "output_tail": "exec: the test binary could not be started",
       "covering_test_packages": [],
       "uncovered": false,
@@ -311,54 +237,7 @@
       "duration_ms": 0,
       "killed_by": null,
       "attempts": 0,
-      "executions": [],
       "output_tail": null,
-      "covering_test_packages": [],
-      "uncovered": false,
-      "cached": false
-    },
-    {
-      "id": "85a879f3028bc6d77bb81bc4760a021c160d45d1405905210c652bd0f7c61809",
-      "display_id": "85a879f3028bc6d77bb8",
-      "path": "internal/beta/beta.go",
-      "package": "example.com/m/internal/beta",
-      "family": "comparison",
-      "rule": "gt-to-ge",
-      "rule_version": 1,
-      "line": 24,
-      "column": 7,
-      "start_byte": 180,
-      "end_byte": 181,
-      "original": ">",
-      "replacement": ">=",
-      "outcome": "timed-out",
-      "not_run_reason": null,
-      "duration_ms": 21000,
-      "killed_by": "example.com/m/internal/beta",
-      "attempts": 2,
-      "executions": [
-        {
-          "attempt": 1,
-          "worker": 1,
-          "outcome": "timed-out",
-          "killed_by": "example.com/m/internal/beta",
-          "duration_ms": 10000,
-          "binaries": [
-            "example.com/m/internal/beta"
-          ]
-        },
-        {
-          "attempt": 2,
-          "worker": 0,
-          "outcome": "timed-out",
-          "killed_by": "example.com/m/internal/beta",
-          "duration_ms": 11000,
-          "binaries": [
-            "example.com/m/internal/beta"
-          ]
-        }
-      ],
-      "output_tail": "panic: test timed out after 10s",
       "covering_test_packages": [],
       "uncovered": false,
       "cached": false
@@ -415,87 +294,8 @@
       "message": "the snapshot directory could not be removed: access is denied"
     },
     {
-      "code": "GOM7602",
-      "message": "coverage-guided selection is off because the test binaries do not compile with coverage instrumentation (GOM7505: the test binaries do not compile); every mutant will be measured against every test binary, which is slower and never wrong"
+      "code": "GOM7601",
+      "message": "coverage-guided selection is off: test.command is not the built-in `go test ./...`"
     }
-  ],
-  "timing": {
-    "phases": [
-      {
-        "name": "discover",
-        "duration_ms": 1200
-      },
-      {
-        "name": "baseline",
-        "duration_ms": 4300
-      },
-      {
-        "name": "mutate",
-        "duration_ms": 35000
-      },
-      {
-        "name": "report",
-        "duration_ms": 90
-      }
-    ],
-    "stages": [
-      {
-        "phase": "discover",
-        "name": "toolchain",
-        "duration_ms": 40,
-        "result": "succeeded"
-      },
-      {
-        "phase": "discover",
-        "name": "snapshot",
-        "duration_ms": 1100,
-        "result": "succeeded"
-      },
-      {
-        "phase": "baseline",
-        "name": "build",
-        "duration_ms": 2800,
-        "result": "succeeded"
-      },
-      {
-        "phase": "baseline",
-        "name": "test",
-        "duration_ms": 1500,
-        "result": "succeeded"
-      },
-      {
-        "phase": "mutate",
-        "name": "validate",
-        "duration_ms": 9000,
-        "result": "succeeded"
-      },
-      {
-        "phase": "mutate",
-        "name": "build-binaries",
-        "duration_ms": 3000,
-        "result": "failed"
-      },
-      {
-        "phase": "mutate",
-        "name": "build-binaries",
-        "duration_ms": 2400,
-        "result": "succeeded"
-      },
-      {
-        "phase": "mutate",
-        "name": "execute",
-        "duration_ms": 20600,
-        "result": "succeeded"
-      },
-      {
-        "phase": "report",
-        "name": "build",
-        "duration_ms": 20,
-        "result": "succeeded"
-      }
-    ]
-  },
-  "validation": {
-    "builds": 3
-  }
+  ]
 }

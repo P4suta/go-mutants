@@ -111,6 +111,15 @@ type MutantRun struct {
 // [Schedule] — which can retry it serially — decides what a mutant's outcome
 // finally is.
 type Attempt struct {
+	// Worker is the scheduler slot that made this pass, counting from zero.
+	//
+	// It is stamped by [Schedule] rather than by [RunOne], which does not know
+	// and must not care: a single pass is the same measurement whoever makes
+	// it. What it is for is the record — a report and a recording both say
+	// which worker ran a mutant, and a run whose mutants slowed each other down
+	// is a run where that is the first thing to look at — and the serial
+	// timeout retry, which is worker 0 and has the machine to itself.
+	Worker int
 	// Outcome is what this pass observed. It is one of killed, survived,
 	// timed out, errored, or not run — never inconclusive, which is a verdict
 	// about two attempts rather than an observation of one.

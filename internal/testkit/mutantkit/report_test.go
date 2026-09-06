@@ -52,6 +52,51 @@ var varyingFields = map[string]string{
 	// pointer is listed because it is a measured duration, not because the
 	// fixture happens to make it move.
 	"/mutants/6/duration_ms": "0",
+	// The toolchain that ran the tests. Its path is a different one on every
+	// machine and its version line changes with every Go release, so both are
+	// facts about the run — and `test.resolved_command` is the same path again,
+	// because it is `test.command` with that executable in place of `go`.
+	"/test/toolchain/go_bin":   mutantkit.NormalizedPath,
+	"/test/toolchain/version":  mutantkit.NormalizedToolchainVersion,
+	"/test/resolved_command/0": mutantkit.NormalizedPath,
+	// One row per attempt of every mutant this run executed: how long the pass
+	// took, and which scheduler slot made it. The worker is here because it is
+	// a fact about the run in the strongest sense — which goroutine won the
+	// race to the queue — so two runs on one machine differ in it; several of
+	// the fixture's rows already say 0 and are listed anyway, because a field
+	// that happens not to move is covered by nothing otherwise. The `binaries`
+	// beside them are deliberately absent: which binaries a pass started is
+	// what the run did, and it is the same every time.
+	"/mutants/1/executions/0/duration_ms": "0",
+	"/mutants/1/executions/0/worker":      "0",
+	"/mutants/3/executions/0/duration_ms": "0",
+	"/mutants/3/executions/0/worker":      "0",
+	"/mutants/3/executions/1/duration_ms": "0",
+	"/mutants/3/executions/1/worker":      "0",
+	"/mutants/4/executions/0/duration_ms": "0",
+	"/mutants/4/executions/0/worker":      "0",
+	"/mutants/5/executions/0/duration_ms": "0",
+	"/mutants/5/executions/0/worker":      "0",
+	"/mutants/7/duration_ms":              "0",
+	"/mutants/7/executions/0/duration_ms": "0",
+	"/mutants/7/executions/0/worker":      "0",
+	"/mutants/7/executions/1/duration_ms": "0",
+	"/mutants/7/executions/1/worker":      "0",
+	// The timeline. Every phase and every stage is a measured duration; their
+	// names are not, and stay.
+	"/timing/phases/0/duration_ms": "0",
+	"/timing/phases/1/duration_ms": "0",
+	"/timing/phases/2/duration_ms": "0",
+	"/timing/phases/3/duration_ms": "0",
+	"/timing/stages/0/duration_ms": "0",
+	"/timing/stages/1/duration_ms": "0",
+	"/timing/stages/2/duration_ms": "0",
+	"/timing/stages/3/duration_ms": "0",
+	"/timing/stages/4/duration_ms": "0",
+	"/timing/stages/5/duration_ms": "0",
+	"/timing/stages/6/duration_ms": "0",
+	"/timing/stages/7/duration_ms": "0",
+	"/timing/stages/8/duration_ms": "0",
 }
 
 // TestNormalizeRunReportFixesOnlyTheVaryingFields is the claim that makes a
@@ -139,11 +184,12 @@ func TestNormalizeRunReportIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestNormalizeRunReportReplacesAToolchainPathAndATimestamp drives the fields
-// the committed golden cannot: it holds no absolute path, because the fixture is
-// hand-written, and a real run's `test.command` starts with the located `go`
-// binary — which is `/usr/local/go/bin/go` on one machine and
-// `C:\hostedtoolcache\...` on another.
+// TestNormalizeRunReportReplacesAToolchainPathAndATimestamp drives the one path
+// the committed golden cannot: a real run's `test.command` starts with the
+// located `go` binary — which is `/usr/local/go/bin/go` on one machine and
+// `C:\hostedtoolcache\...` on another — while the fixture's is the `go` the
+// user wrote. (The golden's own absolute paths, in `test.toolchain.go_bin` and
+// `test.resolved_command`, are in the ledger above.)
 func TestNormalizeRunReportReplacesAToolchainPathAndATimestamp(t *testing.T) {
 	t.Parallel()
 

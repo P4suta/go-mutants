@@ -93,6 +93,18 @@
       "duration_ms": 140,
       "killed_by": "example.com/m/internal/core",
       "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 0,
+          "outcome": "killed",
+          "killed_by": "example.com/m/internal/core",
+          "duration_ms": 140,
+          "binaries": [
+            "example.com/m/internal/core"
+          ]
+        }
+      ],
       "output_tail": "--- FAIL: TestClamp (0.00s)",
       "covering_test_packages": [
         "example.com/m/internal/core",
@@ -120,6 +132,17 @@
       "duration_ms": 90,
       "killed_by": null,
       "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 0,
+          "outcome": "survived",
+          "duration_ms": 90,
+          "binaries": [
+            "example.com/m/internal/edge"
+          ]
+        }
+      ],
       "output_tail": null,
       "covering_test_packages": [
         "example.com/m/internal/edge"
@@ -146,6 +169,7 @@
       "duration_ms": 0,
       "killed_by": null,
       "attempts": 0,
+      "executions": [],
       "output_tail": null,
       "covering_test_packages": [],
       "uncovered": true,

@@ -320,6 +320,55 @@ func TestStageFinishedCarriesResultAndDurationAndStartedCarriesNeither(t *testin
 	}
 }
 
+// TestACloserReturnsTheSpanItRecorded is the promise a second document rests
+// on.
+//
+// The engine publishes every phase and every stage twice — once as a recording
+// event and once in the run report's timing — and the two have to be the same
+// number. They are the same number only if there is one measurement, so the
+// closers hand theirs back rather than leaving a caller to take a second pair
+// of readings around the same work. A closer that ran twice answers the same
+// both times, because the span it measured did not change.
+func TestACloserReturnsTheSpanItRecorded(t *testing.T) {
+	t.Parallel()
+
+	sink := trace.NewMemorySink(0)
+	recorder := trace.New(sink, fixtureClock(), fixtureStartRecord())
+
+	endPhase := recorder.PhaseStart(trace.PhaseBaseline)
+	endStage := recorder.Stage(fixtureStageName, fixtureStageDetail)
+	stage := endStage(trace.ResultSucceeded)
+	phase := endPhase()
+
+	if stage != endStage(trace.ResultFailed) || phase != endPhase() {
+		t.Error("a closer run twice reported two different spans for one measurement")
+	}
+	for _, e := range sink.Events() {
+		switch {
+		case e.Type == trace.TypePhaseEnd:
+			if e.Phase.DurationMS == nil || *e.Phase.DurationMS != phase.Milliseconds() {
+				t.Errorf("the phase-end carries %v ms and its closer returned %s", e.Phase.DurationMS, phase)
+			}
+		case e.Type == trace.TypeStage && e.Stage.State == trace.StateFinished:
+			if e.Stage.DurationMS == nil || *e.Stage.DurationMS != stage.Milliseconds() {
+				t.Errorf("the finished stage carries %v ms and its closer returned %s", e.Stage.DurationMS, stage)
+			}
+		}
+	}
+	if phase <= 0 || stage <= 0 {
+		t.Errorf("the closers returned %s and %s, want two measured spans", phase, stage)
+	}
+	// The disabled recorder measures nothing and says so, which is what lets a
+	// caller tell "no recording" from "a span of no time".
+	var disabled *trace.Recorder
+	if got := disabled.PhaseStart("x")(); got != 0 {
+		t.Errorf("the nil recorder's phase closer returned %s, want 0", got)
+	}
+	if got := disabled.Stage("x", "")(trace.ResultSucceeded); got != 0 {
+		t.Errorf("the nil recorder's stage closer returned %s, want 0", got)
+	}
+}
+
 func TestPhaseEndIsEmittedOnceHoweverOftenTheCloserRuns(t *testing.T) {
 	t.Parallel()
 

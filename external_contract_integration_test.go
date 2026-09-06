@@ -417,8 +417,8 @@ import (
 
 var (
 	_ func(trace.Sink, func() time.Time, trace.StartRecord) *trace.Recorder = trace.New
-	_ func(*trace.Recorder, string) func()                                  = (*trace.Recorder).PhaseStart
-	_ func(*trace.Recorder, string, string) func(string)                    = (*trace.Recorder).Stage
+	_ func(*trace.Recorder, string) func() time.Duration                    = (*trace.Recorder).PhaseStart
+	_ func(*trace.Recorder, string, string) func(string) time.Duration      = (*trace.Recorder).Stage
 	_ func(*trace.Recorder, string, string, string, time.Duration)          = (*trace.Recorder).Prepare
 	_ func(*trace.Recorder, trace.ExecRecord) int64                         = (*trace.Recorder).Exec
 	_ func(*trace.Recorder, trace.MutantRecord) int64                       = (*trace.Recorder).MutantExec

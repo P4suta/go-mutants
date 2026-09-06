@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // The identity of the document this package writes.
@@ -229,6 +230,21 @@ var outcomeNames = map[mutation.Outcome]Outcome{
 	mutation.OutcomeNotRun:       OutcomeNotRun,
 }
 
+// Observations returns the outcomes one pass over the test binaries can
+// observe.
+//
+// It is the six minus two, and the two are the ones that are judgements rather
+// than observations: [OutcomeInconclusive] is what a timeout and a retry that
+// disagree come to, and [OutcomeNotRun] is what a mutant nobody measured is.
+// Neither is a thing a single pass can see, so neither may appear in an
+// [Execution]; the schema's execution rows enumerate exactly this list.
+func Observations() []Outcome {
+	return []Outcome{OutcomeKilled, OutcomeSurvived, OutcomeTimedOut, OutcomeErrored}
+}
+
+// Observed reports whether o is something one pass can have observed.
+func (o Outcome) Observed() bool { return slices.Contains(Observations(), o) }
+
 // OutcomeOf renders a core outcome in this document's spelling.
 func OutcomeOf(o mutation.Outcome) (Outcome, error) {
 	name, ok := outcomeNames[o]
@@ -316,6 +332,43 @@ const (
 // String returns the state as it appears in the document.
 func (s ExpectationState) String() string { return string(s) }
 
+// A StageResult is what became of one timed step of the run.
+//
+// The three values are the recording's own — [trace.ResultSucceeded] and its
+// two siblings, referenced rather than retyped — and that is the whole point of
+// the type. A run's stages are published twice, once as `stage` events for a
+// reader following the run and once in the timing block of the report for a
+// reader who has only the file, and a stage that `succeeded` in one document
+// and was `ok` in the other would make a consumer joining them learn a mapping
+// that exists for no reason. [StageResults] and the schema's enumeration are
+// held to the trace's list by the package tests.
+type StageResult string
+
+// The v1 stage results.
+const (
+	// StageSucceeded means the step did what it was there for.
+	StageSucceeded StageResult = trace.ResultSucceeded
+	// StageFailed means it did not, which is not by itself a failed run: a
+	// coverage-instrumented build that will not compile is a failed stage and a
+	// run that carries on without coverage.
+	StageFailed StageResult = trace.ResultFailed
+	// StageSkipped means the step was not attempted. A skipped step is still a
+	// row, which is what lets a reader tell an intentional omission from a
+	// measurement that was lost.
+	StageSkipped StageResult = trace.ResultSkipped
+)
+
+// StageResults returns every result in document order.
+func StageResults() []StageResult {
+	return []StageResult{StageSucceeded, StageFailed, StageSkipped}
+}
+
+// Valid reports whether r is one of the defined results.
+func (r StageResult) Valid() bool { return slices.Contains(StageResults(), r) }
+
+// String returns the result as it appears in the document.
+func (r StageResult) String() string { return string(r) }
+
 // A Report is one run, losslessly.
 //
 // The field order is the document's order, and the JSON encoder writes struct
@@ -355,6 +408,133 @@ type Report struct {
 	Skips        []Skip        `json:"skips"`
 	Expectations []Expectation `json:"expectations"`
 	Warnings     []Warning     `json:"warnings"`
+	// Timing is where this run's wall-clock time went, and Validation is what
+	// establishing which mutants compile cost it. Both are omitted from a
+	// merged document and from one an older build wrote; see [Timing].
+	Timing     *Timing     `json:"timing,omitempty"`
+	Validation *Validation `json:"validation,omitempty"`
+}
+
+// Timing is where a run's wall-clock time went, phase by phase and stage by
+// stage.
+//
+// It is the answer to "why was this slow" for a reader who has the report and
+// no recording, which is nearly every reader: a trace is opt-in, kept for ten
+// runs, and thrown away, while the report is the permanent record. The two say
+// the same thing in the same words — see [StageResult] — so a reader who has
+// both is not reconciling two accounts.
+//
+// Both lists are in the order the spans closed, which for the engine's linear
+// pipeline is the order they opened, so a consumer can draw the run as a
+// timeline without sorting it. The phases do not add up to `duration_ms`: a run
+// is more than its phases, and a report that made the arithmetic work by
+// inventing a remainder would be describing a phase nobody entered.
+//
+// It is absent from a merged document. Four shards are four runs on four
+// machines, so there is no single timeline to report, and quoting the first
+// shard's would be presenting one machine's clock as the run's.
+type Timing struct {
+	Phases []PhaseTiming `json:"phases"`
+	Stages []StageTiming `json:"stages"`
+}
+
+// A PhaseTiming is how long one phase of the run took.
+type PhaseTiming struct {
+	Name       string `json:"name"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+// A StageTiming is how long one step inside a phase took, and what became of
+// it.
+//
+// The phase is carried on every row because a stage name is unique only within
+// its phase — `build` happens in the baseline and again in the report — and a
+// consumer that keyed a timeline by name alone would add two unrelated numbers
+// together.
+type StageTiming struct {
+	Phase      string      `json:"phase"`
+	Name       string      `json:"name"`
+	DurationMS int64       `json:"duration_ms"`
+	Result     StageResult `json:"result"`
+}
+
+// Validation is what proving which catalogued mutants compile cost the run.
+//
+// One build means the whole catalogue compiled on the first try, which is the
+// ordinary case; anything more is a bisection, and is where a slow run's
+// minutes went. It is a fact about one run's work, so a merged document omits
+// it for the reason it omits [Timing].
+type Validation struct {
+	Builds int `json:"builds"`
+}
+
+// SnapshotFacts is what the disposable copy of the workspace turned out to be.
+//
+// Neither field is about the code, which is why neither is in the workspace
+// digest: a run whose copy could not take the tree's own derived name pays for
+// a cold Go build cache, and that is a fact about the machine's temporary
+// directory rather than about the program under test. It is exactly the fact a
+// reader comparing two runs of one tree needs when one of them took twice as
+// long.
+type SnapshotFacts struct {
+	// StableDir says the copy carried the source tree's own derived name
+	// rather than a random one, which is what lets two runs of one workspace
+	// share a Go build cache.
+	StableDir bool `json:"stable_dir"`
+	// Files is how many regular files were copied.
+	Files int `json:"files"`
+}
+
+// ToolchainFacts is the Go toolchain that ran the tests.
+//
+// It is not `workspace.go_version`, and the difference is the point: that field
+// is the `go` directive of the module under test, while this is the executable
+// that compiled and ran it. A run under a toolchain manager can have the two
+// disagree, and "which go was this?" is unanswerable from the module's
+// directive alone.
+type ToolchainFacts struct {
+	// GoBin is the resolved absolute path of the go executable, so that a
+	// later invocation cannot be re-resolved into a different toolchain by a
+	// changed PATH.
+	GoBin string `json:"go_bin"`
+	// Version is what `go version` printed, verbatim.
+	Version string `json:"version"`
+}
+
+// An Execution is one pass this run made over the test binaries with one mutant
+// active.
+//
+// It is the same type on both sides of [Build]: the caller hands over the rows
+// the document will carry, because there is nothing to translate — an execution
+// is these six facts whether it is being reported or being written down. What
+// the document adds is the refusals; see [Options.Results].
+//
+// An execution is not a verdict. A single [OutcomeTimedOut] row is not a
+// confirmed timeout, and no row is ever [OutcomeInconclusive], which is a
+// judgement about two attempts rather than an observation of one: the mutant's
+// own `outcome` is where the verdict is.
+type Execution struct {
+	// Attempt is which pass this was, counting from one. The rows are in
+	// attempt order, so it is redundant with the index and written anyway: a
+	// consumer filtering the rows keeps the numbering.
+	Attempt int `json:"attempt"`
+	// Worker is the scheduler slot that made the pass, counting from zero. The
+	// serial retry pass is worker 0, which it has to itself.
+	Worker int `json:"worker"`
+	// Outcome is what this pass observed.
+	Outcome Outcome `json:"outcome"`
+	// KilledBy is the import path of the test binary that detected the mutant —
+	// the one that failed, or the one it hung. It is omitted for a pass that
+	// detected nothing, rather than written as a name that is not a name.
+	KilledBy string `json:"killed_by,omitzero"`
+	// DurationMS is the wall-clock time this pass took, summed over the
+	// binaries it actually ran.
+	DurationMS int64 `json:"duration_ms"`
+	// Binaries are the test binaries this pass started, in launch order, by
+	// import path. The list stops where the pass stopped: a mutant killed by
+	// the second of three binaries was measured against two, and naming all
+	// three would describe a measurement nobody made.
+	Binaries []string `json:"binaries"`
 }
 
 // Workspace names the tree the run read.
@@ -363,6 +543,10 @@ type Workspace struct {
 	GoVersion       string   `json:"go_version"`
 	WorkspaceDigest string   `json:"workspace_digest"`
 	Platform        Platform `json:"platform"`
+	// Snapshot is what the disposable copy of that tree turned out to be, or
+	// nil for a document that does not say — a merged one, or one an older
+	// build wrote. See [SnapshotFacts].
+	Snapshot *SnapshotFacts `json:"snapshot,omitempty"`
 }
 
 // Platform is the host the run happened on. Build constraints decide which
@@ -432,6 +616,16 @@ type Test struct {
 	Baseline      Baseline      `json:"baseline"`
 	TimeoutMS     int64         `json:"timeout_ms"`
 	TimeoutSource TimeoutSource `json:"timeout_source"`
+	// Toolchain is the Go toolchain that ran that command; see
+	// [ToolchainFacts].
+	Toolchain *ToolchainFacts `json:"toolchain,omitempty"`
+	// ResolvedCommand is the argv that was really started: `command` with the
+	// located toolchain in place of a bare `go`. The two differ in exactly that
+	// one string, and the difference is what a reader chasing "which go ran
+	// this?" is looking for — under a toolchain manager, `go` on the child's
+	// PATH need not be the `go` this run says it used. It is absent from a
+	// merged document, which has several.
+	ResolvedCommand []string `json:"resolved_command,omitzero"`
 }
 
 // Baseline is every unmutated observation, not just the summary of them. The
@@ -456,6 +650,22 @@ type Baseline struct {
 // refuses them outside `package` mode for the same reason.
 type Coverage struct {
 	Mode CoverageMode `json:"mode"`
+	// UnavailableReason is the whole failure that made the run give up
+	// coverage-instrumented test binaries: the coded message and the compiler's
+	// own diagnostics under it. It is absent from every run that did not fall
+	// back, which is nearly all of them.
+	//
+	// The console has already been told in one line, and this is the copy for
+	// somebody asking why. The two are deliberately different lengths: a run
+	// that is about to succeed does not print a compiler blob at the user, and
+	// a reader investigating it later needs the blob.
+	UnavailableReason *string `json:"unavailable_reason,omitempty"`
+	// BuildFallback says the coverage-instrumented build failed and the run
+	// built plain test binaries instead — which costs it a wasted compile and
+	// every mutant against every binary. It is absent rather than false when
+	// nothing fell back, so an older document and a merged one say nothing
+	// instead of claiming a measurement.
+	BuildFallback bool `json:"build_fallback,omitzero"`
 	// Binaries is how many test binaries the coverage pass profiled.
 	Binaries *int `json:"binaries,omitempty"`
 	// MutantsUncovered is how many mutants no binary covered, and so were
@@ -556,7 +766,24 @@ type Mutant struct {
 	DurationMS   int64   `json:"duration_ms"`
 	KilledBy     *string `json:"killed_by"`
 	Attempts     int     `json:"attempts"`
-	OutputTail   *string `json:"output_tail"`
+	// Executions are the passes this run made over the test binaries for this
+	// mutant, in attempt order, and there are exactly `attempts` of them for a
+	// mutant this run executed. They are `[]` — present and empty — for a
+	// cached, uncovered or not-run mutant, each of which was settled without
+	// this run starting a process for it.
+	//
+	// Two of those three can carry an attempt count with no rows under it, and
+	// they are the only ways it happens. A cached mutant keeps the count of the
+	// run that did measure it, exactly as it keeps that run's duration and
+	// killer. And a mutant that timed out once and was interrupted before the
+	// serial retry could repeat it is not-run with one attempt: the pass really
+	// was made, and the run is not entitled to call an unrepeated timeout a
+	// result.
+	//
+	// The list is absent, rather than empty, from a merged document and from
+	// one an older build wrote. See [Execution].
+	Executions []Execution `json:"executions,omitzero"`
+	OutputTail *string     `json:"output_tail"`
 	// CoveringTestPackages are the import paths of the test binaries whose
 	// coverage profile reaches this mutant's lines, sorted. Empty is legal and
 	// means two different things depending on `coverage.mode`; see the type

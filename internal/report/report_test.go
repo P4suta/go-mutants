@@ -320,17 +320,17 @@ func TestSummaryCountsTheFixture(t *testing.T) {
 		got  int
 		want int
 	}{
-		{"total", s.Total, 7},
+		{"total", s.Total, 8},
 		{"killed", s.Killed, 1},
 		{"survived", s.Survived, 2},
-		{"timed_out", s.TimedOut, 1},
+		{"timed_out", s.TimedOut, 2},
 		{"inconclusive", s.Inconclusive, 1},
 		{"errored", s.Errored, 1},
 		{"not_run", s.NotRun, 1},
-		{"selection.candidates", r.Selection.Candidates, 8},
+		{"selection.candidates", r.Selection.Candidates, 9},
 		{"selection.rejected", r.Selection.Rejected, 1},
-		{"selection.selected", r.Selection.Selected, 7},
-		{"mutants", len(r.Mutants), 7},
+		{"selection.selected", r.Selection.Selected, 8},
+		{"mutants", len(r.Mutants), 8},
 		{"rejected", len(r.Rejected), 1},
 	} {
 		if c.got != c.want {
@@ -340,10 +340,10 @@ func TestSummaryCountsTheFixture(t *testing.T) {
 	if s.ScorePercent == nil {
 		t.Fatal("score_percent is null for a run with a denominator")
 	}
-	// (1 killed + 1 confirmed timeout) / (2 detections + 1 unexpected survivor),
-	// computed the way [mutation.Score] computes it: the report must carry that
-	// number and not a differently rounded one.
-	if want := float64(2) / float64(3) * 100; *s.ScorePercent != want {
+	// (1 killed + 2 confirmed timeouts) / (3 detections + 1 unexpected
+	// survivor), computed the way [mutation.Score] computes it: the report must
+	// carry that number and not a differently rounded one.
+	if want := float64(3) / float64(4) * 100; *s.ScorePercent != want {
 		t.Errorf("score_percent = %v, want %v", *s.ScorePercent, want)
 	}
 }
@@ -396,7 +396,7 @@ func TestTallyRoundTripsThroughTheDocument(t *testing.T) {
 	}
 	want := mutation.Tally{
 		Killed:              1,
-		TimedOut:            1,
+		TimedOut:            2,
 		UnexpectedSurvivors: 1,
 		ExpectedSurvivors:   1,
 		Inconclusive:        1,
@@ -754,6 +754,21 @@ func TestSchemaRejects(t *testing.T) {
 			pointer: "/merge/shards",
 			mutate:  func(doc map[string]any) { doc["merge"] = map[string]any{"shards": 0.0} },
 		},
+		{
+			// An attempt that took less than no time is not a slow measurement,
+			// it is a clock nobody may reason about.
+			name:    "an execution that took a negative time",
+			pointer: "/mutants/1/executions/0/duration_ms",
+			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["duration_ms"] = -1.0 },
+		},
+		{
+			// `additionalProperties: false` inside the new rows too: a typo'd
+			// key is a bug, and the moment it is cheap to catch is before the
+			// file is written.
+			name:    "an unknown key inside an execution",
+			pointer: "/mutants/1/executions/0/attempt_number",
+			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["attempt_number"] = 1.0 },
+		},
 	}
 
 	valid := mutantkit.MustMarshal(t, buildFixture(t))
@@ -803,6 +818,11 @@ func workspace(doc map[string]any) map[string]any {
 // mutant returns one row of the decoded mutants array.
 func mutant(doc map[string]any, i int) map[string]any {
 	return doc["mutants"].([]any)[i].(map[string]any)
+}
+
+// execution returns one execution of one decoded mutant.
+func execution(doc map[string]any, mutantIndex, i int) map[string]any {
+	return mutant(doc, mutantIndex)["executions"].([]any)[i].(map[string]any)
 }
 
 // object returns a named object of a decoded document, or, when an index is

@@ -39,7 +39,9 @@
     "rejected": { "type": "array", "items": { "$ref": "#/$defs/rejected" } },
     "skips": { "type": "array", "items": { "$ref": "#/$defs/skip" } },
     "expectations": { "type": "array", "items": { "$ref": "#/$defs/expectation" } },
-    "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } }
+    "warnings": { "type": "array", "items": { "$ref": "#/$defs/warning" } },
+    "timing": { "$ref": "#/$defs/timing" },
+    "validation": { "$ref": "#/$defs/validation" }
   },
   "$defs": {
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -59,7 +61,8 @@
         "module_path": { "type": "string", "minLength": 1 },
         "go_version": { "type": "string", "minLength": 1 },
         "workspace_digest": { "$ref": "#/$defs/digest" },
-        "platform": { "$ref": "#/$defs/platform" }
+        "platform": { "$ref": "#/$defs/platform" },
+        "snapshot": { "$ref": "#/$defs/snapshot" }
       }
     },
     "platform": {
@@ -128,7 +131,14 @@
         },
         "baseline": { "$ref": "#/$defs/baseline" },
         "timeout_ms": { "$ref": "#/$defs/milliseconds" },
-        "timeout_source": { "enum": ["explicit", "derived"] }
+        "timeout_source": { "enum": ["explicit", "derived"] },
+        "toolchain": { "$ref": "#/$defs/toolchain" },
+        "resolved_command": {
+          "description": "The argv that was really started: `command` with the located toolchain's absolute path in place of a bare `go`, and identical to it for any other program. Optional, and absent from a merged document, which has one per shard.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
       }
     },
     "baseline": {
@@ -150,7 +160,16 @@
       "properties": {
         "mode": { "enum": ["off", "package"] },
         "binaries": { "$ref": "#/$defs/count" },
-        "mutants_uncovered": { "$ref": "#/$defs/count" }
+        "mutants_uncovered": { "$ref": "#/$defs/count" },
+        "unavailable_reason": {
+          "description": "The whole failure that made this run give up coverage-instrumented test binaries — the coded message, and the compiler's own diagnostics under it. Absent from every run that did not fall back, which is nearly all of them, and from a merged document.",
+          "type": "string",
+          "minLength": 1
+        },
+        "build_fallback": {
+          "description": "The coverage-instrumented build failed and the run compiled plain test binaries instead, paying for a wasted build and measuring every mutant against every binary. Absent rather than false when nothing fell back.",
+          "type": "boolean"
+        }
       },
       "if": {
         "type": "object",
@@ -251,10 +270,7 @@
         "original": { "type": "string" },
         "replacement": { "type": "string" },
         "branch": { "$ref": "#/$defs/branch" },
-        "outcome": {
-          "description": "timed-out is a confirmed timeout — it timed out, was retried serially, and timed out again — and counts as a detection. A single timeout that did not reproduce is inconclusive.",
-          "enum": ["killed", "survived", "timed-out", "inconclusive", "errored", "not-run"]
-        },
+        "outcome": { "$ref": "#/$defs/outcome" },
         "not_run_reason": {
           "description": "Why a not-run mutant was not run, and null for every mutant that was. out-of-selection: the run narrowed itself and this mutant was outside — --mutant named another, or --changed found no edited line on it. other-shard: --shard assigned it to a different shard, which is the one that measured it. interrupted: it was selected and a signal ended the run first.",
           "type": ["string", "null"],
@@ -270,6 +286,11 @@
           "description": "How many times this mutant was executed. Zero for a mutant the run never reached, one for an outcome settled first time, and two for a confirmed timeout. A not_run mutant is usually zero, but a mutant that timed out once and was interrupted before the retry could repeat it reports the one attempt it did make.",
           "$ref": "#/$defs/count"
         },
+        "executions": {
+          "description": "One row per pass this run made over the test binaries for this mutant, in attempt order, so there are exactly `attempts` of them for a mutant this run executed. It is present and empty for a cached, uncovered or not-run mutant — each of which was settled without a process being started, and the cached one keeps the attempt count of the run that did measure it. The whole key is optional: a document an older build wrote does not have it, and a merged document drops it, because a worker number and a duration describe one machine.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/execution" }
+        },
         "output_tail": { "type": ["string", "null"], "minLength": 1 },
         "covering_test_packages": {
           "description": "The import paths of the test binaries whose coverage profile reaches this mutant's lines, sorted. Empty is legal and means two different things: with coverage.mode off nobody asked, and with mode package nothing covers it — in which case uncovered is true.",
@@ -284,6 +305,89 @@
           "description": "This outcome was adopted from the outcome cache rather than measured by this run, so duration_ms, attempts, killed_by and output_tail are the ones the run that measured it recorded. It is only ever true of killed, survived and timed-out — the cache stores no other outcome — never of an uncovered mutant, and never in a run whose cache.mode is off.",
           "type": "boolean"
         }
+      }
+    },
+    "outcome": {
+      "description": "timed-out is a confirmed timeout — it timed out, was retried serially, and timed out again — and counts as a detection. A single timeout that did not reproduce is inconclusive. An execution row is one observation rather than a verdict, so it is never inconclusive.",
+      "enum": ["killed", "survived", "timed-out", "inconclusive", "errored", "not-run"]
+    },
+    "observation": {
+      "description": "What one pass over the test binaries saw. It is the mutant outcomes minus the two that are judgements about several passes rather than observations of one: inconclusive is what a timeout and a retry that disagree come to, and not-run is what a mutant nobody measured is — neither is a thing a pass can observe, and a row claiming either would be a verdict wearing an observation's clothes.",
+      "enum": ["killed", "survived", "timed-out", "errored"]
+    },
+    "execution": {
+      "description": "One pass over the test binaries with one mutant active. attempt counts from one and matches the row's position; worker is the scheduler slot that made the pass, counting from zero, and the serial timeout retry is worker 0. binaries stops where the pass stopped: a mutant killed by the second of three binaries was measured against two, and naming all three would describe a measurement nobody made. killed_by is absent for a pass that detected nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt", "worker", "outcome", "duration_ms", "binaries"],
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 1 },
+        "worker": { "$ref": "#/$defs/count" },
+        "outcome": { "$ref": "#/$defs/observation" },
+        "killed_by": { "type": "string", "minLength": 1 },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "binaries": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "timing": {
+      "description": "Where this run's wall-clock time went, phase by phase and stage by stage, in the order the spans closed — which for the engine's linear pipeline is the order they opened, so a consumer can draw a timeline without sorting it. It answers \"why was this slow\" for a reader who has the report and no recording, and it says the same thing the trace's phase-end and stage events say, in the same words. The phases do not add up to duration_ms: a run is more than its phases. The whole block is optional, and absent from a merged document, which is several runs on several machines.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phases", "stages"],
+      "properties": {
+        "phases": { "type": "array", "items": { "$ref": "#/$defs/phase_timing" } },
+        "stages": { "type": "array", "items": { "$ref": "#/$defs/stage_timing" } }
+      }
+    },
+    "phase_timing": {
+      "description": "How long one phase took. The names are the engine's phases: discover, baseline, mutate, report.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "duration_ms"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" }
+      }
+    },
+    "stage_timing": {
+      "description": "How long one step inside a phase took, and what became of it. The phase is on every row because a stage name is unique only within its phase — `build` happens in the baseline and again in the report — so a consumer keying a timeline by name alone would add two unrelated numbers together. result is the trace's own vocabulary, so a reader holding both documents is not reconciling two accounts; a failed stage is not by itself a failed run.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "name", "duration_ms", "result"],
+      "properties": {
+        "phase": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "result": { "enum": ["succeeded", "failed", "skipped"] }
+      }
+    },
+    "validation": {
+      "description": "What proving which catalogued mutants compile cost this run. One build means the whole catalogue compiled on the first try, which is the ordinary case; anything more is a bisection, and is where a slow run's minutes went. Optional, and absent from a merged document.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["builds"],
+      "properties": {
+        "builds": { "$ref": "#/$defs/count" }
+      }
+    },
+    "snapshot": {
+      "description": "What the disposable copy of the workspace turned out to be. Neither field is about the code, which is why neither is in workspace_digest: a run whose copy could not take the tree's own derived name pays for a cold Go build cache, and that is a fact about the machine's temporary directory. stable_dir is that name, and it is what lets two runs of one workspace share a build cache. Optional, and absent from a merged document.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stable_dir", "files"],
+      "properties": {
+        "stable_dir": { "type": "boolean" },
+        "files": { "$ref": "#/$defs/count" }
+      }
+    },
+    "toolchain": {
+      "description": "The Go toolchain that ran the tests, which is not workspace.go_version: that is the `go` directive of the module under test, and this is the executable that compiled and ran it — under a toolchain manager the two can disagree. go_bin is the resolved absolute path, so a later invocation cannot be re-resolved into a different toolchain by a changed PATH, and version is what `go version` printed, verbatim. Optional, and absent from a merged document.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["go_bin", "version"],
+      "properties": {
+        "go_bin": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
       }
     },
     "branch": {

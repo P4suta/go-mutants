@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/P4suta/go-mutants/internal/cache"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -116,7 +115,7 @@ func TestMergedShardsAreTheWholeRun(t *testing.T) {
 			whole := buildFixture(t)
 			merged := mergeShards(t, shards(t, total))
 
-			if diff := cmp.Diff(whole, merged, cmpopts.IgnoreFields(report.Report{}, "RunID", "Merge")); diff != "" {
+			if diff := cmp.Diff(whole, merged, mergeExemptOptions(t)...); diff != "" {
 				t.Errorf("the merge of %d shards is not the whole run (-whole +merged):\n%s", total, diff)
 			}
 			if merged.Merge == nil || merged.Merge.Shards != total {

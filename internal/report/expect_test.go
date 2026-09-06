@@ -267,10 +267,10 @@ func TestExpectedSurvivorsLeaveTheDenominator(t *testing.T) {
 	if without.Summary.ScorePercent == nil || with.Summary.ScorePercent == nil {
 		t.Fatal("one of the runs has no score")
 	}
-	// Two detections out of four become two out of two: both survivors leave
-	// the denominator, and nothing else moves.
-	if got := *without.Summary.ScorePercent; got != 50 {
-		t.Errorf("score without the ledger = %v, want 50", got)
+	// Three detections out of five become three out of three: both survivors
+	// leave the denominator, and nothing else moves.
+	if got := *without.Summary.ScorePercent; got != 60 {
+		t.Errorf("score without the ledger = %v, want 60", got)
 	}
 	if got := *with.Summary.ScorePercent; got != 100 {
 		t.Errorf("score with the ledger = %v, want 100", got)

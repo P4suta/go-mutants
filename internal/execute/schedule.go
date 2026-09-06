@@ -192,8 +192,9 @@ func Schedule(
 
 				hooks.start(mutants[i].ID, worker)
 				attempt := RunOne(ctx, workerOpts, mutants[i], bins)
+				attempt.Worker = worker
 				record(&results[i], attempt)
-				opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, mainAttempt, worker))
+				opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, mainAttempt))
 
 				if attempt.Outcome == mutation.OutcomeTimedOut {
 					// Not a result. The retry pass decides.
@@ -215,7 +216,7 @@ func Schedule(
 	// every recording of every run, most of them empty, is a line a reader
 	// learns to skip past the one time it mattered.
 	retried := heldBack(pending)
-	retryStage := func(string) {}
+	retryStage := func(string) time.Duration { return 0 }
 	if retried > 0 {
 		retryStage = opts.Trace.Stage("retry", countNoun(retried, "timeout"))
 	}
@@ -241,8 +242,9 @@ func Schedule(
 
 		hooks.start(mutants[i].ID, retryWorker)
 		attempt := RunOne(ctx, retryOpts, mutants[i], bins)
+		attempt.Worker = retryWorker
 		record(&results[i], attempt)
-		opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, retryAttempt, retryWorker))
+		opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, retryAttempt))
 		if attempt.Outcome == mutation.OutcomeNotRun {
 			// Started and killed. Nothing else produces this outcome here: a
 			// retry that ran is killed, survived or timed out, and a failure of
@@ -297,12 +299,16 @@ func Schedule(
 // The outcome is spelled with [mutation.Outcome]'s own name, which is the one
 // the report and the cache already use: a trace and a report saying different
 // words about one mutant would be two vocabularies to reconcile for no gain.
-func AttemptRecord(m MutantRun, attempt Attempt, number, worker int) trace.MutantRecord {
+//
+// The worker is read off the attempt rather than passed in beside it, so that
+// the number the recording publishes and the number the attempt carries into a
+// report are the same number and not two call sites' opinions of it.
+func AttemptRecord(m MutantRun, attempt Attempt, number int) trace.MutantRecord {
 	record := trace.MutantRecord{
 		ID:        m.ID,
 		DisplayID: m.DisplayID,
 		Attempt:   number,
-		Worker:    worker,
+		Worker:    attempt.Worker,
 		Package:   m.Package,
 		TimeoutMS: m.Timeout.Milliseconds(),
 		// Cloned on the way in, for the reason [trace.Recorder.Exec] clones an

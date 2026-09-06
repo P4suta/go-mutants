@@ -299,6 +299,16 @@ type RunOutcome struct {
 	// wrote it — before the toolchain path was substituted for a bare `go`.
 	// It is the spelling that belongs in a report and in a message.
 	TestCommand []string
+	// ResolvedTestCommand is that same argv as it was really started: with
+	// [Toolchain]'s absolute path in place of a bare `go`, and identical to
+	// TestCommand for any other program.
+	//
+	// Both are reported because they answer different questions. The written
+	// command is what the user configured and what they would run by hand; the
+	// resolved one is which executable this run actually started, which under a
+	// toolchain manager need not be the `go` on anybody's PATH. It is empty on
+	// a run that stopped before the baseline resolved one.
+	ResolvedTestCommand []string
 	// BaselineRuns holds every baseline observation, in measurement order.
 	BaselineRuns []time.Duration
 	// AverageBaseline and SlowestBaseline summarise BaselineRuns.
@@ -892,6 +902,7 @@ func (s *session) baseline(
 	// PATH, which need not be — and under a toolchain manager usually is not —
 	// the same `go` the run says it is using.
 	argv := resolveProgram(command, toolchain)
+	out.ResolvedTestCommand = slices.Clone(argv)
 	durations := make([]time.Duration, 0, runs)
 	for i := 1; i <= runs; i++ {
 		spec := runner.Spec{
@@ -1127,6 +1138,7 @@ func (s *session) mutate(
 			Duration:             result.Duration,
 			KilledBy:             result.KilledBy,
 			Attempts:             len(result.Attempts),
+			Executions:           executionsOf(result),
 			OutputTail:           result.OutputTail,
 			CoveringTestPackages: st.coverage.covering[result.ID],
 		}
@@ -1139,6 +1151,62 @@ func (s *session) mutate(
 	s.storeOutcomes(opts, results, st)
 	endStore(nil)
 	return err
+}
+
+// executionsOf carries one mutant's attempts into the report, which is where
+// they stop being a count.
+//
+// The attempts were reduced to `len(result.Attempts)` here until this build,
+// and the number was all a reader ever got: a mutant that took eleven seconds
+// over two attempts said so, and which worker made them, which binaries each
+// one started and what each one observed were in the recording or nowhere. They
+// are the same facts internal/execute already has in hand, and carrying them is
+// what lets somebody answer "how was this mutant actually run" from the file.
+//
+// A mutant the run reached and could not settle carries none. Its outcome is
+// not-run — [session.publish] gives it the interrupted reason — and a not-run
+// mutant with rows of evidence would be a document claiming a measurement in
+// detail while its own outcome says none was made; the attempt count still
+// reports the pass that really happened, which is the honest half. See
+// [report.Build], which refuses the other combination rather than trusting this
+// one function to be careful.
+func executionsOf(result execute.MutantResult) []report.Execution {
+	if result.Final == mutation.OutcomeNotRun {
+		return nil
+	}
+	executions := make([]report.Execution, 0, len(result.Attempts))
+	for i, attempt := range result.Attempts {
+		outcome, err := report.OutcomeOf(attempt.Outcome)
+		if err != nil {
+			// Unreachable for an attempt internal/execute produced, and not
+			// worth failing a run over. The whole list goes rather than the one
+			// row: a list one row short of the attempt count is a contradiction
+			// [report.Build] refuses, so dropping a single row would turn an
+			// impossible outcome into a failed run at the very last step. No
+			// list at all is the document saying nothing about how this mutant
+			// was run, which is what every older build said about every mutant.
+			// The outcome the score is computed from is result.Final, and it is
+			// checked where it matters.
+			return nil
+		}
+		if !outcome.Observed() {
+			// A verdict where an observation belongs. Nothing internal/execute
+			// produces reaches here — a pass sees a kill, a survival, a timeout
+			// or a harness failure, and the two judgements are made above it —
+			// and it goes the same way as an unrenderable one for the same
+			// reason: the whole list, rather than a row short of the count.
+			return nil
+		}
+		executions = append(executions, report.Execution{
+			Attempt:    i + 1,
+			Worker:     attempt.Worker,
+			Outcome:    outcome,
+			KilledBy:   attempt.KilledBy,
+			DurationMS: attempt.Duration.Milliseconds(),
+			Binaries:   slices.Clone(attempt.Binaries),
+		})
+	}
+	return executions
 }
 
 // buildTestBinaries compiles the test binaries, and falls back to a plain build
@@ -1556,10 +1624,28 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		TimeoutSource:    reportTimeoutSource(out.TimeoutSource),
 		CoverageMode:     reportCoverageMode(st.coverage.Mode()),
 		CoverageBinaries: st.coverage.binaries,
-		CacheMode:        st.cache.Mode(),
-		CacheMisses:      st.cache.misses,
-		CacheWrites:      st.cache.writes,
-		Warnings:         reportWarnings(s.warnings),
+		// The same event the GOM7602 warning above reports, in the two forms a
+		// document needs it: a flag a consumer can branch on and the whole
+		// failure a person reads. See [RunOutcome.CoverageFallback].
+		CoverageUnavailableReason: out.CoverageFallback,
+		CoverageBuildFallback:     out.CoverageFallback != "",
+		CacheMode:                 st.cache.Mode(),
+		CacheMisses:               st.cache.misses,
+		CacheWrites:               st.cache.writes,
+		Warnings:                  reportWarnings(s.warnings),
+		// What this run cost and what it ran with. The timing is taken here
+		// rather than from [RunOutcome], which is only filled in after Run
+		// returns: the report is written inside the run, so it carries the
+		// spans that had closed by the time it was written — every phase but
+		// the one it is in, and every stage but its own. See [report.Timing].
+		Timing:     reportTiming(s.timing),
+		Validation: reportValidation(out.Validation),
+		Snapshot:   reportSnapshot(out.Snapshot),
+		Toolchain: &report.ToolchainFacts{
+			GoBin:   out.Toolchain.GoBin,
+			Version: out.Toolchain.Version.String(),
+		},
+		ResolvedCommand: out.ResolvedTestCommand,
 	})
 	endBuild(err)
 	if err != nil {
@@ -1635,6 +1721,74 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 	summary := s.compose(out, st, tally, rep)
 	s.summary = &summary
 	return nil
+}
+
+// reportTiming, reportValidation and reportSnapshot render three run facts, or
+// nothing at all when the run never established one.
+//
+// Nothing at all is the point. [report.Options] takes a nil for every one of
+// them and means "this run did not measure it", and a run that stopped early
+// really did not: an interruption between cataloguing and the first `go build`
+// publishes a report — the catalogue is worth having — and a `validation:
+// {builds: 0}` in it would be that run claiming it established what compiles
+// without compiling anything. Zero is the discriminator in each case because
+// zero is not a measurement any of them can produce: validation is at least one
+// build, a snapshot is at least one file, and a run that reached the report has
+// closed at least one phase.
+func reportTiming(timing Timing) *report.Timing {
+	if len(timing.Phases) == 0 && len(timing.Stages) == 0 {
+		return nil
+	}
+	return &report.Timing{Phases: reportPhases(timing), Stages: reportStages(timing)}
+}
+
+// reportValidation renders what proving the catalogue compiles cost this run.
+func reportValidation(facts ValidationFacts) *report.Validation {
+	if facts.Builds == 0 {
+		return nil
+	}
+	return &report.Validation{Builds: facts.Builds}
+}
+
+// reportSnapshot renders what the copy of the workspace turned out to be.
+func reportSnapshot(facts SnapshotFacts) *report.SnapshotFacts {
+	if facts.Files == 0 {
+		return nil
+	}
+	return &report.SnapshotFacts{StableDir: facts.StableDir, Files: facts.Files}
+}
+
+// reportPhases renders the phases the run has finished, in the order they
+// closed.
+func reportPhases(timing Timing) []report.PhaseTiming {
+	phases := make([]report.PhaseTiming, 0, len(timing.Phases))
+	for _, phase := range timing.Phases {
+		phases = append(phases, report.PhaseTiming{
+			Name:       phase.Phase.String(),
+			DurationMS: phase.Duration.Milliseconds(),
+		})
+	}
+	return phases
+}
+
+// reportStages renders the stages the run has finished, in the order they
+// closed.
+//
+// The result is the recording's own word for what became of the stage, carried
+// through rather than re-derived: [session.stage] decided it from the step's
+// error, and a second opinion here is how a report and a trace start
+// disagreeing about a run they both watched.
+func reportStages(timing Timing) []report.StageTiming {
+	stages := make([]report.StageTiming, 0, len(timing.Stages))
+	for _, stage := range timing.Stages {
+		stages = append(stages, report.StageTiming{
+			Phase:      stage.Phase.String(),
+			Name:       stage.Name,
+			DurationMS: stage.Duration.Milliseconds(),
+			Result:     report.StageResult(stage.Result),
+		})
+	}
+	return stages
 }
 
 // compose assembles the closing summary block.
@@ -1951,9 +2105,11 @@ type session struct {
 	// openPhase, phaseEnd and phaseStarted are the phase the run is in. phaseEnd
 	// is nil exactly when no phase is open, which is what makes [session.closePhase]
 	// idempotent and therefore safe to call from a defer and from an early
-	// return both.
+	// return both, and it returns the span the recorder measured — which is the
+	// span the report publishes. phaseStarted is the fallback for an untraced
+	// run, whose closer measures nothing.
 	openPhase    Phase
-	phaseEnd     func()
+	phaseEnd     func() time.Duration
 	phaseStarted time.Time
 	// summary is the closing block, set by publish and read by Run. It is
 	// written from the run's own goroutine and read from it, after every worker
@@ -2014,9 +2170,16 @@ func (s *session) closePhase() {
 	if s.phaseEnd == nil {
 		return
 	}
-	s.phaseEnd()
+	// The recorder's own measurement, not a second one. The report publishes
+	// this span and so does the recording, and two readings of one clock taken
+	// a function call apart are not the same number often enough to be relied
+	// on: see [trace.Recorder.PhaseStart]. An untraced run has no recorder to
+	// borrow from and times itself.
+	duration := s.phaseEnd()
 	s.phaseEnd = nil
-	duration := s.now().Sub(s.phaseStarted)
+	if s.trace == nil {
+		duration = s.now().Sub(s.phaseStarted)
+	}
 	s.timing.Phases = append(s.timing.Phases, PhaseDuration{Phase: s.openPhase, Duration: duration})
 	s.emit(PhaseCompleted{Phase: s.openPhase, Duration: duration})
 }
@@ -2042,11 +2205,16 @@ func (s *session) stage(name, detail string) func(err error) {
 		if err != nil {
 			result = trace.ResultFailed
 		}
-		end(result)
+		// The recorder's measurement, for the reason [session.closePhase] takes
+		// the phase's from it.
+		duration := end(result)
+		if s.trace == nil {
+			duration = s.now().Sub(started)
+		}
 		s.timing.Stages = append(s.timing.Stages, StageDuration{
 			Phase:    phase,
 			Name:     name,
-			Duration: s.now().Sub(started),
+			Duration: duration,
 			Result:   result,
 		})
 	}

@@ -34,6 +34,11 @@ const (
 	// test, which is a fact about the fixture's go.mod as the toolchain of the
 	// day reads it.
 	NormalizedGoVersion = "0.0"
+	// NormalizedToolchainVersion stands in for what `go version` printed, which
+	// is a fact about the machine's toolchain and moves with every release. It
+	// keeps the shape of the real line so that a reader of a normalised
+	// document sees a plausible one rather than wondering what broke.
+	NormalizedToolchainVersion = "go version go0.0.0 normalized/normalized"
 	// NormalizedOS and NormalizedArch stand in for the host a run happened on.
 	//
 	// They are what makes one committed report golden usable on all three
@@ -53,11 +58,22 @@ const (
 	// the schema's milliseconds type has a minimum of zero and because "no time
 	// passed" is unmistakably not a measurement.
 	NormalizedDurationMS = 0
+	// NormalizedWorker stands in for the scheduler slot that executed one
+	// attempt. Which worker claimed a mutant is decided by whichever goroutine
+	// reached the queue first, so two runs of one workspace differ in it and
+	// mean the same thing — the same reason internal/execute's own scheduling
+	// test sets it aside before comparing two runs. Zero is a real worker
+	// number, which is unavoidable: the field has no value that is not one.
+	NormalizedWorker = 0
 )
 
-// normalizedDuration is [NormalizedDurationMS] as a document carries it, built
-// once so that the constant and the value written can never disagree.
-var normalizedDuration = json.Number(strconv.Itoa(NormalizedDurationMS))
+// normalizedDuration and normalizedWorker are [NormalizedDurationMS] and
+// [NormalizedWorker] as a document carries them, built once so that the
+// constants and the values written can never disagree.
+var (
+	normalizedDuration = json.Number(strconv.Itoa(NormalizedDurationMS))
+	normalizedWorker   = json.Number(strconv.Itoa(NormalizedWorker))
+)
 
 // MustMarshal marshals a report and checks it against the published schema.
 //
@@ -121,11 +137,14 @@ func EncodeJSON(t testing.TB, doc map[string]any) []byte {
 // A run report is mostly the second kind — which mutants there are, what
 // happened to each of them, what the policy decided — and that is the part a
 // golden can pin. The first kind is the tool's version, the module's go
-// directive, the host's GOOS and GOARCH, the wall clock at both ends, every
-// measured duration, and every absolute path: the located toolchain, the
-// snapshot root, the report directory. A golden that carried them would fail on
-// the next machine, on the next toolchain, on the other two platforms CI runs,
-// and on the second run of the same day.
+// directive, the toolchain's own version line, the host's GOOS and GOARCH, the
+// wall clock at both ends, every measured duration — the run's, each mutant's,
+// each of its attempts', and every phase and stage of the timeline — the
+// scheduler slot each attempt ran in, and every absolute path: the located toolchain, in `test.command` and in
+// `test.resolved_command` and in `test.toolchain.go_bin`, the snapshot root,
+// the report directory. A golden that carried them would fail on the next
+// machine, on the next toolchain, on the other two platforms CI runs, and on
+// the second run of the same day.
 //
 // Two things are deliberately *not* normalised. Mutant ids and workspace digests
 // are content-addressed: they are derived from the bytes of the program under
@@ -147,8 +166,31 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 	setNumber(doc, "test", "timeout_ms")
 	setNumber(doc, "test", "baseline", "slowest_ms")
 	setNumberSlice(doc, "test", "baseline", "durations_ms")
+	setString(doc, NormalizedToolchainVersion, "test", "toolchain", "version")
 	for _, mutant := range array(doc, "mutants") {
 		setNumber(mutant, "duration_ms")
+		// One row per attempt: how long the pass took, and which of the
+		// scheduler's slots made it. The worker is a fact about the run in the
+		// strongest sense — it is which goroutine won the race to the queue, so
+		// two runs of one workspace on one machine differ in it — and the
+		// binaries beside it are left alone, because which binaries a pass
+		// started is what the run *did* and is the same every time.
+		for _, execution := range array(mutant, "executions") {
+			setNumber(execution, "duration_ms")
+			setValue(execution, normalizedWorker, "worker")
+		}
+	}
+	// The timeline, which is every measured duration there is left. The phase
+	// and stage *names* stay: which steps a run took is a fact about the
+	// pipeline, and a golden that could not see a stage appear or disappear
+	// would be pinning nothing worth pinning.
+	if timing, ok := doc["timing"].(map[string]any); ok {
+		for _, phase := range array(timing, "phases") {
+			setNumber(phase, "duration_ms")
+		}
+		for _, stage := range array(timing, "stages") {
+			setNumber(stage, "duration_ms")
+		}
 	}
 
 	// The paths are replaced last and by a walk rather than by name, because
@@ -213,9 +255,15 @@ func setString(doc map[string]any, value string, keys ...string) {
 
 // setNumber replaces a measured duration with [NormalizedDurationMS].
 func setNumber(doc map[string]any, keys ...string) {
+	setValue(doc, normalizedDuration, keys...)
+}
+
+// setValue replaces whatever is at a path of keys, when it is there. A missing
+// key is not an error, for the reason [setString] gives.
+func setValue(doc map[string]any, value any, keys ...string) {
 	if node, key, ok := parentOf(doc, keys); ok {
 		if _, present := node[key]; present {
-			node[key] = normalizedDuration
+			node[key] = value
 		}
 	}
 }

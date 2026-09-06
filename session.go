@@ -1082,7 +1082,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	// are the facts rather than placeholders. The summary is built by
 	// internal/execute so that an attempt recorded through this API and one
 	// recorded by a run describe themselves the same way, field for field.
-	traceSeq := s.recorder.MutantExec(execute.AttemptRecord(run, attempt, 1, 0))
+	traceSeq := s.recorder.MutantExec(execute.AttemptRecord(run, attempt, 1))
 	if s.keepTemp {
 		s.keepScratch(scratch)
 		kept = true

@@ -61,9 +61,19 @@ func New(sink Sink, now func() time.Time, start StartRecord) *Recorder {
 // The closer is once-guarded and records the phase's duration, so a phase that
 // is closed by a defer and again on an early return is still one span. Until it
 // runs, every stage this recorder records is stamped with this phase.
-func (recorder *Recorder) PhaseStart(name string) func() {
+//
+// It returns the span it recorded, so that a caller which publishes the same
+// duration somewhere else — the engine's report carries every phase — publishes
+// *this* measurement rather than taking a second pair of clock readings around
+// the same work. Two readings of one clock differ by however long the two calls
+// took, which is nothing on a quiet machine and a millisecond on a busy one:
+// enough for two documents describing one run to disagree about it. The closer
+// is idempotent in its answer as well as in its effect, so a phase closed twice
+// returns the one span both times; a nil recorder's closer returns zero, and a
+// caller that has to time an untraced run measures it itself.
+func (recorder *Recorder) PhaseStart(name string) func() time.Duration {
 	if recorder == nil {
-		return func() {}
+		return func() time.Duration { return 0 }
 	}
 	recorder.mutex.Lock()
 	started := recorder.now()
@@ -72,7 +82,8 @@ func (recorder *Recorder) PhaseStart(name string) func() {
 	recorder.mutex.Unlock()
 
 	var once sync.Once
-	return func() {
+	var span time.Duration
+	return func() time.Duration {
 		once.Do(func() {
 			recorder.mutex.Lock()
 			defer recorder.mutex.Unlock()
@@ -80,24 +91,28 @@ func (recorder *Recorder) PhaseStart(name string) func() {
 			if recorder.openPhase == name {
 				recorder.openPhase = ""
 			}
-			elapsed := durationMS(moment.Sub(started))
+			span = moment.Sub(started)
+			elapsed := durationMS(span)
 			recorder.emitLocked(moment, Event{
 				Type:  TypePhaseEnd,
 				Phase: &PhaseRecord{Name: name, DurationMS: &elapsed},
 			})
 		})
+		return span
 	}
 }
 
 // Stage records the start of one step inside a phase and returns the closer
 // that finishes it with a result.
 //
-// The closer is once-guarded, like a phase's. The phase stamped on both events
-// is the one that was open when the stage started, so a stage that outlives its
-// phase is still attributed to it.
-func (recorder *Recorder) Stage(name, detail string) func(result string) {
+// The closer is once-guarded, like a phase's, and returns the span it recorded
+// for the reason [Recorder.PhaseStart]'s does: one measurement, published in as
+// many documents as want it. The phase stamped on both events is the one that
+// was open when the stage started, so a stage that outlives its phase is still
+// attributed to it.
+func (recorder *Recorder) Stage(name, detail string) func(result string) time.Duration {
 	if recorder == nil {
-		return func(string) {}
+		return func(string) time.Duration { return 0 }
 	}
 	recorder.mutex.Lock()
 	started := recorder.now()
@@ -109,12 +124,14 @@ func (recorder *Recorder) Stage(name, detail string) func(result string) {
 	recorder.mutex.Unlock()
 
 	var once sync.Once
-	return func(result string) {
+	var span time.Duration
+	return func(result string) time.Duration {
 		once.Do(func() {
 			recorder.mutex.Lock()
 			defer recorder.mutex.Unlock()
 			moment := recorder.now()
-			elapsed := durationMS(moment.Sub(started))
+			span = moment.Sub(started)
+			elapsed := durationMS(span)
 			recorder.emitLocked(moment, Event{
 				Type: TypeStage,
 				Stage: &StageRecord{
@@ -126,6 +143,7 @@ func (recorder *Recorder) Stage(name, detail string) func(result string) {
 				},
 			})
 		})
+		return span
 	}
 }
 
