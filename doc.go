@@ -15,4 +15,17 @@
 // files and compiled binaries live outside the snapshot, and every child is
 // supervised as a process tree. Workspace and Session both own temporary
 // resources and should be closed.
+//
+// Three things a consumer is likeliest to get wrong, each written out where it
+// is defined: [PreparePhase] is an *open* vocabulary and an unknown phase must
+// be accepted rather than refused ([KnownPreparePhases] is what to pin);
+// [Catalog.Digest] identifies the set of mutants and nothing else, so two
+// sessions prepared over different modules or toolchains can share it; and
+// absence from [ProbeResult.Infected] licenses skipping an execution only for a
+// mutant whose [Mutant.Probed] is true.
+//
+// docs/library.md is the long form: the lifecycle and its locking, every option
+// field with its default, the invariants of every result, the guarantees the
+// engine makes about temporary directories, reserved variables and paired
+// timeouts, and a `go list` passthrough recipe.
 package gomutants

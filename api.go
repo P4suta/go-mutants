@@ -98,6 +98,16 @@ type CommandResult struct {
 }
 
 // PreparePhase identifies one timed stage of session preparation.
+//
+// The vocabulary is *open*. [KnownPreparePhases] lists every phase this build
+// emits, and a later engine may emit one that is not in that list: splitting a
+// stage in two, or timing a step that is not timed today, adds a phase without
+// changing the meaning of any phase already here. So a consumer must accept an
+// unknown phase rather than refuse it — record the string verbatim, or map it
+// to a catch-all of its own — and a consumer that keeps a closed schema, an
+// enumeration or a fixed set of timers must pin [KnownPreparePhases] in a test
+// of its own. That way the day a phase is added is the day that test says so,
+// rather than the day somebody's run fails on a string nobody had heard of.
 type PreparePhase string
 
 const (
@@ -111,6 +121,39 @@ const (
 	PreparePhaseProbeCoverageBuild PreparePhase = "probe_coverage_build"
 	PreparePhaseProbeRestoration   PreparePhase = "probe_restoration"
 )
+
+// KnownPreparePhases returns every phase this build emits, in the order a
+// preparation reaches them.
+//
+// The order is the order of the first [PrepareEventStarted] for each phase and
+// not of the finishes: the binary build starts before the probe tree's own
+// three phases and finishes after them, because the two builds run
+// concurrently. A phase [PrepareOptions] turned off is still emitted, as a
+// start immediately followed by a finish carrying [PreparePhaseSkipped], so
+// this list is what a consumer sees for every preparation rather than only for
+// a fully configured one.
+//
+// [PreparePhase] is an open vocabulary, and this list does not close it: it is
+// what today's engine emits, not what every engine will ever emit. It exists so
+// that a consumer keeping a closed schema of its own can pin the list
+// deliberately, in a test, instead of discovering the vocabulary from whichever
+// run happened to exercise every phase.
+//
+// Each call returns a fresh slice: the list is a fact about this build and not
+// a value a caller may edit out from under the next one.
+func KnownPreparePhases() []PreparePhase {
+	return []PreparePhase{
+		PreparePhaseDiscovery,
+		PreparePhaseProbeSnapshot,
+		PreparePhaseMainValidation,
+		PreparePhaseMainRestoration,
+		PreparePhaseVerification,
+		PreparePhaseBinaryBuild,
+		PreparePhaseProbeValidation,
+		PreparePhaseProbeCoverageBuild,
+		PreparePhaseProbeRestoration,
+	}
+}
 
 // PrepareEventState distinguishes phase entry from phase completion.
 type PrepareEventState string
@@ -179,14 +222,32 @@ type PrepareOptions struct {
 // Session.Catalog returns a deep copy.
 type Catalog struct {
 	WorkspaceDigest string
-	Digest          string
-	ModulePath      string
-	GoVersion       string
-	Toolchain       string
-	Profile         string
-	Mutants         []Mutant
-	Rejections      []Rejection
-	TestPackages    []string
+	// Digest identifies the *set of mutants* and nothing else. It is the
+	// SHA-256 over three length-prefixed things: the domain separator
+	// "go-mutants-catalog-v1", the decimal mutant count, and every [Mutant.ID]
+	// in catalogue order.
+	//
+	// What it does not cover is the half worth writing down, because a digest
+	// invites being used as an identity for more than it is. ModulePath,
+	// GoVersion, Toolchain, Profile, TestPackages, WorkspaceDigest,
+	// [Mutant.Package], [Mutant.Accepted], [Mutant.Probed] and Rejections are
+	// all outside it. Two sessions therefore share this digest whenever they
+	// catalogued the same mutants, however differently they were prepared: a
+	// different module path, a different toolchain, a different profile that
+	// happened to select the same rules, a probe tree in one and none in the
+	// other, or a validation that rejected mutants the other accepted.
+	//
+	// So it answers exactly one question — are these two runs looking at the
+	// same mutants? — and a consumer that needs "are these two prepared
+	// sessions interchangeable?" must hash the rest itself.
+	Digest       string
+	ModulePath   string
+	GoVersion    string
+	Toolchain    string
+	Profile      string
+	Mutants      []Mutant
+	Rejections   []Rejection
+	TestPackages []string
 }
 
 // Mutant is one canonical, deduplicated source edit.
@@ -227,6 +288,10 @@ type Mutant struct {
 	// treat it as infected by every test. Reading the two the same way is the
 	// one mistake this field exists to prevent, and it is the mistake that
 	// silently drops the executions that find kills.
+	//
+	// Probed implies Accepted. A mutant validation rejected is never executed,
+	// so a probe status on it would describe a tree nothing will ever run
+	// against; it reads as false whatever the probe tree made of the site.
 	//
 	// It is session-local, like the rest of this API's live values: it appears
 	// in no report, in no schema, and in no `go-mutants list --json` document,
@@ -388,6 +453,14 @@ type ProbeResult struct {
 	// Only a mutant whose [Mutant.Probed] is true can appear here, and the
 	// converse is what a caller has to remember: an unprobed mutant is absent
 	// from every measurement and must be treated as infected by every test.
+	//
+	// That is a promise the probe tree cannot keep on its own. It is
+	// instrumented from the whole catalogue and its runtime never learns the
+	// mutant tree's verdict, so its log can name a site whose *mutation* does
+	// not compile — a mutant [Session.Exec] refuses and [Mutant.Probed] reports
+	// as false. [Session.Probe] drops those indices before returning: an
+	// infection fact about a mutant nothing will execute licenses no skipping,
+	// and leaving it in would contradict the very field a caller reads it by.
 	Infected []uint32
 	// ExitCode is the status of the test binary that decided the pass.
 	ExitCode int

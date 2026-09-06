@@ -522,10 +522,20 @@ type preparedFixture struct {
 }
 
 var (
-	// probedFixture and unprobedFixture are the two sessions this file shares,
-	// each prepared at most once and only if a test asks for it.
+	// probedFixture and unprobedFixture are the two probeable sessions this file
+	// shares, each prepared at most once and only if a test asks for it.
 	probedFixture   = sync.OnceValue(func() *preparedFixture { return prepareProbeable(true) })
 	unprobedFixture = sync.OnceValue(func() *preparedFixture { return prepareProbeable(false) })
+
+	// rejectedFixture is the third: fixtures/rejectable, whose candidates
+	// include three whose mutated copy is not a program. It is the only shared
+	// session with a non-empty Catalog.Rejections, and every contract claim
+	// about a rejection is vacuous without one. It asks for no probe tree and no
+	// verification, because nothing needs this session to measure anything —
+	// only to have rejected something.
+	rejectedFixture = sync.OnceValue(func() *preparedFixture {
+		return prepareFixture("rejectable", gomutants.PrepareOptions{SkipVerify: true})
+	})
 
 	// preparedMu guards the register TestMain releases. A sync.OnceValue cannot
 	// be asked whether it ever ran, and preparing a session just to close it
@@ -534,27 +544,40 @@ var (
 	preparedFixtures []*preparedFixture
 )
 
-// prepareProbeable copies the fixture, opens a workspace over it, and prepares
-// one session with or without the probe tree.
+// prepareProbeable prepares one probeable session with or without the probe
+// tree.
+func prepareProbeable(probe bool) *preparedFixture {
+	return prepareFixture("probeable", gomutants.PrepareOptions{
+		Probe:              probe,
+		ProbeCoverPackages: []string{probeableModule + "/..."},
+		MutantTimeout:      30 * time.Second,
+		SkipVerify:         !probe,
+	})
+}
+
+// prepareFixture copies the named fixture, opens a workspace over it, and
+// prepares one session with the given options. PrepareOptions.Trace is supplied
+// here rather than by the caller, because the recorded events are one of the
+// things the shared value carries.
 //
 // It takes no testing.T because it runs under a sync.Once that outlives the
 // test that triggered it; a failure is carried in the value and reported by
 // whichever test asks for it first.
-func prepareProbeable(probe bool) *preparedFixture {
+func prepareFixture(name string, options gomutants.PrepareOptions) *preparedFixture {
 	prepared := &preparedFixture{}
 	preparedMu.Lock()
 	preparedFixtures = append(preparedFixtures, prepared)
 	preparedMu.Unlock()
 
-	parent, err := os.MkdirTemp("", "go-mutants-probe-fixture-")
+	parent, err := os.MkdirTemp("", "go-mutants-"+name+"-fixture-")
 	if err != nil {
 		prepared.err = err
 		return prepared
 	}
 	prepared.parent = parent
 
-	root := filepath.Join(parent, "probeable")
-	if err = copyFixtureTree("probeable", root); err != nil {
+	root := filepath.Join(parent, name)
+	if err = copyFixtureTree(name, root); err != nil {
 		prepared.err = err
 		return prepared
 	}
@@ -565,15 +588,10 @@ func prepareProbeable(probe bool) *preparedFixture {
 	}
 	prepared.workspace = workspace
 
-	session, err := workspace.Prepare(context.Background(), gomutants.PrepareOptions{
-		Probe:              probe,
-		ProbeCoverPackages: []string{probeableModule + "/..."},
-		MutantTimeout:      30 * time.Second,
-		SkipVerify:         !probe,
-		Trace: func(event gomutants.PrepareEvent) {
-			prepared.events = append(prepared.events, event)
-		},
-	})
+	options.Trace = func(event gomutants.PrepareEvent) {
+		prepared.events = append(prepared.events, event)
+	}
+	session, err := workspace.Prepare(context.Background(), options)
 	if err != nil {
 		prepared.err = err
 		return prepared
@@ -694,6 +712,17 @@ func unprobeable(t *testing.T) *preparedFixture {
 	prepared := unprobedFixture()
 	if prepared.err != nil {
 		t.Fatalf("preparing the probeable fixture without a probe tree: %v", prepared.err)
+	}
+	return prepared
+}
+
+// rejectable returns the shared session over the fixture whose validation
+// rejects, which is the only one whose catalogue carries rejections.
+func rejectable(t *testing.T) *preparedFixture {
+	t.Helper()
+	prepared := rejectedFixture()
+	if prepared.err != nil {
+		t.Fatalf("preparing the rejectable fixture: %v", prepared.err)
 	}
 	return prepared
 }

@@ -306,6 +306,11 @@ mise run check
 
 ## Engine API
 
+**[`docs/library.md`](docs/library.md) is the reference**: the lifecycle and
+its locking, every option field with its default, the invariants of every
+result, and the guarantees the engine makes about temporary directories,
+reserved variables and paired timeouts. What follows is the tour.
+
 The module root also exposes package `github.com/P4suta/go-mutants` for tools
 that need mutation as an engine rather than as a score-producing command. It
 keeps the same safety boundary: `Open` freezes a disposable snapshot,
@@ -429,6 +434,7 @@ results, and not-run mutants are excluded from the score denominator.
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Engine API](docs/library.md)
 - [Operators](docs/operators.md)
 - [Configuration](docs/configuration.md)
 - [JSON contracts](docs/json-schema.md)

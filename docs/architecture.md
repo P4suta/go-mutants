@@ -462,15 +462,24 @@ never linked a probe — and one that never linked a probe ran no probed site. A
 *existing* log that `ReadInfectionLog` refuses is `GOM7517` and no facts.
 
 `Mutant.Probed` says which mutants the tree speaks for, and it is the field a
-consumer is likeliest to misread. It is the conjunction of two things: the
-mutant has a probe form, and its site survived the probe tree's validation.
-Neither half is enough on its own — a mutant with no form leaves its file
-untouched, so the probe tree compiles and the validation **accepts** it exactly
-as it accepts a probed one, and a caller reading "accepted" as "probed" would
-take its permanent absence from every log as licence to skip the tests that kill
-it. `instrument.Hints.Probes` answers the half only that package can, and it is
+consumer is likeliest to misread. It is the conjunction of three things: the
+mutant has a probe form, its site survived the probe tree's validation, and the
+*mutant tree's* validation accepted the mutant itself. None of the three is
+enough on its own — a mutant with no form leaves its file untouched, so the
+probe tree compiles and the validation **accepts** it exactly as it accepts a
+probed one, and a caller reading "accepted" as "probed" would take its permanent
+absence from every log as licence to skip the tests that kill it.
+`instrument.Hints.Probes` answers the half only that package can, and it is
 `probeFor` and nothing beside it, so a form added there is answered for here
 with no second list to keep in step.
+
+The third clause is about two independent passes over two trees. The probe
+rewrite at a site is a different edit from the mutation there, and often a
+smaller one, so a site whose probe compiles while its mutant does not is an
+ordinary outcome rather than a contradiction. But a rejected mutant is never
+executed, and `Probed` is read as a fact about the executions a consumer may
+skip — so on a mutant the mutant tree rejected it is false, whatever the probe
+tree made of the site. **`Probed` implies `Accepted`.**
 
 So the consumer's rule has two clauses, and dropping either one is unsound:
 

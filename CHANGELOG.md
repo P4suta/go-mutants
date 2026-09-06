@@ -37,6 +37,47 @@ Entries say *why* a change was made, not only what changed.
   machine: sweep only a named parent. Nothing changes for the run's children —
   their `TMPDIR`, `TMP` and `TEMP` still point at a per-worker directory under
   the run's scratch, wherever that scratch now sits.
+- **The engine API's contract is written down and pinned:
+  `KnownPreparePhases`, `docs/library.md`, and a test per invariant.** Every
+  claim a consumer was already relying on lived in somebody's head or in the
+  shape of the code: that a mutant ID is 64 hex characters, that `Mutants[i]`
+  carries `Index == i` so a probe log's indices need no translation, that a
+  `DisplayID` is a prefix of its ID and unique, that a mutant is accepted
+  exactly when it carries no rejection, that `KilledBy` is filled in for a kill
+  and a timeout and for nothing else, that a measured `Infected` set is
+  ascending, distinct, in range and probed. None of it was checked, so any of it
+  could have stopped being true in a refactor that looked local, and the
+  consumer would have found out in production. `api_contract_test.go` now checks
+  those claims against the sessions the suite already prepares, so the cost is
+  assertions rather than minutes. The catalogue invariants run over a third
+  shared session, prepared over `fixtures/rejectable` without a probe tree or a
+  verification, because probeable's three mutants all compile: every clause
+  about a rejection would otherwise pass over an empty list, and a vacuous
+  assertion is a claim nobody is keeping. `external_contract_test.go` compiles a
+  synthetic consumer module against `Swept`, `Preserved`, `ToolchainVersion`,
+  `PrepareOptions.Trace`'s exact type, `SweepResult`'s named fields,
+  `BranchProof`'s named fields, and every constant of all six vocabularies.
+
+  `KnownPreparePhases()` exists because `PreparePhase` is an **open**
+  vocabulary and nothing said so. A consumer with a closed schema of its own —
+  a JSON enumeration, a fixed set of timers — had no way to pin the list except
+  by reading the source, so the day go-mutants split a phase in two would have
+  been the day that consumer's users saw a validation failure. The list is now
+  a function of this build: a consumer pins it in a test, gets told by its own
+  suite when it changes, and is told in the doc to accept an unknown phase
+  verbatim or map it to a catch-all in the meantime.
+
+  `docs/library.md` is the reference the package comment could not be: the
+  lifecycle and exactly which lock each call holds for how long, every option
+  field with its default, the invariants above, the guarantees (a private
+  `TMP`/`TEMP`/`TMPDIR` per call, the reserved `GO_MUTANTS_*` and temporary
+  variables, the paired timeouts — supervisor at `Timeout`, the binary's own
+  `-test.timeout` at twice it so the two never race — the snake_case `Outcome`
+  vocabulary against `run-report-v1`'s kebab-case, and temporary-directory
+  ownership, sweep and keep), what `Catalog.Digest` does and does not cover, and
+  a `go list -json` passthrough recipe that says why `OutputLimit` has to be
+  sized for a document: truncation keeps the tail, and the tail of a JSON stream
+  does not parse.
 - **One shared, hermetic test harness in `internal/testkit`, and a test that
   keeps production code out of it.** Every helper it holds existed three or four
   times before, and the copies disagreed — which is how the suites came to
@@ -1366,6 +1407,26 @@ Entries say *why* a change was made, not only what changed.
   in the report and in a recording. What has stopped happening is the
   discarding, at the one moment those diagnostics exist. No message text
   changed, so a line anybody greps for still reads exactly as it did.
+- **`Mutant.Probed` now implies `Mutant.Accepted`, and `ProbeResult.Infected`
+  no longer names a rejected mutant.** The two validations are independent
+  passes over two trees, and the probe rewrite at a site is a different edit
+  from the mutation there — often a smaller one — so a site whose probe compiles
+  while its mutant does not was reported as `Probed: true` on a mutant the
+  mutant tree had rejected. Nothing will ever execute that mutant, so the field
+  was a statement about a run that cannot happen, while `Probed` is read as a
+  fact about the executions a consumer may *skip*. A consumer keeping a probe
+  status per mutant would have carried one for a mutant that was never a
+  candidate.
+
+  Tightening the field alone would have broken the other half of the same
+  contract. The probe tree is instrumented from the whole catalogue and its
+  runtime never learns the mutant tree's verdict, so such a site is still
+  reached and still *records*: the log names an index whose mutant now reports
+  `Probed: false`, while `Infected` is documented as naming only probed mutants.
+  `Session.Probe` therefore filters those indices out before returning, keeping
+  the order, keeping nil as nil and the empty set as the empty set. The one
+  observable difference is that a rejected mutant no longer appears in a
+  measurement — the same mutant `Session.Exec` already refused to run.
 - **A snapshot now carries the modification times of the tree it copied.**
   Every file and directory landed stamped "now", which is not what the go
   command expects of a tree it is asked to build. cmd/go caches a package
