@@ -12,6 +12,14 @@ name: Nightly fuzz and property
 permissions:
   contents: read
 
+env:
+  # The same rule CI states, and nightly needs it just as much: a runner whose
+  # toolchain went missing must fail rather than quietly narrow the suite to the
+  # tests that need none. It is easier to miss here, because nobody watches a
+  # scheduled job the way they watch a pull request -- a fuzz run that skipped
+  # every target for a week looks exactly like a fuzz run that found nothing.
+  GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"
+
 concurrency:
   group: nightly-${{ github.workflow }}
   cancel-in-progress: true
@@ -45,6 +53,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # The suites' child `go` commands key their entries on absolute paths that
+      # exist for one run, so the cache they fill is rubble by the time the job
+      # ends. Same rule as CI: the runner's own temporary area, never restored
+      # from an actions cache, published through $GITHUB_ENV because the
+      # `runner` context is not available in a job's `env:`.
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -88,6 +106,13 @@ jobs:
     env:
       RAPID_CHECKS: "2000"
     steps:
+      # As in the fuzz job above: the test cache lives in the runner's own
+      # temporary area and dies with it.
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -109,5 +134,86 @@ jobs:
         with:
           name: rapid-failures
           path: internal/*/testdata/rapid/**
+          retention-days: 14
+          if-no-files-found: warn
+
+  # The integration tier under the race detector: the pairing that finds what
+  # neither half finds alone.
+  #
+  # CI's `race` job covers the unit tier on every push, and the races that
+  # matter most in this repository are not there. They are in the scheduler that
+  # runs mutants concurrently, the copier that fans a snapshot out over
+  # goroutines, and the supervisor that kills a process tree while its output is
+  # still being read -- none of which runs without a real toolchain.
+  # Instrumented, that suite is the better part of an hour, which is why it is
+  # here rather than in front of a pull request.
+  #
+  # Ubuntu only, for the same reason CI's race job is: -race links the C
+  # runtime, and a data race is a property of the Go code rather than of the
+  # platform.
+  #
+  # 100 minutes against the task's own 90m alarm, so that a suite which ran out
+  # of budget reports itself -- with the package that hung and a stack -- in the
+  # ten minutes before the runner cancels the job and says nothing.
+  race-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      # The suites' child `go` commands key their entries on absolute paths that
+      # exist for one run, and an instrumented run compiles everything twice
+      # over. Same rule as CI: the runner's own temporary area, never restored
+      # from an actions cache, published through $GITHUB_ENV because the
+      # `runner` context is not available in a job's `env:`.
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+      - run: mise run test-integration-race
+      # As in CI: a report, never a gate.
+      - name: Test build cache
+        if: success() || failure()
+        continue-on-error: true
+        run: mise run test-cache-status
+
+  # The benchmarks, kept.
+  #
+  # A benchmark number is worth nothing on its own and everything next to
+  # yesterday's: `benchstat` over two of these files is how a regression in the
+  # glob matcher, the TOML parser or the snapshot copier is seen at all. Nightly
+  # rather than per-push because a shared runner's timings are too noisy to gate
+  # on and because there is nothing to compare a pull request's number with.
+  #
+  # It is a report, so a failure here is a thing to read rather than a thing to
+  # block on -- but the upload runs `if: always()` regardless, since a benchmark
+  # that panicked halfway still wrote the lines before it.
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # As in the fuzz job above: the test cache lives in the runner's own
+      # temporary area and dies with it.
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+      - run: mise run bench
+      - name: Upload the benchmark output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: bench
+          path: bench.txt
           retention-days: 14
           if-no-files-found: warn

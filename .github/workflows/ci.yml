@@ -95,8 +95,22 @@ jobs:
           install: true
           cache: true
       - run: mise run build
-      - run: mise run test
-      - run: mise run test-integration
+      # Both tiers through internal/devtools/testcost rather than as bare `go
+      # test` runs. The commands underneath are the same ones -- the tool reads
+      # `go test -json` and exits with the run's own verdict, so this gates
+      # exactly as strictly as it did -- and what it adds is the two numbers a
+      # log does not carry: where the time went, per package, and what did not
+      # run at all. The table is appended to $GITHUB_STEP_SUMMARY and rendered
+      # on this run's own page, which is the only place anybody would see it.
+      #
+      # --no-skips is deliberately not passed; the reasoning is written out in
+      # full on [tasks.test-cost] in mise.toml. Briefly: every remaining
+      # `t.Skip` in this repository is a platform-capability guard or a fuzz
+      # body rejecting an input, at least one fires on each of these three
+      # operating systems, and the skips the flag was wanted for -- a missing
+      # tool -- are already fatal here through GO_MUTANTS_TEST_REQUIRE_TOOLS.
+      - run: mise run test-cost
+      - run: mise run test-cost-integration
       # The corpus is an input, never an output. Every integration suite runs
       # against a disposable copy of a fixture module, because a run writes
       # `reports/mutation/` into the tree it is pointed at and several tests
@@ -142,6 +156,111 @@ jobs:
       # suite but not after a cancellation, where the numbers would be about
       # half a run. Through mise rather than a bare `go run`, so that the task
       # definition stays the single place this command is written down.
+      - name: Test build cache
+        if: success() || failure()
+        continue-on-error: true
+        run: mise run test-cache-status
+
+  # The unit tier under the race detector, which had never been run at all.
+  #
+  # This repository schedules mutants across a worker pool, fans a snapshot copy
+  # out over goroutines, merges coverage from concurrent readers and kills
+  # process trees from a supervisor -- and until this job existed, the one tool
+  # that finds a data race in any of that was not part of any gate. A race that
+  # only appears under load is otherwise found by a user, once, in a report
+  # nobody can reproduce.
+  #
+  # Ubuntu only, and cgo is the reason rather than thrift: -race links the C
+  # runtime, so it needs a working C toolchain, and the Windows runner's is a
+  # different compiler with different failures to debug. A data race is a
+  # property of the Go code, not of the platform, so one platform proves it.
+  #
+  # The integration tier under -race is nightly (race-integration), not here: it
+  # is the better part of an hour, and the pull request should not wait for it.
+  #
+  # 35 minutes against the task's own 30m alarm, so that a suite which ran out
+  # of budget reports itself -- with the package that hung and a stack -- in the
+  # five minutes before the runner cancels the job and says nothing at all.
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      # Same rule and the same reason as platform-tests: the suites' child `go`
+      # commands key entries on paths that exist for one run, so their cache
+      # lives in the runner's temporary area and dies with it.
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+      - run: mise run test-race
+
+  # Coverage of the integration tier, as an artifact and never as a gate.
+  #
+  # There is no threshold in this job and there is not going to be one. A
+  # coverage percentage measures which lines ran, not which behaviour is
+  # checked, and a number defended by a gate is a number people write tests for.
+  # The gate on whether the tests catch anything already exists and is far
+  # stricter: the dogfood job runs go-mutants against go-mutants with --strict.
+  # This answers the one question mutation cannot answer cheaply -- what did
+  # nobody even run -- and it answers it by handing over a file to read.
+  #
+  # `continue-on-error` is what "never a gate" means in a workflow. A profile
+  # that could not be written, or a suite that went red here after passing in
+  # platform-tests, is a thing to look at rather than a thing to block a merge.
+  #
+  # The integration tier rather than the unit one, because that is where most of
+  # this repository's lines are actually executed, and with -coverpkg=./... so
+  # that a package is credited for the lines its callers ran. The number is
+  # still a floor: a suite that starts a child `go test` gets no credit for what
+  # the child ran, because the child is a different binary with no counters.
+  #
+  # Not on pull requests. It is ninety minutes of instrumented integration suite
+  # that cannot fail anything, and a job like that on every push of every branch
+  # doubles the runner time this repository spends to produce a file most pull
+  # requests never open. On main it is a trend somebody can read; on a pull
+  # request it is a queue. `workflow_dispatch` is how to get one on demand.
+  #
+  # 100 minutes against the task's own 90m alarm, so that a suite which ran out
+  # of budget reports itself -- with the package that hung and a stack -- in the
+  # ten minutes before the runner cancels the job and says nothing at all.
+  coverage:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - name: Point the test build cache at the runner's temporary directory
+        shell: bash
+        run: >-
+          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+          >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+      - name: Measure coverage
+        continue-on-error: true
+        run: mise run cover-integration
+      # cover.out is what `go tool cover` and every editor reads; cover.html is
+      # what a reviewer opens. Both, because regenerating the rendering needs
+      # the profile *and* the checkout it was measured against.
+      - name: Upload the coverage profile and its rendering
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: coverage
+          path: |
+            cover.out
+            cover.html
+          retention-days: 14
+          if-no-files-found: warn
+      # As in platform-tests: a report, never a gate.
       - name: Test build cache
         if: success() || failure()
         continue-on-error: true

@@ -326,6 +326,104 @@ Entries say *why* a change was made, not only what changed.
   report went — it rides on `engine.ReportPublished` as `TracePath`, so it is
   laid out like the other paths, kept by `--quiet` like the other paths, and
   replayed into the scrollback after a dashboard run like the other paths.
+- **Test tiers, and the four things nobody was measuring: race, coverage,
+  cost and benchmarks.** `mise run test` was paying for forty toolchain-driving
+  tests on three operating systems every push — the root package alone took 28
+  seconds of `go build`, `go test -c` and mutant processes for tests that
+  cannot run on a machine without Go — while `-race` had never been run against
+  this repository at all, coverage had never been measured, and a test that
+  quietly stopped running left no trace anywhere.
+
+  The suite is now two tiers. `go test ./...` runs the whole unit tier — every
+  test that needs a compiler and nothing else, which is most of them — and
+  `go test -tags integration ./...` adds the suites that drive a real toolchain:
+  a `go build`, a `go test -c`, a mutation run. Two tests keep the line where
+  it is: `TestRootPackageUnitTierNeedsNoToolchain` asks the unit-tier binary which
+  tests it contains, because a lost `//go:build` line is invisible in every
+  other way, and `TestEveryToolchainDrivingTestIsIntegrationTagged` scans every
+  `_test.go` in the tree for a `go` command started outside the tag — parsing
+  the build constraint with `go/build/constraint` and asking whether the file is
+  excluded whenever `integration` is off, because a term match would have
+  accepted `integration || !windows`, which every unit-tier run outside Windows
+  builds. The second
+  keeps a ledger,
+  `internal/testkit/testdata/unit-toolchain-allowlist.txt`, of the nine files
+  that drive the toolchain in the unit tier on purpose — internal/gocmd, whose
+  subject *is* the `go` command; internal/discover, which loads modules with
+  go/packages; internal/instrument, which has to compile what it generates to
+  know it is a program; and the harness's own tests, which are the toolchain
+  policy's tests — and reports a stale entry as loudly as an offender, so the
+  list shrinks on its own and grows only deliberately. The three harness needles
+  are matched unqualified (`GoBinary(`, not `testkit.GoBinary(`) precisely so
+  that internal/testkit is subject to the rule it defines rather than exempt
+  from it by construction.
+
+  One silent skip went with it. `internal/discover`'s toolchain helper used a
+  bare `t.Skipf` when `gocmd.Locate` failed, so a runner that lost its Go would
+  have retired seventy-four tests and reported a green build; it now goes
+  through `testkit.GoBinary`, which skips on a developer's machine and fails
+  under `GO_MUTANTS_TEST_REQUIRE_TOOLS=1`. `session_integration_test.go`'s
+  `exec.LookPath("go")` was the same shape and moved the same way.
+
+  New tasks, each with its reasoning beside it in `mise.toml`: `test-race` and
+  `test-integration-race` (ubuntu-only, because `-race` links the C runtime and
+  a data race is a property of the Go code rather than of the platform),
+  `cover` and `cover-integration` (a signal, never a gate — the gate on whether
+  the tests catch anything is `mise run dogfood`, which is far stricter), and
+  `bench`, which writes `bench.txt` for `benchstat` to read against yesterday's.
+
+  New in CI: a `race` job on every push, a `coverage` job on `main` and on
+  demand — ninety minutes that cannot fail anything does not belong in front of
+  every pull request — uploading `cover.out` and `cover.html` for fourteen days,
+  and nightly `race-integration` and `bench` jobs. Every job's `timeout-minutes`
+  is five to ten past its task's own `-timeout`, so Go's alarm fires first and
+  reports the package that hung with a stack, rather than the runner cancelling
+  the job and saying nothing.
+
+  **`race` is not yet a required check.** Adding it to the branch ruleset is an
+  owner action and is not part of this change; until somebody does it, a data
+  race fails a job that a merge can ignore.
+- **`internal/devtools/testcost`: what a test run cost, and what did not run.**
+  Both numbers were invisible. `ok <pkg> <elapsed>` is printed once per
+  package, interleaved with forty others, so a package that grew from two
+  seconds to ninety was noticed months later by somebody complaining about CI;
+  and a skip prints nothing at all without `-v`, so a test that stopped running
+  — a missing tool, an unset variable, a filesystem that refused a symlink —
+  read exactly like a test that passed.
+
+  It reads `go test -json` and prints one Markdown table, `package | tests |
+  skipped | elapsed`, slowest first, naming every skipped test underneath it. A
+  package holding no test files is left out rather than printed as a row of
+  zeroes, and an unreadable line in the stream is named without costing the
+  table the forty packages that parsed — the run somebody is reading this for is
+  usually one that already went wrong.
+  In CI it appends to `$GITHUB_STEP_SUMMARY`, so the table is on the run's own
+  page. It also carries the run's verdict, which is not a nicety, and it *runs*
+  `go test` rather than being piped its output: a pipeline reports its last
+  command's status in every shell there is, `set -o pipefail` is not portable to
+  the `cmd /c` these tasks get on Windows, and the only failures a piped reader
+  can see are the ones cmd/go wrote into the stream — so a `go` command that
+  fell over before it started testing would have been reported as a green run
+  that never happened. With `testcost -- go test -json …` the command's status
+  and the stream's verdict are both honoured, and a command given without `--`
+  is still a usage error rather than something the tool will execute.
+
+  A failure also carries what was said about it. Under `-json` cmd/go runs the
+  binary with `-test.v`, so every line a failing test wrote is in the stream —
+  the assertion with its file and line, the panic, the goroutine dump — and a
+  reader that consumed those records to print a count turned a red CI run into
+  "something failed", diagnosable only by re-running it on a machine nobody has.
+  Each failure's output is now replayed verbatim under a `--- FAIL: <pkg>.<test>`
+  header, bounded at 256 KiB apiece; a package-level failure prints the output no
+  test owned, which is where a panic or a timeout lands, and a build failure
+  prints the compiler's diagnostics. A passing test's output is discarded, since
+  replaying all of it would make a green log a `go test -v` transcript — that is
+  what `--verbose` is for. `--no-skips`
+  exits non-zero naming the skips; it is deliberately not passed in CI, because
+  every remaining `t.Skip` here is a platform-capability guard or a fuzz body
+  rejecting an input, at least one fires on each of the three operating
+  systems, and the skips it was wanted for — a missing tool — are already fatal
+  through `GO_MUTANTS_TEST_REQUIRE_TOOLS=1`.
 - **Typed errors on the engine API, with every message unchanged.** A consumer
   driving `Workspace` and `Session` had to tell three things apart and could
   only do it by matching text: the user's test suite failing on the instrumented
@@ -1897,6 +1995,75 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **The root suite is tiered, and one long sleep now happens only when it is
+  asked for.** `api_integration_test.go`, `api_contract_test.go` and
+  `errors_integration_test.go` carry `//go:build integration`;
+  `workspace_test.go` and `external_contract_test.go` were renamed to
+  `workspace_integration_test.go` and `external_contract_integration_test.go`
+  and tagged with it; `session_test.go` was split, with its one
+  toolchain-driving test moved to `session_integration_test.go` so the six pure
+  ones stay in the tier a developer runs on every save. `go test .` went from
+  28 seconds to 0.2, and needs no `go` on `PATH`.
+
+  The fixture `api_integration_test.go` injects has a test that sleeps, because
+  two assertions need a target that outlives its timeout and a sleep is the only
+  way to write one. It was ungated at ten seconds, so it was paid twice by
+  everything else that ran the package — the baseline `go test ./...` and the
+  verification inside `Prepare` — for the sake of two executions that wanted it.
+  It now sleeps only under `SESSION_BLOCK=yes`, which those two executions pass,
+  and `TestSessionBlocksOnlyWhenAsked` asserts both directions, so that a
+  deleted `if` fails rather than costing two silent minutes.
+  A killed target is now proved dead rather than assumed. The elapsed bounds
+  beside those executions only ever showed that `Session.Exec` *returned*: if
+  SIGKILL or `TerminateJobObject` silently stopped working, the call would still
+  come back inside `TerminationGrace + IODrainGrace` — `Cmd.WaitDelay` closes the
+  pipe whatever the child is doing — while the target slept on for the rest of
+  its minute and every check passed. The blocking target now records its own pid
+  from `init()`, the earliest point at which a Go program can do anything, and
+  each of the two executions polls the operating system afterwards until that pid
+  is gone: signal 0 for `ESRCH` on POSIX, `OpenProcess` plus
+  `GetExitCodeProcess` against `STILL_ACTIVE` on Windows. The probe has a test of
+  its own against a live subprocess, because a probe that always answered "gone"
+  would make every proof that uses it vacuous — which is the defect being fixed.
+
+  The two elapsed bounds stay, now described as what they are: a promptness
+  check, which still catches a supervisor that waited and a cancellation that
+  stopped being delivered. They are
+  `runner.TerminationGrace + runner.IODrainGrace + 20s` rather than a round
+  number, and the gated sleep is a minute. Every number this replaced was wrong
+  in one direction or the other: five seconds sat 750 ms above the supervisor's
+  own escalation ceiling, so it measured the runner's load whenever SIGTERM was
+  actually ignored; fifteen sat past the fixture's ten-second sleep, so it ruled
+  out nothing at all; and three seconds of margin sat near enough to a Windows
+  process start — Defender reads a fresh binary before it runs — for one Windows
+  job to fail on it and the next to pass. Lengthening the sleep is what makes 24
+  seconds sit in a real gap rather than a narrow one, and it is free precisely
+  because the sleep is gated: nothing runs it but the two executions that kill it
+  inside a second.
+
+  The tests that need the fixture to sleep now strip `SESSION_BLOCK` from the
+  environment `Open` freezes, and set it in the host on purpose first, so the
+  removal is a claim the suite can fail rather than a precaution nobody
+  exercises. An inherited one would otherwise have made the ungated half of
+  `TestSessionBlocksOnlyWhenAsked` sleep and fail for a reason nothing in its
+  output mentions.
+- **Coverage renders even when the suite is red.** `mise run cover` and
+  `mise run cover-integration` tolerate a failing suite and say so, instead of
+  stopping before the rendering: `go test` writes the profile whether or not the
+  tests passed, and a red suite is exactly when somebody wants to see what ran.
+  A `;` between the commands would not have been enough — mise runs a task's
+  script under `set -e` — so the first command carries an explicit `|| echo`
+  that prints "the profile below is of the run that failed" to stderr. Nothing
+  is loosened where it matters: `mise run test` and CI's `platform-tests` are
+  where a failing suite fails the build, and the `coverage` job carries no
+  verdict at all. What still fails these tasks is a profile that could not be
+  rendered.
+- **`internal/snapshot`'s benchmarks report a number by default.** Both
+  skipped unless `GO_MUTANTS_BENCH_ROOT` named a tree, which meant the only two
+  benchmarks in the repository measured nothing on every run nobody had
+  exported a path for — every run. They now fall back to a private copy of
+  `fixtures/families`. The variable still points them at a real checkout, which
+  is what the parallel copy was tuned against.
 - **`-test.timeout` in a session target's `Args` is refused by the session, and
   says so differently.** The session owns both timeout layers — the supervisor
   kills the process tree at `Timeout`, the binary gets `-test.timeout` at twice

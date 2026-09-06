@@ -13,15 +13,30 @@ reports/mutation/
 **/reports/mutation/
 
 # Release artifacts, the locally built CLI, and compiled test binaries.
+#
+# The two devtools are named after their directories, so a bare
+# `go build ./internal/devtools/testcost` drops a `testcost` binary in the
+# working directory rather than anywhere anybody would look for it. Both are
+# anchored to the repository root, because the names are ordinary words and a
+# floating pattern would hide a source directory of the same name.
 dist/
 bin/
 /go-mutants
+/testcost
+/testcache
 *.test
 *.exe
 
-# Go toolchain and coverage scratch output.
+# Go toolchain and coverage scratch output. `cover.out` is already covered by
+# the first pattern and is named anyway, because a reader looking for the file
+# `mise run cover` writes should find it here rather than have to work out that
+# a coverage profile is an `.out`; the rendering and the benchmark log have no
+# such pattern to hide behind.
 *.out
 *.prof
+cover.out
+cover.html
+bench.txt
 
 # Failing cases persisted by pgregory.net/rapid. These are development scratch,
 # not a curated corpus: rapid replays every file it finds here on the next run,
