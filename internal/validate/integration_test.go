@@ -23,7 +23,6 @@ package validate_test
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -35,23 +34,15 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/gocmd"
-	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
-	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
-const (
-	// rejectableModule is the module path of the fixture this file drives.
-	rejectableModule = "fixture.example/rejectable"
-
-	// stepTimeout bounds every child process. Each step is a build or a run of
-	// a suite that takes well under a second once warm, so a minute is not a
-	// budget — it is the point past which something has hung rather than been
-	// slow.
-	stepTimeout = 60 * time.Second
-)
+// rejectableModule is the module path of the fixture this file drives.
+const rejectableModule = "fixture.example/rejectable"
 
 // wantCatalog is the fixture's whole catalogue, in catalogue order.
 //
@@ -121,19 +112,22 @@ var trapped = map[int]string{
 // exactly the candidates the compiler refused and keep the rest, in the same
 // pass, with the accepted ones still activatable afterwards.
 func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "rejectable")
-	found, catalog := catalogFixture(t, toolchain, snap)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "rejectable")
+	found, catalog := catalogFixture(t, toolchain, env, snap)
 
 	result, err := validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
-		Hints:        fixtureHints(t, found),
+		Hints:        mutantkit.Hints(t, found),
 		ModulePath:   rejectableModule,
 		Toolchain:    toolchain,
 		Jobs:         2,
-		BuildTimeout: stepTimeout,
-		Env:          fixtureEnv(""),
+		BuildTimeout: mutantkit.StepTimeout,
+		Env:          env,
 	})
 	if err != nil {
 		t.Fatalf("validating the rejectable fixture: %v\n%s", err, retainedOutput(t, err))
@@ -155,13 +149,13 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		}
 		if !slices.Equal(gotRejected, wantRejected) {
 			t.Errorf("rejected\n\t%s\nwant\n\t%s",
-				strings.Join(describe(catalog, gotRejected), "\n\t"),
-				strings.Join(describe(catalog, wantRejected), "\n\t"))
+				strings.Join(mutantkit.Describe(catalog, gotRejected), "\n\t"),
+				strings.Join(mutantkit.Describe(catalog, wantRejected), "\n\t"))
 		}
 		if !slices.Equal(result.AcceptedIDs, wantAccepted) {
 			t.Errorf("accepted\n\t%s\nwant\n\t%s",
-				strings.Join(describe(catalog, result.AcceptedIDs), "\n\t"),
-				strings.Join(describe(catalog, wantAccepted), "\n\t"))
+				strings.Join(mutantkit.Describe(catalog, result.AcceptedIDs), "\n\t"),
+				strings.Join(mutantkit.Describe(catalog, wantAccepted), "\n\t"))
 		}
 	})
 
@@ -264,8 +258,8 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	t.Run("the validated snapshot builds", func(t *testing.T) {
 		// Independently of the build validation ran itself: this one is the
 		// user's own `go build ./...`, and it is the phase's postcondition.
-		build := goInSnapshot(t, toolchain, snap.Root, "", "build", "./...")
-		requireExit(t, build, 0, "`go build ./...` in the validated snapshot")
+		build := mutantkit.RunGo(t, toolchain, snap.Root, env, "build", "./...")
+		mutantkit.RequireExit(t, build, 0, "`go build ./...` in the validated snapshot")
 	})
 
 	t.Run("the instrumented baseline passes", func(t *testing.T) {
@@ -274,9 +268,9 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// active: every guard takes the branch holding the original bytes, so
 		// the suite has to pass exactly as it does in the fixture — and it has
 		// to actually run, which is why the passing subtests are named.
-		baseline := runSuite(t, toolchain, snap.Root, "")
-		requireExit(t, baseline, 0, "the instrumented baseline")
-		requireOutput(t, baseline, "the instrumented baseline",
+		baseline := mutantkit.RunSuite(t, toolchain, snap.Root, env)
+		mutantkit.RequireExit(t, baseline, 0, "the instrumented baseline")
+		mutantkit.RequireOutput(t, baseline, "the instrumented baseline",
 			"--- PASS: TestInRange", "--- PASS: TestErased",
 			"--- PASS: TestLevel", "--- PASS: TestRatio",
 			"--- PASS: TestReady", "--- PASS: TestAlways")
@@ -309,8 +303,8 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 				t.Errorf("%s was not accepted; the named boolean type is being rejected again", what)
 				continue
 			}
-			red := runSuite(t, toolchain, snap.Root, mutant.ID)
-			requireExit(t, red, 1, "the suite with "+what+" active")
+			red := mutantkit.RunSuite(t, toolchain, snap.Root, mutantkit.Activate(env, mutant.ID))
+			mutantkit.RequireExit(t, red, 1, "the suite with "+what+" active")
 		}
 		if guards := result.Instrumented.GuardsByFile["named.go"]; guards == 0 {
 			t.Error("named.go carries no guards, so its candidates were restored rather than instrumented")
@@ -327,10 +321,10 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// mutant, in the file that lost a whole rewrite site to a rejection, is
 		// activated and has to kill the test that covers it.
 		mutant := mutants[14]
-		red := runSuite(t, toolchain, snap.Root, mutant.ID)
+		red := mutantkit.RunSuite(t, toolchain, snap.Root, mutantkit.Activate(env, mutant.ID))
 		what := "the suite with " + mutant.DisplayID + " (" + mutant.Rule.Name + " in " + mutant.Path + ") active"
-		requireExit(t, red, 1, what)
-		requireOutput(t, red, what, "Ratio(9) = -1, want 1", "--- FAIL: TestRatio")
+		mutantkit.RequireExit(t, red, 1, what)
+		mutantkit.RequireOutput(t, red, what, "Ratio(9) = -1, want 1", "--- FAIL: TestRatio")
 		if got := strings.Count(string(red.Output), "--- FAIL:"); got != 1 {
 			t.Errorf("%s reported %d failures, want exactly 1:\n%s", what, got, red.Output)
 		}
@@ -372,7 +366,10 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 // same rejections, and the same bytes — and the bytes are the half that no
 // other test in this file would notice going wrong.
 func TestValidateIsDeterministic(t *testing.T) {
-	toolchain := locateToolchain(t)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 
 	type pass struct {
 		rejected []string
@@ -380,16 +377,16 @@ func TestValidateIsDeterministic(t *testing.T) {
 		bytes    map[string][]byte
 	}
 	run := func() pass {
-		snap := snapshotFixture(t, "rejectable")
-		found, catalog := catalogFixture(t, toolchain, snap)
+		snap := mutantkit.Snapshot(t, "rejectable")
+		found, catalog := catalogFixture(t, toolchain, env, snap)
 		result, err := validate.Validate(t.Context(), validate.Options{
 			Snap:         snap,
 			Catalog:      catalog,
-			Hints:        fixtureHints(t, found),
+			Hints:        mutantkit.Hints(t, found),
 			ModulePath:   rejectableModule,
 			Toolchain:    toolchain,
-			BuildTimeout: stepTimeout,
-			Env:          fixtureEnv(""),
+			BuildTimeout: mutantkit.StepTimeout,
+			Env:          env,
 		})
 		if err != nil {
 			t.Fatalf("validating the rejectable fixture: %v\n%s", err, retainedOutput(t, err))
@@ -399,11 +396,7 @@ func TestValidateIsDeterministic(t *testing.T) {
 			out.rejected = append(out.rejected, r.ID+" "+r.Path+":"+strconv.Itoa(r.Line)+" "+r.Rule)
 		}
 		for _, name := range []string{"compare.go", "limits.go", "named.go", "gomutants_rt/gomutants_rt.go"} {
-			src, readErr := os.ReadFile(filepath.Join(snap.Root, filepath.FromSlash(name)))
-			if readErr != nil {
-				t.Fatalf("reading %s from the validated snapshot: %v", name, readErr)
-			}
-			out.bytes[name] = src
+			out.bytes[name] = testkit.ReadFile(t, filepath.Join(snap.Root, filepath.FromSlash(name)))
 		}
 		return out
 	}
@@ -433,30 +426,27 @@ func TestValidateIsDeterministic(t *testing.T) {
 // left. The failure carries the compiler's output for the same reason a
 // rejection does: the user has to be told what is wrong, not that something is.
 func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "rejectable")
-	found, catalog := catalogFixture(t, toolchain, snap)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "rejectable")
+	found, catalog := catalogFixture(t, toolchain, env, snap)
 
 	// A second file in the same package, referring to something that does not
 	// exist. It holds no candidates, so nothing this phase could reject would
 	// make it compile — which is exactly the situation being tested.
-	broken := filepath.Join(snap.Root, "broken.go")
-	const source = "// SPDX-FileCopyrightText: 2026 go-mutants contributors\n" +
-		"// SPDX-License-Identifier: MIT OR Apache-2.0\n\n" +
-		"package rejectable\n\n" +
-		"func Broken() int { return undefinedHelper() }\n"
-	if err := os.WriteFile(broken, []byte(source), 0o644); err != nil {
-		t.Fatalf("writing the broken file into the snapshot: %v", err)
-	}
+	testkit.WriteSource(t, snap.Root, "broken.go", "package rejectable\n\n"+
+		"func Broken() int { return undefinedHelper() }\n")
 
 	result, err := validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
-		Hints:        fixtureHints(t, found),
+		Hints:        mutantkit.Hints(t, found),
 		ModulePath:   rejectableModule,
 		Toolchain:    toolchain,
-		BuildTimeout: stepTimeout,
-		Env:          fixtureEnv(""),
+		BuildTimeout: mutantkit.StepTimeout,
+		Env:          env,
 	})
 	if err == nil {
 		t.Fatal("Validate accepted a snapshot that does not build, want a refusal")
@@ -505,12 +495,13 @@ func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 // time anything is built; the flag that keeps this true is asserted directly,
 // without a toolchain, by TestBuildArgsSendTheOutputToTheNullDevice.
 func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
-	toolchain := locateToolchain(t)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 
 	const modulePath = "fixture.example/singlemain"
-	source := t.TempDir()
-	writeModuleFile(t, source, "go.mod", "module "+modulePath+"\n\ngo 1.26\n")
-	writeModuleFile(t, source, "main.go", "package main\n\n"+
+	source := testkit.NewModule(t).Module(modulePath).Source("main.go", "package main\n\n"+
 		"// Before is here to be mutated: `<` is a comparison candidate, and a\n"+
 		"// guard around it is a guard in a `package main` file.\n"+
 		"func Before(a, b int) bool { return a < b }\n\n"+
@@ -518,29 +509,11 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 		"\tif Before(1, 2) {\n"+
 		"\t\tprintln(\"ordered\")\n"+
 		"\t}\n"+
-		"}\n")
+		"}\n").Root()
 
-	snap, err := snapshot.Create(source, snapshot.Options{DestParent: t.TempDir()})
-	if err != nil {
-		t.Fatalf("snapshotting the single-main module: %v", err)
-	}
-	t.Cleanup(func() {
-		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
-			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, cleanupErr)
-		}
-	})
-
-	found, err := discover.Discover(t.Context(), discover.Options{
-		SnapshotRoot: snap.Root,
-		Toolchain:    toolchain,
-	})
-	if err != nil {
-		t.Fatalf("discovering the single-main module: %v", err)
-	}
-	catalog, err := discover.BuildCatalog(found)
-	if err != nil {
-		t.Fatalf("building the catalogue: %v", err)
-	}
+	snap := mutantkit.SnapshotOf(t, source)
+	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
+	catalog := mutantkit.Catalog(t, found)
 	if catalog.Len() == 0 {
 		t.Fatal("the single-main module produced no candidates, so nothing would be instrumented or built")
 	}
@@ -548,11 +521,11 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 	result, err := validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
-		Hints:        fixtureHints(t, found),
+		Hints:        mutantkit.Hints(t, found),
 		ModulePath:   found.ModulePath,
 		Toolchain:    toolchain,
-		BuildTimeout: stepTimeout,
-		Env:          fixtureEnv(""),
+		BuildTimeout: mutantkit.StepTimeout,
+		Env:          env,
 	})
 	if err != nil {
 		t.Fatalf("validating the single-main module: %v\n%s", err, retainedOutput(t, err))
@@ -614,40 +587,172 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 	}
 }
 
-// writeModuleFile writes one file of a module built for a single test.
+// TestValidateDoesNotTouchTheUsersBuildCache validates a module through the
+// environment the harness composes, and then looks at each of the three
+// directories the compiler's work could have landed in.
 //
-// The SPDX header goes on every file this project writes into a tree it owns,
-// including the ones that only ever exist inside a t.TempDir().
-func writeModuleFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	const header = "// SPDX-FileCopyrightText: 2026 go-mutants contributors\n" +
-		"// SPDX-License-Identifier: MIT OR Apache-2.0\n\n"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(header+content), 0o644); err != nil {
-		t.Fatalf("writing %s into the module at %s: %v", name, dir, err)
-	}
-}
+// This is the assertion behind one dedicated build cache. The suites drive
+// thousands of `go build`, `go test -c` and `go list` commands against fixtures
+// and snapshots, each keyed on an absolute path that exists for a single run;
+// pointed at the developer's own cache — which is what an inherited environment
+// does — they had grown it to 14 GB of entries that can never be reused. Nothing
+// says which cache a child used, so the only way to keep that fixed is to look
+// afterwards.
+//
+// The checks are made separately because they fail separately. The go command's
+// own answer under the composed environment is the mechanism: GOCACHE is the
+// variable a child actually reads, and it is what stops being right if the
+// policy loses its row. The private home is where an unpinned GOCACHE would land
+// now that HOME is moved, so a build cache appearing there means the pin is gone
+// and only the moved home is still standing between these tests and the
+// developer's files. And the cache the validation is handed receiving entries is
+// the consequence: an environment that named the right directory and a phase
+// that composed its own would pass both of the first two and fail this one.
+//
+// That third check is made against a cache of this test's own rather than
+// against the harness's, and the difference is the difference between an oracle
+// and an observation. The harness's cache is shared: every other test in this
+// package writes into it while this one runs, so "it grew" would be true
+// whatever this validation did with the environment it was given. A directory
+// nobody else can reach is written to by exactly this phase or by nothing.
+//
+// The developer's own cache is compared at directory granularity — its
+// modification time and the names in it — rather than entry by entry, and that
+// is a deliberate ceiling rather than an oversight. `go test` is itself a go
+// command using that cache: it compiles the other packages' test binaries and
+// files their results while this test runs, so a comparison of the entries below
+// it would report somebody else's build as this phase's. What that granularity
+// still catches is the case that actually happened: a suite inheriting the
+// developer's environment wholesale, on a machine where the cache is being
+// created or pruned rather than merely added to.
+func TestValidateDoesNotTouchTheUsersBuildCache(t *testing.T) {
+	t.Parallel()
 
-// snapshotFixture copies a corpus module into a disposable directory and
-// registers its removal.
-func snapshotFixture(t *testing.T, name string) *snapshot.Snapshot {
-	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", "..", "fixtures", name))
+	toolchain := mutantkit.Toolchain(t)
+	harness, err := testkit.BuildCache()
 	if err != nil {
-		t.Fatalf("resolving the %s fixture: %v", name, err)
+		t.Fatalf("resolving the test build cache: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("fixture %s is not a module: %v", name, err)
+	scratch := t.TempDir()
+	// Compose creates and stamps the harness cache, so everything below can read
+	// it as a directory that exists.
+	env := testkit.Compose(t, scratch)
+	// The environment the validation itself runs under: the composed policy with
+	// the cache moved somewhere only this test can see.
+	private := filepath.Join(t.TempDir(), "gocache")
+	buildEnv := append(slices.Clip(env), "GOCACHE="+private)
+
+	users := usersBuildCache(t, harness)
+	usersBefore := directoryState(t, users)
+
+	const modulePath = "fixture.example/cached"
+	source := testkit.NewModule(t).Module(modulePath).Source("before.go", "package cached\n\n"+
+		"// Before is here to be mutated, so that validation has a guarded tree to\n"+
+		"// build rather than a module it can accept without compiling anything.\n"+
+		"func Before(a, b int) bool { return a < b }\n").Root()
+
+	snap := mutantkit.SnapshotOf(t, source)
+	// Discovery goes through the harness's own cache rather than the private one:
+	// what is being measured is where *validation* builds, and paying for a cold
+	// compile of the loader's export data twice would measure the harness instead.
+	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
+	catalog := mutantkit.Catalog(t, found)
+	if catalog.Len() == 0 {
+		t.Fatal("the module produced no candidates, so nothing would be instrumented or built")
 	}
-	snap, err := snapshot.Create(root, snapshot.Options{DestParent: t.TempDir()})
-	if err != nil {
-		t.Fatalf("snapshotting the %s fixture: %v", name, err)
+	if _, err := validate.Validate(t.Context(), validate.Options{
+		Snap:         snap,
+		Catalog:      catalog,
+		Hints:        mutantkit.Hints(t, found),
+		ModulePath:   found.ModulePath,
+		Toolchain:    toolchain,
+		BuildTimeout: mutantkit.StepTimeout,
+		Env:          buildEnv,
+	}); err != nil {
+		t.Fatalf("validating the module: %v\n%s", err, retainedOutput(t, err))
 	}
-	t.Cleanup(func() {
-		if err := snap.Cleanup(); err != nil {
-			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, err)
+
+	// The go command's own answer, under the environment the policy composes
+	// before a test overrides anything in it.
+	answer := mutantkit.RunGo(t, toolchain, snap.Root, env, "env", "GOCACHE")
+	mutantkit.RequireExit(t, answer, 0, "`go env GOCACHE` under the composed environment")
+	if got := strings.TrimSpace(string(answer.Output)); !testkit.SamePath(got, harness) {
+		t.Errorf("a child of this run reads GOCACHE=%s, want the harness's own %s", got, harness)
+	}
+
+	// An unpinned GOCACHE would resolve below the composed home, since that is
+	// where the policy points every cache variable os.UserCacheDir reads.
+	fallback := filepath.Join(scratch, "home", "cache", "go-build")
+	if _, statErr := os.Stat(fallback); statErr == nil {
+		t.Errorf("a build cache was created at %s, so the children resolved GOCACHE from the moved "+
+			"HOME rather than from the harness's pin", fallback)
+	}
+
+	if testkit.BuildCacheEntries(t, private) == 0 {
+		t.Errorf("the validation's builds wrote nothing into %s, the cache its environment named, "+
+			"so they went to a cache this test cannot see", private)
+	}
+
+	t.Run("the developer's own build cache is untouched", func(t *testing.T) {
+		if users == "" {
+			t.Skip("this machine has no initialised build cache outside the harness's, so there is " +
+				"nothing to compare: a fresh runner with GO_MUTANTS_TEST_GOCACHE pointed at the job's " +
+				"temporary area is exactly that machine")
+		}
+		if got := directoryState(t, users); got != usersBefore {
+			t.Errorf("the developer's build cache %s changed while this test ran:\n\tbefore %s\n\tafter  %s",
+				users, usersBefore, got)
 		}
 	})
-	return snap
+}
+
+// usersBuildCache names the developer's own go build cache, or "" when there is
+// nothing here to compare it against.
+//
+// Three reasons for the empty answer, and all of them are ordinary rather than
+// exceptional. A machine may have no cache directory at all. It may have one the
+// go command has never opened — a bare `mkdir` in a CI step — and a directory
+// that is about to be initialised is one whose contents change for a reason that
+// has nothing to do with this phase, so it is left alone rather than watched. And
+// a developer who pointed GO_MUTANTS_TEST_GOCACHE at their own cache has said the
+// two are one directory, which is a choice to respect rather than a failure to
+// report.
+func usersBuildCache(t *testing.T, harness string) string {
+	t.Helper()
+	// os.UserCacheDir rather than a composed value: this test never moves the
+	// process's HOME, so it answers about the machine's real cache root, which is
+	// the whole subject.
+	root, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Join(root, "go-build")
+	if info, statErr := os.Stat(dir); statErr != nil || !info.IsDir() {
+		return ""
+	}
+	if testkit.SamePath(dir, harness) {
+		return ""
+	}
+	// An opened cache holds its 256 shards and its own bookkeeping; anything
+	// smaller is a directory the go command has not made a cache of yet.
+	if len(testkit.Entries(t, dir)) < 2 {
+		return ""
+	}
+	return dir
+}
+
+// directoryState is a directory's modification time and the names directly in
+// it, as one comparable line.
+func directoryState(t *testing.T, dir string) string {
+	t.Helper()
+	if dir == "" {
+		return ""
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("reading the state of %s: %v", dir, err)
+	}
+	return info.ModTime().UTC().Format(time.RFC3339Nano) + " " + strings.Join(testkit.Entries(t, dir), " ")
 }
 
 // catalogFixture discovers the fixture's candidates and catalogues them, then
@@ -657,149 +762,24 @@ func snapshotFixture(t *testing.T, name string) *snapshot.Snapshot {
 // The discovery result is returned alongside because it is the only place the
 // coordinates a user is shown for a *live* mutant exist, and one step compares
 // them with the coordinates validation reports for a rejected one.
-func catalogFixture(t *testing.T, toolchain gocmd.Toolchain, snap *snapshot.Snapshot) (discover.Result, *mutation.Catalog) {
+//
+// The two steps themselves are the harness's — they are the same two every
+// suite in this repository runs — and what is left here is what belongs to this
+// fixture: the module path it must have and the nineteen candidates the
+// assertions below are written against.
+func catalogFixture(t *testing.T, toolchain gocmd.Toolchain, env []string, snap *snapshot.Snapshot) (discover.Result, *mutation.Catalog) {
 	t.Helper()
 
-	found, err := discover.Discover(t.Context(), discover.Options{
-		SnapshotRoot: snap.Root,
-		Toolchain:    toolchain,
-	})
-	if err != nil {
-		t.Fatalf("discovering the rejectable fixture: %v", err)
-	}
+	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
 	if found.ModulePath != rejectableModule {
 		t.Fatalf("discovered module path = %q, want %q", found.ModulePath, rejectableModule)
 	}
-	catalog, err := discover.BuildCatalog(found)
-	if err != nil {
-		t.Fatalf("building the catalogue: %v", err)
-	}
-
-	got := make([]string, 0, catalog.Len())
-	for _, m := range catalog.Mutants() {
-		got = append(got, fmt.Sprintf("%s %s %s -> %s", m.Path, m.Rule.Name, m.Original, m.Replacement))
-	}
-	if !slices.Equal(got, wantCatalog) {
+	catalog := mutantkit.Catalog(t, found)
+	if got := mutantkit.CatalogLines(catalog); !slices.Equal(got, wantCatalog) {
 		t.Fatalf("catalogue =\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(wantCatalog, "\n\t"))
 	}
 	return found, catalog
-}
-
-// fixtureHints indexes the guard hints of one discovery pass.
-//
-// Every validation needs them: the instrumenter is a byte rewriter and cannot
-// choose a rewrite form for itself, so the hints travel with the catalogue from
-// the pass that had the type checker.
-func fixtureHints(t *testing.T, found discover.Result) instrument.Hints {
-	t.Helper()
-
-	hints, err := instrument.HintsOf(found.Candidates)
-	if err != nil {
-		t.Fatalf("indexing the guard hints: %v", err)
-	}
-	return hints
-}
-
-// describe renders a list of mutant IDs in the terms the fixture is written in,
-// so that a failure reads as a list of candidates rather than of digests.
-func describe(catalog *mutation.Catalog, ids []string) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		m, ok := catalog.ByID(id)
-		if !ok {
-			out = append(out, id+" (not in the catalogue)")
-			continue
-		}
-		out = append(out, fmt.Sprintf("[%d] %s %s %s -> %s", m.Index, m.Path, m.Rule.Name, m.Original, m.Replacement))
-	}
-	return out
-}
-
-// locateToolchain finds the Go toolchain this test's children run.
-func locateToolchain(t *testing.T) gocmd.Toolchain {
-	t.Helper()
-	toolchain, err := gocmd.LocateContext(t.Context(), gocmd.Options{})
-	if err != nil {
-		t.Fatalf("locating a Go toolchain: %v", err)
-	}
-	return toolchain
-}
-
-// fixtureEnv builds the environment every child in this test receives, with one
-// mutant activated when active is not empty.
-//
-// It is composed rather than inherited, for the reason internal/engine composes
-// its own: a developer with GO_MUTANTS_ACTIVE exported in their shell would
-// otherwise have the instrumented baseline running a mutant. The three go
-// settings are pinned for the neighbouring reason — a fixture with no
-// dependencies must never reach the network to build, a `go.work` above the
-// temporary directory must not join itself to the snapshot, and a GOFLAGS from
-// the developer's shell must not decide what any of this resolves against.
-func fixtureEnv(active string) []string {
-	base := os.Environ()
-	env := make([]string, 0, len(base)+4)
-	for _, entry := range base {
-		key, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(strings.ToUpper(key), "GO_MUTANTS_") {
-			continue
-		}
-		env = append(env, entry)
-	}
-	env = append(env, "GOWORK=off", "GOFLAGS=-mod=readonly", "GOPROXY=off")
-	if active != "" {
-		env = append(env, instrument.ActiveEnv+"="+active)
-	}
-	return env
-}
-
-// goInSnapshot runs one go command inside the snapshot, supervised by the same
-// package that supervises them in a real run.
-func goInSnapshot(t *testing.T, toolchain gocmd.Toolchain, dir, active string, args ...string) runner.Result {
-	t.Helper()
-	spec := toolchain.Command(args...)
-	spec.Dir = dir
-	spec.Env = fixtureEnv(active)
-	spec.Timeout = stepTimeout
-	return runner.Run(t.Context(), spec)
-}
-
-// runSuite runs the fixture's whole test suite in the snapshot, with one mutant
-// activated or with none.
-//
-// -count=1 defeats the go test result cache, which keys on the environment a
-// test binary reads and so would very probably do the right thing here; "very
-// probably" is not a foundation for the step that tells a survivor from a
-// cached green. -v is what lets a step name the subtest that passed or failed.
-func runSuite(t *testing.T, toolchain gocmd.Toolchain, root, active string) runner.Result {
-	t.Helper()
-	return goInSnapshot(t, toolchain, root, active, "test", "-count=1", "-v", "./...")
-}
-
-// requireExit ends the step unless the child ran to completion with the status
-// the step expects, and quotes the child's output whenever it did not.
-func requireExit(t *testing.T, result runner.Result, want int, what string) {
-	t.Helper()
-	switch {
-	case result.Err != nil:
-		t.Fatalf("%s could not be run: %v\n%s", what, result.Err, result.Output)
-	case result.TimedOut:
-		t.Fatalf("%s did not finish within %s:\n%s", what, stepTimeout, result.Output)
-	case result.ExitCode != want:
-		t.Fatalf("%s exited %d, want %d:\n%s", what, result.ExitCode, want, result.Output)
-	}
-}
-
-// requireOutput fails the step for each needle the child did not print, quoting
-// the whole output once per miss so a failure is readable without re-running.
-func requireOutput(t *testing.T, result runner.Result, what string, needles ...string) {
-	t.Helper()
-	out := string(result.Output)
-	for _, needle := range needles {
-		if !strings.Contains(out, needle) {
-			t.Errorf("%s did not print %q:\n%s", what, needle, out)
-		}
-	}
 }
 
 // retainedOutput is the compiler's own words behind a validation failure.

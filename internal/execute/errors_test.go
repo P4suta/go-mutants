@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // TestCodesAreWellFormed keeps the diagnostic codes usable as the stable
@@ -75,7 +76,7 @@ func TestCodesAreReachable(t *testing.T) {
 	// GOM7502: a binary directory that cannot be created, because a regular
 	// file already sits where the directory would go.
 	blocked := filepath.Join(t.TempDir(), "occupied")
-	writeFile(t, blocked, "not a directory")
+	testkit.WriteFile(t, blocked, []byte("not a directory"))
 	_, err = execute.BuildTestBinaries(t.Context(), execute.Options{
 		Toolchain: gocmd.Toolchain{GoBin: "go"}, SnapshotRoot: snapshot,
 		BinDir: filepath.Join(blocked, "bin"),
@@ -145,7 +146,7 @@ func TestCodesAreReachable(t *testing.T) {
 	// GOM7517: an infection log that exists and cannot be read against the
 	// catalogue it was supposed to have been written against.
 	damaged := filepath.Join(t.TempDir(), "infection.log")
-	writeFile(t, damaged, "not an infection log\n")
+	testkit.WriteFile(t, damaged, []byte("not an infection log\n"))
 	passing := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 	record(execute.RunProbe(t.Context(), options(passing, 1),
 		execute.ProbeRun{Timeout: mutantTimeout, LogPath: damaged}, testBins("example.com/a")).Err)

@@ -54,7 +54,7 @@ func TestRuntimeGolden(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
 	catalog := catalogOf(t, threeAlternatives(t, []byte(runtimeSample)))
 	if catalog.Len() != 3 {
 		t.Fatalf("the fixture catalogue holds %d mutants, want 3", catalog.Len())
@@ -62,7 +62,7 @@ func TestRuntimeGolden(t *testing.T) {
 
 	result := instrumentSnapshot(t, root, catalog)
 	generated := filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go")
-	out := readFile(t, generated)
+	out := testkit.ReadFile(t, generated)
 
 	testkit.Golden(t, "runtime.golden", out)
 
@@ -108,7 +108,7 @@ func TestRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 	if len(result.FilesInstrumented) != 0 {
 		t.Errorf("FilesInstrumented = %v, want none", result.FilesInstrumented)
 	}
-	out := readFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
+	out := testkit.ReadFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
 	if !bytes.Contains(out, []byte("var M [1]bool")) {
 		t.Errorf("an empty catalogue generated an activation array that is not [1]bool:\n%s", out)
 	}
@@ -126,10 +126,10 @@ func TestRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 func TestRuntimeDirectoryIsBumpedOnCollision(t *testing.T) {
 	t.Parallel()
 
-	in := readFile(t, filepath.Join("testdata", "comparison.input"))
+	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), in)
-	writeFile(t, filepath.Join(root, "gomutants_rt", "theirs.go"), []byte("package theirs\n"))
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
+	testkit.WriteFile(t, filepath.Join(root, "gomutants_rt", "theirs.go"), []byte("package theirs\n"))
 
 	result := instrumentSnapshot(t, root, catalogOf(t, candidatesFor(t, nil, in)))
 
@@ -139,14 +139,14 @@ func TestRuntimeDirectoryIsBumpedOnCollision(t *testing.T) {
 	if got, want := result.RuntimeImport, testModule+"/gomutants_rt1"; got != want {
 		t.Errorf("RuntimeImport = %q, want %q", got, want)
 	}
-	if got := readFile(t, filepath.Join(root, "gomutants_rt", "theirs.go")); string(got) != "package theirs\n" {
+	if got := testkit.ReadFile(t, filepath.Join(root, "gomutants_rt", "theirs.go")); string(got) != "package theirs\n" {
 		t.Errorf("the existing directory was written into: %q", got)
 	}
-	out := readFile(t, filepath.Join(root, sampleFile))
+	out := testkit.ReadFile(t, filepath.Join(root, sampleFile))
 	if !bytes.Contains(out, []byte(`"`+result.RuntimeImport+`"`)) {
 		t.Errorf("the instrumented file does not import the bumped runtime:\n%s", out)
 	}
-	generated := readFile(t, filepath.Join(root, "gomutants_rt1", "gomutants_rt1.go"))
+	generated := testkit.ReadFile(t, filepath.Join(root, "gomutants_rt1", "gomutants_rt1.go"))
 	if !bytes.Contains(generated, []byte("package gomutants_rt1\n")) {
 		t.Errorf("the bumped runtime declares the wrong package:\n%s", generated)
 	}

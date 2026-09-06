@@ -13,6 +13,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // A failure is one refusal the instrumenter can produce, together with the code
@@ -63,7 +64,7 @@ func instrumentationFailures(t *testing.T) []failure {
 	empty := catalogOf(t, nil)
 	root := t.TempDir()
 	notADirectory := filepath.Join(root, "file.txt")
-	writeFile(t, notADirectory, []byte("not a directory"))
+	testkit.WriteFile(t, notADirectory, []byte("not a directory"))
 
 	fail := func(name string, code instrument.Code, err error) failure {
 		return failure{name: name, code: code, err: err}
@@ -219,7 +220,7 @@ func instrumentWith(
 	t.Helper()
 
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), []byte(src))
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(src))
 	if candidate.Path == "" {
 		candidate.Path = sampleFile
 	}
@@ -244,10 +245,10 @@ func instrumentCorrupted(t *testing.T, src, replacement string) error {
 
 	root := t.TempDir()
 	target := filepath.Join(root, sampleFile)
-	writeFile(t, target, []byte(src))
+	testkit.WriteFile(t, target, []byte(src))
 	catalog := catalogOf(t, candidatesIn(t, []byte(src)))
 	hints := hintsInSource(t, []byte(src), catalog, hintOptions{})
-	writeFile(t, target, []byte(replacement))
+	testkit.WriteFile(t, target, []byte(replacement))
 
 	_, err := instrument.Instrument(instrument.Options{
 		SnapshotRoot: root,
@@ -364,17 +365,17 @@ func TestPackageBlockNamesSpanTheWholeDirectory(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "a.go"), []byte(
+	testkit.WriteFile(t, filepath.Join(dir, "a.go"), []byte(
 		"package sample\n\nvar Declared = 1\n\nfunc F() {}\n\ntype T struct{}\n\nfunc (T) method() {}\n\nconst K = 2\n"))
-	writeFile(t, filepath.Join(dir, "b.go"), []byte(
+	testkit.WriteFile(t, filepath.Join(dir, "b.go"), []byte(
 		"package sample\n\nfunc Sibling() { local := 1; _ = local }\n"))
-	writeFile(t, filepath.Join(dir, "a_test.go"), []byte(
+	testkit.WriteFile(t, filepath.Join(dir, "a_test.go"), []byte(
 		"package sample\n\nvar inTest = 3\n"))
-	writeFile(t, filepath.Join(dir, "b_test.go"), []byte(
+	testkit.WriteFile(t, filepath.Join(dir, "b_test.go"), []byte(
 		"package sample_test\n\nvar inExternalTest = 4\n"))
-	writeFile(t, filepath.Join(dir, "gen.go"), []byte(
+	testkit.WriteFile(t, filepath.Join(dir, "gen.go"), []byte(
 		"//go:build ignore\n\npackage main\n\nvar inIgnoredFile = 5\n"))
-	writeFile(t, filepath.Join(dir, "notes.txt"), []byte("var notGo = 6\n"))
+	testkit.WriteFile(t, filepath.Join(dir, "notes.txt"), []byte("var notGo = 6\n"))
 
 	got, err := instrument.PackageNames(dir, "sample")
 	if err != nil {
@@ -402,8 +403,8 @@ func TestPackageBlockNamesFallBackToTokens(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "a.go"), []byte("package sample\n\nfunc F() {}\n"))
-	writeFile(t, filepath.Join(dir, "broken.go"), []byte(
+	testkit.WriteFile(t, filepath.Join(dir, "a.go"), []byte("package sample\n\nfunc F() {}\n"))
+	testkit.WriteFile(t, filepath.Join(dir, "broken.go"), []byte(
 		"package sample\n\nfunc Broken() bool { return __gm & } \n"))
 
 	got, err := instrument.PackageNames(dir, "sample")
@@ -423,7 +424,7 @@ func TestPackageBlockNamesReportsAnUnreadableDirectory(t *testing.T) {
 	t.Parallel()
 
 	notADirectory := filepath.Join(t.TempDir(), "file.txt")
-	writeFile(t, notADirectory, []byte("not a directory"))
+	testkit.WriteFile(t, notADirectory, []byte("not a directory"))
 
 	if _, err := instrument.PackageNames(notADirectory, "sample"); err == nil {
 		t.Error("scanning a directory that is a file returned no error")
@@ -511,14 +512,14 @@ func TestImportInjectionForms(t *testing.T) {
 func TestImportGoesOnlyToInstrumentedFiles(t *testing.T) {
 	t.Parallel()
 
-	in := readFile(t, filepath.Join("testdata", "comparison.input"))
+	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), in)
-	writeFile(t, filepath.Join(root, "quiet.go"), []byte("package sample\n\nvar Quiet = 1\n"))
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
+	testkit.WriteFile(t, filepath.Join(root, "quiet.go"), []byte("package sample\n\nvar Quiet = 1\n"))
 
 	instrumentSnapshot(t, root, catalogOf(t, candidatesFor(t, nil, in)))
 
-	if got := readFile(t, filepath.Join(root, "quiet.go")); strings.Contains(string(got), "gomutants_rt") {
+	if got := testkit.ReadFile(t, filepath.Join(root, "quiet.go")); strings.Contains(string(got), "gomutants_rt") {
 		t.Errorf("an uninstrumented file imported the runtime:\n%s", got)
 	}
 }

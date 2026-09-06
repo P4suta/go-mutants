@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/instrument"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // TestInstrumentFileRewritesOneFileWithASubset is the property compile
@@ -28,15 +29,15 @@ import (
 func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 	t.Parallel()
 
-	pristine := readFile(t, filepath.Join("testdata", "nested.input"))
+	pristine := testkit.ReadFile(t, filepath.Join("testdata", "nested.input"))
 	root := t.TempDir()
 	file := filepath.Join(root, sampleFile)
-	writeFile(t, file, pristine)
+	testkit.WriteFile(t, file, pristine)
 
 	catalog := catalogOf(t, candidatesIn(t, pristine))
 	result := instrumentSnapshot(t, root, catalog)
 	runtimeFile := filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go")
-	generated := readFile(t, runtimeFile)
+	generated := testkit.ReadFile(t, runtimeFile)
 
 	mutants := catalog.Mutants()
 	if len(mutants) < 2 {
@@ -64,7 +65,7 @@ func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 		t.Errorf("InstrumentFile reported %d guards, want at least one", guards)
 	}
 
-	out := readFile(t, file)
+	out := testkit.ReadFile(t, file)
 	for _, m := range kept {
 		if flag := fmt.Sprintf(".M[%d]", m.Index); !bytes.Contains(out, []byte(flag)) {
 			t.Errorf("the subset's mutant %s is not guarded: no %s in\n%s", m.DisplayID, flag, out)
@@ -81,7 +82,7 @@ func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 	if got, want := instrument.CountLines(out), instrument.CountLines(pristine); got != want {
 		t.Errorf("the rewritten file holds %d line breaks, the pristine file holds %d", got, want)
 	}
-	if after := readFile(t, runtimeFile); !bytes.Equal(after, generated) {
+	if after := testkit.ReadFile(t, runtimeFile); !bytes.Equal(after, generated) {
 		t.Errorf("the generated runtime changed under InstrumentFile:\n%s", after)
 	}
 }
@@ -98,14 +99,14 @@ func TestInstrumentFileRewritesOneFileWithASubset(t *testing.T) {
 func TestInstrumentFileWithNoMutantsRestoresThePristineFile(t *testing.T) {
 	t.Parallel()
 
-	pristine := readFile(t, filepath.Join("testdata", "comparison.input"))
+	pristine := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	root := t.TempDir()
 	file := filepath.Join(root, sampleFile)
-	writeFile(t, file, pristine)
+	testkit.WriteFile(t, file, pristine)
 
 	catalog := catalogOf(t, candidatesIn(t, pristine))
 	result := instrumentSnapshot(t, root, catalog)
-	if guarded := readFile(t, file); bytes.Equal(guarded, pristine) {
+	if guarded := testkit.ReadFile(t, file); bytes.Equal(guarded, pristine) {
 		t.Fatal("the full pass left the file unchanged, so the restore below would prove nothing")
 	}
 
@@ -121,7 +122,7 @@ func TestInstrumentFileWithNoMutantsRestoresThePristineFile(t *testing.T) {
 	if guards != 0 {
 		t.Errorf("InstrumentFile wrote %d guards for an empty subset, want 0", guards)
 	}
-	if out := readFile(t, file); !bytes.Equal(out, pristine) {
+	if out := testkit.ReadFile(t, file); !bytes.Equal(out, pristine) {
 		t.Errorf("an empty subset did not restore the pristine file:\n%s", out)
 	}
 }
@@ -137,9 +138,9 @@ func TestInstrumentFileWithNoMutantsRestoresThePristineFile(t *testing.T) {
 func TestInstrumentFileRefusesBadOptions(t *testing.T) {
 	t.Parallel()
 
-	src := readFile(t, filepath.Join("testdata", "comparison.input"))
+	src := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), src)
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), src)
 
 	elsewhere := catalogOf(t, candidatesIn(t, src)).Mutants()
 	for i := range elsewhere {
@@ -189,14 +190,14 @@ func TestInstrumentFileRefusesBadOptions(t *testing.T) {
 func TestInstrumentFileRefusesAlreadyInstrumentedBytes(t *testing.T) {
 	t.Parallel()
 
-	pristine := readFile(t, filepath.Join("testdata", "comparison.input"))
+	pristine := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	root := t.TempDir()
 	file := filepath.Join(root, sampleFile)
-	writeFile(t, file, pristine)
+	testkit.WriteFile(t, file, pristine)
 
 	catalog := catalogOf(t, candidatesIn(t, pristine))
 	result := instrumentSnapshot(t, root, catalog)
-	instrumented := readFile(t, file)
+	instrumented := testkit.ReadFile(t, file)
 
 	// The instrumented bytes as Source, deliberately.
 	_, err := instrument.InstrumentFile(instrument.FileOptions{
@@ -216,7 +217,7 @@ func TestInstrumentFileRefusesAlreadyInstrumentedBytes(t *testing.T) {
 		t.Errorf("InstrumentFile failed with %s, want %s or %s: %v",
 			got, instrument.CodeSiteNotFound, instrument.CodeSpliceMismatch, err)
 	}
-	if out := readFile(t, file); !bytes.Equal(out, instrumented) {
+	if out := testkit.ReadFile(t, file); !bytes.Equal(out, instrumented) {
 		t.Error("the refused rewrite still changed the file")
 	}
 }

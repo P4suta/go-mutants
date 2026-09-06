@@ -29,6 +29,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
@@ -65,7 +67,9 @@ const shadowedSource = "// Package shadowed holds one return whose result type i
 // about the code; the probe tree rejecting one candidate and keeping the rest
 // is what says a site that cannot be written costs its own mutant and no more.
 func TestValidateProbeTreeRejectsOnlyTheSiteThatCannotCompile(t *testing.T) {
-	toolchain := locateToolchain(t)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
 
 	for _, c := range []struct {
 		name string
@@ -78,16 +82,19 @@ func TestValidateProbeTreeRejectsOnlyTheSiteThatCannotCompile(t *testing.T) {
 		{name: "the probe tree", mode: instrument.ModeProbe, rejected: []string{"return-zero-numeric int"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			snap, found, catalog := shadowedFixture(t, toolchain)
+			t.Parallel()
+
+			env := testkit.Compose(t, t.TempDir())
+			snap, found, catalog := shadowedFixture(t, toolchain, env)
 
 			result, err := validate.Validate(t.Context(), validate.Options{
 				Snap:         snap,
 				Catalog:      catalog,
-				Hints:        fixtureHints(t, found),
+				Hints:        mutantkit.Hints(t, found),
 				ModulePath:   found.ModulePath,
 				Toolchain:    toolchain,
-				BuildTimeout: stepTimeout,
-				Env:          fixtureEnv(""),
+				BuildTimeout: mutantkit.StepTimeout,
+				Env:          env,
 				Mode:         c.mode,
 			})
 			if err != nil {
@@ -112,43 +119,23 @@ func TestValidateProbeTreeRejectsOnlyTheSiteThatCannotCompile(t *testing.T) {
 			// Whatever was left on disk has to build, in either mode: the phase
 			// promises a tree the next one can use, and a probe tree that did
 			// not build would stop a run rather than merely measure less of it.
-			build := goInSnapshot(t, toolchain, snap.Root, "", "build", "./...")
-			requireExit(t, build, 0, "`go build ./...` after validation")
+			build := mutantkit.RunGo(t, toolchain, snap.Root, env, "build", "./...")
+			mutantkit.RequireExit(t, build, 0, "`go build ./...` after validation")
 		})
 	}
 }
 
 // shadowedFixture snapshots [shadowedSource] and discovers it, insisting on the
 // catalogue the assertions above are written against.
-func shadowedFixture(t *testing.T, toolchain gocmd.Toolchain) (*snapshot.Snapshot, discover.Result, *mutation.Catalog) {
+func shadowedFixture(t *testing.T, toolchain gocmd.Toolchain, env []string) (*snapshot.Snapshot, discover.Result, *mutation.Catalog) {
 	t.Helper()
 
 	const modulePath = "fixture.example/shadowed"
-	source := t.TempDir()
-	writeModuleFile(t, source, "go.mod", "module "+modulePath+"\n\ngo 1.26\n")
-	writeModuleFile(t, source, "shadowed.go", shadowedSource)
+	source := testkit.NewModule(t).Module(modulePath).Source("shadowed.go", shadowedSource).Root()
 
-	snap, err := snapshot.Create(source, snapshot.Options{DestParent: t.TempDir()})
-	if err != nil {
-		t.Fatalf("snapshotting the shadowed module: %v", err)
-	}
-	t.Cleanup(func() {
-		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
-			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, cleanupErr)
-		}
-	})
-
-	found, err := discover.Discover(t.Context(), discover.Options{
-		SnapshotRoot: snap.Root,
-		Toolchain:    toolchain,
-	})
-	if err != nil {
-		t.Fatalf("discovering the shadowed module: %v", err)
-	}
-	catalog, err := discover.BuildCatalog(found)
-	if err != nil {
-		t.Fatalf("building the catalogue: %v", err)
-	}
+	snap := mutantkit.SnapshotOf(t, source)
+	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
+	catalog := mutantkit.Catalog(t, found)
 	// Pinned, because every assertion above names a candidate by its rule and
 	// the bytes it replaces: a fixture that grew one would otherwise change
 	// what "everything else was accepted" counts.

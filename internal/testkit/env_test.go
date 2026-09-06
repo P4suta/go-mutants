@@ -138,6 +138,41 @@ func TestEnvPinsGoCacheToTheTestOwnedDirectory(t *testing.T) {
 	}
 }
 
+// TestBuildCacheEntriesCountsWhatWasCompiledRatherThanWhatWasOpened is the
+// distinction the helper exists for.
+//
+// A go command that opens a cache creates all 256 shard directories, a README
+// and a trim record before it has written a single entry, so "the directory has
+// things in it" is true of a cache nothing ever compiled into. A test asking
+// where a compile went therefore has to look past the bookkeeping, and getting
+// that wrong makes the assertion pass for the failure it was written to catch.
+func TestBuildCacheEntriesCountsWhatWasCompiledRatherThanWhatWasOpened(t *testing.T) {
+	t.Parallel()
+
+	cache := t.TempDir()
+	for _, name := range []string{"README", "trim.txt", "lock", BuildCacheMarker} {
+		WriteFile(t, filepath.Join(cache, name), []byte("bookkeeping\n"))
+	}
+	for _, shard := range []string{"00", "a3", "ff"} {
+		if err := os.MkdirAll(filepath.Join(cache, shard), 0o700); err != nil {
+			t.Fatalf("creating the shard %s: %v", shard, err)
+		}
+	}
+	if got := BuildCacheEntries(t, cache); got != 0 {
+		t.Errorf("an opened cache holds %d compiled entries, want 0", got)
+	}
+
+	WriteFile(t, filepath.Join(cache, "a3", "a3f0ab-d"), []byte("an object\n"))
+	WriteFile(t, filepath.Join(cache, "a3", "a3f0ab-a"), []byte("its action\n"))
+	if got := BuildCacheEntries(t, cache); got != 2 {
+		t.Errorf("a cache holding two entries counted %d", got)
+	}
+
+	if got := BuildCacheEntries(t, filepath.Join(cache, "never-created")); got != 0 {
+		t.Errorf("a cache directory that does not exist counted %d entries, want 0", got)
+	}
+}
+
 // TestBuildCacheHonoursTheNamedDirectory is the CI half of the same rule: a
 // runner names a cache under its own temporary area, which dies with the runner
 // and is never restored from an actions cache, so a job cannot inherit

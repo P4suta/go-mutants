@@ -22,17 +22,17 @@ package instrument_test
 import (
 	"bytes"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // TestProbeTreeIsSemanticsPreserving runs the killable fixture's suite against
@@ -51,38 +51,31 @@ import (
 // the generated runtime may have changed, or a probe pass would be measuring a
 // tree it had itself disturbed.
 func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "killable")
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "killable")
 
 	// The pristine suite first, because it is the thing the probe tree has to
 	// agree with. Nothing is written by it: the fixture's tests assert and
 	// return, and the drift gate at the end is what says so.
-	pristine := runSuite(t, toolchain, snap.Root, "")
-	requireExit(t, pristine, 0, "the pristine fixture's suite")
+	pristine := mutantkit.RunSuite(t, toolchain, snap.Root, env)
+	mutantkit.RequireExit(t, pristine, 0, "the pristine fixture's suite")
 	wantLines := verdictLines(pristine)
 	if len(wantLines) == 0 {
 		t.Fatalf("the pristine suite printed no per-test verdicts, so there is nothing to compare against:\n%s",
 			pristine.Output)
 	}
 
-	found, discoverErr := discover.Discover(t.Context(), discover.Options{
-		SnapshotRoot: snap.Root,
-		Toolchain:    toolchain,
-	})
-	if discoverErr != nil {
-		t.Fatalf("discovering the killable fixture: %v", discoverErr)
-	}
-	catalog := catalogFrom(t, found)
-	hints, hintsErr := instrument.HintsOf(found.Candidates)
-	if hintsErr != nil {
-		t.Fatalf("indexing the guard hints: %v", hintsErr)
-	}
+	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
+	catalog := mutantkit.Catalog(t, found)
 
 	instrumented, instrumentErr := instrument.Instrument(instrument.Options{
 		SnapshotRoot: snap.Root,
 		ModulePath:   found.ModulePath,
 		Catalog:      catalog,
-		Hints:        hints,
+		Hints:        mutantkit.Hints(t, found),
 		Mode:         instrument.ModeProbe,
 	})
 	if instrumentErr != nil {
@@ -102,8 +95,8 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	}
 
 	t.Run("the probe tree builds", func(t *testing.T) {
-		build := goInSnapshot(t, toolchain, snap.Root, "", "build", "./...")
-		requireExit(t, build, 0, "`go build ./...` in the probe tree")
+		build := mutantkit.RunGo(t, toolchain, snap.Root, env, "build", "./...")
+		mutantkit.RequireExit(t, build, 0, "`go build ./...` in the probe tree")
 	})
 
 	t.Run("the probe tree's suite passes unprobed", func(t *testing.T) {
@@ -112,8 +105,8 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 		// verdicts are compared with the pristine run's rather than merely
 		// counted, because a rewrite that changed one answer would still exit 0
 		// if the fixture happened to have a test that tolerated it.
-		quiet := runProbeSuite(t, toolchain, snap.Root, "")
-		requireExit(t, quiet, 0, "the probe tree's suite with no log")
+		quiet := runProbeSuite(t, toolchain, snap.Root, env, "")
+		mutantkit.RequireExit(t, quiet, 0, "the probe tree's suite with no log")
 		if got := verdictLines(quiet); !slices.Equal(got, wantLines) {
 			t.Errorf("the probe tree's suite reported\n\t%s\nthe pristine tree reported\n\t%s",
 				strings.Join(got, "\n\t"), strings.Join(wantLines, "\n\t"))
@@ -122,17 +115,14 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 
 	t.Run("the probe tree's suite passes while recording", func(t *testing.T) {
 		log := filepath.Join(t.TempDir(), "infection.log")
-		recording := runProbeSuite(t, toolchain, snap.Root, log)
-		requireExit(t, recording, 0, "the probe tree's suite with a log")
+		recording := runProbeSuite(t, toolchain, snap.Root, env, log)
+		mutantkit.RequireExit(t, recording, 0, "the probe tree's suite with a log")
 		if got := verdictLines(recording); !slices.Equal(got, wantLines) {
 			t.Errorf("the recording suite reported\n\t%s\nthe pristine tree reported\n\t%s",
 				strings.Join(got, "\n\t"), strings.Join(wantLines, "\n\t"))
 		}
 
-		data, readErr := os.ReadFile(log)
-		if readErr != nil {
-			t.Fatalf("reading the infection log the suite wrote: %v", readErr)
-		}
+		data := testkit.ReadFile(t, log)
 		infected, parseErr := instrument.ReadInfectionLog(bytes.NewReader(data), catalog.Digest(), catalog.Len())
 		if parseErr != nil {
 			t.Fatalf("reading the infection log against the catalogue: %v\n%s", parseErr, data)
@@ -180,21 +170,17 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 // runProbeSuite runs the fixture's whole suite in the snapshot, recording into
 // log when it is not empty.
 //
-// It is [runSuite] with the other variable, and the environment is composed the
-// same way for the same reason: a developer with GO_MUTANTS_PROBE exported in
-// their shell must not turn the unprobed run into a probed one, which is
-// exactly what [fixtureEnv] strips.
-func runProbeSuite(t *testing.T, toolchain gocmd.Toolchain, root, log string) runner.Result {
+// It is [mutantkit.RunSuite] with the other variable, over the environment the
+// caller composed for the same reason every child here gets one: a developer
+// with GO_MUTANTS_PROBE exported in their shell must not turn the unprobed run
+// into a probed one, and the composed environment is what strips it.
+func runProbeSuite(t *testing.T, toolchain gocmd.Toolchain, root string, env []string, log string) runner.Result {
 	t.Helper()
 
-	spec := toolchain.Command("test", "-count=1", "-v", "./...")
-	spec.Dir = root
-	spec.Env = fixtureEnv("")
 	if log != "" {
-		spec.Env = append(spec.Env, instrument.ProbeEnv+"="+log)
+		env = append(slices.Clip(env), instrument.ProbeEnv+"="+log)
 	}
-	spec.Timeout = stepTimeout
-	return runner.Run(t.Context(), spec)
+	return mutantkit.RunSuite(t, toolchain, root, env)
 }
 
 // verdictLines returns every per-test verdict `go test -v` printed, in order,

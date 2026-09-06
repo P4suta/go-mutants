@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -192,7 +193,7 @@ func TestCollectCoverageRefusesADirectoryItCannotCreate(t *testing.T) {
 	// A regular file where the pass wants a directory, which fails on every
 	// platform and needs no permission games.
 	blocked := filepath.Join(t.TempDir(), "coverage")
-	writeFile(t, blocked, "not a directory")
+	testkit.WriteFile(t, blocked, []byte("not a directory"))
 
 	_, err := execute.CollectCoverage(t.Context(), opts, testBins("example.com/m/a"), blocked)
 	if err == nil {

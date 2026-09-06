@@ -157,6 +157,68 @@ Entries say *why* a change was made, not only what changed.
   measured duration and every absolute path, and deliberately leaving the
   digests and mutant ids, which are content-addressed and are what proves two
   runs measured the same program.
+- **The toolchain-driving suites of `internal/validate`, `internal/instrument`,
+  `internal/execute` and `internal/coverage` run on the shared harness.** Four
+  packages each carried their own `snapshotFixture`, `locateToolchain`,
+  `fixtureEnv`, `goInSnapshot`, `runSuite`, `requireExit`, `requireOutput` and
+  `mutantAt`, and the copies disagreed about the things that decide what a test
+  means. Two of them made a missing `go` a skip and two made it a fatal, so the
+  same machine ran a different suite depending on which package it was in.
+  Three composed the environment their children got and one inherited the
+  developer's whole shell, so a `GO_MUTANTS_ACTIVE` exported in it ran a mutant
+  as the baseline in the fourth. `internal/coverage` looked its toolchain up
+  with `exec.LookPath("go")` and then located a second one, which is two chances
+  to find two different compilers. And every one of them pointed its children at
+  the developer's own build cache with fixture paths that exist for a single
+  run. They now call `mutantkit.Toolchain`, `Snapshot`, `Discover`, `Catalog`,
+  `Hints`, `Instrument`, `RunGo`, `RunSuite`, `RequireExit`, `RequireOutput`,
+  `MutantAt` and `Activate` over a `testkit.Compose` environment, so those
+  questions have one answer each. The suites that no longer touch a process
+  global run in parallel, which is where the wall-clock time went. Measured on
+  the machine this was written on, warm — the developer's cache warm before, the
+  harness's warm after — the four integration suites take about 9 s of wall clock
+  (the median of three runs, and the same three runs each) where the same four
+  took 17 s, and `internal/execute`'s about 3 s where it took 8 s. Some of what
+  is left is deliberate: the build-cache guard below hands its validation a cache
+  nobody has written to, so it pays for a cold compile on every run.
+
+  `TestValidateDoesNotTouchTheUsersBuildCache` is the new assertion behind that
+  last point, and it is stated three ways because the three fail separately:
+  `go env GOCACHE` under the very environment a validation ran its builds with
+  has to name the harness's cache, something under that cache has to have
+  changed, and no cache may appear under the private home an unpinned `GOCACHE`
+  would resolve to. The developer's own `go-build` is compared as a directory —
+  its modification time and the names in it — because `go test` is itself a go
+  command using that cache while the test runs, so anything finer would report
+  somebody else's build as this phase's.
+
+  `mutantkit.Discover` and `mutantkit.Instrument` now compose an environment of
+  their own, and `DiscoverWith`/`InstrumentWith` take the caller's. Discovery
+  reads types, so go/packages asks the go command for export data, so a discovery
+  pass *compiles* the module and everything below it — which makes it the
+  heaviest writer of build cache entries in every suite that drives it, heavier
+  than the builds those suites are about, and left on the process's own
+  environment every one of those entries landed in the developer's cache: a plain
+  `go test -tags integration ./internal/testkit/...` put 28 files there. There is
+  no form of these helpers that does that any more. The pair of tests beside them
+  watches a private, empty cache receive the work — counting the files a compile
+  writes rather than the directory's own entries, because a go command creates
+  all 256 shards and its README when it merely *opens* a cache, so a top-level
+  listing says nothing about whether anything was compiled
+  (`testkit.BuildCacheEntries` is the one implementation of that question).
+
+  The synthesized modules in these suites are built by `testkit.NewModule`,
+  which carries this repository's own `go` directive rather than a written-down
+  one — under the policy's `GOTOOLCHAIN=local`, a directive newer than the
+  toolchain in use is an error rather than a download — and puts the SPDX header
+  on every file, including the ones that only ever exist inside a `t.TempDir()`.
+  The local `readFile`/`writeFile` pairs in `internal/instrument` and
+  `internal/execute` are gone the same way, and so is the second copy of the
+  build environment that `internal/instrument`'s probe-site tests had grown
+  (`goCommandWithEnv`): `-mod=mod` and `-buildvcs=false` are on the command
+  line now, where a flag that overrides `GOFLAGS` belongs, with the note about
+  why a module in a temporary directory must never be VCS-stamped kept beside
+  them.
 - **A run trace: `github.com/P4suta/go-mutants/trace` and the
   `gomutants-trace-v1` contract.** A report says a mutant survived; nothing said
   which test binaries were run against it, with which arguments, for how long,

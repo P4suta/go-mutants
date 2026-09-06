@@ -35,12 +35,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/execute"
-	"github.com/P4suta/go-mutants/internal/gocmd"
-	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
-	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 const (
@@ -69,9 +67,12 @@ const (
 // Together — same binaries, same scheduler, one changed environment variable —
 // they say this package really is measuring what it claims to measure.
 func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "killable")
-	catalog := instrumentFixture(t, toolchain, snap)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "killable")
+	catalog := mutantkit.InstrumentWith(t, toolchain, snap, env)
 
 	// Outside the snapshot, both of them. A test binary written into the tree
 	// would show up in the snapshot re-digest as drift indistinguishable from a
@@ -85,6 +86,7 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 		ScratchDir:   filepath.Join(t.TempDir(), "tmp"),
 		Jobs:         2,
 		Timeout:      buildTimeout,
+		Env:          env,
 	}
 
 	bins, err := execute.BuildTestBinaries(t.Context(), opts)
@@ -104,7 +106,7 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	// /var is a link to /private/var), while the snapshot remembers the path
 	// it was created under. The two name one directory, so the comparison
 	// resolves both sides rather than trusting either spelling.
-	if resolvedPath(t, bins[0].Dir) != resolvedPath(t, snap.Root) {
+	if !testkit.SamePath(bins[0].Dir, snap.Root) {
 		t.Errorf("the package directory is %q, want the snapshot root %q", bins[0].Dir, snap.Root)
 	}
 	if info, statErr := os.Stat(bins[0].BinPath); statErr != nil || info.Size() == 0 {
@@ -128,7 +130,7 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 
 	queue := make([]execute.MutantRun, len(want))
 	for i, w := range want {
-		queue[i] = execute.MutantRun{ID: mutantAt(t, catalog, w.path, w.rule).ID, Timeout: runTimeout}
+		queue[i] = execute.MutantRun{ID: mutantkit.MutantAt(t, catalog, w.path, w.rule).ID, Timeout: runTimeout}
 	}
 
 	// Atomic rather than plain counters because the hooks really are called
@@ -203,9 +205,12 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 // report a perfect score. Nothing but a real instrumented binary can prove the
 // status is what this package thinks it is.
 func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "killable")
-	instrumentFixture(t, toolchain, snap)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "killable")
+	mutantkit.InstrumentWith(t, toolchain, snap, env)
 
 	opts := execute.Options{
 		Toolchain:    toolchain,
@@ -214,6 +219,7 @@ func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
 		ScratchDir:   filepath.Join(t.TempDir(), "tmp"),
 		Jobs:         1,
 		Timeout:      buildTimeout,
+		Env:          env,
 	}
 	bins, err := execute.BuildTestBinaries(t.Context(), opts)
 	if err != nil {
@@ -254,9 +260,12 @@ func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
 // a full schedule has to be exactly the instrumentation's own rewrite, with no
 // compiled binary, no temporary file, and no coverage data added to it.
 func TestOnlyTheInstrumentedFilesDriftedDuringExecution(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "killable")
-	catalog := instrumentFixture(t, toolchain, snap)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "killable")
+	catalog := mutantkit.InstrumentWith(t, toolchain, snap, env)
 
 	opts := execute.Options{
 		Toolchain:    toolchain,
@@ -265,6 +274,7 @@ func TestOnlyTheInstrumentedFilesDriftedDuringExecution(t *testing.T) {
 		ScratchDir:   filepath.Join(t.TempDir(), "tmp"),
 		Jobs:         2,
 		Timeout:      buildTimeout,
+		Env:          env,
 	}
 	bins, err := execute.BuildTestBinaries(t.Context(), opts)
 	if err != nil {
@@ -314,8 +324,11 @@ func TestOnlyTheInstrumentedFilesDriftedDuringExecution(t *testing.T) {
 // purpose. Nothing here is about mutants; what is being asserted is that the
 // package set the listing was given is the package set that came out.
 func TestScopedBuildCompilesOnlyTheNamedPackages(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "coverage")
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "coverage")
 
 	const (
 		corePackage   = "fixture.example/coverage/core"
@@ -327,6 +340,7 @@ func TestScopedBuildCompilesOnlyTheNamedPackages(t *testing.T) {
 		BinDir:       filepath.Join(t.TempDir(), "bin"),
 		Jobs:         2,
 		Timeout:      buildTimeout,
+		Env:          env,
 	}
 
 	whole, err := execute.BuildTestBinaries(t.Context(), opts)
@@ -352,7 +366,7 @@ func TestScopedBuildCompilesOnlyTheNamedPackages(t *testing.T) {
 	// Nothing else was compiled into the directory either. A scope that listed
 	// one package and built two would be a scope that saved a listing and
 	// nothing else.
-	if got := len(entriesIn(t, opts.BinDir)); got != 1 {
+	if got := len(testkit.Entries(t, opts.BinDir)); got != 1 {
 		t.Errorf("the scoped binary directory holds %d files, want 1", got)
 	}
 }
@@ -365,112 +379,6 @@ func importPathsOf(bins []execute.TestBinary) []string {
 		out[i] = bin.ImportPath
 	}
 	return out
-}
-
-// entriesIn lists the names directly under a directory.
-func entriesIn(t *testing.T, dir string) []string {
-	t.Helper()
-	found, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("reading %s: %v", dir, err)
-	}
-	names := make([]string, 0, len(found))
-	for _, e := range found {
-		names = append(names, e.Name())
-	}
-	return names
-}
-
-// locateToolchain finds the Go toolchain, or ends the test saying so.
-func locateToolchain(t *testing.T) gocmd.Toolchain {
-	t.Helper()
-	toolchain, err := gocmd.LocateContext(t.Context(), gocmd.Options{})
-	if err != nil {
-		t.Fatalf("locating the Go toolchain: %v", err)
-	}
-	return toolchain
-}
-
-// snapshotFixture copies a corpus module into a disposable directory and
-// registers its removal.
-//
-// The cleanup is registered the moment the snapshot exists, before the caller
-// can do anything that fails: every step after this one is entitled to call
-// t.Fatalf, and a snapshot that outlives the test is a copy of a tree left in
-// the temporary directory with nobody to remove it.
-func snapshotFixture(t *testing.T, name string) *snapshot.Snapshot {
-	t.Helper()
-	root, absErr := filepath.Abs(filepath.Join("..", "..", "fixtures", name))
-	if absErr != nil {
-		t.Fatalf("resolving the %s fixture: %v", name, absErr)
-	}
-	if _, statErr := os.Stat(filepath.Join(root, "go.mod")); statErr != nil {
-		t.Fatalf("fixture %s is not a module: %v", name, statErr)
-	}
-	snap, createErr := snapshot.Create(root, snapshot.Options{DestParent: t.TempDir()})
-	if createErr != nil {
-		t.Fatalf("snapshotting the %s fixture: %v", name, createErr)
-	}
-	t.Cleanup(func() {
-		if cleanupErr := snap.Cleanup(); cleanupErr != nil {
-			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, cleanupErr)
-		}
-	})
-	return snap
-}
-
-// instrumentFixture discovers, catalogues, and instruments a snapshot, and
-// returns the catalogue every later step indexes mutants by.
-func instrumentFixture(t *testing.T, toolchain gocmd.Toolchain, snap *snapshot.Snapshot) *mutation.Catalog {
-	t.Helper()
-	found, discoverErr := discover.Discover(t.Context(), discover.Options{
-		SnapshotRoot: snap.Root,
-		Toolchain:    toolchain,
-	})
-	if discoverErr != nil {
-		t.Fatalf("discovering the fixture: %v", discoverErr)
-	}
-	catalog, catalogErr := discover.BuildCatalog(found)
-	if catalogErr != nil {
-		t.Fatalf("building the catalogue: %v", catalogErr)
-	}
-	// The guard hints travel with the catalogue, from the pass that had the
-	// type checker to the one that rewrites bytes: internal/instrument cannot
-	// choose a rewrite form for itself, and a catalogued mutant with no hint is
-	// refused rather than guessed at.
-	hints, hintsErr := instrument.HintsOf(found.Candidates)
-	if hintsErr != nil {
-		t.Fatalf("indexing the guard hints: %v", hintsErr)
-	}
-	if _, instrumentErr := instrument.Instrument(instrument.Options{
-		SnapshotRoot: snap.Root,
-		ModulePath:   found.ModulePath,
-		Catalog:      catalog,
-		Hints:        hints,
-	}); instrumentErr != nil {
-		t.Fatalf("instrumenting the snapshot: %v", instrumentErr)
-	}
-	return catalog
-}
-
-// mutantAt returns the one catalogued mutant of a rule in a file.
-//
-// Uniqueness is asserted rather than assumed, and the assertion is what turns
-// the fixture's layout into a contract: one function per file and no repeated
-// operator means a rule in a file names exactly one mutant, so a test can say
-// which mutant it means without knowing an identity or a catalogue position.
-func mutantAt(t *testing.T, catalog *mutation.Catalog, path, rule string) mutation.Mutant {
-	t.Helper()
-	var found []mutation.Mutant
-	for _, m := range catalog.Mutants() {
-		if m.Path == path && m.Rule.Name == rule {
-			found = append(found, m)
-		}
-	}
-	if len(found) != 1 {
-		t.Fatalf("the catalogue holds %d mutants of %s in %s, want exactly 1", len(found), rule, path)
-	}
-	return found[0]
 }
 
 // TestCoveragePassLeavesNoTraceInTheSnapshot is the drift gate's verification
@@ -488,9 +396,12 @@ func mutantAt(t *testing.T, catalog *mutation.Catalog, path, rule string) mutati
 // makes, with coverage turned on — which is the configuration a default run now
 // uses, and therefore the one the gate has to hold for.
 func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
-	toolchain := locateToolchain(t)
-	snap := snapshotFixture(t, "killable")
-	catalog := instrumentFixture(t, toolchain, snap)
+	t.Parallel()
+
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
+	snap := mutantkit.Snapshot(t, "killable")
+	catalog := mutantkit.InstrumentWith(t, toolchain, snap, env)
 
 	work := t.TempDir()
 	opts := execute.Options{
@@ -501,6 +412,7 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 		CoverPkg:     killableModule + "/...",
 		Jobs:         2,
 		Timeout:      buildTimeout,
+		Env:          env,
 	}
 	bins, err := execute.BuildTestBinaries(t.Context(), opts)
 	if err != nil {
@@ -552,18 +464,4 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 		t.Errorf("the snapshot drifted as\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
-}
-
-// resolvedPath is filepath.EvalSymlinks as an assertion helper: two spellings
-// of one directory (macOS's /var link into /private/var) must compare equal,
-// and a path that cannot be resolved is a test-environment failure, not a
-// verdict about the code under test.
-func resolvedPath(t *testing.T, path string) string {
-	t.Helper()
-
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		t.Fatalf("resolving %s: %v", path, err)
-	}
-	return resolved
 }

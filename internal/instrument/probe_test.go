@@ -22,6 +22,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // TestProbeRuntimeGolden pins the generated probe package for the same
@@ -38,7 +39,7 @@ func TestProbeRuntimeGolden(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
 	catalog := catalogOf(t, threeAlternatives(t, []byte(runtimeSample)))
 	if catalog.Len() != 3 {
 		t.Fatalf("the fixture catalogue holds %d mutants, want 3", catalog.Len())
@@ -46,7 +47,7 @@ func TestProbeRuntimeGolden(t *testing.T) {
 
 	result := probeSnapshot(t, root, catalog)
 	generated := filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go")
-	out := readFile(t, generated)
+	out := testkit.ReadFile(t, generated)
 
 	testkit.Golden(t, "proberuntime.golden", out)
 
@@ -98,17 +99,17 @@ func TestMutantRuntimeStillExportsOnlyM(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
 	catalog := catalogOf(t, threeAlternatives(t, []byte(runtimeSample)))
 
 	result := instrumentSnapshot(t, root, catalog)
 	generated := filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go")
-	out := readFile(t, generated)
+	out := testkit.ReadFile(t, generated)
 
 	if got, want := exportedNames(t, generated, out), []string{"M"}; !equalStrings(got, want) {
 		t.Errorf("the generated activation runtime exports %v, want %v", got, want)
 	}
-	if want := readFile(t, filepath.Join("testdata", "runtime.golden")); !bytes.Equal(out, want) {
+	if want := testkit.ReadFile(t, filepath.Join("testdata", "runtime.golden")); !bytes.Equal(out, want) {
 		t.Errorf("the activation runtime changed\n--- got ---\n%s\n--- want ---\n%s", out, want)
 	}
 }
@@ -128,7 +129,7 @@ func TestProbeRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 	if len(result.FilesInstrumented) != 0 {
 		t.Errorf("FilesInstrumented = %v, want none", result.FilesInstrumented)
 	}
-	out := readFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
+	out := testkit.ReadFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
 	for _, want := range []string{
 		"var probeSeen [1]uint32",
 		`const probeHeader = "gomutants-infection-v1 ` + catalog.Digest() + ` 1"`,
@@ -162,7 +163,7 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 		t.Fatalf("the probe binary exited %d\n--- stdout ---\n%s\n--- stderr ---\n%s", code, stdout, stderr)
 	}
 
-	data := readFile(t, log)
+	data := testkit.ReadFile(t, log)
 	// The fixture's catalogue holds three mutants, so the array width the header
 	// carries and the catalogue size the reader is handed are the same number
 	// here. They part company only for an empty catalogue, which is
@@ -267,11 +268,12 @@ func TestProbeRuntimeExitsWhenTheLogCannotBeOpened(t *testing.T) {
 func TestInfectIsRaceFree(t *testing.T) {
 	t.Parallel()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	const rel = "pkg/sample/sample.go"
-	writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(runtimeSample))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(runtimeSample))
 
 	candidates := threeAlternatives(t, []byte(runtimeSample))
 	for i := range candidates {
@@ -279,21 +281,20 @@ func TestInfectIsRaceFree(t *testing.T) {
 	}
 	catalog := catalogOf(t, candidates)
 	result := probeSnapshot(t, root, catalog)
-	writeFile(t, filepath.Join(root, filepath.FromSlash("pkg/probe/probe.go")), []byte(probePackage))
-	writeFile(t, filepath.Join(root, filepath.FromSlash("pkg/probe/probe_test.go")),
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("pkg/probe/probe.go")), []byte(probePackage))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("pkg/probe/probe_test.go")),
 		[]byte(fmt.Sprintf(probeRaceTest, result.RuntimeImport)))
 
 	binary := filepath.Join(root, "probe.test")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	out, err := goCommand(t, toolchain, root, "test", "-race", "-c", "-o", binary, "./pkg/probe")
-	if err != nil {
-		if raceUnavailable(out) {
-			t.Skipf("this toolchain cannot build with -race, so the guard cannot be exercised under it:\n%s", out)
-		}
-		t.Fatalf("building the probe test binary with -race: %v\n%s", err, out)
+	build := goCommand(t, toolchain, root, env, "test", "-race", "-c", "-o", binary, "./pkg/probe")
+	if build.ExitCode != 0 && raceUnavailable(string(build.Output)) {
+		t.Skipf("this toolchain cannot build with -race, so the guard cannot be exercised under it:\n%s",
+			build.Output)
 	}
+	mutantkit.RequireExit(t, build, 0, "building the probe test binary with -race")
 
 	log := filepath.Join(t.TempDir(), "infection.log")
 	stdout, stderr, code := runProbe(t, t.TempDir(), binary, instrument.ProbeEnv+"="+log)
@@ -304,7 +305,7 @@ func TestInfectIsRaceFree(t *testing.T) {
 		t.Errorf("the race detector reported a race in the generated probe runtime\n--- stdout ---\n%s\n--- stderr ---\n%s",
 			stdout, stderr)
 	}
-	if got, err := instrument.ReadInfectionLog(bytes.NewReader(readFile(t, log)), catalog.Digest(), catalog.Len()); err != nil {
+	if got, err := instrument.ReadInfectionLog(bytes.NewReader(testkit.ReadFile(t, log)), catalog.Digest(), catalog.Len()); err != nil {
 		t.Errorf("ReadInfectionLog after the race run: %v", err)
 	} else if want := []uint32{0, 1, 2}; !slices.Equal(got, want) {
 		t.Errorf("the race run recorded %v, want %v", got, want)
@@ -323,20 +324,20 @@ func TestInfectIsRaceFree(t *testing.T) {
 func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	t.Parallel()
 
-	in := readFile(t, filepath.Join("testdata", "comparison.input"))
-	other := readFile(t, filepath.Join("testdata", "nested.input"))
+	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
+	other := testkit.ReadFile(t, filepath.Join("testdata", "nested.input"))
 
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, sampleFile), in)
-	writeFile(t, filepath.Join(root, "other.go"), other)
+	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
+	testkit.WriteFile(t, filepath.Join(root, "other.go"), other)
 
 	catalog := catalogOf(t, candidatesFor(t, nil, in))
 	result := probeSnapshot(t, root, catalog)
 
-	if got := readFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
+	if got := testkit.ReadFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
 		t.Errorf("the catalogued file was rewritten in probe mode:\n%s", got)
 	}
-	if got := readFile(t, filepath.Join(root, "other.go")); !bytes.Equal(got, other) {
+	if got := testkit.ReadFile(t, filepath.Join(root, "other.go")); !bytes.Equal(got, other) {
 		t.Errorf("an uncataloged file was rewritten in probe mode:\n%s", got)
 	}
 	if len(result.FilesInstrumented) != 0 || len(result.GuardsByFile) != 0 {
@@ -349,7 +350,7 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	if got, want := result.RuntimeImport, testModule+"/gomutants_rt"; got != want {
 		t.Errorf("RuntimeImport = %q, want %q", got, want)
 	}
-	generated := readFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
+	generated := testkit.ReadFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
 	if !bytes.Contains(generated, []byte("func Infect(")) {
 		t.Errorf("probe mode did not generate a probe runtime:\n%s", generated)
 	}
@@ -357,10 +358,10 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	// The zero value of the new field is the mode every existing caller passes,
 	// and it has to keep producing exactly the package it always did.
 	mutantRoot := t.TempDir()
-	writeFile(t, filepath.Join(mutantRoot, sampleFile), []byte(runtimeSample))
+	testkit.WriteFile(t, filepath.Join(mutantRoot, sampleFile), []byte(runtimeSample))
 	mutantResult := instrumentSnapshot(t, mutantRoot, catalogOf(t, threeAlternatives(t, []byte(runtimeSample))))
-	got := readFile(t, filepath.Join(mutantRoot, mutantResult.RuntimeDir, mutantResult.RuntimeDir+".go"))
-	if want := readFile(t, filepath.Join("testdata", "runtime.golden")); !bytes.Equal(got, want) {
+	got := testkit.ReadFile(t, filepath.Join(mutantRoot, mutantResult.RuntimeDir, mutantResult.RuntimeDir+".go"))
+	if want := testkit.ReadFile(t, filepath.Join("testdata", "runtime.golden")); !bytes.Equal(got, want) {
 		t.Errorf("Options with a zero Mode no longer produce the activation runtime\n--- got ---\n%s\n--- want ---\n%s",
 			got, want)
 	}
@@ -390,9 +391,9 @@ func TestProbeAndMutantRuntimesShareTheDirectoryName(t *testing.T) {
 			var dirs []string
 			for _, probe := range []bool{false, true} {
 				root := t.TempDir()
-				writeFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
+				testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
 				if c.collision {
-					writeFile(t, filepath.Join(root, "gomutants_rt", "theirs.go"), []byte("package theirs\n"))
+					testkit.WriteFile(t, filepath.Join(root, "gomutants_rt", "theirs.go"), []byte("package theirs\n"))
 				}
 				catalog := catalogOf(t, threeAlternatives(t, []byte(runtimeSample)))
 				if probe {
@@ -484,11 +485,12 @@ type probeFixture struct {
 func newProbeFixture(t *testing.T) probeFixture {
 	t.Helper()
 
-	toolchain := locateToolchain(t)
+	toolchain := mutantkit.Toolchain(t)
+	env := testkit.Compose(t, t.TempDir())
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
+	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	const rel = "pkg/sample/sample.go"
-	writeFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(runtimeSample))
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(runtimeSample))
 
 	candidates := threeAlternatives(t, []byte(runtimeSample))
 	for i := range candidates {
@@ -499,16 +501,15 @@ func newProbeFixture(t *testing.T) probeFixture {
 
 	// The command is written after the pass rather than before it, because the
 	// path it calls Infect through is the one the pass chose.
-	writeFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")),
+	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")),
 		[]byte(fmt.Sprintf(probeMain, result.RuntimeImport)))
 
 	binary := filepath.Join(root, "mini")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if out, err := goCommand(t, toolchain, root, "build", "-o", binary, "./cmd/mini"); err != nil {
-		t.Fatalf("building the probe fixture: %v\n%s", err, out)
-	}
+	mutantkit.RequireExit(t, goCommand(t, toolchain, root, env, "build", "-o", binary, "./cmd/mini"),
+		0, "building the probe fixture")
 	return probeFixture{binary: binary, digest: catalog.Digest(), mutants: catalog.Len()}
 }
 

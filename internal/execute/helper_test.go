@@ -264,15 +264,6 @@ func envValue(env []string, name string) string {
 	return ""
 }
 
-// writeFile puts a regular file where a test needs one, most often so that a
-// directory creation has something in its way.
-func writeFile(t *testing.T, path, contents string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
-		t.Fatalf("writing %s: %v", path, err)
-	}
-}
-
 // statDir reports whether path exists and is a directory.
 func statDir(path string) (bool, error) {
 	info, err := os.Stat(path)
