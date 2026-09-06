@@ -764,6 +764,16 @@ func prepareProbeable(probe bool) *preparedFixture {
 // test that triggered it; a failure is carried in the value and reported by
 // whichever test asks for it first.
 func prepareFixture(name string, options gomutants.PrepareOptions) *preparedFixture {
+	return prepareFixtureWith(name, gomutants.OpenOptions{}, options)
+}
+
+// prepareFixtureWith is [prepareFixture] for a caller that also has something
+// to say about how the workspace is opened. TempDirectory is not among those
+// things: the parent is this helper's, because it is what the value carries and
+// what releasing one removes.
+func prepareFixtureWith(
+	name string, open gomutants.OpenOptions, options gomutants.PrepareOptions,
+) *preparedFixture {
 	prepared := &preparedFixture{}
 	preparedMu.Lock()
 	preparedFixtures = append(preparedFixtures, prepared)
@@ -781,7 +791,8 @@ func prepareFixture(name string, options gomutants.PrepareOptions) *preparedFixt
 		prepared.err = err
 		return prepared
 	}
-	workspace, err := gomutants.Open(context.Background(), root, gomutants.OpenOptions{TempDirectory: parent})
+	open.TempDirectory = parent
+	workspace, err := gomutants.Open(context.Background(), root, open)
 	if err != nil {
 		prepared.err = err
 		return prepared

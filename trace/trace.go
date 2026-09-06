@@ -200,20 +200,29 @@ func (recorder *Recorder) recordExec(record ExecRecord) int64 {
 	return recorder.emit(Event{Type: TypeExec, Exec: &record})
 }
 
-// MutantExec records one attempt at one mutant.
-func (recorder *Recorder) MutantExec(record MutantRecord) {
+// MutantExec records one attempt at one mutant and returns the sequence number
+// it was recorded at, or zero when nothing was recorded.
+//
+// The sequence is returned for the reason [Recorder.Exec]'s is: something has
+// to be able to point at the event afterwards. An execution phase discards it,
+// because its attempts are only ever read back out of the recording — but the
+// library API hands one attempt straight to its caller, and the `TraceSeq` on
+// that result is the whole join between a consumer's own recording and this
+// one.
+func (recorder *Recorder) MutantExec(record MutantRecord) int64 {
 	if recorder == nil {
-		return
+		return 0
 	}
-	recorder.recordMutantExec(record)
+	return recorder.recordMutantExec(record)
 }
 
 //go:noinline
-func (recorder *Recorder) recordMutantExec(record MutantRecord) {
-	recorder.emit(Event{Type: TypeMutantExec, Mutant: &record})
+func (recorder *Recorder) recordMutantExec(record MutantRecord) int64 {
+	return recorder.emit(Event{Type: TypeMutantExec, Mutant: &record})
 }
 
-// ProbeExec records one pass through the probe tree.
+// ProbeExec records one pass through the probe tree and returns the sequence
+// number it was recorded at, or zero when nothing was recorded.
 //
 // A measured pass always records its infection set, empty included: "measured
 // and infected nothing" is the strongest statement the probe phase makes, and
@@ -221,19 +230,19 @@ func (recorder *Recorder) recordMutantExec(record MutantRecord) {
 // omitted. A pass that reached no outcome is left exactly as it was given,
 // because a recorder that quietly dropped a caller's facts would hide the bug
 // rather than the field.
-func (recorder *Recorder) ProbeExec(record ProbeRecord) {
+func (recorder *Recorder) ProbeExec(record ProbeRecord) int64 {
 	if recorder == nil {
-		return
+		return 0
 	}
-	recorder.recordProbeExec(record)
+	return recorder.recordProbeExec(record)
 }
 
 //go:noinline
-func (recorder *Recorder) recordProbeExec(record ProbeRecord) {
+func (recorder *Recorder) recordProbeExec(record ProbeRecord) int64 {
 	if record.Outcome == ProbeOutcomeMeasured && record.Infected == nil {
 		record.Infected = []string{}
 	}
-	recorder.emit(Event{Type: TypeProbeExec, Probe: &record})
+	return recorder.emit(Event{Type: TypeProbeExec, Probe: &record})
 }
 
 // Validate records one validation or bisection step.

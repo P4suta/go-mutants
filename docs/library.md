@@ -93,6 +93,7 @@ observe a target halfway through a write.
 | `TempDirectory string` | `""` | parent of the snapshot and every scratch directory. Empty uses `os.TempDir()` |
 | `KeepTemp bool` | `false` | preserve the snapshot, the probe tree and the scratch instead of removing them at `Close` |
 | `Env []string` | `nil` | the complete environment to freeze for children. Nil captures `os.Environ()` |
+| `Trace trace.Sink` | `nil` | where the workspace records what it does. Nil records into a bounded ring `Workspace.Recording()` hands back |
 
 `Open` takes at most one `OpenOptions` value; two are an error rather than a
 silent merge.
@@ -218,6 +219,10 @@ is the code's stated intent, not by those three.
   what it had printed travels on the error instead.
 - `Artifacts` are bounded copies of the standard `go test fuzz v1` inputs a
   fuzz target wrote, captured before its private cache is removed.
+- `Binaries` are the test binaries the execution started, in launch order and by
+  import path, stopping where the execution stopped; `KilledBy` is one of them.
+  `TraceSeq` is the `mutant-exec` event that explains the result — see
+  [Tracing a session](#tracing-a-session).
 
 ### `ProbeResult`
 
@@ -256,6 +261,9 @@ is the code's stated intent, not by those three.
   including the ones that carry no `Infected`, because a pass that proves
   nothing is exactly the one whose output has to be readable. `Truncated` and
   `TotalBytes` say what the cap dropped, exactly as they do on `MutantResult`.
+- `Binaries` are the probe tree's test binaries the pass started, named exactly
+  as `MutantResult.Binaries` are, and `TraceSeq` is the `probe-exec` event that
+  explains the pass — see [Tracing a session](#tracing-a-session).
 
 The consumer's rule has two clauses and dropping either is unsound:
 
@@ -275,7 +283,9 @@ the command produced before it stopped. `Output` is bounded by the effective
 `TotalBytes` is what the command wrote in total — the same number either way,
 so a caller reporting a size never has to ask which case it is in.
 `*VerificationError` carries `Truncated` and `TotalBytes` beside its own
-`Output` for the same reason.
+`Output` for the same reason. `TraceSeq` is the `exec` event the command was
+recorded at, which carries the argument vector the child actually received —
+see [Tracing a session](#tracing-a-session).
 
 `Session.Changes` returns `Change{Kind, Path, BeforeSHA256, AfterSHA256}` in
 strict path order, `Kind` one of `added`, `removed`, `modified`.
@@ -419,15 +429,39 @@ never inside it: every byte under the snapshot root has to be a byte that came
 from the user's tree, or "a test wrote into the workspace" stops being
 detectable.
 
-`Workspace.Exec` keeps its per-call directory when `OpenOptions.KeepTemp` asked
-for it, and removes it otherwise. A session call always removes its own,
-`KeepTemp` or not. For `Session.Probe` that is deliberate rather than an
-oversight: the pass's infection log lives in that directory, and a log left
-behind would be appended to by the next pass over the same session, which would
-then read the previous pass's indices as its own. What `KeepTemp` preserves is
-the durable state — the snapshot, the probe tree, and the workspace scratch the
-session's own scratch lives inside — which is where the question "what did the
-tree this mutant ran in look like" is actually answered.
+Every one of those directories is kept when `OpenOptions.KeepTemp` asked for it
+and removed otherwise — `Workspace.Exec`'s, `Session.Exec`'s and
+`Session.Probe`'s alike. The per-execution scratch is half of the answer
+`KeepTemp` exists to give: it is where the target's `TMPDIR` pointed, where a
+fuzz cache lived, and where anything the test wrote went, so a keep that left
+the snapshot and removed that was answering half the question.
+
+Keeping a probe pass's directory is safe for the reason removing it used to be
+necessary: every pass gets a directory of its own, so the infection log a kept
+one leaves behind is nobody else's to append to. What must never happen is two
+passes sharing one log, and two passes never share a directory.
+
+Only the three **durable** directories — the snapshot, the probe tree and the
+workspace scratch — carry a lock and a marker, and only they need one. A sweep
+looks at the direct children of `TempDirectory` and collects one only if it
+wears a go-mutants name prefix; the per-call scratch is *nested* inside the
+workspace scratch, so it is never a candidate and survives for exactly as long
+as the marked parent above it does. Nothing of go-mutants' is written into it,
+deliberately: a lock and a marker in the child's own `TMPDIR` would be two files
+in the very tree the keep exists to let somebody read. A durable keep the marker
+could not record is not a keep — the directory is removed instead, it is not
+among the preserved ones, and `Close` reports why.
+
+`Workspace.Preserved()` names them all after `Close`, in path order, and the
+recording carries one `artifact` event per directory: `kept-exec-scratch` beside
+the execution it belonged to, and `kept-snapshot`, `kept-scratch` and
+`kept-probe-tree` at `Close`.
+
+**Nothing is kept by a process that dies.** `KeepTemp` is decided at `Close`, so
+a workspace killed before it closes leaves directories that are still locked and
+unmarked, and the next run's sweep collects them once the locks are free. That
+is intended: the escape hatch is for reading what a run produced, and a run that
+never finished has an owner who is still there to ask.
 
 ### Reserved variables and flags
 
@@ -523,6 +557,123 @@ rather than collecting it as an orphan, and `Workspace.Preserved()` names them
 after `Close`. A kept snapshot is a full copy of the module and nothing will
 ever remove it. That is the price of the answer, and it is charged only when
 asked.
+
+## Tracing a session
+
+A `Workspace` records everything it does, and `OpenOptions.Trace` decides where.
+The events are `trace.Event` values in the `gomutants-trace-v1` contract that
+`docs/trace-v1.md` describes and `schema/trace-v1.schema.json` states.
+
+**A sink, or the ring.** Handing `Trace` a `trace.Sink` sends every event there
+and nowhere else; `Workspace.Recording()` then returns `nil`, because a second,
+shorter copy of what the sink already holds would only be a second document to
+reconcile. Handing it nothing records into a bounded ring —
+`trace.DefaultRingCapacity` events, wrapped in `trace.Digested` so that captured
+output cannot grow it — which `Recording()` hands back, before or after `Close`.
+That default is deliberate: the failure nobody expected is exactly the failure
+nobody thought to ask for a recording of. `Recording()` is safe to call at any
+point in a workspace's life, executions in flight included; before `Close` it is
+the account so far, with no `run-end` on the end of it.
+
+A supplied sink is **not** wrapped in `trace.Digested`, because a sink writing to
+disk is meant to preserve the captured output an `exec` carries and the tail a
+`mutant-exec` carries. A sink that keeps events in memory should wrap itself —
+`trace.Digested(mine)` — or it grows with the run rather than with its own
+capacity.
+
+A **failed `Open`** records only into a sink you supplied. It ends the recording
+with a `run-end` whose verdict is `failed`, so a sink sees a complete stream; but
+no `Workspace` is returned, so the default ring dies with the workspace that
+never existed and there is nothing to read it from.
+
+```go
+ws, err := gomutants.Open(ctx, root, gomutants.OpenOptions{Trace: mySink})
+// …or, with no sink at all:
+defer func() { publish(ws.Recording()) }()
+```
+
+The recording opens with a `run-start` of kind `workspace` and closes with the
+`run-end` that `Close` writes — `closed`, or `failed` with the error `Close`
+reported. The sink belongs to the caller and is never closed by the workspace.
+
+**A trace is never evidence.** No option here changes a catalogue digest, a
+mutant identity, a result, or an error. A sink that returns an error, or panics,
+costs the event and never the run: the recorder counts the loss and the
+`run-end` reports it in `events_dropped`.
+
+**The join.** Every result names the event that explains it:
+
+| Field | Points at |
+|---|---|
+| `CommandResult.TraceSeq` | the `exec` event of that `Workspace.Exec`, kind `workspace-exec` |
+| `MutantResult.TraceSeq` | the `mutant-exec` event of that `Session.Exec` |
+| `ProbeResult.TraceSeq` | the `probe-exec` event of that `Session.Probe` |
+
+`probe-exec.infected` is the pass's **raw** infection set: what the probe runtime
+recorded, by mutant identity, before anything was filtered. `ProbeResult.Infected`
+is that set minus the mutants validation rejected — an infection fact about a
+mutant nothing will execute licenses no skipping — so the result is always a
+subset of the event, and the difference is always rejected mutants. The event is
+the account of what the pass recorded; the result is what a caller may act on.
+
+A sequence of `0` means nothing was recorded, which — since a workspace always
+has a recorder — means the call failed before it reached an execution: an
+unresolvable mutant, a package with no prepared binary, a refused flag. A
+*non-zero* sequence names an event that was recorded, not necessarily one that
+can still be read: a sink that refused it kept nothing, and a bounded ring that
+overflowed has since dropped it. The `run-end` reports both.
+
+`MutantResult.Binaries` and `ProbeResult.Binaries` are the test binaries the
+call started, in launch order, by the **import path** of the package each was
+built from. They stop where the call stopped, so a mutant killed by the second
+of three binaries names two: naming all three would describe a measurement that
+was never made. `MutantResult.KilledBy` is one of them, and the `mutant-exec`
+and `probe-exec` events name exactly the same set.
+
+**Reproducing a run by hand.** `Session.OverlayManifest()` and
+`Session.ProbeOverlayManifest()` are the two files `go` is pointed at to compile
+the instrumented trees; the second is empty for a session prepared without a
+probe tree. Neither can be derived — the manifest lives in a scratch directory
+named when the session is prepared — so rebuilding one of the session's test
+binaries is:
+
+```console
+cd <snapshot> && GOFLAGS=-overlay=<manifest> go test -c -o mutant.test ./<package>
+```
+
+Running it is the `exec` event's own `argv`, in the `exec` event's own `dir`,
+with the mutant switched on:
+
+```console
+cd <exec.dir> && GO_MUTANTS_ACTIVE=<mutant id> <exec.argv...>
+```
+
+`exec.dir` is the **package's** directory inside the snapshot, not the snapshot
+root: a Go test resolves `testdata` relative to where it runs, so the engine
+starts every test binary in the directory of the package it was built from, and
+a reproduction started anywhere else is running a different program.
+
+A probe pass activates no mutant. What it needs instead is a private log to
+record into, named by `GO_MUTANTS_PROBE` — a *file path*, not an index:
+
+```console
+cd <exec.dir> && GO_MUTANTS_PROBE=/tmp/infection.log <exec.argv...>
+```
+
+Every binary of one pass appends to one log, which is read once at the end, so a
+file two passes share is two measurements nothing can tell apart.
+
+Both manifests are also in the recording, as `artifact` events of kind
+`overlay-manifest` and `probe-overlay-manifest`. They stay valid for as long as
+the session does, which is why `OpenOptions.KeepTemp` is usually asked for
+beside them.
+
+**Preparation is recorded twice, on purpose.** `PrepareOptions.Trace` still
+receives every `PrepareEvent` exactly as it did — one start and one finish per
+phase, in phase order, synchronously — and the same timeline also reaches the
+recorder as `prepare` events. The callback is for watching a preparation happen;
+the recording is for reading it afterwards, and neither can tell a story the
+other cannot.
 
 ## The preparation phase vocabulary is open
 

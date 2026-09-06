@@ -5,11 +5,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Run trace v1
 
-**Status: `run --trace` records and `go-mutants trace` reads.** `trace/` is the
-public package, `schema/trace-v1.schema.json` is the contract, and this page
-describes both. The library half — handing `OpenOptions` a sink of your own so
-that a `Workspace` records too — arrives in a later change; see
-[How to enable it](#how-to-enable-it).
+**Status: `run --trace` records, `OpenOptions.Trace` records, and
+`go-mutants trace` reads.** `trace/` is the public package,
+`schema/trace-v1.schema.json` is the contract, and this page describes both. A
+command line opens a recording with [`--trace`](#how-to-enable-it); an embedder
+opens one by [handing `OpenOptions` a sink](#recording-a-library-workspace), or
+by handing it nothing and reading the ring back afterwards.
 
 The first trace contract is `gomutants-trace-v1`. A trace is the diagnostic
 account of one run: the phases it passed through, the steps inside them, every
@@ -156,10 +157,64 @@ phases and stages with their durations, the commands tallied by kind, and the
 mutant outcomes; `trace diff` prints the deltas between two, which is how a run
 that got slower is investigated without reading either stream by eye.
 
+### Recording a library workspace
+
+`OpenOptions.Trace` is a `trace.Sink`, and a `Workspace` records into it
+everything it does: the toolchain probe, the sweep it runs before copying
+anything, both frozen trees, every preparation stage, every validation build and
+test-binary compile, every mutant execution and probe pass, and every directory
+a `KeepTemp` close left behind. The recording opens with a `run-start` of kind
+`workspace` and closes with the `run-end` that `Workspace.Close` writes.
+
+```go
+ws, err := gomutants.Open(ctx, root, gomutants.OpenOptions{Trace: mySink})
+```
+
+A nil `Trace` does not switch recording off. The workspace records into a
+bounded ring instead — `trace.DefaultRingCapacity` events, wrapped in
+`trace.Digested` — and `Workspace.Recording()` hands the events back, before or
+after `Close`. That is the same bargain an untraced `run` makes, for the same
+reason: the failure nobody expected is exactly the failure nobody thought to ask
+for a recording of. A caller that *did* supply a sink gets `nil` from
+`Recording()`, because a second, shorter copy of what the sink already holds
+would only be a second document to reconcile.
+
+The sink belongs to the caller and is never closed by the workspace. A sink that
+returns an error or panics costs the event and never the run: nothing here
+enters a catalogue digest, a mutant identity, a result or an error, and the
+`run-end` says how many events were lost.
+
+A supplied sink is not wrapped in `trace.Digested` — a sink writing to disk is
+meant to preserve the captured output — so a sink that keeps events in memory
+should wrap itself, or it grows with the run rather than with its own capacity.
+A failed `Open` records only into a supplied sink: it ends the recording with a
+`run-end` of verdict `failed`, but no workspace is returned, so a default ring
+dies with the workspace that never existed.
+
+A `KeepTemp` workspace records each per-call scratch directory where it is
+kept — an `artifact` of kind `kept-exec-scratch` immediately after the
+`workspace-exec`, `mutant-exec` or `probe-exec` it belonged to — and the durable
+directories at `Close`. A reader therefore finds a kept directory beside the
+execution it explains, and a session that kept ten thousand of them cannot push
+its own `run-start` and preparation timeline out of a bounded ring by reporting
+them all at the end.
+
+Three fields join a consumer's own recording to this one. `CommandResult.TraceSeq`
+is the `exec` event of a `Workspace.Exec`, `MutantResult.TraceSeq` the
+`mutant-exec` of a `Session.Exec`, and `ProbeResult.TraceSeq` the `probe-exec` of
+a `Session.Probe`. `MutantResult.Binaries` and `ProbeResult.Binaries` are what
+each ran, by import path, exactly as the events name them. See
+[docs/library.md](library.md#tracing-a-session) for the API side.
+
+The two commands a library workspace labels are its own: `workspace-exec` for
+one an embedder asked it to run, and `verify` for the verification run inside
+`Prepare`. Everything else is the label the layer underneath already gave it.
+
 ### From a program
 
-An embedder can hand `github.com/P4suta/go-mutants/trace` a sink of its own and
-read the recording back:
+An embedder that wants a recorder without a workspace — its own commands, its
+own phases — can hand `github.com/P4suta/go-mutants/trace` a sink and read the
+recording back:
 
 ```go
 ring := trace.NewMemorySink(trace.DefaultRingCapacity)
@@ -487,7 +542,7 @@ measured is which mutants' sites ever differed.
 | `outcome` | `measured`, `test-failed`, `timed-out`, or `unavailable` |
 | `exit_code` | the exit status |
 | `duration_ms` | how long it ran |
-| `infected` | the mutants whose site the pass made differ, by full identity; present on every measured pass, `[]` included |
+| `infected` | the mutants whose site the pass made differ, by full identity, exactly as the pass recorded them; present on every measured pass, `[]` included |
 | `exec_seqs` | the `exec` events of the binaries it ran |
 | `error` | the error that stopped it, if one did |
 
@@ -504,6 +559,14 @@ refuse a list beside another outcome, and a measured pass with no list at all.
 
 `infected` names each mutant once, by the same full identity `mutant.id`
 carries.
+
+It is the **raw** set: what the probe runtime recorded, before anything was
+filtered. The library API's `ProbeResult.Infected` is that set minus the mutants
+validation rejected — an infection fact about a mutant nothing will execute
+licenses no skipping, and leaving one in would contradict the `Probed` field a
+consumer reads it by. So a result is always a subset of the event it came from,
+and the difference is always rejected mutants. The event is the account of what
+the pass recorded; the result is what a caller may act on.
 
 ### `validate`
 
@@ -722,12 +785,13 @@ A command that appears in both streams is the same `(argv, dir, output_sha256)`
 in both — the argument vector, the directory it ran in, and the digest of what
 it printed — so two recordings of one execution can be matched without either
 tool knowing about the other's sequence numbers. `prepare` is identical field
-for field, so a preparation timeline reads the same wherever it is read. There
-is no hook yet for handing go-mutants a sink of your own: `run --trace` opens
-one, and `OpenOptions` gains one in a later change. What the alignment already
-fixes is the part that would be expensive to change afterwards — the field
-names — so a consumer can write the join now and get one timeline across two
-tools rather than two timelines to reconcile.
+for field, so a preparation timeline reads the same wherever it is read.
+
+A consumer driving the library has a stronger join than that and does not have
+to guess at all: `OpenOptions.Trace` puts both recordings under its own control,
+and the `TraceSeq` on every `CommandResult`, `MutantResult` and `ProbeResult`
+names the event exactly. The `(argv, dir, output_sha256)` match is what remains
+for a consumer that ran `go-mutants` as a command rather than as a library.
 
 ## Validating and reading
 

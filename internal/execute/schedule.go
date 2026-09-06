@@ -193,7 +193,7 @@ func Schedule(
 				hooks.start(mutants[i].ID, worker)
 				attempt := RunOne(ctx, workerOpts, mutants[i], bins)
 				record(&results[i], attempt)
-				opts.Trace.MutantExec(attemptRecord(mutants[i], attempt, mainAttempt, worker))
+				opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, mainAttempt, worker))
 
 				if attempt.Outcome == mutation.OutcomeTimedOut {
 					// Not a result. The retry pass decides.
@@ -242,7 +242,7 @@ func Schedule(
 		hooks.start(mutants[i].ID, retryWorker)
 		attempt := RunOne(ctx, retryOpts, mutants[i], bins)
 		record(&results[i], attempt)
-		opts.Trace.MutantExec(attemptRecord(mutants[i], attempt, retryAttempt, retryWorker))
+		opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, retryAttempt, retryWorker))
 		if attempt.Outcome == mutation.OutcomeNotRun {
 			// Started and killed. Nothing else produces this outcome here: a
 			// retry that ran is killed, survived or timed out, and a failure of
@@ -281,17 +281,23 @@ func Schedule(
 	return results, nil
 }
 
-// attemptRecord is one attempt as the recording holds it.
+// AttemptRecord is one attempt as the recording holds it.
 //
 // It is built whether or not there is a recorder, because a nil recorder is the
 // disabled trace and the branch that skipped this would be a second path
 // through the scheduler for a verdict to come to depend on. What it costs is
 // one struct per attempt, against a child process.
 //
+// It is exported because [Schedule] is not the only caller that runs one
+// mutant: the library API's session runs exactly one at a time and records the
+// same summary for it. One builder rather than two is what keeps a recording
+// made through the API and a recording made by a run describing an attempt the
+// same way, field for field.
+//
 // The outcome is spelled with [mutation.Outcome]'s own name, which is the one
 // the report and the cache already use: a trace and a report saying different
 // words about one mutant would be two vocabularies to reconcile for no gain.
-func attemptRecord(m MutantRun, attempt Attempt, number, worker int) trace.MutantRecord {
+func AttemptRecord(m MutantRun, attempt Attempt, number, worker int) trace.MutantRecord {
 	record := trace.MutantRecord{
 		ID:        m.ID,
 		DisplayID: m.DisplayID,

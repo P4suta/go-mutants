@@ -14,6 +14,73 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A workspace records what it does, and every result says where.** goatest
+  keeps a `goatest-trace-v1` recording of its own and had no way to line it up
+  with the engine's: it could see that a mutant survived and not which binaries
+  were run against it, with which arguments, under which timeout, or where the
+  eight minutes went. `OpenOptions.Trace` takes a `trace.Sink`, and a
+  `Workspace` records into it the toolchain probe, the sweep, both frozen trees,
+  every preparation stage, every validation build and test-binary compile, every
+  mutant execution and probe pass, and every directory a `KeepTemp` close left
+  behind — as `gomutants-trace-v1`, the same contract `run --trace` writes.
+
+  A nil sink does not switch recording off. The workspace records into a bounded
+  ring instead, which `Workspace.Recording()` hands back after `Close`, because
+  the failure nobody expected is exactly the failure nobody thought to ask for a
+  recording of. A caller that supplied a sink gets `nil` from `Recording()`: a
+  second, shorter copy of what the sink already holds is a document to reconcile
+  and not a convenience.
+
+  The join is exact rather than heuristic. `CommandResult.TraceSeq`,
+  `MutantResult.TraceSeq` and `ProbeResult.TraceSeq` name the `exec`,
+  `mutant-exec` and `probe-exec` event each result came from, so a consumer
+  holding a result has the argv, the exit status, the timings and the preserved
+  output without matching on anything. `MutantResult.Binaries` and
+  `ProbeResult.Binaries` are what each call actually ran, by import path, which
+  is the fact a consumer was previously deriving from the request it made rather
+  than from the measurement it got.
+
+  `Session.OverlayManifest()` and `Session.ProbeOverlayManifest()` are the other
+  half of reproducing a run by hand — `cd <snapshot> && GOFLAGS=-overlay=<manifest>
+  go test -c` rebuilds a binary, and `cd <exec.dir> && GO_MUTANTS_ACTIVE=<id>
+  <exec.argv...>` runs it where the engine ran it, which is the *package's*
+  directory rather than the snapshot root because a Go test resolves `testdata`
+  relative to where it runs. A probe pass is the same with
+  `GO_MUTANTS_PROBE=<a private log path>` and no mutant. Neither manifest could
+  be derived from anything the API already returned.
+
+  A trace is never evidence, and that is checked rather than asserted: a sink
+  that refuses every event and panics on the rest changes no catalogue digest,
+  no prepared digest, no kill and no probe result. `PrepareOptions.Trace` is
+  unchanged and still receives every phase event; the recorder now sees the same
+  timeline beside it.
+
+  `OpenOptions.KeepTemp` gained the directory it used to miss. A session's
+  per-execution and per-probe scratch is where the target's `TMPDIR` pointed and
+  where anything the test wrote went, so a keep that left the snapshot and
+  removed that was answering half of "what did the tree this mutant ran in look
+  like". Every kept directory is now named by `Workspace.Preserved()` and
+  recorded: a per-call one as `kept-exec-scratch` beside the execution it
+  belonged to, and `kept-snapshot`, `kept-scratch` and `kept-probe-tree` at
+  `Close`. Beside the execution rather than in a block at the end, because a
+  session that keeps ten thousand executions would otherwise push its own
+  `run-start`, its preparation timeline and every one of its attempts out of the
+  bounded ring in the last moment of its life.
+
+  Nothing of go-mutants' is written *into* a per-call directory. Only the three
+  durable ones carry a lock and a marker, and only they need one: a sweep looks
+  at the direct children of the temporary parent, so a nested per-call scratch
+  is never a candidate and survives because its marked parent does — while a
+  lock and a marker in the child's own `TMPDIR` would be two files in the very
+  tree the keep exists to let somebody read. Keeping a probe pass's directory is
+  safe because every pass already gets one of its own: what must never happen is
+  two passes sharing an infection log, and two passes never share a directory.
+
+  `trace.Recorder.MutantExec` and `trace.Recorder.ProbeExec` return the sequence
+  number they recorded at, as `Exec` already did. An execution phase discards it
+  — its attempts are only ever read back out of the recording — but the library
+  hands one attempt straight to its caller, and that result's `TraceSeq` is the
+  whole join.
 - **`ReadBuildInfo`, `Version` and `ModulePath`: which engine build a consumer
   is running.** Evidence about a mutant is evidence about the engine that
   produced it, so every consumer storing any needs to know which go-mutants it

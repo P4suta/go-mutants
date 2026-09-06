@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // OutputTruncatedPrefix begins the first line of a capture that lost bytes to
@@ -40,14 +41,33 @@ type OpenOptions struct {
 	// TempDirectory is the parent for the snapshot and all session scratch
 	// directories. Empty uses the operating system's temporary directory.
 	TempDirectory string
-	// KeepTemp preserves the snapshot, the probe tree and the scratch directory
-	// instead of removing them when the workspace closes.
+	// KeepTemp preserves every temporary directory the workspace made instead
+	// of removing them when it closes: the snapshot, the probe tree, the
+	// workspace scratch, and the per-call scratch of every [Workspace.Exec],
+	// [Session.Exec] and [Session.Probe].
 	//
 	// It is the escape hatch for the one question a removed directory cannot
-	// answer — what did the tree this mutant ran in actually look like — and it
-	// is deliberate in a way the next run can read: each preserved directory is
-	// marked kept, so [Open]'s sweep leaves it alone rather than collecting it
-	// as an orphan. [Workspace.Preserved] names them after [Workspace.Close].
+	// answer — what did the tree this mutant ran in actually look like — and the
+	// per-call scratch is half of that answer: it is where the target's TMPDIR
+	// pointed, where a fuzz cache lived, and where anything the test wrote went.
+	//
+	// It is deliberate in a way the next run can read. The three durable
+	// directories are the ones a sweep could reach — they are the ones directly
+	// under TempDirectory wearing a go-mutants name prefix — so those are
+	// marked kept and [Open]'s sweep leaves them alone rather than collecting
+	// them as orphans. A per-call scratch is nested inside one of them, so no
+	// sweep is ever a candidate to remove it and nothing of go-mutants' is
+	// written into it: a lock and a marker in the child's own TMPDIR would be
+	// two files in the very tree the keep exists to let somebody read.
+	//
+	// [Workspace.Preserved] names all of them after [Workspace.Close], and the
+	// recording carries one artifact event per directory saying which kind it
+	// was — a per-call one beside the execution it belonged to, a durable one
+	// at Close.
+	//
+	// Nothing is kept by a process that dies: the decision is made at Close, so
+	// a workspace killed before it closes leaves directories the next run's
+	// sweep collects once their locks are free.
 	//
 	// A kept snapshot is a full copy of the module and nothing will ever remove
 	// it. That is the price of the answer, and it is charged only when asked.
@@ -56,6 +76,43 @@ type OpenOptions struct {
 	// captures the current process environment. GO_MUTANTS_ and temporary
 	// directory variables are removed and replaced by the engine as needed.
 	Env []string
+	// Trace is where this workspace records what it does: every subprocess it
+	// starts, every tree it freezes, every preparation stage, every mutant
+	// attempt and probe pass, and every directory it kept. The events are
+	// [trace.Event] values in `gomutants-trace-v1`, and the `TraceSeq` on every
+	// result is the join a consumer keeping a recording of its own writes
+	// against them.
+	//
+	// Nil does not switch recording off. The workspace records into a bounded
+	// ring instead — [trace.DefaultRingCapacity] events, output digested away —
+	// which [Workspace.Recording] hands back at any point and after
+	// [Workspace.Close]. That is the same default an untraced `go-mutants run`
+	// takes, and for the same reason: the failure nobody expected is exactly
+	// the failure nobody thought to ask for a recording of. A caller that
+	// supplies a sink is served by it alone, and Recording then returns nil
+	// rather than a second, shorter copy of what the sink already has.
+	//
+	// A supplied sink is *not* wrapped in [trace.Digested]: it receives the
+	// captured output an exec event carries and the tail a mutant attempt
+	// carries, because a sink writing to disk is meant to preserve them. A sink
+	// that keeps events in memory should wrap itself — `trace.Digested(mine)` —
+	// or it grows with the run rather than with its own capacity.
+	//
+	// A failed [Open] records only into a sink a caller supplied. It ends the
+	// recording with a run-end whose verdict is "failed", so a sink sees a
+	// complete stream; but no Workspace is returned, so a default ring dies
+	// with the workspace that never existed and there is nothing to read it
+	// from. A caller that wants the account of a failed Open supplies a sink.
+	//
+	// A trace is never evidence. Nothing here enters a catalogue digest, a
+	// mutant identity, a result or an error, and a sink that fails or panics
+	// costs the event rather than the run — the recorder counts the loss and
+	// reports it in the recording's last event. The sink belongs to the caller
+	// and is never closed by the workspace.
+	//
+	// See docs/trace-v1.md for the event contract and
+	// docs/adr/0001-trace-is-not-evidence.md for why it is fail-open.
+	Trace trace.Sink
 }
 
 // SweepResult is what [Open] collected before it copied anything: the
@@ -132,6 +189,21 @@ type CommandResult struct {
 	// reporting how much a command produced never has to ask which case it is
 	// in.
 	TotalBytes int64
+	// TraceSeq is the `seq` of the `exec` event this command was recorded at,
+	// and is how a consumer joins its own recording to the workspace's: the
+	// event carries the argument vector, the directory, the environment names,
+	// the exit status and the digest of everything the child printed.
+	//
+	// It is zero only when nothing was recorded, which with the ring default
+	// means the command failed before it was started — a missing executable, a
+	// directory outside the module, a refused environment overlay. A workspace
+	// always has a recorder, so a command that ran always has a sequence.
+	//
+	// A non-zero sequence names an event that was recorded and not necessarily
+	// one that can still be read: a sink that refused it kept nothing, and a
+	// bounded ring that overflowed has since dropped it. The recording's
+	// run-end reports both.
+	TraceSeq int64
 }
 
 // PreparePhase identifies one timed stage of session preparation.
@@ -533,6 +605,22 @@ type MutantResult struct {
 	Truncated  bool
 	TotalBytes int64
 	Artifacts  []Artifact
+	// Binaries are the test binaries this execution started, in launch order,
+	// by the import path of the package each was built from — never the file
+	// that was executed, which is a name in a directory the session deletes.
+	// It stops where the execution stopped: a mutant killed by the second of
+	// three binaries was measured against two, and naming all three would
+	// describe a measurement that was never made. KilledBy is one of them.
+	Binaries []string
+	// TraceSeq is the `seq` of the `mutant-exec` event this execution was
+	// recorded at. That event names the binaries, the arguments, the timeout,
+	// the outcome and the `exec` events of the children underneath it, so a
+	// consumer holding this number can reach the whole account of the attempt.
+	//
+	// It is zero only when nothing was recorded, which with the ring default
+	// means the call failed before it reached the execution — an unresolvable
+	// mutant, a package with no prepared binary, a refused flag.
+	TraceSeq int64
 }
 
 // ErrProbeNotPrepared is returned by [Session.Probe] on a session prepared
@@ -653,6 +741,20 @@ type ProbeResult struct {
 	// binary wrote, kept or not.
 	Truncated  bool
 	TotalBytes int64
+	// Binaries are the probe tree's test binaries this pass started, in launch
+	// order and by import path, exactly as [MutantResult.Binaries] names them.
+	Binaries []string
+	// TraceSeq is the `seq` of the `probe-exec` event this pass was recorded
+	// at. That event names the binaries, the arguments, the outcome, the
+	// infected mutants by identity, and the `exec` events of the children
+	// underneath it.
+	//
+	// It is zero only when nothing was recorded, which with the ring default
+	// means the call failed before it reached the probe tree — a session
+	// prepared without one, a package with no prepared binary, a refused flag.
+	// A pass that could not be made at all is recorded, but its failure is
+	// returned as an error and this result is the zero value.
+	TraceSeq int64
 }
 
 // Artifact is one bounded standard fuzz-corpus file captured before a target's
