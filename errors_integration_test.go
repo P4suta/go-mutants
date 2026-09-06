@@ -50,6 +50,18 @@ func TestVerificationFailureIsTyped(t *testing.T) {
 	if len(verification.Output) == 0 {
 		t.Error("Output is empty, so the failure cannot be shown to the user who caused it")
 	}
+	// And the *whole* of the suite's output, said to be so rather than left to
+	// be inferred. A fixture this small cannot fill the default megabyte, so a
+	// Truncated here would mean the flag is set by something other than the cap
+	// — and a user shown a capture that quietly lost its first half is being
+	// shown the wrong failure.
+	if verification.Truncated {
+		t.Errorf("Truncated = true although the fixture cannot fill the default budget: %+v", verification)
+	}
+	if verification.TotalBytes != int64(len(verification.Output)) {
+		t.Errorf("TotalBytes = %d, want len(Output) = %d when nothing was dropped",
+			verification.TotalBytes, len(verification.Output))
+	}
 	if verification.Duration <= 0 {
 		t.Errorf("Duration = %s, want the time the command took", verification.Duration)
 	}

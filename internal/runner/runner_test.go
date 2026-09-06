@@ -363,6 +363,109 @@ func TestEffectiveOutputLimit(t *testing.T) {
 	}
 }
 
+// TestRunReportsTotalBytesAndTruncation pins the two facts a capped capture
+// has to hand back beside the bytes it kept: how much the child actually
+// produced, and whether anything was dropped.
+//
+// Both are here because the notice alone cannot carry them. A consumer that
+// wanted to know whether output was lost had to match the first line against a
+// string go-mutants formats, which makes a diagnostic line into a wire format —
+// and a consumer that wanted the total had to parse a number back out of that
+// same sentence. Truncated is the fact; the notice is presentation.
+//
+// The uncapped half is the one worth stating outright: OutputBytes is not "the
+// number that appears when something was lost". It is always what the child
+// wrote, so a caller can report a size without first asking whether the cap bit.
+func TestRunReportsTotalBytesAndTruncation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a capture that lost bytes", func(t *testing.T) {
+		t.Parallel()
+
+		const (
+			produced = 100 << 10
+			limit    = 4096
+		)
+		result := runner.Run(t.Context(), runner.Spec{
+			Argv:        helperCommand(t, "spam", strconv.Itoa(produced)),
+			Env:         helperEnviron(),
+			OutputLimit: limit,
+		})
+		if result.Err != nil {
+			t.Fatalf("Err = %v, want nil", result.Err)
+		}
+		if !result.Truncated {
+			t.Errorf("Truncated = false for a child that wrote %d bytes into a %d-byte budget",
+				produced, limit)
+		}
+		if result.OutputBytes != produced {
+			t.Errorf("OutputBytes = %d, want %d: the total is what the child produced, not what was kept",
+				result.OutputBytes, produced)
+		}
+		if len(result.Output) > limit {
+			t.Errorf("len(Output) = %d, want at most %d", len(result.Output), limit)
+		}
+		if !bytes.HasPrefix(result.Output, []byte(runner.OutputTruncatedPrefix)) {
+			t.Errorf("Output begins %q, want the documented prefix %q",
+				string(result.Output[:min(len(result.Output), 120)]), runner.OutputTruncatedPrefix)
+		}
+	})
+
+	// The boundary, which is the one value a reader cannot infer from the cases
+	// either side of it. A child that produced exactly the budget lost nothing:
+	// the cap is on what is kept, and a notice here would be paid for out of the
+	// same budget, dropping bytes that had no need to go.
+	t.Run("a capture that filled the budget exactly", func(t *testing.T) {
+		t.Parallel()
+
+		const limit = 4096
+		result := runner.Run(t.Context(), runner.Spec{
+			Argv:        helperCommand(t, "spam", strconv.Itoa(limit)),
+			Env:         helperEnviron(),
+			OutputLimit: limit,
+		})
+		if result.Err != nil {
+			t.Fatalf("Err = %v, want nil", result.Err)
+		}
+		if result.Truncated {
+			t.Errorf("Truncated = true although the child produced exactly the %d-byte budget", limit)
+		}
+		if result.OutputBytes != limit {
+			t.Errorf("OutputBytes = %d, want %d", result.OutputBytes, limit)
+		}
+		if len(result.Output) != limit {
+			t.Errorf("len(Output) = %d, want all %d bytes: nothing was dropped", len(result.Output), limit)
+		}
+	})
+
+	t.Run("a capture that lost nothing", func(t *testing.T) {
+		t.Parallel()
+
+		const (
+			produced = 400
+			limit    = 4096
+		)
+		result := runner.Run(t.Context(), runner.Spec{
+			Argv:        helperCommand(t, "spam", strconv.Itoa(produced)),
+			Env:         helperEnviron(),
+			OutputLimit: limit,
+		})
+		if result.Err != nil {
+			t.Fatalf("Err = %v, want nil", result.Err)
+		}
+		if result.Truncated {
+			t.Errorf("Truncated = true although %d bytes fit inside the %d-byte budget", produced, limit)
+		}
+		if result.OutputBytes != int64(len(result.Output)) {
+			t.Errorf("OutputBytes = %d, want len(Output) = %d when nothing was dropped",
+				result.OutputBytes, len(result.Output))
+		}
+		if result.OutputBytes != produced {
+			t.Errorf("OutputBytes = %d, want %d", result.OutputBytes, produced)
+		}
+	})
+}
+
 // TestTimeoutReportsTimedOut checks the timeout path itself: the run comes
 // back near the deadline rather than near the child's own lifetime, TimedOut
 // says why, and the exit status is withheld because a killed tree has none

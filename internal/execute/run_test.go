@@ -4,6 +4,7 @@
 package execute_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"path/filepath"
@@ -134,6 +135,96 @@ func TestRunOnePassesTargetArgumentsAndUsesTheSuppliedEnvironment(t *testing.T) 
 			t.Errorf("%s = %q, want %q", key, got, opts.ScratchDir)
 		}
 	}
+}
+
+// TestRunOnePassesTheOutputLimitAndKeepsTheDecidingOutput covers both halves of
+// the output budget: the caller's cap reaches the process that is started, and
+// what came back from the binary that decided the attempt reaches the caller
+// whole rather than only as a fifty-line tail.
+//
+// The two belong in one test because neither is worth much alone. A limit
+// nothing honours is a field; a capture nobody bounded is a memory leak with a
+// mutant's name on it. Together they are the contract: a caller says how much
+// output it is willing to hold, and gets that much of the output that mattered.
+//
+// The survivor case is the third claim and the one a reader is most likely to
+// get wrong. A survivor's output is thousands of lines of nothing having gone
+// wrong, multiplied by every mutant in a run, so it is dropped exactly as
+// [execute.Attempt.OutputTail] has always dropped it.
+func TestRunOnePassesTheOutputLimitAndKeepsTheDecidingOutput(t *testing.T) {
+	t.Run("the caller's limit reaches the spec", func(t *testing.T) {
+		f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+
+		execute.RunOne(t.Context(), options(f, 1), execute.MutantRun{
+			ID:          "abc123",
+			Timeout:     mutantTimeout,
+			OutputLimit: 777,
+		}, testBins("example.com/a"))
+
+		seen := f.seen()
+		if len(seen) != 1 {
+			t.Fatalf("started %d processes, want 1", len(seen))
+		}
+		if seen[0].OutputLimit != 777 {
+			t.Errorf("spec OutputLimit = %d, want the run's 777", seen[0].OutputLimit)
+		}
+	})
+
+	t.Run("a kill keeps the deciding binary's capture", func(t *testing.T) {
+		deciding := runner.Result{
+			ExitCode:    1,
+			Duration:    time.Millisecond,
+			Output:      []byte(runner.OutputTruncatedPrefix + ": …\n--- FAIL: TestB\n"),
+			OutputBytes: 1 << 20,
+			Truncated:   true,
+		}
+		f := &fake{respond: func(_ context.Context, c call) runner.Result {
+			if c.program() == "example.com/b.test" {
+				return deciding
+			}
+			return passed()
+		}}
+
+		attempt := execute.RunOne(t.Context(), options(f, 1),
+			execute.MutantRun{ID: "abc123", Timeout: mutantTimeout, OutputLimit: 777},
+			testBins("example.com/a", "example.com/b", "example.com/c"))
+
+		if attempt.Outcome != mutation.OutcomeKilled {
+			t.Fatalf("outcome = %s, want %s (%v)", attempt.Outcome, mutation.OutcomeKilled, attempt.Err)
+		}
+		if !bytes.Equal(attempt.Output, deciding.Output) {
+			t.Errorf("Output = %q, want the deciding binary's capture %q", attempt.Output, deciding.Output)
+		}
+		if !attempt.Truncated {
+			t.Error("Truncated = false although the deciding capture lost bytes")
+		}
+		if attempt.OutputBytes != deciding.OutputBytes {
+			t.Errorf("OutputBytes = %d, want the deciding binary's %d", attempt.OutputBytes, deciding.OutputBytes)
+		}
+		if !strings.Contains(attempt.OutputTail, "--- FAIL: TestB") {
+			t.Errorf("OutputTail = %q, want the deciding binary's own output", attempt.OutputTail)
+		}
+	})
+
+	t.Run("a survivor keeps none of it", func(t *testing.T) {
+		f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+
+		attempt := execute.RunOne(t.Context(), options(f, 1),
+			execute.MutantRun{ID: "abc123", Timeout: mutantTimeout, OutputLimit: 777},
+			testBins("example.com/a", "example.com/b"))
+
+		if attempt.Outcome != mutation.OutcomeSurvived {
+			t.Fatalf("outcome = %s, want %s (%v)", attempt.Outcome, mutation.OutcomeSurvived, attempt.Err)
+		}
+		if attempt.Output != nil {
+			t.Errorf("Output = %q, want nothing: a survivor's output is thousands of lines of nothing wrong",
+				attempt.Output)
+		}
+		if attempt.OutputBytes != 0 || attempt.Truncated {
+			t.Errorf("OutputBytes = %d and Truncated = %v, want a survivor to report neither",
+				attempt.OutputBytes, attempt.Truncated)
+		}
+	})
 }
 
 func TestRunOneRefusesATargetTimeoutOverride(t *testing.T) {

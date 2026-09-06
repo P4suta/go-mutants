@@ -32,6 +32,11 @@ type call struct {
 	// the recording is the only thing that is poorer for it.
 	Kind    string
 	Subject string
+	// OutputLimit is the cap the call site put on the capture, and it is
+	// captured for the reason Kind is: a limit that never reached the spec is
+	// invisible in everything else a call carries, because a fake runner hands
+	// back whatever output the test asked for whatever budget it was given.
+	OutputLimit int
 }
 
 // active returns the activation identity this call carried, or "" if it carried
@@ -82,12 +87,13 @@ type fake struct {
 // run is the function handed to [execute.WithRunner].
 func (f *fake) run(ctx context.Context, spec runner.Spec) runner.Result {
 	c := call{
-		Argv:    slices.Clone(spec.Argv),
-		Dir:     spec.Dir,
-		Env:     slices.Clone(spec.Env),
-		Timeout: spec.Timeout,
-		Kind:    spec.Kind,
-		Subject: spec.Subject,
+		Argv:        slices.Clone(spec.Argv),
+		Dir:         spec.Dir,
+		Env:         slices.Clone(spec.Env),
+		Timeout:     spec.Timeout,
+		Kind:        spec.Kind,
+		Subject:     spec.Subject,
+		OutputLimit: spec.OutputLimit,
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, c)

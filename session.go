@@ -272,11 +272,13 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			}
 			if verified.TimedOut || verified.ExitCode != 0 {
 				return &VerificationError{
-					Command:  verify,
-					ExitCode: verified.ExitCode,
-					TimedOut: verified.TimedOut,
-					Duration: verified.Duration,
-					Output:   verified.Output,
+					Command:    verify,
+					ExitCode:   verified.ExitCode,
+					TimedOut:   verified.TimedOut,
+					Duration:   verified.Duration,
+					Output:     verified.Output,
+					Truncated:  verified.Truncated,
+					TotalBytes: verified.TotalBytes,
 				}
 			}
 			if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "verification"); driftErr != nil {
@@ -917,14 +919,19 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		}
 	}
 	attempt := execute.RunOne(ctx, opts, execute.MutantRun{
-		ID:        mutant.ID,
-		DisplayID: mutant.DisplayID,
-		Package:   s.packageOf(mutant),
-		Timeout:   timeout,
-		Binaries:  binaryIndexes,
-		Args:      targetArgs,
+		ID:          mutant.ID,
+		DisplayID:   mutant.DisplayID,
+		Package:     s.packageOf(mutant),
+		Timeout:     timeout,
+		Binaries:    binaryIndexes,
+		Args:        targetArgs,
+		OutputLimit: request.OutputLimit,
 	}, runBinaries)
 	artifacts, artifactErr := captureFuzzArtifacts(artifactRoot)
+	// The capture is handed over rather than copied. internal/execute already
+	// cloned it out of the runner's buffer, and the attempt is a local value
+	// nothing else can reach, so a second copy of up to the whole output limit
+	// would buy nothing. [Session.Probe] does the same with its own attempt.
 	result := MutantResult{
 		ID:         mutant.ID,
 		DisplayID:  mutant.DisplayID,
@@ -932,6 +939,9 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		KilledBy:   attempt.KilledBy,
 		Duration:   attempt.Duration,
 		OutputTail: attempt.OutputTail,
+		Output:     attempt.Output,
+		Truncated:  attempt.Truncated,
+		TotalBytes: attempt.OutputBytes,
 		Artifacts:  artifacts,
 	}
 	if artifactErr != nil {
@@ -1080,12 +1090,13 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	opts.ScratchDir = scratch
 	opts.Env = env
 	attempt := execute.RunProbe(ctx, opts, execute.ProbeRun{
-		Timeout:  timeout,
-		Binaries: binaryIndexes,
-		Args:     targetArgs,
-		LogPath:  filepath.Join(scratch, infectionLogName),
-		Digest:   s.catalog.Digest(),
-		Mutants:  s.catalog.Len(),
+		Timeout:     timeout,
+		Binaries:    binaryIndexes,
+		Args:        targetArgs,
+		OutputLimit: request.OutputLimit,
+		LogPath:     filepath.Join(scratch, infectionLogName),
+		Digest:      s.catalog.Digest(),
+		Mutants:     s.catalog.Len(),
 	}, s.probeBinaries)
 	if attempt.Err != nil {
 		return ProbeResult{}, executionError("probe", request.Package,
@@ -1111,12 +1122,17 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	if err := checkInfectedProbed(infected, s.publicCatalog.Mutants); err != nil {
 		return ProbeResult{}, err
 	}
+	// The capture is handed over rather than copied, as [Session.Exec] hands
+	// over its own: internal/execute already cloned it out of the runner's
+	// buffer, and this attempt is a local value nothing else can reach.
 	return ProbeResult{
-		Outcome:  ProbeOutcome(attempt.Outcome),
-		Infected: infected,
-		ExitCode: attempt.ExitCode,
-		Duration: attempt.Duration,
-		Output:   slices.Clone(attempt.Output),
+		Outcome:    ProbeOutcome(attempt.Outcome),
+		Infected:   infected,
+		ExitCode:   attempt.ExitCode,
+		Duration:   attempt.Duration,
+		Output:     attempt.Output,
+		Truncated:  attempt.Truncated,
+		TotalBytes: attempt.OutputBytes,
 	}, nil
 }
 

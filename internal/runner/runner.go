@@ -181,6 +181,24 @@ type Result struct {
 	// len(Output) never exceeds the limit.
 	Output []byte
 
+	// OutputBytes is everything the child wrote to both streams, kept or not.
+	// It is what the process produced and not what survived the cap, so it is
+	// the same number whether or not Truncated is set, and a caller reporting a
+	// size never has to ask which case it is in.
+	//
+	// It is zero for a run that started no process, which is the truth about it:
+	// nothing wrote anything.
+	OutputBytes int64
+
+	// Truncated reports that Output lost bytes to the limit, in which case it
+	// begins with [OutputTruncatedPrefix].
+	//
+	// It is the field to branch on. The notice is a line written for a person to
+	// read, and a consumer that matched its text was making a diagnostic into a
+	// wire format nobody could reword; this says the same thing as data, and it
+	// says it without a caller having to know how the notice is spelled.
+	Truncated bool
+
 	// Err is set only when the process could not be started or could not be
 	// supervised — never when it ran and failed. A non-zero ExitCode is data
 	// about the test; Err means go-mutants itself could not do its job, and
@@ -247,8 +265,7 @@ func record(spec Spec, result Result) Result {
 		// The retained capture, which is what the recorder sizes and digests
 		// and what a directory sink preserves: the tail this package kept,
 		// truncation notice included, and not the total the child produced.
-		// That total is a separate fact and gets a field of its own when
-		// something needs it.
+		// That total is a separate fact and lives on [Result.OutputBytes].
 		Output: result.Output,
 		Error:  errorText(result.Err),
 	})
@@ -374,11 +391,14 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	if err := sup.adopt(cmd); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
+		output, produced, truncated := out.capture()
 		return Result{
-			ExitCode: ExitCodeUnavailable,
-			Duration: time.Since(started),
-			Output:   out.capture(),
-			Err:      err,
+			ExitCode:    ExitCodeUnavailable,
+			Duration:    time.Since(started),
+			Output:      output,
+			OutputBytes: produced,
+			Truncated:   truncated,
+			Err:         err,
 		}
 	}
 
@@ -411,11 +431,14 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	// close(exited) happens before every read above, so waitErr and
 	// cmd.ProcessState are safe to read from here on.
 
+	output, produced, truncated := out.capture()
 	result := Result{
-		ExitCode: ExitCodeUnavailable,
-		TimedOut: timedOut,
-		Duration: time.Since(started),
-		Output:   out.capture(),
+		ExitCode:    ExitCodeUnavailable,
+		TimedOut:    timedOut,
+		Duration:    time.Since(started),
+		Output:      output,
+		OutputBytes: produced,
+		Truncated:   truncated,
 	}
 	if !killed {
 		result.ExitCode = exitCodeOf(cmd.ProcessState)

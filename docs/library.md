@@ -134,6 +134,7 @@ silent merge.
 | `Args []string` | `nil` | passed verbatim to each selected test binary, after the engine's own `-test.timeout` |
 | `Env []string` | `nil` | `KEY=VALUE` overlay for this call |
 | `Timeout time.Duration` | `0` → `PrepareOptions.MutantTimeout` | overrides the session default when positive. Negative is invalid |
+| `OutputLimit int` | zero or negative → 1 MiB | cap on the retained combined output of each test binary the call starts, exactly as `Command.OutputLimit`. A positive value below 256 is raised to 256 |
 
 Targets are named with standard test-binary flags — `-test.run=^TestX$`,
 `-test.fuzz=^FuzzX$`. There is no second test DSL. `-test.timeout` is reserved
@@ -200,7 +201,21 @@ is the code's stated intent, not by those three.
 - `ID` is the full ID and `DisplayID` a prefix of it, whether the request named
   the mutant by prefix or in full.
 - `Duration` is non-negative wall-clock time across the binaries that ran.
-- `OutputTail` is the last 50 lines of the deciding binary's combined output.
+- `OutputTail` is the last 50 lines of the deciding binary's combined output,
+  with carriage returns stripped. It is unchanged: a consumer that renders it
+  needs no change. Being a *tail*, it usually loses the truncation notice,
+  which sits at the top of a capped capture.
+- `Output` is the whole of what the budget kept of that same binary's combined
+  output — `OutputTail` summarises exactly these bytes — bounded by the
+  effective `ExecRequest.OutputLimit`.
+- `Truncated` reports that `Output` lost bytes to the limit, and `TotalBytes`
+  is everything the deciding binary wrote whether kept or not.
+- **`Output` is empty for a survivor**, as `OutputTail` has always been, and
+  `Truncated` and `TotalBytes` are then false and zero. A survivor's output is
+  thousands of lines of nothing having gone wrong, multiplied by every mutant
+  in a run, and holding it is how a mutation run runs a machine out of memory.
+  The same goes for an attempt a cancellation cut off: it decided nothing, and
+  what it had printed travels on the error instead.
 - `Artifacts` are bounded copies of the standard `go test fuzz v1` inputs a
   fuzz target wrote, captured before its private cache is removed.
 
@@ -236,9 +251,11 @@ is the code's stated intent, not by those three.
   set is returned at all. A caller never has to defend against a malformed one.
 - `ExitCode` is 0 for a measured pass and `Duration` is non-negative.
 - `Output` is the bounded combined output of the binary that decided the pass —
-  the failing one for `test-failed`, the last one for `measured`. It is there
-  for every outcome, including the ones that carry no `Infected`, because a
-  pass that proves nothing is exactly the one whose output has to be readable.
+  the failing one for `test-failed`, the last one for `measured` — capped at
+  the effective `ProbeRequest.OutputLimit`. It is there for every outcome,
+  including the ones that carry no `Infected`, because a pass that proves
+  nothing is exactly the one whose output has to be readable. `Truncated` and
+  `TotalBytes` say what the cap dropped, exactly as they do on `MutantResult`.
 
 The consumer's rule has two clauses and dropping either is unsound:
 
@@ -251,7 +268,12 @@ The consumer's rule has two clauses and dropping either is unsound:
 
 `CommandResult` describes a command that *started*: a non-zero `ExitCode` and a
 `TimedOut` are results, not infrastructure errors. An error alongside it means
-go-mutants could not run the command at all.
+go-mutants could not run the command at all. `Output` is bounded by the
+effective `Command.OutputLimit`, `Truncated` says whether the cap dropped
+anything, and `TotalBytes` is what the command wrote in total — the same number
+either way, so a caller reporting a size never has to ask which case it is in.
+`*VerificationError` carries `Truncated` and `TotalBytes` beside its own
+`Output` for the same reason.
 
 `Session.Changes` returns `Change{Kind, Path, BeforeSHA256, AfterSHA256}` in
 strict path order, `Kind` one of `added`, `removed`, `modified`.
@@ -296,7 +318,8 @@ happens. Both spellings are frozen, and neither is a string to compare against.
 
 Reach all of these with `errors.As`.
 
-- **`*VerificationError{Command, ExitCode, TimedOut, Duration, Output}`** —
+- **`*VerificationError{Command, ExitCode, TimedOut, Duration, Output,
+  Truncated, TotalBytes}`** —
   `PrepareOptions.Verify` failed. This is a **finding about the repository**,
   not a broken engine: instrumentation preserves behaviour, so a suite that is
   red here is red on the user's own program, flaky, or depending on something
@@ -457,9 +480,25 @@ assumes. `ProbeOutcome` is a third vocabulary again — `measured`,
 ### Output is capped, and truncation keeps the tail
 
 A capture never grows without bound. When a child produced more than
-`OutputLimit` bytes the result holds a notice line beginning `[go-mutants]
-output truncated` followed by as much of the *tail* as the remaining budget
-allows, and `len(Output) <= OutputLimit` still holds, notice included.
+`OutputLimit` bytes the result holds a notice line beginning
+`OutputTruncatedPrefix` — `[go-mutants] output truncated` — followed by as much
+of the *tail* as the remaining budget allows, and `len(Output) <= OutputLimit`
+still holds, notice included.
+
+**Read `Truncated`, not the notice.** Every result carrying output carries the
+flag beside it: `CommandResult`, `MutantResult`, `ProbeResult` and
+`*VerificationError`. It is true exactly when `TotalBytes` exceeds the effective
+limit, and it is the contract. The prefix stays exported for renderers, which
+style the notice differently from the process's own output, and for the
+consumers that were matching the text before the flag existed — but matching a
+sentence written for a person makes a diagnostic into a wire format nobody can
+reword, and the flag says the same thing without knowing how the notice is
+spelled.
+
+Every call chooses its own budget: `Command.OutputLimit`,
+`ExecRequest.OutputLimit`, `ProbeRequest.OutputLimit`. All three default to
+1 MiB, and a positive value below 256 is raised to 256 so the notice still fits
+inside the budget.
 
 Keeping the tail is right for a test failure and wrong for a document: a
 truncated JSON stream is not JSON. See the `go list` recipe below.
@@ -671,6 +710,12 @@ if err != nil {
 if listed.TimedOut || listed.ExitCode != 0 {
 	return fmt.Errorf("go list exited %d: %s", listed.ExitCode, listed.Output)
 }
+// Before decoding, not after: what survives truncation is the notice line and
+// the tail, which is not a shorter document but an unparsable one.
+if listed.Truncated {
+	return fmt.Errorf("go list produced %d bytes, more than OutputLimit "+
+		"kept; raise it", listed.TotalBytes)
+}
 decoder := json.NewDecoder(bytes.NewReader(listed.Output))
 for decoder.More() {
 	var pkg struct{ ImportPath, Dir string }
@@ -689,4 +734,6 @@ for decoder.More() {
 - **Size `OutputLimit` for the whole document.** The default is 1 MiB, which a
   large module's `go list -json` exceeds; a truncated result is not a shorter
   document but an unparsable one, because the notice line and the tail are
-  what survive.
+  what survive. Check `listed.Truncated` before decoding rather than letting
+  the decoder discover it: the flag says outright what a JSON syntax error at
+  byte zero only implies.

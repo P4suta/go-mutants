@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +91,17 @@ type MutantRun struct {
 	// the outer process-tree supervisor and the later in-process deadline are a
 	// paired safety boundary and cannot be overridden per target.
 	Args []string
+
+	// OutputLimit caps the combined output kept from each binary this run
+	// starts, as [runner.Spec.OutputLimit] takes it: zero or negative selects
+	// internal/runner's own default, and a positive value below its floor is
+	// raised to it.
+	//
+	// It is per run rather than per [Options] because the two callers of one
+	// prepared session want different numbers out of the same binaries — a
+	// console wants a screenful, a consumer archiving the evidence of a kill
+	// wants all of it — and the run is the smallest thing that knows which.
+	OutputLimit int
 }
 
 // An Attempt is one pass over the test binaries with one mutant active.
@@ -137,6 +149,19 @@ type Attempt struct {
 	// failing command for an error. It is empty for a survivor, whose output is
 	// thousands of lines of nothing having gone wrong.
 	OutputTail string
+	// Output is the whole of what [MutantRun.OutputLimit] kept of that same
+	// binary's combined output — OutputTail is a summary of exactly these bytes
+	// — and it is empty wherever OutputTail is, for the same reason. A
+	// survivor's output multiplied by every mutant in a run is the memory the
+	// cap exists to bound, and an attempt nobody finished decided nothing.
+	Output []byte
+	// OutputBytes is everything that binary wrote, kept or not, and Truncated
+	// reports that the cap dropped some of it — in which case Output begins with
+	// [runner.OutputTruncatedPrefix]. They are [runner.Result]'s own fields
+	// carried up unchanged, and they are zero and false wherever Output is
+	// empty.
+	OutputBytes int64
+	Truncated   bool
 	// Err carries a [Code] from this package, with the underlying cause
 	// reachable through it. It is set whenever Outcome is
 	// [mutation.OutcomeErrored], and on exactly one other outcome: a not-run
@@ -216,7 +241,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			return attempt
 		}
 
-		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env, m.Timeout, m.Args)
+		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env, m.Timeout, m.Args, m.OutputLimit)
 		attempt.Duration += result.Duration
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
 		if result.TraceSeq != 0 {
@@ -233,7 +258,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		switch {
 		case result.Err != nil:
 			attempt.Outcome = mutation.OutcomeErrored
-			attempt.OutputTail = tail(result.Output)
+			attempt.keep(result)
 			attempt.Err = &Error{
 				Code:    CodeMutantStart,
 				Message: "the test binary for " + bin.ImportPath + " could not be run",
@@ -258,7 +283,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			// allowed to call it a detection.
 			attempt.Outcome = mutation.OutcomeTimedOut
 			attempt.KilledBy = bin.ImportPath
-			attempt.OutputTail = tail(result.Output)
+			attempt.keep(result)
 			return attempt
 
 		case result.ExitCode == runner.ExitCodeUnavailable:
@@ -290,7 +315,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			// Never a kill: the catalogue and the instrumented tree have drifted
 			// apart, and a score built on that would be a fiction.
 			attempt.Outcome = mutation.OutcomeErrored
-			attempt.OutputTail = tail(result.Output)
+			attempt.keep(result)
 			attempt.Err = &Error{
 				Code: CodeStaleCatalog,
 				Message: "the generated runtime in " + bin.ImportPath + " does not know the mutant " +
@@ -315,11 +340,29 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		case result.ExitCode != 0:
 			attempt.Outcome = mutation.OutcomeKilled
 			attempt.KilledBy = bin.ImportPath
-			attempt.OutputTail = tail(result.Output)
+			attempt.keep(result)
 			return attempt
 		}
 	}
 	return attempt
+}
+
+// keep records the deciding binary's capture on the attempt: the bytes the
+// budget kept, the two facts about what was dropped, and the tail a console
+// prints.
+//
+// The four are set together in one place so that they cannot drift apart. The
+// tail is a summary of exactly the bytes in Output, and a later branch that set
+// one without the other would produce an attempt whose summary described output
+// it does not carry.
+//
+// The clone is not a formality: [runner.Result.Output] is the buffer the
+// capture built, and an attempt is a value that outlives the run it came from.
+func (a *Attempt) keep(result runner.Result) {
+	a.Output = slices.Clone(result.Output)
+	a.OutputBytes = result.OutputBytes
+	a.Truncated = result.Truncated
+	a.OutputTail = tail(result.Output)
 }
 
 // startTarget starts one prepared test binary and waits for it.
@@ -357,18 +400,20 @@ func startTarget(
 	env []string,
 	timeout time.Duration,
 	args []string,
+	outputLimit int,
 ) (runner.Spec, runner.Result) {
 	argv := make([]string, 0, len(args)+2)
 	argv = append(argv, bin.BinPath, "-test.timeout="+(InProcessTimeoutFactor*timeout).String())
 	argv = append(argv, args...)
 	spec := runner.Spec{
-		Argv:    argv,
-		Dir:     bin.Dir,
-		Env:     env,
-		Timeout: timeout,
-		Trace:   opts.Trace,
-		Kind:    kind,
-		Subject: subject,
+		Argv:        argv,
+		Dir:         bin.Dir,
+		Env:         env,
+		Timeout:     timeout,
+		OutputLimit: outputLimit,
+		Trace:       opts.Trace,
+		Kind:        kind,
+		Subject:     subject,
 	}
 	return spec, opts.runProcess(ctx, spec)
 }

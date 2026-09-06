@@ -268,10 +268,12 @@ func (w *Workspace) runCommand(ctx context.Context, command Command, base []stri
 		OutputLimit: command.OutputLimit,
 	})
 	result := CommandResult{
-		ExitCode: run.ExitCode,
-		TimedOut: run.TimedOut,
-		Duration: run.Duration,
-		Output:   slices.Clone(run.Output),
+		ExitCode:   run.ExitCode,
+		TimedOut:   run.TimedOut,
+		Duration:   run.Duration,
+		Output:     slices.Clone(run.Output),
+		Truncated:  run.Truncated,
+		TotalBytes: run.OutputBytes,
 	}
 	if run.Err != nil {
 		return result, fmt.Errorf("gomutants: exec process: %w", run.Err)

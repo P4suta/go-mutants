@@ -84,34 +84,41 @@ func (w *tailWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// capture returns the output as [Result.Output] carries it: the bytes as
-// written when nothing was lost, otherwise the truncation notice followed by
-// as much of the tail as the remaining budget allows.
+// capture returns the output as [Result.Output] carries it — the bytes as
+// written when nothing was lost, otherwise the truncation notice followed by as
+// much of the tail as the remaining budget allows — together with the two facts
+// about it a caller cannot recover from the bytes: how much the child produced
+// in total, and whether any of it was dropped.
 //
-// len(capture()) <= limit always holds, notice included. That is the invariant
+// The three are returned by one call rather than by three accessors because
+// they are one observation. Reading them separately would take the mutex three
+// times, and a capture whose total was read after a late write is a capture
+// whose notice says one number while its caller reports another.
+//
+// len(kept) <= limit always holds, notice included. That is the invariant
 // downstream report writers are entitled to assume, which is why the notice is
 // paid for out of the budget rather than added on top of it.
-func (w *tailWriter) capture() []byte {
+func (w *tailWriter) capture() (kept []byte, total int64, truncated bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if w.total <= int64(w.limit) {
 		out := make([]byte, len(w.buf))
 		copy(out, w.buf)
-		return out
+		return out, w.total, false
 	}
 
 	notice := truncationNotice(w.total)
 	// Unreachable while [MinOutputLimit] holds — the notice is at most about a
 	// hundred bytes even with a 19-digit total — but the invariant should not
 	// depend on arithmetic done in a different file.
-	keep := max(w.limit-len(notice), 0)
+	room := max(w.limit-len(notice), 0)
 	tail := w.buf
-	if len(tail) > keep {
-		tail = tail[len(tail)-keep:]
+	if len(tail) > room {
+		tail = tail[len(tail)-room:]
 	}
 	out := make([]byte, 0, len(notice)+len(tail))
 	out = append(out, notice...)
 	out = append(out, tail...)
-	return out
+	return out, w.total, true
 }

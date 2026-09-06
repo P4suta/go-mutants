@@ -39,15 +39,41 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
-	root := copyFixture(t, "killable")
-	extraTest := `package killable
+// killableExtraTests is the source fixtures/killable is extended with for the
+// tests below.
+//
+// It lives here rather than in the fixture because these targets are about the
+// *API* — the environment a session composes, the fuzz artefacts it captures,
+// the output budget it honours — and not about the mutants the fixture exists
+// to prove killable. It is one string rather than one per test so that the
+// package a session prepares is the same package whichever test prepared it.
+const killableExtraTests = `package killable
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
+
+// TestPrintsALot is the chatty target the output-budget tests need: 2000 lines
+// of 64 characters, which is over a hundred kilobytes and thirty times the
+// smallest limit those tests set.
+//
+// Many short lines rather than one long one, so that the fifty-line rule the
+// retained tail is trimmed by actually bites. One line would make OutputTail
+// and the whole kept capture the same string, and a test comparing the two
+// would then pass whatever that rule was.
+//
+// It prints to stdout directly rather than through t.Log because what is under
+// test is what the engine captured from the process, and t.Log's buffer only
+// reaches the stream when the test fails.
+func TestPrintsALot(t *testing.T) {
+	for range 2000 {
+		fmt.Println(strings.Repeat("x", 64))
+	}
+}
 
 func TestSessionEnvironment(t *testing.T) {
 	if os.Getenv("EXPECT_CLEAN") == "yes" && os.Getenv("GO_MUTANTS_ACTIVE") != "" {
@@ -89,9 +115,20 @@ func TestSessionBlocks(t *testing.T) {
 	time.Sleep(10 * time.Second)
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "session_test.go"), []byte(extraTest), 0o644); err != nil {
+
+// killableRoot copies fixtures/killable into a directory of the test's own and
+// adds [killableExtraTests] to it.
+func killableRoot(t *testing.T) string {
+	t.Helper()
+	root := copyFixture(t, "killable")
+	if err := os.WriteFile(filepath.Join(root, "session_test.go"), []byte(killableExtraTests), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return root
+}
+
+func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
+	root := killableRoot(t)
 
 	parent := t.TempDir()
 	env := append(os.Environ(),
@@ -302,6 +339,145 @@ func TestSessionBlocks(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf("temporary parent still holds %v after Close", entries)
 	}
+}
+
+// TestWorkspaceExecReportsTruncation pins the fact a consumer had to guess at:
+// whether a command's output is all of it.
+//
+// Before this, the only sign was the notice line, so a consumer that cared had
+// to match a string go-mutants formats for humans — which turns a diagnostic
+// into a wire format that cannot be reworded. `Truncated` is the fact and
+// `TotalBytes` is the size; the prefix stays exported for the renderers and for
+// the consumers that were matching it, but nothing has to.
+func TestWorkspaceExecReportsTruncation(t *testing.T) {
+	root := killableRoot(t)
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := workspace.Close(); closeErr != nil {
+			t.Errorf("closing workspace: %v", closeErr)
+		}
+	})
+
+	const limit = 4096
+	result, err := workspace.Exec(t.Context(), gomutants.Command{
+		Argv:        []string{"go", "test", "-run=^TestPrintsALot$", "-v", "."},
+		OutputLimit: limit,
+	})
+	if err != nil {
+		t.Fatalf("running the chatty target: %v", err)
+	}
+	if result.TimedOut || result.ExitCode != 0 {
+		t.Fatalf("chatty target = exit %d timeout=%v:\n%s", result.ExitCode, result.TimedOut, result.Output)
+	}
+	if !result.Truncated {
+		t.Errorf("Truncated = false although the target prints 64 KiB into a %d-byte budget", limit)
+	}
+	if result.TotalBytes <= limit {
+		t.Errorf("TotalBytes = %d, want more than the %d-byte budget", result.TotalBytes, limit)
+	}
+	if len(result.Output) > limit {
+		t.Errorf("len(Output) = %d, want at most %d: the notice is paid for out of the budget",
+			len(result.Output), limit)
+	}
+	if !bytes.HasPrefix(result.Output, []byte(gomutants.OutputTruncatedPrefix)) {
+		t.Errorf("Output begins %q, want the exported prefix %q",
+			string(result.Output[:min(len(result.Output), 120)]), gomutants.OutputTruncatedPrefix)
+	}
+}
+
+// TestSessionExecHonoursOutputLimit is the same claim for a mutant execution,
+// plus the one that made this worth an API change: a caller can now say how
+// much output it is willing to hold.
+//
+// A mutant run silently used the runner's one-mebibyte default, which is both
+// far more than a console wants and far less than a consumer archiving the
+// evidence of a kill might. `OutputTail` is unchanged and stays the fifty-line
+// summary; `Output` is the whole of what the budget kept, and the two agree.
+func TestSessionExecHonoursOutputLimit(t *testing.T) {
+	root := killableRoot(t)
+	parent := t.TempDir()
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := workspace.Close(); closeErr != nil {
+			t.Errorf("closing workspace: %v", closeErr)
+		}
+	})
+	session, err := workspace.Prepare(t.Context(), gomutants.PrepareOptions{
+		Operators:     []string{"comparison"},
+		SkipVerify:    true,
+		MutantTimeout: 60 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("preparing session: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := session.Close(); closeErr != nil {
+			t.Errorf("closing session: %v", closeErr)
+		}
+	})
+
+	const limit = 4096
+	clamp := mutantkit.APIMutantAt(t, session.Catalog(), "clamp.go", "lt-to-le")
+	// The two targets together: one prints far past the budget and the other is
+	// what turns the suite red, so the capture that comes back is a *deciding*
+	// binary's and not merely a chatty one's.
+	result, err := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:      clamp.ID,
+		Package:     "fixture.example/killable",
+		Args:        []string{"-test.run=^TestPrintsALot$|^TestClamp$"},
+		OutputLimit: limit,
+	})
+	if err != nil {
+		t.Fatalf("executing the chatty target: %v", err)
+	}
+	if result.Outcome != gomutants.OutcomeKilled {
+		t.Fatalf("outcome = %s, want %s:\n%s", result.Outcome, gomutants.OutcomeKilled, result.OutputTail)
+	}
+	if !result.Truncated {
+		t.Errorf("Truncated = false although the target prints 64 KiB into a %d-byte budget", limit)
+	}
+	if result.TotalBytes <= limit {
+		t.Errorf("TotalBytes = %d, want more than the %d-byte budget", result.TotalBytes, limit)
+	}
+	if len(result.Output) > limit {
+		t.Errorf("len(Output) = %d, want at most %d", len(result.Output), limit)
+	}
+	if want := lastLines(result.Output, 50); result.OutputTail != want {
+		t.Errorf("OutputTail = %q, want the last 50 lines of Output with the carriage returns stripped: %q",
+			result.OutputTail, want)
+	}
+}
+
+// lastLines is the rule docs/library.md documents OutputTail by: the last n
+// lines of a capture, with the carriage returns stripped.
+//
+// It is written from that sentence rather than transcribed from the trimming
+// helper inside internal/execute, which is the whole point of having it. A copy
+// of the implementation would agree with the implementation by construction and
+// would go on agreeing with it through any change to either; this states what a
+// consumer was promised, and disagreeing with it is the failure worth having.
+//
+// The trailing newline a stream ends with is a terminator and not an empty last
+// line, which is the one place the sentence needs reading carefully.
+func lastLines(output []byte, n int) string {
+	text := strings.TrimRight(string(output), "\n")
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], "\r")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // TestWorkspaceExecBarrierHelper is the subprocess body used below. Reusing
@@ -1037,6 +1213,39 @@ func TestProbeReturnsSuccessfulOutputAndCoverage(t *testing.T) {
 	}
 	if info, err := os.Stat(profile); err != nil || info.Size() == 0 {
 		t.Fatalf("coverage profile = (%v, %v)", info, err)
+	}
+}
+
+// TestProbeHonoursOutputLimit is [TestSessionExecHonoursOutputLimit] for the
+// probe tree. The two calls take one request vocabulary, so a caller that
+// bounded an execution has to be able to bound a pass the same way and be told
+// the same thing about what was dropped.
+func TestProbeHonoursOutputLimit(t *testing.T) {
+	prepared := probeable(t)
+	const limit = 4096
+	result, err := prepared.session.Probe(t.Context(), gomutants.ProbeRequest{
+		Package:     probeableModule,
+		Args:        []string{"-test.run=^TestPrintsALot$"},
+		OutputLimit: limit,
+	})
+	if err != nil {
+		t.Fatalf("probing the chatty target: %v", err)
+	}
+	if result.Outcome != gomutants.ProbeMeasured {
+		t.Fatalf("outcome = %s, want %s:\n%s", result.Outcome, gomutants.ProbeMeasured, result.Output)
+	}
+	if !result.Truncated {
+		t.Errorf("Truncated = false although the target prints 64 KiB into a %d-byte budget", limit)
+	}
+	if result.TotalBytes <= limit {
+		t.Errorf("TotalBytes = %d, want more than the %d-byte budget", result.TotalBytes, limit)
+	}
+	if len(result.Output) > limit {
+		t.Errorf("len(Output) = %d, want at most %d", len(result.Output), limit)
+	}
+	if !bytes.HasPrefix(result.Output, []byte(gomutants.OutputTruncatedPrefix)) {
+		t.Errorf("Output begins %q, want the exported prefix %q",
+			string(result.Output[:min(len(result.Output), 120)]), gomutants.OutputTruncatedPrefix)
 	}
 }
 

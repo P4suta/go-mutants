@@ -5,6 +5,7 @@ package probeable
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,23 @@ func TestLabel(t *testing.T) {
 func TestReady(t *testing.T) {
 	if !Ready() {
 		t.Error("Ready() = false, want true")
+	}
+}
+
+// TestPrintsALot is the chatty target the output-budget test probes: 2000 lines
+// of 64 characters, which is over a hundred kilobytes and thirty times the
+// smallest limit that test sets.
+//
+// It reaches no probed site on purpose. What is under test is the budget a pass
+// runs under, and a target that also infected something would make a failure
+// ambiguous between the two.
+//
+// It lives in the fixture rather than being written into the tree by the test
+// that needs it, because the probeable session is prepared once and shared: no
+// test that uses it can add a file to it.
+func TestPrintsALot(t *testing.T) {
+	for range 2000 {
+		fmt.Println(strings.Repeat("x", 64))
 	}
 }
 
