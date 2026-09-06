@@ -6,6 +6,7 @@
 package gomutants_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -954,6 +955,130 @@ func TestPrepareFailedNamesThePhaseAndNotARefusal(t *testing.T) {
 	if after := notesOfKind(recordingOf(t, workspace), trace.NotePrepareFailed); len(after) != 1 {
 		t.Errorf("a refused Prepare recorded a note: %v", after)
 	}
+}
+
+// TestPrepareFailedNamesThePhaseOfTheFailureTheCallerGot is the same claim as
+// the unit test beside [prepareFailedDetail], over a preparation that really
+// does run two builds at once.
+//
+// A binary build that cannot list its packages fails, and the probe tree's own
+// build — running concurrently over the same patterns — fails or is cancelled
+// beside it. Which of the two errors reaches the caller is the scheduler's
+// business and not this test's; what must hold either way is that the note
+// names *that* error's phase. Asserting a particular phase here would be
+// asserting which goroutine won.
+func TestPrepareFailedNamesThePhaseOfTheFailureTheCallerGot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "probeable")
+	if err := copyFixtureTree("probeable", root); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := workspace.Close(); closeErr != nil {
+			t.Errorf("closing workspace: %v", closeErr)
+		}
+	})
+
+	_, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{
+		Packages:      []string{"./definitely-not-a-package"},
+		Probe:         true,
+		SkipVerify:    true,
+		MutantTimeout: 30 * time.Second,
+	})
+	if err == nil {
+		t.Fatal("a preparation whose test binaries cannot be listed succeeded")
+	}
+	var build *gomutants.BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("preparation failed with %v, want a *BuildError naming the phase", err)
+	}
+
+	notes := notesOfKind(recordingOf(t, workspace), trace.NotePrepareFailed)
+	if len(notes) != 1 {
+		t.Fatalf("a failed preparation recorded %d prepare-failed notes, want one: %v", len(notes), notes)
+	}
+	if want := string(build.Phase) + ": "; !strings.HasPrefix(notes[0], want) {
+		t.Errorf("the note says %q and the caller was given a failure in %q; the note names the"+
+			" phase of the error it carries, never the phase that was cancelled by it",
+			notes[0], build.Phase)
+	}
+	if !strings.HasSuffix(notes[0], err.Error()) {
+		t.Errorf("the note says %q and the error says %q", notes[0], err)
+	}
+}
+
+// TestAFailedProbeStillPointsAtItsOwnRecord is the contract `TraceSeq` states,
+// held to on the paths that are easiest to forget.
+//
+// A pass that reached the probe tree is in the recording whatever became of it,
+// and the documented meaning of a zero sequence is "nothing was recorded". So a
+// failure that handed back a zero would be saying something untrue about the
+// one pass a consumer most wants to read the account of — and it is exactly the
+// pass whose `Output` is empty and whose `Outcome` is blank, so the recording is
+// all there is.
+func TestAFailedProbeStillPointsAtItsOwnRecord(t *testing.T) {
+	prepared := probeable(t)
+
+	// A pass the caller cancelled. The probe tree is reached, the event is
+	// recorded, and the pass then reports that it has no facts.
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	result, err := prepared.session.Probe(cancelled, gomutants.ProbeRequest{Package: probeableModule})
+	if err == nil {
+		t.Fatal("a cancelled probe succeeded")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled probe failed with %v, want it to carry context.Canceled", err)
+	}
+	if result.TraceSeq == 0 {
+		t.Fatal("a probe that reached the probe tree and failed carries TraceSeq 0, so the one" +
+			" account of it there is cannot be found")
+	}
+	// And nothing it did not establish: no outcome, no infection set.
+	if result.Outcome != "" || result.Infected != nil {
+		t.Errorf("a failed pass reports outcome %q and infected %v, want neither",
+			result.Outcome, result.Infected)
+	}
+
+	events := recordingOf(t, prepared.workspace)
+	pass := eventAt(t, events, result.TraceSeq)
+	if pass.Type != trace.TypeProbeExec {
+		t.Fatalf("ProbeResult.TraceSeq points at a %s, want a %s", pass.Type, trace.TypeProbeExec)
+	}
+	if pass.Probe.Error == "" {
+		t.Error("the recorded pass carries no error, so the recording does not say what stopped it")
+	}
+	if !slices.Equal(pass.Probe.Binaries, result.Binaries) {
+		t.Errorf("the pass ran %v and the result reports %v", pass.Probe.Binaries, result.Binaries)
+	}
+
+	// The same claim for an execution, which has always been built before its
+	// error paths and must stay that way.
+	execution, err := prepared.session.Exec(cancelled, gomutants.ExecRequest{
+		Mutant:  mutantkit.APIByRule(t, prepared.catalog, widthRule).ID,
+		Package: probeableModule,
+		Args:    []string{"-test.run=^TestWidth$"},
+	})
+	if err == nil {
+		t.Fatal("a cancelled execution succeeded")
+	}
+	if execution.TraceSeq == 0 {
+		t.Error("a cancelled execution carries TraceSeq 0, so its recorded attempt cannot be found")
+	}
+	if attempt := eventAt(t, events2(t, prepared), execution.TraceSeq); attempt.Type != trace.TypeMutantExec {
+		t.Errorf("MutantResult.TraceSeq points at a %s, want a %s", attempt.Type, trace.TypeMutantExec)
+	}
+}
+
+// events2 re-reads the recording, for a claim about an event recorded after the
+// previous read of it.
+func events2(t *testing.T, prepared *preparedFixture) []trace.Event {
+	t.Helper()
+	return recordingOf(t, prepared.workspace)
 }
 
 // notesOfKind is the detail of every note of one kind in a recording.

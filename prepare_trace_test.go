@@ -6,6 +6,7 @@ package gomutants
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -277,5 +278,57 @@ func TestAPanickingPrepareCallbackDoesNotLoseTheRecordersEvent(t *testing.T) {
 	}
 	if recorded[1].State != string(PrepareEventFinished) {
 		t.Errorf("the second record is %+v, want the finish", *recorded[1])
+	}
+}
+
+// TestTheNoteNamesThePhaseOfTheErrorItCarries is the rule a concurrent
+// preparation makes necessary.
+//
+// The binary build and the probe tree's three phases run at once, and either
+// one's failure cancels the other — so the cancelled side also finishes as a
+// failure, and in the general case it finishes *later*. A note that named the
+// last phase to report a failure would therefore name the phase that was merely
+// collateral while quoting the error from the phase that actually broke: one
+// sentence, two subjects, and a reader sent to the wrong half of the run.
+//
+// The phase is taken from the error the caller was handed instead, which is the
+// only value that carries the two halves together.
+func TestTheNoteNamesThePhaseOfTheErrorItCarries(t *testing.T) {
+	sink := trace.NewMemorySink(0)
+	recorder := trace.New(sink, time.Now, trace.StartRecord{Kind: trace.StartKindWorkspace})
+	phases := newPrepareTrace(nil, recorder)
+
+	// The main build fails…
+	failure := errors.New("gomutants: prepare test binaries: no such package")
+	returned := inPhase(PreparePhaseBinaryBuild, failure)
+	// …and the probe phase it cancelled reports its own failure afterwards.
+	phases.finish(PrepareEvent{
+		Phase:  PreparePhaseProbeCoverageBuild,
+		State:  PrepareEventFinished,
+		Result: PreparePhaseFailed,
+	})
+
+	detail := prepareFailedDetail(returned)
+	if want := string(PreparePhaseBinaryBuild) + ": "; !strings.HasPrefix(detail, want) {
+		t.Errorf("the note says %q, want it to name %q — the phase of the error it carries, not"+
+			" the phase that was cancelled by it", detail, want)
+	}
+	if !strings.HasSuffix(detail, failure.Error()) {
+		t.Errorf("the note says %q and the error says %q", detail, failure)
+	}
+
+	// The tag is invisible to everything else: the message is unchanged, and a
+	// consumer's errors.Is still reaches the cause through it.
+	if returned.Error() != failure.Error() {
+		t.Errorf("tagging changed the message to %q, want %q", returned.Error(), failure)
+	}
+	if !errors.Is(returned, failure) {
+		t.Error("a tagged error no longer unwraps to its cause")
+	}
+
+	// An error from outside every phase names none rather than inventing one.
+	loose := errors.New("gomutants: prepare profile \"nope\": expected balanced, strong, or all")
+	if got := prepareFailedDetail(loose); got != loose.Error() {
+		t.Errorf("an untagged error produced %q, want %q", got, loose)
 	}
 }

@@ -152,7 +152,7 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	// forgotten is the one somebody is reading the recording to find.
 	defer func() {
 		if err != nil {
-			w.recorder.Note(trace.NotePrepareFailed, "", phases.failed.detail(err))
+			w.recorder.Note(trace.NotePrepareFailed, "", prepareFailedDetail(err))
 		}
 	}()
 	if pristineErr := checkPristineSnapshot(w.snapshot); pristineErr != nil {
@@ -370,7 +370,11 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 				return nil
 			}()
 			mainFinished <- mainSpan.complete(buildErr)
-			return result, buildErr
+			// Tagged here rather than by [prepareTrace.run], because this is
+			// the one phase driven by a span of its own: it starts before the
+			// probe tree's three and finishes after them, so it cannot be a
+			// call that returns when the work does.
+			return result, inPhase(PreparePhaseBinaryBuild, buildErr)
 		},
 		func(ctx context.Context) (probeBuildResult, error) {
 			options, binaries, probed, overlay, probeErr := prepareProbeTree(ctx, probeTreeOptions{
@@ -1275,12 +1279,20 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		s.keepScratch(scratch)
 		kept = true
 	}
+	// Everything below returns this rather than a zero value. A pass that
+	// reached an execution is in the recording whatever became of it, and
+	// TraceSeq is documented as the event that explains the result — so a
+	// failure that handed back a zero sequence would be the one case a consumer
+	// most wants to read about and the one case it cannot find. What it carries
+	// is what the pass established and nothing it did not: the binaries it
+	// started and the account of them, never an outcome or an infection set.
+	partial := ProbeResult{Binaries: attempt.Binaries, TraceSeq: traceSeq}
 	if attempt.Err != nil {
-		return ProbeResult{}, executionError("probe", request.Package,
+		return partial, executionError("probe", request.Package,
 			fmt.Errorf("gomutants: session probe: %w", attempt.Err))
 	}
 	if err := ctx.Err(); err != nil {
-		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", err)
+		return partial, fmt.Errorf("gomutants: session probe: %w", err)
 	}
 	// The set a caller receives is one it may index the catalogue with directly,
 	// and that promise is kept here rather than left to the runtime that wrote
@@ -1293,11 +1305,11 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	// drops an index outside the catalogue on its way to dropping the rejected
 	// ones — and those two are not the same thing at all.
 	if err := checkInfectedShape(attempt.Infected, len(s.publicCatalog.Mutants)); err != nil {
-		return ProbeResult{}, err
+		return partial, err
 	}
 	infected := filterInfected(attempt.Infected, s.publicCatalog.Mutants)
 	if err := checkInfectedProbed(infected, s.publicCatalog.Mutants); err != nil {
-		return ProbeResult{}, err
+		return partial, err
 	}
 	// The capture is handed over rather than copied, as [Session.Exec] hands
 	// over its own: internal/execute already cloned it out of the runner's

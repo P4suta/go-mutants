@@ -618,8 +618,13 @@ the account of what the pass recorded; the result is what a caller may act on.
 
 A sequence of `0` means nothing was recorded, which — since a workspace always
 has a recorder — means the call failed before it reached an execution: an
-unresolvable mutant, a package with no prepared binary, a refused flag. A
-*non-zero* sequence names an event that was recorded, not necessarily one that
+unresolvable mutant, a package with no prepared binary, a refused flag. A call
+that *did* reach one and then failed carries its sequence and its `Binaries`
+beside the error, and nothing else: the outcome, the infection set and the
+captured output stay at their zero values, because the call established none of
+them and the recording is all the account there is.
+
+A *non-zero* sequence names an event that was recorded, not necessarily one that
 can still be read: a sink that refused it kept nothing, and a bounded ring that
 overflowed has since dropped it. The `run-end` reports both.
 

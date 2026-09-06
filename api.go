@@ -752,8 +752,15 @@ type ProbeResult struct {
 	// It is zero only when nothing was recorded, which with the ring default
 	// means the call failed before it reached the probe tree — a session
 	// prepared without one, a package with no prepared binary, a refused flag.
-	// A pass that could not be made at all is recorded, but its failure is
-	// returned as an error and this result is the zero value.
+	//
+	// A pass that *did* reach the probe tree and then failed — a binary that
+	// could not be started, a cancelled context, an infection log this session
+	// cannot account for — carries this sequence and Binaries beside the error,
+	// and nothing else. It reached an execution, so it is in the recording, and
+	// a failure that handed back no sequence would be the one case a consumer
+	// most wants to read about and the one it could not find. Outcome, Infected
+	// and the captured output stay at their zero values, because the pass
+	// established none of them.
 	TraceSeq int64
 }
 
