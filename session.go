@@ -106,10 +106,10 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
-		return nil, errors.New("gomutants: prepare: workspace is closed")
+		return nil, fmt.Errorf("gomutants: prepare: %w", ErrWorkspaceClosed)
 	}
 	if w.prepared {
-		return nil, errors.New("gomutants: prepare: workspace has already been prepared")
+		return nil, fmt.Errorf("gomutants: prepare: %w", ErrWorkspacePrepared)
 	}
 	w.prepared = true
 	if err := ctx.Err(); err != nil {
@@ -151,7 +151,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			Packages:     slices.Clone(resolved.DiscoveryPackages),
 		})
 		if err != nil {
-			return fmt.Errorf("gomutants: prepare discovery: %w", err)
+			return buildError(PreparePhaseDiscovery, fmt.Errorf("gomutants: prepare discovery: %w", err))
 		}
 		catalog, err = discover.BuildCatalog(found)
 		if err != nil {
@@ -224,7 +224,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			Packages:     resolved.DiscoveryPackages,
 		})
 		if err != nil {
-			return fmt.Errorf("gomutants: prepare validation: %w", err)
+			return buildError(PreparePhaseMainValidation, fmt.Errorf("gomutants: prepare validation: %w", err))
 		}
 		return nil
 	})
@@ -270,12 +270,14 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 			if verifyErr != nil {
 				return fmt.Errorf("gomutants: prepare instrumented verification: %w", verifyErr)
 			}
-			switch {
-			case verified.TimedOut:
-				return fmt.Errorf("gomutants: prepare instrumented verification timed out after %s", verify.Timeout)
-			case verified.ExitCode != 0:
-				return fmt.Errorf("gomutants: prepare instrumented verification exited with status %d: %s",
-					verified.ExitCode, outputSummary(verified.Output))
+			if verified.TimedOut || verified.ExitCode != 0 {
+				return &VerificationError{
+					Command:  verify,
+					ExitCode: verified.ExitCode,
+					TimedOut: verified.TimedOut,
+					Duration: verified.Duration,
+					Output:   verified.Output,
+				}
 			}
 			if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "verification"); driftErr != nil {
 				return driftErr
@@ -312,7 +314,8 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 				var binaryErr error
 				result.binaries, binaryErr = execute.BuildTestBinaries(ctx, result.options)
 				if binaryErr != nil {
-					return fmt.Errorf("gomutants: prepare test binaries: %w", binaryErr)
+					return buildError(PreparePhaseBinaryBuild,
+						fmt.Errorf("gomutants: prepare test binaries: %w", binaryErr))
 				}
 				var scanErr error
 				result.files, scanErr = scanFiles(w.snapshot.Root)
@@ -401,11 +404,7 @@ func checkPristineSnapshot(snap *snapshot.Snapshot) error {
 	if len(drifts) == 0 {
 		return nil
 	}
-	changes := make([]string, len(drifts))
-	for index, change := range drifts {
-		changes[index] = change.Kind.String() + " " + change.RelPath
-	}
-	return fmt.Errorf("gomutants: prepare commands changed the frozen snapshot:\n%s", strings.Join(changes, "\n"))
+	return &DriftError{Stage: driftStageCommands, Changes: driftChanges(drifts)}
 }
 
 func runPreparationBuilds(
@@ -551,7 +550,8 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 			Packages:     opts.validationPackages,
 		})
 		if validateErr != nil {
-			return fmt.Errorf("gomutants: prepare probe validation: %w", validateErr)
+			return buildError(PreparePhaseProbeValidation,
+				fmt.Errorf("gomutants: prepare probe validation: %w", validateErr))
 		}
 		if driftErr := checkInitialDrift(opts.snap, validated.Instrumented, "probe instrumentation"); driftErr != nil {
 			return driftErr
@@ -581,7 +581,8 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 		var buildErr error
 		binaries, buildErr = execute.BuildTestBinaries(ctx, probeOptions)
 		if buildErr != nil {
-			return fmt.Errorf("gomutants: prepare probe test binaries: %w", buildErr)
+			return buildError(PreparePhaseProbeCoverageBuild,
+				fmt.Errorf("gomutants: prepare probe test binaries: %w", buildErr))
 		}
 		return nil
 	})
@@ -865,19 +866,17 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return MutantResult{}, errors.New("gomutants: session exec: session is closed")
+		return MutantResult{}, fmt.Errorf("gomutants: session exec: %w", ErrSessionClosed)
 	}
 	if request.Timeout < 0 {
 		return MutantResult{}, errors.New("gomutants: session exec: timeout is negative")
 	}
 	mutant, err := s.catalog.ResolvePrefix(request.Mutant)
 	if err != nil {
-		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %q: %w", request.Mutant, err)
+		return MutantResult{}, s.selectionError(request.Mutant, err)
 	}
 	if !s.accepted[mutant.ID] {
-		rejection := s.rejections[mutant.ID]
-		return MutantResult{}, fmt.Errorf("gomutants: session exec mutant %s was rejected during validation: %s",
-			mutant.DisplayID, rejection.Diagnostic)
+		return MutantResult{}, rejectionError(request.Mutant, mutant.DisplayID, s.rejections[mutant.ID])
 	}
 	binaryIndexes, err := selectTestPackages(s.root, s.binaries, request.Package, "exec")
 	if err != nil {
@@ -939,7 +938,8 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return result, fmt.Errorf("gomutants: session exec artifacts: %w", artifactErr)
 	}
 	if attempt.Err != nil {
-		return result, fmt.Errorf("gomutants: session exec: %w", attempt.Err)
+		return result, executionError("exec", request.Package,
+			fmt.Errorf("gomutants: session exec: %w", attempt.Err))
 	}
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("gomutants: session exec: %w", err)
@@ -1012,7 +1012,7 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return ProbeResult{}, errors.New("gomutants: session probe: session is closed")
+		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", ErrSessionClosed)
 	}
 	if s.probeSnapshot == nil {
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", ErrProbeNotPrepared)
@@ -1061,7 +1061,8 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		Mutants:  s.catalog.Len(),
 	}, s.probeBinaries)
 	if attempt.Err != nil {
-		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", attempt.Err)
+		return ProbeResult{}, executionError("probe", request.Package,
+			fmt.Errorf("gomutants: session probe: %w", attempt.Err))
 	}
 	if err := ctx.Err(); err != nil {
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", err)
@@ -1255,6 +1256,15 @@ func captureFuzzArtifacts(root string) ([]Artifact, error) {
 // that cache in the execution scratch preserves the read-only snapshot and
 // lets the standard seed corpus compiled from testdata/fuzz run unchanged.
 //
+// The three flags it refuses are the ones the session owns. Two belong to the
+// fuzz machinery above; the third is `-test.timeout`, which the session sets at
+// twice the supervisor's budget so that the in-process deadline can never fire
+// first. A target supplying its own would switch that insurance off while the
+// API still claimed the budget it was given, so it is refused here — before a
+// scratch directory is made or a binary is started — rather than four layers
+// down by the execution phase, where the same refusal had a code and a sentence
+// about a process supervisor the caller never asked for.
+//
 // The call names itself so that a diagnostic says which of the session's two
 // measurements refused the target. Both go through this function because a
 // caller composing arguments for one has to be able to hand them to the other:
@@ -1267,9 +1277,11 @@ func sessionTargetArgs(args []string, scratch, call string) ([]string, error) {
 		case testflag.Match(argument, "test.fuzz"):
 			fuzz = true
 		case testflag.Match(argument, "test.fuzzcachedir"):
-			return nil, fmt.Errorf("gomutants: session %s: -test.fuzzcachedir is reserved by the session", call)
+			return nil, &ReservedError{Call: call, Flag: "-test.fuzzcachedir", Owner: "the session"}
 		case testflag.Match(argument, "test.fuzzworker"):
-			return nil, fmt.Errorf("gomutants: session %s: -test.fuzzworker is reserved by the Go fuzz coordinator", call)
+			return nil, &ReservedError{Call: call, Flag: "-test.fuzzworker", Owner: "the Go fuzz coordinator"}
+		case testflag.Match(argument, "test.timeout"):
+			return nil, &ReservedError{Call: call, Flag: "-test.timeout", Owner: "the session's process supervisor"}
 		}
 	}
 	if !fuzz {
@@ -1301,7 +1313,7 @@ func selectTestPackages(root string, binaries []execute.TestBinary, selected, ca
 		}
 	}
 	if len(indexes) == 0 {
-		return nil, fmt.Errorf("gomutants: session %s package %q has no prepared test binary", call, selected)
+		return nil, &PackageNotPreparedError{Call: call, Package: selected}
 	}
 	return indexes, nil
 }
@@ -1519,13 +1531,12 @@ func outputSummary(output []byte) string {
 }
 
 func checkInitialDrift(snap *snapshot.Snapshot, instrumented instrument.Result, what string) error {
-	unexpected, err := drift.Unexpected(snap, instrumented)
+	unexpected, err := drift.UnexpectedDrifts(snap, instrumented)
 	if err != nil {
 		return fmt.Errorf("gomutants: prepare drift check: %w", err)
 	}
 	if len(unexpected) != 0 {
-		return fmt.Errorf("gomutants: prepare %s changed the snapshot outside instrumentation:\n%s",
-			what, strings.Join(unexpected, "\n"))
+		return &DriftError{Stage: what, Changes: driftChanges(unexpected)}
 	}
 	return nil
 }

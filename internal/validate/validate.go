@@ -722,6 +722,7 @@ func (v *validator) buildSnapshot(ctx context.Context) (verdict, error) {
 			Message:    "the snapshot did not build within " + v.timeout.String(),
 			Output:     string(result.Output),
 			Invocation: runner.CommandOf(spec, result),
+			TimedOut:   true,
 		}
 	case ctx.Err() != nil:
 		return spent, &Error{

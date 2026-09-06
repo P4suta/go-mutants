@@ -27,6 +27,10 @@ const (
 	scratchPrefix       = "go-mutants-api-"
 	workspaceExecPrefix = "exec-"
 	reservedPrefix      = "GO_MUTANTS_"
+	// reservedEnvironmentOwner is who an environment overlay's refusal names.
+	// The engine sets these variables for itself in every child it starts, so
+	// the owner is the tool rather than one of its calls.
+	reservedEnvironmentOwner = "go-mutants"
 )
 
 var temporaryKeys = []string{"TMP", "TEMP", "TMPDIR"}
@@ -218,7 +222,7 @@ func (w *Workspace) Exec(ctx context.Context, command Command) (CommandResult, e
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	if w.closed {
-		return CommandResult{}, errors.New("gomutants: exec: workspace is closed")
+		return CommandResult{}, fmt.Errorf("gomutants: exec: %w", ErrWorkspaceClosed)
 	}
 	if w.prepared {
 		return CommandResult{}, errors.New("gomutants: exec: workspace is already prepared; execute test targets through its session")
@@ -409,7 +413,7 @@ func overlayEnvironment(base, overlay []string) ([]string, error) {
 			return nil, fmt.Errorf("%q is not KEY=VALUE", entry)
 		}
 		if reservedEnvironment(key) || temporaryEnvironment(key) {
-			return nil, fmt.Errorf("%s is reserved by go-mutants", key)
+			return nil, &ReservedError{Variable: key, Owner: reservedEnvironmentOwner}
 		}
 		replaced := false
 		for i, existing := range out {

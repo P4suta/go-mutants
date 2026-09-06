@@ -189,6 +189,23 @@ type Error struct {
 	// snapshot's absolute paths. The renderer asks for it separately and prints
 	// it under the message.
 	Invocation *runner.Invocation
+
+	// Package is the import path the failure was about, or empty where the
+	// command was about the whole snapshot rather than one package — a `go
+	// list` decides which packages there are and so is about none of them.
+	//
+	// It is here rather than derived from [Error.Invocation] because an argv is
+	// not a subject: the compile of one test binary names an output path made
+	// of a digest, and the import path a caller wants to report is the one the
+	// command was *for*.
+	Package string
+	// ExitCode is the status the command exited with, and zero when it never
+	// ran or was killed. TimedOut says which.
+	ExitCode int
+	// TimedOut reports a command the supervisor had to kill. It is not an exit
+	// status, and a caller classifying a failure has to be able to tell the two
+	// apart without reading the message.
+	TimedOut bool
 }
 
 // RetainedOutput returns the tail of the failing command's output, or an empty

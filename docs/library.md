@@ -241,6 +241,110 @@ holds a lock on), `Kept` (directories a `KeepTemp` run preserved on purpose),
 and `Err` — carried in the value rather than returned, because failing to
 collect somebody else's leftovers is not a reason to refuse to run.
 
+## Errors
+
+Every failure this API returns is one of four things, and a consumer does
+something different about each: **the user's suite is red**, **the repository
+moved under the engine**, **the caller composed a request the session cannot
+serve**, or **go-mutants itself broke**. The sentinels and types below are how
+that question is answered without matching text — no message changed when they
+were introduced, and none of them is a message you may parse.
+
+### Sentinels
+
+| Sentinel | Returned by | Means |
+|---|---|---|
+| `ErrWorkspaceClosed` | `Workspace.Exec`, `Workspace.Prepare` | the workspace is closed |
+| `ErrWorkspacePrepared` | a second `Workspace.Prepare` | a workspace may be prepared once, a failed preparation included |
+| `ErrSessionClosed` | `Session.Exec`, `Session.Probe`, `Session.Changes` | the session, or the workspace that owned it, is closed |
+| `ErrInvalidMutantID` | `Session.Exec` | `ExecRequest.Mutant` is not an identity: too short, too long, or not lowercase hex |
+| `ErrMutantNotFound` | `Session.Exec` | a well-formed prefix no catalogued mutant carries |
+| `ErrAmbiguousMutant` | `Session.Exec` | a prefix more than one mutant carries; `Matches` names them |
+| `ErrMutantRejected` | `Session.Exec` | validation proved the mutant does not compile; there is no binary to run it in |
+| `ErrProbeNotPrepared` | `Session.Probe` | the session was prepared without `PrepareOptions.Probe` |
+
+Match them with `errors.Is`. They survive wrapping, and the sentences they
+appear in are the ones the engine has always printed. `ErrProbeNotPrepared`
+predates the rest and spells its own text with the prefix — `gomutants: the
+session was prepared without a probe tree` — while the newer sentinels carry
+only the condition and are wrapped into the engine's sentence where the failure
+happens. Both spellings are frozen, and neither is a string to compare against.
+
+### Typed errors
+
+Reach all of these with `errors.As`.
+
+- **`*VerificationError{Command, ExitCode, TimedOut, Duration, Output}`** —
+  `PrepareOptions.Verify` failed. This is a **finding about the repository**,
+  not a broken engine: instrumentation preserves behaviour, so a suite that is
+  red here is red on the user's own program, flaky, or depending on something
+  the frozen snapshot does not carry. `Output` is what to show the user.
+- **`*DriftError{Stage, Changes}`** — the frozen tree stopped matching its
+  manifest. `Stage` is `commands` (the integrity gate before discovery) or one
+  of `source restoration`, `verification`, `probe instrumentation`,
+  `probe source restoration`. `Changes` carries the paths and both digests, so
+  a consumer can say *which* file moved. The remedy belongs to the caller:
+  something wrote into the workspace.
+- **`*BuildError{Phase, Package, Argv, ExitCode, TimedOut, Output, Code}`** — a
+  preparation phase could not do its work: a package that would not load, a
+  snapshot that would not compile, a test binary that would not build. This is
+  **infrastructure**. `Code` is the stable diagnostic code and `Argv` the
+  command to reproduce it. `Error()` is the cause's own message, so
+  `gomutants: prepare test binaries: GOM7505: …` reads exactly as before.
+
+  How much of it is filled in depends on which phase failed. A build error from
+  `main_validation` or `probe_validation` carries `Code` and `Output` and
+  nothing else — `ExitCode` is zero, `TimedOut` is false and `Argv` is nil —
+  because those failures come back through the seam the bisection search is
+  faked behind, which answers whether a subset compiled and not with what
+  status. `binary_build` and `probe_coverage_build` carry all of it, `Package`
+  included. `discovery` carries the code alone: a package that will not load is
+  decided in this process, with no child command to name.
+- **`*ExecutionError{Call, Package, Code, Output}`** — the measurement itself
+  failed inside `Session.Exec` or `Session.Probe`: a test binary that would not
+  start or could not be supervised, a generated runtime that refused the
+  activation it was handed, an infection log that is there and cannot be read.
+  Never a statement about the tests — a killed, survived or timed-out mutant is
+  a result and comes back as one.
+
+  It covers what the execution phase reports, not everything the two calls can
+  fail at. A session scratch directory that could not be created, an
+  environment or instrumentation overlay that could not be composed, a fuzz
+  workspace that could not be copied, and the artifacts captured after a fuzz
+  target are plain errors today: they happen before or after the measurement
+  and carry no diagnostic code.
+- **`*MutantSelectionError{Prefix, Reason, Matches, Rejection}`** — the request
+  named a mutant the session will not run. `Reason` is one of the four
+  selection sentinels and `errors.Is` matches it.
+- **`*PackageNotPreparedError{Call, Package}`** — the request named a package
+  this session built no test binary for. In a long-lived consumer this is the
+  ordinary one: a package list that has moved on, or a typo.
+- **`*ReservedError{Call, Flag, Variable, Owner}`** — the request supplied
+  something the engine owns. Exactly one of `Flag` and `Variable` is set.
+
+### Which failures are the user's
+
+A consumer scoring somebody's repository should split them like this:
+
+| Failure | Report as |
+|---|---|
+| `*VerificationError` | the user's test suite: quote `Output` |
+| `*DriftError` | the repository changed under the run; name `Changes` |
+| `*MutantSelectionError`, `*PackageNotPreparedError`, `*ReservedError` | the caller's request; fix and retry |
+| `*BuildError`, `*ExecutionError` | infrastructure; quote `Code` and file a bug |
+| a lifecycle sentinel | a programming error in the consumer |
+
+### `DiagnosticCode`
+
+```go
+func DiagnosticCode(err error) string   // "GOM7505", or "" when it carries none
+```
+
+The codes are the one part of a failure promised to stay put, and they live in
+packages a consumer cannot import. `DiagnosticCode` reaches through every
+wrapper to the innermost error that carries one, so a report can quote a code
+instead of four characters lifted out of a sentence.
+
 ## Guarantees
 
 ### A private temporary directory per call
@@ -267,11 +371,16 @@ tree this mutant ran in look like" is actually answered.
 
 `GO_MUTANTS_*` — activation, the probe log path, everything the engine sets for
 itself — is stripped from the frozen environment and refused in every `Env`
-overlay with `%s is reserved by go-mutants`. So is each of `TMP`, `TEMP` and
-`TMPDIR`. An entry that is not `KEY=VALUE` is refused with `%q is not
-KEY=VALUE`. A `GO_MUTANTS_ACTIVE` exported in a developer's shell therefore
-cannot turn a mutant on inside a baseline, a build, or another mutant's run —
-which is the failure that would look exactly like a detection.
+overlay with `%s is reserved by go-mutants`, as a `*ReservedError` naming the
+`Variable`. So is each of `TMP`, `TEMP` and `TMPDIR`. An entry that is not
+`KEY=VALUE` is refused with `%q is not KEY=VALUE`. A `GO_MUTANTS_ACTIVE`
+exported in a developer's shell therefore cannot turn a mutant on inside a
+baseline, a build, or another mutant's run — which is the failure that would
+look exactly like a detection.
+
+A session target's `Args` are refused the same way for `-test.fuzzcachedir`
+(the session owns the fuzz cache), `-test.fuzzworker` (the Go fuzz coordinator
+owns it) and `-test.timeout` (see below).
 
 The engine adds its own `GOFLAGS` entries for the instrumented builds:
 `-overlay=<manifest>`, `-vet=off`, and `-count=1`. Instrumented sources live
@@ -293,7 +402,10 @@ Two layers, deliberately unequal:
 
 That is why `-test.timeout` in `Args` is refused rather than merged. Passing it
 would let a target switch off the in-process half while the API still claimed
-the supplied budget.
+the supplied budget. The refusal is a `*ReservedError` from `Exec` and `Probe`
+themselves — before a scratch directory is made or a binary is started — and
+reads `gomutants: session exec: -test.timeout is reserved by the session's
+process supervisor`.
 
 ### The outcome vocabulary is not the report's
 

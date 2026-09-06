@@ -37,6 +37,8 @@ replace github.com/P4suta/go-mutants => ` + filepath.ToSlash(repository) + "\n"
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	gomutants "github.com/P4suta/go-mutants"
@@ -65,7 +67,117 @@ var (
 	// PrepareOptions.Trace is part of the contract as a type and not only as a
 	// name: a consumer stores its own recorder in it.
 	_ func(gomutants.PrepareEvent) = gomutants.PrepareOptions{}.Trace
+
+	// The diagnostic code lives in packages a consumer cannot import, so the
+	// accessor is the contract.
+	_ func(error) string = gomutants.DiagnosticCode
+
+	// Every typed error is used through the error interface, and every one of
+	// them is reached with errors.As from outside this module.
+	_ error = (*gomutants.MutantSelectionError)(nil)
+	_ error = (*gomutants.DriftError)(nil)
+	_ error = (*gomutants.VerificationError)(nil)
+	_ error = (*gomutants.BuildError)(nil)
+	_ error = (*gomutants.ExecutionError)(nil)
+	_ error = (*gomutants.PackageNotPreparedError)(nil)
+	_ error = (*gomutants.ReservedError)(nil)
 )
+
+// TestConsumerClassifiesEveryEngineFailure is the consumer-side half of the
+// error contract: the sentinels are comparable with errors.Is, every typed
+// error is reachable with errors.As through a wrapper of the consumer's own,
+// and the fields a caller acts on are named.
+//
+// Every value here is built by hand, and that is the point. What is under test
+// is what a consumer can *do* from outside this module — name these types,
+// construct them for its own doubles, and classify them through its own
+// wrapping — and not what any particular run produces, which the engine's own
+// suite establishes. No message and no field value is asserted: a claim about
+// what a hand-built value prints would be a claim about nothing.
+func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
+	for _, sentinel := range []error{
+		gomutants.ErrWorkspaceClosed,
+		gomutants.ErrWorkspacePrepared,
+		gomutants.ErrSessionClosed,
+		gomutants.ErrInvalidMutantID,
+		gomutants.ErrMutantNotFound,
+		gomutants.ErrAmbiguousMutant,
+		gomutants.ErrMutantRejected,
+		gomutants.ErrProbeNotPrepared,
+	} {
+		if !errors.Is(fmt.Errorf("wrapped: %w", sentinel), sentinel) {
+			t.Errorf("%v does not survive wrapping", sentinel)
+		}
+	}
+
+	// The named fields, not only the types: these are what a consumer reads to
+	// decide whether a failure is its user's or the engine's.
+	_ = gomutants.MutantSelectionError{
+		Prefix:    "",
+		Reason:    nil,
+		Matches:   nil,
+		Rejection: nil,
+	}
+	_ = gomutants.DriftError{Stage: "", Changes: nil}
+	_ = gomutants.VerificationError{
+		Command:  gomutants.Command{},
+		ExitCode: 0,
+		TimedOut: false,
+		Duration: 0,
+		Output:   nil,
+	}
+	_ = gomutants.BuildError{
+		Phase:    gomutants.PreparePhaseBinaryBuild,
+		Package:  "",
+		Argv:     nil,
+		ExitCode: 0,
+		TimedOut: false,
+		Output:   "",
+		Code:     "",
+	}
+	_ = gomutants.ExecutionError{Call: "", Package: "", Code: "", Output: ""}
+	_ = gomutants.PackageNotPreparedError{Call: "", Package: ""}
+	_ = gomutants.ReservedError{Call: "", Flag: "", Variable: "", Owner: ""}
+
+	var (
+		selection *gomutants.MutantSelectionError
+		drift     *gomutants.DriftError
+		verify    *gomutants.VerificationError
+		build     *gomutants.BuildError
+		execution *gomutants.ExecutionError
+		missing   *gomutants.PackageNotPreparedError
+		reserved  *gomutants.ReservedError
+	)
+	failures := []error{
+		fmt.Errorf("wrapped: %w", &gomutants.MutantSelectionError{Reason: gomutants.ErrMutantNotFound}),
+		fmt.Errorf("wrapped: %w", &gomutants.DriftError{Stage: "commands"}),
+		fmt.Errorf("wrapped: %w", &gomutants.VerificationError{ExitCode: 1}),
+		fmt.Errorf("wrapped: %w", &gomutants.BuildError{Phase: gomutants.PreparePhaseDiscovery}),
+		fmt.Errorf("wrapped: %w", &gomutants.ExecutionError{Call: "exec"}),
+		fmt.Errorf("wrapped: %w", &gomutants.PackageNotPreparedError{Call: "probe"}),
+		fmt.Errorf("wrapped: %w", &gomutants.ReservedError{Variable: "GO_MUTANTS_ACTIVE"}),
+	}
+	found := []bool{
+		errors.As(failures[0], &selection),
+		errors.As(failures[1], &drift),
+		errors.As(failures[2], &verify),
+		errors.As(failures[3], &build),
+		errors.As(failures[4], &execution),
+		errors.As(failures[5], &missing),
+		errors.As(failures[6], &reserved),
+	}
+	for i, ok := range found {
+		if !ok {
+			t.Errorf("errors.As did not reach the typed error in %v", failures[i])
+		}
+	}
+	if !errors.Is(failures[0], gomutants.ErrMutantNotFound) {
+		t.Error("a selection error does not carry its reason through a wrap")
+	}
+	if gomutants.DiagnosticCode(errors.New("no code")) != "" {
+		t.Error("DiagnosticCode invented a code for an error that carries none")
+	}
+}
 
 func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.OpenOptions{}

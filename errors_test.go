@@ -1,0 +1,489 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package gomutants
+
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/P4suta/go-mutants/internal/discover"
+	"github.com/P4suta/go-mutants/internal/execute"
+	"github.com/P4suta/go-mutants/internal/gocmd"
+	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/internal/validate"
+)
+
+// TestClosedWorkspaceErrorsAreSentinels is the first half of the claim a
+// consumer needs: a refusal that is a fact about the lifecycle is recognisable
+// with errors.Is, and its message is exactly the one it always was.
+func TestClosedWorkspaceErrorsAreSentinels(t *testing.T) {
+	t.Parallel()
+
+	closed := &Workspace{closed: true}
+	_, execErr := closed.Exec(t.Context(), Command{Argv: []string{"go", "version"}})
+	if !errors.Is(execErr, ErrWorkspaceClosed) {
+		t.Errorf("Exec on a closed workspace = %v, want ErrWorkspaceClosed", execErr)
+	}
+	if got, want := errorText(execErr), "gomutants: exec: workspace is closed"; got != want {
+		t.Errorf("Exec message = %q, want %q", got, want)
+	}
+
+	_, prepareErr := closed.Prepare(t.Context(), PrepareOptions{})
+	if !errors.Is(prepareErr, ErrWorkspaceClosed) {
+		t.Errorf("Prepare on a closed workspace = %v, want ErrWorkspaceClosed", prepareErr)
+	}
+	if got, want := errorText(prepareErr), "gomutants: prepare: workspace is closed"; got != want {
+		t.Errorf("Prepare message = %q, want %q", got, want)
+	}
+}
+
+// TestSecondPrepareIsErrWorkspacePrepared pins the other lifecycle refusal. It
+// is a different condition from a closed workspace and so a different sentinel:
+// a caller that retried a preparation has to be able to tell "this workspace is
+// spent" from "this workspace is gone".
+func TestSecondPrepareIsErrWorkspacePrepared(t *testing.T) {
+	t.Parallel()
+
+	prepared := &Workspace{prepared: true}
+	_, err := prepared.Prepare(t.Context(), PrepareOptions{})
+	if !errors.Is(err, ErrWorkspacePrepared) {
+		t.Errorf("second Prepare = %v, want ErrWorkspacePrepared", err)
+	}
+	if errors.Is(err, ErrWorkspaceClosed) {
+		t.Errorf("second Prepare = %v, which also reads as a closed workspace", err)
+	}
+	if got, want := errorText(err), "gomutants: prepare: workspace has already been prepared"; got != want {
+		t.Errorf("second Prepare message = %q, want %q", got, want)
+	}
+}
+
+// TestClosedSessionErrorsAreSentinels covers the three calls a session refuses
+// once it is closed. All three carry one sentinel, because a consumer that has
+// lost its session has one thing to do about it whichever call noticed.
+func TestClosedSessionErrorsAreSentinels(t *testing.T) {
+	t.Parallel()
+
+	closed := &Session{closed: true}
+	_, execErr := closed.Exec(t.Context(), ExecRequest{Mutant: "deadbeef"})
+	_, probeErr := closed.Probe(t.Context(), ProbeRequest{})
+	_, changesErr := closed.Changes()
+
+	cases := []struct {
+		call    string
+		err     error
+		message string
+	}{
+		{"Exec", execErr, "gomutants: session exec: session is closed"},
+		{"Probe", probeErr, "gomutants: session probe: session is closed"},
+		{"Changes", changesErr, "gomutants: changes: session is closed"},
+	}
+	for _, c := range cases {
+		if !errors.Is(c.err, ErrSessionClosed) {
+			t.Errorf("%s on a closed session = %v, want ErrSessionClosed", c.call, c.err)
+		}
+		if got := errorText(c.err); got != c.message {
+			t.Errorf("%s message = %q, want %q", c.call, got, c.message)
+		}
+	}
+}
+
+// TestMutantSelectionErrors is the four ways a request can name a mutant the
+// session will not run, and the one type that says which.
+//
+// The messages are the ones the API always produced; what is new is that the
+// caller can tell a typo from a rejection without reading them.
+func TestMutantSelectionErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("invalid prefix", func(t *testing.T) {
+		t.Parallel()
+		session := &Session{catalog: &mutation.Catalog{}}
+		_, err := session.Exec(t.Context(), ExecRequest{Mutant: "zz"})
+		var selection *MutantSelectionError
+		if !errors.As(err, &selection) {
+			t.Fatalf("Exec = %v, want a *MutantSelectionError", err)
+		}
+		if !errors.Is(err, ErrInvalidMutantID) {
+			t.Errorf("Exec = %v, want ErrInvalidMutantID", err)
+		}
+		if selection.Prefix != "zz" {
+			t.Errorf("Prefix = %q, want %q", selection.Prefix, "zz")
+		}
+		if !errors.Is(err, mutation.ErrInvalidPrefix) {
+			t.Errorf("the internal cause is no longer reachable: %v", err)
+		}
+		if prefix := `gomutants: session exec mutant "zz": `; !strings.HasPrefix(err.Error(), prefix) {
+			t.Errorf("message = %q, want the prefix %q", err.Error(), prefix)
+		}
+	})
+
+	t.Run("no mutant matches", func(t *testing.T) {
+		t.Parallel()
+		session := &Session{catalog: &mutation.Catalog{}}
+		_, err := session.Exec(t.Context(), ExecRequest{Mutant: "0000beef"})
+		if !errors.Is(err, ErrMutantNotFound) {
+			t.Errorf("Exec = %v, want ErrMutantNotFound", err)
+		}
+		var selection *MutantSelectionError
+		if errors.As(err, &selection) && len(selection.Matches) != 0 {
+			t.Errorf("Matches = %v, want none", selection.Matches)
+		}
+		if prefix := `gomutants: session exec mutant "0000beef": `; !strings.HasPrefix(err.Error(), prefix) {
+			t.Errorf("message = %q, want the prefix %q", err.Error(), prefix)
+		}
+	})
+
+	t.Run("ambiguous prefix", func(t *testing.T) {
+		t.Parallel()
+		// The catalogue's own resolution is what reports the ambiguity; what
+		// this session adds is the list a caller can act on, in an order that
+		// does not depend on catalogue order.
+		session := &Session{publicCatalog: Catalog{Mutants: []Mutant{
+			{ID: "beef2222" + strings.Repeat("0", 56), DisplayID: "beef2222"},
+			{ID: "beef1111" + strings.Repeat("0", 56), DisplayID: "beef1111"},
+			{ID: "0bad0000" + strings.Repeat("0", 56), DisplayID: "0bad0000"},
+		}}}
+		cause := fmt.Errorf("%w: %q matches 2 mutants: beef2222, beef1111", mutation.ErrAmbiguousPrefix, "beef")
+		err := session.selectionError("beef", cause)
+		if !errors.Is(err, ErrAmbiguousMutant) {
+			t.Errorf("selectionError = %v, want ErrAmbiguousMutant", err)
+		}
+		if want := []string{"beef1111", "beef2222"}; !slices.Equal(err.Matches, want) {
+			t.Errorf("Matches = %v, want %v", err.Matches, want)
+		}
+		if got, want := err.Error(), `gomutants: session exec mutant "beef": `+cause.Error(); got != want {
+			t.Errorf("message = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("rejected during validation", func(t *testing.T) {
+		t.Parallel()
+		catalog := catalogOfOne(t)
+		mutant := catalog.Mutants()[0]
+		rejection := Rejection{
+			ID:         mutant.ID,
+			DisplayID:  mutant.DisplayID,
+			Path:       mutant.Path,
+			Rule:       mutant.Rule.Name,
+			Diagnostic: "pkg/a.go:3:9: invalid operation",
+		}
+		session := &Session{
+			catalog:    catalog,
+			accepted:   map[string]bool{},
+			rejections: map[string]Rejection{mutant.ID: rejection},
+		}
+		_, err := session.Exec(t.Context(), ExecRequest{Mutant: mutant.ID})
+		if !errors.Is(err, ErrMutantRejected) {
+			t.Fatalf("Exec of a rejected mutant = %v, want ErrMutantRejected", err)
+		}
+		var selection *MutantSelectionError
+		if !errors.As(err, &selection) {
+			t.Fatalf("Exec = %v, want a *MutantSelectionError", err)
+		}
+		if selection.Rejection == nil || selection.Rejection.Diagnostic != rejection.Diagnostic {
+			t.Errorf("Rejection = %+v, want the catalogued one", selection.Rejection)
+		}
+		want := "gomutants: session exec mutant " + mutant.DisplayID +
+			" was rejected during validation: pkg/a.go:3:9: invalid operation"
+		if got := err.Error(); got != want {
+			t.Errorf("message = %q, want %q", got, want)
+		}
+	})
+}
+
+// TestDriftErrorRendersEveryKind pins both message shapes and all three kind
+// words. The words are the snapshot layer's, and they are asserted against it
+// rather than copied, because the two vocabularies are deliberately different:
+// a snapshot's file "changed" while a session's file is "modified", and the
+// message a user has been reading for a release is the snapshot's.
+func TestDriftErrorRendersEveryKind(t *testing.T) {
+	t.Parallel()
+
+	changes := []Change{
+		{Kind: ChangeAdded, Path: "command-artifact.txt", AfterSHA256: "aa"},
+		{Kind: ChangeRemoved, Path: "gone.go", BeforeSHA256: "bb"},
+		{Kind: ChangeModified, Path: "pkg/a.go", BeforeSHA256: "bb", AfterSHA256: "cc"},
+	}
+	body := "added command-artifact.txt\nremoved gone.go\nchanged pkg/a.go"
+
+	commands := &DriftError{Stage: "commands", Changes: changes}
+	if got, want := commands.Error(), "gomutants: prepare commands changed the frozen snapshot:\n"+body; got != want {
+		t.Errorf("commands drift = %q, want %q", got, want)
+	}
+	for _, stage := range []string{"source restoration", "verification", "probe instrumentation", "probe source restoration"} {
+		staged := &DriftError{Stage: stage, Changes: changes}
+		want := "gomutants: prepare " + stage + " changed the snapshot outside instrumentation:\n" + body
+		if got := staged.Error(); got != want {
+			t.Errorf("%s drift = %q, want %q", stage, got, want)
+		}
+	}
+
+	// A drift with nothing in it is not a failure the engine reports, and the
+	// header alone is what a hand-built value has to print: a message ending in
+	// a newline reaches a log with a hole in it.
+	for stage, want := range map[string]string{
+		"commands":     "gomutants: prepare commands changed the frozen snapshot:",
+		"verification": "gomutants: prepare verification changed the snapshot outside instrumentation:",
+	} {
+		if got := (&DriftError{Stage: stage}).Error(); got != want {
+			t.Errorf("empty %s drift = %q, want %q", stage, got, want)
+		}
+	}
+
+	kinds := map[ChangeKind]snapshot.DriftKind{
+		ChangeAdded:    snapshot.DriftAdded,
+		ChangeRemoved:  snapshot.DriftRemoved,
+		ChangeModified: snapshot.DriftChanged,
+	}
+	for kind, want := range kinds {
+		if got := driftWord(kind); got != want.String() {
+			t.Errorf("driftWord(%q) = %q, want %q", kind, got, want.String())
+		}
+	}
+}
+
+// TestReservedErrorsRenderTheExistingText covers the flags and the variables a
+// session owns. Three of the four messages are the ones the engine has always
+// printed; `-test.timeout` is the deliberate change, refused here rather than
+// four layers down as GOM7511, so that the two halves of the timeout pairing
+// are refused in one place with one sentence.
+func TestReservedErrorsRenderTheExistingText(t *testing.T) {
+	t.Parallel()
+
+	scratch := t.TempDir()
+	flags := []struct {
+		argument string
+		flag     string
+		message  string
+	}{
+		{
+			"-test.fuzzcachedir=" + scratch, "-test.fuzzcachedir",
+			"gomutants: session exec: -test.fuzzcachedir is reserved by the session",
+		},
+		{
+			"-test.fuzzworker", "-test.fuzzworker",
+			"gomutants: session exec: -test.fuzzworker is reserved by the Go fuzz coordinator",
+		},
+		{
+			"-test.timeout=1s", "-test.timeout",
+			"gomutants: session exec: -test.timeout is reserved by the session's process supervisor",
+		},
+	}
+	for _, c := range flags {
+		_, err := sessionTargetArgs([]string{c.argument}, scratch, "exec")
+		var reserved *ReservedError
+		if !errors.As(err, &reserved) {
+			t.Fatalf("sessionTargetArgs(%q) = %v, want a *ReservedError", c.argument, err)
+		}
+		if reserved.Flag != c.flag || reserved.Variable != "" || reserved.Call != "exec" {
+			t.Errorf("sessionTargetArgs(%q) = %+v, want the flag %q refused for exec", c.argument, reserved, c.flag)
+		}
+		if got := err.Error(); got != c.message {
+			t.Errorf("message = %q, want %q", got, c.message)
+		}
+	}
+
+	_, err := overlayEnvironment([]string{"PATH=one"}, []string{"GO_MUTANTS_ACTIVE=stolen"})
+	var reserved *ReservedError
+	if !errors.As(err, &reserved) {
+		t.Fatalf("overlayEnvironment = %v, want a *ReservedError", err)
+	}
+	if reserved.Variable != "GO_MUTANTS_ACTIVE" || reserved.Flag != "" {
+		t.Errorf("overlayEnvironment = %+v, want the variable refused", reserved)
+	}
+	if got, want := err.Error(), "GO_MUTANTS_ACTIVE is reserved by go-mutants"; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+}
+
+// TestDiagnosticCodeReadsInternalCodes is the one thing a consumer cannot do
+// for itself: the codes live in packages it cannot import, and a code parsed
+// out of a message is a code that breaks the day the message is reworded.
+func TestDiagnosticCodeReadsInternalCodes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"nil", nil, ""},
+		{"plain", errors.New("gomutants: prepare test binaries: something"), ""},
+		{"execute", &execute.Error{Code: execute.CodeTestBuildFailed, Message: "no"}, "GOM7505"},
+		{"validate", &validate.Error{Code: validate.CodeNotMutantInduced, Message: "no"}, "GOM7420"},
+		{"discover", &discover.Error{Code: discover.CodePackageErrors, Message: "no"}, "GOM4111"},
+		{"runner", &runner.Error{Code: runner.CodeProcessStartFailed, Message: "no"}, "GOM7202"},
+		{"gocmd", &gocmd.Error{Code: gocmd.CodeToolchainNotFound, Message: "no"}, "GOM7210"},
+		{
+			"wrapped",
+			fmt.Errorf("gomutants: prepare test binaries: %w",
+				&execute.Error{Code: execute.CodeTestBuildFailed, Message: "no"}),
+			"GOM7505",
+		},
+	}
+	for _, c := range cases {
+		if got := DiagnosticCode(c.err); got != c.want {
+			t.Errorf("DiagnosticCode(%s) = %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	inner := &execute.Error{
+		Code:       execute.CodeTestBuildFailed,
+		Message:    "the test binary for example.com/a could not be built",
+		Output:     "a.go:1:1: syntax error",
+		Package:    "example.com/a",
+		ExitCode:   2,
+		Invocation: &runner.Invocation{Argv: []string{"go", "test", "-c"}},
+	}
+	wrapped := fmt.Errorf("gomutants: prepare test binaries: %w", inner)
+	err := buildError(PreparePhaseBinaryBuild, wrapped)
+	var build *BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("buildError = %v, want a *BuildError", err)
+	}
+	if got := DiagnosticCode(err); got != "GOM7505" {
+		t.Errorf("DiagnosticCode of a BuildError = %q, want GOM7505", got)
+	}
+	if build.Code != "GOM7505" || build.Package != "example.com/a" || build.ExitCode != 2 ||
+		build.Output != inner.Output || !slices.Equal(build.Argv, inner.Invocation.Argv) {
+		t.Errorf("BuildError = %+v, want the inner failure's own fields", build)
+	}
+	if build.Phase != PreparePhaseBinaryBuild {
+		t.Errorf("Phase = %q, want %q", build.Phase, PreparePhaseBinaryBuild)
+	}
+	if got := err.Error(); got != wrapped.Error() {
+		t.Errorf("message = %q, want the cause's own %q", got, wrapped.Error())
+	}
+
+	// An error carrying no code at all is returned as it was, so that a caller
+	// reading the message of a failure that never named a build sees the failure
+	// and not a wrapper around it.
+	plain := errors.New("gomutants: prepare discovery: no")
+	if got := buildError(PreparePhaseDiscovery, plain); got != plain {
+		t.Errorf("buildError of an untyped cause = %v, want it unchanged", got)
+	}
+}
+
+// TestBuildErrorFromAValidationCarriesWhatTheSeamKnows is the shape of the
+// other build failure, and the one whose absences are deliberate: a validation
+// phase reaches this layer through the seam the bisection search is faked
+// behind, which answers whether a subset compiled and not with what status, so
+// the code and the compiler's output are there and the exit status and the argv
+// are not.
+func TestBuildErrorFromAValidationCarriesWhatTheSeamKnows(t *testing.T) {
+	t.Parallel()
+
+	inner := &validate.Error{
+		Code:    validate.CodeStillFailing,
+		Message: "the snapshot does not build although every catalogued file was isolated",
+		Output:  "pkg/a.go:3:9: undefined: helper",
+	}
+	wrapped := fmt.Errorf("gomutants: prepare validation: %w", inner)
+	err := buildError(PreparePhaseMainValidation, wrapped)
+	var build *BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("buildError = %v, want a *BuildError", err)
+	}
+	if build.Code != "GOM7421" || build.Output != inner.Output {
+		t.Errorf("BuildError = %+v, want the validation's own code and output", build)
+	}
+	if build.Phase != PreparePhaseMainValidation {
+		t.Errorf("Phase = %q, want %q", build.Phase, PreparePhaseMainValidation)
+	}
+	if build.ExitCode != 0 || build.TimedOut || build.Argv != nil || build.Package != "" {
+		t.Errorf("BuildError = %+v, want no status, no command and no package", build)
+	}
+	if got := err.Error(); got != wrapped.Error() {
+		t.Errorf("message = %q, want the cause's own %q", got, wrapped.Error())
+	}
+}
+
+// TestBuildErrorTypesAnyCodeItIsGiven covers the failure that reaches a phase
+// without one of the three shapes around it — a toolchain probe, or a process
+// that could not be supervised, surfacing straight through discovery. The code
+// is the part a consumer reports, so it is kept rather than dropped for want of
+// a wrapper this function recognises.
+func TestBuildErrorTypesAnyCodeItIsGiven(t *testing.T) {
+	t.Parallel()
+
+	inner := &runner.Error{
+		Code:       runner.CodeProcessStartFailed,
+		Message:    "the go command could not be started",
+		Output:     "exec: no such file",
+		Invocation: &runner.Invocation{Argv: []string{"go", "list", "./..."}},
+	}
+	wrapped := fmt.Errorf("gomutants: prepare discovery: %w", inner)
+	err := buildError(PreparePhaseDiscovery, wrapped)
+	var build *BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("buildError = %v, want a *BuildError", err)
+	}
+	if build.Code != "GOM7202" {
+		t.Errorf("Code = %q, want GOM7202", build.Code)
+	}
+	if !slices.Equal(build.Argv, inner.Invocation.Argv) || build.Output != inner.Output {
+		t.Errorf("BuildError = %+v, want the command and output the runner named", build)
+	}
+	if got := err.Error(); got != wrapped.Error() {
+		t.Errorf("message = %q, want the cause's own %q", got, wrapped.Error())
+	}
+}
+
+// TestHandBuiltErrorsSayWhatTheyAreWithoutACause pins what a value a consumer
+// constructed — in a double, in a table of its own — prints. Neither type may
+// panic on a nil cause, and neither may print the wire spelling of a phase at
+// somebody who is reading a sentence.
+func TestHandBuiltErrorsSayWhatTheyAreWithoutACause(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{&BuildError{Phase: PreparePhaseBinaryBuild}, "gomutants: prepare binary build failed"},
+		{&BuildError{Phase: PreparePhaseProbeCoverageBuild}, "gomutants: prepare probe coverage build failed"},
+		{&BuildError{}, "gomutants: preparation failed"},
+		{&ExecutionError{Call: "exec"}, "gomutants: session exec could not measure"},
+		{&ExecutionError{}, "gomutants: the session could not measure"},
+	}
+	for _, c := range cases {
+		if got := c.err.Error(); got != c.want {
+			t.Errorf("message = %q, want %q", got, c.want)
+		}
+	}
+}
+
+// catalogOfOne catalogues a single candidate, which is how a resolution is
+// tested without a toolchain: the catalogue is a pure value and discovery is
+// not what these assertions are about.
+func catalogOfOne(t *testing.T) *mutation.Catalog {
+	t.Helper()
+	builder := mutation.NewBuilder()
+	err := builder.Add(mutation.Candidate{
+		Path: "pkg/a.go",
+		Rule: mutation.Rule{
+			Family:  mutation.FamilyComparison,
+			Name:    "eq-to-neq",
+			Version: 1,
+			Tier:    mutation.TierBalanced,
+		},
+		Span:         mutation.Span{StartByte: 10, EndByte: 12},
+		Original:     "==",
+		Replacement:  "!=",
+		SourceDigest: mutation.DigestString("the source of pkg/a.go"),
+	})
+	if err != nil {
+		t.Fatalf("cataloguing the candidate: %v", err)
+	}
+	catalog, err := builder.Build()
+	if err != nil {
+		t.Fatalf("building the catalogue: %v", err)
+	}
+	return catalog
+}

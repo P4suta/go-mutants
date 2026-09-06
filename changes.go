@@ -30,7 +30,7 @@ func (s *Session) Changes() ([]Change, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil, errors.New("gomutants: changes: session is closed")
+		return nil, fmt.Errorf("gomutants: changes: %w", ErrSessionClosed)
 	}
 	current, err := scanFiles(s.root)
 	if err != nil {

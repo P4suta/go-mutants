@@ -14,6 +14,39 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **Typed errors on the engine API, with every message unchanged.** A consumer
+  driving `Workspace` and `Session` had to tell three things apart and could
+  only do it by matching text: the user's test suite failing on the instrumented
+  tree, the repository moving under the run, and go-mutants itself breaking.
+  Those three want three different reactions — quote the suite's output to its
+  author, say which file changed and start again, file a bug with a diagnostic
+  code — and the only signal separating them was a sentence, which is the one
+  part of an API nobody promises twice. A consumer that parsed one was one
+  reworded message away from reporting an engine bug as somebody's failing test.
+
+  The root package now returns sentinels and typed errors for every refusal a
+  caller can act on: `ErrWorkspaceClosed`, `ErrWorkspacePrepared`,
+  `ErrSessionClosed`, `ErrInvalidMutantID`, `ErrMutantNotFound`,
+  `ErrAmbiguousMutant` and `ErrMutantRejected`, and the types
+  `*MutantSelectionError`, `*DriftError`, `*VerificationError`, `*BuildError`,
+  `*ExecutionError`, `*PackageNotPreparedError` and `*ReservedError`.
+  `DiagnosticCode(err)` returns the stable `GOM####` code carried anywhere in
+  the chain, because those codes live in packages a consumer cannot import and
+  lifting four characters out of a message is the coupling this change removes.
+
+  Nothing prints differently. Every sentinel is wrapped into the sentence the
+  engine already produced, and every type renders the message it replaced — the
+  drift errors down to the snapshot layer's own kind words, which spell a
+  modified file *changed* where `ChangeKind` spells it `modified`. What is new
+  is what the values carry: `*DriftError` names the drifting paths with the
+  digests on both sides instead of a list of lines; `*VerificationError` carries
+  the command, the status and the output; `*BuildError` carries the phase, the
+  package, the argv and the code, so a bug report can be reproduced; and
+  `*MutantSelectionError` carries the sorted display identities an ambiguous
+  prefix named. `internal/drift` grew `UnexpectedDrifts` for the structured
+  answer and kept `Unexpected` for the CLI, and `execute.Error` and
+  `validate.Error` grew the fields the public types report — `Package`,
+  `ExitCode`, `TimedOut` — where the failure knew them.
 - **`engine.Options.TempDirectory`: a run can name the parent of its own
   temporary directories.** The engine put its snapshot, and the scratch
   directory beside it, under `os.TempDir()`, and swept that same directory for
@@ -1413,6 +1446,20 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **`-test.timeout` in a session target's `Args` is refused by the session, and
+  says so differently.** The session owns both timeout layers — the supervisor
+  kills the process tree at `Timeout`, the binary gets `-test.timeout` at twice
+  that so the two can never race — so a target supplying its own switched the
+  in-process half off while the API still claimed the budget it was given. That
+  was already refused, but four layers down, by the execution phase, as
+  `GOM7511: the mutant … target overrides -test.timeout, which is reserved by
+  the process supervisor`: a scratch directory and a launch decision after the
+  request was already known to be impossible, with a code and a sentence about
+  machinery the caller never asked for. `Session.Exec` and `Session.Probe` now
+  refuse it where they refuse `-test.fuzzcachedir` and `-test.fuzzworker`, as a
+  `*ReservedError` reading `gomutants: session exec: -test.timeout is reserved
+  by the session's process supervisor`. The old text matched no test in this
+  repository and none in the consumer.
 - **A failed command now prints what it printed and what it was.** A test
   binary that would not compile arrived on standard error as a single line —
   `error GOM7505: the test binary for example.com/m/pkg could not be built:
