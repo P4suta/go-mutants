@@ -5,21 +5,25 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON contracts
 
-**Status: three schemas shipped, plus one vendored.**
-`schema/catalog-v1.schema.json`, `schema/run-report-v1.schema.json` and
-`schema/doctor-v1.schema.json` exist, are embedded in `internal/schemas`, and
-every document the CLI writes is validated against them in the tests. The
-Stryker projection is validated too, against the vendored third-party schema in
-`schema/stryker/` — which is deliberately kept out of that registry, for the
-reasons given below.
+**Status: four schemas shipped, plus one vendored.**
+`schema/catalog-v1.schema.json`, `schema/run-report-v1.schema.json`,
+`schema/doctor-v1.schema.json` and `schema/trace-v1.schema.json` exist, are
+embedded in `internal/schemas`, and every document the CLI writes is validated
+against them in the tests. The Stryker projection is validated too, against the
+vendored third-party schema in `schema/stryker/` — which is deliberately kept
+out of that registry, for the reasons given below.
 
-go-mutants publishes three native document types and one lossy projection for
-the Stryker report ecosystem. Every native document is discriminated by two
-fields that a consumer must check before decoding:
+go-mutants publishes four native document types and one lossy projection for
+the Stryker report ecosystem. The three that describe *results* are
+discriminated by two fields that a consumer must check before decoding:
 
 ```json
 { "document_type": "go-mutants/run-report", "schema_version": 1 }
 ```
+
+The fourth, `go-mutants/trace-event`, is not: a trace is a stream of lines
+rather than a document, and it states its format once on its first line. See
+[below](#go-mutantstrace-event-v1).
 
 Schemas live in `schema/`, are written in JSON Schema draft 2020-12 with
 `additionalProperties: false`, and are validated in tests with
@@ -428,9 +432,44 @@ emitted, why `not_run` projects as `Ignored` rather than being omitted, and the
 UTF-16 column rule the coordinates obey — is in
 [Stryker compatibility](stryker-compatibility.md).
 
+## `go-mutants/trace-event` v1
+
+One line of a run trace, validated against `schema/trace-v1.schema.json` and
+returned by `trace.JSONSchema()`.
+
+It is the odd one out in three ways, all deliberate. It describes a *line*
+rather than a file, because a recording is JSON Lines and each event is one
+instance of the schema. It carries no `document_type` or `schema_version`
+field — a recording states its format once, in the `schema` field of its first
+line, rather than on every one of thousands of events. And it is never
+evidence: a trace takes no part in a verdict, in a mutant identity, or in the
+key a cached result is stored under, and a recording that cannot be written
+costs a note rather than the run.
+
+| Field | Contents |
+| --- | --- |
+| `seq` | Position in the recording, counting from one |
+| `type` | Which event this is, and therefore which payload it carries |
+| `schema` | `gomutants-trace-v1`, on the `run-start` line alone |
+| `timestamp`, `elapsed_ms` | When it was recorded, and how far into the recording |
+| one payload | Named after its type: `start`, `phase`, `stage`, `prepare`, `exec`, `mutant`, `probe`, `validate`, `coverage`, `cache`, `snapshot`, `sweep`, `artifact`, `note`, or `run` |
+
+The type and the payload are one contract in both directions, so a reader may
+switch on `type` and reach for that payload alone. `exec.kind` is an
+enumeration of every command go-mutants starts, which is what makes "every
+subprocess is recorded" checkable; `env_names` carries variable names without
+their values, and the schema refuses an item containing `=`.
+
+The full contract — every type, every field, the retention rule, what is
+deterministic, and how a recording joins a consumer's own — is
+[the trace format](trace-v1.md). The reasoning is
+[ADR 0001](adr/0001-trace-is-not-evidence.md).
+
 ## Compatibility rules
 
-- Consumers must branch on `document_type` and `schema_version`.
+- Consumers of the result documents must branch on `document_type` and
+  `schema_version`. A trace consumer reads the format identity from the
+  `schema` field of the `run-start` line instead.
 - New fields are additive within a schema version; removing or retyping a field
   requires a version bump.
 - Unknown fields are rejected by the schemas on purpose: a typo in a generated

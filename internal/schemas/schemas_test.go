@@ -399,6 +399,37 @@ func TestEverySchemaIsRegistered(t *testing.T) {
 	}
 }
 
+// TestDocumentTypesListsTheTraceEvent pins the trace contract into the same
+// registry the report and catalogue documents live in.
+//
+// A trace is never evidence, but it is still a published format somebody
+// scripts against, and the registry is what makes a document type checkable
+// rather than merely documented. Listing it here is also what puts it in the
+// error message an unknown document type produces, so a consumer that mistypes
+// the name is told which types this build knows.
+func TestDocumentTypesListsTheTraceEvent(t *testing.T) {
+	types := DocumentTypes()
+	if !slices.Contains(types, TraceEventV1) {
+		t.Fatalf("DocumentTypes() = %v, want it to list %q", types, TraceEventV1)
+	}
+	if !slices.IsSorted(types) {
+		t.Errorf("DocumentTypes() = %v, want it sorted", types)
+	}
+	if got := registry[TraceEventV1]; got != "trace-v1.schema.json" {
+		t.Errorf("the registry maps %q onto %q", TraceEventV1, got)
+	}
+	// One line of a real recording, which is the unit this document type
+	// describes: a recording is JSON Lines, so the schema validates a line
+	// rather than a file.
+	line := []byte(`{"seq":1,"type":"run-start","schema":"gomutants-trace-v1",` +
+		`"timestamp":"2026-09-06T12:00:00Z","elapsed_ms":0,` +
+		`"start":{"kind":"run","run_id":"20260906T120000Z-1a2b","tool_version":"0.1.0-dev",` +
+		`"pid":31337,"root":"/home/dev/project"}}`)
+	if err := Validate(TraceEventV1, line); err != nil {
+		t.Errorf("a recorded run-start does not satisfy its own schema: %v", err)
+	}
+}
+
 // TestSchemaIDsMatchTheirFilenames keeps the published identity of a schema
 // tied to the path it is published at. Nothing dereferences these URLs, which
 // is exactly why nothing but a test would notice them drifting apart.
