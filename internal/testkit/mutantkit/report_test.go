@@ -431,3 +431,25 @@ func walkJSON(t *testing.T, pointer string, before, after any, changed *[]string
 		}
 	}
 }
+
+// TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines pins the shape rule: the
+// duration `go test` writes beside a test's name or a package's summary is
+// flattened, and a duration the program under test printed itself is evidence
+// and stays exactly as written.
+func TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ in, want string }{
+		{"--- FAIL: TestClamp (0.01s)", "--- FAIL: TestClamp (0.00s)"},
+		{"    --- PASS: TestClamp/inside (12.34s)", "    --- PASS: TestClamp/inside (0.00s)"},
+		{"--- SKIP: TestLater (0.50s)", "--- SKIP: TestLater (0.00s)"},
+		{"ok  \tfixture.example/killable\t0.123s", "ok  \tfixture.example/killable\t0.00s"},
+		{"FAIL\tfixture.example/killable\t0.002s", "FAIL\tfixture.example/killable\t0.00s"},
+		{"    clamp_test.go:14: request completed (0.25s)", "    clamp_test.go:14: request completed (0.25s)"},
+		{"--- FAIL: TestClamp (0.01s) trailing", "--- FAIL: TestClamp (0.01s) trailing"},
+		{"waited (1.5 s) then (0.5)", "waited (1.5 s) then (0.5)"},
+	} {
+		if got := mutantkit.NormalizeText(c.in); got != c.want {
+			t.Errorf("normalizeText(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

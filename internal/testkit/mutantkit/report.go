@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/report"
@@ -209,15 +210,20 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 }
 
 // goTestElapsed matches the elapsed time `go test` prints beside a test's own
-// name, and nothing else.
+// name, on the line where it prints it, and nothing else.
 //
-// The parentheses and the decimal point are the whole of the discrimination,
-// and they are enough: `go test` writes `(0.01s)` after every `--- PASS` and
-// `--- FAIL` line, and the text around it is the program's own output, where a
-// number is evidence. `after 10s`, `go1.26.6`, `(0.5)` and `(1.5 s)` are all
-// left alone, which is what keeps this a rule about one tool's format rather
-// than a hunt for digits.
-var goTestElapsed = regexp.MustCompile(`\([0-9]+\.[0-9]+s\)`)
+// The line shape is the whole of the discrimination: `go test` writes
+// `--- PASS: TestName (0.01s)`, `--- FAIL: …` and `--- SKIP: …` for every test
+// and subtest, and `ok  \tpkg\t0.123s` or `FAIL\tpkg\t0.002s` for every package.
+// A parenthesised duration anywhere else is the program's own output, where a
+// number is evidence — `request completed (0.25s)` printed by the code under
+// test must survive normalisation exactly as it was written, or a golden could
+// accept an output tail that is wrong.
+var goTestElapsed = regexp.MustCompile(`(?m)^([ \t]*--- (?:PASS|FAIL|SKIP|BENCH): .*?) \([0-9]+\.[0-9]+s\)$`)
+
+// goTestPackageElapsed matches the elapsed time on `go test`'s per-package
+// summary line, `ok  \tpkg\t0.123s` and `FAIL\tpkg\t0.002s`.
+var goTestPackageElapsed = regexp.MustCompile(`(?m)^((?:ok|FAIL)[ \t]+\S+[ \t]+)[0-9]+\.[0-9]+s$`)
 
 // absolutePath matches a POSIX or Windows absolute path inside a string value.
 //
@@ -267,7 +273,8 @@ func rewriteText(value any) {
 // it holds.
 func normalizeText(text string) string {
 	text = absolutePath.ReplaceAllString(text, "${1}"+NormalizedPath)
-	return goTestElapsed.ReplaceAllLiteralString(text, NormalizedElapsed)
+	text = goTestElapsed.ReplaceAllString(text, "${1} "+NormalizedElapsed)
+	return goTestPackageElapsed.ReplaceAllString(text, "${1}"+strings.Trim(NormalizedElapsed, "()"))
 }
 
 // setString replaces a string at a path of keys, when it is there.
