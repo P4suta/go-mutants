@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // The scratch subdirectories the coverage pass writes into.
@@ -135,7 +136,9 @@ func (s *session) coveragePhase(
 		return runs, coverageResult{}, nil
 	}
 
+	endProfile := s.stage("coverage-profile", countNoun(len(bins), "binary"))
 	profiles, err := s.profile(ctx, opts, scratch, bins)
+	endProfile(err)
 	if err != nil {
 		if interrupted(err) {
 			return runs, coverageResult{}, err
@@ -144,6 +147,11 @@ func (s *session) coveragePhase(
 		return runs, coverageResult{}, nil
 	}
 
+	// Named for what the stage does rather than for the event it produces: the
+	// `coverage-map` events are one per mutant and are what the stage spends its
+	// time making, but the stage itself is the narrowing — the decision about
+	// which mutants this run will not execute.
+	endNarrow := s.stage("coverage-narrow", countNoun(len(runs), "mutant"))
 	decided := coverageMutants(runs, st)
 	mapped := coverage.Map(coverage.Options{
 		ModulePath: modulePath,
@@ -156,12 +164,21 @@ func (s *session) coveragePhase(
 	// would report every mutant as an uncovered survivor. Failing open here is
 	// the difference between a slow run and a fiction.
 	if mapped.Matched == 0 {
-		s.unavailable("the coverage profiles name no file inside " + modulePath +
-			", so every mutant would be reported as uncovered")
+		unmapped := &coverage.Error{
+			Code: coverage.CodeUnavailable,
+			Message: "the coverage profiles name no file inside " + modulePath +
+				", so every mutant would be reported as uncovered",
+		}
+		// The stage says it failed even though the run goes on: what the phase
+		// was there to establish was not established, and a stage that reported
+		// success would leave the recording claiming a mapping happened.
+		endNarrow(unmapped)
+		s.unavailable(unmapped.Message)
 		return runs, coverageResult{}, nil
 	}
 
 	covered, result := s.narrow(mapped, decided, bins, runs, st)
+	endNarrow(nil)
 	return covered, result, nil
 }
 
@@ -195,11 +212,35 @@ func (s *session) narrow(
 		asked[m.ID] = true
 	}
 
+	// Where the mapping placed each mutant, so that the account of the decision
+	// can state the block it was placed in rather than only the verdict.
+	placed := make(map[string]coverage.Mutant, len(decided))
+	for _, m := range decided {
+		placed[m.ID] = m
+	}
+
 	index := binaryIndex(bins)
 	covered := make([]execute.MutantRun, 0, len(runs))
 	uncovered := make([]string, 0)
 	for _, run := range runs {
 		covering := mapped.CoveringOf(run.ID)
+		// One event per mutant the mapping was asked about, covered or not. It
+		// is the whole evidence for the mutants a coverage-guided run does not
+		// execute, and a decision recorded only for the ones that survived it
+		// would be an account a reader could not check. A mutant the mapping was
+		// never asked about has no placement to record and is left out rather
+		// than recorded with an empty one.
+		if asked[run.ID] {
+			where := placed[run.ID]
+			s.trace.Coverage(trace.CoverageRecord{
+				MutantID:  run.ID,
+				Path:      where.Path,
+				StartLine: where.StartLine,
+				EndLine:   where.EndLine,
+				Covering:  covering,
+				Uncovered: len(covering) == 0,
+			})
+		}
 		switch {
 		case !asked[run.ID]:
 		case len(covering) == 0:
@@ -256,11 +297,18 @@ func (s *session) profile(
 		spec.Dir = opts.SnapshotRoot
 		spec.Env = childEnv(scratch)
 		spec.Timeout = BaselineCap
+		spec.Trace = s.trace
+		spec.Kind = trace.ExecKindCovdataTextfmt
+		spec.Subject = data.ImportPath
 
 		if err := check(ctx, spec, runner.Run(ctx, spec), CodeCoverageRender,
 			"`go tool covdata textfmt` over the profile of "+data.ImportPath+" failed"); err != nil {
 			return nil, err
 		}
+		// The rendered profile is a file the run wrote and the only readable
+		// form the coverage decision was made from, so a `--keep-temp` run has
+		// something to point somebody at.
+		s.trace.Artifact(trace.ArtifactCoverageProfile, path)
 
 		file, err := os.Open(path)
 		if err != nil {
@@ -365,7 +413,7 @@ func (s *session) recordUncovered(id string, st *state) {
 	shown.Outcome = mutation.OutcomeSurvived
 	shown.Duration = 0
 	shown.Uncovered = true
-	s.emit(MutantFinished{Result: shown})
+	s.emit(MutantFinished{Result: shown.clone()})
 }
 
 // unavailable publishes the fail-open warning: what went wrong, and what the run
@@ -376,9 +424,23 @@ func (s *session) recordUncovered(id string, st *state) {
 // is that they can — the run is about to do strictly more work than it would
 // have, and every verdict it reaches is one it would have reached anyway.
 func (s *session) unavailable(why string) {
+	s.unavailableInFull(why, why)
+}
+
+// unavailableInFull is [session.unavailable] for the one caller with more to
+// say to a recording than to a console.
+//
+// The two texts are deliberately different lengths. `why` is folded onto one
+// line, because the run is about to carry on and succeed and a console during a
+// successful run does not print a compiler blob at the user; `whole` is
+// everything there is, because the recording is where somebody who asked why
+// goes to look. Every path that gives coverage up goes through here, so
+// `note{coverage-unavailable}` means one thing whichever of them it was.
+func (s *session) unavailableInFull(why, whole string) {
 	s.warnCode(string(coverage.CodeUnavailable),
 		"coverage-guided selection is off because "+strings.TrimSuffix(firstLine(why), ".")+
 			"; every mutant will be measured against every test binary, which is slower and never wrong")
+	s.trace.Note(trace.NoteCoverageUnavailable, "", whole)
 }
 
 // binaryIndex maps each test binary's import path onto its position, which is

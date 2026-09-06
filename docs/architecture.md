@@ -717,24 +717,50 @@ Status: implemented. The event stream, both console renderers, `RunReport v1`,
 its history store, `report merge`, the Stryker projection, and the
 self-contained HTML report all exist and carry a whole run today. The
 engine never draws. It publishes to a single `chan engine.Event` (a sealed
-interface): `RunPlanned`, `PhaseChanged`, `BaselineProgress`,
+interface): `RunPlanned`, `PhaseChanged`, `PhaseCompleted`, `BaselineProgress`,
 `BaselineCompleted`, `Discovered`, `Validated`, `CoverageMapped`,
-`MutantStarted`, `MutantFinished`, `CacheHit`, `Warning`, `ReportPublished`
-(only after the atomic rename), and a terminating `RunCompleted`.
-`CoverageMapped` is published only by a run that narrowed itself; one with
-coverage off publishes the `GOM76xx` `Warning` saying why instead. A `CacheHit`
-is the accounting for one mutant answered from the cache, and the
-`MutantFinished` carrying the outcome follows it immediately — with no
+`MutantStarted`, `MutantFinished`, `CacheHit`, `Warning`, `Traced`,
+`ReportPublished` (only after the atomic rename), and a terminating
+`RunCompleted`. `CoverageMapped` is published only by a run that narrowed
+itself; one with coverage off publishes the `GOM76xx` `Warning` saying why
+instead. A `CacheHit` is the accounting for one mutant answered from the cache,
+and the `MutantFinished` carrying the outcome follows it immediately — with no
 `MutantStarted` before either, because nothing started. Publishing both is what
 keeps a renderer's counts and the report's in step, exactly as an uncovered
-mutant's lone `MutantFinished` does. A `Renderer` interface has two implementations:
-the bubbletea dashboard and deterministic plain lines. The TUI is selected only
+mutant's lone `MutantFinished` does. Every `PhaseChanged` is answered by exactly
+one `PhaseCompleted` carrying that phase's duration, before the next phase is
+announced and — for the last phase of a run — before `RunCompleted`, on the
+failure and interruption paths as well. A `Renderer` interface has two
+implementations: the bubbletea dashboard and deterministic plain lines. `Traced`
+and `PhaseCompleted` are rendered by neither at the default verbosity — they are
+the run's account of itself rather than its findings — and the plain renderer's
+output is byte-identical whether or not a run was traced. The TUI is selected only
 when standard output is a terminal that can do better than ASCII and
 `--no-tui`, `--json`, `--quiet`, `--no-color`, `NO_COLOR`, and `CI` all say
 otherwise; anything else gets the plain lines. The final summary is
 byte-identical between the two: a dashboard run replays its warnings and its
 closing block through the plain renderer itself, once the alternate screen has
 been restored.
+
+A run also accounts for itself into `engine.Options.TraceSink`, as the
+`gomutants-trace-v1` stream `trace` defines: every phase and stage, every
+subprocess under a label, the snapshot, the sweep, one coverage decision per
+mapped mutant, every cache lookup and write-back, each file written, and every
+warning. A nil sink is the disabled trace, and it is what the command line
+passes today — `--trace` is a later change, and the report carries none of this
+yet. The engine records unconditionally into a nil `*trace.Recorder`, so a traced
+run and an untraced one take the same path through the package and there is no
+branch for a verdict to come to depend on. The sink belongs to the caller and the
+engine never closes it. `engine.Traced` is that same stream published on the event
+channel, only when `Options.PublishTrace` asks for it, through a bounded buffer
+and one forwarding goroutine so that the recorder's lock is never held across a
+send onto a channel a terminal is draining.
+
+A recording is a diagnostic and never evidence: no trace option enters the cache
+key, the workspace digest, the catalogue or a mutant id, and a sink that fails —
+by returning an error or by panicking — costs the events and nothing else. See
+[ADR 0001](adr/0001-trace-is-not-evidence.md) and
+[the trace contract](trace-v1.md).
 
 `RunReport v1` is the lossless source of truth; the Stryker projection and the
 HTML report are one-way, deterministic derivations of it. History is kept

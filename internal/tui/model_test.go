@@ -13,6 +13,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // harness is a model, its clock, and how many times Ctrl-C cancelled the run.
@@ -457,5 +458,44 @@ func TestWarningsAreCountedRatherThanDrawn(t *testing.T) {
 	}
 	if got := len(h.model.survivors); got != 0 {
 		t.Errorf("a warning put %d entries in the survivor feed, want 0", got)
+	}
+}
+
+// TestUnknownEventsAreIgnored is what the missing default case in [model.fold]
+// is worth: an event the dashboard has no drawing for changes nothing about the
+// frame.
+//
+// [engine.Traced] and [engine.PhaseCompleted] are the two that arrive today, and
+// both belong to the plain renderer — a dashboard that redrew on every recorded
+// subprocess would repaint thousands of times for facts nobody can read at that
+// speed. What is asserted is the whole model rather than one field: an event
+// that is ignored has to leave the counters, the slots and the feed exactly as
+// they were, and the run has to go on being foldable afterwards.
+func TestUnknownEventsAreIgnored(t *testing.T) {
+	h := newHarness(t)
+	h.events(t, planned(2)...)
+	h.events(t, engine.Validated{Accepted: 5, Rejected: 1})
+	before := h.model.View()
+
+	h.events(t,
+		engine.PhaseCompleted{Phase: engine.PhaseDiscover, Duration: 250 * time.Millisecond},
+		engine.Traced{Event: trace.Event{Seq: 3, Type: trace.TypeExec, Exec: &trace.ExecRecord{
+			Kind: trace.ExecKindBaselineTest,
+			Argv: []string{"/usr/bin/go", "test", "./..."},
+		}}},
+		engine.Traced{},
+	)
+	if got := h.model.View(); got != before {
+		t.Errorf("an ignored event redrew the dashboard:\n%s\nwant\n%s", got, before)
+	}
+	if h.model.done {
+		t.Error("an ignored event ended the run")
+	}
+
+	// And the stream still folds: the ignored events did not leave the model in
+	// a state a later event cannot be applied to.
+	h.events(t, engine.CoverageMapped{Binaries: 1, Covered: 4, Uncovered: 1})
+	if got, want := h.model.coverage, "coverage: 1 test binary, 4 of 5 mutants covered, 1 uncovered"; got != want {
+		t.Errorf("coverage line = %q, want %q", got, want)
 	}
 }

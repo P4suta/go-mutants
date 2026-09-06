@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -705,5 +706,140 @@ func assertImportPaths(t *testing.T, field string, names []string) {
 		if strings.HasPrefix(name, "/") || strings.HasSuffix(name, ".test") || strings.HasSuffix(name, ".exe") {
 			t.Errorf("%s carries %q, which is a file rather than an import path", field, name)
 		}
+	}
+}
+
+// panickingSink is the sink that does the one thing a Sink implementation is
+// never supposed to do. A third-party sink — an uploader, a socket, a ring of
+// somebody else's — is ordinary Go code, and ordinary Go code panics.
+//
+// One event type is spared so that the recording still has its last line: what
+// this fixture is for is the accounting, and the accounting is written in the
+// event a wholly broken sink would also have eaten.
+type panickingSink struct {
+	inner  trace.Sink
+	spared string
+	emits  atomic.Int64
+}
+
+func (sink *panickingSink) Emit(event trace.Event) error {
+	sink.emits.Add(1)
+	if event.Type != sink.spared {
+		panic("the sink came apart")
+	}
+	return sink.inner.Emit(event)
+}
+
+func (sink *panickingSink) Close() error { return sink.inner.Close() }
+
+// TestASinkThatPanicsCostsTheEventsAndNotTheRun extends the fail-open promise to
+// the failure a sink is least entitled to have and most likely to have anyway.
+//
+// A returned error already costs the event and never the run. A panic used to
+// cost the whole process: it unwound out through the recorder — through the
+// mutex, on whichever goroutine was recording, which during a mutation run is
+// one of the execution workers — and a diagnostic that can kill the run it is a
+// diagnostic of is worse than no diagnostic at all. It is counted exactly as a
+// refusal is, so `events_dropped` still says how much of the recording is
+// missing.
+func TestASinkThatPanicsCostsTheEventsAndNotTheRun(t *testing.T) {
+	t.Parallel()
+
+	kept := trace.NewMemorySink(0)
+	sink := &panickingSink{inner: kept, spared: trace.TypeRunEnd}
+	recorder := trace.New(sink, fixtureClock(), fixtureStartRecord())
+	if recorder == nil {
+		t.Fatal("New returned no recorder for a sink that exists")
+	}
+
+	// Every shape of call, from several goroutines at once, because the one that
+	// matters is the one an execution worker makes.
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			end := recorder.PhaseStart(trace.PhaseMutate)
+			stage := recorder.Stage("execute", "")
+			if seq := recorder.Exec(fixtureExecRecord()); seq == 0 {
+				t.Error("Exec returned seq 0 from a live recorder")
+			}
+			recorder.MutantExec(fixtureMutantRecord())
+			recorder.Cache(fixtureCacheRecord())
+			recorder.Coverage(fixtureCoverageRecord())
+			recorder.Snapshot(fixtureSnapshotRecord())
+			recorder.Sweep(fixtureSweepRecord())
+			recorder.Note(trace.NoteWarning, "GOM4044", "a directory would not go")
+			recorder.Artifact(trace.ArtifactReportRun, "/tmp/run.json")
+			stage(trace.ResultSucceeded)
+			end()
+		}()
+	}
+	wg.Wait()
+	recorder.RunEnd("ok", 0, nil)
+
+	if sink.emits.Load() < 2 {
+		t.Fatalf("the sink was called %d times, so nothing was proven", sink.emits.Load())
+	}
+	events := kept.Events()
+	if len(events) != 1 || events[0].Type != trace.TypeRunEnd {
+		t.Fatalf("the sink kept %d events, want the one it was told to spare", len(events))
+	}
+	run := events[0].Run
+	// The accounting is taken before the run-end is written, so everything the
+	// sink ate is a drop and nothing was emitted.
+	if want := sink.emits.Load() - 1; run.EventsDropped != want {
+		t.Errorf("run-end reports %d dropped, want %d — every event the sink ate",
+			run.EventsDropped, want)
+	}
+	if run.EventsEmitted != 0 {
+		t.Errorf("run-end reports %d emitted, want none: the sink kept nothing", run.EventsEmitted)
+	}
+}
+
+// TestNilRecorderCostsNoAllocation is the price of the disabled trace, which is
+// the price nearly every run pays.
+//
+// Call sites record unconditionally, so every one of these is executed on every
+// run whether or not anybody asked for a recording. A record struct big enough
+// to describe a command is 80 to 112 bytes, and taking its address inside the
+// method is enough to move the *caller's* copy to the heap — an allocation per
+// mutant, per cache lookup, per mapped mutant, on a run that records nothing.
+// The nil check therefore lives in a wrapper small enough to inline, and the
+// address is taken in a body that is never inlined into it.
+func TestNilRecorderCostsNoAllocation(t *testing.T) {
+	var recorder *trace.Recorder
+
+	// Built once, outside the measured call: a composite literal holding a fresh
+	// slice would allocate whatever the recorder did with it.
+	exec := fixtureExecRecord()
+	mutant := fixtureMutantRecord()
+	probe := fixtureProbeRecord()
+	validate := fixtureValidateRecord()
+	coverage := fixtureCoverageRecord()
+	cache := fixtureCacheRecord()
+	snapshot := fixtureSnapshotRecord()
+	sweep := fixtureSweepRecord()
+
+	cases := []struct {
+		name string
+		call func()
+	}{
+		{"Exec", func() { recorder.Exec(exec) }},
+		{"MutantExec", func() { recorder.MutantExec(mutant) }},
+		{"ProbeExec", func() { recorder.ProbeExec(probe) }},
+		{"Validate", func() { recorder.Validate(validate) }},
+		{"Coverage", func() { recorder.Coverage(coverage) }},
+		{"Cache", func() { recorder.Cache(cache) }},
+		{"Snapshot", func() { recorder.Snapshot(snapshot) }},
+		{"Sweep", func() { recorder.Sweep(sweep) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := testing.AllocsPerRun(100, c.call); got != 0 {
+				t.Errorf("%s on a nil recorder allocated %.0f times per call, want none: "+
+					"the record is escaping to the heap on a run that records nothing", c.name, got)
+			}
+		})
 	}
 }

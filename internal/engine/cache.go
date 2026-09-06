@@ -10,6 +10,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // The outcome cache stage, which is the last thing to narrow a run and the only
@@ -70,16 +71,37 @@ func (s *session) cachePhase(
 
 	store, err := s.openCache(opts, catalogDigest, out)
 	if err != nil {
+		s.trace.Cache(trace.CacheRecord{
+			Op:     trace.CacheOpOpen,
+			Result: trace.CacheResultUnavailable,
+			Error:  err.Error(),
+		})
 		s.cacheUnavailable(err)
 		return runs
 	}
 	s.cache = store
 	st.cache.mode = report.CacheOn
+	// The directory and the context together are what makes a hit or a miss
+	// checkable afterwards: two runs that disagree about how much they reused
+	// are told apart by whether they were reading the same store under the same
+	// identity. The key itself carries no trace option; see
+	// docs/adr/0001-trace-is-not-evidence.md.
+	s.trace.Cache(trace.CacheRecord{
+		Op:         trace.CacheOpOpen,
+		Result:     trace.CacheResultOpened,
+		Directory:  store.Dir(),
+		ContextKey: store.ContextKey(),
+	})
 
 	expected := expectedIDs(opts.Config.Mutation.Expect)
 	misses := make([]execute.MutantRun, 0, len(runs))
 	for _, run := range runs {
 		if expected[run.ID] {
+			s.trace.Cache(trace.CacheRecord{
+				Op:       trace.CacheOpLookup,
+				MutantID: run.ID,
+				Result:   trace.CacheResultExpected,
+			})
 			// Never looked up and never stored: `docs/configuration.md` promises
 			// that a mutant in the `[[mutation.expect]]` ledger is measured on
 			// every invocation, and it is a promise worth keeping. An expectation
@@ -93,6 +115,23 @@ func (s *session) cachePhase(
 			continue
 		}
 		entry, found, lookupErr := store.Lookup(run.ID)
+		// One event per lookup, whatever it answered. A corrupt entry is
+		// recorded as itself rather than folded into the miss it becomes,
+		// because only one of the two says something is wrong with the store —
+		// and the console is told about the first one only, so the recording is
+		// where the rest of them are.
+		record := trace.CacheRecord{Op: trace.CacheOpLookup, MutantID: run.ID}
+		switch {
+		case lookupErr != nil:
+			record.Result = trace.CacheResultCorrupt
+			record.Error = lookupErr.Error()
+		case found:
+			record.Result = trace.CacheResultHit
+			record.Outcome = string(entry.Outcome)
+		default:
+			record.Result = trace.CacheResultMiss
+		}
+		s.trace.Cache(record)
 		if lookupErr != nil {
 			s.corrupt(lookupErr)
 		}
@@ -178,8 +217,15 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 	shown.Outcome = entry.Outcome
 	shown.Duration = entry.Duration()
 	shown.Cached = true
+	// Second-hand and marked as such: the three facts are the ones the run that
+	// first measured this mutant recorded, and a renderer that showed them
+	// without the cached marker beside them would be presenting somebody else's
+	// measurement as this run's.
+	shown.KilledBy = entry.KilledBy
+	shown.Attempts = entry.Attempts
+	shown.CoveringTestPackages = st.coverage.covering[id]
 	s.emit(CacheHit{ID: id, DisplayID: shown.DisplayID, Outcome: entry.Outcome})
-	s.emit(MutantFinished{Result: shown})
+	s.emit(MutantFinished{Result: shown.clone()})
 }
 
 // storeOutcomes writes back what this run measured.
@@ -201,7 +247,24 @@ func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st
 	}
 	expected := expectedIDs(opts.Config.Mutation.Expect)
 	for _, result := range results {
-		if expected[result.ID] || !cache.Cacheable(result.Final) {
+		// One event per measured mutant, including the ones nothing is written
+		// for. "This outcome is not one the cache stores" and "this mutant is in
+		// the expectation ledger" are the two reasons a warm run re-measures
+		// something, and a recording that only held the successful writes would
+		// leave a reader to infer them from an absence.
+		record := trace.CacheRecord{
+			Op:       trace.CacheOpStore,
+			MutantID: result.ID,
+			Outcome:  string(result.Final),
+		}
+		switch {
+		case expected[result.ID]:
+			record.Result = trace.CacheResultExpected
+		case !cache.Cacheable(result.Final):
+			record.Result = trace.CacheResultNotCacheable
+		}
+		if record.Result != "" {
+			s.trace.Cache(record)
 			continue
 		}
 		err := s.cache.Put(result.ID, cache.Entry{
@@ -212,12 +275,17 @@ func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st
 			OutputTail: result.OutputTail,
 		})
 		if err != nil {
+			record.Result = trace.CacheResultFailed
+			record.Error = err.Error()
+			s.trace.Cache(record)
 			if !s.cacheWriteWarned {
 				s.cacheWriteWarned = true
 				s.warnCode(string(cache.CodeOf(err)), storeFailed(err))
 			}
 			continue
 		}
+		record.Result = trace.CacheResultWritten
+		s.trace.Cache(record)
 		st.cache.writes++
 	}
 }

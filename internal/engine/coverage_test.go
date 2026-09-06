@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // The rule that decides whether this phase happens at all — whether the test
@@ -410,7 +411,9 @@ func TestCoveragePassSkipsARunWithNothingToNarrow(t *testing.T) {
 func TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile(t *testing.T) {
 	t.Parallel()
 
-	s := &session{}
+	sink := trace.NewMemorySink(0)
+	s := &session{clock: tickingClock()}
+	s.trace = trace.New(sink, s.now, trace.StartRecord{Kind: trace.StartKindRun})
 	opts := execute.Options{CoverPkg: "example.com/m/..."}
 
 	var cov coverageResult
@@ -431,6 +434,40 @@ func TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile(t *testing.T) {
 	}
 	if !strings.Contains(w.Message, "coverage instrumentation") {
 		t.Errorf("the warning does not say what was given up:\n%s", w.Message)
+	}
+
+	// Two builds, recorded as two, and the second saying it was the plain one.
+	// A fallback is where a run's minutes go when it happens, and a recording
+	// showing one build would not account for them.
+	var details []string
+	for _, e := range sink.Events() {
+		if e.Type == trace.TypeStage && e.Stage.Name == "build-binaries" && e.Stage.State == trace.StateStarted {
+			details = append(details, e.Stage.Detail)
+		}
+	}
+	if !slices.Equal(details, []string{"coverage", "plain"}) {
+		t.Errorf("recorded the build stages %v, want the coverage one and then the plain one", details)
+	}
+
+	// And the whole failure, under its own kind. The console got one line
+	// because the run would ordinarily have gone on to succeed; this is the copy
+	// for somebody asking why coverage was given up, and the compiler's own
+	// diagnostics are the only evidence there is that go-mutants' `-coverpkg`
+	// build is what broke.
+	var notes []trace.NoteRecord
+	for _, e := range sink.Events() {
+		if e.Type == trace.TypeNote && e.Note.Kind == trace.NoteCoverageUnavailable {
+			notes = append(notes, *e.Note)
+		}
+	}
+	if len(notes) != 1 {
+		t.Fatalf("recorded %d coverage-unavailable notes, want one: %+v", len(notes), notes)
+	}
+	if notes[0].Detail != cov.coverageFallback {
+		t.Errorf("the note carries\n%s\nwant the whole kept failure\n%s", notes[0].Detail, cov.coverageFallback)
+	}
+	if notes[0].Detail == w.Message {
+		t.Error("the note is the warning again rather than the failure underneath it")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/snapshot"
 	"github.com/P4suta/go-mutants/internal/tempowner"
 	"github.com/P4suta/go-mutants/internal/validate"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // Fixed budgets and the timeout derivation constants.
@@ -191,6 +193,37 @@ type Options struct {
 	// channel publishes nothing and is not closed; see the package
 	// documentation for the draining contract.
 	Events chan<- Event
+
+	// RunID is the identity this run is filed under, in [NewRunID]'s form.
+	// Empty mints a fresh one from the run's own clock, which is what every
+	// caller that has no use for the id before the run starts passes.
+	//
+	// internal/cli sets it because it names the trace directory before the
+	// engine is called, and the recording and the report have to carry the same
+	// id or the two cannot be paired afterwards.
+	RunID string
+
+	// TraceSink is where the run's recording goes. A nil sink is the disabled
+	// trace and is the value every caller passed before there was one: the
+	// engine records unconditionally into a nil [trace.Recorder], so the traced
+	// and the untraced path are one path and there is no branch for a verdict
+	// to come to depend on.
+	//
+	// The sink belongs to the caller, which opened it and knows when the last
+	// thing that will write to it is done. The engine never closes it.
+	TraceSink trace.Sink
+
+	// PublishTrace also publishes every recorded event on Events, as [Traced].
+	// It is what `-vv` asks for, and it does nothing without a sink: there is no
+	// recording to forward.
+	PublishTrace bool
+
+	// now is the run's clock, and the seam this package's own tests move by
+	// hand. Nil is [time.Now], which is what every caller outside this package
+	// gets. It is unexported for the reason [execute.Options]'s run seam is: a
+	// clock is a test's business, and an exported one is an invitation to make
+	// a run's timings a caller's opinion.
+	now func() time.Time
 }
 
 // RunOutcome is everything one run learned. It is returned even when [Run]
@@ -259,6 +292,85 @@ type RunOutcome struct {
 	Warnings []Warning
 	// Summary is the closing line published in [RunCompleted].
 	Summary string
+
+	// Validation is what compiling the instrumented snapshot cost.
+	Validation ValidationFacts
+	// Snapshot is what the copy of the workspace turned out to be.
+	Snapshot SnapshotFacts
+	// Timing is where the run's wall-clock time went, phase by phase and stage
+	// by stage, in the order the spans were closed.
+	Timing Timing
+	// CoverageFallback is the whole failure that made a run give up
+	// coverage-instrumented test binaries and build plain ones: the coded
+	// message and the compiler's own diagnostics under it. Empty on every run
+	// that did not fall back, which is nearly all of them.
+	//
+	// The console has already been told in one line. This is the copy for
+	// somebody asking why, and the two are deliberately different lengths: a run
+	// that is about to succeed does not print a compiler blob at the user.
+	CoverageFallback string
+}
+
+// ValidationFacts is what the validation phase spent.
+type ValidationFacts struct {
+	// Builds is how many `go build` invocations it took to establish which
+	// catalogued mutants compile. One means the whole catalogue compiled on the
+	// first try, which is the ordinary case; anything more is a bisection, and
+	// is where a slow run's minutes went.
+	Builds int
+}
+
+// SnapshotFacts is what the disposable copy of the workspace turned out to be.
+//
+// Both fields are about the *copy* rather than about the code in it, which is
+// why neither is in the report's workspace digest: a run whose snapshot could
+// not take the stable name pays for a cold Go build cache, and that is a fact
+// about the machine's temporary directory, not about the program under test.
+type SnapshotFacts struct {
+	// StableDir reports whether the copy carried the source tree's own derived
+	// name rather than a random one, which is what lets the Go build cache be
+	// reused between two runs of one workspace.
+	StableDir bool
+	// Files is how many regular files were copied.
+	Files int
+}
+
+// A PhaseDuration is how long one phase took.
+type PhaseDuration struct {
+	Phase    Phase
+	Duration time.Duration
+}
+
+// A StageDuration is how long one step inside a phase took, and what became of
+// it.
+type StageDuration struct {
+	// Phase is the phase the stage started in.
+	Phase Phase
+	// Name is the stage's own name, which is unique only within its phase:
+	// `build` happens in the baseline and again in the report.
+	Name string
+	// Duration is the wall-clock time the stage took.
+	Duration time.Duration
+	// Result is [trace.ResultSucceeded] or [trace.ResultFailed].
+	Result string
+}
+
+// Timing is where a run's wall-clock time went.
+//
+// Both lists are in emission order — the order the spans were closed, which for
+// the engine's linear pipeline is the order they were opened — so that a
+// consumer can render the run as a timeline without sorting it, and so that two
+// runs of one workspace produce two lists that line up row for row.
+type Timing struct {
+	Phases []PhaseDuration
+	Stages []StageDuration
+}
+
+// clone returns a copy that shares no slice with the receiver.
+func (t Timing) clone() Timing {
+	t.Phases = slices.Clone(t.Phases)
+	t.Stages = slices.Clone(t.Stages)
+	return t
 }
 
 // Run executes one mutation run.
@@ -281,23 +393,46 @@ type RunOutcome struct {
 // an error would conflate "go-mutants could not do its job" with "your tests
 // did not catch something".
 func Run(ctx context.Context, opts Options) (RunOutcome, error) {
-	started := time.Now()
-	s := &session{events: opts.Events}
+	s := &session{events: opts.Events, clock: opts.now}
 	// Registered before anything else, so that it runs after everything else.
 	// Every deferred step below — the snapshot cleanup in particular — may
 	// still publish a warning, and a send on a closed channel panics.
 	defer s.close()
 
+	started := s.now()
+	// The identity first, because everything below is filed under it — the
+	// outcome, the recording, and the document the run publishes — and a caller
+	// that named one that is not a run id has made a mistake about the
+	// invocation that costs nothing to find and a snapshot to find later.
+	runID, idErr := resolveRunID(opts.RunID, started)
 	out := RunOutcome{
-		RunID:   NewRunID(started),
+		RunID:   runID,
 		Status:  StatusFailed,
 		Started: started,
 	}
+	s.trace = trace.New(s.sink(opts), s.now, trace.StartRecord{
+		Kind:        trace.StartKindRun,
+		RunID:       out.RunID,
+		ToolVersion: or(opts.ToolVersion, unknownValue),
+		PID:         os.Getpid(),
+		Root:        opts.WorkspaceRoot,
+		Args:        slices.Clone(os.Args),
+	})
 
-	err := s.pipeline(ctx, opts, &out)
+	err := idErr
+	if err == nil {
+		err = s.pipeline(ctx, opts, &out)
+	}
 
-	out.Duration = time.Since(started)
+	// The phase the run was in when it stopped, whichever one that was and
+	// whatever stopped it. [session.pipeline] has one exit, so closing it here
+	// covers every path through it, and the closer is once-guarded so that a
+	// phase already closed on the way out stays one span.
+	s.closePhase()
+
+	out.Duration = s.now().Sub(started)
 	out.Warnings = slices.Clone(s.warnings)
+	out.Timing = s.timing.clone()
 	switch {
 	case err == nil:
 		out.Status = StatusOK
@@ -309,10 +444,137 @@ func Run(ctx context.Context, opts Options) (RunOutcome, error) {
 	if err != nil {
 		out.Summary = firstLine(err.Error())
 	}
+	// The recording is closed before the terminal event and never after it: a
+	// reader who found the run-end has read the whole run, and an event
+	// published afterwards would be a line beyond the last line. The sink itself
+	// belongs to the caller and is left open; see [Options.TraceSink].
+	s.trace.RunEnd(string(out.Status), exitCodeOf(out), err)
+	// Everything the recording published reaches the stream before the terminal
+	// event does, so that a renderer drawing the trace has drawn all of it by
+	// the time the run says it is over.
+	s.drainPublished()
 	// Terminal on every path, including this one: a renderer that never sees
 	// RunCompleted cannot tell a finished run from a crashed one.
 	s.emit(RunCompleted{Status: out.Status, Summary: out.Summary, Run: s.summary})
 	return out, err
+}
+
+// sink is where the run records, with the fan-out onto the event stream built
+// in when a caller asked for one.
+//
+// The tee is built only for [Options.PublishTrace], so a run nobody asked to
+// publish pays nothing for the option: no wrapper, no clone per event, no send.
+// The caller's own sink is never closed by the tee either, because the engine
+// never closes the tee.
+func (s *session) sink(opts Options) trace.Sink {
+	if opts.TraceSink == nil || !opts.PublishTrace {
+		return opts.TraceSink
+	}
+	s.published = newEventSink(s)
+	return trace.NewTeeSink(opts.TraceSink, s.published)
+}
+
+// publishBuffer is how many recorded events wait between the recorder and the
+// event stream.
+//
+// It is a bound rather than a queue with a policy, and the number is the same
+// order as the recorder's own ring: large enough that a burst of mutant
+// executions never reaches it, small enough that a consumer which has stopped
+// draining is felt rather than accommodated without limit.
+const publishBuffer = 1024
+
+// An eventSink publishes every recorded event on the engine's own stream.
+//
+// The hand-off is the whole of this type. A recorded event reaches its sinks
+// under the recorder's own lock, so a sink that blocks blocks every goroutine
+// that is recording anything — during execution, that is every worker — and the
+// stream this one writes to is drained by a renderer at the speed of a terminal.
+// Publishing straight onto it would therefore have made a run slower for having
+// asked to watch it, which is a diagnostic changing the thing it is a diagnostic
+// of.
+//
+// So [eventSink.Emit] does nothing but put a copy on a bounded channel, and one
+// goroutine forwards from it. The recorder's lock is never held across a send
+// onto the stream, and the single forwarder is what keeps the published order
+// the recorded order. The bound is the trade-off, stated plainly: a consumer
+// slower than [publishBuffer] events does eventually apply back-pressure, but it
+// applies it to the forwarder rather than to the run.
+//
+// The clone is what makes a published event safe to keep: the recorder hands one
+// value to every sink, and a renderer holding it must not be able to see the
+// next sink — or a later caller reusing a record — write into it.
+type eventSink struct {
+	session *session
+	queue   chan trace.Event
+	done    chan struct{}
+}
+
+// newEventSink starts the forwarder. Its counterpart is
+// [session.drainPublished], which the run calls once, before the terminal event.
+func newEventSink(s *session) *eventSink {
+	sink := &eventSink{
+		session: s,
+		queue:   make(chan trace.Event, publishBuffer),
+		done:    make(chan struct{}),
+	}
+	go sink.forward()
+	return sink
+}
+
+// forward publishes what the recorder queued, in the order it was recorded.
+func (sink *eventSink) forward() {
+	defer close(sink.done)
+	for event := range sink.queue {
+		sink.session.emit(Traced{Event: event})
+	}
+}
+
+// Emit queues the event and never fails. Reporting a renderer's slowness as a
+// dropped event would make a recording's accounting say it was lossy when it was
+// not: the caller's own sink kept every line, and this is a copy for a screen.
+func (sink *eventSink) Emit(event trace.Event) error {
+	sink.queue <- event.Clone()
+	return nil
+}
+
+// Close does nothing: the stream this sink writes to is the engine's own, and
+// [session.close] owns it.
+func (*eventSink) Close() error { return nil }
+
+// drainPublished waits for every recorded event to reach the stream.
+//
+// It runs after the recording is closed and before [RunCompleted], which is what
+// keeps the terminal event terminal: a renderer draining the stream has seen the
+// whole recording, `run-end` included, by the time the run says it is over.
+// Nothing records after [trace.Recorder.RunEnd] — the recorder refuses to, and
+// every worker has joined long before — so closing the queue here cannot race a
+// send.
+func (s *session) drainPublished() {
+	if s.published == nil {
+		return
+	}
+	close(s.published.queue)
+	<-s.published.done
+	s.published = nil
+}
+
+// exitCodeOf is the status the process is about to exit with, as far as the
+// engine can state it.
+//
+// A completed run's code is the verdict internal/mutation reached over the
+// published document, which is the number internal/cli returns. The other two
+// are the engine's own: a cancelled run exits on its signal, and the engine does
+// not know which one, so it records the interruption's own code rather than the
+// zero a policy verdict that was never computed would carry.
+func exitCodeOf(out RunOutcome) int {
+	switch out.Status {
+	case StatusOK:
+		return int(out.Verdict.Code)
+	case StatusInterrupted:
+		return int(mutation.ExitInterrupted)
+	default:
+		return int(mutation.ExitInfrastructure)
+	}
 }
 
 // A state is what the mutation phases have established so far.
@@ -350,6 +612,11 @@ type state struct {
 	results map[string]report.MutantResult
 	// display holds the render data for every catalogued mutant, by full id.
 	display map[string]MutantResult
+	// packages holds the import path of the package each catalogued mutant's
+	// file belongs to, by full id. It is what an execution's account is joined
+	// on, and it is absent for a mutant discovery could not place — which
+	// [displayIndex] documents as impossible.
+	packages map[string]string
 	// coverage is what the coverage phase decided. The zero value is a run with
 	// coverage off, which is what every path that never reached the phase — an
 	// early failure, a custom test command, nothing to execute — leaves behind.
@@ -389,12 +656,11 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	}
 
 	s.emit(RunPlanned{RunID: out.RunID, Workers: cfg.Execution.Jobs})
-	s.emit(PhaseChanged{
-		Phase:  PhaseDiscover,
-		Detail: "locating the Go toolchain and copying the workspace",
-	})
+	s.enterPhase(PhaseDiscover, "locating the Go toolchain and copying the workspace")
 
-	toolchain, err := gocmd.LocateContext(ctx, gocmd.Options{})
+	endToolchain := s.stage("toolchain", "")
+	toolchain, err := gocmd.LocateContext(ctx, gocmd.Options{Trace: s.trace})
+	endToolchain(err)
 	if err != nil {
 		return err
 	}
@@ -432,18 +698,25 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	// and nowhere else. The scratch directory below needs no such argument: it
 	// is created beside the snapshot, which is already inside it.
 	tempParent := temporaryParent(opts.TempDirectory)
+	endSweep := s.stage("sweep", tempParent)
 	s.sweepTemporary(tempParent)
+	endSweep(nil)
 
+	endSnapshot := s.stage("snapshot", root)
+	snapshotStarted := s.now()
 	snap, err := snapshot.Create(root, snapshot.Options{
 		ReportDir:  cfg.Report.Directory,
 		DestParent: tempParent,
 	})
+	s.recordSnapshot(root, snap, s.now().Sub(snapshotStarted), err)
+	endSnapshot(err)
 	if err != nil {
 		return err
 	}
 	out.SnapshotRoot = snap.Root
 	out.SnapshotFiles = len(snap.Manifest)
 	out.WorkspaceDigest = snap.WorkspaceDigest
+	out.Snapshot = SnapshotFacts{StableDir: snap.StableDir, Files: len(snap.Manifest)}
 	defer func() {
 		if removeErr := snap.Cleanup(); removeErr != nil {
 			s.warn(CodeSnapshotNotRemoved, "the snapshot directory could not be removed: "+removeErr.Error())
@@ -458,7 +731,7 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 			Err:     err,
 		}
 	}
-	scratchOwner, err := tempowner.Claim(scratch, time.Now())
+	scratchOwner, err := tempowner.Claim(scratch, s.now())
 	if err != nil {
 		return &Error{
 			Code:    CodeScratchDir,
@@ -485,7 +758,10 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	// check.
 	patterns, scoped := testScope(out.TestCommand)
 	if scoped {
-		if err := resolveTestScope(ctx, toolchain, snap.Root, env, patterns); err != nil {
+		endScope := s.stage("scope", strings.Join(patterns, " "))
+		err := s.resolveTestScope(ctx, toolchain, snap.Root, env, patterns)
+		endScope(err)
+		if err != nil {
 			return err
 		}
 	}
@@ -536,18 +812,20 @@ func (s *session) baseline(
 	out *RunOutcome,
 ) error {
 	runs := cfg.Test.BaselineRuns
-	s.emit(PhaseChanged{
-		Phase: PhaseBaseline,
-		Detail: fmt.Sprintf("building the snapshot, then %s of %s",
-			countNoun(runs, "timed run"), strings.Join(command, " ")),
-	})
+	s.enterPhase(PhaseBaseline, fmt.Sprintf("building the snapshot, then %s of %s",
+		countNoun(runs, "timed run"), strings.Join(command, " ")))
 
 	build := toolchain.Command("build", "./...")
 	build.Dir = root
 	build.Env = env
 	build.Timeout = BaselineCap
-	if buildErr := check(ctx, build, runner.Run(ctx, build), CodeBaselineBuildFailed,
-		"the snapshot does not build"); buildErr != nil {
+	build.Trace = s.trace
+	build.Kind = trace.ExecKindBaselineBuild
+	endBuild := s.stage("build", "")
+	buildErr := check(ctx, build, runner.Run(ctx, build), CodeBaselineBuildFailed,
+		"the snapshot does not build")
+	endBuild(buildErr)
+	if buildErr != nil {
 		return buildErr
 	}
 
@@ -563,10 +841,18 @@ func (s *session) baseline(
 			Dir:     root,
 			Env:     env,
 			Timeout: BaselineCap,
+			Trace:   s.trace,
+			Kind:    trace.ExecKindBaselineTest,
 		}
+		// One stage per observation rather than one for the set: a suite that
+		// got slower between the first run and the third is a fact about the
+		// machine the run is on, and an average would hide it.
+		endRun := s.stage("test", fmt.Sprintf("run %d/%d", i, runs))
 		result := runner.Run(ctx, spec)
-		if runErr := check(ctx, spec, result, CodeBaselineTestFailed,
-			fmt.Sprintf("baseline run %d of %d failed", i, runs)); runErr != nil {
+		runErr := check(ctx, spec, result, CodeBaselineTestFailed,
+			fmt.Sprintf("baseline run %d of %d failed", i, runs))
+		endRun(runErr)
+		if runErr != nil {
 			return runErr
 		}
 		durations = append(durations, result.Duration)
@@ -576,7 +862,9 @@ func (s *session) baseline(
 	out.AverageBaseline = mean(durations)
 	out.SlowestBaseline = slices.Max(durations)
 
+	endTimeout := s.stage("timeout", "")
 	timeout, source, err := deriveTimeout(cfg.Test.Timeout, out.SlowestBaseline)
+	endTimeout(err)
 	if err != nil {
 		return err
 	}
@@ -609,10 +897,7 @@ func (s *session) mutate(
 	st *state,
 ) error {
 	cfg := opts.Config
-	s.emit(PhaseChanged{
-		Phase:  PhaseMutate,
-		Detail: "discovering candidates, validating them, then executing the mutants",
-	})
+	s.enterPhase(PhaseMutate, "discovering candidates, validating them, then executing the mutants")
 
 	rules, err := SelectRules(cfg)
 	if err != nil {
@@ -629,6 +914,7 @@ func (s *session) mutate(
 
 	// The include and exclude patterns are applied here and never to the
 	// snapshot walk; see the long argument at the snapshot above.
+	endDiscover := s.stage("discover", "")
 	found, err := discover.Discover(ctx, discover.Options{
 		SnapshotRoot: snap.Root,
 		Toolchain:    toolchain,
@@ -636,18 +922,21 @@ func (s *session) mutate(
 		Include:      include,
 		Exclude:      exclude,
 	})
+	endDiscover(err)
 	if err != nil {
 		return err
 	}
 	st.found = found
 	s.emit(Discovered{Candidates: len(found.Candidates), Skips: skipTotal(found.Skips)})
 
+	endCatalog := s.stage("catalog", "")
 	catalog, err := discover.BuildCatalog(found)
 	if err != nil {
+		endCatalog(err)
 		return err
 	}
 	st.catalog = catalog
-	st.display = displayIndex(catalog, found.Candidates)
+	st.display, st.packages = displayIndex(catalog, found.Candidates)
 
 	// The guard hints travel with the catalogue from here on. They are the one
 	// thing instrumentation cannot work out for itself — which rewrite form an
@@ -655,10 +944,12 @@ func (s *session) mutate(
 	// checker — so losing them between the two phases would not be a missing
 	// optimisation, it would be a run that instruments nothing.
 	hints, err := instrument.HintsOf(found.Candidates)
+	endCatalog(err)
 	if err != nil {
 		return err
 	}
 
+	endValidate := s.stage("validate", countNoun(catalog.Len(), "mutant"))
 	validated, err := validate.Validate(ctx, validate.Options{
 		Snap:         snap,
 		Catalog:      catalog,
@@ -668,24 +959,37 @@ func (s *session) mutate(
 		Jobs:         cfg.Execution.Jobs,
 		BuildTimeout: BaselineCap,
 		Env:          env,
+		Trace:        s.trace,
 	})
-	// The rejections are recorded whatever happened: they are what the phase
-	// established, and a run that was interrupted half way through the search
-	// should still report the candidates it had already condemned.
+	endValidate(err)
+	// The rejections and what the search cost are recorded whatever happened:
+	// they are what the phase established, and a run that was interrupted half
+	// way through should still report the candidates it had already condemned
+	// and the compiles it had already spent.
 	st.rejections = rejectionsOf(validated.Rejected)
+	out.Validation = ValidationFacts{Builds: validated.Builds}
 	if err != nil {
 		return err
 	}
 	s.emit(Validated{Accepted: len(validated.AcceptedIDs), Rejected: len(validated.Rejected)})
 
-	if err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, snap.Root, env); err != nil {
-		return err
-	}
-	if err = driftGate(snap, validated.Instrumented); err != nil {
+	endInstrumented := s.stage("instrumented-baseline", "")
+	err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, snap.Root, env)
+	endInstrumented(err)
+	if err != nil {
 		return err
 	}
 
+	endDrift := s.stage("drift", "")
+	err = driftGate(snap, validated.Instrumented)
+	endDrift(err)
+	if err != nil {
+		return err
+	}
+
+	endSelection := s.stage("selection", "")
 	runs, err := s.selection(opts, catalog, validated.AcceptedIDs, out.Timeout, st)
+	endSelection(err)
 	if err != nil {
 		return err
 	}
@@ -697,6 +1001,7 @@ func (s *session) mutate(
 		ScratchDir:   filepath.Join(scratch, workerDirName),
 		Jobs:         cfg.Execution.Jobs,
 		Timeout:      BaselineCap,
+		Trace:        s.trace,
 	}
 	// One reading of the test command decides both of the run's optimisations,
 	// because both rest on the same fact: go-mutants can state in full what a
@@ -728,7 +1033,8 @@ func (s *session) mutate(
 	// The fallback's record goes straight into the run's coverage result, and it
 	// can only be written before [session.coveragePhase] replaces that value
 	// wholesale: a run that fell back has no CoverPkg left, so the phase below
-	// is not entered and there is nothing to overwrite it.
+	// is not entered and there is nothing to overwrite it. The outcome reads it
+	// back off the same value afterwards.
 	bins, err := s.buildTestBinaries(ctx, &execOpts, &st.coverage)
 	if err != nil {
 		return err
@@ -743,12 +1049,17 @@ func (s *session) mutate(
 			return err
 		}
 	}
+	out.CoverageFallback = st.coverage.coverageFallback
 	// Last of the narrowing stages and after coverage, which is the order the
 	// correctness argument in cache.go depends on: an uncovered mutant is
 	// settled before the cache is ever asked about it.
+	endLookup := s.stage("cache-lookup", countNoun(len(runs), "mutant"))
 	runs = s.cachePhase(opts, catalog.Digest(), out, runs, st)
+	endLookup(nil)
 
+	endExecute := s.stage("execute", countNoun(len(runs), "mutant"))
 	results, err := execute.Schedule(ctx, execOpts, runs, bins, s.hooks(st))
+	endExecute(err)
 	// As with validation: whatever was measured is kept, because an interrupted
 	// run's report is exactly the record of what it got to.
 	for _, result := range results {
@@ -766,7 +1077,9 @@ func (s *session) mutate(
 	// that settled before the signal arrived settled, and throwing its answer
 	// away would make a run somebody cancelled halfway through cost full price
 	// twice. See [session.storeOutcomes].
+	endStore := s.stage("cache-store", countNoun(len(results), "result"))
 	s.storeOutcomes(opts, results, st)
+	endStore(nil)
 	return err
 }
 
@@ -797,15 +1110,34 @@ func (s *session) buildTestBinaries(
 	opts *execute.Options,
 	cov *coverageResult,
 ) ([]execute.TestBinary, error) {
+	endBuild := s.stage("build-binaries", buildDetail(opts.CoverPkg))
 	bins, err := execute.BuildTestBinaries(ctx, *opts)
+	endBuild(err)
 	if err == nil || opts.CoverPkg == "" || interrupted(err) {
 		return bins, err
 	}
 	cov.coverageFallback = fallbackText(err)
-	s.unavailable("the test binaries do not compile with coverage instrumentation (" +
-		firstLine(err.Error()) + ")")
+	// One line to the console because the run is about to succeed anyway, and
+	// the whole failure to the recording: the compiler's own diagnostics are the
+	// only evidence there is that go-mutants' `-coverpkg` build is what broke.
+	s.unavailableInFull("the test binaries do not compile with coverage instrumentation ("+
+		firstLine(err.Error())+")", cov.coverageFallback)
 	opts.CoverPkg = ""
-	return execute.BuildTestBinaries(ctx, *opts)
+	// A second stage of the same name, because it is a second build: the
+	// recording says the run compiled its binaries twice and says which of the
+	// two was the plain one, which is the fact that explains the wasted minutes.
+	endPlain := s.stage("build-binaries", buildDetail(opts.CoverPkg))
+	bins, err = execute.BuildTestBinaries(ctx, *opts)
+	endPlain(err)
+	return bins, err
+}
+
+// buildDetail says which of the two test-binary builds a stage is.
+func buildDetail(coverPkg string) string {
+	if coverPkg == "" {
+		return "plain"
+	}
+	return "coverage"
 }
 
 // fallbackText is one failure written out in full: its own text, and underneath
@@ -857,6 +1189,8 @@ func (s *session) instrumentedBaseline(
 		Dir:     root,
 		Env:     gocmd.AppendGoflags(env, gocmd.VetOff),
 		Timeout: BaselineCap,
+		Trace:   s.trace,
+		Kind:    trace.ExecKindInstrumentedBaseline,
 	}
 	result := runner.Run(ctx, spec)
 	if err := check(ctx, spec, result, CodeInstrumentedBaselineFailed,
@@ -950,11 +1284,18 @@ func (s *session) selection(
 
 	runs := make([]execute.MutantRun, 0, len(ids))
 	for _, id := range ids {
-		run := execute.MutantRun{ID: id, Timeout: timeout}
+		run := execute.MutantRun{ID: id, Timeout: timeout, Package: st.packages[id]}
 		// The short form the console and the report already print, carried so
 		// that the account of an attempt reads in the same identities. It is
 		// looked up rather than derived: how much of an id is short enough to
 		// be unique is the catalogue's own decision.
+		//
+		// The package is looked up for the same reason and comes from the same
+		// join: the import path a mutant's file belongs to is what discovery's
+		// type checker resolved, and deriving one here from the module path and
+		// the directory would be a second answer to a question already answered
+		// — and a wrong one for a nested module or a package whose directory
+		// name it does not share.
 		if m, ok := catalog.ByID(id); ok {
 			run.DisplayID = m.DisplayID
 		}
@@ -1066,7 +1407,10 @@ func (s *session) hooks(st *state) execute.Hooks {
 			shown := st.display[result.ID]
 			shown.Outcome = result.Final
 			shown.Duration = result.Duration
-			s.emit(MutantFinished{Result: shown})
+			shown.KilledBy = result.KilledBy
+			shown.Attempts = len(result.Attempts)
+			shown.CoveringTestPackages = st.coverage.covering[result.ID]
+			s.emit(MutantFinished{Result: shown.clone()})
 		},
 	}
 }
@@ -1088,7 +1432,7 @@ func (s *session) hooks(st *state) execute.Hooks {
 // it found, which is the worse trade: both warnings are about a directory left
 // in the temporary area, and neither says anything about the mutants.
 func (s *session) publish(opts Options, out *RunOutcome, st *state, status report.Status) error {
-	s.emit(PhaseChanged{Phase: PhaseReport, Detail: "writing the run report"})
+	s.enterPhase(PhaseReport, "writing the run report")
 
 	rejected := make(map[string]bool, len(st.rejections))
 	for _, rejection := range st.rejections {
@@ -1122,7 +1466,8 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		results = append(results, result)
 	}
 
-	finished := time.Now()
+	endBuild := s.stage("build", countNoun(len(results), "result"))
+	finished := s.now()
 	rep, err := report.Build(report.Options{
 		// "unknown" rather than the empty string a caller that forgot would
 		// pass. The document requires a non-empty version, and failing a whole
@@ -1158,17 +1503,22 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		CacheWrites:      st.cache.writes,
 		Warnings:         reportWarnings(s.warnings),
 	})
+	endBuild(err)
 	if err != nil {
 		return err
 	}
 
+	endHistory := s.stage("history", opts.HistoryRoot)
 	runPath, latestPath, err := report.History{Root: opts.HistoryRoot}.Write(rep)
+	endHistory(err)
 	if err != nil {
 		return err
 	}
 	out.Report = rep
 	out.RunPath = runPath
 	out.LatestPath = latestPath
+	s.trace.Artifact(trace.ArtifactReportRun, runPath)
+	s.trace.Artifact(trace.ArtifactReportLatest, latestPath)
 
 	// The project artefacts come after the history and never before it. The
 	// history is where the run's own record lives and is the thing a later run,
@@ -1184,6 +1534,7 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 	// run: a `--report json,html` that quietly produced neither file, exited 0,
 	// and left last week's pair in place is exactly the kind of green this
 	// project keeps refusing to print.
+	endArtifacts := s.stage("artifacts", opts.Config.Report.Directory)
 	artifacts, artifactErr := report.WriteArtifacts(report.ArtifactOptions{
 		Report:        rep,
 		WorkspaceRoot: out.WorkspaceRoot,
@@ -1192,7 +1543,18 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		High:          opts.Config.Report.High,
 		Low:           opts.Config.Report.Low,
 	})
+	endArtifacts(artifactErr)
 	out.Artifacts = artifacts
+	// Only a path that is really there is recorded, which is the same rule
+	// [ReportPublished] follows: `--report none` writes neither file and the
+	// failure path writes neither, and an artifact event naming a file nothing
+	// wrote would be the one line of a recording a reader could not act on.
+	if artifacts.ProjectionPath != "" {
+		s.trace.Artifact(trace.ArtifactReportJSON, artifacts.ProjectionPath)
+	}
+	if artifacts.HTMLPath != "" {
+		s.trace.Artifact(trace.ArtifactReportHTML, artifacts.HTMLPath)
+	}
 	s.emit(ReportPublished{
 		RunPath:        runPath,
 		LatestPath:     latestPath,
@@ -1296,6 +1658,15 @@ func notable(st *state, rep *report.Report) []MutantResult {
 		shown.Duration = time.Duration(m.DurationMS) * time.Millisecond
 		shown.Uncovered = m.Uncovered
 		shown.Cached = m.Cached
+		// Read back out of the published document rather than off the run
+		// beside it, exactly as the counts in the closing block are: the three
+		// facts a `-v` result line adds are then the same three the report
+		// states, by construction.
+		if m.KilledBy != nil {
+			shown.KilledBy = *m.KilledBy
+		}
+		shown.Attempts = m.Attempts
+		shown.CoveringTestPackages = slices.Clone(m.CoveringTestPackages)
 		out = append(out, shown)
 	}
 	slices.SortFunc(out, func(x, y MutantResult) int {
@@ -1344,15 +1715,27 @@ func uncoveredOf(rep *report.Report) int {
 	return count
 }
 
-// displayIndex joins the catalogue to the coordinates discovery found it at, so
-// that an event can name a mutant without anybody downstream holding both.
+// displayIndex joins the catalogue to what discovery found out about each
+// mutant, so that an event can name one without anybody downstream holding both.
+//
+// It returns two indexes off one join rather than two, because the join is the
+// expensive half and both readings are of the same row. The first is the render
+// data a renderer needs; the second is each mutant's package, which the account
+// of an execution carries so that a consumer joining a mutation run to a test
+// run has an import path to join on. The package comes from discovery's own type
+// checker and is deliberately not derived from the module path and the
+// directory, which agree with it for the ordinary module and not for a nested
+// one.
 //
 // A catalogued mutant with no candidate behind it is impossible — the catalogue
-// is built from the candidates — and is left with zero coordinates rather than
-// reported, because this is display data: a report that has lost a mutant is
-// report.Build's failure to raise, and raising it twice would stop a run over a
-// line number.
-func displayIndex(catalog *mutation.Catalog, candidates []discover.Located) map[string]MutantResult {
+// is built from the candidates — and is left with zero coordinates and no
+// package rather than reported, because this is display data: a report that has
+// lost a mutant is report.Build's failure to raise, and raising it twice would
+// stop a run over a line number.
+func displayIndex(
+	catalog *mutation.Catalog,
+	candidates []discover.Located,
+) (display map[string]MutantResult, packages map[string]string) {
 	type key struct {
 		path string
 		span mutation.Span
@@ -1366,10 +1749,11 @@ func displayIndex(catalog *mutation.Catalog, candidates []discover.Located) map[
 		}
 	}
 
-	out := make(map[string]MutantResult, catalog.Len())
+	display = make(map[string]MutantResult, catalog.Len())
+	packages = make(map[string]string, catalog.Len())
 	for _, m := range catalog.Mutants() {
 		where := located[key{path: m.Path, span: m.Span, rule: m.Rule.Name}]
-		out[m.ID] = MutantResult{
+		display[m.ID] = MutantResult{
 			ID:          m.ID,
 			DisplayID:   m.DisplayID,
 			Path:        m.Path,
@@ -1379,8 +1763,11 @@ func displayIndex(catalog *mutation.Catalog, candidates []discover.Located) map[
 			Original:    m.Original,
 			Replacement: m.Replacement,
 		}
+		if where.Package != "" {
+			packages[m.ID] = where.Package
+		}
 	}
-	return out
+	return display, packages
 }
 
 // changedRef is the ref a `--changed` run recorded, or "" for every other run.
@@ -1489,6 +1876,26 @@ type session struct {
 	events   chan<- Event
 	warnings []Warning
 	closed   bool
+	// published is the fan-out of the recording onto this stream, or nil for a
+	// run that did not ask for one. See [eventSink].
+	published *eventSink
+	// trace is where this run is recorded, or nil for a run nobody asked for a
+	// recording of. Every call site records unconditionally: the nil recorder is
+	// safe on every method, which is what keeps the traced and the untraced path
+	// one path.
+	trace *trace.Recorder
+	// clock is the run's time source, or nil for [time.Now]. It is read through
+	// [session.now] so that a session a test built by hand still tells the time.
+	clock func() time.Time
+	// timing is what the phases and stages cost, in the order they closed.
+	timing Timing
+	// openPhase, phaseEnd and phaseStarted are the phase the run is in. phaseEnd
+	// is nil exactly when no phase is open, which is what makes [session.closePhase]
+	// idempotent and therefore safe to call from a defer and from an early
+	// return both.
+	openPhase    Phase
+	phaseEnd     func()
+	phaseStarted time.Time
 	// summary is the closing block, set by publish and read by Run. It is
 	// written from the run's own goroutine and read from it, after every worker
 	// has joined.
@@ -1515,6 +1922,77 @@ func (s *session) emit(e Event) {
 	s.events <- e
 }
 
+// now is the run's clock. A session with none — which is every session one of
+// this package's own tests builds by hand — reads the wall clock.
+func (s *session) now() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
+}
+
+// enterPhase closes the phase the run was in and opens the next one.
+//
+// It is the only place a phase is announced, which is what keeps the two
+// statements about a phase — the engine's [PhaseChanged] and the recording's
+// `phase-start` — from being made in two places and drifting apart. The
+// previous phase is closed first, so that a reader of either stream sees a
+// phase end before the next one begins rather than two open at once.
+func (s *session) enterPhase(phase Phase, detail string) {
+	s.closePhase()
+	s.emit(PhaseChanged{Phase: phase, Detail: detail})
+	s.openPhase = phase
+	s.phaseStarted = s.now()
+	s.phaseEnd = s.trace.PhaseStart(string(phase))
+}
+
+// closePhase ends the open phase, if there is one, and times it.
+//
+// It is idempotent: a phase closed by the next one and again by [Run] on the way
+// out is one span. That is what lets the last phase of a run be closed on every
+// path without any path having to know whether something else closed it first.
+func (s *session) closePhase() {
+	if s.phaseEnd == nil {
+		return
+	}
+	s.phaseEnd()
+	s.phaseEnd = nil
+	duration := s.now().Sub(s.phaseStarted)
+	s.timing.Phases = append(s.timing.Phases, PhaseDuration{Phase: s.openPhase, Duration: duration})
+	s.emit(PhaseCompleted{Phase: s.openPhase, Duration: duration})
+}
+
+// stage opens one recorded step inside the open phase and returns the closer
+// that finishes it with what became of it.
+//
+// The closer takes the step's own error rather than a result word, so that no
+// call site can report a failed step as a successful one by writing the wrong
+// string: whether a step succeeded is exactly whether it returned an error, and
+// that is the one thing every caller already has in hand.
+func (s *session) stage(name, detail string) func(err error) {
+	end := s.trace.Stage(name, detail)
+	phase := s.openPhase
+	started := s.now()
+	done := false
+	return func(err error) {
+		if done {
+			return
+		}
+		done = true
+		result := trace.ResultSucceeded
+		if err != nil {
+			result = trace.ResultFailed
+		}
+		end(result)
+		s.timing.Stages = append(s.timing.Stages, StageDuration{
+			Phase:    phase,
+			Name:     name,
+			Duration: s.now().Sub(started),
+			Result:   result,
+		})
+	}
+}
+
 // sweepTemporary collects the snapshot and scratch directories of runs that
 // died before they could remove their own.
 //
@@ -1523,14 +2001,51 @@ func (s *session) emit(e Event) {
 // leftover permission problem into this run's exit code would stop the work to
 // report the housekeeping.
 //
-// What it collected is deliberately not recorded anywhere. It is a fact about
-// the machine rather than about this workspace, and a report carrying it would
-// invite a reader to compare two runs by how much rubbish each of them found.
-func (s *session) sweepTemporary(parent string) {
-	if _, err := tempowner.Sweep(parent, tempPrefixes, time.Now()); err != nil {
+// What it collected stays out of the report and goes into the recording, which
+// is the difference between the two documents. It is a fact about the machine
+// rather than about this workspace, so a report carrying it would invite a
+// reader to compare two runs by how much rubbish each of them found; but a run
+// that paused to delete four gigabytes has an explanation for the pause, and the
+// recording is where a run explains itself.
+func (s *session) sweepTemporary(parent string) tempowner.Result {
+	result, err := tempowner.Sweep(parent, tempPrefixes, s.now())
+	record := trace.SweepRecord{
+		Parent:       parent,
+		Removed:      result.Removed,
+		RemovedBytes: result.RemovedBytes,
+		Live:         result.Live,
+		Kept:         result.Kept,
+	}
+	if err != nil {
+		record.Error = err.Error()
 		s.warn(CodeOrphanNotRemoved,
 			"temporary directories left by earlier runs could not be removed: "+err.Error())
 	}
+	s.trace.Sweep(record)
+	return result
+}
+
+// recordSnapshot files what the copy of the workspace turned out to be.
+//
+// A failure is recorded too, and with the same event: "the tree could not be
+// frozen" is a fact about the snapshot, and a phase whose only account is a
+// missing event is one a reader has to guess about.
+func (s *session) recordSnapshot(source string, snap *snapshot.Snapshot, took time.Duration, err error) {
+	record := trace.SnapshotRecord{
+		Kind:       trace.SnapshotKindWorkspace,
+		Source:     source,
+		DurationMS: took.Milliseconds(),
+	}
+	if err != nil {
+		record.Error = err.Error()
+	}
+	if snap != nil {
+		record.Dir = snap.Root
+		record.Stable = snap.StableDir
+		record.Files = len(snap.Manifest)
+		record.Digest = snap.WorkspaceDigest
+	}
+	s.trace.Snapshot(record)
 }
 
 // warn records a warning and publishes it. Warnings are kept as well as sent so
@@ -1553,6 +2068,11 @@ func (s *session) warn(code Code, message string) {
 func (s *session) warnCode(code, message string) {
 	w := Warning{Code: code, Message: message}
 	s.warnings = append(s.warnings, w)
+	// Into the recording as well as onto the stream, because a recording is
+	// meant to be the whole account of a run: a warning a user scrolled past on
+	// a console is exactly the line somebody reading the trace afterwards is
+	// looking for.
+	s.trace.Note(trace.NoteWarning, code, message)
 	s.emit(w)
 }
 
@@ -1649,6 +2169,41 @@ func deriveTimeout(explicit, slowest time.Duration) (time.Duration, TimeoutSourc
 		return explicit, TimeoutExplicit, nil
 	}
 	return max(MinDerivedTimeout, TimeoutFactor*slowest), TimeoutDerived, nil
+}
+
+// RunIDPattern is the shape of a run identifier, as a regular expression
+// anchored at both ends.
+//
+// It is exported because the id is a name that leaves this package: internal/cli
+// reads it back off a directory listing to decide which recordings are
+// go-mutants' own and which are somebody else's files, and a second spelling of
+// the same rule is a second thing to keep in step. [NewRunID] mints it and
+// [Options.RunID] is checked against it.
+const RunIDPattern = `^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{4}$`
+
+// runID is [RunIDPattern] compiled once.
+var runIDPattern = regexp.MustCompile(RunIDPattern)
+
+// resolveRunID is the identity a run is filed under: the caller's when they
+// named one, and a fresh one otherwise.
+//
+// A refused id still yields one, so that the failure has a name and the
+// recording opened for it has something to say it is about. The run does not
+// proceed under it — the error stops the pipeline before anything is copied —
+// which is the whole point of checking an invocation rather than repairing it.
+func resolveRunID(given string, at time.Time) (string, error) {
+	if given == "" {
+		return NewRunID(at), nil
+	}
+	if !runIDPattern.MatchString(given) {
+		return NewRunID(at), &Error{
+			Code: CodeRunID,
+			Message: "the run id " + strconv.Quote(given) +
+				" is not one: a run id is a UTC timestamp and four lowercase hex digits, " +
+				"as in \"20260907T120000Z-a1b2\"",
+		}
+	}
+	return given, nil
 }
 
 // NewRunID mints the identifier for one run: a UTC timestamp to the second and

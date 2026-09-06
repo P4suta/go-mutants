@@ -25,6 +25,13 @@
 // one workspace reach the same verdict. See
 // `docs/adr/0001-trace-is-not-evidence.md`.
 //
+// A [Sink] that *panics* costs the event too, and is counted exactly as one
+// that returned an error: a sink is an interface, an embedder's implementation
+// of it is ordinary Go code, and ordinary Go code panics — and without that the
+// panic would unwind through the recorder on whichever goroutine was recording,
+// which during a mutation run is one of the execution workers, and take the
+// whole process with it.
+//
 // Best effort is only honest if the loss is reported, so every [Sink] counts
 // what it could not keep and every recording ends with `events_emitted` and
 // `events_dropped`. A reader has exactly two things to check: that the last

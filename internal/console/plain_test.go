@@ -14,6 +14,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // The two mutants the golden run measures. Their ids are longer than the eight
@@ -531,6 +532,8 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 		{engine.MutantFinished{Result: killed}, true},
 		{engine.MutantFinished{}, false},
 		{engine.CacheHit{}, false},
+		{engine.PhaseCompleted{}, false},
+		{engine.Traced{}, false},
 		{engine.Warning{}, true},
 		{engine.ReportPublished{}, true},
 		{engine.RunCompleted{}, true},
@@ -542,6 +545,38 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 		if _, ok := r.line(row.event); ok != row.lines {
 			t.Errorf("%T rendered = %t, want %t", row.event, ok, row.lines)
 		}
+	}
+}
+
+// TestPlainRendererPrintsNothingForTracedEventsByDefault keeps the diagnostic
+// stream off a console nobody asked to see it on.
+//
+// A traced run publishes one [engine.Traced] per recorded event — thousands of
+// them for a run of any size — and one [engine.PhaseCompleted] per phase. At the
+// default verbosity both are accounting rather than findings, and printing
+// either would bury the survivors under the account of the run that found them.
+// They are rendered by `-vv` and `-v`, which arrive with those flags; until then
+// the renderer is byte-identical whether or not a run was traced.
+func TestPlainRendererPrintsNothingForTracedEventsByDefault(t *testing.T) {
+	r := NewPlain(nil, "0.1.0-dev", false, false)
+	var out bytes.Buffer
+	r.Out = &out
+
+	noisy := []engine.Event{
+		engine.PhaseCompleted{Phase: engine.PhaseDiscover, Duration: 250 * time.Millisecond},
+		engine.Traced{Event: trace.Event{Seq: 7, Type: trace.TypeExec, Exec: &trace.ExecRecord{
+			Kind: trace.ExecKindBaselineTest,
+			Argv: []string{"/usr/bin/go", "test", "./..."},
+		}}},
+		engine.Traced{},
+	}
+	for _, event := range noisy {
+		if line, ok := r.line(event); ok || line != "" {
+			t.Errorf("%T rendered %q, want nothing at the default verbosity", event, line)
+		}
+	}
+	if out.Len() != 0 {
+		t.Errorf("the renderer wrote %q for events it says it prints nothing for", out.String())
 	}
 }
 

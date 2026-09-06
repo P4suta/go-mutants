@@ -49,6 +49,15 @@ const (
 	// user's temporary directory, which is the thing the scratch directory
 	// exists to prevent.
 	CodeScratchDir Code = "GOM4004"
+	// CodeRunID reports a caller-supplied [Options.RunID] that is not one:
+	// anything other than [RunIDPattern], which is the form [NewRunID] mints.
+	//
+	// It is refused rather than replaced because the id names files — the run's
+	// own document in the history store, and the directory a recording is
+	// written into — so a value that is not a run id would name them something
+	// else, and a caller that quietly ran under a different id would leave its
+	// own record and the run's unable to find each other.
+	CodeRunID Code = "GOM4005"
 
 	// CodeBaselineBuildFailed reports a snapshot that does not compile. It is
 	// always a fact about the workspace, never about a mutant: no source has
@@ -193,6 +202,7 @@ var codes = []Code{
 	CodeWorkspaceRoot,
 	CodeTestCommand,
 	CodeScratchDir,
+	CodeRunID,
 	CodeBaselineBuildFailed,
 	CodeBaselineTestFailed,
 	CodeBaselineTimedOut,
