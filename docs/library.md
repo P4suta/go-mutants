@@ -267,11 +267,13 @@ The consumer's rule has two clauses and dropping either is unsound:
 ### `CommandResult`, `Change`, `SweepResult`
 
 `CommandResult` describes a command that *started*: a non-zero `ExitCode` and a
-`TimedOut` are results, not infrastructure errors. An error alongside it means
-go-mutants could not run the command at all. `Output` is bounded by the
-effective `Command.OutputLimit`, `Truncated` says whether the cap dropped
-anything, and `TotalBytes` is what the command wrote in total — the same number
-either way, so a caller reporting a size never has to ask which case it is in.
+`TimedOut` are results, not infrastructure errors. An error alongside it is
+either a process failure — the command could not be started or supervised — or
+the caller's own cancellation, and in both cases the result still carries what
+the command produced before it stopped. `Output` is bounded by the effective
+`Command.OutputLimit`, `Truncated` says whether the cap dropped anything, and
+`TotalBytes` is what the command wrote in total — the same number either way,
+so a caller reporting a size never has to ask which case it is in.
 `*VerificationError` carries `Truncated` and `TotalBytes` beside its own
 `Output` for the same reason.
 
