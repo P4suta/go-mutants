@@ -222,6 +222,77 @@ func TestTraceCleanRemovesRecordingsAndNothingElse(t *testing.T) {
 	}
 }
 
+// TestTraceCleanSaysWhatItKeptRatherThanClaimingThereIsNothing tells the two
+// ways a clean removes nothing apart.
+//
+// "Nothing to remove" and "nothing here" are different answers, and printing
+// the second for the first is the worst thing a command that deletes can say:
+// somebody reading it concludes the recordings are gone and stops looking for
+// the disk they are still sitting on. Two retentions reach it — a --keep that
+// covers everything, and the ordinary one over a root where no recording ended
+// with its run-end — and the second has a reason worth stating, since a plain
+// `trace clean` that appears to have done nothing is otherwise a mystery.
+func TestTraceCleanSaysWhatItKeptRatherThanClaimingThereIsNothing(t *testing.T) {
+	t.Run("kept by --keep", func(t *testing.T) {
+		root := tracedWorkspace(t)
+		traceRoot := traceRootOf(root)
+		for _, id := range []string{"20260901T120000Z-0001", "20260902T120000Z-0002"} {
+			record(t, traceRoot, id, false, nil)
+		}
+
+		code, stdout, stderr := execute(t, "trace", "clean", "--keep", "5")
+		if code != int(mutation.ExitOK) {
+			t.Fatalf("exit = %d, want 0\n%s", code, stderr)
+		}
+		if strings.Contains(stdout, "no recording") {
+			t.Errorf("the command says there is no recording while two are on disk:\n%s", stdout)
+		}
+		if !strings.Contains(stdout, "kept") {
+			t.Errorf("stdout = %q, want it to say the recordings were kept", stdout)
+		}
+		if left := entriesOf(t, traceRoot); len(left) != 2 {
+			t.Errorf("the trace root holds %q, want both recordings", left)
+		}
+	})
+
+	t.Run("kept because no run finished", func(t *testing.T) {
+		root := tracedWorkspace(t)
+		traceRoot := traceRootOf(root)
+		recordUnfinished(t, traceRoot, "20260901T120000Z-0001")
+
+		code, stdout, stderr := execute(t, "trace", "clean")
+		if code != int(mutation.ExitOK) {
+			t.Fatalf("exit = %d, want 0\n%s", code, stderr)
+		}
+		// The line that would be false, whole: "no recording in <root>" with
+		// nothing after it. The true message begins the same way and goes on to
+		// say why the recording that is there was kept.
+		if strings.Contains(stdout, "no recording in "+traceRoot+"\n") {
+			t.Errorf("the command says the trace root is empty while a recording is in it:\n%s", stdout)
+		}
+		if !strings.Contains(stdout, "run-end") {
+			t.Errorf("stdout = %q, want the reason the recording was kept", stdout)
+		}
+		if !strings.Contains(stdout, "--all") {
+			t.Errorf("stdout = %q, want the flag that removes it anyway", stdout)
+		}
+		if left := entriesOf(t, traceRoot); len(left) != 1 {
+			t.Errorf("the trace root holds %q, want the recording no run finished", left)
+		}
+	})
+
+	t.Run("nothing here", func(t *testing.T) {
+		root := tracedWorkspace(t)
+		code, stdout, stderr := execute(t, "trace", "clean")
+		if code != int(mutation.ExitOK) {
+			t.Fatalf("exit = %d, want 0\n%s", code, stderr)
+		}
+		if !strings.Contains(stdout, "no recording in "+traceRootOf(root)+"\n") {
+			t.Errorf("stdout = %q, want it to say the trace root holds nothing", stdout)
+		}
+	})
+}
+
 // TestTraceCleanRemovesTheEmptyTraceDirectory keeps a cleaned workspace the
 // shape of one that was never traced.
 //

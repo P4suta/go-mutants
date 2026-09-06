@@ -271,7 +271,7 @@ go-mutants trace summary
 | `--shard K/N` | execute only shard K of N, assigned from the mutant id |
 | `--cache MODE` | reuse of outcomes go-mutants has already proven: `auto`, `on`, `off` |
 | `--report FORMATS` | what to publish into `report.directory`: `none`, `json`, `html` |
-| `--trace[=DIR]` | record this run's diagnostic account; `GO_MUTANTS_TRACE=1\|DIR` asks for the same |
+| `--trace[=DIR]` | record this run's diagnostic account under `report.directory`, or in `DIR`; `GO_MUTANTS_TRACE=1\|true\|DIR` asks for the same |
 | `--jobs N`, `--timeout D` | how many mutants at once, and how long each may take |
 | `--strict`, `--no-strict` | whether an unexpected survivor exits 1 |
 | `--json`, `--explain`, `--quiet` | the document, the detail underneath it, or less of it |
@@ -303,16 +303,17 @@ measures. An editor's output pane needs no flag: it is a pipe rather than a
 terminal, so it already gets the plain lines.
 
 `--trace` writes the run's diagnostic account into
-`reports/mutation/trace/<run-id>/`, named by the same id the report carries:
+`<report.directory>/trace/<run-id>/` — `reports/mutation/trace/` unless you have
+configured otherwise — in a directory named by the same id the report carries:
 every phase and step with its duration, every subprocess with its argument
 vector and the output it printed, how coverage placed each mutant, and what
 became of every execution. `go-mutants trace summary` reads the newest one and
 `trace diff` compares two. A traced run keeps the newest ten and collects the
 rest as it opens its own — never a recording that stops without its `run-end`,
 which is either a run still going or the one that crashed, and `trace clean
---all` is how you say you have read those. `GO_MUTANTS_TRACE=1` asks for the
-same thing without a flag, for the invocation you cannot add one to; a directory
-names where to record instead.
+--all` is how you say you have read those. `GO_MUTANTS_TRACE=1` or `true` asks
+for the same thing without a flag, for the invocation you cannot add one to; a
+directory names where to record instead.
 
 **Every run records whether or not you ask.** Without the flag the account is
 kept in memory rather than written, because the failure nobody expected is

@@ -453,7 +453,7 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	keep := retention{keep: o.keep, unfinished: o.all}
-	stale, err := staleRecordings(root, keep)
+	found, err := planSweep(root, keep)
 	if err != nil {
 		return &Error{
 			Code:    CodeUnreadableTrace,
@@ -461,18 +461,38 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 			Err:     err,
 		}
 	}
-	var bytes int64
-	for _, name := range stale {
-		bytes += directorySize(filepath.Join(root, name))
+	// Measured before the sweep, because a directory that has been removed
+	// cannot be sized, and totalled afterwards over what actually went — so a
+	// sweep that stopped part way through reports the bytes it really took back
+	// rather than the bytes it had meant to.
+	sizes := make(map[string]int64, len(found.stale))
+	for _, name := range found.stale {
+		sizes[name] = directorySize(filepath.Join(root, name))
 	}
 	removed, removeErr := pruneTraceRoot(root, keep)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "trace root: %s\n", root)
-	if len(removed) == 0 {
-		fmt.Fprintf(&b, "nothing to remove: no recording in %s\n", root)
-	} else {
+	switch {
+	case len(removed) > 0:
+		var bytes int64
+		for _, name := range removed {
+			bytes += sizes[name]
+		}
 		fmt.Fprintf(&b, "removed %s (%s)\n", countNoun(len(removed), "recording"), formatBytes(bytes))
+	case found.held == 0:
+		fmt.Fprintf(&b, "nothing to remove: no recording in %s\n", root)
+	case found.candidates == 0:
+		// The retention rule doing its job, which is worth a sentence of its
+		// own: a plain `trace clean` over a root of interrupted runs has removed
+		// nothing on purpose, and without the reason that is indistinguishable
+		// from a command that did not work.
+		fmt.Fprintf(&b, "nothing to remove: no recording in %s ended with its run-end; --all removes those too\n", root)
+	default:
+		// Kept by --keep, which is the only other way to collect nothing from a
+		// root that holds something. Saying "no recording" here would tell
+		// somebody their recordings are gone while they are still on the disk.
+		fmt.Fprintf(&b, "nothing to remove: every recording in %s is kept\n", root)
 	}
 	// And the directory itself, once the last recording in it has gone, so that
 	// a workspace somebody has cleaned looks like one that was never traced.

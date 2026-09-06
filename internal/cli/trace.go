@@ -295,19 +295,19 @@ type retention struct {
 	keep int
 	// unfinished makes a recording with no run-end a candidate. It is off for
 	// the collector a run runs and on only for `trace clean --all`; see
-	// [staleRecordings].
+	// [planSweep].
 	unfinished bool
 }
 
 // pruneTraceRoot removes the recordings in root that a retention collects, and
 // returns what it removed, oldest first.
 func pruneTraceRoot(root string, keep retention) ([]string, error) {
-	stale, err := staleRecordings(root, keep)
+	found, err := planSweep(root, keep)
 	if err != nil {
 		return nil, err
 	}
-	removed := make([]string, 0, len(stale))
-	for _, name := range stale {
+	removed := make([]string, 0, len(found.stale))
+	for _, name := range found.stale {
 		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
 			return removed, err
 		}
@@ -319,9 +319,26 @@ func pruneTraceRoot(root string, keep retention) ([]string, error) {
 	return removed, nil
 }
 
-// staleRecordings names the recordings a retention collects, oldest first. It
-// is the one statement of the rule, so that what `trace clean` measures before
-// it deletes is exactly what [pruneTraceRoot] deletes.
+// A sweep is what a retention found in a trace root.
+//
+// It carries all three counts rather than only the collectable ones, because
+// "there is nothing here" and "there is something here and I am keeping it" are
+// different answers and a command that deletes must never print the first for
+// the second: somebody reading that concludes their recordings are gone and
+// stops looking for the disk they are still sitting on.
+type sweep struct {
+	// held is every recording in the root, whatever the retention makes of it.
+	held int
+	// candidates is how many of those this retention would even consider — the
+	// finished ones, unless the caller asked for the rest as well.
+	candidates int
+	// stale is what it collects, oldest first.
+	stale []string
+}
+
+// planSweep works out what a retention collects from a trace root and what it
+// leaves behind. It is the one statement of the rule, so that what `trace clean`
+// measures and reports is exactly what [pruneTraceRoot] deletes.
 //
 // A recording whose stream does not end with a run-end is not a candidate
 // unless the caller asked for one, and that exception is the point of the rule.
@@ -331,10 +348,10 @@ func pruneTraceRoot(root string, keep retention) ([]string, error) {
 // be collecting exactly backwards. It is also what makes a live run safe from a
 // concurrent collector, rather than only from being the newest name in the root.
 // `trace clean --all` is how somebody who has read them says so.
-func staleRecordings(root string, keep retention) ([]string, error) {
+func planSweep(root string, keep retention) (sweep, error) {
 	recordings, err := recordingsIn(root)
 	if err != nil {
-		return nil, err
+		return sweep{}, err
 	}
 	candidates := recordings
 	if !keep.unfinished {
@@ -345,10 +362,12 @@ func staleRecordings(root string, keep retention) ([]string, error) {
 			}
 		}
 	}
+	found := sweep{held: len(recordings), candidates: len(candidates)}
 	if keep.keep < 0 || len(candidates) <= keep.keep {
-		return nil, nil
+		return found, nil
 	}
-	return candidates[:len(candidates)-keep.keep], nil
+	found.stale = candidates[:len(candidates)-keep.keep]
+	return found, nil
 }
 
 // recordingsIn names the recordings in a trace root, oldest first.
