@@ -58,7 +58,7 @@ func TestPathPrintsTheResolvedDirectory(t *testing.T) {
 	if code := run([]string{"path"}, &stdout, &stderr, map[string]string{}, d); code != 0 {
 		t.Fatalf("`path` exited %d: %s", code, stderr.String())
 	}
-	want := filepath.Join(cacheRoot, "go-mutants-test", "go-build")
+	want := resolved(t, filepath.Join(cacheRoot, "go-mutants-test", "go-build"))
 	if got := strings.TrimSpace(stdout.String()); got != want {
 		t.Errorf("`path` printed %q, want %q", got, want)
 	}
@@ -69,8 +69,8 @@ func TestPathPrintsTheResolvedDirectory(t *testing.T) {
 	if code := run([]string{"path"}, &stdout, &stderr, map[string]string{buildCacheEnv: named}, d); code != 0 {
 		t.Fatalf("`path` with %s set exited %d: %s", buildCacheEnv, code, stderr.String())
 	}
-	if got := strings.TrimSpace(stdout.String()); got != named {
-		t.Errorf("`path` printed %q, want the named %q", got, named)
+	if got, want := strings.TrimSpace(stdout.String()), resolved(t, named); got != want {
+		t.Errorf("`path` printed %q, want the named %q", got, want)
 	}
 }
 
@@ -107,11 +107,11 @@ func TestStatusReportsSizeAndCountOfATree(t *testing.T) {
 
 	out := stdout.String()
 	for _, needle := range []string{
-		cache,
+		resolved(t, cache),
 		"4 files",
 		"4620 bytes",
 		"4.5 KiB",
-		kept,
+		resolved(t, kept),
 		"1 file",
 		"300 bytes",
 	} {
@@ -136,7 +136,7 @@ func TestStatusSaysSoWhenThereIsNothingThere(t *testing.T) {
 		t.Fatalf("`status` over a missing directory exited %d: %s", code, stderr.String())
 	}
 	out := stdout.String()
-	for _, needle := range []string{missing, "does not exist", "0 bytes"} {
+	for _, needle := range []string{resolved(t, missing), "does not exist", "0 bytes"} {
 		if !strings.Contains(out, needle) {
 			t.Errorf("`status` did not report %q:\n%s", needle, out)
 		}
@@ -178,6 +178,10 @@ func TestTrimWipesOnlyWhenOverBudget(t *testing.T) {
 			cache := filepath.Join(t.TempDir(), "go-build")
 			writeTree(t, cache, map[string]int{"ab/entry": 4096, "cd/entry": 512, "trim.txt": 12})
 			stamp(t, cache, buildCacheMarker)
+			// Resolved now, while it still exists: a directory the trim removes
+			// cannot be resolved afterwards, and the tool named it at the far end
+			// of whatever links its path had.
+			wiped := resolved(t, cache)
 			kept := filepath.Join(t.TempDir(), "kept")
 			writeTree(t, kept, map[string]int{"engine/TestRun-0a1b2c/KEPT.txt": 300})
 
@@ -201,8 +205,8 @@ func TestTrimWipesOnlyWhenOverBudget(t *testing.T) {
 			if wantCleaned := tc.wantWiped; wantCleaned != (len(cleaned) == 1) {
 				t.Errorf("`go clean -cache` was run against %q, want it run exactly %v", cleaned, wantCleaned)
 			}
-			if tc.wantWiped && len(cleaned) == 1 && cleaned[0] != cache {
-				t.Errorf("`go clean -cache` was pointed at %s, want the cache %s", cleaned[0], cache)
+			if tc.wantWiped && len(cleaned) == 1 && cleaned[0] != wiped {
+				t.Errorf("`go clean -cache` was pointed at %s, want the cache %s", cleaned[0], wiped)
 			}
 			if _, err := os.Stat(filepath.Join(kept, "engine", "TestRun-0a1b2c", "KEPT.txt")); err != nil {
 				t.Errorf("a trim removed the kept scratch root, which holds the evidence of failed runs: %v", err)
@@ -249,6 +253,8 @@ func TestCleanEmptiesTheCacheAndTheKeptRoot(t *testing.T) {
 	kept := filepath.Join(t.TempDir(), "kept")
 	writeTree(t, kept, map[string]int{"engine/TestRun-0a1b2c/KEPT.txt": 300})
 	stamp(t, kept, keptMarker)
+	// Resolved before the removal, for the same reason as in the trim above.
+	removedCache, removedKept := resolved(t, cache), resolved(t, kept)
 
 	var cleaned []string
 	d := deps{cleaner: func(dir string) error {
@@ -262,15 +268,15 @@ func TestCleanEmptiesTheCacheAndTheKeptRoot(t *testing.T) {
 		t.Fatalf("`clean` exited %d: %s", code, stderr.String())
 	}
 
-	if !slices.Equal(cleaned, []string{cache}) {
-		t.Errorf("`go clean -cache` was run against %q, want it run once against %s", cleaned, cache)
+	if want := []string{removedCache}; !slices.Equal(cleaned, want) {
+		t.Errorf("`go clean -cache` was run against %q, want it run once against %q", cleaned, want)
 	}
 	for _, dir := range []string{cache, kept} {
 		if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%s still exists after `clean`: %v", dir, err)
 		}
 	}
-	if out := stdout.String(); !strings.Contains(out, cache) || !strings.Contains(out, kept) {
+	if out := stdout.String(); !strings.Contains(out, removedCache) || !strings.Contains(out, removedKept) {
 		t.Errorf("`clean` did not say what it removed:\n%s", out)
 	}
 }
@@ -373,13 +379,13 @@ func TestExecExportsGocacheAndPrintsTheDelta(t *testing.T) {
 
 	saw := readReport(t, report)
 	for _, name := range []string{"GOCACHE", buildCacheEnv} {
-		if saw[name] != cache {
-			t.Errorf("the child saw %s=%q, want the cache %s", name, saw[name], cache)
+		if saw[name] != resolved(t, cache) {
+			t.Errorf("the child saw %s=%q, want the cache %s", name, saw[name], resolved(t, cache))
 		}
 	}
 
 	// 100 bytes were already there and the child wrote 4096 more.
-	want := fmt.Sprintf("testcache: %s %d bytes (%+d)", cache, 4196, 4096)
+	want := fmt.Sprintf("testcache: %s %d bytes (%+d)", resolved(t, cache), 4196, 4096)
 	if !strings.Contains(stderr.String(), want) {
 		t.Errorf("`exec` did not report the growth as %q:\n%s", want, stderr.String())
 	}
@@ -632,6 +638,29 @@ func readReport(t *testing.T, path string) map[string]string {
 	return saw
 }
 
+// resolved is a path as the tool will name it.
+//
+// The tool resolves what it is pointed at through filepath.EvalSymlinks, because
+// a cache that is a symlink onto a bigger disk has to be measured and emptied at
+// the far end of the link. So a test that compares the tool's output against a
+// raw t.TempDir() is testing the platform rather than the tool: it passes on
+// Linux and fails on both platforms where a temporary directory is not the path
+// it is spelled as — macOS hands out `/var/folders/…`, which resolves to
+// `/private/var/folders/…`, and Windows may hand out an 8.3 short name whose long
+// form is what EvalSymlinks returns.
+//
+// A path that does not exist comes back unchanged, which is exactly what the
+// tool does with one, so this can be applied to every comparison without a test
+// having to know which of its directories exist yet.
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	full, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	return full
+}
+
 // stamp writes the ownership marker a removal needs to find, the way the harness
 // and `exec` write it in production.
 //
@@ -851,7 +880,7 @@ func TestWipeRefusesADirectoryItDoesNotOwn(t *testing.T) {
 		if len(*cleaned) != 0 {
 			t.Errorf("`go clean -cache` was run against %q, which would have emptied it before the guard could speak", *cleaned)
 		}
-		for _, needle := range []string{dir, buildCacheMarker} {
+		for _, needle := range []string{resolved(t, dir), buildCacheMarker} {
 			if !strings.Contains(stderr.String(), needle) {
 				t.Errorf("the refusal does not name %q:\n%s", needle, stderr.String())
 			}
@@ -871,7 +900,7 @@ func TestWipeRefusesADirectoryItDoesNotOwn(t *testing.T) {
 		if len(*cleaned) != 0 {
 			t.Errorf("`go clean -cache` was run against %q", *cleaned)
 		}
-		if !strings.Contains(stdout.String()+stderr.String(), dir) {
+		if !strings.Contains(stdout.String()+stderr.String(), resolved(t, dir)) {
 			t.Errorf("the report does not name the directory:\n%s%s", stdout.String(), stderr.String())
 		}
 	})

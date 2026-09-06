@@ -374,6 +374,16 @@ var pinnedBuildCache = os.Getenv(BuildCacheEnv)
 // value the process started with. The middle one is why a `t.Setenv` before
 // [Env] still decides, and the last one is why a CI job's workflow-level `env:`
 // still decides after it.
+//
+// An explicitly empty value is an answer rather than a missing one, at every
+// layer. t.Setenv cannot remove a variable, so `t.Setenv(name, "")` is the only
+// way a test can say "as if nobody had named one" — and if an empty live or
+// stripped value fell through to what the process started with, a test that
+// cleared the variable would get the job's directory back from under itself and
+// compare its own answer against a different question.
+// TestAnExplicitlyEmptyBuildCacheOverrideMeansTheDefault pins that, because the
+// failure it prevents is invisible anywhere except on a machine where CI has
+// named a cache for the whole job.
 func harnessSetting(name, atStart string) string {
 	if value, ok := os.LookupEnv(name); ok {
 		return value

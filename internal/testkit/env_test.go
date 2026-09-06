@@ -199,10 +199,26 @@ func TestBuildCacheHonoursTheNamedDirectory(t *testing.T) {
 // answers can only be compared under the home they were both derived from.
 func TestPathAgreesWithTestkit(t *testing.T) {
 	t.Run("the default directory", func(t *testing.T) {
+		// Cleared first, because CI names a cache for the whole job and this
+		// subtest is about the rule that applies when nobody has. Without this
+		// the two sides are asked different questions: the child is handed an
+		// environment [Env] has stripped the variable out of, so it resolves the
+		// default, while BuildCache here reads the value through that stripping
+		// and resolves the job's — and the test fails on CI and only on CI,
+		// saying the two copies have drifted when they agree perfectly. An
+		// explicitly empty value means "no override" on both sides;
+		// TestAnExplicitlyEmptyBuildCacheOverrideMeansTheDefault is where that is
+		// pinned.
+		t.Setenv(BuildCacheEnv, "")
+
 		e := Env(t, KeepHome())
 		want, err := BuildCache()
 		if err != nil {
 			t.Fatalf("BuildCache: %v", err)
+		}
+		if value, ok := lookupEnv(e.Vars(), BuildCacheEnv); ok && value != "" {
+			t.Fatalf("the child would be handed %s=%s, so it would not be resolving the default at all",
+				BuildCacheEnv, value)
 		}
 		if got := testcacheSays(t, e.Vars(), "path"); !SamePath(got, want) {
 			t.Errorf("`testcache path` printed %s, but testkit resolved %s: the two copies of the "+
@@ -250,6 +266,53 @@ func TestPathAgreesWithTestkit(t *testing.T) {
 			t.Errorf("`testcache path --kept` printed %s, want the named %s", got, named)
 		}
 	})
+}
+
+// TestAnExplicitlyEmptyBuildCacheOverrideMeansTheDefault is the rule that lets a
+// test opt out of a cache the job named.
+//
+// [BuildCache] reads the variable through three layers — the live environment,
+// what [Env] stripped out of it during this test, and the value the process
+// started with — because a test that redirects its environment must not silently
+// lose a directory CI named. The cost of that fallback is that "unset" cannot be
+// expressed by unsetting: t.Setenv cannot remove a variable, and the process's
+// starting value would answer for it anyway. So an explicitly empty value has to
+// mean the default, and it has to mean it at every layer, or a test that clears
+// the variable gets the job's cache back from underneath itself and compares two
+// different questions. That is exactly what made TestPathAgreesWithTestkit fail
+// on CI and pass on every developer machine.
+func TestAnExplicitlyEmptyBuildCacheOverrideMeansTheDefault(t *testing.T) {
+	if pinned.userCache == "" {
+		t.Skip("this platform has no user cache directory, so there is no default to fall back to")
+	}
+	want := filepath.Join(pinned.userCache, "go-mutants-test", "go-build")
+
+	// The arrangement CI runs in: a directory named for the whole job, before
+	// this test says anything.
+	t.Setenv(BuildCacheEnv, filepath.Join(t.TempDir(), "named-by-the-job"))
+	t.Setenv(BuildCacheEnv, "")
+
+	got, err := BuildCache()
+	if err != nil {
+		t.Fatalf("BuildCache with an empty %s: %v", BuildCacheEnv, err)
+	}
+	if got != want {
+		t.Errorf("BuildCache with an empty %s = %s, want the default %s", BuildCacheEnv, got, want)
+	}
+
+	// And still, once Env has removed the whole GO_MUTANTS_ namespace from the
+	// process: the empty value is what it remembers, so the fallback answers with
+	// it rather than reaching further back.
+	e := Env(t, KeepHome())
+	if e.GoCache != want {
+		t.Errorf("Env used %s, want the default %s", e.GoCache, want)
+	}
+	if got, err := BuildCache(); err != nil || got != want {
+		t.Errorf("BuildCache after Env = %s (%v), want the default %s", got, err, want)
+	}
+	if got, _ := lookupEnv(Compose(t, t.TempDir()), "GOCACHE"); got != want {
+		t.Errorf("the composed GOCACHE = %q, want the default %q", got, want)
+	}
 }
 
 // TestMarkerNamesAgreeWithTestcache is the second half of the ownership rule,
