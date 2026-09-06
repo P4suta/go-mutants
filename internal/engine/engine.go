@@ -950,7 +950,15 @@ func (s *session) selection(
 
 	runs := make([]execute.MutantRun, 0, len(ids))
 	for _, id := range ids {
-		runs = append(runs, execute.MutantRun{ID: id, Timeout: timeout})
+		run := execute.MutantRun{ID: id, Timeout: timeout}
+		// The short form the console and the report already print, carried so
+		// that the account of an attempt reads in the same identities. It is
+		// looked up rather than derived: how much of an id is short enough to
+		// be unique is the catalogue's own decision.
+		if m, ok := catalog.ByID(id); ok {
+			run.DisplayID = m.DisplayID
+		}
+		runs = append(runs, run)
 	}
 	st.selected = len(runs)
 	recordNotRun(acceptedIDs, runs, st)

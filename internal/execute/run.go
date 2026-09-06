@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/testflag"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // InProcessTimeoutFactor multiplies a mutant's timeout to get the
@@ -35,6 +36,25 @@ type MutantRun struct {
 	// The display prefix is not enough: the generated runtime matches on the
 	// whole identity and exits [instrument.UnknownMutantExit] for anything else.
 	ID string
+	// DisplayID is the short form of the identity, as a console prints it. It
+	// is carried for the recording alone — nothing here matches on it — so that
+	// an account of a run reads in the same shortened identities the report and
+	// the console use. It may be empty, and a caller that has none says so by
+	// leaving it so rather than by shortening the identity here: how much of an
+	// id is shown is the catalogue's decision and not this package's.
+	DisplayID string
+	// Package is the import path of the package the mutated source belongs to,
+	// carried for the recording alone, as DisplayID is.
+	//
+	// It is the *mutant's* package and never the test scope the binaries were
+	// built from. A consumer reads it as an import path and joins on it — a
+	// recording of a mutation run beside one of the test run that measured it
+	// — so a `./internal/...` there would be a pattern wearing the shape of a
+	// package. The caller is the one that knows it: this package is handed
+	// identities and binaries, and the catalogue is where a mutant's package
+	// is written down. Empty is what a caller with no package for a mutant
+	// says, and it is omitted from the event rather than guessed at.
+	Package string
 	// Timeout bounds one attempt at one test binary. It is required: a mutant
 	// with no budget is refused rather than run unbounded, because a run that
 	// never ends is worse than a mutant reported wrongly.
@@ -93,6 +113,25 @@ type Attempt struct {
 	// every binary; a kill's covers only those up to and including the one that
 	// failed.
 	Duration time.Duration
+	// Binaries are the test binaries this attempt started, in launch order, by
+	// import path. It stops where the attempt stopped: a mutant killed by the
+	// second of three binaries was measured against two, and naming all three
+	// would describe a measurement that was never made.
+	//
+	// The import path rather than the file that was executed, for the reason
+	// [KilledBy] uses it: the file is named after a digest, in a directory the
+	// run deletes, and the import path is what a report renders and what stays
+	// meaningful between runs.
+	Binaries []string
+	// ExecSeqs are the `exec` events those starts were recorded at, in the same
+	// order. They are how an attempt is joined to the commands underneath it,
+	// and through them to the output the recording preserved.
+	//
+	// An untraced run records nothing and is handed a zero for every start,
+	// which is not a sequence anything can be found at, so nothing is listed:
+	// an empty list means there is no recording, never that an attempt started
+	// nothing.
+	ExecSeqs []int64
 	// OutputTail is the last [OutputTailLines] lines the deciding binary
 	// printed: the failing one for a kill, the timed-out one for a timeout, the
 	// failing command for an error. It is empty for a survivor, whose output is
@@ -177,8 +216,12 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			return attempt
 		}
 
-		spec, result := startTarget(ctx, opts, bin, env, m.Timeout, m.Args)
+		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env, m.Timeout, m.Args)
 		attempt.Duration += result.Duration
+		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
+		if result.TraceSeq != 0 {
+			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
+		}
 
 		// The order of these cases is the contract, and the third is the one
 		// that is easy to get wrong. internal/runner reports no exit status only
@@ -287,12 +330,21 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 // put it into an error would be a second copy of this function's rules, which
 // is precisely the drift the one function exists to prevent.
 //
+// The label is the caller's, and it is the one thing about a start that this
+// function must not decide. A probe process and a mutant's are the same binary
+// started the same way — that is the point of them sharing this function — so
+// in a recording the two passes are told apart by their kind and by nothing
+// else, and a default here would be the one place a pass could be recorded as
+// the other.
+//
 // The deadline is rendered as a duration string rather than a number of
 // seconds, because `-test.timeout` takes Go's own duration syntax and a
 // sub-second budget written as a number would truncate to `0`.
 func startTarget(
 	ctx context.Context,
 	opts Options,
+	kind string,
+	subject string,
 	bin TestBinary,
 	env []string,
 	timeout time.Duration,
@@ -306,6 +358,9 @@ func startTarget(
 		Dir:     bin.Dir,
 		Env:     env,
 		Timeout: timeout,
+		Trace:   opts.Trace,
+		Kind:    kind,
+		Subject: subject,
 	}
 	return spec, opts.runProcess(ctx, spec)
 }

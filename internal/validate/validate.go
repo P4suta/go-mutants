@@ -18,6 +18,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // DefaultBuildTimeout bounds one `go build ./...` when [Options.BuildTimeout]
@@ -95,6 +96,13 @@ type Options struct {
 	Mode instrument.Mode
 
 	Packages []string
+
+	// Trace is where this phase's builds and bisection steps are recorded. A
+	// nil recorder is the disabled trace and every method on it is safe, which
+	// is why everything here records unconditionally: the traced path and the
+	// untraced one are the same path, and no accepted set can come to depend on
+	// which of them a run took.
+	Trace *trace.Recorder
 }
 
 // A Rejection is one catalogued mutant that cannot be compiled, and the
@@ -194,6 +202,7 @@ func Validate(ctx context.Context, opts Options) (Result, error) {
 		jobs:      opts.Jobs,
 		timeout:   opts.BuildTimeout,
 		env:       opts.Env,
+		recorder:  opts.Trace,
 		byPath:    make(map[string][]mutation.Mutant),
 		pristine:  make(map[string][]byte),
 		guards:    make(map[string]int),
@@ -248,6 +257,10 @@ type validator struct {
 	jobs      int
 	timeout   time.Duration
 	env       []string
+	// recorder is the run's own, from [Options.Trace]. It is named for what it
+	// is rather than for the package it comes from, because `trace` is the
+	// package this file already imports.
+	recorder *trace.Recorder
 
 	// runtimeImport is the import path of the generated activation package, as
 	// the full instrumentation pass settled it. Every later rewrite is handed
@@ -291,6 +304,15 @@ func (v *validator) run(ctx context.Context, modulePath string) (Result, error) 
 	for path, count := range instrumented.GuardsByFile {
 		v.guards[path] = count
 	}
+	// What the phase started from: the whole catalogue, written into the tree
+	// at once. Every later step of the recording is about narrowing this number
+	// down, and without it a reader cannot tell a validation that rejected two
+	// of four hundred from one that rejected two of three.
+	v.recorder.Validate(trace.ValidateRecord{
+		Tree:       v.tree(),
+		Op:         trace.ValidateOpInstrument,
+		Candidates: v.catalog.Len(),
+	})
 
 	rejected, searchErr := v.search(ctx)
 	result := v.result(instrumented)
@@ -302,7 +324,29 @@ func (v *validator) run(ctx context.Context, modulePath string) (Result, error) 
 }
 
 // search establishes which candidates compile, leaving the snapshot holding
-// exactly those.
+// exactly those, and closes the recording of the phase with what it decided.
+//
+// The closing event is recorded here rather than by the caller because it is
+// what a reader looks for to know the account is complete: a recording that
+// holds builds and rejections but no `done` is a validation that stopped, and
+// the error the phase returns is then the thing to read. So it is written on
+// the way out of a search that finished, and on no other path.
+func (v *validator) search(ctx context.Context) ([]condemned, error) {
+	rejected, err := v.bisect(ctx)
+	if err != nil {
+		return rejected, err
+	}
+	v.recorder.Validate(trace.ValidateRecord{
+		Tree:     v.tree(),
+		Op:       trace.ValidateOpDone,
+		Builds:   v.builds,
+		Accepted: v.candidates() - len(rejected),
+		Rejected: len(rejected),
+	})
+	return rejected, nil
+}
+
+// bisect is the search proper.
 //
 // The first build is the whole phase in the ordinary case. Everything after it
 // exists for the case where a guard did not compile, and the shape of that work
@@ -314,8 +358,9 @@ func (v *validator) run(ctx context.Context, modulePath string) (Result, error) 
 // their neighbours are searched. A file left instrumented would answer for
 // itself in every build and the search would reject candidates until it ran out
 // of them.
-func (v *validator) search(ctx context.Context) ([]condemned, error) {
-	failing, err := v.build(ctx)
+func (v *validator) bisect(ctx context.Context) ([]condemned, error) {
+	pending := slices.Clone(v.paths)
+	failing, err := v.compile(ctx, pending, "")
 	if err != nil {
 		return nil, err
 	}
@@ -323,14 +368,26 @@ func (v *validator) search(ctx context.Context) ([]condemned, error) {
 		return nil, nil
 	}
 
-	pending := slices.Clone(v.paths)
 	if restoreErr := v.restore(pending); restoreErr != nil {
 		return nil, restoreErr
 	}
-	gate, err := v.build(ctx)
+	// No pending set: a gate that fails ends the phase, so the files the
+	// compiler named are not a list of where to search next.
+	gate, err := v.compile(ctx, nil, "")
 	if err != nil {
 		return nil, err
 	}
+	// The one failure this phase refuses to blame on a candidate, recorded
+	// whichever way it came out: a gate that passed is what licenses everything
+	// the search does afterwards, and a reader given only the rejections would
+	// have to take that licence on trust.
+	v.recorder.Validate(trace.ValidateRecord{
+		Tree:    v.tree(),
+		Op:      trace.ValidateOpGate,
+		Build:   v.builds,
+		Failed:  gate.failed,
+		ExecSeq: gate.execSeq,
+	})
 	if gate.failed {
 		return nil, &Error{
 			Code: CodeNotMutantInduced,
@@ -342,11 +399,12 @@ func (v *validator) search(ctx context.Context) ([]condemned, error) {
 
 	var rejected []condemned
 	for {
-		for _, path := range v.blame(failing, pending) {
+		for _, path := range failing.blamed {
 			accepted, condemnedHere, err := isolate(ctx, v.byPath[path], v.probe(path))
 			if err != nil {
 				return rejected, err
 			}
+			v.recordIsolation(path, len(accepted), condemnedHere)
 			// The last probe left whichever subset it tried on disk, which is
 			// not necessarily the accepted one.
 			if err := v.apply(path, accepted); err != nil {
@@ -361,7 +419,7 @@ func (v *validator) search(ctx context.Context) ([]condemned, error) {
 		if err := v.reinstate(pending); err != nil {
 			return rejected, err
 		}
-		result, err := v.build(ctx)
+		result, err := v.compile(ctx, pending, "")
 		if err != nil {
 			return rejected, err
 		}
@@ -443,8 +501,134 @@ func (v *validator) probe(path string) probe {
 		if err := v.apply(path, subset); err != nil {
 			return verdict{}, err
 		}
-		return v.build(ctx)
+		// No pending set: a trial build asks whether one proposed subset of one
+		// file compiles, and the files the compiler names in answer are not a
+		// list of where to look next — the search already knows where it is,
+		// and says so with the path.
+		return v.compile(ctx, nil, path)
 	}
+}
+
+// compile spends one build, counts it, and records what it said.
+//
+// Every build the phase makes goes through here rather than through the seam
+// directly, and that is what makes the count and the recording one thing: a
+// build that was spent and not recorded is invisible in exactly the run
+// somebody is trying to explain, and the two numbers drifting apart would make
+// the recording say the phase was cheaper than it was.
+//
+// A build that could not be *run* is not recorded as a build. The compiler
+// answered nothing, so `failed` would be a claim about a compile that never
+// happened; the execution itself is recorded at the choke point, and the error
+// this returns carries the command.
+//
+// pending is the files still undecided, for the two facts a reader of a failing
+// build needs next: how much is left to search, and which of it the compiler
+// pointed at. Both are recorded for a build that failed and neither for one
+// that did not, because a green build leaves nothing undecided and nobody
+// blamed. Two kinds of build pass no pending set at all, because neither is
+// being asked where to look next: a trial inside an isolation, which asks
+// whether one proposed subset of one file compiles, and the pristine gate,
+// whose failure means nothing this phase could reject would help and whose
+// blamed files would read as candidates about to be condemned.
+//
+// path is the file an isolation is searching, and empty for the builds that are
+// about the tree as a whole. It is what tells a reader which of them a
+// bisection spent: half the builds of a validation that had to search can
+// belong to one file.
+//
+// The blame is computed once, here, and travels back on the verdict: the
+// recording of the build and the search's next step want the same answer, and
+// deriving it twice would parse the compiler's whole output twice per failing
+// build.
+func (v *validator) compile(ctx context.Context, pending []string, path string) (verdict, error) {
+	v.builds++
+	result, err := v.build(ctx)
+	if err != nil {
+		return result, err
+	}
+	if result.failed && len(pending) > 0 {
+		result.blamed = v.blame(result, pending)
+	}
+	record := trace.ValidateRecord{
+		Tree:    v.tree(),
+		Op:      trace.ValidateOpBuild,
+		Build:   v.builds,
+		Failed:  result.failed,
+		Path:    path,
+		Blamed:  result.blamed,
+		ExecSeq: result.execSeq,
+	}
+	if len(result.blamed) > 0 {
+		record.Pending = len(pending)
+	}
+	v.recorder.Validate(record)
+	return result, nil
+}
+
+// recordIsolation records one file's search and each candidate it condemned.
+//
+// The rejections are recorded here, where the search learns of them, rather
+// than inside the bisection: that algorithm is deliberately nothing but "does
+// this subset compile", tested against a table with no snapshot and no
+// toolchain in sight, and a recorder reaching into it would be the first thing
+// it knew about the world. What matters about the moment of rejection is kept
+// either way — the diagnostic is the output of the build that condemned the
+// candidate, captured then, because by the time the phase ends the tree
+// compiles and that message exists nowhere else.
+func (v *validator) recordIsolation(path string, accepted int, rejected []condemned) {
+	v.recorder.Validate(trace.ValidateRecord{
+		Tree:       v.tree(),
+		Op:         trace.ValidateOpIsolate,
+		Path:       path,
+		Candidates: len(v.byPath[path]),
+		Accepted:   accepted,
+	})
+	for _, c := range rejected {
+		v.recorder.Validate(trace.ValidateRecord{
+			Tree: v.tree(),
+			Op:   trace.ValidateOpReject,
+			Path: c.mutant.Path,
+			// The full identity: a recording is joined to a report on it, and
+			// the shortened form is a rendering rather than a key.
+			MutantID:   c.mutant.ID,
+			Diagnostic: v.condemnation(c),
+		})
+	}
+}
+
+// condemnation is the compiler's reason for one rejection, in one line.
+//
+// It is chosen by exactly the rule [validator.rejection] uses, so the reason in
+// the recording and the reason in the report are the same sentence about the
+// same mutant rather than two texts a reader has to reconcile. What differs is
+// the length: a rejection in a report is the whole message, continuations and
+// all, while an event carries its first line — the whole of the condemning
+// build's output is preserved once, under the `exec` event of that build, and
+// copying a page of it into every rejected candidate's event would be the same
+// bytes several times over.
+func (v *validator) condemnation(c condemned) string {
+	return firstLine(v.rejection(c.mutant, c.output).Diagnostic)
+}
+
+// tree is which of the two trees this phase is validating, as the recording
+// spells it.
+func (v *validator) tree() string {
+	if v.mode == instrument.ModeProbe {
+		return trace.ValidateTreeProbe
+	}
+	return trace.ValidateTreeMutant
+}
+
+// candidates is how many mutants the phase started with. It is counted from the
+// files rather than taken from the catalogue so that it means the same thing in
+// a search driven straight through the seam, where there is no catalogue at all.
+func (v *validator) candidates() int {
+	total := 0
+	for _, path := range v.paths {
+		total += len(v.byPath[path])
+	}
+	return total
 }
 
 // readPristine reads every catalogued file before instrumentation touches it.
@@ -510,17 +694,22 @@ func (v *validator) instrumentFile(path string, subset []mutation.Mutant) error 
 // exit is the only one of the four that is not an error: it is the compiler
 // answering the question this phase asked it.
 func (v *validator) buildSnapshot(ctx context.Context) (verdict, error) {
-	v.builds++
-
 	spec := v.toolchain.Command(buildArgs(v.jobs, v.packages)...)
 	spec.Dir = v.root
 	spec.Env = v.env
 	spec.Timeout = v.timeout
+	spec.Trace = v.recorder
+	spec.Kind = trace.ExecKindValidateBuild
 
 	result := runner.Run(ctx, spec)
+	// The sequence rides back on every one of the four answers, the three that
+	// are errors included: a build that could not be run is still an execution
+	// the recording holds, and a caller that keeps the verdict beside the error
+	// can point at it without re-deriving anything.
+	spent := verdict{execSeq: result.TraceSeq}
 	switch {
 	case result.Err != nil:
-		return verdict{}, &Error{
+		return spent, &Error{
 			Code:       CodeBuildFailed,
 			Message:    "the snapshot could not be built: the command could not be run",
 			Output:     string(result.Output),
@@ -528,21 +717,23 @@ func (v *validator) buildSnapshot(ctx context.Context) (verdict, error) {
 			Invocation: runner.CommandOf(spec, result),
 		}
 	case result.TimedOut:
-		return verdict{}, &Error{
+		return spent, &Error{
 			Code:       CodeBuildTimedOut,
 			Message:    "the snapshot did not build within " + v.timeout.String(),
 			Output:     string(result.Output),
 			Invocation: runner.CommandOf(spec, result),
 		}
 	case ctx.Err() != nil:
-		return verdict{}, &Error{
+		return spent, &Error{
 			Code:       CodeInterrupted,
 			Message:    "validation was interrupted",
 			Err:        ctx.Err(),
 			Invocation: runner.CommandOf(spec, result),
 		}
 	}
-	return verdict{failed: result.ExitCode != 0, output: string(result.Output)}, nil
+	spent.failed = result.ExitCode != 0
+	spent.output = string(result.Output)
+	return spent, nil
 }
 
 // buildArgs is the argument vector of one validation build.

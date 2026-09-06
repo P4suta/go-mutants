@@ -16,6 +16,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // A call is one invocation the fake runner saw, captured by value so that a
@@ -25,6 +26,12 @@ type call struct {
 	Dir     string
 	Env     []string
 	Timeout time.Duration
+	// Kind and Subject are the label the call site put on the execution. They
+	// are captured here, beside the argv, because a missing label is invisible
+	// in everything else a call carries: the command runs, the run is right, and
+	// the recording is the only thing that is poorer for it.
+	Kind    string
+	Subject string
 }
 
 // active returns the activation identity this call carried, or "" if it carried
@@ -60,6 +67,14 @@ type fake struct {
 	// be safe for concurrent use.
 	respond func(ctx context.Context, c call) runner.Result
 
+	// record makes the fake do the one thing [runner.Run] does besides starting
+	// a process: hand the execution to the spec's recorder and return the
+	// sequence it was recorded at. It is opt-in so that a test which is not
+	// about the recording sees exactly the runner it always saw, and so that a
+	// test which is about it can assert that an attempt's sequences are the
+	// sequences of the commands underneath it.
+	record bool
+
 	mu    sync.Mutex
 	calls []call
 }
@@ -71,15 +86,35 @@ func (f *fake) run(ctx context.Context, spec runner.Spec) runner.Result {
 		Dir:     spec.Dir,
 		Env:     slices.Clone(spec.Env),
 		Timeout: spec.Timeout,
+		Kind:    spec.Kind,
+		Subject: spec.Subject,
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, c)
 	f.mu.Unlock()
 
-	if f.respond == nil {
-		return runner.Result{}
+	var result runner.Result
+	if f.respond != nil {
+		result = f.respond(ctx, c)
 	}
-	return f.respond(ctx, c)
+	if f.record {
+		// The reduction of the environment to names and of the output to a
+		// digest is the recorder's, exactly as it is for the real runner, so a
+		// fake cannot record something the production path could not.
+		result.TraceSeq = spec.Trace.Exec(trace.ExecRecord{
+			Kind:       spec.Kind,
+			Subject:    spec.Subject,
+			Argv:       spec.Argv,
+			Dir:        spec.Dir,
+			EnvNames:   spec.Env,
+			TimeoutMS:  spec.Timeout.Milliseconds(),
+			ExitCode:   result.ExitCode,
+			TimedOut:   result.TimedOut,
+			DurationMS: result.Duration.Milliseconds(),
+			Output:     result.Output,
+		})
+	}
+	return result
 }
 
 // seen returns the calls recorded so far, in order.
@@ -102,6 +137,56 @@ func (f *fake) programs() []string {
 // options wires a fake into an otherwise empty [execute.Options].
 func options(f *fake, jobs int) execute.Options {
 	return execute.WithRunner(execute.Options{Jobs: jobs}, f.run)
+}
+
+// recording opens a recorder over an unbounded ring and returns both, so a test
+// can assert on exactly what this package handed it.
+func recording(t *testing.T) (*trace.Recorder, *trace.MemorySink) {
+	t.Helper()
+	sink := trace.NewMemorySink(0)
+	recorder := trace.New(sink, time.Now, trace.StartRecord{
+		Kind:        trace.StartKindRun,
+		ToolVersion: "test",
+		PID:         os.Getpid(),
+		Root:        t.TempDir(),
+	})
+	if recorder == nil {
+		t.Fatal("trace.New returned no recorder for a real sink")
+	}
+	return recorder, sink
+}
+
+// traced hands options a recorder and tells the fake to record its calls into
+// it the way [runner.Run] would.
+func traced(t *testing.T, f *fake, opts execute.Options) (execute.Options, *trace.MemorySink) {
+	t.Helper()
+	recorder, sink := recording(t)
+	f.record = true
+	opts.Trace = recorder
+	return opts, sink
+}
+
+// eventsOf returns every event of one type the sink kept, in order.
+func eventsOf(sink *trace.MemorySink, eventType string) []trace.Event {
+	var found []trace.Event
+	for _, event := range sink.Events() {
+		if event.Type == eventType {
+			found = append(found, event)
+		}
+	}
+	return found
+}
+
+// execSeqs returns the sequence numbers of the exec events the sink kept, in
+// order, so an attempt's own list can be compared against the commands the
+// recording actually holds.
+func execSeqs(sink *trace.MemorySink) []int64 {
+	events := eventsOf(sink, trace.TypeExec)
+	seqs := make([]int64, len(events))
+	for i, event := range events {
+		seqs[i] = event.Seq
+	}
+	return seqs
 }
 
 // testBins builds a run's worth of test binaries named after their import

@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // coverPkg is the pattern a coverage-guided run builds with.
@@ -439,5 +440,47 @@ func TestCollectCoverageCreatesTheWorkerTemporaryDirectory(t *testing.T) {
 	info, err := os.Stat(scratch)
 	if err != nil || !info.IsDir() {
 		t.Errorf("the redirected temporary directory %s does not exist: %v", scratch, err)
+	}
+}
+
+// TestCollectCoverageLabelsEachProfilingRun names the pass that is invisible in
+// a report and expensive in a run.
+//
+// The profiling pass runs every test binary once more, before a single mutant
+// is executed, and a reader wondering where the first minute of a run went can
+// only tell it from the mutant runs by its label. The subject is the package
+// whose profile is being taken, which is the identity the coverage map and the
+// report both know a binary by.
+func TestCollectCoverageLabelsEachProfilingRun(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if isList(c) {
+			return runner.Result{Output: []byte(listing(
+				pkgJSON("example.com/m/a", "/snap/a", true, false),
+				pkgJSON("example.com/m/b", "/snap/b", true, false),
+			))}
+		}
+		return runner.Result{}
+	}}
+	built, coverDir := coverOptions(t, f)
+	opts, sink := traced(t, f, built)
+
+	bins, err := execute.BuildTestBinaries(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("BuildTestBinaries: %v", err)
+	}
+	if _, err := execute.CollectCoverage(t.Context(), opts, bins, coverDir); err != nil {
+		t.Fatalf("CollectCoverage: %v", err)
+	}
+
+	var got []string
+	for _, event := range eventsOf(sink, trace.TypeExec) {
+		if event.Exec.Kind == trace.ExecKindCoverageRun {
+			got = append(got, event.Exec.Subject)
+		}
+	}
+	if want := []string{"example.com/m/a", "example.com/m/b"}; !slices.Equal(got, want) {
+		t.Errorf("the coverage runs are about %q, want one per binary, named by its package %q", got, want)
 	}
 }

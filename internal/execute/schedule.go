@@ -14,12 +14,24 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // retryWorker is the worker number reported for the serial retry pass. Zero is
 // honest rather than arbitrary: the retry runs one mutant at a time with
 // nothing else in flight, so there is exactly one worker and it is the first.
 const retryWorker = 0
+
+// The attempt numbers the two passes record. They are the passes themselves
+// rather than a counter, because that is what makes an attempt readable
+// without its neighbours: attempt 1 is the concurrent pass, on a machine with
+// everything else running, and attempt 2 is the serial retry on a quiet one —
+// which is the whole reason a mutant that timed out once is not yet a
+// detection.
+const (
+	mainAttempt  = 1
+	retryAttempt = 2
+)
 
 // Hooks are the callbacks [Schedule] publishes progress through.
 //
@@ -181,6 +193,7 @@ func Schedule(
 				hooks.start(mutants[i].ID, worker)
 				attempt := RunOne(ctx, workerOpts, mutants[i], bins)
 				record(&results[i], attempt)
+				opts.Trace.MutantExec(attemptRecord(mutants[i], attempt, mainAttempt, worker))
 
 				if attempt.Outcome == mutation.OutcomeTimedOut {
 					// Not a result. The retry pass decides.
@@ -196,6 +209,17 @@ func Schedule(
 
 	retryOpts := opts
 	retryOpts.ScratchDir = workerScratchDir(opts.ScratchDir, retryWorker)
+	// Timed once it has something to do. The retry is the one part of an
+	// execution phase that is deliberately serial, so on a queue full of
+	// timeouts it is where the wall-clock time of a run goes — and a stage in
+	// every recording of every run, most of them empty, is a line a reader
+	// learns to skip past the one time it mattered.
+	retried := heldBack(pending)
+	retryStage := func(string) {}
+	if retried > 0 {
+		retryStage = opts.Trace.Stage("retry", countNoun(retried, "timeout"))
+	}
+	skipped := false
 	for i := range mutants {
 		if !pending[i] {
 			continue
@@ -206,15 +230,24 @@ func Schedule(
 			// pretend the run measured something it did not.
 			results[i].Final = mutation.OutcomeNotRun
 			hooks.finish(results[i])
+			skipped = true
 			continue
 		}
 
 		hooks.start(mutants[i].ID, retryWorker)
 		attempt := RunOne(ctx, retryOpts, mutants[i], bins)
 		record(&results[i], attempt)
+		opts.Trace.MutantExec(attemptRecord(mutants[i], attempt, retryAttempt, retryWorker))
 		confirm(&results[i], attempt)
 		hooks.finish(results[i])
 	}
+	// Succeeded says the pass ran to its end, which it does whether or not the
+	// retries reproduced anything: what each one decided is the attempt's own
+	// event, and a stage that reported a mutant's verdict would be a second,
+	// coarser answer to a question already answered. A pass a cancellation left
+	// mutants unretried in did not do the one thing it exists for — those
+	// mutants stay not-run — and says so.
+	retryStage(stageResult(skipped))
 
 	if ctx.Err() != nil {
 		interrupted := &Error{
@@ -235,6 +268,64 @@ func Schedule(
 		return results, interrupted
 	}
 	return results, nil
+}
+
+// attemptRecord is one attempt as the recording holds it.
+//
+// It is built whether or not there is a recorder, because a nil recorder is the
+// disabled trace and the branch that skipped this would be a second path
+// through the scheduler for a verdict to come to depend on. What it costs is
+// one struct per attempt, against a child process.
+//
+// The outcome is spelled with [mutation.Outcome]'s own name, which is the one
+// the report and the cache already use: a trace and a report saying different
+// words about one mutant would be two vocabularies to reconcile for no gain.
+func attemptRecord(m MutantRun, attempt Attempt, number, worker int) trace.MutantRecord {
+	record := trace.MutantRecord{
+		ID:        m.ID,
+		DisplayID: m.DisplayID,
+		Attempt:   number,
+		Worker:    worker,
+		Package:   m.Package,
+		TimeoutMS: m.Timeout.Milliseconds(),
+		// Cloned on the way in, for the reason [trace.Recorder.Exec] clones an
+		// argument vector: the record is handed to a sink that may keep it, and
+		// a caller may reuse a mutant's arguments for the retry.
+		Binaries:   slices.Clone(attempt.Binaries),
+		Args:       slices.Clone(m.Args),
+		ExecSeqs:   slices.Clone(attempt.ExecSeqs),
+		Outcome:    attempt.Outcome.String(),
+		KilledBy:   attempt.KilledBy,
+		DurationMS: attempt.Duration.Milliseconds(),
+		// The deciding binary's tail. A sink writing to disk keeps it, and the
+		// bounded ring drops it, so the recording of a long run stays bounded
+		// while the one on disk stays readable.
+		OutputTail: attempt.OutputTail,
+	}
+	if attempt.Err != nil {
+		record.Error = attempt.Err.Error()
+	}
+	return record
+}
+
+// stageResult is what the retry pass came to: failed when it left a mutant
+// unretried, succeeded when it reached every one of them.
+func stageResult(skipped bool) string {
+	if skipped {
+		return trace.ResultFailed
+	}
+	return trace.ResultSucceeded
+}
+
+// heldBack is how many mutants the main pass left for the retry.
+func heldBack(pending []bool) int {
+	n := 0
+	for _, held := range pending {
+		if held {
+			n++
+		}
+	}
+	return n
 }
 
 // cutOff returns the failure of an attempt the cancellation ended, or nil when

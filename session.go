@@ -913,10 +913,12 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		}
 	}
 	attempt := execute.RunOne(ctx, opts, execute.MutantRun{
-		ID:       mutant.ID,
-		Timeout:  timeout,
-		Binaries: binaryIndexes,
-		Args:     targetArgs,
+		ID:        mutant.ID,
+		DisplayID: mutant.DisplayID,
+		Package:   s.packageOf(mutant),
+		Timeout:   timeout,
+		Binaries:  binaryIndexes,
+		Args:      targetArgs,
 	}, runBinaries)
 	artifacts, artifactErr := captureFuzzArtifacts(artifactRoot)
 	result := MutantResult{
@@ -938,6 +940,26 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return result, fmt.Errorf("gomutants: session exec: %w", err)
 	}
 	return result, nil
+}
+
+// packageOf is the import path of the package a catalogued mutant sits in, for
+// the recording of an execution.
+//
+// It comes from the public catalogue because that is where discovery's answer
+// is kept: the internal mutant carries a module-relative *path*, and a path is
+// not an import path. The lookup is by dense index, which is the order
+// [makeCatalog] built the public catalogue in, and it verifies the identity it
+// landed on rather than trusting that order — a mismatch answers "no package"
+// instead of naming somebody else's.
+func (s *Session) packageOf(m mutation.Mutant) string {
+	if int(m.Index) >= len(s.publicCatalog.Mutants) {
+		return ""
+	}
+	public := s.publicCatalog.Mutants[m.Index]
+	if public.ID != m.ID {
+		return ""
+	}
+	return public.Package
 }
 
 // Probe runs one test or fuzz target against the session's probe tree and

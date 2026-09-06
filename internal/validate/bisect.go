@@ -24,6 +24,21 @@ const linearThreshold = 4
 type verdict struct {
 	failed bool
 	output string
+	// execSeq is the `exec` event the compile was recorded at, or zero when
+	// nothing recorded it. It rides on the verdict because the build is made
+	// behind a seam a fake also sits behind, and a step that pointed at the
+	// command underneath it would otherwise have to reach past the seam to find
+	// it.
+	execSeq int64
+	// blamed are the undecided files a failing build pointed at, in the order
+	// the search will take them, and nil for a build that was not asked the
+	// question — one that compiled, or a trial build inside an isolation.
+	//
+	// It is carried rather than derived twice. Reading it costs a parse of the
+	// compiler's whole output, and both the recording of the build and the
+	// search's next step want the same answer, so the answer is computed where
+	// the build is and travels with it.
+	blamed []string
 }
 
 // A probe rebuilds one file with a subset of its candidates and reports whether

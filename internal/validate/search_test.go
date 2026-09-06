@@ -7,11 +7,14 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // TestSearch drives the whole phase — first build, pristine gate, per-file
@@ -140,14 +143,25 @@ func TestSearch(t *testing.T) {
 			tree.brokenAlways = c.brokenAlways
 			tree.brokenFrom = c.brokenFrom
 
+			recorder, sink := recording(t)
 			v := &validator{
-				root:   posixRoot,
-				paths:  tree.paths,
-				byPath: tree.byPath,
-				apply:  tree.apply,
-				build:  tree.build,
+				root:     posixRoot,
+				paths:    tree.paths,
+				byPath:   tree.byPath,
+				apply:    tree.apply,
+				build:    tree.build,
+				recorder: recorder,
 			}
 			rejected, err := v.search(t.Context())
+
+			// Every build the phase spent is one line of its account of
+			// itself. The count is asserted for every case here rather than
+			// in one test of its own, because a build that goes unrecorded is
+			// invisible in exactly the run somebody is trying to explain.
+			if got := len(opsOf(sink, trace.ValidateOpBuild)); got != tree.builds {
+				t.Errorf("the recording holds %d build events, want the %d builds the search spent",
+					got, tree.builds)
+			}
 
 			if got := CodeOf(err); got != c.wantCode {
 				t.Fatalf("search failed with %q, want %q: %v", got, c.wantCode, err)
@@ -198,6 +212,193 @@ func TestSearchAcceptsEverythingInOneBuild(t *testing.T) {
 	if tree.applies != 0 {
 		t.Errorf("search rewrote %d files on the fast path, want none", tree.applies)
 	}
+}
+
+// TestSearchRecordsEveryBuildIsolationAndRejection is what a reader of a
+// validation that dropped a mutant has to be able to reconstruct.
+//
+// A rejection is an ordinary outcome of the design and the run carries on past
+// it, so the only place the reasoning survives is the recording: which builds
+// were spent, which file was searched and what it offered, which candidate was
+// condemned and what the compiler said about it. Without it a user sees one
+// mutant fewer in a report and has nothing to ask about it.
+func TestSearchRecordsEveryBuildIsolationAndRejection(t *testing.T) {
+	t.Parallel()
+
+	tree := newFakeTree(t, []fakeFile{{"a.go", 10}})
+	tree.bad = indexSet([]int{6})
+	recorder, sink := recording(t)
+	v := &validator{
+		root:     posixRoot,
+		paths:    tree.paths,
+		byPath:   tree.byPath,
+		apply:    tree.apply,
+		build:    tree.build,
+		recorder: recorder,
+	}
+
+	rejected, err := v.search(t.Context())
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if got := positionsOf(mutantsOf(rejected)); !slices.Equal(got, []int{6}) {
+		t.Fatalf("rejected %v, want the one bad candidate", got)
+	}
+
+	builds := opsOf(sink, trace.ValidateOpBuild)
+	if len(builds) != tree.builds {
+		t.Fatalf("the recording holds %d build events, want the %d the search spent", len(builds), tree.builds)
+	}
+	for i, record := range builds {
+		if record.Build != i+1 {
+			t.Errorf("build event %d is numbered %d, want %d", i, record.Build, i+1)
+		}
+		// The compile the step ran, so a step and the command underneath it
+		// are one thing in the stream.
+		if want := tree.execSeq(i + 1); record.ExecSeq != want {
+			t.Errorf("build %d points at exec %d, want %d", record.Build, record.ExecSeq, want)
+		}
+		if record.Tree != trace.ValidateTreeMutant {
+			t.Errorf("build %d is about the %q tree, want %q", record.Build, record.Tree, trace.ValidateTreeMutant)
+		}
+	}
+
+	if gates := opsOf(sink, trace.ValidateOpGate); len(gates) != 1 || gates[0].Failed {
+		t.Errorf("the recording holds %+v for the gate, want exactly one that passed", gates)
+	}
+
+	// Which isolation spent which build. The three builds about the tree as a
+	// whole — the first, the gate, and the one that closes the round — name no
+	// file, and everything between them was spent asking one file a question.
+	if len(builds) < 4 {
+		t.Fatalf("the search spent %d builds, want the whole-tree ones and the isolation's", len(builds))
+	}
+	for _, i := range []int{0, 1, len(builds) - 1} {
+		if builds[i].Path != "" {
+			t.Errorf("build %d is about %q, want no file: it is a build of the whole tree",
+				builds[i].Build, builds[i].Path)
+		}
+	}
+	for _, record := range builds[2 : len(builds)-1] {
+		if record.Path != "a.go" {
+			t.Errorf("build %d is about %q, want the file being isolated %q", record.Build, record.Path, "a.go")
+		}
+	}
+
+	isolations := opsOf(sink, trace.ValidateOpIsolate)
+	if len(isolations) != 1 {
+		t.Fatalf("the recording holds %d isolate events, want the one file the search took", len(isolations))
+	}
+	if got := isolations[0]; got.Path != "a.go" || got.Candidates != 10 || got.Accepted != 9 {
+		t.Errorf("the isolation reads %+v, want a.go offering 10 and keeping 9", got)
+	}
+
+	rejects := opsOf(sink, trace.ValidateOpReject)
+	if len(rejects) != 1 {
+		t.Fatalf("the recording holds %d reject events, want one per condemned candidate", len(rejects))
+	}
+	if want := fmt.Sprintf("%064x", 6); rejects[0].MutantID != want {
+		t.Errorf("the rejection names %q, want the condemned mutant %q", rejects[0].MutantID, want)
+	}
+	if rejects[0].Path != "a.go" {
+		t.Errorf("the rejection is about %q, want %q", rejects[0].Path, "a.go")
+	}
+	// The first line of the build that condemned it, and no more: by the time
+	// the phase ends the tree compiles and that message exists nowhere else.
+	if got := rejects[0].Diagnostic; !strings.Contains(got, "cannot use guard") || strings.Contains(got, "\n") {
+		t.Errorf("the rejection quotes %q, want the first line of the condemning build", got)
+	}
+
+	done := opsOf(sink, trace.ValidateOpDone)
+	if len(done) != 1 {
+		t.Fatalf("the recording holds %d done events, want exactly one", len(done))
+	}
+	if got := done[0]; got.Builds != tree.builds || got.Accepted != 9 || got.Rejected != 1 {
+		t.Errorf("the phase closed with %+v, want %d builds, 9 accepted and 1 rejected", got, tree.builds)
+	}
+}
+
+// TestSearchRecordsTheGateWhenTheTreeIsBrokenWithoutMutants records the one
+// failure this phase refuses to blame on a candidate.
+//
+// A tree that does not build with every guard removed was broken before
+// go-mutants touched it, and the gate is what establishes that. It is the
+// difference between "your code does not compile" and "go-mutants rejected
+// eleven mutants", and a recording that did not hold it would leave a reader
+// with an error message and no evidence for it.
+func TestSearchRecordsTheGateWhenTheTreeIsBrokenWithoutMutants(t *testing.T) {
+	t.Parallel()
+
+	tree := newFakeTree(t, []fakeFile{{"a.go", 4}})
+	tree.brokenAlways = true
+	recorder, sink := recording(t)
+	v := &validator{
+		root:     posixRoot,
+		paths:    tree.paths,
+		byPath:   tree.byPath,
+		apply:    tree.apply,
+		build:    tree.build,
+		recorder: recorder,
+	}
+
+	if _, err := v.search(t.Context()); CodeOf(err) != CodeNotMutantInduced {
+		t.Fatalf("search failed with %q, want %q: %v", CodeOf(err), CodeNotMutantInduced, err)
+	}
+
+	gates := opsOf(sink, trace.ValidateOpGate)
+	if len(gates) != 1 {
+		t.Fatalf("the recording holds %d gate events, want exactly one", len(gates))
+	}
+	if !gates[0].Failed {
+		t.Errorf("the gate reads %+v, want the failure that stopped the phase", gates[0])
+	}
+
+	// The gate build names nobody. It is a build of the tree with every guard
+	// removed, so the files the compiler pointed at are not a list of where to
+	// search — there is nothing to search, which is the whole finding — and a
+	// `blamed` there would read as candidates about to be condemned.
+	builds := opsOf(sink, trace.ValidateOpBuild)
+	if len(builds) != 2 {
+		t.Fatalf("the recording holds %d build events, want the first and the gate", len(builds))
+	}
+	if got := builds[1]; len(got.Blamed) != 0 || got.Pending != 0 {
+		t.Errorf("the gate's build reads %+v, want no blamed files and nothing pending", got)
+	}
+	if got := opsOf(sink, trace.ValidateOpDone); len(got) != 0 {
+		t.Errorf("the recording closes with %+v, want nothing: the phase decided nothing", got)
+	}
+	for _, op := range []string{trace.ValidateOpIsolate, trace.ValidateOpReject} {
+		if got := opsOf(sink, op); len(got) != 0 {
+			t.Errorf("the recording holds %d %s events, want none: nothing was bisected", len(got), op)
+		}
+	}
+}
+
+// recording opens a recorder over an unbounded ring and returns both.
+func recording(t *testing.T) (*trace.Recorder, *trace.MemorySink) {
+	t.Helper()
+	sink := trace.NewMemorySink(0)
+	recorder := trace.New(sink, time.Now, trace.StartRecord{
+		Kind:        trace.StartKindRun,
+		ToolVersion: "test",
+		PID:         os.Getpid(),
+		Root:        t.TempDir(),
+	})
+	if recorder == nil {
+		t.Fatal("trace.New returned no recorder for a real sink")
+	}
+	return recorder, sink
+}
+
+// opsOf returns the validation steps of one kind the sink kept, in order.
+func opsOf(sink *trace.MemorySink, op string) []trace.ValidateRecord {
+	var found []trace.ValidateRecord
+	for _, event := range sink.Events() {
+		if event.Validate != nil && event.Validate.Op == op {
+			found = append(found, *event.Validate)
+		}
+	}
+	return found
 }
 
 // A fakeFile is one catalogued file and how many candidates it holds.
@@ -274,14 +475,21 @@ func (f *fakeTree) apply(path string, subset []mutation.Mutant) error {
 	return nil
 }
 
+// execSeq is the sequence the nth build of this tree pretends its compile was
+// recorded at. It is deliberately not the build number: a step that copied the
+// wrong one of the two would still line up if they were equal.
+func (f *fakeTree) execSeq(build int) int64 { return int64(100 + build) }
+
 // build reports whether the tree as currently written compiles.
 func (f *fakeTree) build(context.Context) (verdict, error) {
 	f.builds++
+	seq := f.execSeq(f.builds)
 
 	if f.brokenAlways || (f.brokenFrom > 0 && f.builds >= f.brokenFrom) {
 		return verdict{
-			failed: true,
-			output: "# fixture.example/fake\n./unrelated.go:1:1: undefined: somethingElse\n",
+			failed:  true,
+			output:  "# fixture.example/fake\n./unrelated.go:1:1: undefined: somethingElse\n",
+			execSeq: seq,
 		}, nil
 	}
 
@@ -294,7 +502,7 @@ func (f *fakeTree) build(context.Context) (verdict, error) {
 		}
 	}
 	if len(failing) == 0 {
-		return verdict{}, nil
+		return verdict{execSeq: seq}, nil
 	}
 
 	var b strings.Builder
@@ -307,7 +515,7 @@ func (f *fakeTree) build(context.Context) (verdict, error) {
 		fmt.Fprintf(&b, "./%s:%d:9: cannot use guard (value of type bool) as Flag value in return statement\n",
 			path, m.Index+1)
 	}
-	return verdict{failed: true, output: b.String()}, nil
+	return verdict{failed: true, output: b.String(), execSeq: seq}, nil
 }
 
 // positions renders what the tree holds as catalogue indices per file.

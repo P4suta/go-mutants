@@ -282,6 +282,15 @@ command, and an unlabelled command is a recording that does not validate.
 `coverage-run` and `covdata-textfmt`, the pattern for `scope-list`, and absent
 where the kind says everything there is to say.
 
+A `probe-run` is the one kind whose subject is a fact about the *pass* rather
+than about the child: a probe pass is one measurement over the binaries it
+selected, all appending to one infection log that is read once at the end. So it
+names the import path when the pass was narrowed to a single binary — the pass
+is then a measurement of that package — and nothing when it ran several, where
+no single package names it and picking one of the set would be worse than
+naming none. Which binaries a pass ran is in its `probe-exec` event, in
+`binaries`.
+
 `output_truncated` and `output_path` describe a file, so they are set by the
 sink that wrote it and never by the code that recorded the command. A sink that
 keeps no file leaves both alone, and `trace.Digested` clears them along with the
