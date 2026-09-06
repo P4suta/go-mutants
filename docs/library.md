@@ -217,11 +217,23 @@ is the code's stated intent, not by those three.
   whose *mutation* does not compile; `Session.Probe` drops those indices, since
   an infection fact about a mutant nothing will execute licenses nothing and
   would contradict its own `Probed`.
-- The engine checks all of that before it returns the set. An index that
-  survives the filtering and is still out of order, out of range, or unprobed is
-  go-mutants contradicting itself, and `Session.Probe` fails with
-  `ErrProbeInconsistent` naming the index rather than returning a set. A caller
-  never has to defend against a malformed one.
+- The engine proves all of that before it returns the set, in **two validation
+  stages with the filtering between them**:
+  1. **The raw log**, as the probe runtime wrote it, must be strictly ascending
+     and inside the catalogue. This runs *first*, before anything is dropped,
+     because the filter has to tolerate an out-of-range index in order not to
+     panic on one — and an index past the end of the catalogue means the runtime
+     wrote about a catalogue that is not this one, which must not be mistaken
+     for an ordinary rejection.
+  2. **The indices of mutants the mutant tree rejected are dropped**, not
+     refused. A well-formed, in-range index naming a rejected mutant therefore
+     never produces an error; it is simply absent from the result.
+  3. **Every index that survives the filter** must name a mutant that is
+     `Probed`. An *accepted* mutant that is not probed is the catalogue and the
+     probe tree disagreeing, and there is no excuse for it.
+
+  A failure at stage 1 or 3 is `ErrProbeInconsistent` naming the index, and no
+  set is returned at all. A caller never has to defend against a malformed one.
 - `ExitCode` is 0 for a measured pass and `Duration` is non-negative.
 - `Output` is the bounded combined output of the binary that decided the pass —
   the failing one for `test-failed`, the last one for `measured`. It is there
@@ -586,10 +598,22 @@ answer moves, and its domain separator carries the version, so a v1 key can
 never be mistaken for a later one and both can sit in one store during a
 migration.
 
-Two preparations of the same tree produce the same value, in different
-temporary directories and on different machines: nothing in the recipe is a
-path — `WorkspaceDigest` names contents, `TestPackages` are import paths — and
-nothing in it is a wall-clock time.
+Two preparations produce the same value when **every hashed input agrees**, and
+that is the whole of the guarantee. What it rules out is incidental variation:
+nothing in the recipe is a path — `WorkspaceDigest` names contents, not
+locations, and `TestPackages` are import paths — and nothing in it is a
+wall-clock time or a process identifier. So the same tree prepared twice in two
+different temporary directories, by two different runs, hashes the same.
+
+Across machines the qualification bites, because `GoVersion` and `Toolchain` are
+in the recipe by design. The same source prepared under a different Go toolchain
+is a *different* prepared session and gets a different digest — deliberately,
+since a mutant's compilation and execution are the toolchain's behaviour, and
+evidence gathered under one is not evidence about the other. A consumer sharing
+a store between machines should therefore expect a miss when the toolchains
+differ, and must not read that miss as "the source changed". The same goes for
+`Profile` and the package set: a narrower preparation of one tree is not
+interchangeable with a wider one, and the digest says so.
 
 ## Selecting by line range
 

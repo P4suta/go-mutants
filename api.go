@@ -247,7 +247,11 @@ type Catalog struct {
 	//
 	// So it answers exactly one question — are these two runs looking at the
 	// same mutants? — and a consumer that needs "are these two prepared
-	// sessions interchangeable?" must hash the rest itself.
+	// sessions interchangeable?" wants [Catalog.PreparedDigest], which covers
+	// the rest of the preparation and carries a recipe version of its own.
+	// Hashing these fields into a key by hand is the thing PreparedDigest
+	// exists to stop: a recipe nobody versions goes on hitting the day the
+	// engine starts reporting something new about a prepared mutant.
 	Digest string
 	// PreparedDigest identifies the *prepared session*: everything that has to
 	// match before evidence gathered against one session may be reused against
@@ -547,14 +551,17 @@ type ProbeResult struct {
 	// infection fact about a mutant nothing will execute licenses no skipping,
 	// and leaving it in would contradict the very field a caller reads it by.
 	//
-	// Every claim above is checked before this set is returned — ascending, in
-	// range, and probed. An index that survives the filtering and still fails
-	// one of them is go-mutants contradicting itself, and [Session.Probe]
-	// reports it as [ErrProbeInconsistent] rather than returning the set. A
-	// caller therefore never has to defend against a malformed one, which is the
-	// point: a bounds check nobody writes is a bounds check nobody gets wrong,
-	// and a set the engine repaired in silence would arrive here as a
-	// measurement licensing skips it cannot justify.
+	// Every claim above is checked before this set is returned, in two stages
+	// with the filtering between them: the raw log must be ascending and in
+	// range, and every index that survives the filtering must be probed. An
+	// index that fails either is go-mutants contradicting itself, and
+	// [Session.Probe] reports it as [ErrProbeInconsistent] rather than returning
+	// the set. The dropped indices are the exception and not a failure: they
+	// name mutants the mutant tree rejected, which the probe tree was entitled
+	// to instrument. A caller therefore never has to defend against a malformed
+	// set, which is the point — a bounds check nobody writes is a bounds check
+	// nobody gets wrong, and a set the engine repaired in silence would arrive
+	// here as a measurement licensing skips it cannot justify.
 	Infected []uint32
 	// ExitCode is the status of the test binary that decided the pass.
 	ExitCode int

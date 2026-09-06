@@ -1003,13 +1003,30 @@ func (s *Session) packageOf(m mutation.Mutant) string {
 //
 // One error is not about the request or the machine at all.
 // [ErrProbeInconsistent] is returned when the log names an index this session's
-// catalogue cannot account for — out of order, past the end of the catalogue,
-// or naming a mutant [Mutant.Probed] reports as unprobed. Nothing a caller does
-// can cause it: the indices are go-mutants' own, written against the catalogue
-// go-mutants prepared, so it is the engine contradicting itself and the answer
-// is a bug report. It is an error rather than a repaired set because a repaired
-// set would be handed over as a measurement, and a measurement is a licence to
-// skip executions.
+// catalogue cannot account for. The set is examined in two stages, with the
+// filter that drops rejected mutants between them:
+//
+//   - The raw log must be strictly ascending and inside the catalogue. That is
+//     checked first, before anything is dropped, because the filter has to
+//     tolerate an out-of-range index in order not to panic on one — and an
+//     index past the end of the catalogue is the runtime writing about a
+//     catalogue that is not this one, which must not be mistaken for an
+//     ordinary rejection.
+//   - The indices of mutants the *mutant tree's* validation rejected are then
+//     dropped, not refused. That is the one surprising index which is no bug at
+//     all: the probe tree is instrumented from the whole catalogue, so its log
+//     legitimately names a site whose mutation did not compile. Such an index
+//     never produces this error, however well formed it is.
+//   - Every index that survives the filter must name a mutant [Mutant.Probed]
+//     reports as probed. An *accepted* mutant that is not probed is the
+//     catalogue and the probe tree disagreeing about a mutant neither has an
+//     excuse for.
+//
+// Nothing a caller does can cause any of that: the indices are go-mutants' own,
+// written against the catalogue go-mutants prepared, so it is the engine
+// contradicting itself and the answer is a bug report. It is an error rather
+// than a repaired set because a repaired set would be handed over as a
+// measurement, and a measurement is a licence to skip executions.
 //
 // Each call gets its own scratch directory and its own log, which is what makes
 // the answer a statement about this target and this call. Probe is safe to call

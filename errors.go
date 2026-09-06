@@ -59,8 +59,15 @@ var (
 	ErrMutantRejected = errors.New("mutant was rejected during validation")
 	// ErrProbeInconsistent reports a probe pass whose log named a mutant this
 	// session's catalogue cannot account for: an index out of order, an index
-	// past the end of the catalogue, or one naming a mutant [Mutant.Probed]
-	// reports as unprobed.
+	// past the end of the catalogue, or one naming an *accepted* mutant
+	// [Mutant.Probed] reports as unprobed.
+	//
+	// An index naming a mutant the mutant tree's validation *rejected* is not
+	// one of them. The probe tree is instrumented from the whole catalogue, so
+	// its log legitimately names a site whose mutation did not compile;
+	// [Session.Probe] drops that index rather than refusing the pass, and
+	// [Session.Probe]'s own documentation sets out the order the two checks and
+	// that filter run in.
 	//
 	// It is the one sentinel here that is never a caller's doing. The indices
 	// come from go-mutants' own probe runtime, written against the catalogue
