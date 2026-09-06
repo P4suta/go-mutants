@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,6 +185,114 @@ func entries(t *testing.T, dir string) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// runDirNames lists the directories a go-mutants run creates directly under
+// dir, sorted, and says nothing about whatever else is in there.
+//
+// It takes no *testing.T and reports no error because it is called from an
+// event hook as well as from the test goroutine, and t.Fatalf off the test's
+// own goroutine is not allowed. A directory this test made itself and cannot
+// read fails the assertions below anyway: the names they look for are missing.
+func runDirNames(dir string) []string {
+	found, _ := os.ReadDir(dir)
+	var mine []string
+	for _, e := range found {
+		if e.IsDir() && strings.HasPrefix(e.Name(), runDirPrefix) {
+			mine = append(mine, e.Name())
+		}
+	}
+	slices.Sort(mine)
+	return mine
+}
+
+// runDirPrefix is what both names a run creates begin with — the snapshot's
+// and the scratch directory's — so one prefix answers for the pair.
+const runDirPrefix = "go-mutants-"
+
+// TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps is the whole of
+// [Options.TempDirectory]: the run copies into the parent it was given, sweeps
+// the orphans it finds there, and leaves the operating system's own temporary
+// directory alone.
+//
+// Both halves are asserted from the same run because they are the same promise.
+// A run that snapshotted into a named parent but swept the shared one would be
+// deleting directories on behalf of a caller who had just said where its
+// business was; a run that swept the named parent but copied into the shared
+// one would leave its debris where nobody had agreed to look for it.
+//
+// The process-wide temporary directory is redirected at a directory of this
+// test's own, which is what makes "the run created nothing there" checkable at
+// all: `go test ./...` has several packages writing into the real one at once,
+// and this is the one test in the package that cannot simply avoid the
+// question — it is about the difference between the two parents. That
+// redirection is a process-global, so this test does not run in parallel. Every
+// other test in the suite is free to take the option instead, which is the
+// point of it.
+func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
+	// Before the redirection, so that the history root and the parent below are
+	// this test's own directories rather than entries in the one being watched.
+	opts := options(t, "simple")
+	parent := t.TempDir()
+	system := privateTempDir(t)
+	opts.TempDirectory = parent
+
+	// A snapshot directory whose owner is gone: the leftovers of a run that was
+	// killed, and the only thing in a temporary directory a run may collect.
+	orphan := abandonedDirectory(t, parent, snapshot.DirPrefix+"orphan")
+	if before := runDirNames(system); len(before) != 0 {
+		t.Fatalf("the redirected temporary directory already held %v", before)
+	}
+
+	// Both parents are listed again while the run still has its directories
+	// open, because a run tidies up after itself: by the time Run returns, a
+	// snapshot taken in the wrong parent has been removed from it, and an
+	// after-the-fact listing of two empty directories proves nothing at all.
+	// The baseline is over once the snapshot and the scratch directory beside
+	// it both exist.
+	var duringMine, duringSystem []string
+	saw := func(e Event) {
+		if _, ok := e.(BaselineCompleted); !ok {
+			return
+		}
+		duringMine = runDirNames(parent)
+		duringSystem = runDirNames(system)
+	}
+	outcome, _, err := watch(t, t.Context(), opts, saw)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
+	}
+
+	if len(duringMine) != 2 {
+		t.Errorf("the temporary directory the run was given held %v mid-run, "+
+			"want the snapshot and the scratch directory beside it", duringMine)
+	}
+	if len(duringSystem) != 0 {
+		t.Errorf("the run put %v in the operating system's temporary directory, "+
+			"which it was told nothing about", duringSystem)
+	}
+
+	owned := filepath.Dir(outcome.SnapshotRoot)
+	if filepath.Base(outcome.SnapshotRoot) != snapshot.TreeName || filepath.Dir(owned) != parent {
+		t.Errorf("the snapshot was created at %s, want %s below a directory the run owns in %s",
+			outcome.SnapshotRoot, snapshot.TreeName, parent)
+	}
+	if _, statErr := os.Stat(orphan); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("the orphan %s in the run's own temporary directory was not swept (stat error %v)",
+			orphan, statErr)
+	}
+	if left := entries(t, parent); len(left) != 0 {
+		t.Errorf("the run left %v behind in the temporary directory it was given", left)
+	}
+	if after := runDirNames(system); len(after) != 0 {
+		t.Errorf("the run left %v in the operating system's temporary directory", after)
+	}
+	if len(outcome.Warnings) != 0 {
+		t.Errorf("a clean run published %v", outcome.Warnings)
+	}
 }
 
 func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {

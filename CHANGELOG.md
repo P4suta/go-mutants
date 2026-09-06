@@ -14,6 +14,29 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`engine.Options.TempDirectory`: a run can name the parent of its own
+  temporary directories.** The engine put its snapshot, and the scratch
+  directory beside it, under `os.TempDir()`, and swept that same directory for
+  the leftovers of runs that had been killed. Neither was a decision the caller
+  could take any part in, so the only way the engine's own tests could keep
+  their snapshots private was to point `TMPDIR`, `TMP` and `TEMP` somewhere of
+  their own — a process-wide global, which is why every one of those tests had
+  to hold it alone and none of them could run in parallel.
+
+  It mirrors `OpenOptions.TempDirectory` in the root package: the snapshot
+  lands there, the scratch directory is created beside the snapshot and so
+  lands there too, and the sweep only ever collects under it. Empty is
+  `os.TempDir()`, which is what `go-mutants run` passes and therefore what
+  every real run still does, and a relative path is resolved against the
+  working directory rather than refused, because internal/snapshot and the
+  sweep both read it against that same directory.
+
+  The sweep is the half that is more than a convenience. A collector that
+  deletes directories is one a caller has to be able to point at a parent it
+  owns, rather than one turned loose on a directory shared with the whole
+  machine: sweep only a named parent. Nothing changes for the run's children —
+  their `TMPDIR`, `TMP` and `TEMP` still point at a per-worker directory under
+  the run's scratch, wherever that scratch now sits.
 - **One shared, hermetic test harness in `internal/testkit`, and a test that
   keeps production code out of it.** Every helper it holds existed three or four
   times before, and the copies disagreed — which is how the suites came to
