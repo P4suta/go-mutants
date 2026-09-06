@@ -390,9 +390,40 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	if err != nil {
 		return nil, s.abandon(&Error{Code: CodeCopy, Path: failedPath, Message: "cannot copy the file into the snapshot", Err: err})
 	}
+	// Directory times come last, because writing a file into a directory
+	// updates it. Deepest first, so that stamping a parent is not undone by
+	// stamping the child inside it. Like the file times, this exists so the go
+	// command sees a tree that looks its age rather than one that looks new.
+	if failedPath, err := stampDirectoryTimes(w.dirs, absSrc, s.Root); err != nil {
+		return nil, s.abandon(&Error{Code: CodeCopy, Path: failedPath, Message: "cannot set the directory's times in the snapshot", Err: err})
+	}
 	s.Manifest = entries
 	s.WorkspaceDigest = WorkspaceDigest(entries)
 	return s, nil
+}
+
+func stampDirectoryTimes(dirs []record, sourceRoot, root string) (string, error) {
+	for index := len(dirs) - 1; index >= 0; index-- {
+		if err := stampOneDirectory(dirs[index].abs, filepath.Join(root, filepath.FromSlash(dirs[index].rel))); err != nil {
+			return dirs[index].rel, err
+		}
+	}
+	// The root is not among the walked directories — the walk starts inside it
+	// — and it holds the top-level packages, so it needs the same stamp last of
+	// all, once everything written into it is done.
+	if err := stampOneDirectory(sourceRoot, root); err != nil {
+		return ".", err
+	}
+	return "", nil
+}
+
+func stampOneDirectory(source, target string) error {
+	info, err := os.Stat(extendedPath(source))
+	if err != nil {
+		return err
+	}
+	modified := info.ModTime()
+	return os.Chtimes(extendedPath(target), modified, modified)
 }
 
 type snapshotFileCopy func(string, string, fs.FileMode) (int64, string, error)
@@ -692,6 +723,12 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
+	sourceInfo, err := in.Stat()
+	if err != nil {
+		_ = in.Close()
+		return 0, "", err
+	}
+	modified := sourceInfo.ModTime()
 	// A read handle that fails to close has nothing to report: no data was at
 	// risk, and the copy either produced the right digest or did not.
 	defer func() { _ = in.Close() }()
@@ -735,6 +772,16 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	// a truncated file whose digest was computed from the bytes we meant to
 	// write would be a snapshot that lies about itself.
 	if err := out.Close(); err != nil {
+		return 0, "", err
+	}
+	// The copy carries the source's modification time because the go command
+	// reads it. cmd/go only caches a package directory's index when every file
+	// in it is at least a couple of seconds old, so a tree whose files were all
+	// stamped "now" is re-indexed by every `go list` and re-read by every
+	// build — the snapshot pays for being new rather than for being different.
+	// The digest is taken from the bytes, so nothing about the snapshot's
+	// identity depends on this; only how much work the toolchain repeats does.
+	if err := os.Chtimes(extendedPath(dst), modified, modified); err != nil {
 		return 0, "", err
 	}
 	return size, hex.EncodeToString(h.Sum(nil)), nil

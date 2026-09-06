@@ -1091,6 +1091,18 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **A snapshot now carries the modification times of the tree it copied.**
+  Every file and directory landed stamped "now", which is not what the go
+  command expects of a tree it is asked to build. cmd/go caches a package
+  directory's index only when the directory has been still for a couple of
+  seconds, so a freshly stamped snapshot is re-indexed by every `go list` and
+  every load that follows it — the tree pays for looking new rather than for
+  being different. The digest is taken from the bytes, so nothing about a
+  snapshot's identity depends on this; only how much work the toolchain repeats
+  does. Directory times are set after the files inside them, deepest first,
+  since writing a file into a directory updates it. Measured on a consumer's
+  scoped verification, discovery and the two preparation builds fell from a
+  combined 3.01s to 2.39s on one pair of runs and 2.42s to 2.33s on the next.
 - **`Prepare` overlaps its independent phases, and `PrepareEvent` now says
   so.** The main and probe binaries do not read each other's output, so
   compiling one after the other spent wall time on an order neither of them
