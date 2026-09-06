@@ -14,6 +14,12 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`Workspace.ToolchainVersion()`.** A workspace already resolves the
+  toolchain it froze the module against, and every consumer that needed the
+  version was running its own `go version` to learn something the workspace was
+  holding. It is exposed as the resolved raw version string, empty on a nil
+  workspace, so a caller pays for that resolution once per workspace rather
+  than once per command that asks.
 - **Concurrent, isolated `Workspace.Exec` controls with a snapshot-integrity
   gate.** Engine consumers may now run independent pre-preparation build and
   baseline commands concurrently. Every call gets a private `TMP`, `TEMP` and
@@ -1085,6 +1091,24 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **`Prepare` overlaps its independent phases, and `PrepareEvent` now says
+  so.** The main and probe binaries do not read each other's output, so
+  compiling one after the other spent wall time on an order neither of them
+  needed. Events are still emitted synchronously, callbacks are still
+  serialized, and every phase still starts before it finishes — but two phases
+  may now be open at once, so a consumer that assumed a start always followed
+  the previous phase's finish must read the phase rather than the order. The
+  prepared trees, digests and catalogue are unchanged.
+- **Preparation builds its reusable binaries from source overlays and copies
+  the frozen tree in parallel.** These are costs a first verification pays
+  before it can say anything at all. The binaries were compiled from separately
+  materialized trees when a source overlay already describes the same program
+  to the go command, and the deterministic tree copy walked one file at a time
+  while the other cores sat idle. The copy fans out over `GOMAXPROCS` workers
+  and writes each result into its own slot, so the manifest order and the
+  digests it produces remain exactly what a serial copy produced. On the
+  repository this was measured against, the snapshot copy fell from roughly
+  22-24 ms to 8-10 ms.
 - A snapshot's copy of the module now lives in `tree` inside the directory
   go-mutants creates for it, rather than at the top of it. The ownership files
   described above need somewhere to live, and it cannot be beside the sources:
