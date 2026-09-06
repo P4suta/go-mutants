@@ -512,13 +512,18 @@ type probeTreeOptions struct {
 // failing target as "no facts", so a suite-wide gate here would buy a guarantee
 // the per-call rule already gives and cost a full test run to get it.
 //
-// Probed is the conjunction of two things and not either alone. The mutant must
-// have a probe form — [instrument.Hints.Probes] — because a mutant with none
-// leaves its file untouched and is therefore *accepted* by this validation
-// exactly as a probed one is; and its site must have survived that validation,
-// because a probe that did not compile was bisected back out of the tree.
-// Reading either half as the whole would mark a mutant nothing can record as
-// one whose silence means something.
+// The probed map this returns is the probe tree's own two-clause answer, and
+// not the whole of [Mutant.Probed]. The mutant must have a probe form —
+// [instrument.Hints.Probes] — because a mutant with none leaves its file
+// untouched and is therefore *accepted* by this validation exactly as a probed
+// one is; and its site must have survived that validation, because a probe that
+// did not compile was bisected back out of the tree. Reading either half as the
+// whole would mark a mutant nothing can record as one whose silence means
+// something.
+//
+// The third clause belongs to the mutant tree and is applied by [makeCatalog],
+// which conjoins acceptance: this function cannot see that verdict, because it
+// runs alongside the validation that produces it.
 func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 	execute.Options, []execute.TestBinary, map[string]bool, string, error,
 ) {
@@ -1041,11 +1046,50 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	}
 	return ProbeResult{
 		Outcome:  ProbeOutcome(attempt.Outcome),
-		Infected: attempt.Infected,
+		Infected: filterInfected(attempt.Infected, s.publicCatalog.Mutants),
 		ExitCode: attempt.ExitCode,
 		Duration: attempt.Duration,
 		Output:   slices.Clone(attempt.Output),
 	}, nil
+}
+
+// filterInfected drops the indices of mutants the mutant tree's validation
+// rejected.
+//
+// The probe tree is instrumented from the *whole* catalogue, and its validation
+// is an independent pass over a different tree: the probe rewrite at a site is
+// a different edit from the mutation there, so a site whose probe compiles
+// while its mutation does not is instrumented, is reached, and records. The log
+// can therefore name a mutant [Session.Exec] would refuse to run.
+//
+// Two contract claims meet here, and the catalogue alone can keep only one of
+// them. [Mutant.Probed] is false for such a mutant, because a probe status on
+// something nothing will execute is a statement about a run that cannot happen
+// — while the consumer's rule reads an index in [ProbeResult.Infected] as a
+// mutant it may look up and act on. Left in, the index would contradict the
+// field that is supposed to explain it. Filtering is the reconciliation, and it
+// happens here rather than by instrumenting the probe tree differently because
+// that tree is built alongside validation rather than after it: making its
+// contents depend on the mutant tree's compiler would serialise two phases that
+// currently run at once, to drop indices a slice skip drops.
+//
+// Order is preserved, so an ascending set stays ascending. Nil stays nil: nil
+// is "no facts" and the empty set is "nothing was infected", and those two must
+// not become each other here of all places.
+func filterInfected(indices []uint32, mutants []Mutant) []uint32 {
+	if indices == nil {
+		return nil
+	}
+	kept := make([]uint32, 0, len(indices))
+	for _, index := range indices {
+		// The bounds check cannot fire today — instrument.ReadInfectionLog
+		// refuses a log naming an index outside the catalogue it was written
+		// for — and it is here so this function cannot panic on one.
+		if uint64(index) < uint64(len(mutants)) && mutants[index].Accepted {
+			kept = append(kept, index)
+		}
+	}
+	return kept
 }
 
 func hasFuzzTarget(arguments []string) bool {
@@ -1357,7 +1401,15 @@ func makeCatalog(
 			Replacement:  internal.Replacement,
 			Accepted:     accepted[internal.ID],
 			Branch:       publicBranch(where.Branch),
-			Probed:       probed[internal.ID],
+			// The conjunction, not the probe tree's answer alone. The two
+			// validations are independent passes over two trees, and the probe
+			// rewrite at a site is a different edit from the mutation there, so
+			// a site whose probe compiles while its mutant does not is an
+			// ordinary outcome rather than a contradiction. But a rejected
+			// mutant is never executed: "the probe tree speaks for it" would be
+			// a statement about a run that cannot happen, and a consumer reads
+			// Probed as a fact about the executions it may skip.
+			Probed: probed[internal.ID] && accepted[internal.ID],
 		}
 		mutants = append(mutants, public)
 		byID[public.ID] = public

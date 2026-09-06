@@ -47,11 +47,24 @@ var (
 	_ func(*gomutants.Workspace, context.Context, gomutants.Command) (gomutants.CommandResult, error) = (*gomutants.Workspace).Exec
 	_ func(*gomutants.Workspace, context.Context, gomutants.PrepareOptions) (*gomutants.Session, error) = (*gomutants.Workspace).Prepare
 	_ func(*gomutants.Workspace) error = (*gomutants.Workspace).Close
+	_ func(*gomutants.Workspace) gomutants.SweepResult = (*gomutants.Workspace).Swept
+	_ func(*gomutants.Workspace) []string = (*gomutants.Workspace).Preserved
+	_ func(*gomutants.Workspace) string = (*gomutants.Workspace).ToolchainVersion
 	_ func(*gomutants.Session) gomutants.Catalog = (*gomutants.Session).Catalog
 	_ func(*gomutants.Session, context.Context, gomutants.ExecRequest) (gomutants.MutantResult, error) = (*gomutants.Session).Exec
 	_ func(*gomutants.Session, context.Context, gomutants.ProbeRequest) (gomutants.ProbeResult, error) = (*gomutants.Session).Probe
 	_ func(*gomutants.Session) ([]gomutants.Change, error) = (*gomutants.Session).Changes
 	_ func(*gomutants.Session) error = (*gomutants.Session).Close
+
+	// The phase vocabulary is open, so a consumer that keeps a closed schema of
+	// its own has to be able to read the list this build emits rather than
+	// hard-code it. Pinning the function here is what makes that possible from
+	// outside the module.
+	_ func() []gomutants.PreparePhase = gomutants.KnownPreparePhases
+
+	// PrepareOptions.Trace is part of the contract as a type and not only as a
+	// name: a consumer stores its own recorder in it.
+	_ func(gomutants.PrepareEvent) = gomutants.PrepareOptions{}.Trace
 )
 
 func TestPublicDataTypes(t *testing.T) {
@@ -59,14 +72,9 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.Command{}
 	_ = gomutants.CommandResult{}
 	_ = gomutants.PrepareEvent{}
-	_ = gomutants.PreparePhaseDiscovery
-	_ = gomutants.PrepareEventStarted
-	_ = gomutants.PreparePhaseSucceeded
 	_ = gomutants.PrepareOptions{}
 	_ = gomutants.Catalog{}
 	_ = gomutants.Mutant{}
-	_ = gomutants.BranchProof{}
-	_ = gomutants.BranchDecreasing
 	_ = gomutants.Rejection{}
 	_ = gomutants.ExecRequest{}
 	_ = gomutants.MutantResult{}
@@ -74,13 +82,68 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.ProbeResult{}
 	_ = gomutants.Artifact{}
 	_ = gomutants.Change{}
-	_ = gomutants.OutcomeKilled
-	_ = gomutants.ProbeMeasured
-	_ = gomutants.ProbeTestFailed
-	_ = gomutants.ProbeTimedOut
-	_ = gomutants.ProbeUnavailable
 	_ = gomutants.ErrProbeNotPrepared
-	_ = gomutants.ChangeAdded
+
+	// The named fields, not only the type: a consumer reads these by name and a
+	// rename is a breaking change whatever the shape of the struct stays.
+	_ = gomutants.SweepResult{
+		Removed:      nil,
+		RemovedBytes: 0,
+		Live:         0,
+		Kept:         0,
+		Err:          nil,
+	}
+	_ = gomutants.BranchProof{
+		Direction:       gomutants.BranchDecreasing,
+		BodyStartLine:   0,
+		BodyStartColumn: 0,
+		BodyEndLine:     0,
+		BodyEndColumn:   0,
+	}
+
+	// Every phase this build emits. The vocabulary is open — a later engine may
+	// emit one that is not here — so a consumer keeping a closed schema pins
+	// the list rather than assuming it, and this is where the pin lives for a
+	// consumer that cannot see the engine's own tests.
+	_ = []gomutants.PreparePhase{
+		gomutants.PreparePhaseDiscovery,
+		gomutants.PreparePhaseProbeSnapshot,
+		gomutants.PreparePhaseMainValidation,
+		gomutants.PreparePhaseMainRestoration,
+		gomutants.PreparePhaseVerification,
+		gomutants.PreparePhaseBinaryBuild,
+		gomutants.PreparePhaseProbeValidation,
+		gomutants.PreparePhaseProbeCoverageBuild,
+		gomutants.PreparePhaseProbeRestoration,
+	}
+	_ = []gomutants.PrepareEventState{
+		gomutants.PrepareEventStarted,
+		gomutants.PrepareEventFinished,
+	}
+	_ = []gomutants.PreparePhaseResult{
+		gomutants.PreparePhaseSucceeded,
+		gomutants.PreparePhaseFailed,
+		gomutants.PreparePhaseSkipped,
+	}
+	_ = []gomutants.Outcome{
+		gomutants.OutcomeNotRun,
+		gomutants.OutcomeKilled,
+		gomutants.OutcomeSurvived,
+		gomutants.OutcomeTimedOut,
+		gomutants.OutcomeInconclusive,
+		gomutants.OutcomeErrored,
+	}
+	_ = []gomutants.ProbeOutcome{
+		gomutants.ProbeMeasured,
+		gomutants.ProbeTestFailed,
+		gomutants.ProbeTimedOut,
+		gomutants.ProbeUnavailable,
+	}
+	_ = []gomutants.ChangeKind{
+		gomutants.ChangeAdded,
+		gomutants.ChangeRemoved,
+		gomutants.ChangeModified,
+	}
 }
 `
 	compileConsumer(t, goBinary, map[string]string{
