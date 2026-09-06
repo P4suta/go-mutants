@@ -6,7 +6,9 @@ package execute_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -19,6 +21,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // attemptCounter counts how many attempts each mutant has had, so that a fake
@@ -888,5 +891,342 @@ func TestScheduleInterruptionNamesTheBinaryThatWasCutOff(t *testing.T) {
 	}
 	if results[0].Err != nil {
 		t.Errorf("the verdict carries %v, want none", results[0].Err)
+	}
+}
+
+// TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries is the claim
+// the whole recording of this phase rests on: one event per *attempt*, not per
+// mutant.
+//
+// A mutant that timed out and was retried is two measurements with two
+// durations, and collapsing them into the one verdict they produced is exactly
+// what makes a flaky suite unreadable after the fact. Each event names the
+// worker that ran it — which is what a reader with an overloaded machine is
+// looking for — the binaries the attempt tried, and the executions underneath
+// it, so the account of an attempt and the commands it issued are one thing.
+func TestScheduleRecordsOneMutantExecPerAttemptWithWorkerAndBinaries(t *testing.T) {
+	t.Parallel()
+
+	attempts := newAttemptCounter()
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		id := activeOf(c)
+		if id == "slow" && attempts.next(id) == 1 {
+			return timedOut()
+		}
+		if id == "slow" {
+			return failed("--- FAIL: TestSlow\n")
+		}
+		return passed()
+	}}
+	opts, sink := traced(t, f, options(f, 3))
+	// The scope the *binaries* were built from is deliberately several
+	// patterns, so that a `package` taken from it rather than from the mutant
+	// would be visibly wrong.
+	opts.Packages = []string{"./internal/...", "./cmd/..."}
+
+	queue := mutants(mutantTimeout, "quick", "slow", "steady")
+	queue[0].Package = "example.com/m/a"
+	queue[1].Package = "example.com/m/b"
+	// The third names none, which a caller that has no package for a mutant
+	// says by leaving it empty.
+
+	// The worker a mutant ran on is not this test's to predict, so it is taken
+	// from the hook that announces it: the event and the hook are two accounts
+	// of one attempt and have to agree.
+	var mu sync.Mutex
+	started := map[string][]int{}
+	hooks := execute.Hooks{Started: func(id string, worker int) {
+		mu.Lock()
+		defer mu.Unlock()
+		started[id] = append(started[id], worker)
+	}}
+
+	results, err := execute.Schedule(t.Context(), opts, queue, testBins("example.com/a"), hooks)
+	if err != nil {
+		t.Fatalf("scheduling: %v", err)
+	}
+	if got := results[1].Final; got != mutation.OutcomeInconclusive {
+		t.Fatalf("the retried mutant settled as %s, want %s", got, mutation.OutcomeInconclusive)
+	}
+
+	events := eventsOf(sink, trace.TypeMutantExec)
+	if len(events) != 4 {
+		t.Fatalf("the recording holds %d mutant-exec events, want one per attempt (3 mutants, one retried)",
+			len(events))
+	}
+
+	// The mutant's own package, verbatim, and nothing at all for the mutant
+	// that has none: `package` is a join key a consumer reads as an import
+	// path, and the test scope a run happens to have been given is not one.
+	packages := map[string]string{}
+	for _, event := range events {
+		packages[event.Mutant.ID] = event.Mutant.Package
+	}
+	want := map[string]string{"quick": "example.com/m/a", "slow": "example.com/m/b", "steady": ""}
+	if !maps.Equal(packages, want) {
+		t.Errorf("the attempts are about %v, want the mutants' own packages %v", packages, want)
+	}
+
+	byID := map[string][]*trace.MutantRecord{}
+	for _, event := range events {
+		if event.Mutant == nil {
+			t.Fatalf("a mutant-exec event carries no mutant payload: %+v", event)
+		}
+		byID[event.Mutant.ID] = append(byID[event.Mutant.ID], event.Mutant)
+	}
+	for id, records := range byID {
+		for i, record := range records {
+			if record.Attempt != i+1 {
+				t.Errorf("%s attempt %d is numbered %d, want %d", id, i+1, record.Attempt, i+1)
+			}
+			if want := started[id][i]; record.Worker != want {
+				t.Errorf("%s attempt %d says worker %d, want the %d the hook announced",
+					id, i+1, record.Worker, want)
+			}
+			if want := []string{"example.com/a"}; !slices.Equal(record.Binaries, want) {
+				t.Errorf("%s attempt %d ran %q, want %q", id, i+1, record.Binaries, want)
+			}
+			if len(record.ExecSeqs) != 1 {
+				t.Errorf("%s attempt %d points at %v, want the one execution it made", id, i+1, record.ExecSeqs)
+			}
+			if record.TimeoutMS != mutantTimeout.Milliseconds() {
+				t.Errorf("%s attempt %d was given %d ms, want %d", id, i+1, record.TimeoutMS,
+					mutantTimeout.Milliseconds())
+			}
+		}
+	}
+
+	slow := byID["slow"]
+	if len(slow) != 2 {
+		t.Fatalf("the retried mutant has %d events, want both attempts", len(slow))
+	}
+	if slow[0].Outcome != trace.OutcomeTimedOut || slow[1].Outcome != trace.OutcomeKilled {
+		t.Errorf("the retried mutant reads %q then %q, want %q then %q",
+			slow[0].Outcome, slow[1].Outcome, trace.OutcomeTimedOut, trace.OutcomeKilled)
+	}
+	for i, record := range slow {
+		if want := "example.com/a"; record.KilledBy != want {
+			t.Errorf("attempt %d says killed_by %q, want %q", i+1, record.KilledBy, want)
+		}
+	}
+
+	// Every sequence an attempt points at is an execution the recording holds,
+	// and every execution belongs to exactly one attempt.
+	var pointed []int64
+	for _, event := range events {
+		pointed = append(pointed, event.Mutant.ExecSeqs...)
+	}
+	slices.Sort(pointed)
+	if want := execSeqs(sink); !slices.Equal(pointed, want) {
+		t.Errorf("the attempts point at %v, want the recording's own executions %v", pointed, want)
+	}
+}
+
+// TestScheduleRecordsTheRetryPassAsAStage times the serial pass rather than
+// leaving it as a gap in the recording.
+//
+// The retry pass is the one part of an execution phase that is deliberately not
+// parallel, so on a queue with many timeouts it is where a run's wall-clock time
+// disappears — and to a reader of a recording that has no stage it looks like
+// the phase simply took longer for no reason. The detail says how much work the
+// pass was given, which is the number that explains the duration.
+func TestScheduleRecordsTheRetryPassAsAStage(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(context.Context, call) runner.Result { return timedOut() }}
+	opts, sink := traced(t, f, options(f, 2))
+
+	if _, err := execute.Schedule(t.Context(), opts,
+		mutants(mutantTimeout, "slow", "slower"), testBins("example.com/a"), execute.Hooks{}); err != nil {
+		t.Fatalf("scheduling: %v", err)
+	}
+
+	stages := eventsOf(sink, trace.TypeStage)
+	if len(stages) != 2 {
+		t.Fatalf("the recording holds %d stage events, want the retry pass's started/finished pair", len(stages))
+	}
+	for i, want := range []string{trace.StateStarted, trace.StateFinished} {
+		if stages[i].Stage.Name != "retry" {
+			t.Errorf("stage %d is named %q, want %q", i, stages[i].Stage.Name, "retry")
+		}
+		if stages[i].Stage.State != want {
+			t.Errorf("stage %d is %q, want %q", i, stages[i].Stage.State, want)
+		}
+	}
+	if got := stages[0].Stage.Detail; !strings.Contains(got, "2 timeouts") {
+		t.Errorf("the retry pass started with detail %q, want the number of timeouts it was given", got)
+	}
+	if got := stages[1].Stage.Result; got != trace.ResultSucceeded {
+		t.Errorf("the retry pass finished as %q, want %q", got, trace.ResultSucceeded)
+	}
+
+	// The retried attempts are inside the pair, which is what makes the stage a
+	// span rather than a label.
+	for _, event := range eventsOf(sink, trace.TypeMutantExec) {
+		if event.Mutant.Attempt != 2 {
+			continue
+		}
+		if event.Seq < stages[0].Seq || event.Seq > stages[1].Seq {
+			t.Errorf("a retried attempt was recorded at %d, outside the retry stage %d..%d",
+				event.Seq, stages[0].Seq, stages[1].Seq)
+		}
+	}
+}
+
+// TestScheduleRecordsARetryPassACancellationSkippedAsFailed is the other half
+// of the stage's result.
+//
+// A retry pass that was cut off left the very evidence it existed to gather
+// ungathered — the mutants it did not reach stay not-run — so reporting it as
+// succeeded would make a run stopped halfway read like a run that finished. The
+// stage is still a pair, because a step that started and was abandoned is
+// exactly what a reader needs to see.
+func TestScheduleRecordsARetryPassACancellationSkippedAsFailed(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	f := &fake{respond: func(context.Context, call) runner.Result {
+		// Timed out and, by the time the retry pass begins, cancelled.
+		cancel()
+		return timedOut()
+	}}
+	opts, sink := traced(t, f, options(f, 1))
+
+	results, err := execute.Schedule(ctx, opts,
+		mutants(mutantTimeout, "slow"), testBins("example.com/a"), execute.Hooks{})
+	if got := execute.CodeOf(err); got != execute.CodeInterrupted {
+		t.Fatalf("Schedule failed with %q, want %q: %v", got, execute.CodeInterrupted, err)
+	}
+	if got := results[0].Final; got != mutation.OutcomeNotRun {
+		t.Fatalf("the unretried mutant settled as %s, want %s", got, mutation.OutcomeNotRun)
+	}
+
+	stages := eventsOf(sink, trace.TypeStage)
+	if len(stages) != 2 {
+		t.Fatalf("the recording holds %d stage events, want the retry pass's started/finished pair", len(stages))
+	}
+	if got := stages[1].Stage.Result; got != trace.ResultFailed {
+		t.Errorf("the retry pass finished as %q, want %q: it never retried anything", got, trace.ResultFailed)
+	}
+}
+
+// TestScheduleRecordsARetryPassACancellationCutOffAsFailed is the same claim
+// about the retry that *did* start.
+//
+// A retry the signal killed mid-suite is not visible in the pass's own control
+// flow: the loop asked the context before starting it and got no cancellation,
+// and [RunOne] comes back with the not-run outcome rather than with an error.
+// The mutant is left exactly as unretried as one the pass never reached — its
+// timeout was never reproduced and its verdict is not-run — so the stage has to
+// close the same way, or a run stopped during its last retry would read as a
+// pass that finished.
+func TestScheduleRecordsARetryPassACancellationCutOffAsFailed(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	attempts := newAttemptCounter()
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if attempts.next(activeOf(c)) == 1 {
+			return timedOut()
+		}
+		// The retry started, and the signal arrived while it was running.
+		cancel()
+		return cancelled()
+	}}
+	opts, sink := traced(t, f, options(f, 1))
+
+	results, err := execute.Schedule(ctx, opts,
+		mutants(mutantTimeout, "slow"), testBins("example.com/a"), execute.Hooks{})
+	if got := execute.CodeOf(err); got != execute.CodeInterrupted {
+		t.Fatalf("Schedule failed with %q, want %q: %v", got, execute.CodeInterrupted, err)
+	}
+	if got := len(results[0].Attempts); got != 2 {
+		t.Fatalf("the mutant kept %d attempts, want the timeout and the retry that was cut off", got)
+	}
+	if got := results[0].Final; got != mutation.OutcomeNotRun {
+		t.Fatalf("the cut-off mutant settled as %s, want %s", got, mutation.OutcomeNotRun)
+	}
+
+	stages := eventsOf(sink, trace.TypeStage)
+	if len(stages) != 2 {
+		t.Fatalf("the recording holds %d stage events, want the retry pass's started/finished pair", len(stages))
+	}
+	if got := stages[1].Stage.Result; got != trace.ResultFailed {
+		t.Errorf("the retry pass finished as %q, want %q: the mutant it started is still unretried",
+			got, trace.ResultFailed)
+	}
+}
+
+// TestScheduleRecordsNoRetryStageWhenNothingTimedOut keeps the stage a
+// statement about work that happened. A run in which nothing timed out has no
+// serial pass, and a zero-length "retry" in every recording would be a line
+// every reader learns to skip.
+func TestScheduleRecordsNoRetryStageWhenNothingTimedOut(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+	opts, sink := traced(t, f, options(f, 2))
+
+	if _, err := execute.Schedule(t.Context(), opts,
+		mutants(mutantTimeout, "a", "b"), testBins("example.com/a"), execute.Hooks{}); err != nil {
+		t.Fatalf("scheduling: %v", err)
+	}
+	if stages := eventsOf(sink, trace.TypeStage); len(stages) != 0 {
+		t.Errorf("the recording holds %d stage events, want none: nothing was retried", len(stages))
+	}
+}
+
+// TestScheduleWithoutARecorderIsUnchanged is the promise the whole feature is
+// worth nothing without: a recording is an account of a run and never a
+// participant in it.
+//
+// The one difference between the two runs is the sequences an attempt points
+// at, because an untraced run has no recording to point into. Everything a
+// verdict is computed from — the outcomes, the binaries, the durations, the
+// attempts kept — is identical, and this compares the whole of it rather than
+// the fields somebody thought to check.
+func TestScheduleWithoutARecorderIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	respond := func(_ context.Context, c call) runner.Result {
+		switch activeOf(c) {
+		case "killed":
+			return failed("--- FAIL: TestX\n")
+		case "slow":
+			return timedOut()
+		default:
+			return passed()
+		}
+	}
+	queue := mutants(mutantTimeout, "killed", "survived", "slow")
+	bins := testBins("example.com/a", "example.com/b")
+
+	plain := &fake{respond: respond}
+	untraced, err := execute.Schedule(t.Context(), options(plain, 2), queue, bins, execute.Hooks{})
+	if err != nil {
+		t.Fatalf("scheduling without a recorder: %v", err)
+	}
+
+	spy := &fake{respond: respond}
+	opts, sink := traced(t, spy, options(spy, 2))
+	recorded, err := execute.Schedule(t.Context(), opts, queue, bins, execute.Hooks{})
+	if err != nil {
+		t.Fatalf("scheduling with a recorder: %v", err)
+	}
+	if len(eventsOf(sink, trace.TypeMutantExec)) == 0 {
+		t.Fatal("the traced run recorded no attempts, so this compares two untraced runs")
+	}
+
+	for i := range recorded {
+		for j := range recorded[i].Attempts {
+			if len(untraced[i].Attempts[j].ExecSeqs) != 0 {
+				t.Errorf("the untraced %s attempt %d points at %v, want nothing: there is no recording",
+					untraced[i].ID, j+1, untraced[i].Attempts[j].ExecSeqs)
+			}
+			recorded[i].Attempts[j].ExecSeqs = nil
+		}
+	}
+	if !reflect.DeepEqual(recorded, untraced) {
+		t.Errorf("the traced run produced\n%+v\nand the untraced one\n%+v", recorded, untraced)
 	}
 }

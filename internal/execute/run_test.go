@@ -16,6 +16,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // mutantTimeout is the per-mutant budget every test here uses. It is never
@@ -603,4 +604,106 @@ func TestRunOneNamesTheBinaryACancellationCutOff(t *testing.T) {
 			t.Errorf("err = %v, want none: nothing had been started, so there is nothing to name", attempt.Err)
 		}
 	})
+}
+
+// TestRunOneLabelsEachBinaryStartAsMutantRunWithTheMutantAsSubject is the
+// labelling half of the recording contract for this package.
+//
+// internal/runner records every process go-mutants starts, so nothing here can
+// forget to record one — what a call site can forget is to say *what* it
+// started, and a recording of unlabelled commands is a list of paths in a
+// temporary directory nobody can act on. The subject is the mutant rather than
+// the binary because that is the question a reader of a recording arrives with:
+// every execution of one identity, in order, whichever binaries they were.
+func TestRunOneLabelsEachBinaryStartAsMutantRunWithTheMutantAsSubject(t *testing.T) {
+	t.Parallel()
+
+	const id = "5f2b8c1d4e6a7b9c"
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if c.program() == "example.com/b.test" {
+			return failed("--- FAIL: TestB\n")
+		}
+		return passed()
+	}}
+	opts, sink := traced(t, f, options(f, 1))
+
+	attempt := execute.RunOne(t.Context(), opts,
+		execute.MutantRun{ID: id, Timeout: mutantTimeout}, testBins("example.com/a", "example.com/b"))
+
+	if attempt.Outcome != mutation.OutcomeKilled {
+		t.Fatalf("outcome = %s, want %s", attempt.Outcome, mutation.OutcomeKilled)
+	}
+	for i, c := range f.seen() {
+		if c.Kind != trace.ExecKindMutantRun {
+			t.Errorf("call %d was labelled %q, want %q", i, c.Kind, trace.ExecKindMutantRun)
+		}
+		if c.Subject != id {
+			t.Errorf("call %d was about %q, want the mutant %q", i, c.Subject, id)
+		}
+	}
+	events := eventsOf(sink, trace.TypeExec)
+	if len(events) != 2 {
+		t.Fatalf("the recording holds %d exec events, want one per binary started", len(events))
+	}
+	for i, event := range events {
+		if event.Exec.Kind != trace.ExecKindMutantRun || event.Exec.Subject != id {
+			t.Errorf("exec %d = {kind: %q, subject: %q}, want {%q, %q}",
+				i, event.Exec.Kind, event.Exec.Subject, trace.ExecKindMutantRun, id)
+		}
+	}
+}
+
+// TestRunOneReportsTheBinariesItTriedInOrder is what turns an attempt into
+// something a reader can join to the commands underneath it.
+//
+// The list is what was *tried*, in launch order, and it therefore stops where
+// the attempt stopped: a mutant killed by the second of three binaries was
+// measured against two, and a report that named all three would describe a run
+// that did not happen. The sequences beside it are the recording's own, so an
+// attempt points at exactly the executions it made and at their preserved
+// output.
+func TestRunOneReportsTheBinariesItTriedInOrder(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if c.program() == "example.com/b.test" {
+			return failed("--- FAIL: TestB\n")
+		}
+		return passed()
+	}}
+	opts, sink := traced(t, f, options(f, 1))
+
+	attempt := execute.RunOne(t.Context(), opts,
+		execute.MutantRun{ID: "abc123", Timeout: mutantTimeout},
+		testBins("example.com/a", "example.com/b", "example.com/c"))
+
+	want := []string{"example.com/a", "example.com/b"}
+	if !slices.Equal(attempt.Binaries, want) {
+		t.Errorf("Binaries = %q, want %q — the binary after the kill was never started", attempt.Binaries, want)
+	}
+	if got := execSeqs(sink); !slices.Equal(attempt.ExecSeqs, got) {
+		t.Errorf("ExecSeqs = %v, want the recording's own exec sequences %v", attempt.ExecSeqs, got)
+	}
+	if len(attempt.ExecSeqs) != len(want) {
+		t.Errorf("ExecSeqs = %v, want one sequence per binary tried", attempt.ExecSeqs)
+	}
+}
+
+// TestRunOneReportsNoSequencesWithoutARecorder pins the other side of it: an
+// untraced run records nothing and costs a zero sequence, and a zero is not a
+// sequence any event can be found at — so it is left out rather than listed.
+func TestRunOneReportsNoSequencesWithoutARecorder(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+
+	attempt := execute.RunOne(t.Context(), options(f, 1),
+		execute.MutantRun{ID: "abc123", Timeout: mutantTimeout}, testBins("example.com/a", "example.com/b"))
+
+	if want := []string{"example.com/a", "example.com/b"}; !slices.Equal(attempt.Binaries, want) {
+		t.Errorf("Binaries = %q, want %q whether or not the run is traced", attempt.Binaries, want)
+	}
+	if len(attempt.ExecSeqs) != 0 {
+		t.Errorf("ExecSeqs = %v, want none: nothing was recorded", attempt.ExecSeqs)
+	}
 }

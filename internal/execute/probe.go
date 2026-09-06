@@ -16,6 +16,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/testflag"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // A ProbeRun is one test target to run against the probe tree.
@@ -114,6 +115,14 @@ type ProbeAttempt struct {
 	// binaries this pass actually ran.
 	Duration time.Duration
 	Output   []byte
+	// Binaries are the test binaries this pass started, in launch order, by
+	// import path, and ExecSeqs the `exec` events they were recorded at. They
+	// are [Attempt.Binaries] and [Attempt.ExecSeqs] exactly, and mean the same
+	// thing: what was run, and where the account of it is. A pass that stopped
+	// at a binary that proved nothing names the binaries up to and including
+	// that one.
+	Binaries []string
+	ExecSeqs []int64
 	// Err is set when the pass could not be made at all, and always carries a
 	// [Code] from this package. It is never set alongside facts.
 	Err error
@@ -179,6 +188,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 	}
 
 	env := probeEnvFrom(opts.Env, scratch, p.LogPath)
+	subject := probeSubject(selected)
 	attempt := ProbeAttempt{Outcome: ProbeMeasured}
 	for _, bin := range selected {
 		// Asked before each binary, as [RunOne] asks, so a cancelled run stops
@@ -186,13 +196,17 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 		// Nothing is running at this point — whatever came before has been
 		// reaped — so the failure names no command.
 		if ctx.Err() != nil {
-			return probeErrored(probeInterrupted(ctx, nil))
+			return attempt.failed(probeInterrupted(ctx, nil))
 		}
 
-		spec, result := startTarget(ctx, opts, bin, env, p.Timeout, p.Args)
+		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env, p.Timeout, p.Args)
 		attempt.Duration += result.Duration
 		attempt.ExitCode = result.ExitCode
 		attempt.Output = slices.Clone(result.Output)
+		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
+		if result.TraceSeq != 0 {
+			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
+		}
 
 		// The order of these cases is [RunOne]'s, and the third is the one that
 		// is easy to get wrong: internal/runner reports no exit status only for
@@ -203,7 +217,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 		// it as a pass would turn it into a licence.
 		switch {
 		case result.Err != nil:
-			return probeErrored(&Error{
+			return attempt.failed(&Error{
 				Code:    CodeProbeStart,
 				Message: "the probe tree's test binary for " + bin.ImportPath + " could not be run",
 				Output:  tail(result.Output),
@@ -220,7 +234,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 		case result.ExitCode == runner.ExitCodeUnavailable:
 			// This one *was* running when the signal arrived, so it is named.
-			return probeErrored(probeInterrupted(ctx, runner.CommandOf(spec, result)))
+			return attempt.failed(probeInterrupted(ctx, runner.CommandOf(spec, result)))
 
 		case result.ExitCode == instrument.ProbeUnavailableExit:
 			// The generated runtime refusing to run because it cannot record.
@@ -238,7 +252,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 	infected, err := readInfection(p)
 	if err != nil {
-		return probeErrored(err)
+		return attempt.failed(err)
 	}
 	attempt.Infected = infected
 	return attempt
@@ -278,6 +292,24 @@ func readInfection(p ProbeRun) ([]uint32, error) {
 		infected = []uint32{}
 	}
 	return infected, nil
+}
+
+// probeSubject names what a pass is about, for the recording.
+//
+// A probe pass is one measurement over the binaries it selected — the log every
+// one of them appends to is read once, at the end, and the infection facts
+// belong to the pass rather than to any child in it — so the subject is a fact
+// about the pass and is stamped on every execution of it. A pass narrowed to a
+// single binary is a measurement of that package and says so; a pass over
+// several is a measurement of no single one, and naming an arbitrary member of
+// the set would be worse than naming none. Which binaries ran is not lost by
+// that: [ProbeAttempt.Binaries] holds them, and the `probe-exec` event the
+// session records carries them all.
+func probeSubject(selected []TestBinary) string {
+	if len(selected) == 1 {
+		return selected[0].ImportPath
+	}
+	return ""
 }
 
 // validateProbeArgs protects the timeout owned by the pass, exactly as
@@ -345,7 +377,22 @@ func probeInterrupted(ctx context.Context, command *runner.Invocation) error {
 }
 
 // probeErrored builds the attempt that reports a pass which yielded no facts at
-// all. Infected stays nil, which is the whole contract.
+// all, before any binary was started. Infected stays nil, which is the whole
+// contract.
 func probeErrored(err error) ProbeAttempt {
 	return ProbeAttempt{Err: err}
+}
+
+// failed is [probeErrored] for a pass that had already started something: it
+// reports no facts, and it keeps the account of what it ran.
+//
+// The two halves are deliberately different. Infected is cleared along with the
+// outcome, because a pass that could not be completed licenses nothing and a
+// partial set of indices is exactly what a wrong smaller answer looks like. The
+// binaries and their executions are kept, because "which binaries had already
+// run" is the first question a failed pass raises and the one thing nothing
+// downstream could reconstruct — the recording holds the output of every one of
+// them, and this is what points at it.
+func (a ProbeAttempt) failed(err error) ProbeAttempt {
+	return ProbeAttempt{Binaries: a.Binaries, ExecSeqs: a.ExecSeqs, Err: err}
 }

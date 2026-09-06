@@ -17,6 +17,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // toolchain is the located Go toolchain the build tests pretend to have. Only
@@ -657,5 +658,56 @@ func TestCommandFailureCarriesTheInvocation(t *testing.T) {
 				t.Errorf("Command().Dir = %q, want the snapshot root %q", command.Dir, opts.SnapshotRoot)
 			}
 		})
+	}
+}
+
+// TestBuildTestBinariesLabelsTheListingAndEachCompile names the two kinds of
+// `go` command this phase issues, and says which package each compile was for.
+//
+// Both are needed to read a recording of a slow run: `go list` is one command
+// whose duration is a fact about the module, and the compiles are n commands
+// whose durations are facts about n packages — and without the subject they are
+// n identical lines differing only in an output path under a temporary
+// directory.
+func TestBuildTestBinariesLabelsTheListingAndEachCompile(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if isList(c) {
+			return runner.Result{Output: []byte(listing(
+				pkgJSON("example.com/m/a", "/snap/a", true, false),
+				pkgJSON("example.com/m/b", "/snap/b", false, true),
+			))}
+		}
+		return runner.Result{}
+	}}
+	built, _ := buildOptions(t, f, 1)
+	opts, sink := traced(t, f, built)
+
+	if _, err := execute.BuildTestBinaries(t.Context(), opts); err != nil {
+		t.Fatalf("BuildTestBinaries: %v", err)
+	}
+
+	type label struct{ kind, subject string }
+	want := []label{
+		{trace.ExecKindGoList, ""},
+		{trace.ExecKindGoTestC, "example.com/m/a"},
+		{trace.ExecKindGoTestC, "example.com/m/b"},
+	}
+	var got []label
+	for _, event := range eventsOf(sink, trace.TypeExec) {
+		got = append(got, label{event.Exec.Kind, event.Exec.Subject})
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the recording holds %+v, want %+v", got, want)
+	}
+	// The listing names no package because it is the command that decides which
+	// packages there are; a subject there could only repeat the pattern the
+	// argv already carries.
+	for i, c := range f.seen() {
+		if c.Kind != got[i].kind || c.Subject != got[i].subject {
+			t.Errorf("call %d was labelled {%q, %q}, want {%q, %q}",
+				i, c.Kind, c.Subject, got[i].kind, got[i].subject)
+		}
 	}
 }

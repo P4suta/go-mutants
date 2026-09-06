@@ -5,9 +5,14 @@ package validate
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/P4suta/go-mutants/internal/gocmd"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // TestBuildArgsSendTheOutputToTheNullDevice pins the whole command one
@@ -53,5 +58,58 @@ func TestBuildArgsSendTheOutputToTheNullDevice(t *testing.T) {
 					c.jobs, c.packages, strings.Join(got, " "), strings.Join(c.want, " "))
 			}
 		})
+	}
+}
+
+// TestBuildSnapshotLabelsTheExecAsValidateBuild names the compiles this phase
+// spends.
+//
+// A validation of a large catalogue that has to bisect can spend dozens of
+// builds, and in a recording they are otherwise the same `go build ./...` line
+// repeated with no indication of what asked for it. The label is what separates
+// them from the baseline's build and from every compile the execution phase
+// issues, and the sequence is what lets a step point at the compile it ran.
+//
+// The toolchain here is a path with nothing behind it, so no process is
+// started: what is being asserted is the label on the execution, and
+// internal/runner records a command that could not be started exactly as it
+// records one that ran — which is the case where a reader needs the record
+// most.
+func TestBuildSnapshotLabelsTheExecAsValidateBuild(t *testing.T) {
+	t.Parallel()
+
+	recorder, sink := recording(t)
+	v := &validator{
+		root:      t.TempDir(),
+		toolchain: gocmd.Toolchain{GoBin: filepath.Join(t.TempDir(), "not-a-toolchain")},
+		timeout:   time.Minute,
+		recorder:  recorder,
+	}
+
+	got, err := v.buildSnapshot(t.Context())
+	if CodeOf(err) != CodeBuildFailed {
+		t.Fatalf("buildSnapshot failed with %q, want %q: %v", CodeOf(err), CodeBuildFailed, err)
+	}
+
+	var execs []trace.Event
+	for _, event := range sink.Events() {
+		if event.Type == trace.TypeExec {
+			execs = append(execs, event)
+		}
+	}
+	if len(execs) != 1 {
+		t.Fatalf("the recording holds %d exec events, want one per build", len(execs))
+	}
+	if got := execs[0].Exec.Kind; got != trace.ExecKindValidateBuild {
+		t.Errorf("the build is labelled %q, want %q", got, trace.ExecKindValidateBuild)
+	}
+	if argv := execs[0].Exec.Argv; len(argv) == 0 || argv[0] != v.toolchain.GoBin {
+		t.Errorf("the recorded argv is %q, want the toolchain that could not be started", argv)
+	}
+	// The verdict points at its own compile, so a step that spent this build
+	// can say which execution it was without reaching past the build seam.
+	if got.execSeq != execs[0].Seq {
+		t.Errorf("the verdict points at exec %d, want the %d this build was recorded at",
+			got.execSeq, execs[0].Seq)
 	}
 }

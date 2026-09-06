@@ -220,6 +220,61 @@ Entries say *why* a change was made, not only what changed.
   that turns a recording into a file come in the changes after this one. What
   landed here is the guarantee that when they do, no command can be missing from
   the account.
+- **The execution and validation phases say what they did: every build labelled,
+  every mutant attempt recorded, every bisection step written down.** A run that
+  spends four minutes before the first mutant and rejects eleven candidates
+  along the way has, in its report, one number for each of those facts. Which
+  compile took the four minutes, which file the bisection searched, which
+  candidate the compiler condemned and in what words, which binaries a mutant
+  was actually measured against, and which attempt of the two produced its
+  verdict were all reasoning that existed only while the phase ran.
+
+  So `internal/execute` and `internal/validate` now record into a
+  `*trace.Recorder` carried on their `Options`. Every `go` command and every
+  test binary they start names what it is — `go-list`, `go-test-c` with the
+  package it compiles, `coverage-run` with the package it profiles,
+  `mutant-run` with the mutant it activates, `probe-run`, `validate-build` — so
+  a recording of a slow run is a list of labelled durations rather than of
+  paths in a temporary directory. A `probe-run` names its package only when the
+  pass was narrowed to one binary, because a probe pass is one measurement over
+  everything it started rather than a fact about each child; `docs/trace-v1.md`
+  says so beside the rest of the `subject` rule. `execute.Schedule` records one
+  `mutant-exec` per *attempt*: the worker that ran it, the mutant's own package
+  and short id, the binaries it tried in launch order, the outcome in the same
+  word the report uses, and the `exec` events of the commands underneath it.
+  Two attempts stay two events, because "survived" and "survived on the second
+  try" are different facts about a flaky suite, and the serial retry pass — the
+  one part of an execution phase that is deliberately not parallel, and where a
+  run full of timeouts loses its wall-clock time — is timed as a `retry` stage
+  when it has anything to retry, and reports itself failed when a cancellation
+  left a mutant unretried. Validation records the instrumentation; each build
+  with the file it was spent on and, for a failing one, the files the compiler
+  blamed and how many are still undecided; the pristine gate that licenses the
+  whole bisection; each file it isolated with what that file offered and what it
+  kept; each condemned candidate with the compiler's own first line about it; and
+  a closing `done` with what the phase spent and decided. `Attempt` and
+  `ProbeAttempt` now carry the binaries they tried and the sequences those runs
+  were recorded at — a pass that could not be finished included, because which
+  binaries had already run is the first question a failed one raises — so an
+  attempt and the commands it issued are one thing rather than two lists to
+  reconcile.
+
+  Nobody hands these options a recorder yet: the engine does that in the change
+  after this one, and until it does every one of these calls is made on a nil
+  recorder, which is the disabled trace. That is the point of recording
+  unconditionally — a traced run and an untraced one take the same path, and no
+  accepted set, no outcome and no message can come to depend on whether anybody
+  was watching. The one thing a recording adds to a result is the sequence
+  numbers that point into it.
+
+  `execute.MutantRun` gains `DisplayID` and `Package`, both carried for the
+  recording alone and both the caller's to fill, because a mutant's short id and
+  its import path are the catalogue's answers rather than something the
+  execution layer could derive from an activation identity. `Session.Exec` fills
+  both. `internal/engine` fills the short id; **its `Package` is left for the
+  change that hands the engine a recorder**, which is where the run's discovery
+  results and the selection meet — until then a CLI run's `mutant-exec` carries
+  no package, and nothing reads the field in the meantime.
 - **The test suites' `go` commands no longer fill the developer's own build
   cache, and one command now shows and empties the one they do fill.** The
   bloat was never go-mutants compiling itself: the suites drive thousands of

@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // coverDirFlag is how a test binary is told where to leave its coverage data.
@@ -124,6 +125,9 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 			// different program from the one the mutants are measured in.
 			Env:     baseEnvFrom(opts.Env, scratch),
 			Timeout: opts.Timeout,
+			Trace:   opts.Trace,
+			Kind:    trace.ExecKindCoverageRun,
+			Subject: bin.ImportPath,
 		}
 		result := opts.runProcess(ctx, spec)
 		if err := commandFailure(ctx, spec, result, CodeCoverageFailed,

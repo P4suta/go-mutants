@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // probeRun builds one probe pass over a log path that does not exist, which is
@@ -485,4 +486,118 @@ func TestRunProbeNamesTheBinaryACancellationCutOff(t *testing.T) {
 			t.Errorf("Command() = %+v, want nil: nothing had been started", command)
 		}
 	})
+}
+
+// TestRunProbeLabelsEachBinaryStartAsProbeRun keeps the two passes over one
+// tree apart in the account of a run.
+//
+// A probe process and a mutant process are the same binary started the same way
+// — that is the whole point of them sharing [startTarget] — so in a recording
+// they are told apart by their label and by nothing else. The subject names the
+// package the pass is *about*, which is a fact about the pass rather than about
+// each child: a pass narrowed to one binary is a measurement of that package,
+// and a pass over several is a measurement of no single one, so it names none.
+func TestRunProbeLabelsEachBinaryStartAsProbeRun(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a pass over several binaries names no package", func(t *testing.T) {
+		t.Parallel()
+
+		f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+		opts, sink := traced(t, f, options(f, 1))
+
+		attempt := execute.RunProbe(t.Context(), opts, probeRun(filepath.Join(t.TempDir(), "infection.log")),
+			testBins("example.com/a", "example.com/b"))
+
+		if attempt.Err != nil {
+			t.Fatalf("RunProbe: %v", attempt.Err)
+		}
+		events := eventsOf(sink, trace.TypeExec)
+		if len(events) != 2 {
+			t.Fatalf("the recording holds %d exec events, want one per binary", len(events))
+		}
+		for i, event := range events {
+			if event.Exec.Kind != trace.ExecKindProbeRun {
+				t.Errorf("exec %d is labelled %q, want %q", i, event.Exec.Kind, trace.ExecKindProbeRun)
+			}
+			if event.Exec.Subject != "" {
+				t.Errorf("exec %d is about %q, want no package: the pass ran several", i, event.Exec.Subject)
+			}
+		}
+		if want := []string{"example.com/a", "example.com/b"}; !slices.Equal(attempt.Binaries, want) {
+			t.Errorf("Binaries = %q, want %q", attempt.Binaries, want)
+		}
+		if got := execSeqs(sink); !slices.Equal(attempt.ExecSeqs, got) {
+			t.Errorf("ExecSeqs = %v, want the recording's own %v", attempt.ExecSeqs, got)
+		}
+	})
+
+	t.Run("a pass narrowed to one binary names its package", func(t *testing.T) {
+		t.Parallel()
+
+		f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+		opts, sink := traced(t, f, options(f, 1))
+		run := probeRun(filepath.Join(t.TempDir(), "infection.log"))
+		run.Binaries = []int{1}
+
+		attempt := execute.RunProbe(t.Context(), opts, run, testBins("example.com/a", "example.com/b"))
+
+		if attempt.Err != nil {
+			t.Fatalf("RunProbe: %v", attempt.Err)
+		}
+		events := eventsOf(sink, trace.TypeExec)
+		if len(events) != 1 {
+			t.Fatalf("the recording holds %d exec events, want the one binary the pass selected", len(events))
+		}
+		if want := "example.com/b"; events[0].Exec.Subject != want {
+			t.Errorf("the exec is about %q, want %q", events[0].Exec.Subject, want)
+		}
+		if want := []string{"example.com/b"}; !slices.Equal(attempt.Binaries, want) {
+			t.Errorf("Binaries = %q, want %q", attempt.Binaries, want)
+		}
+	})
+}
+
+// TestRunProbeNamesTheBinariesItStartedWhenAPassCannotBeMade keeps the account
+// of a pass that failed as complete as the account of one that worked.
+//
+// A pass whose second binary could not be started is exactly the pass somebody
+// has to diagnose, and "which binaries had already run" is the first thing they
+// need: the first binary ran a whole test suite, and a report that named none
+// of it would describe a pass that started nothing. The sequences go with them,
+// because the output of the binary that did run is in the recording and this is
+// what points at it.
+func TestRunProbeNamesTheBinariesItStartedWhenAPassCannotBeMade(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if c.program() == "example.com/b.test" {
+			return unstartable()
+		}
+		return passed()
+	}}
+	opts, sink := traced(t, f, options(f, 1))
+
+	attempt := execute.RunProbe(t.Context(), opts, probeRun(filepath.Join(t.TempDir(), "infection.log")),
+		testBins("example.com/a", "example.com/b"))
+
+	if execute.CodeOf(attempt.Err) != execute.CodeProbeStart {
+		t.Fatalf("RunProbe failed with %q, want %q: %v",
+			execute.CodeOf(attempt.Err), execute.CodeProbeStart, attempt.Err)
+	}
+	if attempt.Infected != nil {
+		t.Errorf("Infected = %v, want nil: a pass that could not be made carries no facts", attempt.Infected)
+	}
+	want := []string{"example.com/a", "example.com/b"}
+	if !slices.Equal(attempt.Binaries, want) {
+		t.Errorf("Binaries = %q, want %q — both were started, and one of them would not run", attempt.Binaries, want)
+	}
+	// One sequence: the binary that ran. The one that never became a process is
+	// recorded too, by internal/runner, and this fake records what it is given.
+	if got := execSeqs(sink); !slices.Equal(attempt.ExecSeqs, got) {
+		t.Errorf("ExecSeqs = %v, want the recording's own %v", attempt.ExecSeqs, got)
+	}
+	if len(attempt.ExecSeqs) == 0 {
+		t.Error("ExecSeqs is empty, want the executions the pass made before it stopped")
+	}
 }

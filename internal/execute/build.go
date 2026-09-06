@@ -22,6 +22,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // listOutputLimit is the capture budget for `go list -json`.
@@ -190,6 +191,14 @@ type Options struct {
 	// measurement and travels with the mutant, in [MutantRun.Timeout]. Zero
 	// means no bound.
 	Timeout time.Duration
+
+	// Trace is where this phase's executions and attempts are recorded. It is
+	// the run's own recorder, handed down rather than reached for through a
+	// global, and a nil one is the disabled trace: every recorder method is
+	// safe on it, which is why everything here records unconditionally. A
+	// traced run and an untraced one therefore take the same path, and no
+	// verdict can come to depend on whether anybody was watching.
+	Trace *trace.Recorder
 
 	// run is the process runner, injected by the package's own tests. Nil means
 	// [runner.Run], which is the only value any caller outside this package can
@@ -425,6 +434,10 @@ func listPackages(ctx context.Context, opts Options) ([]listedPackage, error) {
 	spec.Env = toolchainEnvFrom(opts.Env, opts.Toolchain, "")
 	spec.Timeout = opts.Timeout
 	spec.OutputLimit = listOutputLimit
+	spec.Trace = opts.Trace
+	// No subject: the listing is the command that decides which packages there
+	// are, so anything it could be said to be about is already in its argv.
+	spec.Kind = trace.ExecKindGoList
 
 	result := opts.runProcess(ctx, spec)
 	if err := commandFailure(ctx, spec, result, CodeListFailed,
@@ -549,6 +562,12 @@ func compile(ctx context.Context, opts Options, bin TestBinary) error {
 	spec.Dir = opts.SnapshotRoot
 	spec.Env = gocmd.AppendGoflags(toolchainEnvFrom(opts.Env, opts.Toolchain, ""), gocmd.VetOff)
 	spec.Timeout = opts.Timeout
+	spec.Trace = opts.Trace
+	spec.Kind = trace.ExecKindGoTestC
+	// The package rather than the output path: the file is named after a
+	// digest and lives in a directory that is deleted when the run ends, and
+	// the import path is what the report and every later event call it.
+	spec.Subject = bin.ImportPath
 
 	result := opts.runProcess(ctx, spec)
 	return commandFailure(ctx, spec, result, CodeTestBuildFailed,
