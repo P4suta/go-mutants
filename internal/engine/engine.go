@@ -148,6 +148,28 @@ type Options struct {
 	// request asks for.
 	Shard report.Shard
 
+	// TempDirectory is the parent of the run's own temporary directories: the
+	// snapshot, the scratch directory beside it — the compiled test binaries,
+	// the per-worker temporary directories and the coverage data underneath —
+	// and the only directory the sweep ever collects under. Empty is
+	// os.TempDir(), which is what every real run uses.
+	//
+	// It mirrors [github.com/P4suta/go-mutants.OpenOptions.TempDirectory], and
+	// for the same two reasons. A run that names its own parent is a run whose
+	// debris a caller can find and account for, and the sweep that takes the
+	// disk back from a killed run is then confined to a directory this caller
+	// owns rather than turned loose on one shared with the whole machine. It is
+	// also what lets the engine's own tests be private without redirecting the
+	// process-wide TMPDIR, which is a global they would have to hold serially.
+	//
+	// A relative path is resolved against the current working directory rather
+	// than refused: internal/snapshot resolves the destination with
+	// filepath.Abs, and the sweep reads the same name from the same directory,
+	// so both mean what the caller wrote. Nothing here changes what the run's
+	// children see — their TMP, TEMP and TMPDIR are pointed at a directory
+	// under the run's scratch either way; see [childEnv].
+	TempDirectory string
+
 	// HistoryRoot overrides the directory the run history is written under.
 	// Empty is <os.UserCacheDir>/go-mutants, which is what every real run uses;
 	// the tests set it so that they never touch the developer's own cache.
@@ -405,9 +427,17 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) e
 	// was killed has the disk back before this one asks for a module-sized
 	// piece of it. A directory another run is using holds its own lock and is
 	// left alone; see internal/tempowner.
-	s.sweepTemporary(os.TempDir())
+	//
+	// The parent is the run's own, so a caller that named one is swept there
+	// and nowhere else. The scratch directory below needs no such argument: it
+	// is created beside the snapshot, which is already inside it.
+	tempParent := temporaryParent(opts.TempDirectory)
+	s.sweepTemporary(tempParent)
 
-	snap, err := snapshot.Create(root, snapshot.Options{ReportDir: cfg.Report.Directory})
+	snap, err := snapshot.Create(root, snapshot.Options{
+		ReportDir:  cfg.Report.Directory,
+		DestParent: tempParent,
+	})
 	if err != nil {
 		return err
 	}
@@ -1643,6 +1673,24 @@ func workspaceRoot(root string) (string, error) {
 		}
 	}
 	return abs, nil
+}
+
+// temporaryParent is the directory the run's snapshot, the scratch directory
+// beside it and the sweep that precedes both all agree on: [Options.TempDirectory],
+// or the operating system's temporary directory when the caller named none.
+//
+// It resolves nothing. A relative path means the same thing to everything
+// downstream — internal/snapshot's destination takes filepath.Abs of it, and
+// internal/tempowner's sweep reads it from this process's working directory,
+// which is the directory it was written against — so making it absolute here
+// would buy nothing and cost the one error [filepath.Abs] can return, on a
+// machine whose working directory has gone away, a diagnostic code of its own.
+// This is what the root package's Open does with the same option.
+func temporaryParent(dir string) string {
+	if strings.TrimSpace(dir) == "" {
+		return os.TempDir()
+	}
+	return dir
 }
 
 // testCommand picks the argv the baseline is measured with: the `--`

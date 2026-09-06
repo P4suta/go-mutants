@@ -162,4 +162,10 @@
 // snapshot, so that a test which writes to the temporary directory cannot leave
 // debris in the user's. The compiled test binaries live in that scratch
 // directory too, which is what keeps them out of the drift gate's view.
+//
+// Which temporary area that is, is the caller's to say. [Options.TempDirectory]
+// is the parent of the snapshot and of the scratch directory beside it, and the
+// only directory the sweep that collects the leftovers of killed runs ever
+// looks in. Empty is os.TempDir(), which is what the command line passes and
+// therefore what every real run uses.
 package engine

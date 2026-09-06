@@ -6,7 +6,9 @@ package engine
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/snapshot"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -228,6 +231,54 @@ func TestWorkspaceRootRejectsNothing(t *testing.T) {
 	}
 	if got != wd {
 		t.Errorf("workspaceRoot(.) = %q, want %q", got, wd)
+	}
+}
+
+// TestTempDirectoryIsResolvedOrRefusedWhenRelative pins the answer every
+// path-valued option has to give, and it is the answer the root package's
+// [gomutants.OpenOptions.TempDirectory] already gives: a relative path is
+// resolved against this process's working directory rather than refused.
+//
+// The sweep is what proves it, because the sweep is the half that would go
+// wrong quietly. internal/snapshot has TestCreateWithRelativeDestParent for the
+// copy, and a destination that came out relative fails loudly there — the
+// cleanup guard refuses to delete it. A sweep pointed at a directory other than
+// the one the caller meant does not fail at all: it collects nothing, or
+// somebody else's directories, and says nothing either way.
+func TestTempDirectoryIsResolvedOrRefusedWhenRelative(t *testing.T) {
+	base := t.TempDir()
+	parent := filepath.Join(base, "temporary")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orphan := abandonedDirectory(t, parent, snapshot.DirPrefix+"orphan")
+
+	t.Chdir(base)
+	s := &session{}
+	s.sweepTemporary(temporaryParent("temporary"))
+
+	if _, err := os.Stat(orphan); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the orphan under the relative temporary directory survived (stat error %v): "+
+			`"temporary" was read against some directory other than the working one`, err)
+	}
+	if len(s.warnings) != 0 {
+		t.Errorf("sweeping a relative temporary directory published %v, want no warning", s.warnings)
+	}
+}
+
+// TestTempDirectoryDefaultsToTheSystemTemporaryDirectory keeps the option's
+// zero value meaning exactly what every run meant before the option existed.
+// internal/cli passes nothing, so this is the path production takes.
+func TestTempDirectoryDefaultsToTheSystemTemporaryDirectory(t *testing.T) {
+	for _, unset := range []string{"", "   "} {
+		if got := temporaryParent(unset); got != os.TempDir() {
+			t.Errorf("temporaryParent(%q) = %q, want the system temporary directory %q",
+				unset, got, os.TempDir())
+		}
+	}
+	named := filepath.Join(t.TempDir(), "named")
+	if got := temporaryParent(named); got != named {
+		t.Errorf("temporaryParent(%q) = %q, want the directory the caller named", named, got)
 	}
 }
 
