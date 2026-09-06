@@ -220,8 +220,16 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			// one thing the outcome cannot answer. See [Attempt.Err].
 			attempt.Outcome = mutation.OutcomeNotRun
 			attempt.Err = &Error{
-				Code:       CodeInterrupted,
-				Message:    "the test binary for " + bin.ImportPath + " was interrupted",
+				Code:    CodeInterrupted,
+				Message: "the test binary for " + bin.ImportPath + " was interrupted",
+				// What the suite had printed by the time the supervisor killed
+				// it, which is how far the run had got. It is kept here rather
+				// than in [Attempt.OutputTail] deliberately: that field is the
+				// *deciding* binary's output and reaches the report as this
+				// mutant's evidence, and an attempt nobody finished decided
+				// nothing. On the error it travels with the command it belongs
+				// to and is printed under it.
+				Output:     tail(result.Output),
 				Err:        context.Cause(ctx),
 				Invocation: runner.CommandOf(spec, result),
 			}

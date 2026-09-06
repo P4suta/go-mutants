@@ -1278,7 +1278,11 @@ Entries say *why* a change was made, not only what changed.
   outcomes, and the interruption paths, since what was still running is the
   first thing anybody asks of a Ctrl-C — reusing the invocation internal/runner
   already attached rather than describing the same command twice, so what an
-  error says ran and what the recording says ran cannot disagree. An invocation
+  error says ran and what the recording says ran cannot disagree. A Ctrl-C is
+  carried the whole way: the attempt the signal cut off names its binary, and
+  the error the execution phase returns — the one the command line prints —
+  names it too, because a report keeps the number of attempts rather than the
+  attempts, so this is the last layer that can still answer. An invocation
   carries no environment, so a mutant's `command:` line is the binary as it
   would run *unactivated*: a real command somebody can paste, with reproducing
   the mutant itself left to `explain`.

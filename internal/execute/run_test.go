@@ -535,7 +535,13 @@ func TestRunOneNamesTheBinaryACancellationCutOff(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		f := &fake{respond: func(context.Context, call) runner.Result {
 			cancel()
-			return cancelled()
+			// With the partial output of a suite the supervisor killed
+			// mid-test, which is how far it had got when the signal arrived.
+			return runner.Result{
+				ExitCode: runner.ExitCodeUnavailable,
+				Duration: time.Millisecond,
+				Output:   []byte("=== RUN   TestSlow\n"),
+			}
 		}}
 		bins := testBins("example.com/a")
 
@@ -544,6 +550,13 @@ func TestRunOneNamesTheBinaryACancellationCutOff(t *testing.T) {
 
 		if attempt.Outcome != mutation.OutcomeNotRun {
 			t.Fatalf("outcome = %s, want %s", attempt.Outcome, mutation.OutcomeNotRun)
+		}
+		// The verdict's own field stays empty: OutputTail is the *deciding*
+		// binary's output, and a cancelled attempt decided nothing — it would
+		// otherwise reach the report as this mutant's evidence. The bytes
+		// travel on the error instead, beside the command they belong to.
+		if attempt.OutputTail != "" {
+			t.Errorf("OutputTail = %q, want empty: this attempt decided nothing", attempt.OutputTail)
 		}
 		if got := execute.CodeOf(attempt.Err); got != execute.CodeInterrupted {
 			t.Fatalf("code = %q, want %q (%v)", got, execute.CodeInterrupted, attempt.Err)
@@ -566,6 +579,9 @@ func TestRunOneNamesTheBinaryACancellationCutOff(t *testing.T) {
 		if !slices.Equal(command.Argv, started[0].Argv) || command.Dir != bins[0].Dir {
 			t.Errorf("Command() = %+v, want the argv and directory the binary was started with %q in %q",
 				command, started[0].Argv, bins[0].Dir)
+		}
+		if got := failure.RetainedOutput(); !strings.Contains(got, "TestSlow") {
+			t.Errorf("RetainedOutput() = %q, want what the killed child had printed", got)
 		}
 	})
 
