@@ -604,6 +604,7 @@ func commandFailure(
 			Output:     tail(result.Output),
 			Err:        result.Err,
 			Invocation: runner.CommandOf(spec, result),
+			Package:    spec.Subject,
 		}
 	case result.TimedOut:
 		return &Error{
@@ -611,6 +612,8 @@ func commandFailure(
 			Message:    what + ": no answer within " + timeout.String(),
 			Output:     tail(result.Output),
 			Invocation: runner.CommandOf(spec, result),
+			Package:    spec.Subject,
+			TimedOut:   true,
 		}
 	case ctx.Err() != nil:
 		return &Error{
@@ -618,6 +621,7 @@ func commandFailure(
 			Message:    "the execution phase was interrupted",
 			Err:        context.Cause(ctx),
 			Invocation: runner.CommandOf(spec, result),
+			Package:    spec.Subject,
 		}
 	case result.ExitCode != 0:
 		return &Error{
@@ -625,6 +629,8 @@ func commandFailure(
 			Message:    what + ": exited with status " + strconv.Itoa(result.ExitCode),
 			Output:     tail(result.Output),
 			Invocation: runner.CommandOf(spec, result),
+			Package:    spec.Subject,
+			ExitCode:   result.ExitCode,
 		}
 	}
 	return nil

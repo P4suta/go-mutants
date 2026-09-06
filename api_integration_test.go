@@ -437,9 +437,33 @@ func TestWriteSnapshot(t *testing.T) {
 	if err != nil || run.TimedOut || run.ExitCode != 0 {
 		t.Fatalf("drifting command = (%+v, %v)", run, err)
 	}
-	if _, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "commands changed the frozen snapshot:\nadded command-artifact.txt") {
+	_, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{})
+	if err == nil || !strings.Contains(err.Error(), "commands changed the frozen snapshot:\nadded command-artifact.txt") {
 		t.Fatalf("Prepare after drift = %v", err)
+	}
+	// The message is the half a user reads; this is the half a consumer acts
+	// on. A tree that moved under the engine is the one preparation failure
+	// whose remedy belongs to the caller — it wrote the file — so the paths and
+	// the kinds are carried rather than only printed.
+	var drift *gomutants.DriftError
+	if !errors.As(err, &drift) {
+		t.Fatalf("Prepare after drift = %v, want a *DriftError", err)
+	}
+	if drift.Stage != "commands" {
+		t.Errorf("Stage = %q, want %q", drift.Stage, "commands")
+	}
+	if len(drift.Changes) != 1 {
+		t.Fatalf("Changes = %+v, want the one file the command wrote", drift.Changes)
+	}
+	change := drift.Changes[0]
+	if change.Kind != gomutants.ChangeAdded || change.Path != "command-artifact.txt" {
+		t.Errorf("Changes[0] = %+v, want command-artifact.txt added", change)
+	}
+	if change.AfterSHA256 == "" {
+		t.Errorf("Changes[0].AfterSHA256 is empty, so the added file cannot be identified: %+v", change)
+	}
+	if change.BeforeSHA256 != "" {
+		t.Errorf("Changes[0].BeforeSHA256 = %q, want empty for a file that was not there", change.BeforeSHA256)
 	}
 }
 

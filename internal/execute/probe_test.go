@@ -465,6 +465,9 @@ func TestRunProbeNamesTheBinaryACancellationCutOff(t *testing.T) {
 			t.Errorf("Command() = %+v, want the argv and directory the binary was started with %q in %q",
 				command, started[0].Argv, bins[0].Dir)
 		}
+		if failure.Package != bins[0].ImportPath {
+			t.Errorf("Package = %q, want the binary that was cut off %q", failure.Package, bins[0].ImportPath)
+		}
 	})
 
 	t.Run("a pass cancelled before anything started", func(t *testing.T) {
@@ -487,6 +490,9 @@ func TestRunProbeNamesTheBinaryACancellationCutOff(t *testing.T) {
 		}
 		if command := failure.Command(); command != nil {
 			t.Errorf("Command() = %+v, want nil: nothing had been started", command)
+		}
+		if failure.Package != "" {
+			t.Errorf("Package = %q, want empty: no binary had been started to be about", failure.Package)
 		}
 	})
 }
@@ -594,6 +600,16 @@ func TestRunProbeNamesTheBinariesItStartedWhenAPassCannotBeMade(t *testing.T) {
 	want := []string{"example.com/a", "example.com/b"}
 	if !slices.Equal(attempt.Binaries, want) {
 		t.Errorf("Binaries = %q, want %q — both were started, and one of them would not run", attempt.Binaries, want)
+	}
+	// The failure names the binary that would not start, and neither the first
+	// one tried nor the pass's subject: a caller reporting the package has to be
+	// pointed at the one that broke.
+	var failure *execute.Error
+	if !errors.As(attempt.Err, &failure) {
+		t.Fatalf("err = %v, want an *execute.Error", attempt.Err)
+	}
+	if failure.Package != "example.com/b" {
+		t.Errorf("Package = %q, want example.com/b, the binary that would not start", failure.Package)
 	}
 	// One sequence: the binary that ran. The one that never became a process is
 	// recorded too, by internal/runner, and this fake records what it is given.

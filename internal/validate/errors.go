@@ -101,6 +101,18 @@ type Error struct {
 	// snapshot's absolute paths. The renderer asks for it separately and prints
 	// it under the message.
 	Invocation *runner.Invocation
+
+	// TimedOut reports a build the supervisor had to kill, which is the one
+	// failure here that is about the machine rather than about the code. A
+	// caller classifying the phase's failures has to be able to tell it from a
+	// compiler verdict without reading the message or the code.
+	//
+	// There is deliberately no exit status beside it. The two failures that
+	// carry a compiler's output — [CodeNotMutantInduced] and [CodeStillFailing]
+	// — reach this package through the seam the search is faked behind, which
+	// answers "did it compile" and not "with what status", and a field that is
+	// always zero is a field a caller would read as an answer.
+	TimedOut bool
 }
 
 // RetainedOutput returns the compiler output that goes with the failure, or an
