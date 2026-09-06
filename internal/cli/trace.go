@@ -544,48 +544,64 @@ func planSweep(r retentionRoot, keep retention) (sweep, error) {
 	return found, nil
 }
 
-// readDir is how a collector lists a root, and is a package variable for the
-// reason [traceFilesystem] is one: "a directory that cannot be read is reported
-// as one that cannot be read" is a promise that can only be checked by
-// producing such a directory — and one operating system produces it by handing
-// back an empty listing rather than an error. See
-// [namesIn] and the test that injects that answer.
+// errNotDirectory is what the collector says about a path that exists and is
+// not a directory, whichever step found out. [namesIn] raises it through
+// [notADirectory] and [removeDirectory] returns it, so the two halves of the
+// protocol below give one answer in one sentence.
+var errNotDirectory = errors.New("is not a directory")
+
+// notADirectory names a path in [errNotDirectory]'s words.
+func notADirectory(path string) error { return fmt.Errorf("%s %w", path, errNotDirectory) }
+
+// readDir is how a collector reads an open root, and is a package variable for
+// the reason [traceFilesystem] is one: "a root that changed under the collector
+// is never unlinked" is a promise that can only be checked by changing one
+// under it. See the tests that inject a listing which does exactly that.
 //
-// Nothing outside the suite assigns it.
-var readDir = os.ReadDir
+// It takes the handle rather than the path, because that is the protocol; see
+// [namesIn]. Nothing outside the suite assigns it.
+var readDir = func(f *os.File) ([]os.DirEntry, error) { return f.ReadDir(-1) }
 
 // namesIn names what a root holds of ours, oldest first.
 //
 // The listing sorts by name and a run id sorts by the moment it was minted, so
-// the order of the listing is the order of the runs.
+// the order of the listing is the order of the runs. A root that does not exist
+// holds nothing, which is an answer rather than a failure: it is what a
+// workspace that has never traced or failed a run looks like.
 //
-// What the root *is* is settled before it is listed, and that is not
-// belt-and-braces. A root that does not exist holds nothing, which is an answer
-// rather than a failure — it is what a workspace that has never traced or failed
-// a run looks like — but a root that exists and is not a directory is a failure
-// on every platform, and asking the listing would make the answer depend on
-// which one. Go's Windows readdir queries the handle for directory information
-// and, on two of the error codes that can come back, breaks out of its loop and
+// The protocol is **one handle to read, and rmdir alone to remove**, and both
+// halves are about the same window. Everything here — that the path is a
+// directory at all, and what is inside it — is read from a single [os.Open], so
+// the kind and the contents describe one object rather than whatever happened to
+// be at that path at two different moments. And [removeDirectory] is what takes
+// an emptied root away, so a path that became a regular file after this looked
+// at it cannot be unlinked however the timing falls out.
+//
+// Asking the listing what the root *is* would have been wrong even without the
+// race. Go's Windows readdir queries the handle for directory information and,
+// on two of the error codes that can come back, breaks out of its loop and
 // returns `names, dirents, infos, nil`: the error it was holding is dropped, so
-// a caller listing a *file* is handed an empty directory and no failure. `trace
-// clean` then reported "nothing to remove: no recording here" about a root it
-// had never read, which is the one thing a command that deletes must never say.
+// a caller listing a *file* is handed an empty directory and no failure at all.
+// `trace clean` then reported "nothing to remove: no recording here" about a
+// root it had never read — and went on to remove it.
 func namesIn(r retentionRoot) ([]string, error) {
-	info, err := os.Stat(r.path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil, nil
-	case err != nil:
-		return nil, err
-	case !info.IsDir():
-		return nil, fmt.Errorf("%s is not a directory", r.path)
-	}
-	entries, err := readDir(r.path)
-	// Still asked, because the two calls are two moments: a root removed
-	// between them is a root that holds nothing, not one that failed.
+	f, err := os.Open(r.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, notADirectory(r.path)
+	}
+	entries, err := readDir(f)
 	if err != nil {
 		return nil, err
 	}

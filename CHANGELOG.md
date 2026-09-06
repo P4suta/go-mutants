@@ -65,10 +65,6 @@ Entries say *why* a change was made, not only what changed.
   survive in each, half-written ones are left alone in both, and `trace clean`
   sweeps both — `trace list` still lists only recordings, because a bundle is
   not one.
-  with one predicate swapped: a recording is finished when its stream ends with
-  `run-end`, a bundle when its last file is there. The newest ten survive in
-  each, half-written ones are left alone in both, and `trace clean` sweeps both
-  — `trace list` still lists only recordings, because a bundle is not one.
 - **A workspace records what it does, and every result says where.** goatest
   keeps a `goatest-trace-v1` recording of its own and had no way to line it up
   with the engine's: it could see that a mutant survived and not which binaries

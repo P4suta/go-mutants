@@ -5,6 +5,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -546,13 +547,6 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 		// their recordings are gone while they are still on the disk.
 		fmt.Fprintf(b, "nothing to remove: every %s in %s is kept\n", r.noun, r.path)
 	}
-	// And the directory itself, once the last thing in it has gone, so that a
-	// workspace somebody has cleaned looks like one that was never traced.
-	// os.Remove is the whole of the test: it refuses a directory with anything
-	// left in it, which is exactly the directory that has to stay.
-	if os.Remove(r.path) == nil {
-		fmt.Fprintf(b, "removed the empty %s directory %s\n", r.label, r.path)
-	}
 	if removeErr != nil {
 		return &Error{
 			Code:    CodeTraceNotRemoved,
@@ -560,7 +554,40 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 			Err:     removeErr,
 		}
 	}
+	// And the directory itself, once the last thing in it has gone, so that a
+	// workspace somebody has cleaned looks like one that was never traced.
+	// Emptiness is not tested for: rmdir refuses a directory with anything left
+	// in it, which is exactly the directory that has to stay — and it refuses a
+	// path that is not a directory at all, which is what keeps a root somebody
+	// replaced under the collector from being unlinked. See [removeDirectory].
+	switch err := removeDirectory(r.path); {
+	case err == nil:
+		fmt.Fprintf(b, "removed the empty %s directory %s\n", r.label, r.path)
+	case errors.Is(err, errNotDirectory) && replacedByAFile(r.path):
+		return &Error{
+			Code:    CodeUnreadableTrace,
+			Message: "the " + r.label + " directory " + r.path + " cannot be read",
+			Err:     notADirectory(r.path),
+		}
+	}
 	return nil
+}
+
+// replacedByAFile reports whether a path rmdir refused is a regular file.
+//
+// rmdir refuses a symbolic link for the same reason it refuses a file, and the
+// two deserve different answers. A link at the trace root is somebody's
+// deliberate arrangement — the refusal rule resolves links precisely so that one
+// pointing out of the workspace is allowed — and this command has nothing to say
+// about it and does not remove it. A regular file where a directory was a moment
+// ago is the race, and is worth reporting.
+//
+// Asking after the refusal is safe in the way asking before it would not have
+// been: the removal has already happened or not, and rmdir could not have
+// unlinked either of them whatever this answers.
+func replacedByAFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // workspaceTraceRoot is where a run started in this directory would record.

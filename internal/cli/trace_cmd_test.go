@@ -4,6 +4,8 @@
 package cli
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -515,9 +517,10 @@ func TestAnUnreadableRootIsReportedAsUnreadableRatherThanAsUndeleted(t *testing.
 
 // withDirectoryListing points the collector's directory reads at a listing of
 // the test's own, for the length of one test.
-func withDirectoryListing(t *testing.T, list func(string) ([]os.DirEntry, error)) {
+func withDirectoryListing(t *testing.T, list func(*os.File) ([]os.DirEntry, error)) {
 	t.Helper()
-	t.Cleanup(func() { readDir = os.ReadDir })
+	restore := readDir
+	t.Cleanup(func() { readDir = restore })
 	readDir = list
 }
 
@@ -546,7 +549,7 @@ func TestARootThatIsNotADirectoryIsRefusedOnEveryPlatform(t *testing.T) {
 	if err := os.WriteFile(traceRoot, []byte("not a directory"), 0o600); err != nil {
 		t.Fatalf("occupying the trace root: %v", err)
 	}
-	withDirectoryListing(t, func(string) ([]os.DirEntry, error) { return nil, nil })
+	withDirectoryListing(t, func(*os.File) ([]os.DirEntry, error) { return nil, nil })
 
 	code, stdout, stderr := execute(t, "trace", "clean")
 	if code != int(mutation.ExitInfrastructure) {
@@ -576,5 +579,114 @@ func TestARootThatIsNotADirectoryIsRefusedOnEveryPlatform(t *testing.T) {
 	names, err := namesIn(absent)
 	if err != nil || len(names) != 0 {
 		t.Errorf("namesIn(a root that was never made) = %q/%v, want nothing and no failure", names, err)
+	}
+}
+
+// TestRemoveDirectoryRemovesOnlyDirectories is the primitive the collector's
+// last step rests on.
+//
+// [os.Remove] tries unlink before rmdir, so it takes a regular file as readily
+// as an empty directory — which is the wrong tool for "the root is empty now,
+// take it away": whether the path is still the directory that was measured is
+// exactly what a collector cannot know. rmdir can only ever remove a directory,
+// so the mistake is not one the timing can produce.
+func TestRemoveDirectoryRemovesOnlyDirectories(t *testing.T) {
+	parent := t.TempDir()
+
+	empty := filepath.Join(parent, "empty")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatalf("creating the empty directory: %v", err)
+	}
+	if err := removeDirectory(empty); err != nil {
+		t.Errorf("removeDirectory(an empty directory) = %v, want it removed", err)
+	}
+	if _, err := os.Stat(empty); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the empty directory survived (%v)", err)
+	}
+
+	file := filepath.Join(parent, "theirs")
+	if err := os.WriteFile(file, []byte("somebody else's file"), 0o600); err != nil {
+		t.Fatalf("writing the file: %v", err)
+	}
+	err := removeDirectory(file)
+	if !errors.Is(err, errNotDirectory) {
+		t.Errorf("removeDirectory(a file) = %v, want it refused as not a directory", err)
+	}
+	if _, statErr := os.Stat(file); statErr != nil {
+		t.Errorf("removeDirectory unlinked a file: %v", statErr)
+	}
+
+	full := filepath.Join(parent, "full")
+	if err := os.MkdirAll(filepath.Join(full, "inside"), 0o755); err != nil {
+		t.Fatalf("creating the directory that holds something: %v", err)
+	}
+	// A directory with something in it is refused too, and is *not* the
+	// not-a-directory case: it is the ordinary "there is still something here"
+	// the collector passes over in silence.
+	if err := removeDirectory(full); err == nil || errors.Is(err, errNotDirectory) {
+		t.Errorf("removeDirectory(a directory holding something) = %v, want an ordinary refusal", err)
+	}
+	if _, statErr := os.Stat(full); statErr != nil {
+		t.Errorf("removeDirectory emptied a directory that was not empty: %v", statErr)
+	}
+}
+
+// TestARootReplacedBetweenTheListingAndTheRemovalIsNotUnlinked closes the
+// window the two-call classification left open.
+//
+// Reading the kind and reading the contents used to be two moments: a stat that
+// said "directory", then a listing of whatever was at that path by the time the
+// listing happened. Something replacing the root with a file in between handed
+// the collector an empty listing — on Windows with no error at all — and the
+// step that takes an emptied root away then unlinked the file.
+//
+// Two things close it, and the second is what makes the first enough. The kind
+// and the listing now come from one open handle, so they describe one object;
+// and the removal is rmdir rather than unlink, so a file at that path cannot be
+// removed however the timing falls out.
+//
+// The injected listing is that race, performed rather than imagined: it swaps
+// the directory for a file and then reports the empty listing the run was about
+// to act on. It closes the handle first because Windows will not delete a
+// directory anything holds open — [namesIn]'s own deferred close ignores the
+// second one.
+func TestARootReplacedBetweenTheListingAndTheRemovalIsNotUnlinked(t *testing.T) {
+	root := tracedWorkspace(t)
+	traceRoot := traceRootOf(root)
+	if err := os.MkdirAll(traceRoot, 0o755); err != nil {
+		t.Fatalf("creating the trace root: %v", err)
+	}
+
+	const theirs = "somebody else's file"
+	withDirectoryListing(t, func(f *os.File) ([]os.DirEntry, error) {
+		path := f.Name()
+		if err := f.Close(); err != nil {
+			return nil, err
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, []byte(theirs), 0o600); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+
+	code, stdout, stderr := execute(t, "trace", "clean")
+	if code != int(mutation.ExitInfrastructure) {
+		t.Fatalf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, string(CodeUnreadableTrace)) {
+		t.Errorf("stderr = %q, want it coded %s", stderr, CodeUnreadableTrace)
+	}
+	if strings.Contains(stdout, "removed the empty") {
+		t.Errorf("the command claims to have removed an empty directory that is a file:\n%s", stdout)
+	}
+	data, err := os.ReadFile(traceRoot)
+	if err != nil {
+		t.Fatalf("`trace clean` unlinked the file that replaced the trace root: %v", err)
+	}
+	if string(data) != theirs {
+		t.Errorf("the file at the trace root reads %q, want %q", data, theirs)
 	}
 }
