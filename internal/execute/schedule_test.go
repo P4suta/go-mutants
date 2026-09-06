@@ -5,6 +5,7 @@ package execute_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -332,6 +333,21 @@ func TestScheduleLetsAFailedRetryStandInsteadOfPromotingTheTimeout(t *testing.T)
 			}
 			if got.Attempts[0].Outcome != mutation.OutcomeTimedOut {
 				t.Errorf("first attempt = %s, want the timeout that was retried", got.Attempts[0].Outcome)
+			}
+			// Where an interruption goes: onto the attempt that was cut off,
+			// naming the binary still running, and never onto the verdict — a
+			// mutant nobody measured did not error, which is what the
+			// wantMutantCode assertion above is the other half of.
+			if c.wantFinal == mutation.OutcomeNotRun {
+				retry := got.Attempts[1].Err
+				if code := execute.CodeOf(retry); code != execute.CodeInterrupted {
+					t.Errorf("the cut-off attempt carries code %q, want %q (%v)",
+						code, execute.CodeInterrupted, retry)
+				}
+				var failure *execute.Error
+				if errors.As(retry, &failure) && failure.Command() == nil {
+					t.Error("the cut-off attempt names no command, so nothing says what was still running")
+				}
 			}
 		})
 	}

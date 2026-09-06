@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/P4suta/go-mutants/internal/runner"
 )
 
 // A Code is a stable, user-facing diagnostic code.
@@ -240,7 +242,32 @@ type Error struct {
 	// Err is the underlying cause, or nil. It stays reachable through
 	// errors.Is, which is how the command line recognises a cancellation.
 	Err error
+
+	// Invocation is the command the failure was about, or nil when there was no
+	// child process behind it. Where the cause is an internal/runner failure
+	// that already named its command, this is that same value rather than a
+	// second one built from the same spec.
+	//
+	// It is not part of [Error.Error], and deliberately so: the message is a
+	// one-liner two runs of the same failure render identically, while a command
+	// carries absolute paths and a snapshot directory that differ every run. The
+	// renderer asks for it separately and prints it under the message.
+	Invocation *runner.Invocation
 }
+
+// RetainedOutput returns the tail of the failing command's output, or an empty
+// string when the failure had no child process behind it.
+//
+// It is an accessor rather than a bare field so that a renderer can ask any of
+// go-mutants' error types for its output through one interface, without
+// importing every package that produces one. [OutputOf] is the same answer for
+// a caller that has an `error` and knows it came from here.
+func (e *Error) RetainedOutput() string { return e.Output }
+
+// Command returns the command this failure was about, or nil when there was
+// none. It mirrors [runner.Error.Command] so that one renderer can ask every
+// package's error the same question.
+func (e *Error) Command() *runner.Invocation { return e.Invocation }
 
 // Error renders "GOM4011: <message>", with the cause appended when there is
 // one. The output tail is deliberately not part of it.

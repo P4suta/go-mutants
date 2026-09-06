@@ -1251,6 +1251,51 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **A failed command now prints what it printed and what it was.** A test
+  binary that would not compile arrived on standard error as a single line —
+  `error GOM7505: the test binary for example.com/m/pkg could not be built:
+  exited with status 2` — with the compiler's diagnostics, the only evidence of
+  *why*, discarded on the way up. That code's own documentation reads the
+  failure as a go-mutants bug in the instrumented rewrite, so the line was a bug
+  report with the bug removed. The cause was narrow: the renderer asked
+  internal/engine for a retained output, and this error is internal/execute's.
+
+  It now asks the error itself. `engine.Error`, `execute.Error` and
+  `validate.Error` join `gocmd.Error` and `runner.Error` in answering
+  `RetainedOutput()` and `Command()`; the renderer walks the whole cause tree —
+  branches of a joined error included — for the outermost error carrying
+  either, and prints them under the message: the argument vector as `command:`,
+  the working directory as `dir:`, and then the output tail exactly as before.
+  Outermost wins because the outer error is the one that decided what a terminal
+  should see, trimming a fifty-line tail where the runner retains a megabyte.
+  An element of the command is quoted only when it contains whitespace or a
+  quote, and by hand rather than through `strconv.Quote`, because the one
+  platform whose paths contain spaces is the one where Go's quoting doubles
+  every separator — and this line exists to be pasted.
+
+  Every constructor that judges a command now names it — `engine.check`,
+  `execute.commandFailure`, `validate.buildSnapshot`, the two errored mutant
+  outcomes, and the interruption paths, since what was still running is the
+  first thing anybody asks of a Ctrl-C — reusing the invocation internal/runner
+  already attached rather than describing the same command twice, so what an
+  error says ran and what the recording says ran cannot disagree. An invocation
+  carries no environment, so a mutant's `command:` line is the binary as it
+  would run *unactivated*: a real command somebody can paste, with reproducing
+  the mutant itself left to `explain`.
+
+  Two consequences are worth stating. `validate.Error.Error()` no longer appends
+  the compiler's output to its own text: it would now be printed twice, and
+  folded into the message it reached the renderer as continuation lines and came
+  back with a `GOM7420` in front of each, go-mutants claiming the compiler's
+  words as diagnostics of its own. And the coverage build that fails and falls
+  back to a plain one now *keeps* the whole failure, the compiler's output
+  included, beside the one-line warning it publishes. Nothing surfaces it yet:
+  the console still prints exactly the single line it printed before — a run
+  that is about to succeed anyway should not dump a compiler blob at the user —
+  and the changes that follow are what put the kept copy in front of a reader,
+  in the report and in a recording. What has stopped happening is the
+  discarding, at the one moment those diagnostics exist. No message text
+  changed, so a line anybody greps for still reads exactly as it did.
 - **A snapshot now carries the modification times of the tree it copied.**
   Every file and directory landed stamped "now", which is not what the go
   command expects of a tree it is asked to build. cmd/go caches a package

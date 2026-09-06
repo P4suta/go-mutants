@@ -468,3 +468,123 @@ func TestRunOneLeavesTheInheritedTempAloneWithoutAScratchDir(t *testing.T) {
 		t.Errorf("TMPDIR = %q, want the inherited value untouched", got)
 	}
 }
+
+// TestMutantStartFailureCarriesTheBinarysInvocation is what makes the two
+// errored outcomes diagnosable.
+//
+// Both name a test binary go-mutants compiled itself, in a snapshot that is
+// deleted when the run ends: "the test binary for example.com/a could not be
+// run" names a package, and the argument vector and working directory name the
+// process. The start failure reuses the invocation internal/runner had already
+// attached to its own error; the stale-catalogue exit is not an error down
+// there at all, so this package names the command it started.
+func TestMutantStartFailureCarriesTheBinarysInvocation(t *testing.T) {
+	cases := []struct {
+		name   string
+		result runner.Result
+		code   execute.Code
+	}{
+		{"the binary could not be started", unstartable(), execute.CodeMutantStart},
+		{"the runtime does not know the mutant", staleCatalog(), execute.CodeStaleCatalog},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fake{respond: func(context.Context, call) runner.Result { return c.result }}
+			bins := testBins("example.com/a")
+
+			attempt := execute.RunOne(t.Context(), options(f, 1),
+				execute.MutantRun{ID: strings.Repeat("0", 64), Timeout: mutantTimeout}, bins)
+
+			if got := execute.CodeOf(attempt.Err); got != c.code {
+				t.Fatalf("code = %q, want %q (%v)", got, c.code, attempt.Err)
+			}
+			var failure *execute.Error
+			if !errors.As(attempt.Err, &failure) {
+				t.Fatalf("err = %v, want an *execute.Error", attempt.Err)
+			}
+			command := failure.Command()
+			if command == nil {
+				t.Fatal("Command() = nil, want the test binary that was started")
+			}
+			started := f.seen()
+			if len(started) != 1 {
+				t.Fatalf("the fake saw %d calls, want 1", len(started))
+			}
+			if !slices.Equal(command.Argv, started[0].Argv) {
+				t.Errorf("Command().Argv = %q, want the argv the binary was started with %q",
+					command.Argv, started[0].Argv)
+			}
+			if command.Dir != bins[0].Dir {
+				t.Errorf("Command().Dir = %q, want the package directory %q", command.Dir, bins[0].Dir)
+			}
+		})
+	}
+}
+
+// TestRunOneNamesTheBinaryACancellationCutOff is the Ctrl-C case of the same
+// argument [CodeMutantStart] makes: what was still running is the one thing a
+// reader of an interruption wants to know.
+//
+// The outcome stays not-run — a child the supervisor killed measured nothing,
+// and that is what the score must be told — so this is the one place an
+// [Attempt] carries an error without being errored. A pass that was cancelled
+// before it started anything names no command instead of inventing the one it
+// was about to start.
+func TestRunOneNamesTheBinaryACancellationCutOff(t *testing.T) {
+	t.Run("a child the cancellation killed", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		f := &fake{respond: func(context.Context, call) runner.Result {
+			cancel()
+			return cancelled()
+		}}
+		bins := testBins("example.com/a")
+
+		attempt := execute.RunOne(ctx, options(f, 1),
+			execute.MutantRun{ID: "abc123", Timeout: mutantTimeout}, bins)
+
+		if attempt.Outcome != mutation.OutcomeNotRun {
+			t.Fatalf("outcome = %s, want %s", attempt.Outcome, mutation.OutcomeNotRun)
+		}
+		if got := execute.CodeOf(attempt.Err); got != execute.CodeInterrupted {
+			t.Fatalf("code = %q, want %q (%v)", got, execute.CodeInterrupted, attempt.Err)
+		}
+		if !isCancellation(attempt.Err) {
+			t.Errorf("the cancellation is not reachable through %v", attempt.Err)
+		}
+		var failure *execute.Error
+		if !errors.As(attempt.Err, &failure) {
+			t.Fatalf("err = %v, want an *execute.Error", attempt.Err)
+		}
+		command := failure.Command()
+		if command == nil {
+			t.Fatal("Command() = nil, want the binary that was cut off")
+		}
+		started := f.seen()
+		if len(started) != 1 {
+			t.Fatalf("the fake saw %d calls, want 1", len(started))
+		}
+		if !slices.Equal(command.Argv, started[0].Argv) || command.Dir != bins[0].Dir {
+			t.Errorf("Command() = %+v, want the argv and directory the binary was started with %q in %q",
+				command, started[0].Argv, bins[0].Dir)
+		}
+	})
+
+	t.Run("a mutant cancelled before anything started", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		f := &fake{}
+
+		attempt := execute.RunOne(ctx, options(f, 1),
+			execute.MutantRun{ID: "abc123", Timeout: mutantTimeout}, testBins("example.com/a"))
+
+		if attempt.Outcome != mutation.OutcomeNotRun {
+			t.Fatalf("outcome = %s, want %s", attempt.Outcome, mutation.OutcomeNotRun)
+		}
+		if len(f.seen()) != 0 {
+			t.Fatalf("the fake was asked to start %d processes, want none", len(f.seen()))
+		}
+		if attempt.Err != nil {
+			t.Errorf("err = %v, want none: nothing had been started, so there is nothing to name", attempt.Err)
+		}
+	})
+}

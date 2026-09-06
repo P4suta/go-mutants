@@ -62,7 +62,28 @@ type Error struct {
 	// while a command carries absolute paths and a temporary directory. The
 	// renderer asks for it separately and prints it under the message.
 	Invocation *Invocation
+
+	// Output is what the child had printed by the time the failure was noticed,
+	// as this package retained it. [Run] fills it in from the same capture
+	// [Result.Output] carries; it is empty on the failures that never got a
+	// child as far as writing anything — a refused spec, a process that could
+	// not be started — because a command that never ran said nothing.
+	//
+	// It is kept out of [Error.Error] for the reason the invocation is: however
+	// many lines some other program decided to print is not part of a stable
+	// one-line message. The renderer asks for it separately and prints it
+	// underneath.
+	Output string
 }
+
+// RetainedOutput returns what the failing command printed, or an empty string
+// when it printed nothing.
+//
+// It is the second half of the pair every go-mutants error answers — the other
+// is [Error.Command] — so that one renderer can ask any of them for its output
+// through a one-method interface, without importing the package that produced
+// it or knowing how many such packages there are.
+func (e *Error) RetainedOutput() string { return e.Output }
 
 // Command returns the command this failure was about, or nil when there is
 // none.

@@ -413,7 +413,8 @@ func TestBuildFallsBackToAPlainBuildWhenCoverageWillNotCompile(t *testing.T) {
 	s := &session{}
 	opts := execute.Options{CoverPkg: "example.com/m/..."}
 
-	_, err := s.buildTestBinaries(t.Context(), &opts)
+	var cov coverageResult
+	_, err := s.buildTestBinaries(t.Context(), &opts, &cov)
 	if err == nil {
 		t.Fatal("buildTestBinaries succeeded against unusable options")
 	}
@@ -441,11 +442,15 @@ func TestPlainBuildFailureIsNotACoverageWarning(t *testing.T) {
 	s := &session{}
 	opts := execute.Options{}
 
-	if _, err := s.buildTestBinaries(t.Context(), &opts); err == nil {
+	var cov coverageResult
+	if _, err := s.buildTestBinaries(t.Context(), &opts, &cov); err == nil {
 		t.Fatal("buildTestBinaries succeeded against unusable options")
 	}
 	if len(s.warnings) != 0 {
 		t.Errorf("a run that never asked for coverage published %+v", s.warnings)
+	}
+	if cov.coverageFallback != "" {
+		t.Errorf("a run that never asked for coverage kept a coverage failure:\n%s", cov.coverageFallback)
 	}
 }
 
@@ -466,7 +471,8 @@ func TestInterruptedBuildIsNotRetried(t *testing.T) {
 		CoverPkg:     "example.com/m/...",
 	}
 
-	_, err := s.buildTestBinaries(ctx, &opts)
+	var cov coverageResult
+	_, err := s.buildTestBinaries(ctx, &opts, &cov)
 	if err == nil {
 		t.Fatal("buildTestBinaries succeeded with a cancelled context")
 	}
@@ -478,6 +484,9 @@ func TestInterruptedBuildIsNotRetried(t *testing.T) {
 	}
 	if opts.CoverPkg == "" {
 		t.Error("a cancelled build gave up coverage, which it has no reason to decide")
+	}
+	if cov.coverageFallback != "" {
+		t.Errorf("a cancelled build kept a coverage failure that never happened:\n%s", cov.coverageFallback)
 	}
 }
 

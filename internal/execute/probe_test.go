@@ -5,8 +5,10 @@ package execute_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -421,4 +423,66 @@ func TestRunProbeAndRunOneShareTheProcessCore(t *testing.T) {
 	if probeCalls[0].active() != "" {
 		t.Errorf("the probe process carried the activation identity %q", probeCalls[0].active())
 	}
+}
+
+// TestRunProbeNamesTheBinaryACancellationCutOff is [RunOne]'s rule applied to
+// the probe pass, and it is the same argument: a pass that was cut off names
+// the binary it was in, because that is what a reader of a Ctrl-C is looking
+// for, and one that was cancelled before it started anything names nothing
+// rather than the command it was about to run.
+func TestRunProbeNamesTheBinaryACancellationCutOff(t *testing.T) {
+	t.Run("a child the cancellation killed", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		f := &fake{respond: func(context.Context, call) runner.Result {
+			cancel()
+			return cancelled()
+		}}
+		bins := testBins("example.com/a")
+
+		attempt := execute.RunProbe(ctx, options(f, 1),
+			probeRun(filepath.Join(t.TempDir(), "infection.log")), bins)
+
+		if got := execute.CodeOf(attempt.Err); got != execute.CodeInterrupted {
+			t.Fatalf("code = %q, want %q (%v)", got, execute.CodeInterrupted, attempt.Err)
+		}
+		var failure *execute.Error
+		if !errors.As(attempt.Err, &failure) {
+			t.Fatalf("err = %v, want an *execute.Error", attempt.Err)
+		}
+		command := failure.Command()
+		if command == nil {
+			t.Fatal("Command() = nil, want the probe binary that was cut off")
+		}
+		started := f.seen()
+		if len(started) != 1 {
+			t.Fatalf("the fake saw %d calls, want 1", len(started))
+		}
+		if !slices.Equal(command.Argv, started[0].Argv) || command.Dir != bins[0].Dir {
+			t.Errorf("Command() = %+v, want the argv and directory the binary was started with %q in %q",
+				command, started[0].Argv, bins[0].Dir)
+		}
+	})
+
+	t.Run("a pass cancelled before anything started", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		f := &fake{}
+
+		attempt := execute.RunProbe(ctx, options(f, 1),
+			probeRun(filepath.Join(t.TempDir(), "infection.log")), testBins("example.com/a"))
+
+		if got := execute.CodeOf(attempt.Err); got != execute.CodeInterrupted {
+			t.Fatalf("code = %q, want %q (%v)", got, execute.CodeInterrupted, attempt.Err)
+		}
+		if len(f.seen()) != 0 {
+			t.Fatalf("the fake was asked to start %d processes, want none", len(f.seen()))
+		}
+		var failure *execute.Error
+		if !errors.As(attempt.Err, &failure) {
+			t.Fatalf("err = %v, want an *execute.Error", attempt.Err)
+		}
+		if command := failure.Command(); command != nil {
+			t.Errorf("Command() = %+v, want nil: nothing had been started", command)
+		}
+	})
 }

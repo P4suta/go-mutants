@@ -98,9 +98,18 @@ type Attempt struct {
 	// failing command for an error. It is empty for a survivor, whose output is
 	// thousands of lines of nothing having gone wrong.
 	OutputTail string
-	// Err is set only when Outcome is [mutation.OutcomeErrored], and always
-	// carries a [Code] from this package with the underlying cause reachable
-	// through it.
+	// Err carries a [Code] from this package, with the underlying cause
+	// reachable through it. It is set whenever Outcome is
+	// [mutation.OutcomeErrored], and on exactly one other outcome: a not-run
+	// attempt whose child a cancellation killed, where it is [CodeInterrupted]
+	// and names the binary that was cut off.
+	//
+	// An error here is therefore not by itself a statement that anything went
+	// wrong, and nothing may classify on its presence: Outcome is what
+	// distinguishes an infrastructure failure from a run somebody stopped. It
+	// is set on that path because "which binary was still running when Ctrl-C
+	// arrived" is the first thing a reader of an interrupted run asks, and an
+	// outcome alone cannot say it.
 	Err error
 }
 
@@ -168,7 +177,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			return attempt
 		}
 
-		result := startTarget(ctx, opts, bin, env, m.Timeout, m.Args)
+		spec, result := startTarget(ctx, opts, bin, env, m.Timeout, m.Args)
 		attempt.Duration += result.Duration
 
 		// The order of these cases is the contract, and the third is the one
@@ -187,6 +196,11 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 				Message: "the test binary for " + bin.ImportPath + " could not be run",
 				Output:  attempt.OutputTail,
 				Err:     result.Err,
+				// The binary is one go-mutants compiled itself, in a snapshot that
+				// is deleted when the run ends, so the import path alone leaves
+				// nothing to reproduce. The runner's own error already named the
+				// command; this reuses it rather than describing it twice.
+				Invocation: runner.CommandOf(spec, result),
 			}
 			return attempt
 
@@ -199,7 +213,18 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			return attempt
 
 		case result.ExitCode == runner.ExitCodeUnavailable:
+			// Not run, and named. The outcome is what the score is computed
+			// from and it says the mutant was never measured; the error beside
+			// it says which binary was in flight when the signal arrived, which
+			// is the first question anybody asks of an interrupted run and the
+			// one thing the outcome cannot answer. See [Attempt.Err].
 			attempt.Outcome = mutation.OutcomeNotRun
+			attempt.Err = &Error{
+				Code:       CodeInterrupted,
+				Message:    "the test binary for " + bin.ImportPath + " was interrupted",
+				Err:        context.Cause(ctx),
+				Invocation: runner.CommandOf(spec, result),
+			}
 			return attempt
 
 		case result.ExitCode == instrument.UnknownMutantExit:
@@ -213,6 +238,18 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 				Message: "the generated runtime in " + bin.ImportPath + " does not know the mutant " +
 					display(m.ID) + "; the catalogue and the instrumented snapshot disagree",
 				Output: attempt.OutputTail,
+				// Nothing failed down in the runner — the child ran and refused —
+				// so there is no inner error carrying the command, and this names
+				// the binary and the directory it ran in.
+				//
+				// Not the activation: [instrument.ActiveEnv] is in the child's
+				// environment, which an [runner.Invocation] deliberately does not
+				// carry and the renderer therefore never prints. The `command:`
+				// line under this failure is the binary run *unactivated*, which
+				// is the honest thing to hand somebody — it is a real command
+				// they can paste — and reproducing the mutant itself is what
+				// `explain` is for.
+				Invocation: runner.CommandOf(spec, result),
 			}
 			return attempt
 
@@ -236,6 +273,12 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 // the two trees disagree about is the *tree* and the environment composed for
 // it, both of which arrive here already decided.
 //
+// It returns the spec alongside the result because a failure has to be able to
+// name what was started, and this is the only place that knows: the argument
+// vector is composed here and nowhere else. Rebuilding it at the call site to
+// put it into an error would be a second copy of this function's rules, which
+// is precisely the drift the one function exists to prevent.
+//
 // The deadline is rendered as a duration string rather than a number of
 // seconds, because `-test.timeout` takes Go's own duration syntax and a
 // sub-second budget written as a number would truncate to `0`.
@@ -246,16 +289,17 @@ func startTarget(
 	env []string,
 	timeout time.Duration,
 	args []string,
-) runner.Result {
+) (runner.Spec, runner.Result) {
 	argv := make([]string, 0, len(args)+2)
 	argv = append(argv, bin.BinPath, "-test.timeout="+(InProcessTimeoutFactor*timeout).String())
 	argv = append(argv, args...)
-	return opts.runProcess(ctx, runner.Spec{
+	spec := runner.Spec{
 		Argv:    argv,
 		Dir:     bin.Dir,
 		Env:     env,
 		Timeout: timeout,
-	})
+	}
+	return spec, opts.runProcess(ctx, spec)
 }
 
 // validateArgs protects the timeout owned by RunOne. Both spellings accepted

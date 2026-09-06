@@ -229,11 +229,23 @@ func record(result *MutantResult, attempt Attempt) {
 
 // settle promotes a first-pass attempt to the mutant's verdict. It is called
 // for every outcome except a timeout, which the retry pass owns.
+//
+// Only the verdict's own error is promoted with it. An attempt a cancellation
+// cut off carries [CodeInterrupted] naming the binary that was still running —
+// see [Attempt.Err] — and that belongs to the attempt's record rather than to a
+// mutant whose verdict is simply "not run": [MutantResult.Err] means this
+// mutant errored, the interruption itself is what [Schedule] returns, and
+// letting the two blur would make "did this mutant error?" answerable two
+// different ways. Nothing is lost by leaving it where it is, because [record]
+// keeps every attempt.
 func settle(result *MutantResult, attempt Attempt) {
 	result.Final = attempt.Outcome
 	result.KilledBy = attempt.KilledBy
 	result.OutputTail = attempt.OutputTail
-	result.Err = attempt.Err
+	result.Err = nil
+	if attempt.Outcome == mutation.OutcomeErrored {
+		result.Err = attempt.Err
+	}
 }
 
 // confirm applies the timeout retry rule to a mutant that has already timed out

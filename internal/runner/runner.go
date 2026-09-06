@@ -130,6 +130,29 @@ func InvocationOf(spec Spec, result Result) Invocation {
 	}
 }
 
+// CommandOf is what a caller turning a [Result] into its own error should
+// attach: the command the result was about, as a pointer it can hand straight
+// to an error's Invocation field.
+//
+// It prefers the invocation this package already attached to its own failure
+// over building a second one from the same spec. The two describe the same
+// command, so the choice costs nothing either way — but only one of them is the
+// value the recording also points at, and an error naming a command the trace
+// does not know is exactly the kind of small disagreement nobody can debug
+// afterwards. It also means a caller that wrapped somebody else's failure
+// cannot relabel it with its own spec.
+//
+// Every layer above needs this, so it lives here rather than three times over
+// in internal/engine, internal/execute and internal/validate.
+func CommandOf(spec Spec, result Result) *Invocation {
+	var failure *Error
+	if errors.As(result.Err, &failure) && failure.Invocation != nil {
+		return failure.Invocation
+	}
+	invocation := InvocationOf(spec, result)
+	return &invocation
+}
+
 // Result is what one [Run] produced.
 type Result struct {
 	// ExitCode is the child's exit status, or [ExitCodeUnavailable] when there
@@ -236,13 +259,19 @@ func record(spec Spec, result Result) Result {
 		return result
 	}
 	// Every error this package produces is freshly allocated by the call that
-	// failed, so filling the invocation in here cannot be seen by anybody else.
-	// It is filled in only when it is empty, so that an inner failure which
-	// already named its own command keeps it.
+	// failed, so filling the invocation and the output in here cannot be seen by
+	// anybody else. Each is filled in only when it is empty, so that an inner
+	// failure which already named its own command, or kept its own words, keeps
+	// them.
 	var failure *Error
-	if errors.As(result.Err, &failure) && failure.Invocation == nil {
-		invocation := InvocationOf(spec, result)
-		failure.Invocation = &invocation
+	if errors.As(result.Err, &failure) {
+		if failure.Invocation == nil {
+			invocation := InvocationOf(spec, result)
+			failure.Invocation = &invocation
+		}
+		if failure.Output == "" {
+			failure.Output = string(result.Output)
+		}
 	}
 	return result
 }

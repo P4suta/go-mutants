@@ -521,22 +521,25 @@ func (v *validator) buildSnapshot(ctx context.Context) (verdict, error) {
 	switch {
 	case result.Err != nil:
 		return verdict{}, &Error{
-			Code:    CodeBuildFailed,
-			Message: "the snapshot could not be built: the command could not be run",
-			Output:  string(result.Output),
-			Err:     result.Err,
+			Code:       CodeBuildFailed,
+			Message:    "the snapshot could not be built: the command could not be run",
+			Output:     string(result.Output),
+			Err:        result.Err,
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case result.TimedOut:
 		return verdict{}, &Error{
-			Code:    CodeBuildTimedOut,
-			Message: "the snapshot did not build within " + v.timeout.String(),
-			Output:  string(result.Output),
+			Code:       CodeBuildTimedOut,
+			Message:    "the snapshot did not build within " + v.timeout.String(),
+			Output:     string(result.Output),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case ctx.Err() != nil:
 		return verdict{}, &Error{
-			Code:    CodeInterrupted,
-			Message: "validation was interrupted",
-			Err:     ctx.Err(),
+			Code:       CodeInterrupted,
+			Message:    "validation was interrupted",
+			Err:        ctx.Err(),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	}
 	return verdict{failed: result.ExitCode != 0, output: string(result.Output)}, nil

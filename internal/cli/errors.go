@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/runner"
 )
 
 // A Code is a stable, user-facing diagnostic code. This package owns the
@@ -277,6 +277,17 @@ func ExitCode(err error) mutation.ExitCode {
 // word — that tail is deliberately left uncoded and indented, since it is the
 // child's words and not a diagnostic of ours.
 //
+// Under the message and the hint, and above that tail, comes what the failure
+// was about: the argument vector as `command:` and the working directory as
+// `dir:`, both indented and both uncoded for the same reason the tail is. They
+// are asked for through [commandOf] and [outputOf] rather than from one
+// package, because five packages produce errors that carry them and a renderer
+// that knew only internal/engine's used to drop a compiler's whole diagnostics
+// on the floor — a GOM7505 arrived here as one line saying a test binary would
+// not build, with the reason discarded. What is printed is what the error
+// carries: an error that named no command prints neither line, and one whose
+// command had no working directory of its own prints only the first.
+//
 // A line inside a coded error that carries no code of its own inherits the code
 // above it. Nothing go-mutants writes should produce one — a message is a
 // single line, and internal/discover folds a multi-line loader blob before it
@@ -332,12 +343,144 @@ func RenderError(w io.Writer, err error) {
 	if errors.As(err, &cliErr) && cliErr.Hint != "" {
 		b.WriteString("hint: " + cliErr.Hint + "\n")
 	}
-	if output := engine.OutputOf(err); output != "" {
+	// The two lines stand or fall together. An invocation with no argument
+	// vector is a spec the runner refused for having none, and a lone `dir:`
+	// under it would say a command ran somewhere without saying what it was.
+	if command := commandOf(err); command != nil && len(command.Argv) > 0 {
+		b.WriteString("    command: " + renderArgv(command.Argv) + "\n")
+		if command.Dir != "" {
+			b.WriteString("    dir: " + command.Dir + "\n")
+		}
+	}
+	if output := outputOf(err); output != "" {
 		for _, line := range strings.Split(output, "\n") {
 			b.WriteString("    " + line + "\n")
 		}
 	}
 	_, _ = io.WriteString(w, b.String())
+}
+
+// An outputCarrier is an error that kept what the failing command printed.
+//
+// It is an interface rather than a type assertion per package because five
+// packages produce one — internal/engine, internal/execute, internal/validate,
+// internal/gocmd and internal/runner — and the renderer that prints them all is
+// the worst possible place to have to remember a sixth. Asking through one
+// method is also what lets each package keep its own field and its own
+// trimming rule.
+type outputCarrier interface{ RetainedOutput() string }
+
+// A commandCarrier is an error that knows which command it was about.
+type commandCarrier interface{ Command() *runner.Invocation }
+
+// outputOf returns the retained output of the outermost error in err's tree
+// that kept any, or "" when none did.
+//
+// Outermost wins, and that is a decision rather than an accident of the walk.
+// The outer error is the one that decided what a terminal should see:
+// internal/engine, internal/execute and internal/validate trim a fifty-line
+// tail for a console, while internal/runner retains up to a megabyte for a
+// report and a recording. Preferring the inner capture would bury the failure
+// in exactly the scrollback the tail was trimmed out of, and printing both
+// would print the same bytes twice at two different lengths.
+//
+// The walk continues *past* a carrier with nothing to say rather than stopping
+// at it, which is the other half of the rule. A start failure arrives as an
+// [engine.Error] wrapping a [runner.Error] with no tail of its own — there was
+// no child to produce one — while the runner's error knows what it tried to
+// run, so a walk that stopped at the first error merely capable of answering
+// would print nothing for it.
+func outputOf(err error) string {
+	var found string
+	walkCauses(err, func(e error) bool {
+		carrier, ok := e.(outputCarrier)
+		if !ok {
+			return false
+		}
+		found = carrier.RetainedOutput()
+		return found != ""
+	})
+	return found
+}
+
+// commandOf returns the command the outermost error in err's tree that names
+// one was about, or nil when none does. The precedence and the walking-past are
+// [outputOf]'s, for the same reasons.
+func commandOf(err error) *runner.Invocation {
+	var found *runner.Invocation
+	walkCauses(err, func(e error) bool {
+		carrier, ok := e.(commandCarrier)
+		if !ok {
+			return false
+		}
+		found = carrier.Command()
+		return found != nil
+	})
+	return found
+}
+
+// walkCauses visits err and everything it wraps, outermost first and in branch
+// order, until visit answers true. It reports whether anything did.
+//
+// It is a hand-rolled traversal rather than repeated errors.As calls because of
+// the branches. An error joined out of several — internal/engine joins a run's
+// failure with whatever cleaning up the scratch directory said, and so does the
+// public session — unwraps to a *slice*, and following a single cause at a time
+// reaches the join, finds no cause under it, and stops with the evidence one
+// branch away. errors.As would find a carrier inside such a tree, but only the
+// first one: it cannot be asked for "the next one that actually has an answer",
+// which is the question both callers here are really asking.
+func walkCauses(err error, visit func(error) bool) bool {
+	for err != nil {
+		if visit(err) {
+			return true
+		}
+		switch cause := err.(type) {
+		case interface{ Unwrap() error }:
+			err = cause.Unwrap()
+		case interface{ Unwrap() []error }:
+			for _, branch := range cause.Unwrap() {
+				if walkCauses(branch, visit) {
+					return true
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// renderArgv lays an argument vector out as one line somebody can read, and in
+// the ordinary case paste.
+//
+// An element is printed verbatim unless it is empty or contains whitespace or a
+// double quote. Quoting everything would escape the absolute paths that make up
+// most of a go-mutants command line into something nobody can read; quoting
+// nothing would silently turn `-run` `Test A` into three shell words, so the
+// command somebody was handed to reproduce the failure would not be the command
+// that failed. An empty element is quoted because it would otherwise vanish
+// altogether, taking the argument count with it.
+//
+// The quoting is written out here rather than handed to strconv.Quote, and the
+// difference is the whole point of the line. strconv.Quote produces a Go string
+// literal, so it escapes backslashes — and the one platform whose ordinary
+// paths contain a space is the one whose separator is a backslash, which turns
+// the command a Windows user most needs to paste into `"C:\\Program
+// Files\\Go\\bin\\go.exe"`: correct as source, wrong in every shell there is.
+// Only the quote that would end the quoting is escaped; everything else,
+// backslashes included, goes through as it was.
+func renderArgv(argv []string) string {
+	rendered := make([]string, len(argv))
+	for i, arg := range argv {
+		if arg != "" && !strings.ContainsAny(arg, " \t\n\v\f\r\"") {
+			rendered[i] = arg
+			continue
+		}
+		rendered[i] = `"` + strings.ReplaceAll(arg, `"`, `\"`) + `"`
+	}
+	return strings.Join(rendered, " ")
 }
 
 // splitCode lifts a leading "GOM####: " off a line.

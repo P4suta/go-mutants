@@ -7,6 +7,8 @@ import (
 	"errors"
 	"slices"
 	"strings"
+
+	"github.com/P4suta/go-mutants/internal/runner"
 )
 
 // A Code is a stable, user-facing diagnostic code.
@@ -88,10 +90,42 @@ type Error struct {
 	// Err is the underlying cause, or nil. It stays reachable through
 	// errors.Is and errors.As.
 	Err error
+
+	// Invocation is the build the failure was about, or nil when there was no
+	// child process behind it. Where the cause is an internal/runner failure
+	// that already named its command, this is that same value rather than a
+	// second one built from the same spec.
+	//
+	// It is not part of [Error.Error]: the message is a one-liner two runs of
+	// the same failure render identically, while a command carries the
+	// snapshot's absolute paths. The renderer asks for it separately and prints
+	// it under the message.
+	Invocation *runner.Invocation
 }
 
-// Error renders "GOM7420: <message>", with the compiler output on following
-// lines and the cause appended when there is one.
+// RetainedOutput returns the compiler output that goes with the failure, or an
+// empty string when there is none.
+//
+// It is an accessor rather than a bare field so that a renderer can ask any of
+// go-mutants' error types for its output through one interface, without
+// importing every package that produces one.
+func (e *Error) RetainedOutput() string { return e.Output }
+
+// Command returns the build this failure was about, or nil when there was none.
+// It mirrors [runner.Error.Command] so that one renderer can ask every
+// package's error the same question.
+func (e *Error) Command() *runner.Invocation { return e.Invocation }
+
+// Error renders "GOM7420: <message>", with the cause appended when there is
+// one.
+//
+// The compiler output used to be appended to it and is deliberately no longer.
+// A failure line has to stay one line — that is what makes it greppable, and
+// what lets internal/cli lift the code out of it — while a blob folded into the
+// message arrived at the renderer as a run of continuation lines and came back
+// out with a GOM7420 in front of each, as though the compiler's diagnostics
+// were go-mutants' own words. The renderer asks for them through
+// [Error.RetainedOutput] instead and prints them once, indented, underneath.
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString(string(e.Code))
@@ -100,10 +134,6 @@ func (e *Error) Error() string {
 	if e.Err != nil {
 		b.WriteString(": ")
 		b.WriteString(e.Err.Error())
-	}
-	if e.Output != "" {
-		b.WriteString("\n")
-		b.WriteString(e.Output)
 	}
 	return b.String()
 }

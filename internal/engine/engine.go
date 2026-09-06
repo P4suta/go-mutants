@@ -516,7 +516,7 @@ func (s *session) baseline(
 	build.Dir = root
 	build.Env = env
 	build.Timeout = BaselineCap
-	if buildErr := check(ctx, runner.Run(ctx, build), CodeBaselineBuildFailed,
+	if buildErr := check(ctx, build, runner.Run(ctx, build), CodeBaselineBuildFailed,
 		"the snapshot does not build"); buildErr != nil {
 		return buildErr
 	}
@@ -528,13 +528,14 @@ func (s *session) baseline(
 	argv := resolveProgram(command, toolchain)
 	durations := make([]time.Duration, 0, runs)
 	for i := 1; i <= runs; i++ {
-		result := runner.Run(ctx, runner.Spec{
+		spec := runner.Spec{
 			Argv:    argv,
 			Dir:     root,
 			Env:     env,
 			Timeout: BaselineCap,
-		})
-		if runErr := check(ctx, result, CodeBaselineTestFailed,
+		}
+		result := runner.Run(ctx, spec)
+		if runErr := check(ctx, spec, result, CodeBaselineTestFailed,
 			fmt.Sprintf("baseline run %d of %d failed", i, runs)); runErr != nil {
 			return runErr
 		}
@@ -694,7 +695,11 @@ func (s *session) mutate(
 		s.warnCode(string(coverage.CodeCustomTestCommand), customTestCommand(out.TestCommand))
 	}
 
-	bins, err := s.buildTestBinaries(ctx, &execOpts)
+	// The fallback's record goes straight into the run's coverage result, and it
+	// can only be written before [session.coveragePhase] replaces that value
+	// wholesale: a run that fell back has no CoverPkg left, so the phase below
+	// is not entered and there is nothing to overwrite it.
+	bins, err := s.buildTestBinaries(ctx, &execOpts, &st.coverage)
 	if err != nil {
 		return err
 	}
@@ -750,15 +755,41 @@ func (s *session) mutate(
 //
 // The second build is only ever paid for on the failure path, and a failure
 // there is worth one wasted build.
-func (s *session) buildTestBinaries(ctx context.Context, opts *execute.Options) ([]execute.TestBinary, error) {
+//
+// What the warning says and what is kept are deliberately different lengths.
+// The console gets one line, because the run is about to carry on and succeed;
+// cov keeps the whole failure — the coded message and the compiler's own
+// diagnostics — because those diagnostics are the only evidence that
+// go-mutants' `-coverpkg` build is what broke, and dropping them left a user
+// who wanted to know why coverage was given up with nothing to look at.
+func (s *session) buildTestBinaries(
+	ctx context.Context,
+	opts *execute.Options,
+	cov *coverageResult,
+) ([]execute.TestBinary, error) {
 	bins, err := execute.BuildTestBinaries(ctx, *opts)
 	if err == nil || opts.CoverPkg == "" || interrupted(err) {
 		return bins, err
 	}
+	cov.coverageFallback = fallbackText(err)
 	s.unavailable("the test binaries do not compile with coverage instrumentation (" +
 		firstLine(err.Error()) + ")")
 	opts.CoverPkg = ""
 	return execute.BuildTestBinaries(ctx, *opts)
+}
+
+// fallbackText is one failure written out in full: its own text, and underneath
+// it whatever the failing command printed.
+//
+// It is the shape a reader needs and the opposite of what a console wants,
+// which is why it is a separate value from the warning rather than a longer
+// warning.
+func fallbackText(err error) string {
+	text := err.Error()
+	if output := execute.OutputOf(err); output != "" {
+		text += "\n" + output
+	}
+	return text
 }
 
 // instrumentedBaseline is the semantic preservation gate.
@@ -791,13 +822,14 @@ func (s *session) instrumentedBaseline(
 	root string,
 	env []string,
 ) error {
-	result := runner.Run(ctx, runner.Spec{
+	spec := runner.Spec{
 		Argv:    resolveProgram(command, toolchain),
 		Dir:     root,
 		Env:     gocmd.AppendGoflags(env, gocmd.VetOff),
 		Timeout: BaselineCap,
-	})
-	if err := check(ctx, result, CodeInstrumentedBaselineFailed,
+	}
+	result := runner.Run(ctx, spec)
+	if err := check(ctx, spec, result, CodeInstrumentedBaselineFailed,
 		"the instrumented snapshot does not pass its own tests with no mutant active"); err != nil {
 		return err
 	}
@@ -1505,32 +1537,42 @@ func (s *session) close() {
 // timeout, which is indistinguishable from a failure unless the context is
 // asked first — so it is asked before the exit status is judged, and after the
 // two conditions that are definitely not cancellations.
-func check(ctx context.Context, result runner.Result, code Code, what string) error {
+//
+// The spec is taken so that every failure can name the command it judged, and
+// it is attached in all four branches — the interruption included. The snapshot
+// these commands run in is deleted as the run unwinds, so a failure that did
+// not say what it started is one nobody can reproduce afterwards; and what was
+// still running is the one thing a reader of a Ctrl-C wants to know.
+func check(ctx context.Context, spec runner.Spec, result runner.Result, code Code, what string) error {
 	switch {
 	case result.Err != nil:
 		return &Error{
-			Code:    code,
-			Message: what + ": the command could not be run",
-			Output:  tail(result.Output),
-			Err:     result.Err,
+			Code:       code,
+			Message:    what + ": the command could not be run",
+			Output:     tail(result.Output),
+			Err:        result.Err,
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case result.TimedOut:
 		return &Error{
-			Code:    CodeBaselineTimedOut,
-			Message: what + ": no answer within " + BaselineCap.String(),
-			Output:  tail(result.Output),
+			Code:       CodeBaselineTimedOut,
+			Message:    what + ": no answer within " + BaselineCap.String(),
+			Output:     tail(result.Output),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case ctx.Err() != nil:
 		return &Error{
-			Code:    CodeInterrupted,
-			Message: "the run was interrupted",
-			Err:     ctx.Err(),
+			Code:       CodeInterrupted,
+			Message:    "the run was interrupted",
+			Err:        ctx.Err(),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case result.ExitCode != 0:
 		return &Error{
-			Code:    code,
-			Message: what + ": exited with status " + strconv.Itoa(result.ExitCode),
-			Output:  tail(result.Output),
+			Code:       code,
+			Message:    what + ": exited with status " + strconv.Itoa(result.ExitCode),
+			Output:     tail(result.Output),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	}
 	return nil

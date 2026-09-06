@@ -100,6 +100,10 @@ func TestValidateRefusesBadOptions(t *testing.T) {
 
 // TestErrorRenders pins how a validation failure reads, because a GOM code is
 // only a stable handle if it is printed the same way every time.
+//
+// The compiler output is no longer part of the text; see
+// [TestErrorStringNoLongerEmbedsTheCompilerOutput] for why it moved out from
+// under the message and who prints it now.
 func TestErrorRenders(t *testing.T) {
 	t.Parallel()
 
@@ -110,8 +114,7 @@ func TestErrorRenders(t *testing.T) {
 		Output:  "./a.go:1:1: undefined: x",
 		Err:     cause,
 	}
-	want := "GOM7420: the snapshot does not build with every mutant removed: exit status 2\n" +
-		"./a.go:1:1: undefined: x"
+	want := "GOM7420: the snapshot does not build with every mutant removed: exit status 2"
 	if got := err.Error(); got != want {
 		t.Errorf("Error() =\n%s\nwant\n%s", got, want)
 	}
