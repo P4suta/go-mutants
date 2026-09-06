@@ -4,6 +4,7 @@
 package gomutants_test
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -413,35 +414,165 @@ func TestKnownPreparePhasesMatchWhatPrepareEmits(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			started := make(map[gomutants.PreparePhase]int, len(known))
-			finished := make(map[gomutants.PreparePhase]int, len(known))
-			var order []gomutants.PreparePhase
-			for i, event := range test.fixture(t).events {
-				switch event.State {
-				case gomutants.PrepareEventStarted:
-					if _, seen := started[event.Phase]; !seen {
-						order = append(order, event.Phase)
-					}
-					started[event.Phase] = i
-				case gomutants.PrepareEventFinished:
-					if start, seen := started[event.Phase]; !seen {
-						t.Errorf("phase %s finished at event %d without ever starting", event.Phase, i)
-					} else if start >= i {
-						t.Errorf("phase %s finished at event %d, before it started at %d", event.Phase, i, start)
-					}
-					finished[event.Phase] = i
-				default:
-					t.Errorf("event %d carries state %q, which is neither started nor finished", i, event.State)
-				}
+			order, problems := phaseEventProblems(test.fixture(t).events)
+			for _, problem := range problems {
+				t.Error(problem)
 			}
-
 			if !slices.Equal(order, known) {
 				t.Errorf("Prepare started the phases %v, and KnownPreparePhases lists %v", order, known)
 			}
-			for _, phase := range known {
-				if _, ended := finished[phase]; !ended {
-					t.Errorf("phase %s never finished", phase)
-				}
+		})
+	}
+}
+
+// phaseProgress is how far one phase has got through its two events.
+type phaseProgress int
+
+const (
+	phaseUnseen phaseProgress = iota
+	phaseOpen
+	phaseClosed
+)
+
+// phaseEventProblems walks one preparation's events and reports the order the
+// phases started in, together with everything wrong with the sequence.
+//
+// It tracks a state per phase rather than the position of the latest event of
+// each kind, and the difference is the whole of what it checks. Positions
+// overwrite: a phase that started, finished, and started again would leave a
+// start position and a finish position both recorded, and read as a complete
+// phase — while its live start has no finish and any consumer timing the phase
+// from these events is left holding a stopwatch that never stops. Counting
+// transitions instead makes each of the three malformed shapes — a second
+// start, a second finish, a start after a finish — a state it has no edge for.
+func phaseEventProblems(events []gomutants.PrepareEvent) ([]gomutants.PreparePhase, []string) {
+	progress := make(map[gomutants.PreparePhase]phaseProgress, len(events))
+	var order []gomutants.PreparePhase
+	var problems []string
+	note := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+	for i, event := range events {
+		switch event.State {
+		case gomutants.PrepareEventStarted:
+			switch progress[event.Phase] {
+			case phaseUnseen:
+				order = append(order, event.Phase)
+				progress[event.Phase] = phaseOpen
+			case phaseOpen:
+				note("event %d starts %s again while it is still running", i, event.Phase)
+			case phaseClosed:
+				note("event %d starts %s again after it finished", i, event.Phase)
+			}
+		case gomutants.PrepareEventFinished:
+			switch progress[event.Phase] {
+			case phaseUnseen:
+				note("event %d finishes %s, which never started", i, event.Phase)
+			case phaseOpen:
+				progress[event.Phase] = phaseClosed
+			case phaseClosed:
+				note("event %d finishes %s, which had already finished", i, event.Phase)
+			}
+		default:
+			note("event %d carries state %q, which is neither started nor finished", i, event.State)
+		}
+	}
+	// Over order rather than over the map, so the problems a caller prints come
+	// out in the same sequence on every run.
+	for _, phase := range order {
+		if progress[phase] != phaseClosed {
+			note("phase %s started and never finished", phase)
+		}
+	}
+	return order, problems
+}
+
+// TestPhaseEventsAreOneStartAndOneFinishEachPhase pins what
+// TestKnownPreparePhasesMatchWhatPrepareEmits reads a real preparation with.
+//
+// The claim in the doc is that a phase starts once and finishes once, and the
+// sequences that break it are the ones no fixture will produce on demand: a
+// doubled start, a doubled finish, a start after a finish. A checker that
+// merely remembered the latest position of each would accept all three — the
+// second start would overwrite the first and the already-recorded finish would
+// still be there — so the phase would read as complete while its last start had
+// no finish at all. That is the shape a consumer's own timers would break on,
+// and it is why the walk is a separate function: a synthetic slice can state
+// the case that a fixture cannot.
+func TestPhaseEventsAreOneStartAndOneFinishEachPhase(t *testing.T) {
+	t.Parallel()
+
+	const one, two = gomutants.PreparePhaseDiscovery, gomutants.PreparePhaseVerification
+	start := func(phase gomutants.PreparePhase) gomutants.PrepareEvent {
+		return gomutants.PrepareEvent{Phase: phase, State: gomutants.PrepareEventStarted}
+	}
+	finish := func(phase gomutants.PreparePhase) gomutants.PrepareEvent {
+		return gomutants.PrepareEvent{
+			Phase: phase, State: gomutants.PrepareEventFinished, Result: gomutants.PreparePhaseSucceeded,
+		}
+	}
+
+	for _, test := range []struct {
+		name         string
+		events       []gomutants.PrepareEvent
+		wantOrder    []gomutants.PreparePhase
+		wantProblems int
+	}{
+		{
+			name:      "a well formed pair of phases",
+			events:    []gomutants.PrepareEvent{start(one), finish(one), start(two), finish(two)},
+			wantOrder: []gomutants.PreparePhase{one, two},
+		},
+		{
+			// Overlap is legal and deliberate: the binary build starts before
+			// the probe phases and finishes after them.
+			name:      "two phases open at once",
+			events:    []gomutants.PrepareEvent{start(one), start(two), finish(two), finish(one)},
+			wantOrder: []gomutants.PreparePhase{one, two},
+		},
+		{
+			name:         "a start after the phase already finished",
+			events:       []gomutants.PrepareEvent{start(one), finish(one), start(one)},
+			wantOrder:    []gomutants.PreparePhase{one},
+			wantProblems: 1,
+		},
+		{
+			name:         "a doubled start",
+			events:       []gomutants.PrepareEvent{start(one), start(one), finish(one)},
+			wantOrder:    []gomutants.PreparePhase{one},
+			wantProblems: 1,
+		},
+		{
+			name:         "a doubled finish",
+			events:       []gomutants.PrepareEvent{start(one), finish(one), finish(one)},
+			wantOrder:    []gomutants.PreparePhase{one},
+			wantProblems: 1,
+		},
+		{
+			name:         "a finish with no start",
+			events:       []gomutants.PrepareEvent{finish(one)},
+			wantProblems: 1,
+		},
+		{
+			name:         "a start with no finish",
+			events:       []gomutants.PrepareEvent{start(one)},
+			wantOrder:    []gomutants.PreparePhase{one},
+			wantProblems: 1,
+		},
+		{
+			name:         "a state that is neither",
+			events:       []gomutants.PrepareEvent{{Phase: one, State: "paused"}},
+			wantProblems: 1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			order, problems := phaseEventProblems(test.events)
+			if !slices.Equal(order, test.wantOrder) {
+				t.Errorf("order = %v, want %v", order, test.wantOrder)
+			}
+			if len(problems) != test.wantProblems {
+				t.Errorf("problems = %d (%v), want %d", len(problems), problems, test.wantProblems)
 			}
 		})
 	}
