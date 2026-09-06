@@ -390,9 +390,32 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	if err != nil {
 		return nil, s.abandon(&Error{Code: CodeCopy, Path: failedPath, Message: "cannot copy the file into the snapshot", Err: err})
 	}
+	// Directory times come last, because writing a file into a directory
+	// updates it. Deepest first, so that stamping a parent is not undone by
+	// stamping the child inside it. Like the file times, this exists so the go
+	// command sees a tree that looks its age rather than one that looks new.
+	if failedPath, err := stampDirectoryTimes(w.dirs, s.Root); err != nil {
+		return nil, s.abandon(&Error{Code: CodeCopy, Path: failedPath, Message: "cannot set the directory's times in the snapshot", Err: err})
+	}
 	s.Manifest = entries
 	s.WorkspaceDigest = WorkspaceDigest(entries)
 	return s, nil
+}
+
+func stampDirectoryTimes(dirs []record, root string) (string, error) {
+	for index := len(dirs) - 1; index >= 0; index-- {
+		source := dirs[index].abs
+		info, err := os.Stat(extendedPath(source))
+		if err != nil {
+			return dirs[index].rel, err
+		}
+		modified := info.ModTime()
+		target := extendedPath(filepath.Join(root, filepath.FromSlash(dirs[index].rel)))
+		if err := os.Chtimes(target, modified, modified); err != nil {
+			return dirs[index].rel, err
+		}
+	}
+	return "", nil
 }
 
 type snapshotFileCopy func(string, string, fs.FileMode) (int64, string, error)
@@ -692,6 +715,12 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
+	sourceInfo, err := in.Stat()
+	if err != nil {
+		_ = in.Close()
+		return 0, "", err
+	}
+	modified := sourceInfo.ModTime()
 	// A read handle that fails to close has nothing to report: no data was at
 	// risk, and the copy either produced the right digest or did not.
 	defer func() { _ = in.Close() }()
@@ -735,6 +764,16 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	// a truncated file whose digest was computed from the bytes we meant to
 	// write would be a snapshot that lies about itself.
 	if err := out.Close(); err != nil {
+		return 0, "", err
+	}
+	// The copy carries the source's modification time because the go command
+	// reads it. cmd/go only caches a package directory's index when every file
+	// in it is at least a couple of seconds old, so a tree whose files were all
+	// stamped "now" is re-indexed by every `go list` and re-read by every
+	// build — the snapshot pays for being new rather than for being different.
+	// The digest is taken from the bytes, so nothing about the snapshot's
+	// identity depends on this; only how much work the toolchain repeats does.
+	if err := os.Chtimes(extendedPath(dst), modified, modified); err != nil {
 		return 0, "", err
 	}
 	return size, hex.EncodeToString(h.Sum(nil)), nil
