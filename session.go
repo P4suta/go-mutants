@@ -257,18 +257,18 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	if !resolved.SkipVerify {
 		err = trace.run(PreparePhaseVerification, func() error {
 			verify := resolved.Verify
-			verifyBase, err := overlayEnvironment(w.env, verify.Env)
-			if err != nil {
-				return fmt.Errorf("gomutants: prepare verification environment: %w", err)
+			verifyBase, verifyErr := overlayEnvironment(w.env, verify.Env)
+			if verifyErr != nil {
+				return fmt.Errorf("gomutants: prepare verification environment: %w", verifyErr)
 			}
 			verify.Env = nil
-			verifyBase, err = instrumentationEnvironment(verifyBase, overlayPath)
-			if err != nil {
-				return fmt.Errorf("gomutants: prepare verification overlay: %w", err)
+			verifyBase, verifyErr = instrumentationEnvironment(verifyBase, overlayPath)
+			if verifyErr != nil {
+				return fmt.Errorf("gomutants: prepare verification overlay: %w", verifyErr)
 			}
-			verified, err := w.runCommand(ctx, verify, verifyBase)
-			if err != nil {
-				return fmt.Errorf("gomutants: prepare instrumented verification: %w", err)
+			verified, verifyErr := w.runCommand(ctx, verify, verifyBase)
+			if verifyErr != nil {
+				return fmt.Errorf("gomutants: prepare instrumented verification: %w", verifyErr)
 			}
 			switch {
 			case verified.TimedOut:
@@ -294,10 +294,10 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	mainBuild, probeBuild, err := runPreparationBuilds(ctx,
 		func(ctx context.Context) (mainBuildResult, error) {
 			var result mainBuildResult
-			err := func() error {
-				executionEnv, err := instrumentationEnvironment(w.env, overlayPath)
-				if err != nil {
-					return fmt.Errorf("gomutants: prepare execution overlay: %w", err)
+			buildErr := func() error {
+				executionEnv, envErr := instrumentationEnvironment(w.env, overlayPath)
+				if envErr != nil {
+					return fmt.Errorf("gomutants: prepare execution overlay: %w", envErr)
 				}
 				result.options = execute.Options{
 					Toolchain:    w.toolchain,
@@ -309,21 +309,23 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 					Jobs:         resolved.Jobs,
 					Timeout:      resolved.BuildTimeout,
 				}
-				result.binaries, err = execute.BuildTestBinaries(ctx, result.options)
-				if err != nil {
-					return fmt.Errorf("gomutants: prepare test binaries: %w", err)
+				var binaryErr error
+				result.binaries, binaryErr = execute.BuildTestBinaries(ctx, result.options)
+				if binaryErr != nil {
+					return fmt.Errorf("gomutants: prepare test binaries: %w", binaryErr)
 				}
-				result.files, err = scanFiles(w.snapshot.Root)
-				if err != nil {
-					return fmt.Errorf("gomutants: prepare snapshot state: %w", err)
+				var scanErr error
+				result.files, scanErr = scanFiles(w.snapshot.Root)
+				if scanErr != nil {
+					return fmt.Errorf("gomutants: prepare snapshot state: %w", scanErr)
 				}
 				return nil
 			}()
-			mainFinished <- mainSpan.complete(err)
-			return result, err
+			mainFinished <- mainSpan.complete(buildErr)
+			return result, buildErr
 		},
 		func(ctx context.Context) (probeBuildResult, error) {
-			options, binaries, probed, overlay, err := prepareProbeTree(ctx, probeTreeOptions{
+			options, binaries, probed, overlay, probeErr := prepareProbeTree(ctx, probeTreeOptions{
 				snap:               probeSnap,
 				catalog:            catalog,
 				hints:              hints,
@@ -340,7 +342,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 				pristineSources:    pristineSources,
 				trace:              trace,
 			})
-			return probeBuildResult{options: options, binaries: binaries, probed: probed, overlay: overlay}, err
+			return probeBuildResult{options: options, binaries: binaries, probed: probed, overlay: overlay}, probeErr
 		},
 	)
 	trace.finish(<-mainFinished)
@@ -698,21 +700,30 @@ func writeInstrumentationOverlay(root, scratch, name string, result instrument.R
 		}
 		source := filepath.Join(root, relative)
 		target := filepath.Join(backingRoot, relative)
-		info, err := os.Stat(source)
-		if err != nil {
-			return "", err
+		info, statErr := os.Stat(source)
+		if statErr != nil {
+			return "", statErr
 		}
-		data, err := os.ReadFile(source)
-		if err != nil {
-			return "", err
+		data, readErr := os.ReadFile(source)
+		if readErr != nil {
+			return "", readErr
 		}
-		if err := os.MkdirAll(filepath.Dir(target), privateDirectoryMode); err != nil {
-			return "", err
+		if mkdirErr := os.MkdirAll(filepath.Dir(target), privateDirectoryMode); mkdirErr != nil {
+			return "", mkdirErr
 		}
-		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
-			return "", err
+		if writeErr := os.WriteFile(target, data, info.Mode().Perm()); writeErr != nil {
+			return "", writeErr
 		}
 		replacements[source] = target
+		// The go command resolves the package directory it is given through the
+		// file system before it looks a path up in the overlay, so on a platform
+		// whose temporary directory is reached through a symbolic link — macOS
+		// reaches /var/folders through /private/var — the key written from the
+		// snapshot root would never be the key looked up. Both spellings name
+		// the same file, so both map to the same backing copy.
+		if resolved, resolveErr := filepath.EvalSymlinks(source); resolveErr == nil && resolved != source {
+			replacements[resolved] = target
+		}
 	}
 	manifest, err := json.Marshal(struct {
 		Replace map[string]string `json:"Replace"`
@@ -747,7 +758,7 @@ func quotedGoFlag(flag string) (string, error) {
 	if !strings.ContainsRune(flag, '"') {
 		return `"` + flag + `"`, nil
 	}
-	return "", fmt.Errorf("Go flag %q contains whitespace and both quote characters", flag)
+	return "", fmt.Errorf("gomutants: go flag %q contains whitespace and both quote characters", flag)
 }
 
 func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {

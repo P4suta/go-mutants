@@ -24,16 +24,16 @@ func TestInstrumentationEnvironmentSupportsOverlayPathWithWhitespace(t *testing.
 		t.Skipf("Go toolchain is unavailable: %v", err)
 	}
 	root := filepath.Join(t.TempDir(), "module root")
-	if err := os.MkdirAll(root, privateDirectoryMode); err != nil {
-		t.Fatal(err)
+	if mkdirErr := os.MkdirAll(root, privateDirectoryMode); mkdirErr != nil {
+		t.Fatal(mkdirErr)
 	}
 	for name, contents := range map[string]string{
 		"go.mod":                "module fixture.example/space\n\ngo 1.26.0\n",
 		"value.go":              "package space\n",
 		"overlay manifest.json": `{"Replace":{}}`,
 	} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), privateFileMode); err != nil {
-			t.Fatal(err)
+		if writeErr := os.WriteFile(filepath.Join(root, name), []byte(contents), privateFileMode); writeErr != nil {
+			t.Fatal(writeErr)
 		}
 	}
 	overlay := filepath.Join(root, "overlay manifest.json")
@@ -73,10 +73,10 @@ func TestResolvePrepareOptionsScopesDiscoveryIndependently(t *testing.T) {
 		!slices.Equal(defaults.Packages, []string{"./..."}) {
 		t.Fatalf("default package scopes = discovery %q tests %q", defaults.DiscoveryPackages, defaults.Packages)
 	}
-	if _, err := resolvePrepareOptions(PrepareOptions{DiscoveryPackages: []string{"../outside"}}); err == nil {
+	if _, outsideErr := resolvePrepareOptions(PrepareOptions{DiscoveryPackages: []string{"../outside"}}); outsideErr == nil {
 		t.Fatal("outside discovery package was accepted")
 	}
-	if _, err := resolvePrepareOptions(PrepareOptions{ProbeCoverPackages: []string{"a,b"}}); err == nil {
+	if _, commaErr := resolvePrepareOptions(PrepareOptions{ProbeCoverPackages: []string{"a,b"}}); commaErr == nil {
 		t.Fatal("comma-separated probe coverage package was accepted")
 	}
 	skipped, err := resolvePrepareOptions(PrepareOptions{SkipVerify: true})
