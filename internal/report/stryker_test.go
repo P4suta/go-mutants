@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // The fixture workspace is three files chosen for what their bytes do to a
@@ -252,20 +253,7 @@ func TestProjectionGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	path := filepath.Join("testdata", "mutation-report.golden.json")
-	if *updateGolden {
-		if writeErr := os.WriteFile(path, got, 0o644); writeErr != nil {
-			t.Fatalf("rewriting %s: %v", path, writeErr)
-		}
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("the marshalled projection does not match %s\n--- got ---\n%s\n--- want ---\n%s",
-			path, got, want)
-	}
+	testkit.Golden(t, "mutation-report.golden.json", got)
 
 	// The same bytes, through the vendored schema. A golden that matched a
 	// document the format refuses would be a very precise record of a mistake.

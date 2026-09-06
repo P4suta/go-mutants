@@ -17,6 +17,8 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // TestMain releases the sessions the probe tests share.
@@ -27,6 +29,10 @@ import (
 // every probe assertion below is about the answers *one* prepared session
 // gives. Sharing them means the file cannot use t.Cleanup to release them, so
 // the release happens here, after the last test that could still reach one.
+// workspaceBarrierEnv switches the barrier subprocess on. Its presence, not its
+// value, is what [testkit.HelperEnabled] reads.
+const workspaceBarrierEnv = "WORKSPACE_EXEC_BARRIER_HELPER"
+
 func TestMain(m *testing.M) {
 	code := m.Run()
 	releasePreparedFixtures()
@@ -146,8 +152,8 @@ func TestSessionBlocks(t *testing.T) {
 	if !slices.Equal(catalog.TestPackages, []string{"fixture.example/killable"}) {
 		t.Errorf("test packages = %v", catalog.TestPackages)
 	}
-	clamp := findMutant(t, catalog, "clamp.go", "lt-to-le")
-	untested := findMutant(t, catalog, "untested.go", "neq-to-eq")
+	clamp := mutantkit.APIMutantAt(t, catalog, "clamp.go", "lt-to-le")
+	untested := mutantkit.APIMutantAt(t, catalog, "untested.go", "neq-to-eq")
 	if changes, changesErr := session.Changes(); changesErr != nil {
 		t.Fatalf("checking the freshly prepared snapshot: %v", changesErr)
 	} else if len(changes) != 0 {
@@ -302,7 +308,7 @@ func TestSessionBlocks(t *testing.T) {
 // the already-built test executable keeps this concurrency test independent
 // of a platform's Go build-cache scheduling and cold compilation speed.
 func TestWorkspaceExecBarrierHelper(t *testing.T) {
-	if os.Getenv("WORKSPACE_EXEC_BARRIER_HELPER") != "1" {
+	if !testkit.HelperEnabled(workspaceBarrierEnv) {
 		return
 	}
 	temporary := strings.Join([]string{
@@ -331,10 +337,6 @@ func TestWorkspaceExecBarrierHelper(t *testing.T) {
 // state.
 func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing.T) {
 	root := copyFixture(t, "simple")
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -348,9 +350,9 @@ func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing
 	for _, marker := range markers {
 		go func() {
 			result, execErr := workspace.Exec(t.Context(), gomutants.Command{
-				Argv: []string{executable, "-test.run=^TestWorkspaceExecBarrierHelper$"},
+				Argv: testkit.HelperArgv("TestWorkspaceExecBarrierHelper"),
 				Env: []string{
-					"WORKSPACE_EXEC_BARRIER_HELPER=1", "MARKER=" + marker, "RELEASE=" + release,
+					workspaceBarrierEnv + "=1", "MARKER=" + marker, "RELEASE=" + release,
 				},
 			})
 			if execErr == nil && (result.TimedOut || result.ExitCode != 0) {
@@ -441,32 +443,23 @@ func TestWriteSnapshot(t *testing.T) {
 	}
 }
 
-func findMutant(t *testing.T, catalog gomutants.Catalog, path, rule string) gomutants.Mutant {
-	t.Helper()
-	for _, mutant := range catalog.Mutants {
-		if mutant.Path == path && mutant.Rule == rule {
-			if !mutant.Accepted {
-				t.Fatalf("mutant %s/%s was rejected", path, rule)
-			}
-			return mutant
-		}
-	}
-	t.Fatalf("no %s mutant in %s: %+v", rule, path, catalog.Mutants)
-	return gomutants.Mutant{}
-}
-
+// copyFixture copies one corpus module into a directory of the test's own.
+//
+// It is [testkit.Copy]: the fixtures are checked in and `git status --porcelain
+// fixtures/` is a CI gate, while a workspace opened here writes a snapshot, a
+// report directory and scratch beside the module it was pointed at. The harness
+// also ages the copy, which is not cosmetic — cmd/go indexes a package directory
+// only when every file in it is at least two seconds old, so a tree copied a
+// moment ago is a different input from the same tree on a user's disk.
 func copyFixture(t *testing.T, name string) string {
 	t.Helper()
-	destination := filepath.Join(t.TempDir(), name)
-	if err := copyFixtureTree(name, destination); err != nil {
-		t.Fatalf("copying fixture: %v", err)
-	}
-	return destination
+	return testkit.Copy(t, name)
 }
 
 // copyFixtureTree is [copyFixture] without a testing.T, so that a fixture can
 // also be copied for a session prepared once for the whole package rather than
-// once per test.
+// once per test. It stays hand-written for exactly that reason: every helper in
+// the harness takes a [testing.TB], and the shared session has none.
 func copyFixtureTree(name, destination string) error {
 	source := filepath.Join("fixtures", name)
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -705,24 +698,6 @@ func unprobeable(t *testing.T) *preparedFixture {
 	return prepared
 }
 
-// byRule returns the one catalogued mutant a rule produced.
-func byRule(t *testing.T, catalog gomutants.Catalog, rule string) gomutants.Mutant {
-	t.Helper()
-	var found []gomutants.Mutant
-	for _, mutant := range catalog.Mutants {
-		if mutant.Rule == rule {
-			found = append(found, mutant)
-		}
-	}
-	if len(found) != 1 {
-		t.Fatalf("the catalogue holds %d mutants of %s, want exactly 1: %+v", len(found), rule, catalog.Mutants)
-	}
-	if !found[0].Accepted {
-		t.Fatalf("mutant %s was rejected during validation", found[0].DisplayID)
-	}
-	return found[0]
-}
-
 // snapshotDirectories counts the snapshot directories under a temporary parent.
 // A probe tree is a second snapshot beside the mutant one, so the count is how
 // a test says whether one was built without reaching into the session.
@@ -839,8 +814,8 @@ func TestProbeWithoutPreparationIsAnError(t *testing.T) {
 // that reported none would satisfy the second and would license everything.
 func TestProbeReportsTheMutantsATestInfected(t *testing.T) {
 	prepared := probeable(t)
-	width := byRule(t, prepared.catalog, widthRule)
-	label := byRule(t, prepared.catalog, labelRule)
+	width := mutantkit.APIByRule(t, prepared.catalog, widthRule)
+	label := mutantkit.APIByRule(t, prepared.catalog, labelRule)
 
 	widthRun := probeOf(t, prepared.session, gomutants.ProbeRequest{
 		Package: probeableModule,
@@ -885,7 +860,7 @@ func TestProbeReportsTheMutantsATestInfected(t *testing.T) {
 // meaningful, and the fallback would silently stop being conservative.
 func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 	prepared := probeable(t)
-	ready := byRule(t, prepared.catalog, readyRule)
+	ready := mutantkit.APIByRule(t, prepared.catalog, readyRule)
 	if ready.Probed {
 		t.Fatalf("the fixture's boolean literal %s is probed; it is the specimen for the unprobed case",
 			ready.DisplayID)
@@ -1014,7 +989,7 @@ func TestProbeReturnsSuccessfulOutputAndCoverage(t *testing.T) {
 
 func TestPreparedExecutionsExposeOnlyPristineSource(t *testing.T) {
 	prepared := probeable(t)
-	width := findMutant(t, prepared.catalog, "probeable.go", widthRule)
+	width := mutantkit.APIMutantAt(t, prepared.catalog, "probeable.go", widthRule)
 	probe := probeOf(t, prepared.session, gomutants.ProbeRequest{
 		Package: probeableModule,
 		Args:    []string{"-test.run=^TestSourceTreeIsPristine$"},
@@ -1034,7 +1009,7 @@ func TestPreparedExecutionsExposeOnlyPristineSource(t *testing.T) {
 
 func TestPreparedExecutionsPropagateOverlayToChildGoTest(t *testing.T) {
 	prepared := probeable(t)
-	width := findMutant(t, prepared.catalog, "probeable.go", widthRule)
+	width := mutantkit.APIMutantAt(t, prepared.catalog, "probeable.go", widthRule)
 	probe := probeOf(t, prepared.session, gomutants.ProbeRequest{
 		Package: probeableModule,
 		Args:    []string{"-test.run=^TestChildGoTestUsesSessionOverlay$"},
@@ -1152,7 +1127,7 @@ func TestProbeRefusesTheSameRequestsAsExec(t *testing.T) {
 // assertions here only make sure every goroutine really did the work.
 func TestProbeIsSafeConcurrently(t *testing.T) {
 	prepared := probeable(t)
-	width := byRule(t, prepared.catalog, widthRule)
+	width := mutantkit.APIByRule(t, prepared.catalog, widthRule)
 
 	const workers = 8
 	var wait sync.WaitGroup

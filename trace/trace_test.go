@@ -8,33 +8,28 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// updateGolden rewrites the golden recording instead of comparing against it.
+// The committed recordings every scripted event must marshal to, byte for byte:
+// the first for a run that went well, the second for one that went wrong.
 //
-// Regenerate with `go test ./trace/ -run TestRecordedEventsPinTheirJSONFieldNames -update`
-// and read the diff before committing it: the file is the wire contract, so a
-// change to it is a change other tools see. There is no repository-wide
-// `-update` flag yet; this one is local to this package and will be unified
-// with the others when there is.
-var updateGolden = flag.Bool("update", false, "rewrite the golden trace recording")
-
-// goldenPath is the committed recording every scripted event must marshal to,
-// byte for byte, and failureGoldenPath is the same for the recording of a run
-// that went wrong.
-var (
-	goldenPath        = filepath.Join("testdata", "events.golden.jsonl")
-	failureGoldenPath = filepath.Join("testdata", "events-failure.golden.jsonl")
+// They are compared and regenerated through [testkit.Golden], which owns this
+// repository's one `-update` flag — `mise run golden-update`. This package used
+// to register a flag of its own, as internal/report and internal/instrument did;
+// three of them in one binary is a "flag redefined" panic before any test runs.
+// The files are the wire contract, so a change to either is a change other tools
+// see: read the diff before committing it.
+const (
+	goldenRecording        = "events.golden.jsonl"
+	goldenFailureRecording = "events-failure.golden.jsonl"
 )
 
 func TestNewEmitsRunStartWithTheSchemaAndStartRecord(t *testing.T) {
@@ -172,19 +167,7 @@ func TestRecordedEventsPinTheirJSONFieldNamesAndOrder(t *testing.T) {
 		lines = append(lines, string(encoded))
 	}
 	got := strings.Join(lines, "\n") + "\n"
-	if *updateGolden {
-		if err := os.WriteFile(goldenPath, []byte(got), 0o644); err != nil {
-			t.Fatalf("rewriting %s: %v", goldenPath, err)
-		}
-	}
-	wantBytes, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", goldenPath, err)
-	}
-	if want := string(wantBytes); got != want {
-		t.Errorf("the recording does not match %s; regenerate with -update after reading the diff\n%s",
-			goldenPath, unifiedDiff(want, got))
-	}
+	testkit.Golden(t, goldenRecording, []byte(got))
 }
 
 func TestExecReducesEnvironmentToSortedDeduplicatedNamesAndNeverValues(t *testing.T) {
@@ -651,19 +634,7 @@ func TestFailureRecordingPinsItsJSONFieldNamesAndOrder(t *testing.T) {
 		t.Fatalf("the failure recording holds %d events, want %d", len(events), fixtureFailureCount)
 	}
 	got := encodeAll(t, events)
-	if *updateGolden {
-		if err := os.WriteFile(failureGoldenPath, []byte(got), 0o644); err != nil {
-			t.Fatalf("rewriting %s: %v", failureGoldenPath, err)
-		}
-	}
-	wantBytes, err := os.ReadFile(failureGoldenPath)
-	if err != nil {
-		t.Fatalf("reading %s: %v", failureGoldenPath, err)
-	}
-	if want := string(wantBytes); got != want {
-		t.Errorf("the failure recording does not match %s; regenerate with -update after reading the diff\n%s",
-			failureGoldenPath, unifiedDiff(want, got))
-	}
+	testkit.Golden(t, goldenFailureRecording, []byte(got))
 	last := events[len(events)-1]
 	if last.Type != trace.TypeRunEnd {
 		t.Fatalf("the last event is %q", last.Type)

@@ -27,6 +27,9 @@ test-cache-status:
 test-clean:
     mise run test-clean
 
+golden-update:
+    mise run golden-update
+
 fmt:
     mise run fmt
 

@@ -12,19 +12,16 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// A clock is a settable time source, so that a test can assert on an elapsed
-// duration without waiting for one.
-type clock struct{ t time.Time }
-
-func (c *clock) now() time.Time          { return c.t }
-func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
-
 // harness is a model, its clock, and how many times Ctrl-C cancelled the run.
+//
+// The clock is the shared one: a stopped time source a test moves by hand, so
+// that an assertion about an elapsed duration does not have to wait for one.
 type harness struct {
 	model     model
-	clock     *clock
+	clock     *testkit.Clock
 	cancelled int
 }
 
@@ -39,11 +36,11 @@ func newHarness(t *testing.T) *harness {
 // frame the way production draws it: with the escape sequences in it.
 func newThemedHarness(t *testing.T, th theme) *harness {
 	t.Helper()
-	h := &harness{clock: &clock{t: time.Date(2026, 8, 19, 10, 11, 12, 0, time.UTC)}}
+	h := &harness{clock: testkit.NewClock(time.Date(2026, 8, 19, 10, 11, 12, 0, time.UTC))}
 	h.model = newModel(options{
 		version: "0.1.0-dev",
 		cancel:  func() { h.cancelled++ },
-		now:     h.clock.now,
+		now:     h.clock.Now,
 		theme:   th,
 	})
 	return h
@@ -406,15 +403,15 @@ func TestTheClockTicksUntilTheRunEnds(t *testing.T) {
 	h := newHarness(t)
 	h.events(t, planned(2)...)
 
-	h.clock.advance(90 * time.Second)
-	if cmd := h.send(t, tickMsg(h.clock.now())); cmd == nil {
+	h.clock.Advance(90 * time.Second)
+	if cmd := h.send(t, tickMsg(h.clock.Now())); cmd == nil {
 		t.Fatal("a tick during the run did not schedule the next one")
 	}
 	if got := h.model.elapsed(); got != 90*time.Second {
 		t.Errorf("elapsed = %s, want 1m30s", got)
 	}
 	h.events(t, engine.RunCompleted{Status: engine.StatusOK})
-	if cmd := h.send(t, tickMsg(h.clock.now())); cmd != nil {
+	if cmd := h.send(t, tickMsg(h.clock.Now())); cmd != nil {
 		t.Error("a tick after the run ended scheduled another; the clock must stop")
 	}
 }

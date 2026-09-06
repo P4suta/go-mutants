@@ -50,6 +50,49 @@ Entries say *why* a change was made, not only what changed.
   `TestProductionCodeDoesNotImportTestkit` parses every non-test file in the
   tree, and `TestTheHarnessImportsNothingFromThisModule` parses the harness's
   own.
+- **One `-update` flag, one helper-process shape and one clock, in
+  `internal/testkit`, with `internal/testkit/mutantkit` beside it.** Two packages
+  registered a `-update` flag of their own — `internal/report` and
+  `internal/instrument` — and the public `trace` package registered a third. They
+  are `flag.Bool` calls on `flag.CommandLine`, so the moment any test binary
+  linked two of those packages, package flag would have panicked "flag redefined:
+  update" before a single test ran; the only reason it had not happened yet is
+  that no binary had linked two of them. There is now exactly one, registered in
+  the harness, and `mise run golden-update` names the packages that hold goldens
+  explicitly — because one flag in every test binary means `go test -update
+  ./...` would regenerate every golden in the tree in one command, and a golden
+  regenerated without being read is a golden that records a bug.
+  `TestGoldenPackagesAreNamedByTheUpdateTask` scans for `testdata/*.golden*` and
+  fails when that list goes stale. A mismatch is now a `cmp.Diff` naming the
+  line that moved, rather than the two whole documents four suites each
+  printed, and a missing golden fails closed instead of recording silently — a
+  first recording turns a new test, and every run after a golden is lost in a
+  merge, into a green one that pins nothing.
+
+  `testkit.Helper` is the TestMain shape a package whose tests need real
+  processes uses. It carries the rule that took a day to find the first time: a
+  helper is the test binary re-executed, so under `go test -cover` its exit hook
+  writes `covmeta.<hash>` into the single `GOCOVERDIR` that `go test` exports,
+  under a name derived from the binary and so identical for every helper —
+  and on Windows the losing rename prints "coverage meta-data emit failed:
+  Access is denied" onto the very stderr internal/runner asserts the exact bytes
+  of. `testkit.Clock` replaces three time sources that had each been written
+  separately, two of them as slices of instants popped one per read: a slice
+  makes a test depend on how many times the code under test happens to read the
+  clock, so an extra read is an index-out-of-range panic on a goroutine nobody
+  owns and the assertion the test is making is nowhere in its source.
+
+  `internal/testkit/mutantkit` is the half of the harness that may hold
+  go-mutants' own types, kept separate so that the harness itself goes on
+  importing nothing from this module: snapshots that are aged and whose removal
+  is registered before anything else can fail, the discover/catalogue/hint/
+  instrument sequence four suites each wrote out, mutant lookups that assert
+  there is exactly one match and that it was accepted, and run reports marshalled
+  through the published schema and normalised so that two runs can be compared —
+  fixing the tool version, the go version, the host's GOOS and GOARCH, every
+  measured duration and every absolute path, and deliberately leaving the
+  digests and mutant ids, which are content-addressed and are what proves two
+  runs measured the same program.
 - **A run trace: `github.com/P4suta/go-mutants/trace` and the
   `gomutants-trace-v1` contract.** A report says a mutant survived; nothing said
   which test binaries were run against it, with which arguments, for how long,

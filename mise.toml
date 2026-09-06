@@ -114,6 +114,29 @@ run = "go run ./internal/devtools/testcache status"
 description = "Empty the test-owned build cache and the kept scratch root"
 run = "go run ./internal/devtools/testcache clean"
 
+[tasks.golden-update]
+# Rewrite every committed golden file, then read the diff before committing it.
+#
+# The packages are named one by one rather than with `./...`, and that list is
+# the whole point of the task. There is one `-update` flag in this repository —
+# it is registered in internal/testkit, so it is the same flag in every test
+# binary that links the harness — and `go test -update ./...` would therefore
+# regenerate every golden in the tree in one command, including the ones nobody
+# was looking at. A golden regenerated without being read is a golden that
+# records a bug.
+#
+# internal/testkit/golden_test.go::TestGoldenPackagesAreNamedByTheUpdateTask
+# parses this line and fails when a package holding a `testdata/*.golden*` file
+# is missing from it, so the list cannot go stale in silence.
+#
+# The packages come *before* `-update`, which is not a style choice. cmd/go
+# knows its own test flags and nothing else; on an unrecognised one it stops
+# parsing and hands the rest of the command line to the test binary, so
+# `go test -update ./internal/report` runs the package in the working directory
+# with two arguments it ignores — silently, and with every golden left alone.
+description = "Rewrite the committed golden files, to be read before committing"
+run = "go test ./internal/instrument ./internal/report ./trace -update"
+
 [tasks.fmt]
 # `gofmt -l` exits 0 even when it lists files, so the offenders have to be
 # turned into a non-zero exit explicitly on both shells.

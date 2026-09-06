@@ -802,8 +802,8 @@ is the whole of what was asked for and a failure is an error.
 | `internal/console` | Deterministic plain-line renderer | implemented |
 | `internal/tui` | The bubbletea dashboard | implemented |
 | `internal/schemas` | Embedded JSON Schemas, validation before writing | catalog, run report, doctor |
-| `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes | test-only support |
-| `internal/testkit/mutantkit` | The same for helpers that need go-mutants' own types | test-only support, planned (T2) |
+| `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks | test-only support |
+| `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `vendor-assets` | The vendored viewer bundle and its digest check | implemented |
 
@@ -815,7 +815,14 @@ Production code may never import it — that would link `testing`, and its flag
 registrations, into `go-mutants` — and it may never import anything from this
 module, so a pure package's unit tests can use it without pulling the engine in
 behind them. Helpers that do need engine types live in `internal/testkit/mutantkit`
-and are imported only from external test packages.
+and are imported only from external test packages; the import gate treats that
+tree as part of the harness, so it may import `internal/testkit` while nothing
+outside the harness may import either.
+
+The `-update` flag for golden files is registered once, in `internal/testkit`,
+and is therefore the same flag in every test binary that links the harness.
+`mise run golden-update` names the packages holding goldens explicitly, and
+`TestGoldenPackagesAreNamedByTheUpdateTask` fails when that list goes stale.
 
 That rule is why the test-owned build cache's location, and the name of the
 ownership marker that licenses emptying it, are written down twice: once in

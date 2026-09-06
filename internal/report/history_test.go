@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // TestWriteStoresTheRunAndThePointer walks one write end to end: the layout on
@@ -39,7 +40,7 @@ func TestWriteStoresTheRunAndThePointer(t *testing.T) {
 		t.Errorf("latest path = %q, want %q", latestPath, want)
 	}
 
-	want := mustMarshal(t, r)
+	want := mutantkit.MustMarshal(t, r)
 	for _, path := range []string{runPath, latestPath} {
 		got, readErr := os.ReadFile(path)
 		if readErr != nil {
@@ -110,7 +111,7 @@ func TestLatestFollowsTheNewestRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the pointer: %v", err)
 	}
-	if !bytes.Equal(latest, mustMarshal(t, second)) {
+	if !bytes.Equal(latest, mutantkit.MustMarshal(t, second)) {
 		t.Error("latest.json does not hold the newest run")
 	}
 
@@ -178,7 +179,7 @@ func TestACrashedWriteDoesNotPoisonTheNextOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Write over a crashed one: %v", err)
 	}
-	want := mustMarshal(t, r)
+	want := mutantkit.MustMarshal(t, r)
 	for _, path := range []string{runPath, latestPath} {
 		got, readErr := os.ReadFile(path)
 		if readErr != nil {
@@ -214,7 +215,7 @@ func TestWriteOverAnExistingRunIsAtomic(t *testing.T) {
 		t.Fatalf("first Write: %v", err)
 	}
 
-	garbage := bytes.Repeat([]byte("x"), len(mustMarshal(t, r))*2)
+	garbage := bytes.Repeat([]byte("x"), len(mutantkit.MustMarshal(t, r))*2)
 	for _, path := range []string{runPath, latestPath} {
 		if writeErr := os.WriteFile(path, garbage, 0o600); writeErr != nil {
 			t.Fatalf("truncating %s: %v", path, writeErr)
@@ -223,7 +224,7 @@ func TestWriteOverAnExistingRunIsAtomic(t *testing.T) {
 	if _, _, err = history.Write(r); err != nil {
 		t.Fatalf("second Write: %v", err)
 	}
-	want := mustMarshal(t, r)
+	want := mutantkit.MustMarshal(t, r)
 	for _, path := range []string{runPath, latestPath} {
 		got, readErr := os.ReadFile(path)
 		if readErr != nil {

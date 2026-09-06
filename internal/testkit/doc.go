@@ -38,15 +38,19 @@
 // internal/mutation would rebuild the harness, and a test of that change would
 // be written with helpers compiled from the code under test.
 // TestProductionCodeDoesNotImportTestkit enforces the first half; the second is
-// enforced by the import list of this package being the standard library and
-// nothing else.
+// enforced by the import list of this package holding nothing from this module,
+// and outside the standard library only github.com/google/go-cmp — which is
+// here because [Golden] prints a diff, and a hand-written diff of two
+// multi-line documents is either wrong or is go-cmp again. The list is a test:
+// TestTheHarnessImportsNothingFromThisModule names the next third-party import
+// rather than letting it in.
 //
 // Helpers that need go-mutants' own types — a gocmd.Toolchain, a
 // snapshot.Snapshot, a mutation.Catalog, a normalised run report — belong in
 // internal/testkit/mutantkit, which imports the engine packages freely and is
 // imported only from external test packages. That split is what keeps this
-// package's own import weight at zero, so a pure package's unit tests can use it
-// without pulling the engine in behind them.
+// package's own import weight to one small, test-only dependency, so a pure
+// package's unit tests can use it without pulling the engine in behind them.
 //
 // # What the parts are
 //

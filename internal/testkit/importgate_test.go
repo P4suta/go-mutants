@@ -49,6 +49,39 @@ var skippedDirectories = []string{"testdata", FixturesDir, "vendor-assets", ".gi
 // its way out, and nobody would be told.
 const ForwarderException = "internal/testsupport/cache.go"
 
+// HarnessDir is the harness's own tree, relative to the module root, spelled
+// with forward slashes.
+//
+// Nothing under it is production code — it is the harness — so the files in it
+// are the one tree that may import the harness. internal/testkit/mutantkit is
+// why: it is the half that holds go-mutants' own types, it is imported only
+// from external test packages, and every helper in it composes an environment
+// or copies a fixture from the package above.
+const HarnessDir = "internal/testkit"
+
+// TestImportGateAllowsTheHarnessToImportItself is that exemption, and the proof
+// that it is scoped to the harness's own tree rather than to the import path.
+//
+// A gate that read mutantkit's files as production code would report the harness
+// for being the harness; one that exempted the *import* would stop naming the
+// production package that reached the engine's test types through it.
+func TestImportGateAllowsTheHarnessToImportItself(t *testing.T) {
+	t.Parallel()
+
+	m := NewModule(t).Module("fixture.example/gate")
+	m.Source(HarnessDir+"/mutantkit/toolchain.go", "package mutantkit\n\nimport _ \""+TestkitImportPath+"\"\n")
+	m.Source("internal/engine/engine.go", "package engine\n\nimport _ \""+TestkitImportPath+"/mutantkit\"\n")
+
+	got, err := offendingImports(m.Root())
+	if err != nil {
+		t.Fatalf("scanning the synthesized module: %v", err)
+	}
+	want := []string{"internal/engine/engine.go imports " + TestkitImportPath + "/mutantkit"}
+	if !slices.Equal(got, want) {
+		t.Errorf("offendingImports = %q, want %q", got, want)
+	}
+}
+
 // TestProductionCodeDoesNotImportTestkit is the layering rule as a test.
 //
 // A production package that imported testkit would link `testing` into
@@ -206,7 +239,7 @@ func offendingImports(root string) ([]string, error) {
 			return err
 		}
 		relative := filepath.ToSlash(rel)
-		if relative == ForwarderException {
+		if relative == ForwarderException || strings.HasPrefix(relative, HarnessDir+"/") {
 			return nil
 		}
 		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)

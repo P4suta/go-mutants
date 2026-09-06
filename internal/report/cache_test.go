@@ -13,6 +13,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // cacheCandidate is one mutant to build a one-row report around.
@@ -127,7 +128,7 @@ func TestACacheThatWasOffStatesNoNumbersItDidNotMeasure(t *testing.T) {
 	if r.Cache.Hits != 0 || r.Cache.Misses != 0 || r.Cache.Writes != 0 {
 		t.Errorf("a cache that was off reported %+v", r.Cache)
 	}
-	if err = schemas.Validate(schemas.RunReportV1, mustMarshal(t, r)); err != nil {
+	if err = schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, r)); err != nil {
 		t.Errorf("the document does not satisfy the schema: %v", err)
 	}
 }
@@ -242,7 +243,7 @@ func TestTheCacheBlockIsInTheSchemaAndTheModel(t *testing.T) {
 	t.Parallel()
 
 	r := buildFixture(t)
-	data := mustMarshal(t, r)
+	data := mutantkit.MustMarshal(t, r)
 	if err := schemas.Validate(schemas.RunReportV1, data); err != nil {
 		t.Fatalf("the fixture does not satisfy the schema: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestEveryCacheModeIsInTheSchema(t *testing.T) {
 		if err != nil {
 			t.Fatalf("building a %q run: %v", mode, err)
 		}
-		if err = schemas.Validate(schemas.RunReportV1, mustMarshal(t, r)); err != nil {
+		if err = schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, r)); err != nil {
 			t.Errorf("a %q run does not satisfy the schema: %v", mode, err)
 		}
 	}

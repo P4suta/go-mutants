@@ -15,6 +15,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // mergedRunID is the id the merged document is given. It is a constant so that
@@ -127,7 +128,7 @@ func TestMergedShardsAreTheWholeRun(t *testing.T) {
 			if merged.RunID != mergedRunID {
 				t.Errorf("run_id = %q, want %q", merged.RunID, mergedRunID)
 			}
-			if err := schemas.Validate(schemas.RunReportV1, mustMarshal(t, merged)); err != nil {
+			if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, merged)); err != nil {
 				t.Errorf("the merged document does not satisfy the schema: %v", err)
 			}
 		})
@@ -178,7 +179,7 @@ func TestMergingChangedShardsKeepsTheDiff(t *testing.T) {
 	if merged.Shard != nil || merged.Merge == nil {
 		t.Errorf("the merged document reports shard %+v and merge %+v", merged.Shard, merged.Merge)
 	}
-	if err := schemas.Validate(schemas.RunReportV1, mustMarshal(t, merged)); err != nil {
+	if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, merged)); err != nil {
 		t.Errorf("the merged document does not satisfy the schema: %v", err)
 	}
 }
@@ -487,7 +488,7 @@ func TestParseRoundTripsADocument(t *testing.T) {
 	t.Parallel()
 
 	original := buildFixture(t)
-	parsed, err := report.Parse(mustMarshal(t, original))
+	parsed, err := report.Parse(mutantkit.MustMarshal(t, original))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -678,10 +679,10 @@ func TestChangedRefIsRecorded(t *testing.T) {
 	if r.Selection.ChangedRef == nil || *r.Selection.ChangedRef != "origin/main" {
 		t.Fatalf("changed_ref = %v", r.Selection.ChangedRef)
 	}
-	if got := string(mustMarshal(t, r)); !strings.Contains(got, `"changed_ref": "origin/main"`) {
+	if got := string(mutantkit.MustMarshal(t, r)); !strings.Contains(got, `"changed_ref": "origin/main"`) {
 		t.Error("the ref is not in the document")
 	}
-	if got := string(mustMarshal(t, buildFixture(t))); !strings.Contains(got, `"changed_ref": null`) {
+	if got := string(mutantkit.MustMarshal(t, buildFixture(t))); !strings.Contains(got, `"changed_ref": null`) {
 		t.Error("a run that took no diff does not write changed_ref as null")
 	}
 }

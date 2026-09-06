@@ -85,7 +85,7 @@ func inFlight(t *testing.T, th theme, coverage bool) *harness {
 		h.events(t, engine.CoverageMapped{Binaries: 3, Covered: 40, Uncovered: 7})
 	}
 
-	h.clock.advance(40 * time.Second)
+	h.clock.Advance(40 * time.Second)
 	h.events(t, started(killedResult), started(survivorResult))
 	h.events(t,
 		engine.MutantFinished{Result: killedResult},
@@ -105,8 +105,8 @@ func inFlight(t *testing.T, th theme, coverage bool) *harness {
 	inFlight.Rule = "add-to-sub"
 	h.events(t, started(inFlight))
 
-	h.clock.advance(2 * time.Second)
-	h.send(t, tickMsg(h.clock.now()))
+	h.clock.Advance(2 * time.Second)
+	h.send(t, tickMsg(h.clock.Now()))
 	return h
 }
 
@@ -210,8 +210,8 @@ func TestTheStyledFrameFitsTheTerminalAndClosesEveryStyle(t *testing.T) {
 				for width := minWidth; width <= 100; width++ {
 					for _, height := range []int{10, 24} {
 						h := coverageRunInFlight(t, th)
-						h.clock.advance(c.elapsed)
-						h.send(t, tickMsg(h.clock.now()))
+						h.clock.Advance(c.elapsed)
+						h.send(t, tickMsg(h.clock.Now()))
 
 						what := strconv.Itoa(width) + "x" + strconv.Itoa(height)
 						view := rawFrame(t, h, width, height)
