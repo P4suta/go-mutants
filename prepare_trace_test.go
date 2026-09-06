@@ -73,3 +73,51 @@ func TestPrepareTraceWithoutObserverDoesNotReadTheClock(t *testing.T) {
 	}
 	trace.skip(PreparePhaseVerification)
 }
+
+func TestPreparePhaseSpanCanFinishAfterAnotherPhase(t *testing.T) {
+	mainStarted := time.Time{}
+	probeStarted := mainStarted.Add(time.Millisecond)
+	probeFinished := probeStarted.Add(time.Millisecond)
+	mainFinished := probeFinished.Add(time.Millisecond)
+	instants := []time.Time{
+		mainStarted,
+		probeStarted,
+		probeFinished,
+		mainFinished,
+	}
+	var events []PrepareEvent
+	trace := prepareTrace{
+		emit: func(event PrepareEvent) {
+			events = append(events, event)
+		},
+		now: func() time.Time {
+			instant := instants[0]
+			instants = instants[1:]
+			return instant
+		},
+	}
+	main := trace.begin(PreparePhaseBinaryBuild)
+	if err := trace.run(PreparePhaseProbeValidation, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	trace.finish(main.complete(nil))
+	want := []PrepareEvent{
+		{Phase: PreparePhaseBinaryBuild, State: PrepareEventStarted},
+		{Phase: PreparePhaseProbeValidation, State: PrepareEventStarted},
+		{
+			Phase:    PreparePhaseProbeValidation,
+			State:    PrepareEventFinished,
+			Result:   PreparePhaseSucceeded,
+			Duration: probeFinished.Sub(probeStarted),
+		},
+		{
+			Phase:    PreparePhaseBinaryBuild,
+			State:    PrepareEventFinished,
+			Result:   PreparePhaseSucceeded,
+			Duration: mainFinished.Sub(mainStarted),
+		},
+	}
+	if !slices.Equal(events, want) {
+		t.Fatalf("events = %+v, want %+v", events, want)
+	}
+}

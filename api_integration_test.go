@@ -591,18 +591,37 @@ func prepareProbeable(probe bool) *preparedFixture {
 }
 
 func TestPrepareTraceReportsEveryPhaseInOrder(t *testing.T) {
-	phases := []gomutants.PreparePhase{
+	serialPhases := []gomutants.PreparePhase{
 		gomutants.PreparePhaseDiscovery,
 		gomutants.PreparePhaseProbeSnapshot,
 		gomutants.PreparePhaseMainValidation,
 		gomutants.PreparePhaseMainRestoration,
 		gomutants.PreparePhaseVerification,
-		gomutants.PreparePhaseBinaryBuild,
+	}
+	probePhases := []gomutants.PreparePhase{
 		gomutants.PreparePhaseProbeValidation,
 		gomutants.PreparePhaseProbeCoverageBuild,
 		gomutants.PreparePhaseProbeRestoration,
 	}
-	const eventsPerPhase = 2
+	type eventKey struct {
+		phase gomutants.PreparePhase
+		state gomutants.PrepareEventState
+	}
+	var order []eventKey
+	for _, phase := range serialPhases {
+		order = append(order,
+			eventKey{phase: phase, state: gomutants.PrepareEventStarted},
+			eventKey{phase: phase, state: gomutants.PrepareEventFinished},
+		)
+	}
+	order = append(order, eventKey{phase: gomutants.PreparePhaseBinaryBuild, state: gomutants.PrepareEventStarted})
+	for _, phase := range probePhases {
+		order = append(order,
+			eventKey{phase: phase, state: gomutants.PrepareEventStarted},
+			eventKey{phase: phase, state: gomutants.PrepareEventFinished},
+		)
+	}
+	order = append(order, eventKey{phase: gomutants.PreparePhaseBinaryBuild, state: gomutants.PrepareEventFinished})
 	for _, test := range []struct {
 		name    string
 		fixture *preparedFixture
@@ -622,23 +641,27 @@ func TestPrepareTraceReportsEveryPhaseInOrder(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got, want := len(test.fixture.events), len(phases)*eventsPerPhase; got != want {
+			if got, want := len(test.fixture.events), len(order); got != want {
 				t.Fatalf("event count = %d, want %d: %+v", got, want, test.fixture.events)
 			}
-			for index, phase := range phases {
-				started := test.fixture.events[index*eventsPerPhase]
-				finished := test.fixture.events[index*eventsPerPhase+1]
-				if started.Phase != phase || started.State != gomutants.PrepareEventStarted ||
-					started.Result != "" || started.Duration != 0 {
-					t.Errorf("phase %s start = %+v", phase, started)
+			for index, want := range order {
+				event := test.fixture.events[index]
+				if event.Phase != want.phase || event.State != want.state {
+					t.Errorf("event %d = %+v, want phase %s state %s", index, event, want.phase, want.state)
+					continue
+				}
+				if want.state == gomutants.PrepareEventStarted {
+					if event.Result != "" || event.Duration != 0 {
+						t.Errorf("phase %s start = %+v", want.phase, event)
+					}
+					continue
 				}
 				wantResult := gomutants.PreparePhaseSucceeded
-				if test.skipped[phase] {
+				if test.skipped[want.phase] {
 					wantResult = gomutants.PreparePhaseSkipped
 				}
-				if finished.Phase != phase || finished.State != gomutants.PrepareEventFinished ||
-					finished.Result != wantResult || finished.Duration < 0 {
-					t.Errorf("phase %s finish = %+v, want result %s", phase, finished, wantResult)
+				if event.Result != wantResult || event.Duration < 0 {
+					t.Errorf("phase %s finish = %+v, want result %s", want.phase, event, wantResult)
 				}
 			}
 		})

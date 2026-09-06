@@ -10,29 +10,55 @@ type prepareTrace struct {
 	now  func() time.Time
 }
 
+type preparePhaseSpan struct {
+	trace    prepareTrace
+	phase    PreparePhase
+	started  time.Time
+	observed bool
+}
+
 func newPrepareTrace(emit func(PrepareEvent)) prepareTrace {
 	return prepareTrace{emit: emit, now: time.Now}
 }
 
 func (t prepareTrace) run(phase PreparePhase, work func() error) error {
+	span := t.begin(phase)
+	err := work()
+	t.finish(span.complete(err))
+	return err
+}
+
+func (t prepareTrace) begin(phase PreparePhase) preparePhaseSpan {
+	span := preparePhaseSpan{trace: t, phase: phase}
 	if t.emit == nil {
-		return work()
+		return span
 	}
 	t.emit(PrepareEvent{Phase: phase, State: PrepareEventStarted})
-	started := t.now()
-	err := work()
-	duration := t.now().Sub(started)
+	span.started = t.now()
+	span.observed = true
+	return span
+}
+
+func (s preparePhaseSpan) complete(err error) PrepareEvent {
+	if !s.observed {
+		return PrepareEvent{}
+	}
 	result := PreparePhaseSucceeded
 	if err != nil {
 		result = PreparePhaseFailed
 	}
-	t.emit(PrepareEvent{
-		Phase:    phase,
+	return PrepareEvent{
+		Phase:    s.phase,
 		State:    PrepareEventFinished,
 		Result:   result,
-		Duration: duration,
-	})
-	return err
+		Duration: s.trace.now().Sub(s.started),
+	}
+}
+
+func (t prepareTrace) finish(event PrepareEvent) {
+	if t.emit != nil {
+		t.emit(event)
+	}
 }
 
 func (t prepareTrace) skip(phase PreparePhase) {

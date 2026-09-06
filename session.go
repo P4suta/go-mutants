@@ -83,6 +83,19 @@ type Session struct {
 	preserved []string
 }
 
+type mainBuildResult struct {
+	options  execute.Options
+	binaries []execute.TestBinary
+	files    map[string]fileState
+}
+
+type probeBuildResult struct {
+	options  execute.Options
+	binaries []execute.TestBinary
+	probed   map[string]bool
+	overlay  string
+}
+
 // Prepare discovers, validates, instruments, verifies, and builds one reusable
 // mutation session. A Workspace may be prepared exactly once, including when
 // preparation fails after it has begun.
@@ -276,55 +289,61 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		trace.skip(PreparePhaseVerification)
 	}
 
-	var execOptions execute.Options
-	var binaries []execute.TestBinary
-	var preparedFiles map[string]fileState
-	err = trace.run(PreparePhaseBinaryBuild, func() error {
-		executionEnv, err := instrumentationEnvironment(w.env, overlayPath)
-		if err != nil {
-			return fmt.Errorf("gomutants: prepare execution overlay: %w", err)
-		}
-		execOptions = execute.Options{
-			Toolchain:    w.toolchain,
-			SnapshotRoot: w.snapshot.Root,
-			Packages:     slices.Clone(resolved.Packages),
-			BinDir:       filepath.Join(scratch, "bin"),
-			ScratchDir:   filepath.Join(scratch, "targets"),
-			Env:          executionEnv,
-			Jobs:         resolved.Jobs,
-			Timeout:      resolved.BuildTimeout,
-		}
-		binaries, err = execute.BuildTestBinaries(ctx, execOptions)
-		if err != nil {
-			return fmt.Errorf("gomutants: prepare test binaries: %w", err)
-		}
-		preparedFiles, err = scanFiles(w.snapshot.Root)
-		if err != nil {
-			return fmt.Errorf("gomutants: prepare snapshot state: %w", err)
-		}
-		return nil
-	})
-	if err != nil {
-		return fail(err)
-	}
-
-	probeOptions, probeBinaries, probed, probeOverlay, err := prepareProbeTree(ctx, probeTreeOptions{
-		snap:               probeSnap,
-		catalog:            catalog,
-		hints:              hints,
-		modulePath:         found.ModulePath,
-		toolchain:          w.toolchain,
-		jobs:               resolved.Jobs,
-		buildTimeout:       resolved.BuildTimeout,
-		packages:           resolved.Packages,
-		validationPackages: resolved.DiscoveryPackages,
-		coverPackages:      resolved.ProbeCoverPackages,
-		env:                w.env,
-		validateEnv:        validationEnv,
-		scratch:            scratch,
-		pristineSources:    pristineSources,
-		trace:              trace,
-	})
+	mainSpan := trace.begin(PreparePhaseBinaryBuild)
+	mainFinished := make(chan PrepareEvent, 1)
+	mainBuild, probeBuild, err := runPreparationBuilds(ctx,
+		func(ctx context.Context) (mainBuildResult, error) {
+			var result mainBuildResult
+			err := func() error {
+				executionEnv, err := instrumentationEnvironment(w.env, overlayPath)
+				if err != nil {
+					return fmt.Errorf("gomutants: prepare execution overlay: %w", err)
+				}
+				result.options = execute.Options{
+					Toolchain:    w.toolchain,
+					SnapshotRoot: w.snapshot.Root,
+					Packages:     slices.Clone(resolved.Packages),
+					BinDir:       filepath.Join(scratch, "bin"),
+					ScratchDir:   filepath.Join(scratch, "targets"),
+					Env:          executionEnv,
+					Jobs:         resolved.Jobs,
+					Timeout:      resolved.BuildTimeout,
+				}
+				result.binaries, err = execute.BuildTestBinaries(ctx, result.options)
+				if err != nil {
+					return fmt.Errorf("gomutants: prepare test binaries: %w", err)
+				}
+				result.files, err = scanFiles(w.snapshot.Root)
+				if err != nil {
+					return fmt.Errorf("gomutants: prepare snapshot state: %w", err)
+				}
+				return nil
+			}()
+			mainFinished <- mainSpan.complete(err)
+			return result, err
+		},
+		func(ctx context.Context) (probeBuildResult, error) {
+			options, binaries, probed, overlay, err := prepareProbeTree(ctx, probeTreeOptions{
+				snap:               probeSnap,
+				catalog:            catalog,
+				hints:              hints,
+				modulePath:         found.ModulePath,
+				toolchain:          w.toolchain,
+				jobs:               resolved.Jobs,
+				buildTimeout:       resolved.BuildTimeout,
+				packages:           resolved.Packages,
+				validationPackages: resolved.DiscoveryPackages,
+				coverPackages:      resolved.ProbeCoverPackages,
+				env:                w.env,
+				validateEnv:        validationEnv,
+				scratch:            scratch,
+				pristineSources:    pristineSources,
+				trace:              trace,
+			})
+			return probeBuildResult{options: options, binaries: binaries, probed: probed, overlay: overlay}, err
+		},
+	)
+	trace.finish(<-mainFinished)
 	if err != nil {
 		return fail(err)
 	}
@@ -341,8 +360,8 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		catalog,
 		validated.Rejected,
 		accepted,
-		probed,
-		binaries,
+		probeBuild.probed,
+		mainBuild.binaries,
 	)
 	session := &Session{
 		root:           w.snapshot.Root,
@@ -352,15 +371,15 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		publicCatalog:  publicCatalog,
 		accepted:       accepted,
 		rejections:     rejectionIndex,
-		binaries:       slices.Clone(binaries),
-		executeOptions: execOptions,
+		binaries:       slices.Clone(mainBuild.binaries),
+		executeOptions: mainBuild.options,
 		mutantTimeout:  resolved.MutantTimeout,
-		preparedFiles:  preparedFiles,
+		preparedFiles:  mainBuild.files,
 		overlayPath:    overlayPath,
 		probeSnapshot:  probeSnap,
-		probeBinaries:  probeBinaries,
-		probeOptions:   probeOptions,
-		probeOverlay:   probeOverlay,
+		probeBinaries:  probeBuild.binaries,
+		probeOptions:   probeBuild.options,
+		probeOverlay:   probeBuild.overlay,
 		keepTemp:       w.keepTemp,
 	}
 	w.session = session
@@ -385,6 +404,55 @@ func checkPristineSnapshot(snap *snapshot.Snapshot) error {
 		changes[index] = change.Kind.String() + " " + change.RelPath
 	}
 	return fmt.Errorf("gomutants: prepare commands changed the frozen snapshot:\n%s", strings.Join(changes, "\n"))
+}
+
+func runPreparationBuilds(
+	ctx context.Context,
+	main func(context.Context) (mainBuildResult, error),
+	probe func(context.Context) (probeBuildResult, error),
+) (mainBuildResult, probeBuildResult, error) {
+	type completedMain struct {
+		result   mainBuildResult
+		err      error
+		canceled bool
+	}
+	buildCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	mainFailure := errors.New("gomutants: main preparation build failed")
+	probeFailure := errors.New("gomutants: probe preparation build failed")
+	mainDone := make(chan completedMain, 1)
+	go func() {
+		result, err := main(buildCtx)
+		canceled := buildContextCanceled(err, context.Cause(buildCtx))
+		if err != nil && !canceled {
+			cancel(mainFailure)
+		}
+		mainDone <- completedMain{result: result, err: err, canceled: canceled}
+	}()
+	probeResult, probeErr := probe(buildCtx)
+	probeCanceled := buildContextCanceled(probeErr, context.Cause(buildCtx))
+	if probeErr != nil && !probeCanceled {
+		cancel(probeFailure)
+	}
+	mainResult := <-mainDone
+	if mainResult.err != nil && !mainResult.canceled {
+		return mainBuildResult{}, probeBuildResult{}, mainResult.err
+	}
+	if probeErr != nil && !probeCanceled {
+		return mainBuildResult{}, probeBuildResult{}, probeErr
+	}
+	if mainResult.err != nil {
+		return mainBuildResult{}, probeBuildResult{}, mainResult.err
+	}
+	if probeErr != nil {
+		return mainBuildResult{}, probeBuildResult{}, probeErr
+	}
+	return mainResult.result, probeResult, nil
+}
+
+func buildContextCanceled(err, cause error) bool {
+	return cause != nil && (errors.Is(err, context.Canceled) ||
+		errors.Is(cause, context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded))
 }
 
 // failPrepare returns a preparation failure, removing the probe tree first when

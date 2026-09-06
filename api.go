@@ -129,7 +129,9 @@ const (
 	PreparePhaseSkipped   PreparePhaseResult = "skipped"
 )
 
-// PrepareEvent is emitted synchronously in phase order while Prepare runs.
+// PrepareEvent is emitted synchronously in deterministic dependency order.
+// Independent phases may overlap, but callbacks are serialized and every phase
+// starts before it finishes.
 type PrepareEvent struct {
 	Phase    PreparePhase
 	State    PrepareEventState
@@ -169,7 +171,7 @@ type PrepareOptions struct {
 	SkipVerify bool
 	// Probe prepares binaries that record whether probed mutant values differ.
 	Probe bool
-	// Trace receives deterministic phase start and finish events synchronously.
+	// Trace receives serialized phase start and finish events synchronously.
 	Trace func(PrepareEvent)
 }
 
