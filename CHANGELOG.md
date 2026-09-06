@@ -50,6 +50,32 @@ Entries say *why* a change was made, not only what changed.
   `TestProductionCodeDoesNotImportTestkit` parses every non-test file in the
   tree, and `TestTheHarnessImportsNothingFromThisModule` parses the harness's
   own.
+- **A run trace: `github.com/P4suta/go-mutants/trace` and the
+  `gomutants-trace-v1` contract.** A report says a mutant survived; nothing said
+  which test binaries were run against it, with which arguments, for how long,
+  or where their output went — so diagnosing a run meant re-running it with
+  print statements. The new public package is a machine-readable account of what
+  a run did: an `Event` for every phase, step, subprocess, mutant attempt, probe
+  pass, validation step, coverage placement, cache decision, snapshot and sweep;
+  a `Recorder` whose disabled form is a nil pointer every method is safe on; a
+  directory sink that leaves a readable stream even for a killed run; a bounded
+  in-memory ring for the failure nobody asked for a recording of; and strict
+  readers (`Read`, `ReadSummary`, `Diff`) for reading one back. It is
+  deliberately *not* evidence: no trace option enters a mutant identity, the
+  workspace digest or a cache key, a failing sink costs the event and never the
+  run, environment variables are recorded by name and never by value, and
+  captured output is digested into the event and preserved beside the stream
+  rather than serialised into it. Every recording ends with
+  `events_emitted`/`events_dropped`, because best effort is only honest if the
+  loss is reported. The `exec`, `prepare`, `mutant`, `artifact`, `note` and
+  `run` payloads share their field names with goatest's own trace — which spells
+  `note` a `progress` record, with the same `kind` and `detail` — so an embedder
+  that records both streams gets one timeline across two tools rather than two
+  to reconcile. Nothing asks for a recording yet — the flag, the
+  environment variable and the wiring come next; the format landed first so that
+  what is recorded into it is recorded against a contract. Documented in
+  `docs/trace-v1.md`, published as `schema/trace-v1.schema.json`, and reasoned
+  about in `docs/adr/0001-trace-is-not-evidence.md`.
 - **`Workspace.ToolchainVersion()`.** A workspace already resolves the
   toolchain it froze the module against, and every consumer that needed the
   version was running its own `go version` to learn something the workspace was

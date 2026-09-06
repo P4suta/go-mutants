@@ -34,6 +34,12 @@ const (
 	// the machine rather than any code, which is why it shares nothing with the
 	// two documents above — no run id, no workspace, no mutants.
 	DoctorV1 = "go-mutants/doctor"
+
+	// TraceEventV1 is one line of a run trace: the diagnostic account of what
+	// a run did. It is the one document type here that is not a whole file —
+	// a recording is JSON Lines, and each line is one instance — and the one
+	// that is never evidence. See docs/trace-v1.md.
+	TraceEventV1 = "go-mutants/trace-event"
 )
 
 // registry maps a document type onto the schema file in [schema.FS] that
@@ -44,9 +50,10 @@ const (
 // here; nothing else in this package knows how many schemas there are or what
 // they contain.
 var registry = map[string]string{
-	CatalogV1:   "catalog-v1.schema.json",
-	DoctorV1:    "doctor-v1.schema.json",
-	RunReportV1: "run-report-v1.schema.json",
+	CatalogV1:    "catalog-v1.schema.json",
+	DoctorV1:     "doctor-v1.schema.json",
+	RunReportV1:  "run-report-v1.schema.json",
+	TraceEventV1: "trace-v1.schema.json",
 }
 
 // baseURL is the identity a schema gets when its file declares no "$id".

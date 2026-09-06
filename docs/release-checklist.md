@@ -159,7 +159,8 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
 ## Reports and schemas
 
 - [ ] Real CLI output validates against `schema/run-report-v1.schema.json`,
-      `schema/catalog-v1.schema.json`, and `schema/doctor-v1.schema.json` —
+      `schema/catalog-v1.schema.json`, `schema/doctor-v1.schema.json`, and
+      every line of a recording against `schema/trace-v1.schema.json` —
       `run --json`, `list --json`, and `doctor --json` each checked, not only
       the fixtures
 - [ ] `report validate` accepts a freshly written report, and `report merge`

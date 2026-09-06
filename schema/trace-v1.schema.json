@@ -1,0 +1,694 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://go-mutants.invalid/schema/trace-v1.schema.json",
+  "title": "go-mutants trace event v1",
+  "description": "One line of a go-mutants trace stream. A trace is the diagnostic account of a run, never evidence: it takes no part in a verdict, in a mutant identity, or in the key a cached result is stored under, and it records environment variable names without their values. See docs/trace-v1.md for the contract and docs/adr/0001-trace-is-not-evidence.md for why it is shaped this way.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "type", "timestamp", "elapsed_ms"],
+  "properties": {
+    "seq": {
+      "description": "Position of the event in the recording, counting from one.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "type": {
+      "description": "Which event this is, and therefore which payload it carries.",
+      "enum": [
+        "run-start",
+        "phase-start",
+        "phase-end",
+        "stage",
+        "prepare",
+        "exec",
+        "mutant-exec",
+        "probe-exec",
+        "validate",
+        "coverage-map",
+        "cache",
+        "snapshot",
+        "sweep",
+        "artifact",
+        "note",
+        "run-end"
+      ]
+    },
+    "schema": {
+      "description": "Format identity, carried by the run-start event alone.",
+      "const": "gomutants-trace-v1"
+    },
+    "timestamp": {
+      "description": "When the event was recorded, RFC 3339 in UTC.",
+      "type": "string",
+      "format": "date-time",
+      "minLength": 1
+    },
+    "elapsed_ms": {
+      "description": "Milliseconds between the start of the recording and the event.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "start": { "$ref": "#/$defs/start" },
+    "phase": { "$ref": "#/$defs/phase" },
+    "stage": { "$ref": "#/$defs/stage" },
+    "prepare": { "$ref": "#/$defs/prepare" },
+    "exec": { "$ref": "#/$defs/exec" },
+    "mutant": { "$ref": "#/$defs/mutant" },
+    "probe": { "$ref": "#/$defs/probe" },
+    "validate": { "$ref": "#/$defs/validate" },
+    "coverage": { "$ref": "#/$defs/coverage" },
+    "cache": { "$ref": "#/$defs/cache" },
+    "snapshot": { "$ref": "#/$defs/snapshot" },
+    "sweep": { "$ref": "#/$defs/sweep" },
+    "artifact": { "$ref": "#/$defs/artifact" },
+    "note": { "$ref": "#/$defs/note" },
+    "run": { "$ref": "#/$defs/run" }
+  },
+  "allOf": [
+    {
+      "description": "The type names the payload the line carries. Stated in this direction, a type with its payload missing is refused.",
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "run-start" } } },
+          "then": { "required": ["schema", "start"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "phase-start" } } },
+          "then": {
+            "description": "A phase is only timed when it ends, so a phase-start that carried a duration would describe a span nothing measured.",
+            "required": ["phase"],
+            "properties": { "phase": { "not": { "required": ["duration_ms"] } } }
+          }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "phase-end" } } },
+          "then": {
+            "description": "A phase-end always carries its duration, including when it is zero, so a reader can tell a phase that took under a millisecond from an event that was lost.",
+            "required": ["phase"],
+            "properties": { "phase": { "required": ["duration_ms"] } }
+          }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "stage" } } },
+          "then": { "required": ["stage"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "prepare" } } },
+          "then": { "required": ["prepare"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "exec" } } },
+          "then": { "required": ["exec"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "mutant-exec" } } },
+          "then": { "required": ["mutant"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "probe-exec" } } },
+          "then": { "required": ["probe"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "validate" } } },
+          "then": { "required": ["validate"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "coverage-map" } } },
+          "then": { "required": ["coverage"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "cache" } } },
+          "then": { "required": ["cache"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "snapshot" } } },
+          "then": { "required": ["snapshot"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "sweep" } } },
+          "then": { "required": ["sweep"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "artifact" } } },
+          "then": { "required": ["artifact"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "note" } } },
+          "then": { "required": ["note"] }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "run-end" } } },
+          "then": { "required": ["run"] }
+        }
+      ]
+    },
+    {
+      "description": "A payload appears only on the event type it belongs to. Stated in this direction, a line carrying two payloads — or somebody else's — is refused, so a reader may switch on the type and reach for that payload alone.",
+      "allOf": [
+        {
+          "if": { "required": ["schema"] },
+          "then": { "properties": { "type": { "const": "run-start" } } }
+        },
+        {
+          "if": { "required": ["start"] },
+          "then": { "properties": { "type": { "const": "run-start" } } }
+        },
+        {
+          "if": { "required": ["phase"] },
+          "then": { "properties": { "type": { "enum": ["phase-start", "phase-end"] } } }
+        },
+        {
+          "if": { "required": ["stage"] },
+          "then": { "properties": { "type": { "const": "stage" } } }
+        },
+        {
+          "if": { "required": ["prepare"] },
+          "then": { "properties": { "type": { "const": "prepare" } } }
+        },
+        {
+          "if": { "required": ["exec"] },
+          "then": { "properties": { "type": { "const": "exec" } } }
+        },
+        {
+          "if": { "required": ["mutant"] },
+          "then": { "properties": { "type": { "const": "mutant-exec" } } }
+        },
+        {
+          "if": { "required": ["probe"] },
+          "then": { "properties": { "type": { "const": "probe-exec" } } }
+        },
+        {
+          "if": { "required": ["validate"] },
+          "then": { "properties": { "type": { "const": "validate" } } }
+        },
+        {
+          "if": { "required": ["coverage"] },
+          "then": { "properties": { "type": { "const": "coverage-map" } } }
+        },
+        {
+          "if": { "required": ["cache"] },
+          "then": { "properties": { "type": { "const": "cache" } } }
+        },
+        {
+          "if": { "required": ["snapshot"] },
+          "then": { "properties": { "type": { "const": "snapshot" } } }
+        },
+        {
+          "if": { "required": ["sweep"] },
+          "then": { "properties": { "type": { "const": "sweep" } } }
+        },
+        {
+          "if": { "required": ["artifact"] },
+          "then": { "properties": { "type": { "const": "artifact" } } }
+        },
+        {
+          "if": { "required": ["note"] },
+          "then": { "properties": { "type": { "const": "note" } } }
+        },
+        {
+          "if": { "required": ["run"] },
+          "then": { "properties": { "type": { "const": "run-end" } } }
+        }
+      ]
+    }
+  ],
+  "$defs": {
+    "milliseconds": { "type": "integer", "minimum": 0 },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "start": {
+      "description": "Who opened the recording, and what it is about.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "tool_version", "pid", "root"],
+      "properties": {
+        "kind": {
+          "description": "A CLI run, or a library workspace. They differ in what they can say about themselves: a run has a run id and an argument vector, a workspace has neither.",
+          "enum": ["run", "workspace"]
+        },
+        "run_id": {
+          "description": "The run identity the report is also named by, so a recording and a report can be paired.",
+          "type": "string",
+          "pattern": "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{4}$"
+        },
+        "tool_version": { "type": "string" },
+        "pid": { "type": "integer" },
+        "root": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["kind"], "properties": { "kind": { "const": "workspace" } } },
+          "then": {
+            "description": "A workspace is opened by a program rather than by a command line, so it has neither a run id nor an argument vector to record.",
+            "not": { "anyOf": [{ "required": ["run_id"] }, { "required": ["args"] }] }
+          }
+        }
+      ]
+    },
+    "phase": {
+      "description": "A phase of a run. A phase is only timed when it ends.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" }
+      }
+    },
+    "stage": {
+      "description": "One step inside a phase, recorded as a started/finished pair. The phase is stamped by the recorder from the phase that was open when the stage started, so no call site can mislabel one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "state"],
+      "properties": {
+        "phase": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "state": { "enum": ["started", "finished"] },
+        "result": { "type": "string", "minLength": 1 },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "detail": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "started" } } },
+          "then": {
+            "description": "A started stage has produced neither a result nor a duration yet.",
+            "not": { "anyOf": [{ "required": ["result"] }, { "required": ["duration_ms"] }] }
+          }
+        },
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "finished" } } },
+          "then": {
+            "description": "A finished stage always carries its duration, including when it is zero, so a reader can tell a fast stage from an event that was lost.",
+            "required": ["duration_ms"]
+          }
+        }
+      ]
+    },
+    "prepare": {
+      "description": "One timed stage of a library mutation session's preparation. Its fields and its vocabulary are goatest's, exactly, so one timeline reads the same in both recordings.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "state"],
+      "properties": {
+        "phase": {
+          "enum": [
+            "discovery",
+            "probe_snapshot",
+            "main_validation",
+            "main_restoration",
+            "verification",
+            "binary_build",
+            "probe_validation",
+            "probe_coverage_build",
+            "probe_restoration"
+          ]
+        },
+        "state": { "enum": ["started", "finished"] },
+        "result": { "enum": ["succeeded", "failed", "skipped"] },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "started" } } },
+          "then": {
+            "not": { "anyOf": [{ "required": ["result"] }, { "required": ["duration_ms"] }] }
+          }
+        },
+        {
+          "if": { "required": ["state"], "properties": { "state": { "const": "finished" } } },
+          "then": { "required": ["result", "duration_ms"] }
+        }
+      ]
+    },
+    "exec": {
+      "description": "One executed command, recorded after the child was reaped and recorded without its environment values and without its captured output.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "argv", "exit_code"],
+      "properties": {
+        "kind": {
+          "description": "What the command was. Every subprocess go-mutants starts is labelled with one of these, so an unlabelled command is a recording that does not validate rather than a command a reader has to guess about.",
+          "enum": [
+            "go-version",
+            "scope-list",
+            "baseline-build",
+            "baseline-test",
+            "instrumented-baseline",
+            "covdata-textfmt",
+            "go-list",
+            "go-test-c",
+            "coverage-run",
+            "mutant-run",
+            "probe-run",
+            "validate-build",
+            "workspace-exec",
+            "verify"
+          ]
+        },
+        "subject": {
+          "description": "What the command was about: a mutant id, an import path, a scope pattern — absent when the kind says everything there is to say.",
+          "type": "string",
+          "minLength": 1
+        },
+        "argv": { "type": "array", "items": { "type": "string" } },
+        "dir": { "type": "string" },
+        "env_names": {
+          "description": "Environment variable names alone, sorted and deduplicated: an item holding a value is not a trace.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[^=]+$" }
+        },
+        "timeout_ms": { "$ref": "#/$defs/milliseconds" },
+        "exit_code": { "type": "integer" },
+        "timed_out": { "type": "boolean" },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "output_bytes": { "type": "integer", "minimum": 0 },
+        "output_sha256": { "$ref": "#/$defs/digest" },
+        "output_truncated": { "type": "boolean" },
+        "output_path": { "type": "string", "minLength": 1 },
+        "error": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["output_path"] },
+          "then": {
+            "description": "A preserved output file is only meaningful beside the digest of the capture it holds part of.",
+            "required": ["output_sha256"]
+          }
+        },
+        {
+          "if": { "required": ["output_truncated"], "properties": { "output_truncated": { "const": true } } },
+          "then": {
+            "description": "Truncation is a property of the preserved file, so it is recorded only where there is one.",
+            "required": ["output_path"]
+          }
+        }
+      ]
+    },
+    "mutant": {
+      "description": "One attempt at one mutant. It shares id, display_id, package, args, timeout_ms, outcome, killed_by, duration_ms and error with goatest's own mutant record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "attempt", "worker"],
+      "properties": {
+        "id": { "$ref": "#/$defs/digest" },
+        "display_id": {
+          "description": "The short identity go-mutants names the mutant by: a prefix of `id` of `mutation.DisplayIDLength` characters, which is 20 today and is a constant the project may change. The bound is deliberately loose rather than pinned to that number, because a pattern that pinned it would turn a change to a display length into a recording nothing accepts.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{4,64}$"
+        },
+        "attempt": {
+          "description": "Which attempt this is, from one: 1 is the concurrent pass, 2 the serial retry a survivor gets. Recorded rather than collapsed, because 'survived' and 'survived twice' are different facts about a flaky test.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "worker": {
+          "description": "Which execution slot ran it, from zero.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "package": { "type": "string" },
+        "binaries": {
+          "description": "The test binaries this attempt ran, in order.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "timeout_ms": { "$ref": "#/$defs/milliseconds" },
+        "outcome": {
+          "description": "What became of the attempt, in the vocabulary the library's Outcome uses: killed, survived, timed_out, inconclusive, errored, not_run. It is deliberately not an enum here, so that a recording made by an older build stays readable when the vocabulary grows.",
+          "type": "string",
+          "minLength": 1
+        },
+        "killed_by": { "type": "string", "minLength": 1 },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "exec_seqs": {
+          "description": "The exec events of the binaries this attempt ran, in order. They are how an attempt is joined to the commands underneath it, and therefore to their preserved output.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sequence" }
+        },
+        "output_tail": {
+          "description": "The tail of the killing binary's output. It is stripped before a bounded ring and kept by a sink that writes to disk.",
+          "type": "string"
+        },
+        "error": { "type": "string" }
+      }
+    },
+    "probe": {
+      "description": "One pass through the prepared probe tree, where no mutant is active and what is measured is which mutants' sites ever differed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_code"],
+      "properties": {
+        "package": { "type": "string" },
+        "binaries": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "timeout_ms": { "$ref": "#/$defs/milliseconds" },
+        "outcome": {
+          "description": "What became of the pass. Absent only on one carrying the error that stopped it instead.",
+          "enum": ["measured", "test-failed", "timed-out", "unavailable"]
+        },
+        "exit_code": { "type": "integer" },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "infected": {
+          "description": "The mutants whose site the pass made differ, by full identity, each named once.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/digest" }
+        },
+        "exec_seqs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sequence" }
+        },
+        "error": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["infected"] },
+          "then": {
+            "description": "Only a measured pass observed anything, so the infections it recorded come with the outcome that measured them.",
+            "required": ["outcome"],
+            "properties": { "outcome": { "const": "measured" } }
+          }
+        },
+        {
+          "if": { "required": ["outcome"], "properties": { "outcome": { "const": "measured" } } },
+          "then": {
+            "description": "A measured pass always says what it infected, the empty list included: a measured pass that infected nothing is the strongest thing the probe phase says about a binary — nothing it runs can observe any of them — and omitting the list would make that claim indistinguishable from a pass nothing measured.",
+            "required": ["infected"]
+          }
+        }
+      ]
+    },
+    "validate": {
+      "description": "One step of establishing which catalogued mutants can exist: the instrumentation, each compile, and each step of the bisection a red compile starts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tree", "op"],
+      "properties": {
+        "tree": { "enum": ["mutant", "probe"] },
+        "op": {
+          "description": "instrument wrote the catalogue into the tree; build compiled it once; gate found the tree broken with no mutant in it, which validation refuses to blame on a candidate; isolate searched one file; reject removed one candidate; done closed validation with what it spent and decided.",
+          "enum": ["instrument", "build", "gate", "isolate", "reject", "done"]
+        },
+        "build": { "type": "integer", "minimum": 1 },
+        "failed": { "type": "boolean" },
+        "blamed": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "pending": { "type": "integer", "minimum": 0 },
+        "path": { "type": "string", "minLength": 1 },
+        "candidates": { "type": "integer", "minimum": 0 },
+        "accepted": { "type": "integer", "minimum": 0 },
+        "mutant_id": { "$ref": "#/$defs/digest" },
+        "diagnostic": { "type": "string" },
+        "builds": { "type": "integer", "minimum": 0 },
+        "rejected": { "type": "integer", "minimum": 0 },
+        "exec_seq": { "$ref": "#/$defs/sequence" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["op"], "properties": { "op": { "const": "reject" } } },
+          "then": {
+            "description": "A rejection always names the candidate it removed.",
+            "required": ["mutant_id"]
+          }
+        },
+        {
+          "if": { "required": ["op"], "properties": { "op": { "const": "build" } } },
+          "then": {
+            "description": "A compile is numbered, so that a reader counting the compiles of one validation counts them the same way validation does.",
+            "required": ["build"]
+          }
+        }
+      ]
+    },
+    "coverage": {
+      "description": "How coverage placed one mutant: which test binaries reach the block the mutation sits in, or that none does.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mutant_id", "path", "start_line", "end_line"],
+      "properties": {
+        "mutant_id": { "$ref": "#/$defs/digest" },
+        "path": { "type": "string", "minLength": 1 },
+        "start_line": {
+          "description": "The coverage block the mutation was mapped into, not the mutation's own span. Zero for a mutant whose position no block contained.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_line": { "type": "integer", "minimum": 0 },
+        "covering": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "uncovered": {
+          "description": "The same statement as an empty covering set, recorded explicitly so that a reader is not asked to infer a decision from an omitted array.",
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["uncovered"], "properties": { "uncovered": { "const": true } } },
+          "then": {
+            "description": "A mutant no binary reaches has no covering binaries to name.",
+            "not": { "required": ["covering"] }
+          }
+        }
+      ]
+    },
+    "cache": {
+      "description": "One cache decision. A hit is the one event that explains an absence of work, which is why a warm run's recording is as long as it is.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "result"],
+      "properties": {
+        "op": { "enum": ["open", "lookup", "store"] },
+        "mutant_id": { "$ref": "#/$defs/digest" },
+        "result": {
+          "enum": [
+            "hit",
+            "miss",
+            "corrupt",
+            "expected",
+            "written",
+            "failed",
+            "not-cacheable",
+            "unavailable",
+            "opened"
+          ]
+        },
+        "outcome": {
+          "description": "The cached verdict a hit produced.",
+          "type": "string",
+          "minLength": 1
+        },
+        "directory": { "type": "string", "minLength": 1 },
+        "context_key": {
+          "description": "The identity the entry is filed under: `cache.Context.ContextKey()`, which is the full key truncated to `cache.ContextKeyLength` characters — the directory name, not the whole digest. No trace option enters it, which is why a traced and an untraced run share a cache.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "error": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["op"], "properties": { "op": { "enum": ["lookup", "store"] } } },
+          "then": {
+            "description": "A lookup and a store are always about one mutant; opening the store is about none.",
+            "required": ["mutant_id"]
+          }
+        },
+        {
+          "if": { "required": ["op"], "properties": { "op": { "const": "open" } } },
+          "then": { "not": { "required": ["mutant_id"] } }
+        }
+      ]
+    },
+    "snapshot": {
+      "description": "One frozen tree.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["workspace", "probe"] },
+        "source": { "type": "string" },
+        "dir": { "type": "string" },
+        "stable": {
+          "description": "Whether the copy carried the source tree's modification times with it, which is what lets the Go build cache be reused across snapshots.",
+          "type": "boolean"
+        },
+        "files": { "type": "integer", "minimum": 0 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "error": { "type": "string" }
+      }
+    },
+    "sweep": {
+      "description": "What collection reclaimed from a temporary directory before the run wrote anything into it. It is silent about a machine with nothing to reclaim, and it can never change a verdict.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent"],
+      "properties": {
+        "parent": { "type": "string", "minLength": 1 },
+        "removed": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "removed_bytes": { "type": "integer", "minimum": 0 },
+        "live": {
+          "description": "Directories collection left alone because a running process still holds their lock.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "kept": {
+          "description": "Directories collection left alone because a --keep-temp asked it to.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": { "type": "string" }
+      }
+    },
+    "artifact": {
+      "description": "A file or directory the run wrote or kept.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "note": {
+      "description": "Something the run could not do, said once. A note can never change a verdict.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "code": {
+          "description": "The GOMnnnn code the run also reported to its console, where there is one.",
+          "type": "string",
+          "pattern": "^GOM[0-9]{4}$"
+        },
+        "detail": { "type": "string" }
+      }
+    },
+    "run": {
+      "description": "The end of a recording, with the accounting that tells a complete trace from a lossy one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events_emitted", "events_dropped"],
+      "properties": {
+        "verdict": { "type": "string" },
+        "exit_code": { "type": "integer" },
+        "error": { "type": "string" },
+        "events_emitted": {
+          "description": "Events the sink kept before this one. The accounting is taken before this event is written, so it excludes the run-end itself — goatest's rule too, so one number means one thing in both recordings. For an intact recording, events_emitted + events_dropped + 1 is the number of lines in the stream, with events_dropped zero.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "events_dropped": {
+          "description": "Events the sink could not keep. A sink that reports its own drops is authoritative, so a bounded ring that discarded an old event counts it even though nothing failed.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
