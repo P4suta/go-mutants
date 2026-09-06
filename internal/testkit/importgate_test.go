@@ -15,8 +15,18 @@ import (
 	"testing"
 )
 
-// TestkitImportPath is the prefix no production file may import.
-const TestkitImportPath = ModulePath + "/internal/testkit"
+// The two import paths no production file may reach.
+//
+// The second is not a second harness: internal/testsupport is test-only support
+// in its entirety, and its one exported helper is now a forwarder into this
+// package. It has to be forbidden explicitly because the scan reads *direct*
+// imports — a production file that imported the forwarder would pull the
+// harness, and `testing` with it, one hop further along, and a gate that watched
+// only for the harness would report nothing at all.
+const (
+	TestkitImportPath     = ModulePath + "/internal/testkit"
+	TestSupportImportPath = ModulePath + "/internal/testsupport"
+)
 
 // skippedDirectories are the trees that hold Go files which are not this
 // module's production code: the corpus is a set of modules of their own, the
@@ -24,15 +34,20 @@ const TestkitImportPath = ModulePath + "/internal/testkit"
 // vendor-assets holds somebody else's code.
 var skippedDirectories = []string{"testdata", FixturesDir, "vendor-assets", ".git"}
 
-// testOnlyPackages may import testkit from a file that is not a _test.go.
+// ForwarderException is the one file that may import the harness without being a
+// _test.go.
 //
-// internal/testsupport is one: it is itself test-only support — imported from
-// _test files and nowhere else — and its exported helper is now a forwarder into
-// this package so that its call sites keep compiling while the suites move over.
-// It disappears when they have, and this list with it. A production package
-// added here would be the defect the gate exists to catch, which is why it is a
-// list of one with a reason attached rather than a pattern.
-var testOnlyPackages = []string{"internal/testsupport"}
+// internal/testsupport/cache.go is test-only support whose exported helper is a
+// forwarder into this package, kept so that its fourteen call sites go on
+// compiling while the suites move over; it disappears when they have, and this
+// constant with it.
+//
+// It is one *file* rather than its package, and the difference is the whole
+// point of the exception. Written as a package prefix, it silently extends the
+// permission to every file anybody adds beside it — so a new production package
+// linking `testing` would be admitted by a rule that was written about a file on
+// its way out, and nobody would be told.
+const ForwarderException = "internal/testsupport/cache.go"
 
 // TestProductionCodeDoesNotImportTestkit is the layering rule as a test.
 //
@@ -54,14 +69,9 @@ func TestProductionCodeDoesNotImportTestkit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scanning %s for imports of the test harness: %v", root, err)
 	}
-	offenders = slices.DeleteFunc(offenders, func(path string) bool {
-		return slices.ContainsFunc(testOnlyPackages, func(allowed string) bool {
-			return strings.HasPrefix(path, allowed+"/")
-		})
-	})
 	if len(offenders) != 0 {
-		t.Errorf("%d production file(s) import %s, which would link the testing package into "+
-			"go-mutants:\n\t%s", len(offenders), TestkitImportPath, strings.Join(offenders, "\n\t"))
+		t.Errorf("%d production file(s) import the test harness, which would link the testing "+
+			"package into go-mutants:\n\t%s", len(offenders), strings.Join(offenders, "\n\t"))
 	}
 }
 
@@ -87,7 +97,7 @@ func TestImportGateNamesTheOffendingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scanning the synthesized module: %v", err)
 	}
-	if want := []string{"pkg/offender.go"}; !slices.Equal(got, want) {
+	if want := []string{"pkg/offender.go imports " + TestkitImportPath}; !slices.Equal(got, want) {
 		t.Errorf("offendingImports = %q, want %q", got, want)
 	}
 }
@@ -105,13 +115,70 @@ func TestImportGateNamesADeeperImportOfTheHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scanning the synthesized module: %v", err)
 	}
-	if want := []string{"deep.go"}; !slices.Equal(got, want) {
+	if want := []string{"deep.go imports " + TestkitImportPath + "/mutantkit"}; !slices.Equal(got, want) {
+		t.Errorf("offendingImports = %q, want %q", got, want)
+	}
+}
+
+// TestImportGateNamesASecondFileInTheForwardersPackage is the difference between
+// an exception and a hole.
+//
+// One file is allowed to import the harness — internal/testsupport/cache.go, the
+// forwarder that keeps its fourteen call sites compiling until they migrate — and
+// an exception written as a package prefix quietly extends that permission to
+// every file anybody adds beside it. A second file there would be a new
+// production package importing `testing`, admitted by a rule that was written
+// about a file that is on its way out.
+func TestImportGateNamesASecondFileInTheForwardersPackage(t *testing.T) {
+	t.Parallel()
+
+	m := NewModule(t).Module("fixture.example/gate")
+	m.Source(ForwarderException, "package testsupport\n\nimport _ \""+TestkitImportPath+"\"\n")
+	m.Source("internal/testsupport/extra.go", "package testsupport\n\nimport _ \""+TestkitImportPath+"\"\n")
+
+	got, err := offendingImports(m.Root())
+	if err != nil {
+		t.Fatalf("scanning the synthesized module: %v", err)
+	}
+	want := []string{"internal/testsupport/extra.go imports " + TestkitImportPath}
+	if !slices.Equal(got, want) {
+		t.Errorf("offendingImports = %q, want %q", got, want)
+	}
+}
+
+// TestImportGateNamesAProductionImportOfTheForwarder closes the way round the
+// gate.
+//
+// The scan reads direct imports, so exempting the forwarder for importing the
+// harness would let any production file reach the harness — and `testing`, and
+// its flag registrations — one hop further along by importing the forwarder
+// instead. internal/testsupport is test-only support in its entirety, so no
+// production file may import it either, and the exception stays what it says it
+// is: one file, on its way out.
+func TestImportGateNamesAProductionImportOfTheForwarder(t *testing.T) {
+	t.Parallel()
+
+	m := NewModule(t).Module("fixture.example/gate")
+	m.Source("cli/run.go", "package cli\n\nimport _ \""+TestSupportImportPath+"\"\n")
+	m.Source("cli/run_test.go", "package cli\n\nimport _ \""+TestSupportImportPath+"\"\n")
+
+	got, err := offendingImports(m.Root())
+	if err != nil {
+		t.Fatalf("scanning the synthesized module: %v", err)
+	}
+	want := []string{"cli/run.go imports " + TestSupportImportPath}
+	if !slices.Equal(got, want) {
 		t.Errorf("offendingImports = %q, want %q", got, want)
 	}
 }
 
 // offendingImports returns every non-test Go file under root that imports the
-// test harness, as slash-separated paths relative to root, sorted.
+// test harness or its forwarder, as `<path> imports <import path>` lines
+// relative to root, sorted.
+//
+// The import is named as well as the file, because there are two rules and a
+// reader has to know which one was broken: importing the harness links `testing`
+// directly, and importing the forwarder links it one hop further along.
 //
 // Only the import declarations are parsed, which is both the cheapest read of a
 // Go file and the one that cannot be wrong about anything else: a file that does
@@ -134,6 +201,14 @@ func offendingImports(root string) ([]string, error) {
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			return nil
 		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		relative := filepath.ToSlash(rel)
+		if relative == ForwarderException {
+			return nil
+		}
 		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 		if err != nil {
 			return fmt.Errorf("parsing the imports of %s: %w", path, err)
@@ -143,14 +218,10 @@ func offendingImports(root string) ([]string, error) {
 			if err != nil {
 				return fmt.Errorf("reading the import path %s in %s: %w", spec.Path.Value, path, err)
 			}
-			if imported != TestkitImportPath && !strings.HasPrefix(imported, TestkitImportPath+"/") {
+			if !forbiddenImport(imported) {
 				continue
 			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			offenders = append(offenders, filepath.ToSlash(rel))
+			offenders = append(offenders, relative+" imports "+imported)
 			break
 		}
 		return nil
@@ -160,4 +231,19 @@ func offendingImports(root string) ([]string, error) {
 	}
 	slices.Sort(offenders)
 	return offenders, nil
+}
+
+// forbiddenImport reports whether a production file may not import a path.
+//
+// Both trees are matched rather than both exact paths, because the rule is about
+// the tree: internal/testkit/mutantkit imports the engine and is just as
+// forbidden as its parent, and a sub-package of the forwarder would be no more
+// importable than the forwarder.
+func forbiddenImport(path string) bool {
+	for _, forbidden := range []string{TestkitImportPath, TestSupportImportPath} {
+		if path == forbidden || strings.HasPrefix(path, forbidden+"/") {
+			return true
+		}
+	}
+	return false
 }

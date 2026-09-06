@@ -148,14 +148,9 @@ func TestAgeTreeRefusesToFollowALinkOutOfTheTree(t *testing.T) {
 		t.Skipf("this platform does not allow this test to create a symlink: %v", err)
 	}
 
-	rec := &recorder{TB: t}
-	AgeTree(rec, root)
-	if len(rec.fatals) != 1 {
-		t.Fatalf("AgeTree produced %d fatal report(s) for a tree with a symlink in it, want 1: %q",
-			len(rec.fatals), rec.fatals)
-	}
-	if !strings.Contains(rec.fatals[0], "only directories and regular files") {
-		t.Errorf("the report does not say what the rule is:\n%s", rec.fatals[0])
+	rec := expectFatal(t, func(tb testing.TB) { AgeTree(tb, root) })
+	if report := rec.first(t, "AgeTree over a tree with a symlink in it"); !strings.Contains(report, "only directories and regular files") {
+		t.Errorf("the report does not say what the rule is:\n%s", report)
 	}
 	if got := modTime(t, outside); !got.Equal(stamp) {
 		t.Errorf("the file outside the tree was aged through the link: %v, was %v", got, stamp)

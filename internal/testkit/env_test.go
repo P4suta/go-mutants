@@ -417,14 +417,9 @@ func TestComposeRefusesAScratchItCannotUse(t *testing.T) {
 	t.Parallel()
 
 	for _, scratch := range []string{"", filepath.Join("relative", "scratch"), filepath.Join(t.TempDir(), "does-not-exist")} {
-		rec := &recorder{TB: t}
-		Compose(rec, scratch)
-		if len(rec.fatals) == 0 {
-			t.Errorf("Compose(%q) reported nothing, want a refusal", scratch)
-			continue
-		}
-		if !strings.Contains(rec.fatals[0], "scratch") {
-			t.Errorf("the refusal of %q does not say what was wrong:\n%s", scratch, rec.fatals[0])
+		rec := expectFatal(t, func(tb testing.TB) { Compose(tb, scratch) })
+		if report := rec.first(t, "Compose("+strconv.Quote(scratch)+")"); !strings.Contains(report, "scratch") {
+			t.Errorf("the refusal of %q does not say what was wrong:\n%s", scratch, report)
 		}
 	}
 }
@@ -591,14 +586,11 @@ func TestVarsIsACopyAndWithOverrides(t *testing.T) {
 func TestEnvRefusesToInheritTheHomeItIsMoving(t *testing.T) {
 	for _, name := range []string{"HOME", "XDG_CACHE_HOME", "LocalAppData", "USERPROFILE"} {
 		t.Run(name, func(t *testing.T) {
-			rec := &recorder{TB: t}
-			Env(rec, Inherit(name))
-			if len(rec.fatals) == 0 {
-				t.Fatalf("Env(Inherit(%q)) reported nothing, want a refusal", name)
-			}
+			rec := expectFatal(t, func(tb testing.TB) { Env(tb, Inherit(name)) })
+			report := rec.first(t, "Env(Inherit("+strconv.Quote(name)+"))")
 			for _, needle := range []string{"Inherit", "KeepHome", name} {
-				if !strings.Contains(rec.fatals[0], needle) {
-					t.Errorf("the refusal does not mention %q:\n%s", needle, rec.fatals[0])
+				if !strings.Contains(report, needle) {
+					t.Errorf("the refusal does not mention %q:\n%s", needle, report)
 				}
 			}
 		})

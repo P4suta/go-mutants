@@ -145,16 +145,9 @@ func TestModuleCRLFRefusesToRewriteThroughALink(t *testing.T) {
 		t.Skipf("this platform does not allow this test to create a symlink: %v", err)
 	}
 
-	// The recorder does not stop at a Fatalf the way testing.T does, so the
-	// builder runs on past the refusal and reports again from the ageing pass.
-	// The first report is the one a real test would have seen.
-	rec := &recorder{TB: t}
-	NewModuleAt(rec, m.Root()).CRLF()
-	if len(rec.fatals) == 0 {
-		t.Fatal("CRLF rewrote a module with a symlink in it without reporting anything")
-	}
-	if !strings.Contains(rec.fatals[0], "only directories and regular files") {
-		t.Errorf("the report does not say what the rule is:\n%s", rec.fatals[0])
+	rec := expectFatal(t, func(tb testing.TB) { NewModuleAt(tb, m.Root()).CRLF() })
+	if report := rec.first(t, "CRLF over a module with a symlink in it"); !strings.Contains(report, "only directories and regular files") {
+		t.Errorf("the report does not say what the rule is:\n%s", report)
 	}
 	if got := string(ReadFile(t, outside)); got != before {
 		t.Errorf("the file outside the module was rewritten through the link:\n%q\nwant\n%q", got, before)

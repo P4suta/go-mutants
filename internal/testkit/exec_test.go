@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -191,13 +192,11 @@ func TestExecContextReportsAnAbandonedChild(t *testing.T) {
 func TestRequireExitReportsAnAbandonedChild(t *testing.T) {
 	t.Parallel()
 
-	rec := &recorder{TB: t}
-	RequireExit(rec, Result{Argv: []string{"go", "test"}, Abandoned: true, ExitCode: ExitCodeUnavailable}, 0, "the suite")
-	if len(rec.fatals) != 1 {
-		t.Fatalf("RequireExit produced %d fatal report(s), want 1: %q", len(rec.fatals), rec.fatals)
-	}
-	if !strings.Contains(rec.fatals[0], "abandoned") {
-		t.Errorf("the report does not say the caller walked away:\n%s", rec.fatals[0])
+	rec := expectFatal(t, func(tb testing.TB) {
+		RequireExit(tb, Result{Argv: []string{"go", "test"}, Abandoned: true, ExitCode: ExitCodeUnavailable}, 0, "the suite")
+	})
+	if report := rec.first(t, "RequireExit on an abandoned child"); !strings.Contains(report, "abandoned") {
+		t.Errorf("the report does not say the caller walked away:\n%s", report)
 	}
 }
 
@@ -289,19 +288,18 @@ func TestExecReportsACommandThatCouldNotStart(t *testing.T) {
 func TestRequireExitQuotesTheChildOutputOnMismatch(t *testing.T) {
 	t.Parallel()
 
-	rec := &recorder{TB: t}
-	RequireExit(rec, Result{
-		Argv:     []string{"go", "test", "./..."},
-		ExitCode: 1,
-		Output:   []byte("--- FAIL: TestSomething\n\tsomething_test.go:12: 2 != 3\n"),
-	}, 0, "the fixture's suite")
+	rec := expectFatal(t, func(tb testing.TB) {
+		RequireExit(tb, Result{
+			Argv:     []string{"go", "test", "./..."},
+			ExitCode: 1,
+			Output:   []byte("--- FAIL: TestSomething\n\tsomething_test.go:12: 2 != 3\n"),
+		}, 0, "the fixture's suite")
+	})
 
-	if len(rec.fatals) != 1 {
-		t.Fatalf("RequireExit produced %d fatal report(s), want 1: %q", len(rec.fatals), rec.fatals)
-	}
+	report := rec.first(t, "RequireExit on a mismatched status")
 	for _, want := range []string{"the fixture's suite", "exited 1", "want 0", "2 != 3"} {
-		if !strings.Contains(rec.fatals[0], want) {
-			t.Errorf("the report does not mention %q:\n%s", want, rec.fatals[0])
+		if !strings.Contains(report, want) {
+			t.Errorf("the report does not mention %q:\n%s", want, report)
 		}
 	}
 }
@@ -312,21 +310,20 @@ func TestRequireExitQuotesTheChildOutputOnMismatch(t *testing.T) {
 func TestRequireExitReportsATimeoutRatherThanAnExitStatus(t *testing.T) {
 	t.Parallel()
 
-	rec := &recorder{TB: t}
-	RequireExit(rec, Result{
-		Argv:     []string{"go", "test", "./..."},
-		TimedOut: true,
-		ExitCode: ExitCodeUnavailable,
-		Output:   []byte("=== RUN   TestHangs\n"),
-		Duration: DefaultTimeout,
-	}, 0, "the fixture's suite")
+	rec := expectFatal(t, func(tb testing.TB) {
+		RequireExit(tb, Result{
+			Argv:     []string{"go", "test", "./..."},
+			TimedOut: true,
+			ExitCode: ExitCodeUnavailable,
+			Output:   []byte("=== RUN   TestHangs\n"),
+			Duration: DefaultTimeout,
+		}, 0, "the fixture's suite")
+	})
 
-	if len(rec.fatals) != 1 {
-		t.Fatalf("RequireExit produced %d fatal report(s), want 1: %q", len(rec.fatals), rec.fatals)
-	}
+	report := rec.first(t, "RequireExit on a child that ran out of time")
 	for _, want := range []string{"did not finish", DefaultTimeout.String(), "TestHangs"} {
-		if !strings.Contains(rec.fatals[0], want) {
-			t.Errorf("the report does not mention %q:\n%s", want, rec.fatals[0])
+		if !strings.Contains(report, want) {
+			t.Errorf("the report does not mention %q:\n%s", want, report)
 		}
 	}
 }
@@ -336,18 +333,16 @@ func TestRequireExitReportsATimeoutRatherThanAnExitStatus(t *testing.T) {
 func TestRequireExitReportsAChildThatCouldNotBeStarted(t *testing.T) {
 	t.Parallel()
 
-	rec := &recorder{TB: t}
-	RequireExit(rec, Result{
-		Argv:     []string{"git", "commit"},
-		ExitCode: ExitCodeUnavailable,
-		Err:      errors.New("exec: \"git\": executable file not found in $PATH"),
-	}, 0, "the commit")
+	rec := expectFatal(t, func(tb testing.TB) {
+		RequireExit(tb, Result{
+			Argv:     []string{"git", "commit"},
+			ExitCode: ExitCodeUnavailable,
+			Err:      errors.New("exec: \"git\": executable file not found in $PATH"),
+		}, 0, "the commit")
+	})
 
-	if len(rec.fatals) != 1 {
-		t.Fatalf("RequireExit produced %d fatal report(s), want 1: %q", len(rec.fatals), rec.fatals)
-	}
-	if !strings.Contains(rec.fatals[0], "could not be run") {
-		t.Errorf("the report reads as a failing child rather than a failing harness:\n%s", rec.fatals[0])
+	if report := rec.first(t, "RequireExit on a child that never started"); !strings.Contains(report, "could not be run") {
+		t.Errorf("the report reads as a failing child rather than a failing harness:\n%s", report)
 	}
 }
 
@@ -411,11 +406,9 @@ func TestRequireNoOutputNamesTheNeedleThatAppeared(t *testing.T) {
 func TestExecRefusesAnEmptyArgv(t *testing.T) {
 	t.Parallel()
 
-	rec := &recorder{TB: t}
-	Exec(rec, t.TempDir(), nil)
-	if len(rec.fatals) != 1 {
-		t.Errorf("Exec with no argv produced %d fatal report(s), want 1: %q", len(rec.fatals), rec.fatals)
-	}
+	dir := t.TempDir()
+	rec := expectFatal(t, func(tb testing.TB) { Exec(tb, dir, nil) })
+	rec.first(t, "Exec with no argv")
 }
 
 // recorder is a [testing.TB] that records what a helper reported instead of
@@ -427,18 +420,57 @@ func TestExecRefusesAnEmptyArgv(t *testing.T) {
 // unexported methods and nothing else — every method a helper here calls is
 // overridden below, and a helper that started calling another one would panic on
 // a nil embedded value rather than quietly pass.
+//
+// A recorder made by [expectFatal] also *stops* at the first Fatalf, which a
+// plain one cannot. That difference is not cosmetic: a helper's Fatalf never
+// returns under a real testing.T, so everything after it is written on the
+// assumption that it is unreachable — and a fake that let it run carried
+// TestComposeRefusesAScratchItCannotUse straight on into the directory creation
+// it had just refused, writing `relative/scratch/home` into this package's own
+// source directory.
 type recorder struct {
 	testing.TB
+	stop   bool
 	fatals []string
 	errors []string
 	logs   []string
 	skips  []string
 }
 
+// expectFatal runs a call that is expected to end the test, and returns what it
+// reported.
+//
+// The call runs on a goroutine of its own so that the recorder can end it with
+// runtime.Goexit, which is how testing.T's own FailNow stops a test: unwinding
+// that goroutine leaves the real test running to make its assertions.
+func expectFatal(t testing.TB, call func(testing.TB)) *recorder {
+	t.Helper()
+	rec := &recorder{TB: t, stop: true}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		call(rec)
+	}()
+	<-done
+	return rec
+}
+
+// first returns the first fatal report, failing the test when there was none.
+func (r *recorder) first(t testing.TB, what string) string {
+	t.Helper()
+	if len(r.fatals) == 0 {
+		t.Fatalf("%s reported nothing, want a refusal", what)
+	}
+	return r.fatals[0]
+}
+
 func (r *recorder) Helper() {}
 
 func (r *recorder) Fatalf(format string, args ...any) {
 	r.fatals = append(r.fatals, fmt.Sprintf(format, args...))
+	if r.stop {
+		runtime.Goexit()
+	}
 }
 
 func (r *recorder) Errorf(format string, args ...any) {
