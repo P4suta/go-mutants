@@ -1,44 +1,51 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-package testsupport
+package testsupport_test
 
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// TestCacheDirTurnsGoTelemetryOffInTheMovedHome pins the one file CacheDir
-// writes into the HOME it moves.
+// TestCacheDirIsTheEnvironmentsCacheRoot keeps the forwarder honest for the
+// fourteen call sites that still go through it.
 //
-// The go command derives its telemetry directory from os.UserConfigDir, which
-// on macOS — and on a Linux without XDG_CONFIG_HOME — is derived from HOME, and
-// there is no variable of its own to pin it with. A go command that finds no
-// mode file there starts in "local" mode: it opens counters and forks a sidecar
-// that outlives it. So a test that drove a single `go version` under a moved
-// HOME left a detached process writing into its own temporary directory, and
-// t.TempDir's cleanup failed with "directory not empty" — which is how
-// TestDoctorPublishesItsCheckNames failed on macOS on 2026-09-03. Telemetry is
-// turned off in the moved HOME, and only there.
-func TestCacheDirTurnsGoTelemetryOffInTheMovedHome(t *testing.T) {
-	CacheDir(t)
-	home := os.Getenv("HOME")
-	config, err := os.UserConfigDir()
+// Each of them uses the returned path as the cache *root* — the directory
+// go-mutants puts its own `go-mutants` directory in — and each of them then
+// asserts on what the code under test wrote below it. A forwarder that returned
+// the moved HOME, or the build cache, or a path that did not exist yet would
+// leave every one of those tests passing against a directory nothing writes to.
+func TestCacheDirIsTheEnvironmentsCacheRoot(t *testing.T) {
+	cache := testsupport.CacheDir(t)
+
+	resolved, err := os.UserCacheDir()
 	if err != nil {
-		t.Fatalf("os.UserConfigDir after moving HOME: %v", err)
+		t.Fatalf("os.UserCacheDir after the redirection: %v", err)
 	}
-	if !within(home, config) {
-		t.Skipf("%s derives the config directory from something other than HOME (%s), so nothing is written", runtime.GOOS, config)
+	if !testkit.SamePath(cache, resolved) {
+		t.Errorf("CacheDir returned %s, but os.UserCacheDir resolves to %s", cache, resolved)
+	}
+	if info, err := os.Stat(cache); err != nil || !info.IsDir() {
+		t.Errorf("the cache root %s is not a directory that exists: %v", cache, err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(config, "go", "telemetry", "mode"))
-	if err != nil {
-		t.Fatalf("reading the telemetry mode file below the moved HOME: %v", err)
+	home := os.Getenv("HOME")
+	if home == "" {
+		t.Fatal("CacheDir did not move HOME")
 	}
-	if mode, _, _ := strings.Cut(strings.TrimSpace(string(data)), " "); mode != "off" {
-		t.Errorf("the telemetry mode below the moved HOME is %q, want %q", mode, "off")
+	if rel, err := filepath.Rel(home, cache); err != nil || strings.HasPrefix(rel, "..") {
+		t.Errorf("the cache root %s is outside the moved HOME %s", cache, home)
+	}
+
+	// The rest of the policy comes with it, which is the reason the helper is a
+	// forwarder rather than its own implementation.
+	if got := os.Getenv("GOFLAGS"); got != "-mod=readonly" {
+		t.Errorf("GOFLAGS = %q, so CacheDir is not applying the harness policy", got)
 	}
 }

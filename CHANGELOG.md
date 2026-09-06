@@ -14,6 +14,42 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **One shared, hermetic test harness in `internal/testkit`, and a test that
+  keeps production code out of it.** Every helper it holds existed three or four
+  times before, and the copies disagreed — which is how the suites came to
+  depend on the machine running them. Three packages redirected the user cache
+  directory and all three were wrong on macOS, where `os.UserCacheDir` ignores
+  XDG, so those tests read the developer's real `~/Library/Caches/go-mutants`
+  back and interfered with each other through it. Two suites pointed the
+  temporary directory somewhere private and a third did not, so "the snapshot
+  was removed" was an assertion in two places and a guess in the third. One
+  suite composed the environment its children got and another inherited it, so a
+  developer with `GO_MUTANTS_ACTIVE` exported in their shell ran a mutant as the
+  baseline in half the repository. None of that is a fact about go-mutants: it
+  is a fact about the operating system, the go command and git, and a copy of
+  such a rule per package is a rule that drifts.
+
+  So there is one copy: the module and corpus paths, tree copies aged past
+  cmd/go's two-second index cutoff, a synthesized-module builder, the hermetic
+  environment as both a process redirection and a value a parallel test can hand
+  a child, a stated skip-or-fail policy for a missing `go` or `git`
+  (`GO_MUTANTS_TEST_REQUIRE_TOOLS`, set for every CI job so a runner without a
+  toolchain fails instead of quietly running a smaller suite), deterministic git
+  repositories, and child-process assertions that quote the child's output on
+  every mismatch — because in CI the log is all there is. The suites' child `go`
+  commands are pointed at one dedicated build cache (`GO_MUTANTS_TEST_GOCACHE`)
+  rather than the developer's, which had reached 14 GB of entries keyed on
+  absolute paths that existed for a single run. That cache defaults to
+  `<os.UserCacheDir()>/go-mutants-test/go-build`; until `mise run test-clean`
+  exists it is emptied with `go clean -cache` run with `GOCACHE` set to it.
+
+  Nothing that ships may import the harness — that would link `testing`, and its
+  flag registrations, into `go-mutants` — and the harness may not import
+  anything from this module, so the tests of the pure packages can use it
+  without pulling the engine in behind them. Both halves are enforced:
+  `TestProductionCodeDoesNotImportTestkit` parses every non-test file in the
+  tree, and `TestTheHarnessImportsNothingFromThisModule` parses the harness's
+  own.
 - **`Workspace.ToolchainVersion()`.** A workspace already resolves the
   toolchain it froze the module against, and every consumer that needed the
   version was running its own `go version` to learn something the workspace was

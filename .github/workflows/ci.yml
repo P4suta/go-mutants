@@ -13,6 +13,11 @@ name: CI
 permissions:
   contents: read
 
+env:
+  # A missing go or git must fail CI rather than silently narrow the suite to
+  # the tests that need no toolchain.
+  GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"
+
 # One run per ref: a newer push supersedes the older run instead of queueing
 # behind it.
 concurrency:
