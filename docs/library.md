@@ -160,6 +160,7 @@ is the code's stated intent, not by those three.
 
 - `Digest`, `WorkspaceDigest`, `ModulePath` and `Toolchain` are non-empty, and
   `Toolchain` is exactly `Workspace.ToolchainVersion()`.
+- `PreparedDigest` is 64 lowercase hex characters.
 - `TestPackages` is non-empty, every element is non-empty, and no element
   repeats.
 - `Rejections` IDs are distinct and each names a mutant in `Mutants`.
@@ -178,6 +179,9 @@ is the code's stated intent, not by those three.
   `Package` is non-empty.
 - `Line >= 1` and `Column >= 1` — 1-based line and 1-based byte column, the
   coordinates `go test -coverprofile` reports blocks in.
+- `EndLine >= Line`, and `EndLine == Line + strings.Count(Original, "\n")` — the
+  1-based line the edit ends on. Select by line range with `[Line, EndLine]`;
+  see [Selecting by line range](#selecting-by-line-range).
 - `StartByte <= EndByte`. `Original != Replacement`: replacing bytes with
   themselves is not a mutation.
 - `Rule` is non-empty and `RuleVersion >= 1`. `SourceDigest` is 64 lowercase hex
@@ -213,6 +217,23 @@ is the code's stated intent, not by those three.
   whose *mutation* does not compile; `Session.Probe` drops those indices, since
   an infection fact about a mutant nothing will execute licenses nothing and
   would contradict its own `Probed`.
+- The engine proves all of that before it returns the set, in **two validation
+  stages with the filtering between them**:
+  1. **The raw log**, as the probe runtime wrote it, must be strictly ascending
+     and inside the catalogue. This runs *first*, before anything is dropped,
+     because the filter has to tolerate an out-of-range index in order not to
+     panic on one — and an index past the end of the catalogue means the runtime
+     wrote about a catalogue that is not this one, which must not be mistaken
+     for an ordinary rejection.
+  2. **The indices of mutants the mutant tree rejected are dropped**, not
+     refused. A well-formed, in-range index naming a rejected mutant therefore
+     never produces an error; it is simply absent from the result.
+  3. **Every index that survives the filter** must name a mutant that is
+     `Probed`. An *accepted* mutant that is not probed is the catalogue and the
+     probe tree disagreeing, and there is no excuse for it.
+
+  A failure at stage 1 or 3 is `ErrProbeInconsistent` naming the index, and no
+  set is returned at all. A caller never has to defend against a malformed one.
 - `ExitCode` is 0 for a measured pass and `Duration` is non-negative.
 - `Output` is the bounded combined output of the binary that decided the pass —
   the failing one for `test-failed`, the last one for `measured`. It is there
@@ -262,6 +283,7 @@ were introduced, and none of them is a message you may parse.
 | `ErrAmbiguousMutant` | `Session.Exec` | a prefix more than one mutant carries; `Matches` names them |
 | `ErrMutantRejected` | `Session.Exec` | validation proved the mutant does not compile; there is no binary to run it in |
 | `ErrProbeNotPrepared` | `Session.Probe` | the session was prepared without `PrepareOptions.Probe` |
+| `ErrProbeInconsistent` | `Session.Probe` | the probe log named a mutant the catalogue cannot account for — an **engine bug**, never a caller's doing |
 
 Match them with `errors.Is`. They survive wrapping, and the sentences they
 appear in are the ones the engine has always printed. `ErrProbeNotPrepared`
@@ -341,7 +363,13 @@ A consumer scoring somebody's repository should split them like this:
 | `*DriftError` | the repository changed under the run; name `Changes` |
 | `*MutantSelectionError`, `*PackageNotPreparedError`, `*ReservedError` | the caller's request; fix and retry |
 | `*BuildError`, `*ExecutionError` | infrastructure; quote `Code` and file a bug |
+| `ErrProbeInconsistent` | the engine broke its own contract; file a bug quoting the index, and treat the pass as having no facts |
 | a lifecycle sentinel | a programming error in the consumer |
+
+`ErrProbeInconsistent` is the only row nothing outside go-mutants can cause. The
+indices are the engine's own, written against the catalogue the engine prepared,
+so a set it cannot account for is a bug in go-mutants and never a fact about the
+repository, the request or the machine.
 
 ### `DiagnosticCode`
 
@@ -505,8 +533,118 @@ however differently they were prepared — a different module path, a different
 toolchain, a different profile that happened to select the same rules, a probe
 tree in one and none in the other, or a validation that rejected mutants the
 other accepted. It answers exactly one question: *are these two runs looking at
-the same mutants?* A consumer that needs "are these two prepared sessions
-interchangeable?" hashes the rest itself.
+the same mutants?* The second question — *are these two prepared sessions
+interchangeable?* — is `PreparedDigest`.
+
+## What `PreparedDigest` covers
+
+`PreparedDigest` identifies the **prepared session**: everything that has to
+match before evidence gathered against one session may be reused against
+another. It is the SHA-256 over these fields, each written as a four-byte
+big-endian byte length followed by its bytes — the encoding the mutant ID uses
+— in this order:
+
+1. the domain separator `go-mutants-prepared-catalog-v1`,
+2. `Digest`,
+3. `WorkspaceDigest`,
+4. `ModulePath`,
+5. `GoVersion`,
+6. `Toolchain`,
+7. `Profile`,
+8. the decimal `len(TestPackages)`, then every `TestPackages` element in order,
+9. the decimal `len(Mutants)`, then per mutant in catalogue order: `Mutant.ID`,
+   `Mutant.Package`, and three flag bytes — `a` or `-` for `Mutant.Accepted`,
+   `p` or `-` for `Mutant.Probed`, `s` or `-` for selection, which is `s` for
+   every mutant until a selection can narrow a session,
+10. the decimal `len(Rejections)`, then every `Rejection.ID` in order.
+
+**Not** hashed, and the list is exhaustive: `Mutant.Index`, `Mutant.DisplayID`,
+`Mutant.Path`, `Mutant.Line`, `Mutant.Column`, `Mutant.EndLine`,
+`Mutant.StartByte`, `Mutant.EndByte`, `Mutant.Family`, `Mutant.Rule`,
+`Mutant.RuleVersion`, `Mutant.SourceDigest`, `Mutant.Original`,
+`Mutant.Replacement`, `Mutant.Branch`, and every field of a `Rejection` but its
+`ID` — `DisplayID`, `Path`, `Line`, `Column`, `Rule` and `Diagnostic`.
+
+Every one of them is a function of something that *is* hashed. An index is a
+position; a display identity is a prefix of an ID; the rule, the span, the text
+on both sides and the source digest are the very inputs `Mutant.ID` is computed
+from, so a change to any of them is a change to the ID, and the ID is in the
+recipe. The coordinates and the compiler's words follow from the source that
+digest names, and a branch proof is a lemma about the same span. Hashing them
+again would add nothing and would move the key every time a line shifted above
+an untouched mutant — and a key that moves for a session that has not changed is
+a cache that never hits.
+
+The order of the fields is part of the recipe and is not free to change: a
+different order is a different digest for every session anybody has already
+stored evidence against, and changing it means changing the domain separator
+with it.
+
+`Catalog.PreparedDigest` does not follow an edited copy. `Session.Catalog()`
+returns a deep copy a caller may rewrite, and the field keeps naming the session
+the engine prepared rather than the struct in hand — usually what a caller wants,
+since evidence stays keyed to the preparation that produced it, but a caller that
+has rewritten a catalogue and needs a key for what it now holds hashes it itself
+from the recipe above.
+
+**Key evidence on this value, not on a fingerprint of your own.** Every
+consumer that stored results per mutant needed this question answered and
+computed some approximation of it: the mutant set plus `Package` and
+`Accepted`, or plus `Probed`, usually as two fingerprints because no single one
+covered both. Those are second recipes nobody versions, and the day the engine
+starts reporting something new about a prepared mutant they go on hashing the
+old thing and go on hitting. `PreparedDigest` moves when the engine's own
+answer moves, and its domain separator carries the version, so a v1 key can
+never be mistaken for a later one and both can sit in one store during a
+migration.
+
+Two preparations produce the same value when **every hashed input agrees**, and
+that is the whole of the guarantee. What it rules out is incidental variation:
+nothing in the recipe is a path — `WorkspaceDigest` names contents, not
+locations, and `TestPackages` are import paths — and nothing in it is a
+wall-clock time or a process identifier. So the same tree prepared twice in two
+different temporary directories, by two different runs, hashes the same.
+
+Across machines the qualification bites, because `GoVersion` and `Toolchain` are
+in the recipe by design. The same source prepared under a different Go toolchain
+is a *different* prepared session and gets a different digest — deliberately,
+since a mutant's compilation and execution are the toolchain's behaviour, and
+evidence gathered under one is not evidence about the other. A consumer sharing
+a store between machines should therefore expect a miss when the toolchains
+differ, and must not read that miss as "the source changed". The same goes for
+`Profile` and the package set: a narrower preparation of one tree is not
+interchangeable with a wider one, and the digest says so.
+
+## Selecting by line range
+
+`Mutant.EndLine` is the 1-based line the edit ends on: `Line` plus the number of
+newlines in `Original`. A mutant is inside a range `[first, last]` when
+`Line <= last && EndLine >= first`, and that is exactly the rule
+`go-mutants run --changed` applies to a diff, so a caller narrowing the same
+catalogue through this API reaches the same mutants:
+
+```go
+func touches(m gomutants.Mutant, first, last int) bool {
+	return m.Line <= last && m.EndLine >= first
+}
+```
+
+Comparing `Line` alone silently drops the multi-line edits — a condition
+spanning three lines, a composite literal — whenever the range touches their
+last line and not their first, and those are the mutants a `--changed` run
+would have executed.
+
+Two details of the count:
+
+- **An `Original` ending in a newline opens the next line.** That newline is
+  counted like any other, so an edit covering `"return 0\n"` on line 10 reports
+  `EndLine` 11 and a range naming only line 11 selects it. The over-approximation
+  by one line is deliberate: it is what `--changed` already does, so the library
+  and the CLI select the same mutants, and erring towards selecting a mutant
+  costs an execution while erring the other way drops one in silence and reports
+  a score higher than the truth.
+- **A carriage return is not a line break.** A CRLF file's break is one `\n`
+  preceded by a byte that is not one, so `"a\r\nb"` spans two lines, not three.
 
 ## Recipe: listing the module
 

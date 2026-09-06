@@ -42,6 +42,11 @@ func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Wor
 		t.Errorf("catalogue identity is incomplete: digest=%q workspace=%q module=%q toolchain=%q",
 			c.Digest, c.WorkspaceDigest, c.ModulePath, c.Toolchain)
 	}
+	if !isDigest64(c.PreparedDigest) {
+		t.Errorf("catalogue PreparedDigest = %q, want 64 lowercase hex characters; it is what a"+
+			" consumer keys prepared evidence on, and a half-built key is worse than none",
+			c.PreparedDigest)
+	}
 	if got, want := c.Toolchain, w.ToolchainVersion(); got != want {
 		t.Errorf("catalogue toolchain = %q, want the workspace's %q", got, want)
 	}
@@ -89,6 +94,12 @@ func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Wor
 		}
 		if m.Line < 1 || m.Column < 1 {
 			t.Errorf("mutant %s is at %d:%d, want 1-based coordinates", m.DisplayID, m.Line, m.Column)
+		}
+		// This implies EndLine >= Line, since a newline count is never negative.
+		if want := m.Line + strings.Count(m.Original, "\n"); m.EndLine != want {
+			t.Errorf("mutant %s has EndLine %d and covers %q from line %d, which ends on line %d;"+
+				" a consumer selecting by line range applies exactly this rule and would miss it",
+				m.DisplayID, m.EndLine, m.Original, m.Line, want)
 		}
 		if m.StartByte > m.EndByte {
 			t.Errorf("mutant %s spans [%d,%d), which is empty backwards", m.DisplayID, m.StartByte, m.EndByte)
@@ -575,5 +586,83 @@ func TestPhaseEventsAreOneStartAndOneFinishEachPhase(t *testing.T) {
 				t.Errorf("problems = %d (%v), want %d", len(problems), problems, test.wantProblems)
 			}
 		})
+	}
+}
+
+// TestPreparedDigestDiffersWithProbe is the difference between the two
+// catalogue digests, stated over two real preparations of one tree.
+//
+// The pair is the whole argument for [gomutants.Catalog.PreparedDigest]
+// existing. Both sessions catalogue the same three mutants, so `Digest` — which
+// is the mutant set and nothing else — is identical, and a consumer keying its
+// evidence on it would carry facts from the probed session into the unprobed
+// one. But `Mutant.Probed` is what tells that consumer whether a mutant's
+// absence from a measurement is a fact or a silence, so the two sessions are
+// not interchangeable, and the prepared digest is what says so.
+func TestPreparedDigestDiffersWithProbe(t *testing.T) {
+	t.Parallel()
+
+	probed := probeable(t)
+	unprobed := unprobeable(t)
+
+	if probed.catalog.Digest != unprobed.catalog.Digest {
+		t.Fatalf("the two sessions catalogued different mutant sets (%s and %s);"+
+			" the claim below is about two preparations of one set",
+			probed.catalog.Digest, unprobed.catalog.Digest)
+	}
+	// Otherwise the difference below could hold for a reason that has nothing to
+	// do with the probe tree, and the day probing stopped changing the catalogue
+	// this test would go on passing.
+	differs := false
+	for i, mutant := range probed.catalog.Mutants {
+		if mutant.Probed != unprobed.catalog.Mutants[i].Probed {
+			differs = true
+			break
+		}
+	}
+	if !differs {
+		t.Fatal("no mutant is Probed in one session and not the other, so the probe tree" +
+			" changed nothing this digest could have noticed")
+	}
+
+	if probed.catalog.PreparedDigest == unprobed.catalog.PreparedDigest {
+		t.Errorf("both sessions carry PreparedDigest %s; a consumer keyed on it would reuse"+
+			" evidence gathered where an absent mutant meant something else",
+			probed.catalog.PreparedDigest)
+	}
+	for _, digest := range []string{probed.catalog.PreparedDigest, unprobed.catalog.PreparedDigest} {
+		if !isDigest64(digest) {
+			t.Errorf("PreparedDigest = %q, want 64 lowercase hex characters", digest)
+		}
+	}
+}
+
+// TestPreparedDigestIsStableAcrossTwoPreparationsOfOneTree is the other half:
+// a digest that moved between two identical preparations would be a cache key
+// that never hits, and a consumer would go on re-measuring what it already
+// knows while believing the session had changed.
+//
+// The two preparations are over two copies of one fixture in two temporary
+// directories, which is the case that matters: every consumer prepares in a
+// path of the day. Nothing in the recipe is a path — the workspace digest names
+// contents, the test packages are import paths — and this is where that is
+// established rather than argued.
+func TestPreparedDigestIsStableAcrossTwoPreparationsOfOneTree(t *testing.T) {
+	t.Parallel()
+
+	first := unprobeable(t)
+	second := prepareProbeable(false)
+	if second.err != nil {
+		t.Fatalf("preparing the probeable fixture a second time: %v", second.err)
+	}
+
+	if got, want := second.catalog.Digest, first.catalog.Digest; got != want {
+		t.Fatalf("the second preparation catalogued %s and the first %s;"+
+			" the two are meant to be the same tree", got, want)
+	}
+	if got, want := second.catalog.PreparedDigest, first.catalog.PreparedDigest; got != want {
+		t.Errorf("PreparedDigest = %s on the second preparation and %s on the first;"+
+			" two preparations of one tree must be interchangeable, and a key that"+
+			" moves with the temporary directory never hits", got, want)
 	}
 }
