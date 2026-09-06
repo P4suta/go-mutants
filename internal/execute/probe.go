@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -112,10 +113,7 @@ type ProbeAttempt struct {
 	// Duration is the wall-clock time the child processes took, summed over the
 	// binaries this pass actually ran.
 	Duration time.Duration
-	// OutputTail is the last [OutputTailLines] lines the deciding binary
-	// printed. It is empty for a measured pass, whose output is a passing
-	// suite.
-	OutputTail string
+	Output   []byte
 	// Err is set when the pass could not be made at all, and always carries a
 	// [Code] from this package. It is never set alongside facts.
 	Err error
@@ -192,6 +190,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 		result := startTarget(ctx, opts, bin, env, p.Timeout, p.Args)
 		attempt.Duration += result.Duration
 		attempt.ExitCode = result.ExitCode
+		attempt.Output = slices.Clone(result.Output)
 
 		// The order of these cases is [RunOne]'s, and the third is the one that
 		// is easy to get wrong: internal/runner reports no exit status only for
@@ -211,7 +210,6 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 		case result.TimedOut:
 			attempt.Outcome = ProbeTimedOut
-			attempt.OutputTail = tail(result.Output)
 			return attempt
 
 		case result.ExitCode == runner.ExitCodeUnavailable:
@@ -223,12 +221,10 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 			// wrong, and the difference is what tells a broken machine from a
 			// broken test.
 			attempt.Outcome = ProbeUnavailable
-			attempt.OutputTail = tail(result.Output)
 			return attempt
 
 		case result.ExitCode != 0:
 			attempt.Outcome = ProbeTestFailed
-			attempt.OutputTail = tail(result.Output)
 			return attempt
 		}
 	}

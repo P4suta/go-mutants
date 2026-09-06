@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/drift"
 	"github.com/P4suta/go-mutants/internal/execute"
@@ -43,11 +45,15 @@ const (
 	maximumArtifacts     = 128
 	maximumArtifactBytes = 2 << 20
 	maximumArtifactsSize = 16 << 20
+	mainOverlayName      = "main-overlay"
+	probeOverlayName     = "probe-overlay"
+	overlayManifestName  = "overlay.json"
+	privateDirectoryMode = 0o700
+	privateFileMode      = 0o600
+	uncachedTestFlag     = "-count=1"
 )
 
-// Session is a discovered, validated, instrumented snapshot with test binaries
-// compiled once. Its zero value is not usable. A Session permits concurrent
-// Exec calls; Changes and Close wait for those calls to finish.
+// Session is a validated mutation catalog with reusable test binaries.
 type Session struct {
 	mu             sync.RWMutex
 	root           string
@@ -61,21 +67,13 @@ type Session struct {
 	executeOptions execute.Options
 	mutantTimeout  time.Duration
 	preparedFiles  map[string]fileState
+	overlayPath    string
 	closed         bool
 
-	// probeSnapshot is the second instrumented copy of the same source, or nil
-	// when the session was prepared without one. Its presence is what
-	// [Session.Probe] refuses on, because a session with no probe tree cannot
-	// answer the infection question at all — and answering it emptily would be
-	// the one wrong answer.
 	probeSnapshot *snapshot.Snapshot
-	// probeBinaries and probeOptions are that tree's own test binaries and the
-	// options they are started with. They are separate values rather than a
-	// mode on the mutant ones because the two trees are different directories:
-	// a binary of one started against the other would measure a program nobody
-	// built.
 	probeBinaries []execute.TestBinary
 	probeOptions  execute.Options
+	probeOverlay  string
 
 	// keepTemp is the workspace's OpenOptions.KeepTemp. A kept session leaves
 	// its probe tree on disk and leaves its own scratch directory alone: the
@@ -111,6 +109,7 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	if pristineErr := checkPristineSnapshot(w.snapshot); pristineErr != nil {
 		return nil, pristineErr
 	}
+	trace := newPrepareTrace(resolved.Trace)
 	rules, err := selectRules(resolved.Profile, resolved.Operators)
 	if err != nil {
 		return nil, err
@@ -124,25 +123,39 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		return nil, fmt.Errorf("gomutants: prepare exclude patterns: %w", err)
 	}
 
-	found, err := discover.Discover(ctx, discover.Options{
-		SnapshotRoot: w.snapshot.Root,
-		Toolchain:    w.toolchain,
-		Env:          slices.Clone(w.env),
-		Rules:        rules,
-		Include:      include,
-		Exclude:      exclude,
-		Packages:     slices.Clone(resolved.DiscoveryPackages),
+	var found discover.Result
+	var catalog *mutation.Catalog
+	var pristineSources map[string]sourceImage
+	var hints instrument.Hints
+	err = trace.run(PreparePhaseDiscovery, func() error {
+		found, err = discover.Discover(ctx, discover.Options{
+			SnapshotRoot: w.snapshot.Root,
+			Toolchain:    w.toolchain,
+			Env:          slices.Clone(w.env),
+			Rules:        rules,
+			Include:      include,
+			Exclude:      exclude,
+			Packages:     slices.Clone(resolved.DiscoveryPackages),
+		})
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare discovery: %w", err)
+		}
+		catalog, err = discover.BuildCatalog(found)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare catalog: %w", err)
+		}
+		pristineSources, err = captureInstrumentationSources(w.snapshot.Root, catalog)
+		if err != nil {
+			return err
+		}
+		hints, err = instrument.HintsOf(found.Candidates)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare instrumentation hints: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare discovery: %w", err)
-	}
-	catalog, err := discover.BuildCatalog(found)
-	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare catalog: %w", err)
-	}
-	hints, err := instrument.HintsOf(found.Candidates)
-	if err != nil {
-		return nil, fmt.Errorf("gomutants: prepare instrumentation hints: %w", err)
+		return nil, err
 	}
 
 	validationEnv, err := overlayEnvironment(w.env, []string{"GOWORK=off"})
@@ -159,84 +172,143 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 	// the user's tree, which may have moved since Open froze it.
 	var probeSnap *snapshot.Snapshot
 	if resolved.Probe {
-		probeSnap, err = snapshot.Create(w.snapshot.Root, snapshot.Options{
-			DestParent: w.snapshot.Parent(),
+		err = trace.run(PreparePhaseProbeSnapshot, func() error {
+			probeSnap, err = snapshot.Create(w.snapshot.Root, snapshot.Options{
+				DestParent: w.snapshot.Parent(),
+			})
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare probe snapshot: %w", err)
+			}
+			if probeSnap.WorkspaceDigest != w.snapshot.WorkspaceDigest {
+				return fmt.Errorf(
+					"gomutants: prepare probe snapshot digest %s does not match the mutant snapshot's %s",
+					probeSnap.WorkspaceDigest, w.snapshot.WorkspaceDigest)
+			}
+			return nil
 		})
 		if err != nil {
-			return nil, fmt.Errorf("gomutants: prepare probe snapshot: %w", err)
+			return failPrepare(probeSnap, err)
 		}
-		if probeSnap.WorkspaceDigest != w.snapshot.WorkspaceDigest {
-			return failPrepare(probeSnap, fmt.Errorf(
-				"gomutants: prepare probe snapshot digest %s does not match the mutant snapshot's %s",
-				probeSnap.WorkspaceDigest, w.snapshot.WorkspaceDigest))
-		}
+	} else {
+		trace.skip(PreparePhaseProbeSnapshot)
 	}
 	// Every return from here on goes through fail, so that a probe tree copied
 	// and then abandoned does not outlive the call that made it — as Open
 	// cleans up its own snapshot when the scratch directory beside it fails.
 	fail := func(err error) (*Session, error) { return failPrepare(probeSnap, err) }
 
-	validated, err := validate.Validate(ctx, validate.Options{
-		Snap:         w.snapshot,
-		Catalog:      catalog,
-		Hints:        hints,
-		ModulePath:   found.ModulePath,
-		Toolchain:    w.toolchain,
-		Jobs:         resolved.Jobs,
-		BuildTimeout: resolved.BuildTimeout,
-		Env:          validationEnv,
-		Packages:     resolved.DiscoveryPackages,
+	var validated validate.Result
+	err = trace.run(PreparePhaseMainValidation, func() error {
+		validated, err = validate.Validate(ctx, validate.Options{
+			Snap:         w.snapshot,
+			Catalog:      catalog,
+			Hints:        hints,
+			ModulePath:   found.ModulePath,
+			Toolchain:    w.toolchain,
+			Jobs:         resolved.Jobs,
+			BuildTimeout: resolved.BuildTimeout,
+			Env:          validationEnv,
+			Packages:     resolved.DiscoveryPackages,
+		})
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare validation: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		return fail(fmt.Errorf("gomutants: prepare validation: %w", err))
+		return fail(err)
+	}
+	var scratch string
+	var overlayPath string
+	err = trace.run(PreparePhaseMainRestoration, func() error {
+		scratch, err = os.MkdirTemp(w.scratch, sessionPrefix)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare session scratch: %w", err)
+		}
+		overlayPath, err = writeInstrumentationOverlay(w.snapshot.Root, scratch, mainOverlayName, validated.Instrumented)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare instrumentation overlay: %w", err)
+		}
+		if err = restoreInstrumentationSources(w.snapshot.Root, pristineSources, validated.Instrumented); err != nil {
+			return fmt.Errorf("gomutants: prepare restore source tree: %w", err)
+		}
+		if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "source restoration"); driftErr != nil {
+			return driftErr
+		}
+		return nil
+	})
+	if err != nil {
+		return fail(err)
 	}
 
-	verify := resolved.Verify
-	verifyBase, err := overlayEnvironment(w.env, verify.Env)
-	if err != nil {
-		return fail(fmt.Errorf("gomutants: prepare verification environment: %w", err))
-	}
-	verify.Env = nil
-	verifyBase = gocmd.AppendGoflags(verifyBase, gocmd.VetOff)
-	verified, err := w.runCommand(ctx, verify, verifyBase)
-	if err != nil {
-		return fail(fmt.Errorf("gomutants: prepare instrumented verification: %w", err))
-	}
-	switch {
-	case verified.TimedOut:
-		return fail(fmt.Errorf("gomutants: prepare instrumented verification timed out after %s", verify.Timeout))
-	case verified.ExitCode != 0:
-		return fail(fmt.Errorf("gomutants: prepare instrumented verification exited with status %d: %s",
-			verified.ExitCode, outputSummary(verified.Output)))
-	}
-	if driftErr := checkInitialDrift(w.snapshot, validated.Instrumented, "verification"); driftErr != nil {
-		return fail(driftErr)
-	}
-
-	scratch, err := os.MkdirTemp(w.scratch, sessionPrefix)
-	if err != nil {
-		return fail(fmt.Errorf("gomutants: prepare session scratch: %w", err))
-	}
-	execOptions := execute.Options{
-		Toolchain:    w.toolchain,
-		SnapshotRoot: w.snapshot.Root,
-		Packages:     slices.Clone(resolved.Packages),
-		BinDir:       filepath.Join(scratch, "bin"),
-		ScratchDir:   filepath.Join(scratch, "targets"),
-		Env:          slices.Clone(w.env),
-		Jobs:         resolved.Jobs,
-		Timeout:      resolved.BuildTimeout,
-	}
-	binaries, err := execute.BuildTestBinaries(ctx, execOptions)
-	if err != nil {
-		return fail(fmt.Errorf("gomutants: prepare test binaries: %w", err))
-	}
-	preparedFiles, err := scanFiles(w.snapshot.Root)
-	if err != nil {
-		return fail(fmt.Errorf("gomutants: prepare snapshot state: %w", err))
+	if !resolved.SkipVerify {
+		err = trace.run(PreparePhaseVerification, func() error {
+			verify := resolved.Verify
+			verifyBase, err := overlayEnvironment(w.env, verify.Env)
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare verification environment: %w", err)
+			}
+			verify.Env = nil
+			verifyBase, err = instrumentationEnvironment(verifyBase, overlayPath)
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare verification overlay: %w", err)
+			}
+			verified, err := w.runCommand(ctx, verify, verifyBase)
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare instrumented verification: %w", err)
+			}
+			switch {
+			case verified.TimedOut:
+				return fmt.Errorf("gomutants: prepare instrumented verification timed out after %s", verify.Timeout)
+			case verified.ExitCode != 0:
+				return fmt.Errorf("gomutants: prepare instrumented verification exited with status %d: %s",
+					verified.ExitCode, outputSummary(verified.Output))
+			}
+			if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "verification"); driftErr != nil {
+				return driftErr
+			}
+			return nil
+		})
+		if err != nil {
+			return fail(err)
+		}
+	} else {
+		trace.skip(PreparePhaseVerification)
 	}
 
-	probeOptions, probeBinaries, probed, err := prepareProbeTree(ctx, probeTreeOptions{
+	var execOptions execute.Options
+	var binaries []execute.TestBinary
+	var preparedFiles map[string]fileState
+	err = trace.run(PreparePhaseBinaryBuild, func() error {
+		executionEnv, err := instrumentationEnvironment(w.env, overlayPath)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare execution overlay: %w", err)
+		}
+		execOptions = execute.Options{
+			Toolchain:    w.toolchain,
+			SnapshotRoot: w.snapshot.Root,
+			Packages:     slices.Clone(resolved.Packages),
+			BinDir:       filepath.Join(scratch, "bin"),
+			ScratchDir:   filepath.Join(scratch, "targets"),
+			Env:          executionEnv,
+			Jobs:         resolved.Jobs,
+			Timeout:      resolved.BuildTimeout,
+		}
+		binaries, err = execute.BuildTestBinaries(ctx, execOptions)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare test binaries: %w", err)
+		}
+		preparedFiles, err = scanFiles(w.snapshot.Root)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare snapshot state: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fail(err)
+	}
+
+	probeOptions, probeBinaries, probed, probeOverlay, err := prepareProbeTree(ctx, probeTreeOptions{
 		snap:               probeSnap,
 		catalog:            catalog,
 		hints:              hints,
@@ -246,9 +318,12 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		buildTimeout:       resolved.BuildTimeout,
 		packages:           resolved.Packages,
 		validationPackages: resolved.DiscoveryPackages,
+		coverPackages:      resolved.ProbeCoverPackages,
 		env:                w.env,
 		validateEnv:        validationEnv,
 		scratch:            scratch,
+		pristineSources:    pristineSources,
+		trace:              trace,
 	})
 	if err != nil {
 		return fail(err)
@@ -281,9 +356,11 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 		executeOptions: execOptions,
 		mutantTimeout:  resolved.MutantTimeout,
 		preparedFiles:  preparedFiles,
+		overlayPath:    overlayPath,
 		probeSnapshot:  probeSnap,
 		probeBinaries:  probeBinaries,
 		probeOptions:   probeOptions,
+		probeOverlay:   probeOverlay,
 		keepTemp:       w.keepTemp,
 	}
 	w.session = session
@@ -339,9 +416,12 @@ type probeTreeOptions struct {
 	buildTimeout       time.Duration
 	packages           []string
 	validationPackages []string
+	coverPackages      []string
 	env                []string
 	validateEnv        []string
 	scratch            string
+	pristineSources    map[string]sourceImage
+	trace              prepareTrace
 }
 
 // prepareProbeTree instruments, validates and builds the probe tree, and
@@ -370,31 +450,46 @@ type probeTreeOptions struct {
 // Reading either half as the whole would mark a mutant nothing can record as
 // one whose silence means something.
 func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
-	execute.Options, []execute.TestBinary, map[string]bool, error,
+	execute.Options, []execute.TestBinary, map[string]bool, string, error,
 ) {
 	if opts.snap == nil {
-		return execute.Options{}, nil, nil, nil
+		opts.trace.skip(PreparePhaseProbeValidation)
+		opts.trace.skip(PreparePhaseProbeCoverageBuild)
+		opts.trace.skip(PreparePhaseProbeRestoration)
+		return execute.Options{}, nil, nil, "", nil
 	}
 
-	validated, err := validate.Validate(ctx, validate.Options{
-		Snap:         opts.snap,
-		Catalog:      opts.catalog,
-		Hints:        opts.hints,
-		ModulePath:   opts.modulePath,
-		Toolchain:    opts.toolchain,
-		Jobs:         opts.jobs,
-		BuildTimeout: opts.buildTimeout,
-		Env:          opts.validateEnv,
-		Mode:         instrument.ModeProbe,
-		Packages:     opts.validationPackages,
+	var validated validate.Result
+	var overlayPath string
+	err := opts.trace.run(PreparePhaseProbeValidation, func() error {
+		var validateErr error
+		validated, validateErr = validate.Validate(ctx, validate.Options{
+			Snap:         opts.snap,
+			Catalog:      opts.catalog,
+			Hints:        opts.hints,
+			ModulePath:   opts.modulePath,
+			Toolchain:    opts.toolchain,
+			Jobs:         opts.jobs,
+			BuildTimeout: opts.buildTimeout,
+			Env:          opts.validateEnv,
+			Mode:         instrument.ModeProbe,
+			Packages:     opts.validationPackages,
+		})
+		if validateErr != nil {
+			return fmt.Errorf("gomutants: prepare probe validation: %w", validateErr)
+		}
+		if driftErr := checkInitialDrift(opts.snap, validated.Instrumented, "probe instrumentation"); driftErr != nil {
+			return driftErr
+		}
+		overlayPath, validateErr = writeInstrumentationOverlay(opts.snap.Root, opts.scratch, probeOverlayName, validated.Instrumented)
+		if validateErr != nil {
+			return fmt.Errorf("gomutants: prepare probe instrumentation overlay: %w", validateErr)
+		}
+		return nil
 	})
 	if err != nil {
-		return execute.Options{}, nil, nil, fmt.Errorf("gomutants: prepare probe validation: %w", err)
+		return execute.Options{}, nil, nil, "", err
 	}
-	if driftErr := checkInitialDrift(opts.snap, validated.Instrumented, "probe instrumentation"); driftErr != nil {
-		return execute.Options{}, nil, nil, driftErr
-	}
-
 	probeOptions := execute.Options{
 		Toolchain:    opts.toolchain,
 		SnapshotRoot: opts.snap.Root,
@@ -404,11 +499,39 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 		Env:          slices.Clone(opts.env),
 		Jobs:         opts.jobs,
 		Timeout:      opts.buildTimeout,
+		CoverPkg:     strings.Join(opts.coverPackages, ","),
 	}
-	binaries, err := execute.BuildTestBinaries(ctx, probeOptions)
+	var binaries []execute.TestBinary
+	err = opts.trace.run(PreparePhaseProbeCoverageBuild, func() error {
+		var buildErr error
+		binaries, buildErr = execute.BuildTestBinaries(ctx, probeOptions)
+		if buildErr != nil {
+			return fmt.Errorf("gomutants: prepare probe test binaries: %w", buildErr)
+		}
+		return nil
+	})
 	if err != nil {
-		return execute.Options{}, nil, nil, fmt.Errorf("gomutants: prepare probe test binaries: %w", err)
+		return execute.Options{}, nil, nil, "", err
 	}
+	var probeEnv []string
+	err = opts.trace.run(PreparePhaseProbeRestoration, func() error {
+		if restoreErr := restoreInstrumentationSources(opts.snap.Root, opts.pristineSources, validated.Instrumented); restoreErr != nil {
+			return fmt.Errorf("gomutants: prepare restore probe source tree: %w", restoreErr)
+		}
+		if driftErr := checkInitialDrift(opts.snap, instrument.Result{}, "probe source restoration"); driftErr != nil {
+			return driftErr
+		}
+		var environmentErr error
+		probeEnv, environmentErr = instrumentationEnvironment(opts.env, overlayPath)
+		if environmentErr != nil {
+			return fmt.Errorf("gomutants: prepare probe execution overlay: %w", environmentErr)
+		}
+		return nil
+	})
+	if err != nil {
+		return execute.Options{}, nil, nil, "", err
+	}
+	probeOptions.Env = probeEnv
 
 	survived := make(map[string]bool, len(validated.AcceptedIDs))
 	for _, id := range validated.AcceptedIDs {
@@ -420,7 +543,143 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 			probed[m.ID] = true
 		}
 	}
-	return probeOptions, binaries, probed, nil
+	return probeOptions, binaries, probed, overlayPath, nil
+}
+
+type sourceImage struct {
+	data []byte
+	mode fs.FileMode
+}
+
+func captureInstrumentationSources(root string, catalog *mutation.Catalog) (map[string]sourceImage, error) {
+	images := make(map[string]sourceImage)
+	for _, mutant := range catalog.Mutants() {
+		if _, captured := images[mutant.Path]; captured {
+			continue
+		}
+		name := filepath.Join(root, filepath.FromSlash(mutant.Path))
+		info, err := os.Stat(name)
+		if err != nil {
+			return nil, fmt.Errorf("gomutants: capture source %s: %w", mutant.Path, err)
+		}
+		data, err := os.ReadFile(name)
+		if err != nil {
+			return nil, fmt.Errorf("gomutants: capture source %s: %w", mutant.Path, err)
+		}
+		images[mutant.Path] = sourceImage{data: data, mode: info.Mode().Perm()}
+	}
+	return images, nil
+}
+
+func restoreInstrumentationSources(root string, images map[string]sourceImage, result instrument.Result) error {
+	for _, path := range result.FilesInstrumented {
+		image, captured := images[path]
+		if !captured {
+			return fmt.Errorf("no pristine source was captured for %s", path)
+		}
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), image.data, image.mode); err != nil {
+			return fmt.Errorf("restore source %s: %w", path, err)
+		}
+	}
+	runtimeDirectory := filepath.FromSlash(result.RuntimeDir)
+	if runtimeDirectory == "." || !filepath.IsLocal(runtimeDirectory) {
+		return fmt.Errorf("generated runtime directory %q is not local", result.RuntimeDir)
+	}
+	if err := os.RemoveAll(filepath.Join(root, runtimeDirectory)); err != nil {
+		return fmt.Errorf("remove generated runtime %s: %w", result.RuntimeDir, err)
+	}
+	return nil
+}
+
+func writeInstrumentationOverlay(root, scratch, name string, result instrument.Result) (string, error) {
+	backingRoot := filepath.Join(scratch, name)
+	if err := os.MkdirAll(backingRoot, privateDirectoryMode); err != nil {
+		return "", err
+	}
+	paths := slices.Clone(result.FilesInstrumented)
+	runtimeDirectory := filepath.FromSlash(result.RuntimeDir)
+	if runtimeDirectory == "." || !filepath.IsLocal(runtimeDirectory) {
+		return "", fmt.Errorf("generated runtime directory %q is not local", result.RuntimeDir)
+	}
+	err := filepath.WalkDir(filepath.Join(root, runtimeDirectory), func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("generated runtime contains non-regular file %s", path)
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(relative))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	slices.Sort(paths)
+	replacements := make(map[string]string, len(paths))
+	for _, path := range paths {
+		relative := filepath.FromSlash(path)
+		if !filepath.IsLocal(relative) {
+			return "", fmt.Errorf("instrumented source path %q is not local", path)
+		}
+		source := filepath.Join(root, relative)
+		target := filepath.Join(backingRoot, relative)
+		info, err := os.Stat(source)
+		if err != nil {
+			return "", err
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return "", err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), privateDirectoryMode); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(target, data, info.Mode().Perm()); err != nil {
+			return "", err
+		}
+		replacements[source] = target
+	}
+	manifest, err := json.Marshal(struct {
+		Replace map[string]string `json:"Replace"`
+	}{Replace: replacements})
+	if err != nil {
+		return "", err
+	}
+	manifestPath := filepath.Join(scratch, name+"-"+overlayManifestName)
+	if err := os.WriteFile(manifestPath, manifest, privateFileMode); err != nil {
+		return "", err
+	}
+	return manifestPath, nil
+}
+
+func instrumentationEnvironment(base []string, overlayPath string) ([]string, error) {
+	overlayFlag, err := quotedGoFlag("-overlay=" + overlayPath)
+	if err != nil {
+		return nil, err
+	}
+	env := gocmd.AppendGoflags(base, overlayFlag)
+	env = gocmd.AppendGoflags(env, gocmd.VetOff)
+	return gocmd.AppendGoflags(env, uncachedTestFlag), nil
+}
+
+func quotedGoFlag(flag string) (string, error) {
+	if !strings.ContainsAny(flag, " \t\r\n") {
+		return flag, nil
+	}
+	if !strings.ContainsRune(flag, '\'') {
+		return "'" + flag + "'", nil
+	}
+	if !strings.ContainsRune(flag, '"') {
+		return `"` + flag + `"`, nil
+	}
+	return "", fmt.Errorf("Go flag %q contains whitespace and both quote characters", flag)
 }
 
 func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
@@ -430,11 +689,11 @@ func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
 	if _, err := mutation.ParseTier(opts.Profile); err != nil {
 		return PrepareOptions{}, fmt.Errorf("gomutants: prepare profile %q: expected balanced, strong, or all", opts.Profile)
 	}
-	if opts.Jobs < 0 || opts.Jobs > 32 {
-		return PrepareOptions{}, fmt.Errorf("gomutants: prepare jobs %d: expected 0 through 32", opts.Jobs)
+	if opts.Jobs < 0 || opts.Jobs > config.MaxJobs {
+		return PrepareOptions{}, fmt.Errorf("gomutants: prepare jobs %d: expected 0 through %d", opts.Jobs, config.MaxJobs)
 	}
 	if opts.Jobs == 0 {
-		opts.Jobs = min(runtime.NumCPU(), 8)
+		opts.Jobs = config.DefaultJobs()
 	}
 	if opts.BuildTimeout < 0 {
 		return PrepareOptions{}, errors.New("gomutants: prepare build timeout is negative")
@@ -464,10 +723,19 @@ func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
 			return PrepareOptions{}, fmt.Errorf("gomutants: prepare discovery package pattern %q is not module-relative", pattern)
 		}
 	}
-	if len(opts.Verify.Argv) == 0 {
+	for _, pattern := range opts.ProbeCoverPackages {
+		if strings.TrimSpace(pattern) == "" || strings.Contains(pattern, ",") {
+			return PrepareOptions{}, fmt.Errorf("gomutants: prepare probe coverage package %q is invalid", pattern)
+		}
+	}
+	if opts.SkipVerify && (len(opts.Verify.Argv) != 0 || len(opts.Verify.Env) != 0 || opts.Verify.Dir != "" ||
+		opts.Verify.Timeout != 0 || opts.Verify.OutputLimit != 0) {
+		return PrepareOptions{}, errors.New("gomutants: prepare cannot combine skip verify with a verification command")
+	}
+	if !opts.SkipVerify && len(opts.Verify.Argv) == 0 {
 		opts.Verify.Argv = []string{"go", "test", "./..."}
 	}
-	if opts.Verify.Timeout == 0 {
+	if !opts.SkipVerify && opts.Verify.Timeout == 0 {
 		opts.Verify.Timeout = opts.BuildTimeout
 	}
 	return opts, nil
@@ -534,6 +802,10 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	env, err := overlayEnvironment(s.env, request.Env)
 	if err != nil {
 		return MutantResult{}, fmt.Errorf("gomutants: session exec environment: %w", err)
+	}
+	env, err = instrumentationEnvironment(env, s.overlayPath)
+	if err != nil {
+		return MutantResult{}, fmt.Errorf("gomutants: session exec overlay: %w", err)
 	}
 	timeout := request.Timeout
 	if timeout == 0 {
@@ -650,6 +922,10 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	if err != nil {
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe environment: %w", err)
 	}
+	env, err = instrumentationEnvironment(env, s.probeOverlay)
+	if err != nil {
+		return ProbeResult{}, fmt.Errorf("gomutants: session probe overlay: %w", err)
+	}
 	timeout := request.Timeout
 	if timeout == 0 {
 		timeout = s.mutantTimeout
@@ -685,11 +961,11 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe: %w", err)
 	}
 	return ProbeResult{
-		Outcome:    ProbeOutcome(attempt.Outcome),
-		Infected:   attempt.Infected,
-		ExitCode:   attempt.ExitCode,
-		Duration:   attempt.Duration,
-		OutputTail: attempt.OutputTail,
+		Outcome:  ProbeOutcome(attempt.Outcome),
+		Infected: attempt.Infected,
+		ExitCode: attempt.ExitCode,
+		Duration: attempt.Duration,
+		Output:   slices.Clone(attempt.Output),
 	}, nil
 }
 
@@ -1089,14 +1365,6 @@ func outputSummary(output []byte) string {
 	return strconv.Quote(trimmed)
 }
 
-// checkInitialDrift asserts that a freshly instrumented tree holds nothing but
-// what instrumentation put there.
-//
-// The `what` names the step being held to account, because the two trees reach
-// this gate having done different things: the mutant tree has just run the
-// user's verification command in it, and the probe tree has run nothing at all,
-// so a drift there is instrumentation's own and saying "verification" about it
-// would send a reader looking in the wrong place.
 func checkInitialDrift(snap *snapshot.Snapshot, instrumented instrument.Result, what string) error {
 	unexpected, err := drift.Unexpected(snap, instrumented)
 	if err != nil {

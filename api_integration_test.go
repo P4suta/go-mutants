@@ -4,6 +4,7 @@
 package gomutants_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -523,6 +524,7 @@ type preparedFixture struct {
 	workspace *gomutants.Workspace
 	session   *gomutants.Session
 	catalog   gomutants.Catalog
+	events    []gomutants.PrepareEvent
 	err       error
 }
 
@@ -571,8 +573,13 @@ func prepareProbeable(probe bool) *preparedFixture {
 	prepared.workspace = workspace
 
 	session, err := workspace.Prepare(context.Background(), gomutants.PrepareOptions{
-		Probe:         probe,
-		MutantTimeout: 30 * time.Second,
+		Probe:              probe,
+		ProbeCoverPackages: []string{probeableModule + "/..."},
+		MutantTimeout:      30 * time.Second,
+		SkipVerify:         !probe,
+		Trace: func(event gomutants.PrepareEvent) {
+			prepared.events = append(prepared.events, event)
+		},
 	})
 	if err != nil {
 		prepared.err = err
@@ -581,6 +588,61 @@ func prepareProbeable(probe bool) *preparedFixture {
 	prepared.session = session
 	prepared.catalog = session.Catalog()
 	return prepared
+}
+
+func TestPrepareTraceReportsEveryPhaseInOrder(t *testing.T) {
+	phases := []gomutants.PreparePhase{
+		gomutants.PreparePhaseDiscovery,
+		gomutants.PreparePhaseProbeSnapshot,
+		gomutants.PreparePhaseMainValidation,
+		gomutants.PreparePhaseMainRestoration,
+		gomutants.PreparePhaseVerification,
+		gomutants.PreparePhaseBinaryBuild,
+		gomutants.PreparePhaseProbeValidation,
+		gomutants.PreparePhaseProbeCoverageBuild,
+		gomutants.PreparePhaseProbeRestoration,
+	}
+	const eventsPerPhase = 2
+	for _, test := range []struct {
+		name    string
+		fixture *preparedFixture
+		skipped map[gomutants.PreparePhase]bool
+	}{
+		{name: "probe", fixture: probeable(t)},
+		{
+			name:    "without probe",
+			fixture: unprobeable(t),
+			skipped: map[gomutants.PreparePhase]bool{
+				gomutants.PreparePhaseProbeSnapshot:      true,
+				gomutants.PreparePhaseVerification:       true,
+				gomutants.PreparePhaseProbeValidation:    true,
+				gomutants.PreparePhaseProbeCoverageBuild: true,
+				gomutants.PreparePhaseProbeRestoration:   true,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got, want := len(test.fixture.events), len(phases)*eventsPerPhase; got != want {
+				t.Fatalf("event count = %d, want %d: %+v", got, want, test.fixture.events)
+			}
+			for index, phase := range phases {
+				started := test.fixture.events[index*eventsPerPhase]
+				finished := test.fixture.events[index*eventsPerPhase+1]
+				if started.Phase != phase || started.State != gomutants.PrepareEventStarted ||
+					started.Result != "" || started.Duration != 0 {
+					t.Errorf("phase %s start = %+v", phase, started)
+				}
+				wantResult := gomutants.PreparePhaseSucceeded
+				if test.skipped[phase] {
+					wantResult = gomutants.PreparePhaseSkipped
+				}
+				if finished.Phase != phase || finished.State != gomutants.PrepareEventFinished ||
+					finished.Result != wantResult || finished.Duration < 0 {
+					t.Errorf("phase %s finish = %+v, want result %s", phase, finished, wantResult)
+				}
+			}
+		})
+	}
 }
 
 // releasePreparedFixtures closes every session this file prepared and removes
@@ -666,7 +728,7 @@ func probeOf(t *testing.T, session *gomutants.Session, request gomutants.ProbeRe
 	}
 	if result.Outcome != gomutants.ProbeMeasured {
 		t.Fatalf("probing %v = %s, want %s:\n%s",
-			request.Args, result.Outcome, gomutants.ProbeMeasured, result.OutputTail)
+			request.Args, result.Outcome, gomutants.ProbeMeasured, result.Output)
 	}
 	if result.Infected == nil {
 		t.Fatalf("probing %v measured, but Infected is nil rather than a set", request.Args)
@@ -896,7 +958,7 @@ func TestProbeOfAFailingTestCarriesNoFacts(t *testing.T) {
 		t.Fatalf("probing a failing target: %v", err)
 	}
 	if result.Outcome != gomutants.ProbeTestFailed {
-		t.Errorf("outcome = %s, want %s:\n%s", result.Outcome, gomutants.ProbeTestFailed, result.OutputTail)
+		t.Errorf("outcome = %s, want %s:\n%s", result.Outcome, gomutants.ProbeTestFailed, result.Output)
 	}
 	if result.Infected != nil {
 		t.Errorf("infected = %v, want nil: a failing target proves nothing about infection", result.Infected)
@@ -904,8 +966,68 @@ func TestProbeOfAFailingTestCarriesNoFacts(t *testing.T) {
 	if result.ExitCode == 0 {
 		t.Errorf("exit code = 0 for a target reported as failed")
 	}
-	if !strings.Contains(result.OutputTail, "TestFlagged") {
-		t.Errorf("output tail = %q, want the failing target's own output", result.OutputTail)
+	if !strings.Contains(string(result.Output), "TestFlagged") {
+		t.Errorf("output = %q, want the failing target's own output", result.Output)
+	}
+}
+
+func TestProbeReturnsSuccessfulOutputAndCoverage(t *testing.T) {
+	prepared := probeable(t)
+	profile := filepath.Join(t.TempDir(), "coverage.out")
+	result := probeOf(t, prepared.session, gomutants.ProbeRequest{
+		Package: probeableModule,
+		Args: []string{
+			"-test.run=^TestWidth$",
+			"-test.coverprofile=" + profile,
+		},
+	})
+	if !bytes.Contains(result.Output, []byte("PASS")) {
+		t.Fatalf("output = %q", result.Output)
+	}
+	if info, err := os.Stat(profile); err != nil || info.Size() == 0 {
+		t.Fatalf("coverage profile = (%v, %v)", info, err)
+	}
+}
+
+func TestPreparedExecutionsExposeOnlyPristineSource(t *testing.T) {
+	prepared := probeable(t)
+	width := findMutant(t, prepared.catalog, "probeable.go", widthRule)
+	probe := probeOf(t, prepared.session, gomutants.ProbeRequest{
+		Package: probeableModule,
+		Args:    []string{"-test.run=^TestSourceTreeIsPristine$"},
+	})
+	if len(probe.Infected) != 0 {
+		t.Fatalf("source audit infected mutants = %v", probe.Infected)
+	}
+	result, err := prepared.session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  width.ID,
+		Package: probeableModule,
+		Args:    []string{"-test.run=^TestSourceTreeIsPristine$"},
+	})
+	if err != nil || result.Outcome != gomutants.OutcomeSurvived {
+		t.Fatalf("source audit against mutant = (%+v, %v)", result, err)
+	}
+}
+
+func TestPreparedExecutionsPropagateOverlayToChildGoTest(t *testing.T) {
+	prepared := probeable(t)
+	width := findMutant(t, prepared.catalog, "probeable.go", widthRule)
+	probe := probeOf(t, prepared.session, gomutants.ProbeRequest{
+		Package: probeableModule,
+		Args:    []string{"-test.run=^TestChildGoTestUsesSessionOverlay$"},
+		Env:     []string{"PROBEABLE_CHILD_GO_TEST=parent"},
+	})
+	if !slices.Contains(probe.Infected, width.Index) {
+		t.Fatalf("child go test infected mutants = %v, want %d", probe.Infected, width.Index)
+	}
+	result, err := prepared.session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  width.ID,
+		Package: probeableModule,
+		Args:    []string{"-test.run=^TestChildGoTestUsesSessionOverlay$"},
+		Env:     []string{"PROBEABLE_CHILD_GO_TEST=parent"},
+	})
+	if err != nil || result.Outcome != gomutants.OutcomeKilled {
+		t.Fatalf("child go test against mutant = (%+v, %v)", result, err)
 	}
 }
 
@@ -925,7 +1047,7 @@ func TestProbeOfATimedOutTestCarriesNoFacts(t *testing.T) {
 		t.Fatalf("probing a blocking target: %v", err)
 	}
 	if result.Outcome != gomutants.ProbeTimedOut {
-		t.Errorf("outcome = %s, want %s:\n%s", result.Outcome, gomutants.ProbeTimedOut, result.OutputTail)
+		t.Errorf("outcome = %s, want %s:\n%s", result.Outcome, gomutants.ProbeTimedOut, result.Output)
 	}
 	if result.Infected != nil {
 		t.Errorf("infected = %v, want nil: a target that was killed proves nothing", result.Infected)
