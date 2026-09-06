@@ -5,6 +5,7 @@ package execute_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -579,5 +580,82 @@ func TestPlanNamesBinariesDeterministicallyAndResolvesCollisions(t *testing.T) {
 		if first[i].BinPath != second[i].BinPath {
 			t.Errorf("planning twice named binary %d %q then %q", i, first[i].BinPath, second[i].BinPath)
 		}
+	}
+}
+
+// TestCommandFailureCarriesTheInvocation names the command behind each of the
+// build phase's three toolchain failures.
+//
+// The compile failure is the one that matters most. It is documented as a
+// go-mutants bug in the instrumented rewrite, and a bug report for it needs the
+// exact `go test -c` line and the snapshot it ran in — both of which used to
+// end at this package's boundary, leaving a user with a message about a package
+// and a temporary directory that no longer exists.
+func TestCommandFailureCarriesTheInvocation(t *testing.T) {
+	good := listing(pkgJSON("example.com/m/pkg", "/snap/pkg", true, false))
+	cases := []struct {
+		name    string
+		respond func(context.Context, call) runner.Result
+		code    execute.Code
+		argv1   string
+	}{
+		{
+			name: "the listing exits non-zero",
+			respond: func(_ context.Context, c call) runner.Result {
+				if isList(c) {
+					return runner.Result{ExitCode: 1, Output: []byte("go: cannot load package\n")}
+				}
+				return runner.Result{}
+			},
+			code:  execute.CodeListFailed,
+			argv1: "list",
+		},
+		{
+			name: "the listing is not JSON",
+			respond: func(_ context.Context, c call) runner.Result {
+				if isList(c) {
+					return runner.Result{Output: []byte("not json at all\n")}
+				}
+				return runner.Result{}
+			},
+			code:  execute.CodeListUnreadable,
+			argv1: "list",
+		},
+		{
+			name: "a test binary does not compile",
+			respond: func(_ context.Context, c call) runner.Result {
+				if isList(c) {
+					return runner.Result{Output: []byte(good)}
+				}
+				return runner.Result{ExitCode: 2, Output: []byte("./a_test.go:9:2: undefined: Missing\n")}
+			},
+			code:  execute.CodeTestBuildFailed,
+			argv1: "test",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fake{respond: c.respond}
+			opts, _ := buildOptions(t, f, 1)
+
+			_, err := execute.BuildTestBinaries(t.Context(), opts)
+			if got := execute.CodeOf(err); got != c.code {
+				t.Fatalf("code = %q, want %q (%v)", got, c.code, err)
+			}
+			var failure *execute.Error
+			if !errors.As(err, &failure) {
+				t.Fatalf("err = %v, want an *execute.Error", err)
+			}
+			command := failure.Command()
+			if command == nil {
+				t.Fatal("Command() = nil, want the toolchain command that failed")
+			}
+			if len(command.Argv) < 2 || command.Argv[0] != toolchain.GoBin || command.Argv[1] != c.argv1 {
+				t.Errorf("Command().Argv = %q, want the located toolchain running %q", command.Argv, c.argv1)
+			}
+			if command.Dir != opts.SnapshotRoot {
+				t.Errorf("Command().Dir = %q, want the snapshot root %q", command.Dir, opts.SnapshotRoot)
+			}
+		})
 	}
 }

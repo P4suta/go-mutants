@@ -59,6 +59,15 @@ type coverageResult struct {
 	// covering maps a mutant id onto the sorted import paths of the binaries
 	// that reach it. Empty in [CoverageOff].
 	covering map[string][]string
+	// coverageFallback is the whole failure that made the run give coverage up:
+	// the coded message and the compiler's own diagnostics under it, as
+	// [session.buildTestBinaries] kept them. It is empty on every run that
+	// never fell back, which is nearly all of them.
+	//
+	// The console has already been told in one line. This is the copy for
+	// somebody asking why, and it is deliberately not the warning: a run that
+	// is about to succeed does not print a compiler blob at the user.
+	coverageFallback string
 }
 
 // Mode resolves the zero value to [CoverageOff], so that a run which never
@@ -248,7 +257,7 @@ func (s *session) profile(
 		spec.Env = childEnv(scratch)
 		spec.Timeout = BaselineCap
 
-		if err := check(ctx, runner.Run(ctx, spec), CodeCoverageRender,
+		if err := check(ctx, spec, runner.Run(ctx, spec), CodeCoverageRender,
 			"`go tool covdata textfmt` over the profile of "+data.ImportPath+" failed"); err != nil {
 			return nil, err
 		}

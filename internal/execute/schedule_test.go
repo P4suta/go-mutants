@@ -5,6 +5,7 @@ package execute_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -332,6 +333,21 @@ func TestScheduleLetsAFailedRetryStandInsteadOfPromotingTheTimeout(t *testing.T)
 			}
 			if got.Attempts[0].Outcome != mutation.OutcomeTimedOut {
 				t.Errorf("first attempt = %s, want the timeout that was retried", got.Attempts[0].Outcome)
+			}
+			// Where an interruption goes: onto the attempt that was cut off,
+			// naming the binary still running, and never onto the verdict — a
+			// mutant nobody measured did not error, which is what the
+			// wantMutantCode assertion above is the other half of.
+			if c.wantFinal == mutation.OutcomeNotRun {
+				retry := got.Attempts[1].Err
+				if code := execute.CodeOf(retry); code != execute.CodeInterrupted {
+					t.Errorf("the cut-off attempt carries code %q, want %q (%v)",
+						code, execute.CodeInterrupted, retry)
+				}
+				var failure *execute.Error
+				if errors.As(retry, &failure) && failure.Command() == nil {
+					t.Error("the cut-off attempt names no command, so nothing says what was still running")
+				}
 			}
 		})
 	}
@@ -800,4 +816,77 @@ func mapsEqual(got, want map[string]int) bool {
 		}
 	}
 	return true
+}
+
+// TestScheduleInterruptionNamesTheBinaryThatWasCutOff carries the one thing a
+// reader of a Ctrl-C is looking for all the way out to the error they see.
+//
+// The attempt that was cut off knows which binary it was in, and until now that
+// was where the knowledge stopped: a report keeps the *number* of attempts and
+// not the attempts, so nothing downstream could reach it, and the error this
+// function returns — the one internal/cli prints — said only that the phase was
+// interrupted. The verdict is untouched by this: a mutant nobody measured is
+// still not-run and still carries no error of its own.
+func TestScheduleInterruptionNamesTheBinaryThatWasCutOff(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f := &fake{respond: func(context.Context, call) runner.Result {
+		cancel()
+		// The partial output of a child the supervisor killed mid-test: how
+		// far the suite got before the signal arrived.
+		return runner.Result{
+			ExitCode: runner.ExitCodeUnavailable,
+			Duration: time.Millisecond,
+			Output:   []byte("=== RUN   TestSlow\n"),
+		}
+	}}
+	bins := testBins("example.com/a")
+
+	results, err := execute.Schedule(ctx, options(f, 1),
+		mutants(mutantTimeout, "slow"), bins, execute.Hooks{})
+
+	if code := execute.CodeOf(err); code != execute.CodeInterrupted {
+		t.Fatalf("code = %q, want %q (%v)", code, execute.CodeInterrupted, err)
+	}
+	// The message is the stable contract and does not change because the error
+	// grew a command.
+	if want := "GOM7520: the execution phase was interrupted"; !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("Error() = %q, want it to begin %q", err.Error(), want)
+	}
+	if !isCancellation(err) {
+		t.Errorf("the cancellation is not reachable through %v", err)
+	}
+
+	var failure *execute.Error
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want an *execute.Error", err)
+	}
+	command := failure.Command()
+	if command == nil {
+		t.Fatal("Command() = nil, want the binary that was still running")
+	}
+	started := f.seen()
+	if len(started) != 1 {
+		t.Fatalf("the fake saw %d calls, want 1", len(started))
+	}
+	if !slices.Equal(command.Argv, started[0].Argv) || command.Dir != bins[0].Dir {
+		t.Errorf("Command() = %+v, want the argv and directory of %q in %q",
+			command, started[0].Argv, bins[0].Dir)
+	}
+	if got := failure.RetainedOutput(); !strings.Contains(got, "TestSlow") {
+		t.Errorf("RetainedOutput() = %q, want what the killed child had printed", got)
+	}
+
+	// And the verdict is exactly what it was: not run, with no error of its
+	// own. Naming the command is a diagnostic about the run, not a statement
+	// that this mutant errored.
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Final != mutation.OutcomeNotRun {
+		t.Errorf("final outcome = %s, want %s", results[0].Final, mutation.OutcomeNotRun)
+	}
+	if results[0].Err != nil {
+		t.Errorf("the verdict carries %v, want none", results[0].Err)
+	}
 }

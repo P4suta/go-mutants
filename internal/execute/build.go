@@ -427,7 +427,7 @@ func listPackages(ctx context.Context, opts Options) ([]listedPackage, error) {
 	spec.OutputLimit = listOutputLimit
 
 	result := opts.runProcess(ctx, spec)
-	if err := commandFailure(ctx, result, CodeListFailed,
+	if err := commandFailure(ctx, spec, result, CodeListFailed,
 		"the snapshot's packages could not be listed", opts.Timeout); err != nil {
 		return nil, err
 	}
@@ -451,6 +451,11 @@ func listPackages(ctx context.Context, opts Options) ([]listedPackage, error) {
 				Message: "the output of `go list -json` could not be decoded",
 				Output:  tail(result.Output),
 				Err:     err,
+				// The listing ran; what it printed is what could not be read. The
+				// command is as much of the diagnosis as the output is, because a
+				// `go list` that prints something else is usually one carrying a
+				// pattern or an environment nobody expected.
+				Invocation: runner.CommandOf(spec, result),
 			}
 		}
 		packages = append(packages, pkg)
@@ -546,7 +551,7 @@ func compile(ctx context.Context, opts Options, bin TestBinary) error {
 	spec.Timeout = opts.Timeout
 
 	result := opts.runProcess(ctx, spec)
-	return commandFailure(ctx, result, CodeTestBuildFailed,
+	return commandFailure(ctx, spec, result, CodeTestBuildFailed,
 		"the test binary for "+bin.ImportPath+" could not be built", opts.Timeout)
 }
 
@@ -558,32 +563,49 @@ func compile(ctx context.Context, opts Options, bin TestBinary) error {
 // no error and no timeout, which is indistinguishable from a failure unless the
 // context is asked — so it is asked before the exit status is judged, and after
 // the two conditions that are definitely not cancellations.
-func commandFailure(ctx context.Context, result runner.Result, code Code, what string, timeout time.Duration) error {
+//
+// The spec is taken so that every failure names the command it judged. It
+// matters most for [CodeTestBuildFailed], which this package's own
+// documentation reads as a go-mutants bug: a bug report about a compile needs
+// the `go test -c` line and the snapshot it ran in, and both used to stop at
+// this function's boundary.
+func commandFailure(
+	ctx context.Context,
+	spec runner.Spec,
+	result runner.Result,
+	code Code,
+	what string,
+	timeout time.Duration,
+) error {
 	switch {
 	case result.Err != nil:
 		return &Error{
-			Code:    code,
-			Message: what + ": the command could not be run",
-			Output:  tail(result.Output),
-			Err:     result.Err,
+			Code:       code,
+			Message:    what + ": the command could not be run",
+			Output:     tail(result.Output),
+			Err:        result.Err,
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case result.TimedOut:
 		return &Error{
-			Code:    code,
-			Message: what + ": no answer within " + timeout.String(),
-			Output:  tail(result.Output),
+			Code:       code,
+			Message:    what + ": no answer within " + timeout.String(),
+			Output:     tail(result.Output),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case ctx.Err() != nil:
 		return &Error{
-			Code:    CodeInterrupted,
-			Message: "the execution phase was interrupted",
-			Err:     context.Cause(ctx),
+			Code:       CodeInterrupted,
+			Message:    "the execution phase was interrupted",
+			Err:        context.Cause(ctx),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	case result.ExitCode != 0:
 		return &Error{
-			Code:    code,
-			Message: what + ": exited with status " + strconv.Itoa(result.ExitCode),
-			Output:  tail(result.Output),
+			Code:       code,
+			Message:    what + ": exited with status " + strconv.Itoa(result.ExitCode),
+			Output:     tail(result.Output),
+			Invocation: runner.CommandOf(spec, result),
 		}
 	}
 	return nil

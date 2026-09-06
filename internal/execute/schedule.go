@@ -5,6 +5,7 @@ package execute
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -124,6 +125,12 @@ type MutantResult struct {
 // retained — and the full result slice is returned alongside a
 // [CodeInterrupted] error wrapping [context.Cause]. Schedule never returns
 // while a worker is still running.
+//
+// That error names one of the test binaries the signal cut off, with what it
+// had printed, because "what was still running" is the first question a Ctrl-C
+// raises and this is the last layer that can answer it: what the attempts know
+// is reduced to a count of attempts by the time a report is built. See [cutOff]
+// for which one it names and why that is not a race.
 func Schedule(
 	ctx context.Context,
 	opts Options,
@@ -210,13 +217,46 @@ func Schedule(
 	}
 
 	if ctx.Err() != nil {
-		return results, &Error{
+		interrupted := &Error{
 			Code:    CodeInterrupted,
 			Message: "the execution phase was interrupted",
 			Err:     context.Cause(ctx),
 		}
+		// What was still running is the one thing a reader of a Ctrl-C asks
+		// for, and this is the last place that knows it: the attempts hold it,
+		// and a report keeps the *number* of attempts rather than the attempts
+		// themselves, so an error that did not carry it up would be the end of
+		// the trail. The message is untouched — this puts a command under it,
+		// it does not restate the failure.
+		if cut := cutOff(results); cut != nil {
+			interrupted.Invocation = cut.Invocation
+			interrupted.Output = cut.Output
+		}
+		return results, interrupted
 	}
 	return results, nil
+}
+
+// cutOff returns the failure of an attempt the cancellation ended, or nil when
+// nothing was in flight — a run stopped between mutants, or one where every
+// worker had already finished.
+//
+// With several workers there were several, and this names the first in the
+// mutants' own order rather than whichever goroutine happened to lose the race.
+// The determinism is the point: two interrupted runs of the same queue print
+// the same command, and a diagnostic naming a different binary each time would
+// read as a fact about that binary rather than about the signal.
+func cutOff(results []MutantResult) *Error {
+	for _, result := range results {
+		for _, attempt := range result.Attempts {
+			var failure *Error
+			if errors.As(attempt.Err, &failure) &&
+				failure.Code == CodeInterrupted && failure.Invocation != nil {
+				return failure
+			}
+		}
+	}
+	return nil
 }
 
 // record appends an attempt to a result and adds its time to the total. It
@@ -229,11 +269,23 @@ func record(result *MutantResult, attempt Attempt) {
 
 // settle promotes a first-pass attempt to the mutant's verdict. It is called
 // for every outcome except a timeout, which the retry pass owns.
+//
+// Only the verdict's own error is promoted with it. An attempt a cancellation
+// cut off carries [CodeInterrupted] naming the binary that was still running —
+// see [Attempt.Err] — and that belongs to the attempt's record rather than to a
+// mutant whose verdict is simply "not run": [MutantResult.Err] means this
+// mutant errored, the interruption itself is what [Schedule] returns, and
+// letting the two blur would make "did this mutant error?" answerable two
+// different ways. Nothing is lost by leaving it where it is, because [record]
+// keeps every attempt.
 func settle(result *MutantResult, attempt Attempt) {
 	result.Final = attempt.Outcome
 	result.KilledBy = attempt.KilledBy
 	result.OutputTail = attempt.OutputTail
-	result.Err = attempt.Err
+	result.Err = nil
+	if attempt.Outcome == mutation.OutcomeErrored {
+		result.Err = attempt.Err
+	}
 }
 
 // confirm applies the timeout retry rule to a mutant that has already timed out

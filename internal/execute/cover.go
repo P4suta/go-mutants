@@ -116,7 +116,7 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 			}
 		}
 
-		result := opts.runProcess(ctx, runner.Spec{
+		spec := runner.Spec{
 			Argv: []string{bin.BinPath, coverDirFlag + binDir},
 			Dir:  bin.Dir,
 			// No activation, and the same composed environment a mutant gets:
@@ -124,8 +124,9 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 			// different program from the one the mutants are measured in.
 			Env:     baseEnvFrom(opts.Env, scratch),
 			Timeout: opts.Timeout,
-		})
-		if err := commandFailure(ctx, result, CodeCoverageFailed,
+		}
+		result := opts.runProcess(ctx, spec)
+		if err := commandFailure(ctx, spec, result, CodeCoverageFailed,
 			"the coverage pass over "+bin.ImportPath+" failed", opts.Timeout); err != nil {
 			return nil, err
 		}

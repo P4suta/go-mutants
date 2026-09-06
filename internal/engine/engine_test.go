@@ -4,6 +4,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"os"
 	"slices"
@@ -12,7 +13,10 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
+	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
@@ -337,5 +341,152 @@ func TestMean(t *testing.T) {
 	got := mean([]time.Duration{time.Second, 3 * time.Second})
 	if got != 2*time.Second {
 		t.Errorf("mean = %s, want 2s", got)
+	}
+}
+
+// TestCheckCarriesTheInvocationOnEveryFailure is the whole of what [check] owes
+// the renderer beyond a code.
+//
+// A baseline failure that says "the snapshot does not build" and nothing else
+// is a sentence about a directory the user has never seen, in a snapshot that
+// is deleted before they can look at it. Every branch here therefore names the
+// command it judged — including the cancellation, which is the one place a
+// reader most wants to know what was still running when the signal arrived.
+func TestCheckCarriesTheInvocationOnEveryFailure(t *testing.T) {
+	t.Parallel()
+
+	spec := runner.Spec{
+		Argv: []string{"/usr/bin/go", "test", "./..."},
+		Dir:  "/tmp/go-mutants-snapshot",
+		Kind: trace.ExecKindBaselineTest,
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	cases := []struct {
+		name   string
+		ctx    context.Context
+		result runner.Result
+		code   Code
+	}{
+		{
+			name:   "the command could not be run",
+			ctx:    t.Context(),
+			result: runner.Result{ExitCode: runner.ExitCodeUnavailable, Err: errors.New("fork/exec: no such file")},
+			code:   CodeBaselineTestFailed,
+		},
+		{
+			name:   "the command timed out",
+			ctx:    t.Context(),
+			result: runner.Result{ExitCode: runner.ExitCodeUnavailable, TimedOut: true},
+			code:   CodeBaselineTimedOut,
+		},
+		{
+			name:   "the run was cancelled",
+			ctx:    cancelled,
+			result: runner.Result{ExitCode: runner.ExitCodeUnavailable},
+			code:   CodeInterrupted,
+		},
+		{
+			name:   "the command exited non-zero",
+			ctx:    t.Context(),
+			result: runner.Result{ExitCode: 1, Output: []byte("--- FAIL: TestX\n")},
+			code:   CodeBaselineTestFailed,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := check(c.ctx, spec, c.result, CodeBaselineTestFailed, "baseline run 1 of 1 failed")
+			if err == nil {
+				t.Fatal("check accepted a failed command")
+			}
+			if got := CodeOf(err); got != c.code {
+				t.Errorf("code = %s, want %s (%v)", got, c.code, err)
+			}
+			var failure *Error
+			if !errors.As(err, &failure) {
+				t.Fatalf("err = %v, want an *engine.Error", err)
+			}
+			command := failure.Command()
+			if command == nil {
+				t.Fatal("Command() = nil, want the command that failed")
+			}
+			if !slices.Equal(command.Argv, spec.Argv) || command.Dir != spec.Dir {
+				t.Errorf("Command() = %+v, want the spec's argv and directory", command)
+			}
+		})
+	}
+
+	// A failure the runner noticed itself already named its command, argv copy
+	// and all. That one is carried up rather than rebuilt, so the error the user
+	// reads and the event the recording holds cannot disagree about what ran.
+	named := &runner.Invocation{Argv: []string{"/usr/bin/go", "test", "./..."}, TraceSeq: 12}
+	inner := &runner.Error{Code: runner.CodeProcessStartFailed, Message: "could not start it", Invocation: named}
+	err := check(t.Context(), spec, runner.Result{ExitCode: runner.ExitCodeUnavailable, Err: inner},
+		CodeBaselineBuildFailed, "the snapshot does not build")
+	var failure *Error
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want an *engine.Error", err)
+	}
+	if failure.Command() != named {
+		t.Errorf("Command() = %+v, want the invocation the runner had already attached (%+v)",
+			failure.Command(), named)
+	}
+}
+
+// TestCoverageBuildFallbackKeepsTheWholeFailure is about what the fallback
+// throws away.
+//
+// A coverage build that will not compile is given up on and retried without
+// coverage, and the warning that says so is one line — which is right for a
+// console during a run that is going to succeed anyway. The compiler's own
+// diagnostics were dropped entirely, though, and they are the only evidence
+// there is that go-mutants' `-coverpkg` build is what broke. The whole failure
+// is kept beside the warning instead, for the reporting that follows.
+func TestCoverageBuildFallbackKeepsTheWholeFailure(t *testing.T) {
+	t.Parallel()
+
+	// The failure as it arrives from internal/execute: one coded line and a
+	// compiler blob underneath it.
+	failure := &execute.Error{
+		Code:    execute.CodeTestBuildFailed,
+		Message: "the test binary for example.com/m/pkg could not be built: exited with status 2",
+		Output:  "./a_test.go:9:2: undefined: Missing\n./a_test.go:12:2: undefined: AlsoMissing",
+	}
+	// Written out exactly: the error's own text, and the output on the lines
+	// under it. A containment check would pass for a composition that dropped a
+	// line or ran two together, which is the only thing this value has to get
+	// right.
+	kept := fallbackText(failure)
+	if want := failure.Error() + "\n" + failure.Output; kept != want {
+		t.Errorf("fallbackText =\n%s\nwant\n%s", kept, want)
+	}
+
+	// And the fallback path files it. The options are deliberately unusable, so
+	// both builds fail; what is asserted is that the *coverage* build's failure
+	// was kept whole while the warning kept its first line.
+	s := &session{}
+	opts := execute.Options{CoverPkg: "example.com/m/..."}
+	var cov coverageResult
+
+	if _, err := s.buildTestBinaries(t.Context(), &opts, &cov); err == nil {
+		t.Fatal("buildTestBinaries succeeded against unusable options")
+	}
+	if cov.coverageFallback == "" {
+		t.Fatal("the coverage build's failure was not kept")
+	}
+	if len(s.warnings) != 1 {
+		t.Fatalf("published %d warnings, want the one that says coverage was given up", len(s.warnings))
+	}
+	// One direction, and it is the one the fallback actually promises: the
+	// warning is the kept failure's first line wrapped in a sentence, so the
+	// console's summary and the record cannot end up describing two different
+	// failures.
+	if !strings.Contains(s.warnings[0].Message, firstLine(cov.coverageFallback)) {
+		t.Errorf("the warning does not quote the kept failure's first line:\n%s\n%s",
+			s.warnings[0].Message, cov.coverageFallback)
+	}
+	if strings.Contains(s.warnings[0].Message, "\n") {
+		t.Errorf("the warning is no longer one line:\n%s", s.warnings[0].Message)
 	}
 }

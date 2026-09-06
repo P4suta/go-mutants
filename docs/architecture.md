@@ -599,8 +599,14 @@ the outcome cache.
   `gocmd.Error` from a failed version probe, together with the output that
   probe produced — carries the `Invocation` it was about, so a failure that
   travelled up three layers can still say which command it was, where it ran,
-  and where the recording kept its output. A nil recorder records nothing and
-  costs a zero `TraceSeq`, so the traced and the untraced paths are one path.
+  and where the recording kept its output. The layers above carry it on:
+  `engine.Error`, `execute.Error` and `validate.Error` answer the same
+  `Command()` and `RetainedOutput()` pair, reusing the invocation the runner
+  already attached rather than describing the command a second time, and
+  `internal/cli` walks the cause chain for whichever error carries them and
+  prints `command:`, `dir:` and the output tail under the coded message. A nil
+  recorder records nothing and costs a zero `TraceSeq`, so the traced and the
+  untraced paths are one path.
 - **One shared snapshot.** Activation is per-process, so N workers share it. A
   test that writes into its package directory is caught by re-digesting the
   manifest after the instrumented baseline; drift is exit 2 with the offending

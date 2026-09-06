@@ -199,7 +199,7 @@ func resolveTestScope(
 		spec.Timeout = BaselineCap
 
 		result := runner.Run(ctx, spec)
-		if err := check(ctx, result, CodeTestScope,
+		if err := check(ctx, spec, result, CodeTestScope,
 			"the package pattern "+strconv.Quote(pattern)+
 				" in the test command could not be resolved"); err != nil {
 			return err

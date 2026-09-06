@@ -22,6 +22,7 @@
 package validate_test
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -135,7 +136,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		Env:          fixtureEnv(""),
 	})
 	if err != nil {
-		t.Fatalf("validating the rejectable fixture: %v", err)
+		t.Fatalf("validating the rejectable fixture: %v\n%s", err, retainedOutput(t, err))
 	}
 
 	mutants := catalog.Mutants()
@@ -391,7 +392,7 @@ func TestValidateIsDeterministic(t *testing.T) {
 			Env:          fixtureEnv(""),
 		})
 		if err != nil {
-			t.Fatalf("validating the rejectable fixture: %v", err)
+			t.Fatalf("validating the rejectable fixture: %v\n%s", err, retainedOutput(t, err))
 		}
 		out := pass{accepted: result.AcceptedIDs, bytes: make(map[string][]byte)}
 		for _, r := range result.Rejected {
@@ -463,8 +464,11 @@ func TestValidateRefusesATreeItDidNotBreak(t *testing.T) {
 	if got := validate.CodeOf(err); got != validate.CodeNotMutantInduced {
 		t.Fatalf("Validate failed with %s, want %s: %v", got, validate.CodeNotMutantInduced, err)
 	}
-	if !strings.Contains(err.Error(), "undefinedHelper") {
-		t.Errorf("the refusal does not carry the compiler's reason:\n%v", err)
+	// The compiler's reason travels beside the message rather than inside it —
+	// the message has to stay one greppable line, and internal/cli prints the
+	// output underneath it — so this asks the error for what it retained.
+	if !strings.Contains(retainedOutput(t, err), "undefinedHelper") {
+		t.Errorf("the refusal does not carry the compiler's reason:\n%v\n%s", err, retainedOutput(t, err))
 	}
 	if len(result.Rejected) != 0 {
 		t.Errorf("Validate rejected %d candidates for a failure none of them caused", len(result.Rejected))
@@ -551,7 +555,7 @@ func TestValidateLeavesNoBuildOutputInTheSnapshot(t *testing.T) {
 		Env:          fixtureEnv(""),
 	})
 	if err != nil {
-		t.Fatalf("validating the single-main module: %v", err)
+		t.Fatalf("validating the single-main module: %v\n%s", err, retainedOutput(t, err))
 	}
 	// Nothing in this module can fail to compile when guarded, so a rejection
 	// here means the phase is answering a different question than the one this
@@ -796,4 +800,20 @@ func requireOutput(t *testing.T, result runner.Result, what string, needles ...s
 			t.Errorf("%s did not print %q:\n%s", what, needle, out)
 		}
 	}
+}
+
+// retainedOutput is the compiler's own words behind a validation failure.
+//
+// They used to be part of the error's text, and are not any more: a message has
+// to stay one line for internal/cli to be able to prefix it with a code, and
+// the output is printed underneath it instead. A test that quotes an error
+// without them quotes a failure with the reason removed, so every assertion and
+// every message here asks for them explicitly.
+func retainedOutput(t *testing.T, err error) string {
+	t.Helper()
+	var failure *validate.Error
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want a *validate.Error", err)
+	}
+	return failure.RetainedOutput()
 }
