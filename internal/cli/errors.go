@@ -107,6 +107,18 @@ const (
 	// which is what every untraced run does, and a diagnostic that could stop
 	// the run it is a diagnostic of would invert the point of having one.
 	CodeTraceUnavailable Code = "GOM1013"
+	// CodeDiagnosticsUnavailable reports a diagnostics bundle a failed run could
+	// not write: a directory that would land where the snapshot reads, or one
+	// that could not be created or filled at all. It is printed as a warning and
+	// never returned, and it never changes the exit status.
+	//
+	// That is the same judgement [CodeTraceUnavailable] carries and it matters
+	// more here, because this one arrives on a run that has already failed. A
+	// bundle that could turn a failed baseline's exit 2 into a different exit 2
+	// for a different reason would tell a CI job "the tool broke" where the
+	// truth is "your tests did not pass" — and a diagnostic that can change what
+	// a run reports inverts the point of having one.
+	CodeDiagnosticsUnavailable Code = "GOM1014"
 )
 
 // The `doctor` codes, which are the GOM80xx block. There is one, and that is
@@ -210,6 +222,7 @@ var codes = []Code{
 	CodeInvalidReportDocument,
 	CodeGitHubSummary,
 	CodeTraceUnavailable,
+	CodeDiagnosticsUnavailable,
 	CodeEnvironmentUnusable,
 	CodeConfigurationExists,
 	CodeConfigurationUnreadable,
@@ -332,6 +345,13 @@ func ExitCode(err error) mutation.ExitCode {
 // instead of inventing a code for it. Blank lines are dropped rather than
 // rendered as a code with nothing after it.
 //
+// Underneath all of it, a failed run that left a diagnostics bundle names it as
+// `diagnostics: <dir>`. It is last because it is where to go next rather than
+// part of what went wrong, and it is printed here rather than by `run` because
+// `run` returns its failure and this function renders it afterwards — a line
+// printed by the command would have arrived above the error it belongs to. See
+// [diagnosticsError].
+//
 // One error renders as nothing at all: a failed policy gate, which has already
 // reported itself in the run's closing summary. See [exitError].
 //
@@ -393,7 +413,60 @@ func RenderError(w io.Writer, err error) {
 			b.WriteString("    " + line + "\n")
 		}
 	}
+	// Last, under everything the failure had to say, because it is where to go
+	// next rather than part of what went wrong. It is uncoded and unindented for
+	// the same reason the `trace:` line the renderer prints is: it is a path to
+	// be selected and pasted, and `grep '^diagnostics: '` is how a CI step picks
+	// the directory up to attach it.
+	if directory := diagnosticsOf(err); directory != "" {
+		b.WriteString("diagnostics: " + directory + "\n")
+	}
 	_, _ = io.WriteString(w, b.String())
+}
+
+// A diagnosticsError is a run failure with the bundle that was written for it.
+//
+// It exists so that the line naming the bundle is printed *under* the failure
+// it explains, by the one function that prints failures. `run` could have
+// printed the path itself, but it returns the error and internal/cli renders it
+// afterwards, so the line would have arrived above the error it belongs to —
+// and a reader would meet a path before the problem it is a path to.
+//
+// It wraps rather than replaces, so [ExitCode], [errors.As] and every other
+// question anybody asks of the failure reach the failure. A bundle never
+// changes what a run reports.
+type diagnosticsError struct {
+	err error
+	// directory is where the bundle went.
+	directory string
+}
+
+func (e *diagnosticsError) Error() string { return e.err.Error() }
+func (e *diagnosticsError) Unwrap() error { return e.err }
+
+// DiagnosticsDirectory names the bundle written for this failure, which is what
+// [RenderError] prints under it.
+func (e *diagnosticsError) DiagnosticsDirectory() string { return e.directory }
+
+// A diagnosticsCarrier is an error that had a diagnostics bundle written for
+// it. It is an interface for the reason [outputCarrier] is one: the renderer
+// asks a question rather than knowing a type.
+type diagnosticsCarrier interface{ DiagnosticsDirectory() string }
+
+// diagnosticsOf returns the bundle written for the outermost error in err's
+// tree that has one, or "" when none does. The walk is [outputOf]'s, for the
+// same reasons.
+func diagnosticsOf(err error) string {
+	var found string
+	walkCauses(err, func(e error) bool {
+		carrier, ok := e.(diagnosticsCarrier)
+		if !ok {
+			return false
+		}
+		found = carrier.DiagnosticsDirectory()
+		return found != ""
+	})
+	return found
 }
 
 // renderWarning writes one "warning GOMxxxx: message" line, and the hint under

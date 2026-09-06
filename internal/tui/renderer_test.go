@@ -51,6 +51,7 @@ func TestRunDrawsTheStreamAndKeepsWhatOutlivesTheScreen(t *testing.T) {
 	events <- engine.Warning{Code: "GOM7301", Message: "a package was skipped"}
 	events <- engine.MutantFinished{Result: survivorResult}
 	events <- engine.ReportPublished{RunPath: "/c/runs/a1b2.json", LatestPath: "/c/latest.json"}
+	events <- engine.DirectoryKept{Kind: engine.KeptSnapshot, Path: "/tmp/go-mutants-snap-1a2b"}
 	events <- completed()
 	close(events)
 
@@ -59,11 +60,18 @@ func TestRunDrawsTheStreamAndKeepsWhatOutlivesTheScreen(t *testing.T) {
 	}
 
 	// What is kept is what the alternate screen destroys and a user still
-	// needs: the warnings, the report's paths, and the closing block. In the
-	// order they arrived, so that internal/cli can replay them as a stream.
+	// needs: the warnings, the report's paths, the directories the run was asked
+	// to leave on disk, and the closing block. In the order they arrived, so
+	// that internal/cli can replay them as a stream.
+	//
+	// The kept directory is the one of the four a user cannot recover from
+	// anywhere else. A path the dashboard drew and then erased is a path nobody
+	// can find again: a successful `--keep-temp` run writes no diagnostics
+	// bundle to look it up in, and nothing under the temporary parent says which
+	// of the directories there was this run's.
 	final := r.Final()
-	if len(final) != 3 {
-		t.Fatalf("Final() kept %d events, want 3: %#v", len(final), final)
+	if len(final) != 4 {
+		t.Fatalf("Final() kept %d events, want 4: %#v", len(final), final)
 	}
 	if _, ok := final[0].(engine.Warning); !ok {
 		t.Errorf("Final()[0] is %T, want engine.Warning", final[0])
@@ -71,9 +79,16 @@ func TestRunDrawsTheStreamAndKeepsWhatOutlivesTheScreen(t *testing.T) {
 	if _, ok := final[1].(engine.ReportPublished); !ok {
 		t.Errorf("Final()[1] is %T, want engine.ReportPublished", final[1])
 	}
-	last, ok := final[2].(engine.RunCompleted)
+	kept, ok := final[2].(engine.DirectoryKept)
 	if !ok {
-		t.Fatalf("Final()[2] is %T, want engine.RunCompleted", final[2])
+		t.Fatalf("Final()[2] is %T, want engine.DirectoryKept", final[2])
+	}
+	if kept.Path != "/tmp/go-mutants-snap-1a2b" {
+		t.Errorf("Final() lost the kept directory's path: %#v", kept)
+	}
+	last, ok := final[3].(engine.RunCompleted)
+	if !ok {
+		t.Fatalf("Final()[3] is %T, want engine.RunCompleted", final[3])
 	}
 	if last.Run == nil || last.Run.RunID != "20260819T101112Z-a1b2" {
 		t.Errorf("Final() lost the closing summary: %#v", last)

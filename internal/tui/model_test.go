@@ -465,12 +465,21 @@ func TestWarningsAreCountedRatherThanDrawn(t *testing.T) {
 // is worth: an event the dashboard has no drawing for changes nothing about the
 // frame.
 //
-// [engine.Traced] and [engine.PhaseCompleted] are the two that arrive today, and
-// both belong to the plain renderer — a dashboard that redrew on every recorded
-// subprocess would repaint thousands of times for facts nobody can read at that
-// speed. What is asserted is the whole model rather than one field: an event
-// that is ignored has to leave the counters, the slots and the feed exactly as
-// they were, and the run has to go on being foldable afterwards.
+// [engine.Traced], [engine.PhaseCompleted] and [engine.DirectoryKept] are the
+// three that arrive today, and all three belong to the plain renderer — a
+// dashboard that redrew on every recorded subprocess would repaint thousands of
+// times for facts nobody can read at that speed, and a kept directory's path is
+// a line to copy out of a scrollback rather than a number on a live frame.
+//
+// Ignored here is not dropped, and the difference matters for exactly one of
+// them: [Renderer.keep] holds [engine.DirectoryKept] for [Renderer.Final], so a
+// `--keep-temp` run at a terminal still prints where its directories went once
+// the alternate screen is gone. See
+// [TestRunDrawsTheStreamAndKeepsWhatOutlivesTheScreen].
+//
+// What is asserted is the whole model rather than one field: an event that is
+// ignored has to leave the counters, the slots and the feed exactly as they
+// were, and the run has to go on being foldable afterwards.
 func TestUnknownEventsAreIgnored(t *testing.T) {
 	h := newHarness(t)
 	h.events(t, planned(2)...)
@@ -484,6 +493,8 @@ func TestUnknownEventsAreIgnored(t *testing.T) {
 			Argv: []string{"/usr/bin/go", "test", "./..."},
 		}}},
 		engine.Traced{},
+		engine.DirectoryKept{Kind: engine.KeptSnapshot, Path: "/tmp/go-mutants-snap-1a2b/tree"},
+		engine.DirectoryKept{Kind: engine.KeptScratch, Path: "/tmp/go-mutants-tmp-3c4d"},
 	)
 	if got := h.model.View(); got != before {
 		t.Errorf("an ignored event redrew the dashboard:\n%s\nwant\n%s", got, before)

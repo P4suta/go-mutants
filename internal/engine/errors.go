@@ -190,6 +190,32 @@ const (
 	// quietly filling up is a failure that arrives days later as something
 	// else.
 	CodeOrphanNotRemoved Code = "GOM4044"
+	// CodeTemporaryNotKept reports a directory [Options.KeepTemp] asked the run
+	// to preserve, whose owner marker could not be written — so it was removed
+	// instead of being left behind.
+	//
+	// A keep the marker did not record is not a keep. The next run's sweep reads
+	// the marker and finds a lock nobody holds, which is exactly what an
+	// abandoned directory looks like, so an unmarked directory would be
+	// collected minutes later and the answer somebody kept it for would be gone
+	// anyway. Removing it now and saying so is the honest half of that: the user
+	// learns the directory they asked for is not there, at the moment they could
+	// still re-run for it, instead of finding it missing tomorrow.
+	CodeTemporaryNotKept Code = "GOM4045"
+	// CodeDeadlineExceeded reports a run whose context ran out of time.
+	//
+	// It is a failure and not an interruption, and that difference is the whole
+	// reason it has a code of its own rather than sharing [CodeInterrupted]. A
+	// cancellation is somebody's decision, taken at the moment it happened and
+	// needing no explanation. A deadline expiring is the run failing to do what
+	// it was asked inside the time it was given, and "where did the time go" is
+	// answered by the tree and by the account of the run — so such a run reports
+	// [StatusFailed], keeps what `--keep-temp=on-failure` was asked to keep, and
+	// gets the diagnostics bundle every other failure gets. See [Interrupted].
+	//
+	// It is distinct from [CodeBaselineTimedOut], which is go-mutants' own cap on
+	// one command. This one is the caller's budget for the whole run.
+	CodeDeadlineExceeded Code = "GOM4046"
 )
 
 // String returns the code as it is printed.
@@ -218,6 +244,8 @@ var codes = []Code{
 	CodeReportNotPublished,
 	CodeSelectedMutantRejected,
 	CodeOrphanNotRemoved,
+	CodeTemporaryNotKept,
+	CodeDeadlineExceeded,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

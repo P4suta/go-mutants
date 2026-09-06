@@ -143,7 +143,15 @@ The temporary parent is not the only place a run writes. `report.directory` —
 that go-mutants may write into, and the same pair of questions applies to it:
 who owns each thing there, and what takes it away again.
 
-Two kinds of thing live there, and they are owned differently:
+Three kinds of thing live there, and they are owned differently:
+
+```text
+reports/mutation/
+  mutation.json            the newest run, overwritten
+  mutation.html            the newest run, overwritten
+  trace/<run-id>/          one per traced run, newest 10 kept
+  diagnostics/<run-id>/    one per failed run, newest 10 kept
+```
 
 - `mutation.json` and `mutation.html`, the published projections of one run.
   There is one of each and the next run overwrites them, so they need no
@@ -167,6 +175,24 @@ Two kinds of thing live there, and they are owned differently:
   only from being the newest name in the root. `trace clean --all` is how
   somebody who has read them says so, and the empty directory goes with the last
   recording in it.
+- `diagnostics/<run-id>/`, the bundle a *failed* run leaves so that it can be
+  diagnosed without being run again: the rendered failure and its typed chain,
+  the environment's variable names, the `doctor` table, the run's own recording
+  out of the in-memory ring, and the report if it had published one. A run
+  already traced to a directory writes the bundle *there* instead, beside the
+  stream it explains, and writes no second `trace.jsonl`.
+
+  It is collected by the same implementation and the same rule, with one
+  predicate swapped: a bundle is finished when its last file,
+  `preserved-paths.txt`, is there, and one without it is a run that died while
+  writing it. That is why the bundle's files are written in a fixed order —
+  `error.txt` first, because it is what makes the directory go-mutants', and
+  `preserved-paths.txt` last, because it is what says the directory is complete.
+  A bundle whose *first* write fails is a third case and is removed on the spot:
+  an empty directory carries no marker, so neither the retention nor
+  `trace clean --all` could ever name it, and it would keep the empty
+  diagnostics root from being removed as well. `trace clean` sweeps both roots;
+  `trace list` lists only recordings, because a bundle is not one.
 
 That everything diagnostic lands under `report.directory` rather than beside the
 snapshot in the temporary parent is forced rather than chosen, by the same fact
@@ -178,7 +204,9 @@ is a diagnostic of. That is why `--trace=DIR` refuses a directory inside the
 workspace and outside `report.directory`, symbolic links resolved on the longest
 existing prefix, and why the refusal costs a `trace-unavailable` note and a
 `GOM1013` warning rather than the run: the run then records into memory, exactly
-as an untraced run does.
+as an untraced run does. The diagnostics root is placed by the same function and
+refused by the same check, under `GOM1014`, and the refusal costs the bundle
+rather than the failure it was going to explain.
 
 The other direction of the same rule is that nothing diagnostic is added under
 `TMPDIR`. A recording is something a user attaches to a bug report, and a run's

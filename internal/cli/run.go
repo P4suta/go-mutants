@@ -86,6 +86,23 @@ can be piped straight into a validator. --explain is the opposite half and the
 two are refused together: it prints, underneath the summary, every rejected
 mutant with the compiler's own words and every suppressed site by reason.
 
+A run that fails writes a diagnostics bundle: the rendered error and its typed
+chain, this run's trace, the environment's variable names, the doctor table, and
+the report if there was one. It goes into the run's trace directory when the run
+was traced and into report.directory/diagnostics/<run-id>/ otherwise, and the
+newest 10 are kept. --no-diagnostics turns it off, and GO_MUTANTS_DIAGNOSTICS=0
+does the same for an invocation nobody can add a flag to. An interrupted run
+writes none: nothing went wrong.
+
+--keep-temp leaves the run's snapshot and scratch directory on disk instead of
+removing them, which is the only way to answer "what did the tree this mutant
+ran in look like". A bare --keep-temp keeps them whatever happened;
+--keep-temp=on-failure keeps them only when the run failed, which is the mode a
+CI job can leave on. The value takes an equals sign, and
+GO_MUTANTS_KEEP_TEMP=1|true|always|on-failure asks for the same. It is off by
+default because a kept snapshot is a whole copy of your module and nothing will
+ever remove it.
+
 A completed run exits 0 unless a policy gate the user opted into failed. Nothing
 here fails a build by default: --strict and policy.minimum_score are how you ask
 for one.`
@@ -104,6 +121,7 @@ type runOptions struct {
 	cache     string
 	report    string
 	trace     string
+	keepTemp  string
 	jobs      int
 	timeout   time.Duration
 	strict    bool
@@ -113,11 +131,55 @@ type runOptions struct {
 	quiet     bool
 	noColor   bool
 	noTUI     bool
+	noDiags   bool
 
 	// recording is the account the run kept of itself, filled in by [execute].
 	// It is held here rather than returned because the diagnostics bundle a
 	// failed run writes is assembled from it after everything else is done.
 	recording *traceRecording
+}
+
+// The `--keep-temp` modes, as they are written on the command line.
+//
+// They are the words [engine.KeepTemp.String] prints, and that is a contract
+// rather than a coincidence: a mode a run reports in one vocabulary and accepts
+// in another is a mode whose own documentation misleads. keepTempNever is the
+// zero value's word — nothing ever produces it, since leaving the flag off says
+// the same thing, but somebody who read it in a message and typed it back must
+// not be refused for having believed it.
+//
+// keepTempAlways is also the flag's [pflag.Flag.NoOptDefVal]: pflag expresses an
+// optional value as the value the flag takes when it is written without one, and
+// "always" is what a bare `--keep-temp` can only mean.
+const (
+	keepTempNever     = "never"
+	keepTempAlways    = "always"
+	keepTempOnFailure = "on-failure"
+)
+
+// parseKeepTemp turns the flag's word into the engine's mode.
+//
+// The vocabulary is stated once, here, and the environment variable feeds its
+// value through this same check — so `GO_MUTANTS_KEEP_TEMP=sometimes` is refused
+// in the words somebody who typed `--keep-temp=sometimes` would read, and there
+// is one list of what the option accepts rather than two that can drift.
+func parseKeepTemp(value string) (engine.KeepTemp, error) {
+	switch strings.TrimSpace(value) {
+	case "", keepTempNever:
+		return engine.KeepTempNever, nil
+	case keepTempAlways:
+		return engine.KeepTempAlways, nil
+	case keepTempOnFailure:
+		return engine.KeepTempOnFailure, nil
+	default:
+		return engine.KeepTempNever, &Error{
+			Code:    CodeUsage,
+			Message: strconv.Quote(value) + " is not a --keep-temp mode",
+			Hint: "write `--keep-temp` or `--keep-temp=" + keepTempAlways +
+				"` to keep the run's directories whatever happens, `--keep-temp=" + keepTempOnFailure +
+				"` to keep them only when the run fails, or `--keep-temp=" + keepTempNever + "` to keep nothing",
+		}
+	}
 }
 
 // newRunCommand builds the `run` command.
@@ -180,6 +242,19 @@ func newRunCommand() *cobra.Command {
 	// means what a reader of that line would expect it to mean. See
 	// [traceDefaultDirectory].
 	flags.Lookup("trace").NoOptDefVal = traceDefaultDirectory
+	flags.StringVar(&o.keepTemp, "keep-temp", "",
+		"leave the run's snapshot and scratch directory on disk instead of removing them: `MODE` is "+
+			keepTempAlways+" or "+keepTempOnFailure+", a bare --keep-temp is "+keepTempAlways+
+			", and the value takes an equals sign (also GO_MUTANTS_KEEP_TEMP)")
+	// The third flag of this shape, with the same consequence: `--keep-temp MODE`
+	// with a space is not the same thing as `--keep-temp=MODE`, and
+	// [passthrough] recognises the mistake and says how to write it instead.
+	// Here the wrong reading is the expensive one — the run would keep its
+	// directories on every path instead of only on failure — so it is refused
+	// rather than resolved.
+	flags.Lookup("keep-temp").NoOptDefVal = keepTempAlways
+	flags.BoolVar(&o.noDiags, "no-diagnostics", false,
+		"do not write a diagnostics bundle when the run fails (also GO_MUTANTS_DIAGNOSTICS=0)")
 	// The pflag default is zero and the real one is described in the usage
 	// text. Printing config.DefaultJobs() as the default would make `--help`
 	// say 8 on a laptop and 4 on a CI runner, and help output that depends on
@@ -240,6 +315,13 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err = checkTraceDirectory(flags.Changed("trace"), o.trace); err != nil {
+		return err
+	}
+	// Parsed here, before anything is copied, for the reason the shard is parsed
+	// here: a mode nobody can spell is a mistake about the invocation, and it
+	// costs nothing to say so before a module-sized copy is made.
+	keepTemp, err := parseKeepTemp(o.keepTemp)
+	if err != nil {
 		return err
 	}
 	// Parsed here rather than in the engine for the same reason: `--shard 3/2`
@@ -362,6 +444,7 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 		TraceSink:      recording.sink,
 		TraceDirectory: recording.directory,
 		Notes:          recording.notes,
+		KeepTemp:       keepTemp,
 	})
 	wg.Wait()
 
@@ -403,12 +486,68 @@ func (o *runOptions) execute(cmd *cobra.Command, args []string) error {
 	emitGitHub(out, cmd.ErrOrStderr(), o.json, outcome.Report)
 
 	if runErr != nil {
-		return interpret(runErr, watch.Signal())
+		// The bundle last of all, and never before the error it explains is
+		// decided: what goes into it is the failure as the process is about to
+		// report it, and the path it went to is printed underneath that failure
+		// by [RenderError].
+		return o.withDiagnostics(cmd, root, cfg.Report.Directory, runID, outcome,
+			interpret(runErr, watch.Signal()), runErr)
 	}
 	if renderErr != nil {
 		return renderErr
 	}
 	return policyFailure(outcome.Verdict)
+}
+
+// withDiagnostics writes the bundle for a failed run and returns the error the
+// exit status is decided from, which is never changed by having written one.
+//
+// Two runs get no bundle. One the user asked to suppress, and one that was
+// interrupted: nothing went wrong there, there is no failure to explain, and a
+// directory per cancelled run in somebody's tree is exhaust rather than
+// evidence. It is the same predicate `--keep-temp=on-failure` obeys, asked of
+// the engine so that the two answers cannot disagree.
+//
+// A bundle that could not be written is a warning and nothing else. The run has
+// already failed and the user is about to read why; turning "I could not write
+// a diagnostic" into a different exit status would tell a CI job the tool broke
+// where the truth is that the tests did not pass, which is exactly the inversion
+// [CodeDiagnosticsUnavailable] exists to refuse.
+//
+// reported is the failure as the process will report it — [interpret]'s answer,
+// not the engine's raw error — because the bundle's own copy of it has to be
+// what the console said. runErr is the engine's, because only it answers the
+// question about interruption.
+func (o *runOptions) withDiagnostics(
+	cmd *cobra.Command,
+	workspace, reportDirectory, runID string,
+	outcome engine.RunOutcome,
+	reported, runErr error,
+) error {
+	if o.noDiags || engine.Interrupted(runErr) {
+		return reported
+	}
+	directory, err := writeDiagnostics(cmd.Context(), diagnosticsRequest{
+		workspace:       workspace,
+		reportDirectory: reportDirectory,
+		runID:           runID,
+		traceDirectory:  o.recording.directory,
+		events:          o.recording.Events(),
+		err:             reported,
+		outcome:         outcome,
+		environ:         os.Environ(),
+		hooks:           traceFilesystem,
+	})
+	if err != nil {
+		renderWarning(cmd.ErrOrStderr(), &Error{
+			Code:    CodeDiagnosticsUnavailable,
+			Message: "the diagnostics bundle for this failed run could not be written, so the failure below is all there is",
+			Err:     err,
+			Hint:    "the run's own result is unaffected; --no-diagnostics stops go-mutants trying",
+		})
+		return reported
+	}
+	return &diagnosticsError{err: reported, directory: directory}
 }
 
 // runOverlay turns the flags the user actually typed into a configuration
@@ -673,14 +812,19 @@ func passthrough(cmd *cobra.Command, args []string) ([]string, error) {
 // named — or refused here, which is the better of the two. Both branches of
 // [passthrough] can be reached that way, `--changed HEAD -- go test ./...`
 // landing in the one about the separator, so both ask this to word the message.
+//
+// `--trace` and `--keep-temp` are the other two flags of that shape, and each
+// makes the mistake worse in its own way: the recording lands in the default
+// directory rather than the named one, and the run keeps its directories on
+// every path rather than only when it failed.
 func positional(cmd *cobra.Command, got, what string) error {
 	err := usagef("%s (got %q)", what, got)
-	// `--trace` is the second flag of the same shape and makes the same mistake
-	// possible, with a worse outcome: the run records into the default
-	// directory instead of the one the user named, which they would only
-	// discover by looking for a recording that is not there. Refusing it here
-	// is the better of the two answers.
-	for _, flag := range []struct{ name, noun string }{{"changed", "ref"}, {"trace", "directory"}} {
+	// In the order the flags were added, so that a command line carrying two of
+	// them is reported against the first — which is arbitrary but fixed, and a
+	// message that moved with the map iteration would be worse than either.
+	for _, flag := range []struct{ name, noun string }{
+		{"changed", "ref"}, {"trace", "directory"}, {"keep-temp", "mode"},
+	} {
 		if cmd.Flags().Changed(flag.name) {
 			err.Hint = "--" + flag.name + " takes its " + flag.noun + " with an equals sign: write `--" +
 				flag.name + "=" + got + "`, not `--" + flag.name + " " + got + "`"

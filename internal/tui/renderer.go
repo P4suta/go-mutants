@@ -176,13 +176,21 @@ func modelOptions(r *Renderer) options {
 
 // keep records the events that have to survive the alternate screen.
 //
-// Everything the dashboard drew is erased when the screen is restored, so the
-// two kinds of thing a user still needs afterwards are kept and handed back:
-// the warnings, whose text is nowhere else, and the closing block, which is the
-// answer the run exists to produce. See [Renderer.Final].
+// Everything the dashboard drew is erased when the screen is restored, so what a
+// user still needs afterwards is kept and handed back: the warnings, whose text
+// is nowhere else; the paths the run published; the directories it was asked to
+// leave on disk; and the closing block, which is the answer the run exists to
+// produce. See [Renderer.Final].
+//
+// [engine.DirectoryKept] is the one of the four a user cannot recover from
+// anywhere else. A report path is in the report directory and a warning is in
+// the recording, but a kept snapshot is a name under the temporary parent that
+// nothing else records — a successful `--keep-temp` run writes no diagnostics
+// bundle to look it up in — so a path the dashboard drew and erased is a
+// directory nobody can find again.
 func (r *Renderer) keep(event engine.Event) {
 	switch event.(type) {
-	case engine.Warning, engine.ReportPublished, engine.RunCompleted:
+	case engine.Warning, engine.ReportPublished, engine.DirectoryKept, engine.RunCompleted:
 	default:
 		return
 	}
@@ -194,11 +202,11 @@ func (r *Renderer) keep(event engine.Event) {
 // Final returns the events internal/cli should print once the dashboard has
 // exited, in the order they arrived.
 //
-// It is the warnings, the report's paths, and the closing summary — replayed
-// through the plain renderer rather than reformatted here, so that the block a
-// user reads after a dashboard run is byte for byte the block they would have
-// read from a plain one. A second implementation of that block is exactly the
-// thing this project keeps refusing to write.
+// It is the warnings, the report's paths, any kept directories, and the closing
+// summary — replayed through the plain renderer rather than reformatted here, so
+// that the block a user reads after a dashboard run is byte for byte the block
+// they would have read from a plain one. A second implementation of that block
+// is exactly the thing this project keeps refusing to write.
 //
 // It is safe to call once [Renderer.Run] has returned.
 func (r *Renderer) Final() []engine.Event {

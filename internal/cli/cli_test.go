@@ -24,8 +24,15 @@ import (
 // execute drives the whole command tree with captured streams.
 func execute(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
+	return executeContext(t, t.Context(), args...)
+}
+
+// executeContext is [execute] with the context named, for the tests whose
+// subject is a run that was cancelled before or while it worked.
+func executeContext(t *testing.T, ctx context.Context, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
 	var out, errOut bytes.Buffer
-	code = ExecuteContext(t.Context(), args, &out, &errOut)
+	code = ExecuteContext(ctx, args, &out, &errOut)
 	return code, out.String(), errOut.String()
 }
 
@@ -38,8 +45,16 @@ func execute(t *testing.T, args ...string) (code int, stdout, stderr string) {
 // glance which of the places the remedy is in. Each block is checked rather than
 // merely allowed, so that a doctor code cannot drift into the history range or a
 // usage code into either.
+//
+// Naming a code below also asserts that [Codes] lists it, which is the second
+// half of the registry's job: a code declared and never registered is one
+// `doctor` cannot print and nobody can look up. The two warnings the diagnostic
+// options report themselves under are named for that reason and no other — they
+// are in the same GOM10xx block everything unnamed defaults to.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	blocks := map[Code]string{
+		CodeTraceUnavailable:        "GOM10",
+		CodeDiagnosticsUnavailable:  "GOM10",
 		CodeEnvironmentUnusable:     "GOM80",
 		CodeConfigurationExists:     "GOM81",
 		CodeConfigurationUnreadable: "GOM81",

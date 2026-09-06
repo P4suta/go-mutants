@@ -291,6 +291,69 @@ many fell out. And `trace.Digested` strips the captured output bytes and the
 `mutant.output_tail` before the ring, because those grow with the run instead of
 with the ring; the size and the digest stay, which is what a reader joins on.
 
+The ring is what the diagnostics bundle of a failed untraced run is written
+from, which is the reason it exists.
+
+## The diagnostics bundle
+
+A run that fails writes one directory holding everything needed to diagnose it
+without running it again:
+
+```text
+<report.directory>/diagnostics/20260906T120000Z-1a2b/
+  error.txt              the rendered failure, then %+v, then the typed chain
+  environment.txt        tool, toolchain, platform, paths, and env NAMES
+  doctor.txt             the `doctor` table, run against this workspace
+  trace.jsonl            this run's recording, from the ring
+  report.json            the run report, when the run had published one
+  preserved-paths.txt    what --keep-temp left on disk, or a line saying nothing
+```
+
+A run traced to a directory gets its bundle *in that directory*, beside the
+stream it explains, and no second `trace.jsonl` is written: a traced run's
+recording is already the whole account, and the ring is a bounded suffix of it.
+No file is ever written empty, so a bundle whose run published no report has no
+`report.json` rather than an empty one.
+
+`error.txt` is written first and `preserved-paths.txt` last, and that pair is
+the collector's contract: the first makes the directory one of go-mutants', and
+the last says it is complete. A bundle with no `preserved-paths.txt` is a run
+that died while writing one, and the retention leaves it alone exactly as it
+leaves a recording with no `run-end`. The diagnostics root keeps the newest
+`trace.RetainRuns` — ten — collected as a bundle is written, and `go-mutants
+trace clean` sweeps it with the rule it sweeps the trace root with.
+
+Three runs write no bundle: one that succeeded, one that was interrupted, and
+one told not to with `run --no-diagnostics` or `GO_MUTANTS_DIAGNOSTICS=0`. A
+bundle that cannot be written costs a `GOM1014` warning and never the exit
+status, which is [ADR 0001](adr/0001-trace-is-not-evidence.md)'s rule applied to
+the other diagnostic: one that can change what a run reports inverts the point
+of having it.
+
+Values are never recorded, only variable names — see
+[Environment names, never values](#environment-names-never-values), which is the
+same rule for the same reason.
+
+## Keeping the temporary directories
+
+`run --keep-temp` leaves the run's snapshot and its scratch directory on disk
+instead of removing them, which is the only way to answer "what did the tree
+this mutant ran in actually look like". A bare `--keep-temp` keeps them whatever
+became of the run; `--keep-temp=on-failure` keeps them only when it failed, and
+never when it was interrupted, which is the mode a CI job can leave switched on.
+`GO_MUTANTS_KEEP_TEMP=1|true|always|on-failure` asks for the same.
+
+Each kept directory is recorded as an `artifact` — `kept-snapshot` and
+`kept-scratch` — and marked `kept` in its own owner marker, so the next run's
+sweep obeys the decision rather than collecting the directory as an orphan
+minutes later. The console prints `kept <kind>: <path>` for each, and
+`preserved-paths.txt` names them in the bundle.
+
+It is off by default because a kept snapshot is a whole copy of the module and
+nothing will ever remove it. And it takes no part in a mutant identity, a
+verdict, or a cache key: a keep is a decision about a directory taken on the way
+out, after every mutant has been measured.
+
 ## Event envelope
 
 Every line has the same five envelope fields, followed by exactly one payload
@@ -684,6 +747,13 @@ leave behind; their paths are absolute and outside the workspace, because that
 is where a temporary directory is made, so a `path` is read as it was recorded
 rather than resolved against anything.
 
+A `run --keep-temp` records one `kept-snapshot` and one `kept-scratch` as it
+unwinds; see [Keeping the temporary
+directories](#keeping-the-temporary-directories). `diagnostics` is reserved for
+a producer that writes its bundle while it is still recording, and `run` is not
+one: it writes [the bundle](#the-diagnostics-bundle) after the recording is
+closed, because the recording is one of the things that goes into it.
+
 ### `note`
 
 | Field | Meaning |
@@ -699,6 +769,13 @@ streams reads go-mutants' `note` and goatest's `progress` as one kind of line.
 
 `coverage-unavailable` carries the whole reason rather than its first line,
 which is the difference between a note and the console warning beside it.
+
+`diagnostics` and `diagnostics-unavailable` are reserved and nothing emits them
+today, for the same reason nothing emits the `diagnostics` artifact kind: `run`
+writes [its bundle](#the-diagnostics-bundle) after the recording is closed,
+because the recording is one of the things that goes into it. They are held for
+a producer that writes one while it is still recording, and a reader should
+expect them to be absent rather than treat them as missing.
 
 ### `run`
 
