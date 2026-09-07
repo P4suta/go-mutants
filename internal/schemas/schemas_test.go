@@ -449,6 +449,242 @@ func TestSchemaIDsMatchTheirFilenames(t *testing.T) {
 	}
 }
 
+// TestFirstViolationBreaksTiesAtOneLocation is the half of the ordering
+// TestFirstViolationIsDeterministic cannot reach.
+//
+// That test breaks the schema in several places and pins the pointer, which the
+// first sort key alone decides. Two schemas can also reject the *same* value —
+// a trace event carrying a payload that belongs to another event type is
+// rejected once per foreign payload, every one of them at `/type` — and then
+// the pointer settles nothing and the reported complaint is whatever the two
+// remaining keys pick. Both documents below are ties on the pointer: the first
+// is settled by the keyword and the second by the detail, so between them every
+// key of the sort decides an answer a caller reads.
+//
+// The document is the reason to care rather than the sort: "value must be
+// 'exec'" and "value must be 'cache'" are two true statements about one line,
+// and which of them a run prints has to be a function of the line rather than
+// of a map's iteration order.
+func TestFirstViolationBreaksTiesAtOneLocation(t *testing.T) {
+	const preamble = `"seq":1,"timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0`
+
+	tests := []struct {
+		name     string
+		document string
+		pointer  string
+		detail   string
+	}{
+		{
+			// A phase-start whose payload is not an object at all. `$defs/phase`
+			// rejects it for its type, and the `not` that keeps a duration off a
+			// phase-start rejects it too, because `required` holds vacuously for
+			// something that is not an object — two complaints about `/phase`
+			// under two different keywords.
+			name:     "one value, two keywords",
+			document: `{` + preamble + `,"type":"phase-start","phase":"oops"}`,
+			pointer:  "/phase",
+			detail:   "'not' failed",
+		},
+		{
+			// A note carrying an exec and a cache payload as well. Each foreign
+			// payload demands its own event type of `/type`, so both complaints
+			// are `const` failures at one location and only the detail tells
+			// them apart.
+			name: "one value, two constants",
+			document: `{` + preamble + `,"type":"note","note":{"kind":"warning"},` +
+				`"cache":{"op":"open","result":"opened"},` +
+				`"exec":{"kind":"verify","argv":["go"],"exit_code":0}}`,
+			pointer: "/type",
+			detail:  "value must be 'cache'",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Repeated inside one process on purpose: Go randomizes map
+			// iteration per range statement rather than per process, so a tie
+			// broken by iteration order shows up here and nowhere else.
+			for i := range 100 {
+				err := Validate(TraceEventV1, []byte(test.document))
+				if err == nil {
+					t.Fatalf("attempt %d: the document was accepted", i)
+				}
+				pointer, ok := PointerOf(err)
+				if !ok {
+					t.Fatalf("attempt %d: error does not carry a pointer: %v", i, err)
+				}
+				if pointer != test.pointer {
+					t.Fatalf("attempt %d: pointer = %q, want %q (%v)", i, pointer, test.pointer, err)
+				}
+				if !strings.HasSuffix(err.Error(), ": "+test.detail) {
+					t.Fatalf("attempt %d: error = %q, want it to end in %q", i, err.Error(), test.detail)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateCarriesTheValidatorsComplaint pins the half of the message that
+// is not this package's own words.
+//
+// The pointer says where and the code says what kind; the validator's own line
+// is the only part that says what was wrong with the value. A message that
+// stopped at "is not valid at /mutants/0/line:" would read like a finished
+// sentence and tell a reader nothing.
+func TestValidateCarriesTheValidatorsComplaint(t *testing.T) {
+	doc := decode(t, goldenCatalog)
+	mutant(t, doc, 0)["line"] = json.Number("0")
+	err := Validate(CatalogV1, encode(t, doc))
+	if err == nil {
+		t.Fatal("mutated document was accepted")
+	}
+	if !strings.HasSuffix(err.Error(), ": minimum: got 0, want 1") {
+		t.Errorf("error = %q, want it to end in the validator's own complaint", err.Error())
+	}
+}
+
+// TestResourceURL covers the naming rule from both sides, which no embedded
+// schema can.
+//
+// Every schema in this repository declares an "$id" that is exactly the
+// fallback this function would otherwise derive — TestSchemaIDsMatchTheirFilenames
+// requires it — so compiling them exercises the rule without ever telling the
+// two branches apart. A vendored third-party schema is the case the branches
+// exist for, and it arrives with an "$id" of its own or with none at all.
+func TestResourceURL(t *testing.T) {
+	const file = "vendored.schema.json"
+
+	tests := []struct {
+		name string
+		doc  any
+		want string
+	}{
+		{
+			name: "a schema that declares an id keeps it",
+			doc:  map[string]any{"$id": "https://stryker-mutator.io/schema/mutation-testing-report.json"},
+			want: "https://stryker-mutator.io/schema/mutation-testing-report.json",
+		},
+		{
+			name: "a schema with no id is named after its file",
+			doc:  map[string]any{"type": "object"},
+			want: baseURL + file,
+		},
+		{
+			name: "an empty id is no id",
+			doc:  map[string]any{"$id": ""},
+			want: baseURL + file,
+		},
+		{
+			name: "an id that is not a string is no id",
+			doc:  map[string]any{"$id": float64(1)},
+			want: baseURL + file,
+		},
+		{
+			// The boolean schemas of 2020-12: `true` and `false` are documents,
+			// and neither is an object with an "$id" in it.
+			name: "a schema that is not an object at all",
+			doc:  true,
+			want: baseURL + file,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := resourceURL(file, test.doc); got != test.want {
+				t.Errorf("resourceURL = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// TestUnusableNamesTheFileAndKeepsTheCause pins the error every failure inside
+// compileAll is reported as.
+//
+// It is unreachable through [Validate] in a build whose embedded schemas
+// compile, which is every build TestEveryRegisteredSchemaCompiles passes on —
+// and it is the error a reader will be looking at on the day one does not, so
+// it has to name the file and keep what went wrong with it.
+func TestUnusableNamesTheFileAndKeepsTheCause(t *testing.T) {
+	cause := errors.New("unexpected end of JSON input")
+	err := unusable("catalog-v1.schema.json", "is not JSON", cause)
+	if err == nil {
+		t.Fatal("an unusable schema was reported as usable")
+	}
+	if got := CodeOf(err); got != CodeSchemaUnusable {
+		t.Errorf("code = %q, want %q (%v)", got, CodeSchemaUnusable, err)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("the cause is not reachable through the error: %v", err)
+	}
+	for _, want := range []string{"catalog-v1.schema.json", "is not JSON", cause.Error()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestInvalidDocumentReportsACauseItCannotWalk covers the branch that exists
+// because an error is a poor place to assume anything.
+//
+// The validator returns *jsonschema.ValidationError and nothing else today, so
+// this branch is dead until the day it is not — and on that day it is the
+// difference between a caller seeing the failure whole and seeing nothing at
+// all, because the alternative to reporting an unrecognised cause is walking a
+// tree that is not there.
+func TestInvalidDocumentReportsACauseItCannotWalk(t *testing.T) {
+	cause := errors.New("the validator returned something else")
+	err := invalidDocument(CatalogV1, cause)
+	if err == nil {
+		t.Fatal("a cause that is not a ValidationError was reported as valid")
+	}
+	if got := CodeOf(err); got != CodeInvalidDocument {
+		t.Errorf("code = %q, want %q (%v)", got, CodeInvalidDocument, err)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("the cause is not reachable through the error: %v", err)
+	}
+	pointer, ok := PointerOf(err)
+	if !ok || pointer != "" {
+		t.Errorf("pointer = %q, %t; want the empty pointer of a failure with no location", pointer, ok)
+	}
+	if !strings.Contains(err.Error(), cause.Error()) {
+		t.Errorf("error %q does not carry the cause's own words", err.Error())
+	}
+}
+
+// TestFirstNameOfNoNames pins the answer for a set the validator does not
+// produce.
+//
+// kind.Required and kind.AdditionalProperties always name at least one
+// property, so describe never asks this about an empty set — and if one ever
+// arrived, the other answer would append an empty token to the pointer and
+// report the violation at a property called "".
+func TestFirstNameOfNoNames(t *testing.T) {
+	if name, ok := firstName(nil); ok || name != "" {
+		t.Errorf("firstName(nil) = %q, %t; want the empty name and false", name, ok)
+	}
+	if name, ok := firstName([]string{"line", "column"}); !ok || name != "column" {
+		t.Errorf("firstName = %q, %t; want the lexicographically first name", name, ok)
+	}
+}
+
+// TestCodeStringIsTheCodeItself pins the one thing a Code renders as.
+//
+// It is a defined string type, so `%s` and `string(c)` agree with String()
+// whatever String() does — which is why the method needs a test of its own: a
+// caller printing a code through the fmt.Stringer interface reads this and
+// nothing else.
+func TestCodeStringIsTheCodeItself(t *testing.T) {
+	for _, code := range Codes() {
+		if got := code.String(); got != string(code) {
+			t.Errorf("%q.String() = %q, want the code itself", string(code), got)
+		}
+	}
+	if got := CodeInvalidDocument.String(); got != "GOM5003" {
+		t.Errorf("CodeInvalidDocument.String() = %q, want %q", got, "GOM5003")
+	}
+}
+
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	seen := make(map[Code]bool, len(Codes()))
 	for _, code := range Codes() {

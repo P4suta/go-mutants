@@ -200,6 +200,64 @@ func TestMap(t *testing.T) {
 			want: nil,
 		},
 		{
+			// A span whose end precedes its start is not a line interval, and
+			// the guard says so before the search runs. Without it the search
+			// answers "does any covered line lie in [10,3]" with the first
+			// interval that reaches line 10, and a mutant is reported as
+			// covered by a block holding no line of it.
+			name:    "a reversed span is covered by nothing",
+			mutants: []coverage.Mutant{spans("a", coreFile, 10, 3)},
+			profiles: map[string]coverage.Profile{
+				core: profile(block(coreProfiled, 1, 20, 1)),
+			},
+			want: nil,
+		},
+		{
+			// A profile lists a file's blocks in the order the toolchain wrote
+			// them, which is not sorted by line. The index sorts them, and this
+			// is the case that says so: line 3 is inside the second block
+			// listed, and a search over the unsorted pair stops at the first.
+			name:    "covered blocks listed out of order still cover the line between them",
+			mutants: []coverage.Mutant{mutant("a", coreFile, 3)},
+			profiles: map[string]coverage.Profile{
+				core: profile(
+					block(coreProfiled, 10, 20, 1),
+					block(coreProfiled, 1, 5, 1),
+				),
+			},
+			want: map[string][]string{"a": {core}},
+		},
+		{
+			// The blocks of a function and of a branch inside it nest, and the
+			// index sorts by the line a block opens on. Sorting by the line it
+			// closes on would put the inner block first and leave the joined
+			// range opening where the inner one does, which loses every line
+			// between the two opening lines.
+			name:    "a block nested inside another still covers the outer block's first line",
+			mutants: []coverage.Mutant{mutant("a", coreFile, 1)},
+			profiles: map[string]coverage.Profile{
+				core: profile(
+					block(coreProfiled, 1, 100, 1),
+					block(coreProfiled, 5, 10, 1),
+				),
+			},
+			want: map[string][]string{"a": {core}},
+		},
+		{
+			// Two blocks of one file can open on the same line, and they
+			// overlap by definition: the joined range has to reach the further
+			// of the two ends whichever of them the profile listed first.
+			name:    "two covered blocks that open on one line reach the further end",
+			mutants: []coverage.Mutant{mutant("a", coreFile, 9)},
+			profiles: map[string]coverage.Profile{
+				core: profile(
+					block(coreProfiled, 3, 5, 1),
+					block(coreProfiled, 3, 9, 1),
+				),
+			},
+			want: map[string][]string{"a": {core}},
+		},
+		{
 			// Two mutants on one line share a verdict. That is the
 			// over-approximation the line-only rule buys, stated as a test so
 			// that nobody later "fixes" it with columns.
@@ -458,6 +516,54 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 		if !seen[code] {
 			t.Errorf("Codes() does not list %q", code)
 		}
+	}
+}
+
+// TestCodeStringIsTheCodeItself pins the one thing a Code renders as.
+//
+// It is a defined string type, so `%s` and `string(c)` agree with String()
+// whatever String() does — which is exactly why the method needs a test of its
+// own: every caller that prints a code through the fmt.Stringer interface, the
+// `doctor` table included, reads this method and nothing else.
+func TestCodeStringIsTheCodeItself(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range coverage.Codes() {
+		if got := code.String(); got != string(code) {
+			t.Errorf("%q.String() = %q, want the code itself", string(code), got)
+		}
+	}
+	if got := coverage.CodeMalformedProfile.String(); got != "GOM7600" {
+		t.Errorf("CodeMalformedProfile.String() = %q, want %q", got, "GOM7600")
+	}
+}
+
+// TestErrorRendersItsCause pins both halves of the rendering, because the
+// difference between them is the whole diagnostic value of the cause.
+//
+// A malformed profile is reported as infrastructure trouble, and the only thing
+// that says which trouble is the wrapped error the toolchain or the reader
+// produced. Dropping it leaves a caller with "the coverage profile could not be
+// read" and nothing to act on.
+func TestErrorRendersItsCause(t *testing.T) {
+	t.Parallel()
+
+	withCause := &coverage.Error{
+		Code:    coverage.CodeMalformedProfile,
+		Message: "the coverage profile could not be read",
+		Err:     errUnrelated,
+	}
+	want := "GOM7600: the coverage profile could not be read: " + errUnrelated.Error()
+	if got := withCause.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+
+	alone := &coverage.Error{
+		Code:    coverage.CodeMalformedProfile,
+		Message: "the coverage profile could not be read",
+	}
+	if got, wantAlone := alone.Error(), "GOM7600: the coverage profile could not be read"; got != wantAlone {
+		t.Errorf("Error() without a cause = %q, want %q", got, wantAlone)
 	}
 }
 

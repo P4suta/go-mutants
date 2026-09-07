@@ -133,6 +133,68 @@ var repositoryExpectations = []Expectation{
 			"than math.MaxUint32 bytes, so killing it means allocating more than " +
 			"four gigabytes in a unit test.",
 	},
+	{
+		ID: "d42fb63591d5db90e42e36081a7f65630aae5c925098abab5ed536f7dd5f57bb",
+		Reason: "Equivalent: this is the tie-break of a sort whose primary key " +
+			"is the start line, so it only orders intervals that share one; " +
+			"merge joins any such run into [start, max end] whatever their " +
+			"order, and nothing downstream reads the order itself.",
+	},
+	{
+		ID: "96e3e2eaaff49e3c662188a99235ddcd673af4d3e5c9189bd9b42461d3a5faa6",
+		Reason: "Equivalent: the same tie-break as the row above -- intervals " +
+			"sharing a start line all overlap, so merge folds them into " +
+			"[start, max end] however the sort arranges them, and the " +
+			"primary key still decides every pair whose start lines differ.",
+	},
+	{
+		ID: "4316f032816f9b8bea32fd9582296b74674df9d53de742511356db366a4e68d9",
+		Reason: "Unreachable: compileErr is set only when an embedded schema " +
+			"cannot be read, parsed, registered or compiled, and " +
+			"TestEveryRegisteredSchemaCompiles asserts that none of that " +
+			"happens in this build, so this branch is never taken.",
+	},
+	{
+		ID: "d8c4cff8932d9455d3ef8e81586b06ca622755ecb2f56c108a98ca56b40b25d7",
+		Reason: "Unreachable: the return the row above guards, reported " +
+			"`survived (uncovered)` because no suite reaches a line that " +
+			"needs compileErr to be non-nil.",
+	},
+	{
+		ID: "dc8a00968d7b71abe998d1d562013904cb4b84f09b97ee2bfd3e6827bbb3abe9",
+		Reason: "Unreachable: compileAll compiles every type in the registry " +
+			"and schemaFor looks up that same registry, so the lookup " +
+			"cannot miss; TestEveryRegisteredSchemaCompiles asserts it for " +
+			"every registered type.",
+	},
+	{
+		ID: "cc88bfab205c63ce546f8c6c20a8481ea065cb270f5c6027731c5a2e4186cfc1",
+		Reason: "Unreachable: the file is read out of an embed.FS fixed at " +
+			"build time, and TestEverySchemaIsRegistered plus " +
+			"TestEveryRegisteredSchemaCompiles assert that every registered " +
+			"name is a file in it, so ReadFile has no failure left to " +
+			"return.",
+	},
+	{
+		ID: "5b74b4c090cbff9cd61dc5bc551946c41f0275647a1e79d8c1eb541859d83890",
+		Reason: "Unreachable: the bytes are an embedded schema this " +
+			"repository's own tests parse and compile, so they are JSON in " +
+			"every build TestEveryRegisteredSchemaCompiles passes on.",
+	},
+	{
+		ID: "cbed187653982db4970d6f42da553e14e2ef7d932e05de603de728450c5bf382",
+		Reason: "Unreachable: AddResource fails on a resource identity it " +
+			"cannot parse, and TestSchemaIDsMatchTheirFilenames pins every " +
+			"embedded schema's `$id` to `baseURL + <file>`, which is a URL " +
+			"by construction.",
+	},
+	{
+		ID: "939b4163d07d97de0f882ab4af250a72f14eaea40a377cff94f7aeab16b01b42",
+		Reason: "Unreachable: every registered schema compiles, which is " +
+			"exactly what TestEveryRegisteredSchemaCompiles asserts by " +
+			"requiring an invalid document to come back GOM5003 rather than " +
+			"GOM5004.",
+	},
 }
 
 // The example everyone reads has to be an example that works. A documented
@@ -161,12 +223,13 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Six whole packages. Scoped test binaries bought the first two
+			// Eight whole packages. Scoped test binaries bought the first two
 			// — the gate used to be two files, because every mutant ran every
 			// test binary in the module — internal/mutation's own tests
 			// bought the third, by killing the survivors that kept it out,
-			// and the last three were measured before they were included and
-			// had no survivor to kill.
+			// the next three were measured before they were included and
+			// had no survivor to kill, and the last two were bought the same
+			// way the third was.
 			//
 			// The order is the file's order, and it is asserted rather than
 			// sorted for the same reason the expectation ids are: a list
@@ -178,6 +241,8 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/testflag/*.go",
 				"internal/operatorselect/*.go",
 				"internal/drift/*.go",
+				"internal/coverage/*.go",
+				"internal/schemas/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -191,8 +256,8 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		},
 		Test: Test{
 			// The command is the run's scope as well as its measurement: these
-			// six patterns are the only packages a test binary is built for,
-			// and they have to be the six Include names above. A package that
+			// eight patterns are the only packages a test binary is built for,
+			// and they have to be the eight Include names above. A package that
 			// is mutated but not named here gets no binary, so every mutant in
 			// it is reported `survived (uncovered)` — which is why both lists
 			// are pinned here rather than one of them.
@@ -200,6 +265,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"go", "test",
 				"./internal/mutation/...", "./internal/glob/...", "./internal/interval/...",
 				"./internal/testflag/...", "./internal/operatorselect/...", "./internal/drift/...",
+				"./internal/coverage/...", "./internal/schemas/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
