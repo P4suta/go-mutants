@@ -69,20 +69,34 @@ func TestLocateFindsTheToolchainOnPath(t *testing.T) {
 	}
 }
 
-// TestLocateHonoursAnExplicitPath checks that configuration wins over PATH,
-// using the toolchain PATH would have found anyway so the assertion is about
-// which mechanism was used rather than about which binary exists.
+// TestLocateHonoursAnExplicitPath checks that configuration wins over PATH.
+//
+// It wins by being the only way in: PATH is emptied first, so a [gocmd.Options]
+// whose Explicit was ignored finds nothing at all and the test fails with
+// [gocmd.CodeToolchainNotFound]. Naming the toolchain PATH would have found
+// anyway — which is what this did — proves nothing, because both mechanisms
+// then produce the same answer.
 func TestLocateHonoursAnExplicitPath(t *testing.T) {
-	t.Parallel()
-
+	// No t.Parallel: PATH is emptied with t.Setenv, which is process-wide.
 	found, err := exec.LookPath("go")
 	if err != nil {
 		t.Fatalf("looking up the go that is running this test: %v", err)
 	}
+	// Absolute, because that is what [gocmd.Toolchain.GoBin] promises to be and
+	// what the comparison below is against: exec.LookPath hands a relative PATH
+	// entry straight back.
+	found, err = filepath.Abs(found)
+	if err != nil {
+		t.Fatalf("resolving %q: %v", found, err)
+	}
+
+	// A directory with no `go` in it, so PATH cannot answer the question.
+	t.Setenv("PATH", t.TempDir())
 
 	tc, err := gocmd.Locate(gocmd.Options{Explicit: found})
 	if err != nil {
-		t.Fatalf("Locate with an explicit path = %v, want a toolchain", err)
+		t.Fatalf("Locate with an explicit path and nothing on PATH = %v, want the configured "+
+			"toolchain: configuration is the only way in here", err)
 	}
 	if tc.GoBin != found {
 		t.Errorf("GoBin = %q, want the explicitly configured %q", tc.GoBin, found)

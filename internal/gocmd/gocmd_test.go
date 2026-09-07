@@ -44,10 +44,13 @@ func TestMain(m *testing.M) {
 
 // probeTimeout bounds every scripted probe here.
 //
-// It is far shorter than [gocmd.DefaultProbeTimeout], because the fake answers
-// from a table: anything approaching this is a fake that did not start, and
-// waiting out thirty seconds to learn that is thirty seconds nobody has.
-const probeTimeout = 30 * time.Second
+// Two seconds rather than [gocmd.DefaultProbeTimeout]'s thirty, and the
+// difference is not impatience: the hanging probe below asserts that it came
+// back long before its own budget expired, and a budget equal to the default
+// would make that assertion true of a probe that had waited out the whole
+// thirty. The fake answers from a table, so anything approaching two seconds is
+// a fake that did not start rather than one that was slow.
+const probeTimeout = 2 * time.Second
 
 // hangTimeout is what the hanging probe is given.
 //
@@ -165,8 +168,13 @@ func TestLocateReportsAProbeThatHangs(t *testing.T) {
 		t.Errorf("Error() = %q, want it to say %q: a hang is not an exit status and must not read as one",
 			err, want)
 	}
-	if elapsed := time.Since(started); elapsed > probeTimeout {
-		t.Errorf("the probe took %s, want the deadline rather than the sleep", elapsed)
+	// Bounded by a small multiple of the deadline the probe was given rather
+	// than by the budget it did not use: the claim is that *this* deadline
+	// ended it, and a bound of two seconds would be satisfied by a probe that
+	// had ignored a two-hundred-millisecond one.
+	if elapsed, bound := time.Since(started), 5*hangTimeout; elapsed > bound {
+		t.Errorf("the probe took %s, want it ended by its own %s deadline (allowing %s for a "+
+			"loaded machine) rather than by the sleep", elapsed, hangTimeout, bound)
 	}
 	// The command is attached to a timeout as much as to a failure: it is the
 	// one a reader has to run by hand to see the hang for themselves.
@@ -329,7 +337,14 @@ func TestListFailureCarriesTheToolchainOutput(t *testing.T) {
 func TestLocateAbsolutisesARelativeExplicitPath(t *testing.T) {
 	// No t.Parallel: t.Chdir is what gives a relative path a meaning, and the
 	// two are mutually exclusive.
-	workspace := t.TempDir()
+	//
+	// The workspace is the harness's scratch rather than t.TempDir, because the
+	// stand-in installed below is a copy of the running test binary on Windows
+	// and this test starts it twice. The operating system can hold a copy for a
+	// moment after its process exits, and the harness's scratch — under the
+	// keep policy CI runs with — is removed with retries; Go's own t.TempDir
+	// cleanup has none.
+	workspace := testkit.Scratch(t)
 	f := mutantkit.FakeGo(t)
 	// A version line no released toolchain will ever print, so that a result
 	// accidentally produced by the real `go` could not be mistaken for this one.

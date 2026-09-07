@@ -61,10 +61,18 @@ func fakeBuild(t *testing.T) (*mutantkit.Fake, execute.Options) {
 	opts := execute.Options{
 		Toolchain:    gocmd.Toolchain{GoBin: f.Bin()},
 		SnapshotRoot: snapshot,
-		BinDir:       filepath.Join(t.TempDir(), "bin"),
-		Env:          f.Env(testkit.Compose(t, testkit.Scratch(t))),
-		Jobs:         1,
-		Timeout:      time.Minute,
+		// Under the harness's scratch rather than t.TempDir, because a scripted
+		// compile's output is the fake itself and one test here goes on to run
+		// it. On Windows a copy whose process has just exited can still be held
+		// for a moment while its mapping is torn down, and the harness's
+		// scratch — under the keep policy CI runs with — is removed with
+		// retries. Go's own t.TempDir cleanup has none, and an unremovable file
+		// there fails the test through its cleanup rather than through an
+		// assertion.
+		BinDir:  filepath.Join(testkit.Scratch(t), "bin"),
+		Env:     f.Env(testkit.Compose(t, testkit.Scratch(t))),
+		Jobs:    1,
+		Timeout: time.Minute,
 	}
 	return f, opts
 }

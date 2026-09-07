@@ -69,9 +69,19 @@ Entries say *why* a change was made, not only what changed.
   hundred and seventy megabytes of copying per run. It also keeps the evidence
   small: a failing fake test's kept scratch holds the rule table and the call
   log, two text files, rather than a copy of the program. `mutantkit.Main`
-  removes the shared directory after the suite, retrying the way the harness
-  retries a scratch removal, because a child the supervisor has just killed can
-  still hold its own image open on Windows.
+  removes the shared directory after the suite, retrying because an exiting
+  child can still hold its own image for a moment.
+
+  On Windows nothing is hard-linked at all. A hard link is a second name for one
+  file, so a link to the test binary that is running names an image the
+  operating system has mapped, and Windows refuses to unlink a mapped image —
+  which made both the shared install, removed while the process is still alive,
+  and every `-o` output a scripted compile creates undeletable. Each arrived as
+  an `Access is denied` from a cleanup rather than from any assertion. The
+  choice is expressed as "has this platform a hard link that can be removed
+  again", so the copy the cross-volume case already needed is the one fallback
+  both take, and the removal waits five times two hundred milliseconds there
+  against three times a hundred elsewhere.
 
   `Fake.Export`, which is the `PATH` form, forces
   `testkit.ResolveToolchainDirectories` before it changes anything. Putting the

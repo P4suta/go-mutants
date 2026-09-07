@@ -106,8 +106,13 @@ func TestDoctorReportsAToolchainThatDoesNotAnswer(t *testing.T) {
 		defer cancel()
 		started := time.Now()
 		checks := diagnose(ctx, t.TempDir())
-		if elapsed := time.Since(started); elapsed > 30*time.Second {
-			t.Fatalf("diagnose waited %s, want the caller's deadline rather than the probe's", elapsed)
+		// A small multiple of the deadline the caller set, not the budget
+		// `doctor` gives its own probe: bounding by the latter would be
+		// satisfied by a diagnosis that had waited out all thirty seconds,
+		// which is the very thing this is meant to rule out.
+		if elapsed, bound := time.Since(started), 5*hangCutoff; elapsed > bound {
+			t.Fatalf("diagnose waited %s, want the caller's %s deadline to have ended it (allowing "+
+				"%s for a loaded machine) rather than the probe's own budget", elapsed, hangCutoff, bound)
 		}
 
 		index := slices.IndexFunc(checks, func(c check) bool { return c.Name == checkToolchain })

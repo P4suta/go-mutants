@@ -315,22 +315,35 @@ func removeSharedFakeGo() {
 		return
 	}
 	var err error
-	for attempt := range fakeGoRemovalAttempts {
+	attempts, delay := fakeGoRemovalPolicy(runtime.GOOS)
+	for attempt := range attempts {
 		if err = os.RemoveAll(*dir); err == nil {
 			return
 		}
-		if attempt < fakeGoRemovalAttempts-1 {
-			time.Sleep(fakeGoRemovalDelay)
+		if attempt < attempts-1 {
+			time.Sleep(delay)
 		}
 	}
 	fmt.Fprintf(os.Stderr, "fake go: %s could not be removed and is left as it is: %v\n", *dir, err)
 }
 
-// The retry the removal above makes, mirroring internal/testkit's own.
-const (
-	fakeGoRemovalAttempts = 3
-	fakeGoRemovalDelay    = 100 * time.Millisecond
-)
+// fakeGoRemovalPolicy is how hard the removal above tries, and it is a function
+// of the platform because the thing it is waiting for only happens on one.
+//
+// Elsewhere this mirrors internal/testkit's own three attempts a tenth of a
+// second apart, which covers a virus scanner or a file a child has not quite
+// closed. On Windows it is waiting for something else: the executable image of
+// a process that has already exited stays mapped for a moment afterwards, and an
+// unlink in that window is refused with `Access is denied`. A second of patience
+// costs nothing on the path that succeeds first time — which is every path where
+// nothing was running — and is the difference between a clean temporary
+// directory and a message on every run.
+func fakeGoRemovalPolicy(goos string) (attempts int, delay time.Duration) {
+	if goos == "windows" {
+		return 5, 200 * time.Millisecond
+	}
+	return 3, 100 * time.Millisecond
+}
 
 // installFakeGo puts an executable named `go` in dir and counts it.
 func installFakeGo(dir string) (string, error) {
@@ -635,13 +648,69 @@ func (f *Fake) saveLocked() {
 	}
 }
 
-// linkFile is os.Link, behind a name so that the copy fallback below can be
-// driven on a machine where linking works. See SetFakeGoLinker in
-// export_test.go.
-var linkFile = os.Link
+// linkFile is how a second name for an executable is made, where the platform
+// has a way of making one that can also be taken away again.
+//
+// It is a variable for two reasons. The copy fallback below is unreachable on a
+// machine where linking works, so it is driven through this in a test — see
+// SetFakeGoLinker in export_test.go — and the platform rule is expressed here
+// rather than as a branch inside [linkOrCopyExecutable], so that both platforms
+// take the one code path and the fallback is not a path only Windows runs.
+var linkFile = platformLinker(runtime.GOOS)
 
-// linkOrCopyExecutable makes to a second name for from, by link where the
-// filesystem allows it and by copy where it does not.
+// platformLinker is os.Link where a hard link can be removed again, and nothing
+// where it cannot.
+func platformLinker(goos string) func(from, to string) error {
+	if !HardLinksAreRemovable(goos) {
+		return refuseToLink
+	}
+	return os.Link
+}
+
+// HardLinksAreRemovable reports whether this platform lets a hard link to a
+// running executable be unlinked.
+//
+// It does not on Windows, and that is the whole reason this package copies
+// there. A hard link is a second name for one file, so a link to the test binary
+// that is running names an image the operating system has mapped — and Windows
+// refuses to unlink a mapped image with `Access is denied`. Both of the things
+// installed here are exactly that: the shared `go`, which [Main] removes while
+// the process is still alive, and every `-o` output a scripted compile makes,
+// which the test's own cleanup removes. Neither could be deleted, and the
+// failure arrived as a t.TempDir cleanup error attached to a test that had
+// already passed.
+//
+// A copy has no such problem. It is a different file, so removing it says
+// nothing about the binary that is running; the only wait is for a child that
+// ran the copy to finish being torn down, which is what [fakeGoRemovalPolicy]
+// is patient about.
+//
+// It is exported for the tests, which is the only way the rule can be checked
+// from the platform that does not have the problem.
+func HardLinksAreRemovable(goos string) bool { return goos != "windows" }
+
+// refuseToLink is the linker of a platform that has no usable hard link.
+//
+// It is an error rather than a nil function so that [linkOrCopyExecutable] has
+// one shape on every platform: the copy is the fallback everywhere, and a
+// machine that cannot link across volumes and a machine that must not link at
+// all reach it the same way.
+func refuseToLink(_, _ string) error { return errNoRemovableHardLink }
+
+// errNoRemovableHardLink is what [refuseToLink] says, for a reader who finds it
+// in a wrapped error.
+var errNoRemovableHardLink = errors.New(
+	"a hard link to a running executable cannot be removed on this platform")
+
+// linkOrCopyExecutable makes to a second reachable copy of from, by link where
+// the platform and the filesystem both allow one and by copy where either does
+// not.
+//
+// The two reasons a link is unavailable are different and the answer is the
+// same: a Windows host, where a link to a running image cannot be removed
+// afterwards, and a temporary directory on a different volume from the build
+// cache, which is the ordinary arrangement on a GitHub Windows runner. See
+// [HardLinksAreRemovable].
 func linkOrCopyExecutable(from, to string) error {
 	if err := linkFile(from, to); err == nil {
 		return nil
@@ -895,7 +964,11 @@ func createFakeOutput(args []string) error {
 			"` names no `-o` path")
 	}
 	// The fake itself, so the produced binary is something the caller can
-	// start and script in turn: see [FakeRule.CreateOutput].
+	// start and script in turn: see [FakeRule.CreateOutput]. It is linked where
+	// a link can be removed again and copied where it cannot, which is the same
+	// rule the shared install follows and for the same reason — on Windows this
+	// file is deleted by the test's own cleanup while the process it is a name
+	// for is still running.
 	self, err := os.Executable()
 	if err != nil {
 		return err

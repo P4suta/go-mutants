@@ -3,6 +3,8 @@
 
 package mutantkit
 
+import "time"
+
 // NormalizeText exposes the free-text rule to the external tests.
 var NormalizeText = normalizeText
 
@@ -26,3 +28,19 @@ func SetFakeGoLinker(link func(from, to string) error) func() {
 	linkFile = link
 	return func() { linkFile = previous }
 }
+
+// FakeGoRemovalPolicy exposes how hard the shared install's removal tries on a
+// given platform, so the Windows rule can be checked from a machine that is not
+// one.
+func FakeGoRemovalPolicy(goos string) (attempts int, delay time.Duration) {
+	return fakeGoRemovalPolicy(goos)
+}
+
+// PlatformLinker exposes the linker a platform gets, so that "Windows never
+// links" is a fact about the code rather than about the comment above it.
+func PlatformLinker(goos string) func(from, to string) error { return platformLinker(goos) }
+
+// LinkOrCopyExecutable exposes the install step itself, so that each of the
+// three answers a linker can give is pinned against a source the test owns
+// rather than against wherever `go test` happened to put this binary.
+func LinkOrCopyExecutable(from, to string) error { return linkOrCopyExecutable(from, to) }

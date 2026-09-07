@@ -162,7 +162,14 @@ func TestFakeGoCreateOutputWritesAnExecutableAtTheDashOPath(t *testing.T) {
 	f.On("-test.run=^TestOnly$").Stdout("PASS\n")
 	env := fakeEnv(t, f)
 
-	out := filepath.Join(t.TempDir(), "pkg.test")
+	// The produced binary is the fake itself, and this test then runs it. A
+	// copy of a program whose process has just exited can still be held for a
+	// moment on Windows while the operating system tears its mapping down, so
+	// the file goes under the harness's scratch: with the keep policy CI runs
+	// with, that directory is removed with retries. Go's own t.TempDir cleanup
+	// has none, and would fail this test through its cleanup after every
+	// assertion in it had passed.
+	out := filepath.Join(testkit.Scratch(t), "pkg.test")
 	result := runFake(t, f, t.TempDir(), "test", "-c", "-o", out, "example.com/m/pkg")
 	if result.ExitCode != 0 {
 		t.Fatalf("the scripted compile exited %d, want 0:\n%s", result.ExitCode, result.Output)
@@ -507,22 +514,98 @@ func TestFakeGoCreateOutputRefusesAnArgvWithNoDashOPath(t *testing.T) {
 	}
 }
 
-// TestFakeGoFallsBackToCopyingWhenItCannotLink is the branch a machine with one
-// filesystem never takes and a Windows runner takes every time.
+// TestInstallLinksOrCopiesAccordingToTheLinkerItWasGiven pins all three answers
+// a linker can give, against a source this test owns.
 //
-// `RUNNER_TEMP` is on D: there and the build cache is on C:, so os.Link cannot
-// answer and the whole install is a copy. Untested, the fallback is a path that
-// runs only where nobody is watching.
+// The source is a file in the destination's own directory rather than the test
+// binary, so "a link was made" is a claim about the code and not about whether
+// `go test` put this binary on the same volume as the temporary directory —
+// which on a Windows runner it does not.
+func TestInstallLinksOrCopiesAccordingToTheLinkerItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	const body = "the program\n"
+	for _, test := range []struct {
+		name   string
+		linker func(from, to string) error
+		linked bool
+	}{
+		{
+			name:   "a platform whose hard links can be removed again",
+			linker: mutantkit.PlatformLinker("linux"),
+			linked: true,
+		},
+		{
+			// The reason this package copies on Windows: see
+			// [mutantkit.HardLinksAreRemovable].
+			name:   "a platform whose hard links cannot",
+			linker: mutantkit.PlatformLinker("windows"),
+			linked: false,
+		},
+		{
+			// The reason the fallback existed before Windows needed it: a
+			// GitHub runner puts RUNNER_TEMP and the build cache on different
+			// volumes, and os.Link cannot answer across them.
+			name:   "a link the filesystem refuses",
+			linker: func(string, string) error { return errors.New("invalid cross-device link") },
+			linked: false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// No t.Parallel: the linker is replaced for the whole process.
+			restore := mutantkit.SetFakeGoLinker(test.linker)
+			defer restore()
+
+			dir := t.TempDir()
+			from := filepath.Join(dir, "source")
+			if err := os.WriteFile(from, []byte(body), 0o755); err != nil {
+				t.Fatalf("writing the source: %v", err)
+			}
+			to := filepath.Join(dir, "installed")
+			if err := mutantkit.LinkOrCopyExecutable(from, to); err != nil {
+				t.Fatalf("installing: %v", err)
+			}
+
+			source, err := os.Stat(from)
+			if err != nil {
+				t.Fatalf("stat of the source: %v", err)
+			}
+			installed, err := os.Stat(to)
+			if err != nil {
+				t.Fatalf("stat of the install: %v", err)
+			}
+			if got := os.SameFile(source, installed); got != test.linked {
+				t.Errorf("os.SameFile = %v, want %v: a link is one file under two names and a copy "+
+					"is two files, and only one of them can be removed while the other is running",
+					got, test.linked)
+			}
+			if got := testkit.ReadFile(t, to); string(got) != body {
+				t.Errorf("the install holds %q, want the source's %q", got, body)
+			}
+			if perm := installed.Mode().Perm(); runtime.GOOS != "windows" && perm&0o111 == 0 {
+				t.Errorf("mode = %v, want the executable bit", perm)
+			}
+		})
+	}
+}
+
+// TestFakeGoFallsBackToCopyingWhenItCannotLink is the whole install through the
+// copy branch, which is what a Windows runner takes every time.
+//
+// The table above says the copy is a copy; this says it is still a program. A
+// fallback that produced a file of the right length and no entry point would
+// pass everything else here and fail on the first machine that used it.
 func TestFakeGoFallsBackToCopyingWhenItCannotLink(t *testing.T) {
-	// No t.Parallel: the link is replaced for the whole process.
-	restore := mutantkit.SetFakeGoLinker(func(string, string) error {
-		return errors.New("invalid cross-device link")
-	})
+	// No t.Parallel: the linker is replaced for the whole process.
+	restore := mutantkit.SetFakeGoLinker(mutantkit.PlatformLinker("windows"))
 	defer restore()
 
 	f := mutantkit.FakeGo(t)
 	f.Version("1.99.0")
-	copied := f.Install(filepath.Join(t.TempDir(), "copied"))
+	// Under the harness's scratch rather than t.TempDir: on Windows a copy a
+	// child has just run can still be held for a moment, and Go's own TempDir
+	// cleanup does not retry.
+	copied := f.Install(filepath.Join(testkit.Scratch(t), "copied"))
 
 	source, err := os.Stat(f.Bin())
 	if err != nil {
@@ -548,5 +631,65 @@ func TestFakeGoFallsBackToCopyingWhenItCannotLink(t *testing.T) {
 	}
 	if got := string(result.Output); !strings.Contains(got, "go version go1.99.0") {
 		t.Errorf("the copied fake printed %q, want the scripted version line", got)
+	}
+}
+
+// TestFakeGoNeverHardLinksWhereALinkCannotBeRemoved is the Windows rule, and it
+// is a rule about *removal* rather than about linking.
+//
+// A hard link to a running executable is a second name for an image the
+// operating system has mapped, and Windows refuses to unlink a mapped image:
+// `Access is denied`. Both of the things this package installs are links to the
+// test binary that is running — the shared `go`, which [Main] removes while the
+// process is still alive, and every `-o` output a scripted compile creates — so
+// on Windows both were undeletable, and they failed the test that made them
+// through t.TempDir's cleanup rather than through any assertion. A copy has no
+// such problem: it is a different file, and nothing has it mapped once the child
+// that ran it has exited.
+//
+// The choice is expressed as "is there a linker at all", so the fallback that
+// already existed for a cross-volume install is the only code path either
+// platform takes.
+func TestFakeGoNeverHardLinksWhereALinkCannotBeRemoved(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		goos      string
+		hardLinks bool
+	}{
+		{goos: "windows", hardLinks: false},
+		{goos: "linux", hardLinks: true},
+		{goos: "darwin", hardLinks: true},
+		{goos: "freebsd", hardLinks: true},
+	} {
+		t.Run(test.goos, func(t *testing.T) {
+			t.Parallel()
+			if got := mutantkit.HardLinksAreRemovable(test.goos); got != test.hardLinks {
+				t.Errorf("HardLinksAreRemovable(%q) = %v, want %v", test.goos, got, test.hardLinks)
+			}
+		})
+	}
+}
+
+// TestFakeGoRemovalRetriesLongerWhereAnExitingChildHoldsItsImage is the other
+// half of the same Windows fact.
+//
+// A copy is deletable, but not necessarily at the instant the child that ran it
+// returned: the process has exited from the caller's point of view while the
+// operating system is still tearing its mapping down, and an unlink in that
+// window is refused. The removal therefore retries, and it waits longer on the
+// platform where the window exists at all.
+func TestFakeGoRemovalRetriesLongerWhereAnExitingChildHoldsItsImage(t *testing.T) {
+	t.Parallel()
+
+	windowsAttempts, windowsDelay := mutantkit.FakeGoRemovalPolicy("windows")
+	posixAttempts, posixDelay := mutantkit.FakeGoRemovalPolicy("linux")
+	if windowsAttempts <= posixAttempts || windowsDelay <= posixDelay {
+		t.Errorf("windows gets %d attempts %s apart and linux %d attempts %s apart, want windows to "+
+			"wait longer: it is the platform where a just-exited child still holds its image",
+			windowsAttempts, windowsDelay, posixAttempts, posixDelay)
+	}
+	if got := time.Duration(windowsAttempts) * windowsDelay; got < time.Second {
+		t.Errorf("windows gives up after %s, want at least a second for a mapping to be torn down", got)
 	}
 }

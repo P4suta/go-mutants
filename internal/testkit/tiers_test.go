@@ -8,6 +8,7 @@ import (
 	"context"
 	"go/build/constraint"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -59,6 +60,29 @@ var toolchainNeedles = []string{
 	"Toolchain" + "(",
 }
 
+// fakeableNeedles are the calls that can be handed a toolchain instead of
+// reaching for one, and are therefore the only ones the fake exemption covers.
+//
+// The split is the whole content of that exemption. [gocmd.Locate] takes
+// Options.Explicit and gomutants.Open takes OpenOptions.GoBinary, so a test
+// that builds a scripted `go` and passes its path is not driving the machine's
+// toolchain however the call is spelled — that is exactly how every consumer
+// test in this repository uses the fake. The other four take nothing: an
+// os/exec lookup of `go` reads the machine's PATH, and testkit.GoBinary,
+// testkit.GitBinary and mutantkit.Toolchain resolve the real tool and apply the
+// skip-or-fail policy. A file that calls one of those is reaching for the
+// machine's toolchain, and building a fake somewhere else in the same file does
+// not change that.
+//
+// Without the split the exemption was a hole rather than a rule: one
+// `mutantkit.FakeGo(` anywhere in a file excused every other toolchain call in
+// it, so a file that scripted one `go` and ran a real one would leave the tier
+// silently.
+var fakeableNeedles = []string{
+	"gomutants." + "Open(",
+	"gocmd." + "Locate(",
+}
+
 // fakeToolchainNeedle is the call that means "this file supplies the toolchain
 // rather than reaching for one".
 //
@@ -72,10 +96,14 @@ var toolchainNeedles = []string{
 //
 // The exemption is for the *file* rather than for the call, because the two
 // halves are always written together and a rule that tried to pair them up
-// would be a parser rather than a scan. It is deliberately narrow in exchange:
-// constructing a fake is the only thing that grants it, so a file that wants
+// would be a parser rather than a scan. It is narrow in two ways in exchange.
+// Constructing a fake is the only thing that grants it, so a file that wants
 // both a scripted toolchain and a real one has to be two files — which is what
-// internal/gocmd now is, and why it is no longer in the ledger.
+// internal/gocmd now is, and why it is no longer in the ledger. And it covers
+// only the calls a fake can be handed, [fakeableNeedles]: a file that builds a
+// fake and also calls exec.LookPath("go") or testkit.GoBinary is reported like
+// any other, because those reach for the machine's toolchain and no fake is in
+// their way.
 //
 // Like every needle above it is matched as text and not as a call the compiler
 // resolved, so a file that names the helper in a comment is exempted too. That
@@ -389,19 +417,62 @@ func TestAFileThatScriptsTheToolchainIsNotDrivingOne(t *testing.T) {
 			"\tgocmd."+"Locate(f.Bin())\n}\n")
 	m.Source("real/real_test.go",
 		"package real\n\nfunc use() { gocmd."+"Locate(nil) }\n")
+	// The hole the exemption used to have: one fake anywhere in the file
+	// excused every other toolchain call in it, so a file that scripted one
+	// `go` and reached for the machine's would leave the tier in silence.
+	m.Source("both/both_test.go",
+		"package both\n\nfunc use() {\n\tf := "+fakeToolchainNeedle+"nil)\n"+
+			"\tgocmd."+"Locate(f.Bin())\n"+
+			"\tpath, _ := "+"exec."+`LookPath("go")`+"\n\t_ = path\n}\n")
 
 	found, err := toolchainDrivingTests(m.Root())
 	if err != nil {
 		t.Fatalf("scanning the synthesized module: %v", err)
 	}
-	var paths []string
+	reported := map[string]string{}
 	for _, file := range found {
-		paths = append(paths, file.path)
+		reported[file.path] = file.needle
 	}
-	if want := []string{"real/real_test.go"}; !slices.Equal(paths, want) {
-		t.Errorf("the scan reported %q, want %q: a file that scripts the toolchain does not drive "+
-			"it, and a file that merely names the helper does", paths, want)
+	want := map[string]string{
+		"real/real_test.go": "gocmd." + "Locate(",
+		"both/both_test.go": "exec." + `LookPath("go")`,
 	}
+	if !maps.Equal(reported, want) {
+		t.Errorf("the scan reported %v, want %v: a file that scripts the toolchain does not drive "+
+			"it, one that reaches for the machine's does, and a file that does both is reported "+
+			"for the half a fake cannot stand in for", reported, want)
+	}
+}
+
+// drivingNeedle reports whether a file drives the toolchain, and which call
+// says so.
+//
+// The call it names is the one a reader has to look at, which is why an
+// independent driver is preferred over a fakeable one when a file has both: a
+// file that scripts a `go` for gocmd.Locate *and* calls testkit.GoBinary is
+// reported for the second, since the first is not what puts it in the wrong
+// tier.
+func drivingNeedle(text string) (string, bool) {
+	var fakeable string
+	for _, needle := range toolchainNeedles {
+		if !containsCall(text, needle) {
+			continue
+		}
+		if !slices.Contains(fakeableNeedles, needle) {
+			// Reaches for the machine's toolchain by itself. No fake in the
+			// file changes that, so the answer is settled.
+			return needle, true
+		}
+		if fakeable == "" {
+			fakeable = needle
+		}
+	}
+	if fakeable == "" {
+		return "", false
+	}
+	// Only calls a scripted toolchain can be handed, so a file that builds one
+	// is supplying the toolchain rather than reaching for it.
+	return fakeable, !containsCall(text, fakeToolchainNeedle)
 }
 
 // drivingFile is one test file that starts a `go` command, and whether it is in
@@ -443,10 +514,8 @@ func toolchainDrivingTests(root string) ([]drivingFile, error) {
 			return readErr
 		}
 		text := string(source)
-		index := slices.IndexFunc(toolchainNeedles, func(needle string) bool {
-			return containsCall(text, needle)
-		})
-		if index < 0 || containsCall(text, fakeToolchainNeedle) {
+		needle, drives := drivingNeedle(text)
+		if !drives {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)
@@ -455,7 +524,7 @@ func toolchainDrivingTests(root string) ([]drivingFile, error) {
 		}
 		found = append(found, drivingFile{
 			path:   filepath.ToSlash(rel),
-			needle: toolchainNeedles[index],
+			needle: needle,
 			tagged: hasIntegrationTag(text),
 		})
 		return nil
