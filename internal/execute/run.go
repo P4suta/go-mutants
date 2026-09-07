@@ -285,7 +285,33 @@ type Attempt struct {
 //
 // RunOne is safe for concurrent use as long as each caller passes a distinct
 // [Options.ScratchDir]; [Schedule] gives every worker its own.
+//
+// When the mutant was narrowed to a subset of its binaries' tests
+// ([MutantRun.Tests]) and that subset survives, RunOne confirms the survival
+// against the whole of those binaries before returning it. A covering test can
+// leave shared state, under the mutant, that a test not covering the line would
+// catch — a kill that only happens in the whole binary, which the narrowed run
+// never started. So a narrowed survivor is re-run with no selection, and it is
+// that whole-binary attempt RunOne returns: the survival that stands is the one
+// the whole binary reached, and the attempt reports no test selection because
+// none narrowed it. A kill, a timeout, an error or an interruption already ran
+// the tests that decided it and is returned unchanged. See ADR 0010.
 func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) Attempt {
+	attempt := runNarrowed(ctx, opts, m, bins)
+	if len(m.Tests) == 0 || attempt.Outcome != mutation.OutcomeSurvived {
+		return attempt
+	}
+	whole := m
+	whole.Tests = nil
+	return runNarrowed(ctx, opts, whole, bins)
+}
+
+// runNarrowed executes one mutant against the test binaries exactly as its
+// [MutantRun.Tests] selection asks — the whole of each binary when it names
+// none. It is [RunOne] without the survivor confirmation, and the two are split
+// so that the confirmation is one place rather than tangled through the branch
+// that decides each binary.
+func runNarrowed(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) Attempt {
 	switch {
 	case strings.TrimSpace(m.ID) == "":
 		return errored(&Error{Code: CodeMutantInvalid, Message: "the mutant has no activation identity"})

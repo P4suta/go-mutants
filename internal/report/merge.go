@@ -534,16 +534,27 @@ func parseTimestamp(value, which string, shard *Report) (time.Time, error) {
 // code that counts it for a run.
 func mergedCoverage(shards []*Report, mutants []Mutant) (Coverage, error) {
 	mode := CoverageOff
-	binaries := 0
+	binaries, tests := 0, 0
 	for _, shard := range shards {
-		if shard.Coverage.Mode == CoveragePackage {
-			mode = CoveragePackage
+		// The finest narrowing any shard managed, because the merged rows
+		// carry whatever the finest shard wrote: a `test` shard's rows name
+		// covering tests, which only a `test` document may state.
+		if finer(shard.Coverage.Mode, mode) {
+			mode = shard.Coverage.Mode
 		}
 		if shard.Coverage.Binaries != nil {
 			binaries = max(binaries, *shard.Coverage.Binaries)
 		}
+		if shard.Coverage.Tests != nil {
+			tests = max(tests, *shard.Coverage.Tests)
+		}
 	}
-	return coverageBlock(mode, binaries, mutants)
+	return coverageBlock(mode, binaries, tests, mutants)
+}
+
+// finer reports whether a narrows more than b: off, then package, then test.
+func finer(a, b CoverageMode) bool {
+	return slices.Index(CoverageModes(), a) > slices.Index(CoverageModes(), b)
 }
 
 // mergedCache is the cache block of the run as a whole.

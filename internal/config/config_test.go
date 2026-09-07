@@ -79,6 +79,7 @@ func TestDefaults(t *testing.T) {
 			Command:      []string{"go", "test", "./..."},
 			Timeout:      0,
 			BaselineRuns: 3,
+			Narrowing:    NarrowingTest,
 		},
 		// The default worker count is a property of the machine, so it is
 		// derived here the way the documentation states it rather than pinned
@@ -315,6 +316,7 @@ func TestOverlayIsEmpty(t *testing.T) {
 		"timeout":          {Timeout: Explicit(time.Duration(0))},
 		"memory":           {Memory: Explicit(int64(0))},
 		"baseline_runs":    {BaselineRuns: Explicit(0)},
+		"narrowing":        {Narrowing: Explicit(NarrowingTest)},
 		"jobs":             {Jobs: Explicit(0)},
 		"cache_mode":       {CacheMode: Explicit(CacheAuto)},
 		"cache_directory":  {CacheDirectory: Explicit("")},

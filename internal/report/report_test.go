@@ -30,6 +30,10 @@ import (
 const (
 	goldenReport         = "run-report.golden.json"
 	goldenCoverageReport = "run-report-coverage.golden.json"
+	// goldenTestCoverageReport is the coverage-guided report narrowed one
+	// step further, to tests: the same three mutants, with the tests that
+	// reach each of them named and every pass narrowed to them.
+	goldenTestCoverageReport = "run-report-tests.golden.json"
 )
 
 // TestGoldenReport pins every byte of a complete run report.
@@ -80,6 +84,62 @@ func TestGoldenCoverageReport(t *testing.T) {
 	want := testkit.ReadFile(t, testkit.GoldenPath(goldenCoverageReport))
 	if err := schemas.Validate(schemas.RunReportV1, want); err != nil {
 		t.Fatalf("the golden coverage report does not satisfy its own schema: %v", err)
+	}
+}
+
+// TestGoldenTestCoverageReport pins every byte of a test-narrowed run report,
+// and checks it against the schema, for the reason the coverage golden is:
+// `covering_tests`, `executions[].tests` and `coverage.tests` are a published
+// shape, and the only way `mode: "test"` can be additive is for every older
+// key to stay exactly where it was.
+func TestGoldenTestCoverageReport(t *testing.T) {
+	t.Parallel()
+
+	got, err := buildTestCoverageFixture(t).Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	testkit.Golden(t, goldenTestCoverageReport, got)
+
+	want := testkit.ReadFile(t, testkit.GoldenPath(goldenTestCoverageReport))
+	if err := schemas.Validate(schemas.RunReportV1, want); err != nil {
+		t.Fatalf("the golden test-narrowed report does not satisfy its own schema: %v", err)
+	}
+}
+
+// TestTestCoverageBlockNamesTheTestsUnderneathIt is the test-narrowed twin of
+// [TestCoverageBlockDescribesTheMutantsUnderneathIt]: the block says `test`
+// and counts the tests, every covered mutant names the tests that reach it,
+// every pass names the tests it was narrowed to, and the uncovered mutant
+// names none of either.
+func TestTestCoverageBlockNamesTheTestsUnderneathIt(t *testing.T) {
+	t.Parallel()
+
+	r := buildTestCoverageFixture(t)
+	if r.Coverage.Mode != report.CoverageTest {
+		t.Fatalf("coverage mode = %q, want %q", r.Coverage.Mode, report.CoverageTest)
+	}
+	if r.Coverage.Binaries == nil || *r.Coverage.Binaries != coverageBinaries {
+		t.Errorf("coverage.binaries = %v, want %d", r.Coverage.Binaries, coverageBinaries)
+	}
+	if r.Coverage.Tests == nil || *r.Coverage.Tests != testCoverageTests {
+		t.Errorf("coverage.tests = %v, want %d", r.Coverage.Tests, testCoverageTests)
+	}
+	for _, m := range r.Mutants {
+		if m.Uncovered {
+			if len(m.CoveringTests) != 0 {
+				t.Errorf("uncovered mutant %s names %v as covering it", m.DisplayID, m.CoveringTests)
+			}
+			continue
+		}
+		if len(m.CoveringTests) == 0 {
+			t.Errorf("covered mutant %s names no covering test", m.DisplayID)
+		}
+		for _, execution := range m.Executions {
+			if len(execution.Tests) == 0 {
+				t.Errorf("attempt %d of mutant %s was not narrowed to any test", execution.Attempt, m.DisplayID)
+			}
+		}
 	}
 }
 

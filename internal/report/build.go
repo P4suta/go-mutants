@@ -81,6 +81,10 @@ type MutantResult struct {
 	// coverage profile reaches this mutant's lines. Nil becomes the empty list,
 	// which is what a run with coverage off carries for every mutant.
 	CoveringTestPackages []string
+	// CoveringTests are the tests whose own coverage reaches this mutant's
+	// lines, sorted. Only a [CoverageTest] run may name any; [Build] refuses
+	// them in every other mode, where nothing measured them.
+	CoveringTests []TestRef
 	// Uncovered says the run established that no test binary reaches this
 	// mutant's lines and therefore did not execute it. Such a result is a
 	// survivor with no attempts; [Build] refuses any other combination, because
@@ -192,6 +196,10 @@ type Options struct {
 	// is recorded only in [CoveragePackage] mode; an `off` run states no number
 	// rather than a zero it never measured.
 	CoverageBinaries int
+	// CoverageTests is how many tests the coverage pass profiled on their
+	// own. It is recorded only in [CoverageTest] mode, for the reason
+	// CoverageBinaries is only recorded when the pass ran.
+	CoverageTests int
 	// CoverageUnavailableReason is the whole failure that made the run give up
 	// coverage-instrumented test binaries, and CoverageBuildFallback says it
 	// did. Empty and false are the ordinary run, which says nothing about a
@@ -564,6 +572,7 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			Executions:           executionsOf(result.Executions),
 			OutputTail:           text(result.OutputTail),
 			CoveringTestPackages: stringList(result.CoveringTestPackages),
+			CoveringTests:        testRefs(result.CoveringTests),
 			Uncovered:            result.Uncovered,
 			Cached:               result.Cached,
 			MemoryExceeded:       result.MemoryExceeded || anyExecutionExceeded(result.Executions),
@@ -703,9 +712,20 @@ func executionsOf(executions []Execution) []Execution {
 	for i, execution := range executions {
 		execution.Attempt = i + 1
 		execution.Binaries = stringList(execution.Binaries)
+		execution.Tests = testRefs(execution.Tests)
 		out = append(out, execution)
 	}
 	return out
+}
+
+// testRefs clones a list of test references, keeping nil as nil: the key is
+// omitted when there is nothing to name, and an empty list would be a claim
+// that something was named.
+func testRefs(refs []TestRef) []TestRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	return slices.Clone(refs)
 }
 
 // joinReasons lists the not-run reasons for a message, so that the list in an
@@ -955,7 +975,7 @@ func shardOf(opts Options) (*Shard, error) {
 // in, so the number in the summary and the rows a reader would count by hand
 // are the same number by construction.
 func coverageOf(opts Options, mutants []Mutant) (Coverage, error) {
-	coverage, err := coverageBlock(opts.CoverageMode, opts.CoverageBinaries, mutants)
+	coverage, err := coverageBlock(opts.CoverageMode, opts.CoverageBinaries, opts.CoverageTests, mutants)
 	if err != nil {
 		return Coverage{}, err
 	}
@@ -971,7 +991,7 @@ func coverageOf(opts Options, mutants []Mutant) (Coverage, error) {
 // options struct, so that `report merge` — which has rows and no options — can
 // recount `mutants_uncovered` through this one implementation instead of
 // growing a second opinion about what an uncovered mutant is.
-func coverageBlock(mode CoverageMode, binaryCount int, mutants []Mutant) (Coverage, error) {
+func coverageBlock(mode CoverageMode, binaryCount, testCount int, mutants []Mutant) (Coverage, error) {
 	stated := mode
 	if mode == "" {
 		mode = CoverageOff
@@ -979,17 +999,20 @@ func coverageBlock(mode CoverageMode, binaryCount int, mutants []Mutant) (Covera
 	if !mode.Valid() {
 		return Coverage{}, &Error{
 			Code:    CodeInvalidCoverage,
-			Message: fmt.Sprintf("%q is not a coverage mode: expected off or package", string(stated)),
+			Message: fmt.Sprintf("%q is not a coverage mode: expected off, package or test", string(stated)),
 		}
 	}
 
 	uncovered := 0
 	for _, m := range mutants {
+		if err := checkCoverageFacts(mode, m); err != nil {
+			return Coverage{}, err
+		}
 		if !m.Uncovered {
 			continue
 		}
 		switch {
-		case mode != CoveragePackage:
+		case !mode.Narrowed():
 			return Coverage{}, &Error{
 				Code: CodeInvalidCoverage,
 				Message: fmt.Sprintf("mutant %s is marked uncovered in a run whose coverage mode is %q: only a coverage-guided run knows what covers a mutant",
@@ -1006,7 +1029,7 @@ func coverageBlock(mode CoverageMode, binaryCount int, mutants []Mutant) (Covera
 	}
 
 	coverage := Coverage{Mode: mode}
-	if mode != CoveragePackage {
+	if !mode.Narrowed() {
 		return coverage, nil
 	}
 	if binaryCount < 0 {
@@ -1018,7 +1041,44 @@ func coverageBlock(mode CoverageMode, binaryCount int, mutants []Mutant) (Covera
 	binaries := binaryCount
 	coverage.Binaries = &binaries
 	coverage.MutantsUncovered = &uncovered
+	if mode != CoverageTest {
+		return coverage, nil
+	}
+	if testCount < 0 {
+		return Coverage{}, &Error{
+			Code:    CodeInvalidCoverage,
+			Message: fmt.Sprintf("the coverage pass reports %d tests", testCount),
+		}
+	}
+	tests := testCount
+	coverage.Tests = &tests
 	return coverage, nil
+}
+
+// checkCoverageFacts refuses a row that names tests in a run that never
+// measured any: covering tests on the mutant, or a selection on one of its
+// passes, are statements only a test-narrowed run can make.
+func checkCoverageFacts(mode CoverageMode, m Mutant) error {
+	if mode == CoverageTest {
+		return nil
+	}
+	if len(m.CoveringTests) > 0 {
+		return &Error{
+			Code: CodeInvalidCoverage,
+			Message: fmt.Sprintf("mutant %s names %s in a run whose coverage mode is %q: only a test-narrowed run knows which tests cover a mutant",
+				m.DisplayID, countNoun(len(m.CoveringTests), "covering test"), string(mode)),
+		}
+	}
+	for _, execution := range m.Executions {
+		if len(execution.Tests) > 0 {
+			return &Error{
+				Code: CodeInvalidCoverage,
+				Message: fmt.Sprintf("attempt %d of mutant %s was narrowed to %s in a run whose coverage mode is %q: only a test-narrowed run selects tests",
+					execution.Attempt, m.DisplayID, countNoun(len(execution.Tests), "test"), string(mode)),
+			}
+		}
+	}
+	return nil
 }
 
 // cacheBlock assembles the cache block and checks that the mutants agree with

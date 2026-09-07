@@ -770,6 +770,7 @@ How coverage placed one mutant.
 | `start_line` | the first line of the coverage block the mutation was mapped into |
 | `end_line` | the last line of it |
 | `covering` | the test binaries whose profile reaches that block, by import path |
+| `covering_tests` | in a run narrowed to tests, the tests whose own profile reaches it, as `<import path> <name>` labels |
 | `uncovered` | `true` when none does |
 
 The lines are the *block's*, not the mutation's own span: a reader asking "why
@@ -854,7 +855,7 @@ closed, because the recording is one of the things that goes into it.
 
 | Field | Meaning |
 | --- | --- |
-| `kind` | `warning`, `trace-unavailable`, `diagnostics`, `diagnostics-unavailable`, `trace-gc`, `coverage-unavailable`, `prepare-failed`, or `control` |
+| `kind` | `warning`, `trace-unavailable`, `diagnostics`, `diagnostics-unavailable`, `trace-gc`, `coverage-unavailable`, `order-dependent-tests`, `unreliable-test-set`, `prepare-failed`, or `control` |
 | `code` | the `GOMnnnn` code the run also reported to its console, where there is one |
 | `detail` | the detail line that accompanies it |
 

@@ -404,13 +404,15 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 2497 mutants at 100.00%, 6m13s-6m30s at
-# --jobs 4 against a warm test-owned build cache with the derived timeout at
-# its 10s floor (8m42s-9m02s when other work on the machine moved that
-# timeout), and cold about 4m45s on GitHub's ubuntu runner with the timeout at
-# its 10s floor -- the 9m31s the shared machine measured cold before the engine
-# sized the timeout on the runs after the first is kept in .go-mutants.toml as
-# the figure that change removed. Cold is what CI measures, because the dogfood
+# The budget this job is sized against: 2549 mutants at 100.00% under the
+# default test-level narrowing (2026-09-08), which runs each mutant against the
+# tests that reach it rather than every binary that does. Warm, at --jobs 4
+# against a test-owned build cache with the derived timeout at its 10s floor,
+# it measured about 5m10s on the shared machine under a load average near five (survivors pay a whole-binary confirmation, ADR 0010);
+# the 2497-mutant, 6m13s-6m30s figures the package-level default recorded
+# before this change are kept in the timing narrative below as its ancestor.
+# Cold on GitHub's ubuntu runner is what this PR's own CI first measures under
+# the new default. Cold is what CI measures, because the dogfood
 # job points GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and
 # never restores it. .go-mutants.toml records all of that under [policy], next
 # to the scope it is a measurement of.

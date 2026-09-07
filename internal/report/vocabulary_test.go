@@ -84,7 +84,7 @@ func TestEveryValidAcceptsItsOwnAndRefusesTheRest(t *testing.T) {
 			refuses: []bool{report.MemorySource("guessed").Valid(), report.MemorySource("").Valid()},
 		},
 		"coverage mode": {
-			accepts: []bool{report.CoverageOff.Valid(), report.CoveragePackage.Valid()},
+			accepts: []bool{report.CoverageOff.Valid(), report.CoveragePackage.Valid(), report.CoverageTest.Valid()},
 			refuses: []bool{report.CoverageMode("file").Valid(), report.CoverageMode("").Valid()},
 		},
 		"cache mode": {

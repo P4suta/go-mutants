@@ -115,6 +115,15 @@ func precedenceCases() []precedenceCase {
 			fromFlag:    1,
 		},
 		{
+			name:        "test.narrowing",
+			document:    "version = 1\n[test]\nnarrowing = \"package\"\n",
+			flags:       Overlay{Narrowing: Explicit(NarrowingTest)},
+			read:        func(c Config) any { return c.Test.Narrowing },
+			fromDefault: NarrowingTest,
+			fromFile:    NarrowingPackage,
+			fromFlag:    NarrowingTest,
+		},
+		{
 			name:        "execution.jobs",
 			document:    "version = 1\n[execution]\njobs = 2\n",
 			flags:       Overlay{Jobs: Explicit(16)},
@@ -267,7 +276,7 @@ func TestPrecedenceCoversEveryOverridableSetting(t *testing.T) {
 	}
 	want := []string{
 		"mutation.include", "mutation.exclude", "mutation.operators", "mutation.profile", "mutation.expect",
-		"test.command", "test.timeout", "test.memory", "test.baseline_runs",
+		"test.command", "test.timeout", "test.memory", "test.baseline_runs", "test.narrowing",
 		"execution.jobs",
 		"cache.mode", "cache.directory",
 		"policy.strict", "policy.minimum_score", "policy.require_mutants",

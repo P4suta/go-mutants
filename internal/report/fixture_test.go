@@ -109,6 +109,10 @@ type candidate struct {
 	// carries.
 	covering  []string
 	uncovered bool
+	// coveringTests are the tests a test-narrowed run found reaching this
+	// mutant's lines. Only the test-narrowed fixture sets them, because only
+	// a test-narrowed document may carry them.
+	coveringTests []report.TestRef
 	// cached marks an outcome this run adopted from the outcome cache instead
 	// of measuring. It is only ever set on a reusable outcome, which is the
 	// pairing [report.Build] enforces.
@@ -524,6 +528,7 @@ func coverageOptions(t *testing.T) report.Options {
 			OutputTail:           c.tail,
 			Executions:           c.executions,
 			CoveringTestPackages: c.covering,
+			CoveringTests:        c.coveringTests,
 			Uncovered:            c.uncovered,
 		})
 	}
@@ -563,6 +568,88 @@ func coverageOptions(t *testing.T) report.Options {
 func buildCoverageFixture(t *testing.T) *report.Report {
 	t.Helper()
 	r, err := report.Build(coverageOptions(t))
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	return r
+}
+
+// The test-narrowed fixture: the coverage-guided run above, narrowed one step
+// further, to the tests of each binary rather than the binaries.
+const (
+	testCoverageRunID = "20260218T101500Z-7e2a"
+	// testCoverageTests is how many tests the pass profiled on their own,
+	// summed over the two binaries: two in core and one in edge.
+	testCoverageTests = 3
+)
+
+// testCoverageCandidates are [coverageCandidates] with the tests that reach
+// each mutant named, and each pass narrowed to them.
+func testCoverageCandidates() []candidate {
+	candidates := make([]candidate, len(coverageCandidates))
+	copy(candidates, coverageCandidates)
+
+	// The first mutant is reached by one test of each binary, and the pass
+	// that killed it was narrowed to the core one before it stopped there.
+	candidates[0].coveringTests = []report.TestRef{
+		{Package: corePackage, Name: "TestClamp"},
+		{Package: edgePackage, Name: "TestEdges"},
+	}
+	candidates[0].executions = []report.Execution{{
+		Attempt: 1, Worker: 0, Outcome: report.OutcomeKilled, KilledBy: corePackage,
+		DurationMS: 140, Binaries: []string{corePackage},
+		Tests: []report.TestRef{{Package: corePackage, Name: "TestClamp"}},
+	}}
+	// The second is reached by one test of the edge binary alone.
+	candidates[1].coveringTests = []report.TestRef{{Package: edgePackage, Name: "TestEdges"}}
+	candidates[1].executions = []report.Execution{{
+		Attempt: 1, Worker: 0, Outcome: report.OutcomeSurvived, DurationMS: 90,
+		Binaries: []string{edgePackage},
+		Tests:    []report.TestRef{{Package: edgePackage, Name: "TestEdges"}},
+	}}
+	// The third is reached by nothing, as before.
+	return candidates
+}
+
+// testCoverageOptions is one complete test-narrowed run.
+func testCoverageOptions(t *testing.T) report.Options {
+	t.Helper()
+	candidates := testCoverageCandidates()
+	located, catalog := located(t, candidates)
+	mutants := catalog.Mutants()
+
+	results := make([]report.MutantResult, 0, len(mutants))
+	for i, m := range mutants {
+		c := candidates[i]
+		results = append(results, report.MutantResult{
+			ID:                   m.ID,
+			Outcome:              c.outcome,
+			NotRunReason:         c.notRun,
+			Duration:             c.duration,
+			KilledBy:             c.killedBy,
+			Attempts:             c.attempts,
+			OutputTail:           c.tail,
+			Executions:           c.executions,
+			CoveringTestPackages: c.covering,
+			CoveringTests:        c.coveringTests,
+			Uncovered:            c.uncovered,
+		})
+	}
+
+	opts := coverageOptions(t)
+	opts.RunID = testCoverageRunID
+	opts.Catalog = catalog
+	opts.Located = located
+	opts.Results = results
+	opts.CoverageMode = report.CoverageTest
+	opts.CoverageTests = testCoverageTests
+	return opts
+}
+
+// buildTestCoverageFixture builds the test-narrowed fixture report.
+func buildTestCoverageFixture(t *testing.T) *report.Report {
+	t.Helper()
+	r, err := report.Build(testCoverageOptions(t))
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

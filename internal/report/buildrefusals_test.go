@@ -443,6 +443,107 @@ func TestBuildRefusesACoverageBinaryCountThatIsNotOne(t *testing.T) {
 	}
 }
 
+// TestBuildRefusesTestFactsOutsideTestMode: covering tests on a mutant, and a
+// selection on one of its passes, are statements only a test-narrowed run can
+// make, and a package-mode or off document carrying either would be describing
+// a measurement its own mode says never happened.
+func TestBuildRefusesTestFactsOutsideTestMode(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		mode report.CoverageMode
+		edit func(*report.MutantResult)
+		want string
+	}{
+		"covering tests in package mode": {
+			mode: report.CoveragePackage,
+			edit: func(r *report.MutantResult) {
+				r.CoveringTests = []report.TestRef{{Package: corePackage, Name: "TestClamp"}}
+			},
+			want: "names 1 covering test in a run whose coverage mode is \"package\"",
+		},
+		"a narrowed pass in package mode": {
+			mode: report.CoveragePackage,
+			edit: func(r *report.MutantResult) {
+				r.Executions[0].Tests = []report.TestRef{{Package: corePackage, Name: "TestClamp"}}
+			},
+			want: "attempt 1 of mutant",
+		},
+		"covering tests with coverage off": {
+			mode: report.CoverageOff,
+			edit: func(r *report.MutantResult) {
+				r.CoveringTests = []report.TestRef{{Package: corePackage, Name: "TestClamp"}}
+			},
+			want: "in a run whose coverage mode is \"off\"",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := testCoverageOptions(t)
+			opts.CoverageMode = tc.mode
+			for i := range opts.Results {
+				opts.Results[i].CoveringTests = nil
+				opts.Results[i].Uncovered = opts.Results[i].Uncovered && tc.mode.Narrowed()
+				for j := range opts.Results[i].Executions {
+					opts.Results[i].Executions[j].Tests = nil
+				}
+			}
+			tc.edit(&opts.Results[0])
+
+			_, err := report.Build(opts)
+			if got := report.CodeOf(err); got != report.CodeInvalidCoverage {
+				t.Fatalf("Build = %v (code %q), want %s", err, got, report.CodeInvalidCoverage)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say what was wrong: %v", err)
+			}
+		})
+	}
+}
+
+// TestATestNarrowedRunThatProfiledNoTests is the boundary the negative-count
+// guard sits on: zero tests is a measurement, not an error — a run all of whose
+// binaries were dirty profiles no test on its own and still says so with
+// `tests: 0`, exactly as a zero binary count is stated rather than refused.
+func TestATestNarrowedRunThatProfiledNoTests(t *testing.T) {
+	t.Parallel()
+
+	opts := testCoverageOptions(t)
+	opts.CoverageTests = 0
+
+	r, err := report.Build(opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if r.Coverage.Tests == nil {
+		t.Fatal("a test-narrowed run states no test count")
+	}
+	if *r.Coverage.Tests != 0 {
+		t.Errorf("coverage.tests = %d, want 0", *r.Coverage.Tests)
+	}
+	if r.Coverage.Mode != report.CoverageTest {
+		t.Errorf("coverage.mode = %q, want %q", r.Coverage.Mode, report.CoverageTest)
+	}
+}
+
+// TestBuildRefusesANegativeTestCount is [TestBuildRefusesACoverageBinaryCountThatIsNotOne]
+// for the count a test-narrowed run adds.
+func TestBuildRefusesANegativeTestCount(t *testing.T) {
+	t.Parallel()
+
+	opts := testCoverageOptions(t)
+	opts.CoverageTests = -1
+
+	_, err := report.Build(opts)
+	if got := report.CodeOf(err); got != report.CodeInvalidCoverage {
+		t.Fatalf("Build = %v (code %q), want %s", err, got, report.CodeInvalidCoverage)
+	}
+	if !strings.Contains(err.Error(), "the coverage pass reports -1 tests") {
+		t.Errorf("the refusal does not say what it was told: %v", err)
+	}
+}
+
 // TestTheToolchainBlockIsWrittenOnlyWhenSomethingIsKnown covers all four
 // answers a caller can give about the `go` that ran the tests.
 //

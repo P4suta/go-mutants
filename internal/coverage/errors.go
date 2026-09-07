@@ -64,6 +64,20 @@ const (
 	// slowly. Failing a run because an optimisation was unavailable would trade
 	// a correct slow answer for no answer at all.
 	CodeUnavailable Code = "GOM7602"
+
+	// CodeOrderDependentTests reports tests that fail when run on their own
+	// and are therefore left out of test-level narrowing: a test that needs
+	// what the rest of its suite does first cannot be the sole witness of a
+	// mutant. It is a warning; the mutants only such tests reach are measured
+	// against the whole binary instead, which is slower and never wrong, and
+	// the tests are named so that the dependence can be fixed.
+	CodeOrderDependentTests Code = "GOM7603"
+
+	// CodeUnreliableTestSet reports a set of tests that fails when run
+	// together without any mutant active, so a failure under a mutant could
+	// not be read as the mutant's doing. It is a warning; every mutant that
+	// set would have measured is measured against the whole binary instead.
+	CodeUnreliableTestSet Code = "GOM7604"
 )
 
 // String returns the code as it is printed.
@@ -75,6 +89,8 @@ var codes = []Code{
 	CodeMalformedProfile,
 	CodeCustomTestCommand,
 	CodeUnavailable,
+	CodeOrderDependentTests,
+	CodeUnreliableTestSet,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

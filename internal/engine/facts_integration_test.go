@@ -428,8 +428,8 @@ func TestReportToolchainAndSnapshotFactsMatchTheRun(t *testing.T) {
 		t.Errorf("coverage = %+v, want no fallback on a run whose instrumented binaries compiled",
 			outcome.Report.Coverage)
 	}
-	if outcome.Report.Coverage.Mode != report.CoveragePackage {
-		t.Errorf("coverage.mode = %q, want %q", outcome.Report.Coverage.Mode, report.CoveragePackage)
+	if outcome.Report.Coverage.Mode != report.CoverageTest {
+		t.Errorf("coverage.mode = %q, want %q", outcome.Report.Coverage.Mode, report.CoverageTest)
 	}
 
 	// The engine is the only caller of report.Build outside its own tests, so

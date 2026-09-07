@@ -1,0 +1,214 @@
+{
+  "document_type": "go-mutants/run-report",
+  "schema_version": 1,
+  "tool_version": "0.0.0-test",
+  "run_id": "20260218T101500Z-7e2a",
+  "status": "completed",
+  "started_at": "2026-02-18T09:45:00Z",
+  "finished_at": "2026-02-18T09:45:42Z",
+  "duration_ms": 42000,
+  "workspace": {
+    "module_path": "example.com/m",
+    "go_version": "1.26",
+    "workspace_digest": "abababababababababababababababababababababababababababababababab",
+    "platform": {
+      "os": "linux",
+      "arch": "amd64"
+    }
+  },
+  "selection": {
+    "mode": "all",
+    "changed_ref": null,
+    "profile": "balanced",
+    "operators": [],
+    "include": [
+      "**/*.go"
+    ],
+    "exclude": [],
+    "candidates": 3,
+    "rejected": 0,
+    "selected": 3
+  },
+  "shard": null,
+  "test": {
+    "command": [
+      "go",
+      "test",
+      "./..."
+    ],
+    "baseline": {
+      "runs": 1,
+      "durations_ms": [
+        900
+      ],
+      "slowest_ms": 900
+    },
+    "timeout_ms": 10000,
+    "timeout_source": "derived",
+    "memory_bytes": 1073741824,
+    "memory_source": "derived"
+  },
+  "coverage": {
+    "mode": "test",
+    "binaries": 2,
+    "tests": 3,
+    "mutants_uncovered": 1
+  },
+  "cache": {
+    "mode": "off",
+    "hits": 0,
+    "misses": 0,
+    "writes": 0
+  },
+  "summary": {
+    "total": 3,
+    "killed": 1,
+    "survived": 2,
+    "timed_out": 0,
+    "inconclusive": 0,
+    "errored": 0,
+    "not_run": 0,
+    "score_percent": 33.33333333333333,
+    "policy": {
+      "strict": false,
+      "minimum_score": 0,
+      "require_mutants": true,
+      "failure": null
+    }
+  },
+  "mutants": [
+    {
+      "id": "07a06044cec76566f9a509fc1e9693ef183d2c4fad881de4a32f56945a1c2258",
+      "display_id": "07a06044cec76566f9a5",
+      "path": "internal/core/core.go",
+      "package": "example.com/m/internal/core",
+      "family": "comparison",
+      "rule": "lt-to-le",
+      "rule_version": 1,
+      "line": 9,
+      "column": 5,
+      "start_byte": 64,
+      "end_byte": 65,
+      "original": "<",
+      "replacement": "<=",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 140,
+      "killed_by": "example.com/m/internal/core",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 0,
+          "outcome": "killed",
+          "killed_by": "example.com/m/internal/core",
+          "duration_ms": 140,
+          "binaries": [
+            "example.com/m/internal/core"
+          ],
+          "tests": [
+            {
+              "package": "example.com/m/internal/core",
+              "name": "TestClamp"
+            }
+          ]
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)",
+      "covering_test_packages": [
+        "example.com/m/internal/core",
+        "example.com/m/internal/edge"
+      ],
+      "covering_tests": [
+        {
+          "package": "example.com/m/internal/core",
+          "name": "TestClamp"
+        },
+        {
+          "package": "example.com/m/internal/edge",
+          "name": "TestEdges"
+        }
+      ],
+      "uncovered": false,
+      "cached": false
+    },
+    {
+      "id": "6bd678d5e97100f280463dc80789ceff1b339c6000c57ba763a55b5c2e06451c",
+      "display_id": "6bd678d5e97100f28046",
+      "path": "internal/core/core.go",
+      "package": "example.com/m/internal/core",
+      "family": "comparison",
+      "rule": "neq-to-eq",
+      "rule_version": 1,
+      "line": 15,
+      "column": 9,
+      "start_byte": 120,
+      "end_byte": 122,
+      "original": "!=",
+      "replacement": "==",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 90,
+      "killed_by": null,
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 0,
+          "outcome": "survived",
+          "duration_ms": 90,
+          "binaries": [
+            "example.com/m/internal/edge"
+          ],
+          "tests": [
+            {
+              "package": "example.com/m/internal/edge",
+              "name": "TestEdges"
+            }
+          ]
+        }
+      ],
+      "output_tail": null,
+      "covering_test_packages": [
+        "example.com/m/internal/edge"
+      ],
+      "covering_tests": [
+        {
+          "package": "example.com/m/internal/edge",
+          "name": "TestEdges"
+        }
+      ],
+      "uncovered": false,
+      "cached": false
+    },
+    {
+      "id": "fbef4a53edb4d19d4961263cc4023cc21e3963a5ea61dace233e628f372d0847",
+      "display_id": "fbef4a53edb4d19d4961",
+      "path": "internal/edge/edge.go",
+      "package": "example.com/m/internal/edge",
+      "family": "boolean-literal",
+      "rule": "true-to-false",
+      "rule_version": 1,
+      "line": 7,
+      "column": 9,
+      "start_byte": 30,
+      "end_byte": 34,
+      "original": "true",
+      "replacement": "false",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "executions": [],
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": true,
+      "cached": false
+    }
+  ],
+  "rejected": [],
+  "skips": [],
+  "expectations": [],
+  "warnings": []
+}

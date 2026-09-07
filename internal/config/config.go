@@ -90,6 +90,38 @@ func (m CacheMode) Valid() bool {
 // String returns the mode as it is written in TOML.
 func (m CacheMode) String() string { return string(m) }
 
+// A Narrowing says how far coverage narrows what each mutant is measured
+// against.
+//
+// It is a choice about cost, not about meaning: whichever is chosen, a run
+// reaches the same verdicts. Narrowing to tests is the default because it is
+// the cheaper one on every project where a package's tests are one binary —
+// which is every project — and the controls that keep it sound are the
+// engine's, not the user's.
+type Narrowing string
+
+// The narrowings.
+const (
+	// NarrowingTest measures each mutant against only the tests whose own
+	// coverage reaches its lines, each test binary started with those tests
+	// selected. It is the default.
+	NarrowingTest Narrowing = "test"
+	// NarrowingPackage measures each mutant against every test binary whose
+	// coverage reaches its lines, each binary run whole.
+	NarrowingPackage Narrowing = "package"
+)
+
+// Narrowings returns the narrowings in the order they are documented.
+func Narrowings() []Narrowing { return []Narrowing{NarrowingTest, NarrowingPackage} }
+
+// Valid reports whether n is one of the defined narrowings.
+func (n Narrowing) Valid() bool {
+	return n == NarrowingTest || n == NarrowingPackage
+}
+
+// String returns the narrowing as it is written in TOML.
+func (n Narrowing) String() string { return string(n) }
+
 // A ReportFormat is one project report artefact.
 type ReportFormat string
 
@@ -186,6 +218,10 @@ type Test struct {
 	// any mutant runs. Every observation is kept in the report, not just the
 	// slowest.
 	BaselineRuns int
+	// Narrowing says whether coverage narrows each mutant to the tests that
+	// reach it or to the test binaries that do. It has no flag: it is a
+	// choice about how a project's suite behaves, not about one run.
+	Narrowing Narrowing
 }
 
 // Execution is the `[execution]` section.
@@ -297,6 +333,7 @@ func Defaults() Config {
 			// actually need, and no fixed number is right for every project.
 			Memory:       0,
 			BaselineRuns: DefaultBaselineRuns,
+			Narrowing:    NarrowingTest,
 		},
 		Execution: Execution{Jobs: DefaultJobs()},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},

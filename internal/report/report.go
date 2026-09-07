@@ -172,13 +172,34 @@ const (
 	// statement on the mutant's lines. Mutants no binary covers were not
 	// executed at all and carry `uncovered`.
 	CoveragePackage CoverageMode = "package"
+	// CoverageTest means the run profiled every test of every test binary on
+	// its own and executed every mutant only against the tests whose profile
+	// shows a covered statement on the mutant's lines, each binary started
+	// with those tests selected. Mutants no test covers were not executed at
+	// all and carry `uncovered`, exactly as in [CoveragePackage].
+	CoverageTest CoverageMode = "test"
 )
 
 // CoverageModes returns every mode in document order.
-func CoverageModes() []CoverageMode { return []CoverageMode{CoverageOff, CoveragePackage} }
+func CoverageModes() []CoverageMode {
+	return []CoverageMode{CoverageOff, CoveragePackage, CoverageTest}
+}
 
 // Valid reports whether m is one of the defined modes.
 func (m CoverageMode) Valid() bool { return slices.Contains(CoverageModes(), m) }
+
+// Narrowed reports whether coverage decided what each mutant was measured
+// against — which is what licenses a mutant to be `uncovered`, and what makes
+// `binaries` a number the run measured rather than one it never took.
+func (m CoverageMode) Narrowed() bool { return m == CoveragePackage || m == CoverageTest }
+
+// A TestRef names one test of one test binary: the import path of the package
+// the binary was built from, and the top-level test name as `-test.list`
+// prints it. It is the unit a test-narrowed run measures with.
+type TestRef struct {
+	Package string `json:"package"`
+	Name    string `json:"name"`
+}
 
 // String returns the mode as it appears in the document.
 func (m CoverageMode) String() string { return string(m) }
@@ -563,6 +584,11 @@ type Execution struct {
 	// the second of three binaries was measured against two, and naming all
 	// three would describe a measurement nobody made.
 	Binaries []string `json:"binaries"`
+	// Tests are the tests this pass was narrowed to, sorted by package and
+	// then by name — the binary in Binaries was started with exactly these
+	// selected. Absent when every binary ran whole, which is every pass of a
+	// run that is not in [CoverageTest] mode.
+	Tests []TestRef `json:"tests,omitzero"`
 	// MemoryExceeded reports that this pass was stopped by the run's per-mutant
 	// memory bound rather than by a test failing or by the deadline.
 	//
@@ -739,6 +765,9 @@ type Coverage struct {
 	BuildFallback bool `json:"build_fallback,omitzero"`
 	// Binaries is how many test binaries the coverage pass profiled.
 	Binaries *int `json:"binaries,omitempty"`
+	// Tests is how many tests the coverage pass profiled on their own, summed
+	// over the binaries. Present exactly in [CoverageTest] mode.
+	Tests *int `json:"tests,omitempty"`
 	// MutantsUncovered is how many mutants no binary covered, and so were
 	// reported as survivors without being executed. It is counted from
 	// `mutants[]` by [Build] rather than passed in, so the summary line and the
@@ -860,6 +889,11 @@ type Mutant struct {
 	// means two different things depending on `coverage.mode`; see the type
 	// documentation.
 	CoveringTestPackages []string `json:"covering_test_packages"`
+	// CoveringTests are the tests whose own coverage profile reaches this
+	// mutant's lines, sorted by package and then by name. It is written only
+	// by a [CoverageTest] run and only when there are any: an uncovered
+	// mutant has none to name, and every other mode never asked.
+	CoveringTests []TestRef `json:"covering_tests,omitzero"`
 	// Uncovered says the run established that no test binary reaches this
 	// mutant's lines and therefore did not execute it. Such a mutant is a
 	// survivor — no test could have caught it — with zero attempts.

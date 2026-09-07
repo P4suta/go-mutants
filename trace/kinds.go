@@ -291,6 +291,13 @@ const (
 	NoteCoverageUnavailable = "coverage-unavailable"
 	// NotePrepareFailed is the preparation stage a session died in.
 	NotePrepareFailed = "prepare-failed"
+	// NoteOrderDependentTests names the tests that failed when run on their
+	// own and were left out of test-level narrowing.
+	NoteOrderDependentTests = "order-dependent-tests"
+	// NoteUnreliableTestSet names a set of tests that failed together
+	// without a mutant, and so measured nothing: the mutants it would have
+	// measured ran against the whole binary instead.
+	NoteUnreliableTestSet = "unreliable-test-set"
 	// NoteControl summarises one Session.Control: the original program run
 	// through the prepared binaries. It is the one note that is not a failure,
 	// and it is a note because this contract's `type` enum is closed and holds

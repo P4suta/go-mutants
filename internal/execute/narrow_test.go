@@ -36,7 +36,15 @@ func testRunOf(c call) string {
 func TestRunOneSelectsOnlyTheNamedTestsOfEachBinary(t *testing.T) {
 	t.Parallel()
 
-	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+	// The second selected binary kills, so this is a kill rather than a
+	// survivor and no whole-binary confirmation follows (see RunOne): the
+	// argv this pins is the narrowed pass's own.
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		if c.program() == "example.com/c.test" {
+			return failed("--- FAIL: TestSomething\n")
+		}
+		return passed()
+	}}
 	opts := options(f, 1)
 	bins := testBins("example.com/a", "example.com/b", "example.com/c")
 	selected := map[string][]string{"example.com/a": {"TestOne", "Test.Two"}}
@@ -48,8 +56,8 @@ func TestRunOneSelectsOnlyTheNamedTestsOfEachBinary(t *testing.T) {
 		Tests:    selected,
 		Args:     []string{"-test.count=1"},
 	}, bins)
-	if attempt.Outcome != mutation.OutcomeSurvived {
-		t.Fatalf("outcome = %s, want %s (%v)", attempt.Outcome, mutation.OutcomeSurvived, attempt.Err)
+	if attempt.Outcome != mutation.OutcomeKilled {
+		t.Fatalf("outcome = %s, want %s (%v)", attempt.Outcome, mutation.OutcomeKilled, attempt.Err)
 	}
 	seen := f.seen()
 	if len(seen) != 2 {
@@ -206,7 +214,18 @@ func TestRunControlSelectsTheNamedTests(t *testing.T) {
 func TestScheduleRecordsTheTestsOfEveryAttempt(t *testing.T) {
 	t.Parallel()
 
-	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+	// The narrowed mutant is killed by its first binary, so its attempt keeps
+	// the selection it ran; a survivor would be confirmed against the whole
+	// binary and record no tests.
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		// Binary a passes so the run reaches b; b kills, so the mutant is
+		// killed rather than survived and no whole-binary confirmation
+		// follows -- its attempt keeps both binaries' selections.
+		if activeOf(c) == "narrowed" && c.program() == "example.com/b.test" {
+			return failed("--- FAIL: TestB\n")
+		}
+		return passed()
+	}}
 	opts, sink := traced(t, f, options(f, 1))
 	queue := mutants(mutantTimeout, "narrowed", "whole")
 	queue[0].Tests = map[string][]string{
@@ -227,5 +246,93 @@ func TestScheduleRecordsTheTestsOfEveryAttempt(t *testing.T) {
 	}
 	if !maps.EqualFunc(recorded, want, slices.Equal) {
 		t.Errorf("the attempts recorded tests %v, want %v", recorded, want)
+	}
+}
+
+// TestRunOneConfirmsANarrowedSurvivorAgainstTheWholeBinary is the soundness
+// step ADR 0010 turns on: a mutant whose covering test passes can still be
+// killed by a test that does not cover its line but observes, through shared
+// state, that the covering test behaved differently under the mutant. RunOne
+// re-runs a narrowed survivor against the whole binary, so that kill is not
+// lost — and the attempt it returns is the whole-binary one, naming no tests.
+func TestRunOneConfirmsANarrowedSurvivorAgainstTheWholeBinary(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(_ context.Context, c call) runner.Result {
+		// The narrowed run selects one test and passes; the whole-binary run,
+		// which selects none, fails — the shared-state kill the narrowing could
+		// not see.
+		if testRunOf(c) != "" {
+			return passed()
+		}
+		return failed("--- FAIL: TestUnrelated\n")
+	}}
+	attempt := execute.RunOne(t.Context(), options(f, 1), execute.MutantRun{
+		ID:      "abc123",
+		Timeout: mutantTimeout,
+		Tests:   map[string][]string{"example.com/a": {"TestCovering"}},
+	}, testBins("example.com/a"))
+
+	if attempt.Outcome != mutation.OutcomeKilled {
+		t.Fatalf("outcome = %s, want %s: the whole binary catches it (%v)", attempt.Outcome, mutation.OutcomeKilled, attempt.Err)
+	}
+	if attempt.Tests != nil {
+		t.Errorf("the confirmed attempt names tests %v, want none: it ran the whole binary", attempt.Tests)
+	}
+	seen := f.seen()
+	if len(seen) != 2 {
+		t.Fatalf("started %d processes, want the narrowed run and the whole-binary confirmation", len(seen))
+	}
+	if testRunOf(seen[0]) == "" || testRunOf(seen[1]) != "" {
+		t.Errorf("want a narrowed run then a whole-binary run, got selectors %q then %q",
+			testRunOf(seen[0]), testRunOf(seen[1]))
+	}
+}
+
+// TestRunOneDoesNotConfirmAKilledNarrowedRun: only survival needs the whole
+// binary. A narrowed run that kills has already run the test that decided it,
+// so RunOne returns it without a second pass — and keeps its test selection.
+func TestRunOneDoesNotConfirmAKilledNarrowedRun(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(context.Context, call) runner.Result { return failed("--- FAIL: TestCovering\n") }}
+	sel := map[string][]string{"example.com/a": {"TestCovering"}}
+	attempt := execute.RunOne(t.Context(), options(f, 1), execute.MutantRun{
+		ID:      "abc123",
+		Timeout: mutantTimeout,
+		Tests:   sel,
+	}, testBins("example.com/a"))
+
+	if attempt.Outcome != mutation.OutcomeKilled {
+		t.Fatalf("outcome = %s, want killed", attempt.Outcome)
+	}
+	if len(f.seen()) != 1 {
+		t.Errorf("started %d processes, want just the narrowed run that killed it", len(f.seen()))
+	}
+	if !maps.EqualFunc(attempt.Tests, sel, slices.Equal) {
+		t.Errorf("the kill's attempt.Tests = %v, want the narrowed selection %v", attempt.Tests, sel)
+	}
+}
+
+// TestRunOneConfirmsAWholeBinarySurvivor: a narrowed survivor the whole binary
+// also survives stays a survivor, reported as the whole-binary attempt.
+func TestRunOneConfirmsAWholeBinarySurvivor(t *testing.T) {
+	t.Parallel()
+
+	f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+	attempt := execute.RunOne(t.Context(), options(f, 1), execute.MutantRun{
+		ID:      "abc123",
+		Timeout: mutantTimeout,
+		Tests:   map[string][]string{"example.com/a": {"TestCovering"}},
+	}, testBins("example.com/a"))
+
+	if attempt.Outcome != mutation.OutcomeSurvived {
+		t.Fatalf("outcome = %s, want survived", attempt.Outcome)
+	}
+	if attempt.Tests != nil {
+		t.Errorf("the confirmed survivor names tests %v, want none: the reported run is the whole binary", attempt.Tests)
+	}
+	if len(f.seen()) != 2 {
+		t.Errorf("started %d processes, want the narrowed run and the whole-binary confirmation", len(f.seen()))
 	}
 }

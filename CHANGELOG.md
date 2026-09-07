@@ -14,6 +14,36 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A run narrows each mutant to the tests that cover it, not just to the test
+  binaries.** This is the payoff of the three changes before it, wired into the
+  engine and made the default. `test.narrowing = "test"` profiles every test on
+  its own, maps each mutant to the tests whose coverage reaches its lines, and
+  runs the mutant against only those tests — the binary started with them
+  selected — instead of against every binary that reaches it. On a package whose
+  tests are one binary, which is every package, the binary-level mapping never
+  narrowed anything; this does, by ten to fifty times on a suite with many
+  tests, which is what finally makes a package like `internal/discover` fit in
+  the dogfood gate.
+  It reaches the same verdicts a binary-level run does, and
+  [ADR 0010](docs/adr/0010-narrowing-to-tests-is-sound.md) is the argument: a
+  survivor of its covering tests is re-run against the whole binary before the
+  verdict stands, so a kill that only happens through shared state a covering
+  test left under the mutant is not lost; a kill is checked against a control of
+  the same tests with no mutant, and a set that fails together without one is
+  named in a `GOM7604` warning and its mutants widened to the whole binary; a
+  test that fails when run alone is order-dependent, named in a `GOM7603`
+  warning, and its binary run whole so nothing it covers is lost; and because
+  the outcome does not depend on the mode, the outcome cache does not key on
+  it. `test.narrowing = "package"` selects the
+  coarser binary-level mapping, and a custom `test.command` still turns coverage
+  off entirely — neither excludes any mutant from measurement.
+  The run report says which mode ran (`coverage.mode` may now be `test`), how
+  many tests it profiled (`coverage.tests`), which tests reach each mutant
+  (`mutants[].covering_tests`), and which tests each pass was narrowed to
+  (`mutants[].executions[].tests`); the trace records the same on its
+  `coverage-map` and `mutant-exec` events, and the console and `-v` output name
+  the tests a survivor was measured against. `covering_test_packages` is
+  unchanged in every mode.
 - **A mutant can be measured against named tests of a binary, not only
   against the binary.** `internal/execute` takes, on a mutant run and on a
   control, a selection of top-level tests per binary and starts that binary

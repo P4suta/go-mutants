@@ -7,6 +7,7 @@ package execute_test
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/execute"
@@ -16,13 +17,16 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestAMutantIsDecidedByTheTestsItIsNarrowedTo is narrowing against a real
-// binary: the same mutant, the same binary, and two selections — the test
-// that reaches the mutated line kills it, and the test that does not lets it
-// live. Together they say the selection reached the process: a `-test.run`
-// the binary ignored would kill in both cases, and one that selected nothing
-// would let it live in both.
-func TestAMutantIsDecidedByTheTestsItIsNarrowedTo(t *testing.T) {
+// TestANarrowedMutantIsKilledDirectlyOrByConfirmation is narrowing against a
+// real binary: the same mutant, the same binary, and two selections. Narrowed
+// to the test that reaches the mutated line, it is killed by that test alone
+// and the attempt names it. Narrowed to a test that does *not* reach the line,
+// the narrowed run survives — but RunOne confirms a narrowed survivor against
+// the whole binary, where the covering test kills it, so it is killed all the
+// same and the attempt names no test because it ran the whole binary. The
+// second half is the soundness [RunOne]'s confirmation exists for: narrowing
+// to the wrong tests cannot turn a kill into a survivor.
+func TestANarrowedMutantIsKilledDirectlyOrByConfirmation(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
@@ -64,10 +68,12 @@ func TestAMutantIsDecidedByTheTestsItIsNarrowedTo(t *testing.T) {
 	tests := []struct {
 		name string
 		test string
-		want mutation.Outcome
+		// wantTests is what the returned attempt names: the covering test when
+		// it killed directly, and none when the whole-binary confirmation did.
+		wantTests []string
 	}{
-		{name: "the test that reaches the line", test: "TestPositive", want: mutation.OutcomeKilled},
-		{name: "a test that does not", test: "TestNegative", want: mutation.OutcomeSurvived},
+		{name: "the covering test kills it directly", test: "TestPositive", wantTests: []string{"TestPositive"}},
+		{name: "a non-covering test still kills it, through confirmation", test: "TestNegative", wantTests: nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -76,12 +82,12 @@ func TestAMutantIsDecidedByTheTestsItIsNarrowedTo(t *testing.T) {
 				Timeout: runTimeout,
 				Tests:   map[string][]string{perTestModule: {test.test}},
 			}, bins)
-			if attempt.Outcome != test.want {
-				t.Fatalf("narrowed to %s: outcome = %s, want %s (%v)\n%s",
-					test.test, attempt.Outcome, test.want, attempt.Err, attempt.OutputTail)
+			if attempt.Outcome != mutation.OutcomeKilled {
+				t.Fatalf("narrowed to %s: outcome = %s, want killed (%v)\n%s",
+					test.test, attempt.Outcome, attempt.Err, attempt.OutputTail)
 			}
-			if got := attempt.Tests[perTestModule]; len(got) != 1 || got[0] != test.test {
-				t.Errorf("the attempt reports tests %v, want [%s]", attempt.Tests, test.test)
+			if got := attempt.Tests[perTestModule]; !slices.Equal(got, test.wantTests) {
+				t.Errorf("narrowed to %s: attempt names tests %v, want %v", test.test, got, test.wantTests)
 			}
 		})
 	}

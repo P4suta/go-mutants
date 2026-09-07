@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -137,10 +138,20 @@ const (
 	// The mutants no binary reaches were not executed at all; they are
 	// survivors with [MutantResult.Uncovered] set.
 	CoveragePackage CoverageMode = "package"
+	// CoverageTest means every test of every test binary was profiled on its
+	// own and every mutant was measured only against the tests whose profile
+	// reaches its lines, each binary started with those tests selected. The
+	// mutants no test reaches were not executed at all, exactly as in
+	// [CoveragePackage].
+	CoverageTest CoverageMode = "test"
 )
 
 // String returns the mode as it is printed.
 func (m CoverageMode) String() string { return string(m) }
+
+// Narrowed reports whether coverage decided what each mutant was measured
+// against — package or test — as opposed to off, where nothing was narrowed.
+func (m CoverageMode) Narrowed() bool { return m == CoveragePackage || m == CoverageTest }
 
 // A CacheMode says whether the run reused outcomes it had proven before.
 //
@@ -379,11 +390,19 @@ type SelectionNarrowed struct {
 type CoverageMapped struct {
 	// Binaries is how many test binaries were profiled.
 	Binaries int
+	// Tests is how many tests were profiled on their own, summed over the
+	// binaries, in a run narrowed to tests; zero in a run narrowed to
+	// binaries, which profiled none on its own.
+	Tests int
 	// Covered and Uncovered partition the selected mutants: Covered are the
 	// ones at least one binary reaches, and Uncovered the ones none does, which
 	// are reported as survivors without being executed.
 	Covered   int
 	Uncovered int
+	// Widened is how many covered mutants a run narrowed to tests will
+	// measure against a whole binary after all, because the tests that reach
+	// them fail without a mutant — on their own, or together.
+	Widened int
 }
 
 // A MutantResult is one mutant's settled outcome, with everything a renderer
@@ -463,6 +482,12 @@ type MutantResult struct {
 	// apart. For a survivor that *was* covered it is the actionable half of the
 	// finding: these are the suites that ran the line and did not notice.
 	CoveringTestPackages []string
+	// CoveringTests are the tests whose own coverage profile reaches this
+	// mutant's lines, sorted by package and then name, exactly as the report's
+	// `covering_tests` carries them. It is empty unless the run was narrowed
+	// to tests, and is empty for an uncovered mutant for the reason
+	// CoveringTestPackages is.
+	CoveringTests []report.TestRef
 	// PeakMemory is the highest memory any binary this mutant was
 	// measured against was observed to hold, MemoryExceeded says the run's
 	// memory bound is what stopped it, and MemoryLimit is the bound it was
@@ -490,6 +515,7 @@ type MutantResult struct {
 // out of the coverage mapping.
 func (m MutantResult) clone() MutantResult {
 	m.CoveringTestPackages = slices.Clone(m.CoveringTestPackages)
+	m.CoveringTests = slices.Clone(m.CoveringTests)
 	return m
 }
 

@@ -39,6 +39,7 @@ command = ["go", "test", "./..."]
 timeout = "60s"
 memory = "2GiB"
 baseline_runs = 3
+narrowing = "test"
 
 [execution]
 jobs = 8
@@ -166,6 +167,16 @@ low = 60
   first.
 - `baseline_runs`: positive integer, default 3. Every observation is retained
   in the report, not just the slowest.
+- `narrowing`: `"test"` (default) or `"package"`. How far coverage narrows what
+  each mutant is measured against. `"test"` profiles every test of every test
+  binary on its own and runs each mutant against only the tests whose coverage
+  reaches its lines, with the binary started with those tests selected;
+  `"package"` profiles each binary once and runs each mutant against every
+  binary whose coverage reaches it, whole. Both reach the same verdicts; the
+  difference is cost, and `"test"` is the cheaper wherever a package's tests
+  are one binary. There is no flag: it is a choice about how a project's suite
+  behaves rather than about one run. Neither turns coverage off — a custom
+  `test.command` is what does that.
 
 ### `[execution]`
 

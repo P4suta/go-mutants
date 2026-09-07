@@ -7,8 +7,9 @@
   },
   "coverage": {
     "binaries": 1,
-    "mode": "package",
-    "mutants_uncovered": 0
+    "mode": "test",
+    "mutants_uncovered": 0,
+    "tests": 3
   },
   "document_type": "go-mutants/run-report",
   "duration_ms": 0,
@@ -21,6 +22,12 @@
       "column": 5,
       "covering_test_packages": [
         "fixture.example/simple"
+      ],
+      "covering_tests": [
+        {
+          "name": "TestClamp",
+          "package": "fixture.example/simple"
+        }
       ],
       "display_id": "147a44c5e0e150ff21a5",
       "duration_ms": 0,
@@ -35,6 +42,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestClamp",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -45,7 +58,7 @@
       "not_run_reason": null,
       "original": "v \u003c lo",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below (0.00s)\n        simple_test.go:22: Clamp(-5, 0, 10) = -5, want 0\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 0, want 4\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        simple_test.go:22: Clamp(10, 0, 10) = 0, want 10\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 0, want 10\nFAIL\ncoverage: 65.4% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below (0.00s)\n        simple_test.go:22: Clamp(-5, 0, 10) = -5, want 0\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 0, want 4\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        simple_test.go:22: Clamp(10, 0, 10) = 0, want 10\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 0, want 10\nFAIL\ncoverage: 42.3% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -61,6 +74,12 @@
       "column": 7,
       "covering_test_packages": [
         "fixture.example/simple"
+      ],
+      "covering_tests": [
+        {
+          "name": "TestClamp",
+          "package": "fixture.example/simple"
+        }
       ],
       "display_id": "1d7b62556971a042ac28",
       "duration_ms": 0,
@@ -101,6 +120,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestClamp",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "b16fface8fba67c0b4a9",
       "duration_ms": 0,
       "end_byte": 896,
@@ -140,6 +165,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestClamp",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "1a0a1828db3b15b0c7b1",
       "duration_ms": 0,
       "end_byte": 910,
@@ -153,6 +184,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestClamp",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -163,7 +200,7 @@
       "not_run_reason": null,
       "original": "v \u003e hi",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        simple_test.go:22: Clamp(0, 0, 10) = 10, want 0\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 10, want 4\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 40, want 10\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        simple_test.go:22: Clamp(0, 0, 10) = 10, want 0\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 10, want 4\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 40, want 10\nFAIL\ncoverage: 50.0% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -179,6 +216,12 @@
       "column": 7,
       "covering_test_packages": [
         "fixture.example/simple"
+      ],
+      "covering_tests": [
+        {
+          "name": "TestClamp",
+          "package": "fixture.example/simple"
+        }
       ],
       "display_id": "86f2480a7d71b55001d9",
       "duration_ms": 0,
@@ -219,6 +262,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestClamp",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "874f73ca0a9b3633fc05",
       "duration_ms": 0,
       "end_byte": 924,
@@ -232,6 +281,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestClamp",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -242,7 +297,7 @@
       "not_run_reason": null,
       "original": "hi",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 0, want 10\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 0, want 10\nFAIL\ncoverage: 50.0% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -259,6 +314,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestClamp",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "8d21720077611640ea0d",
       "duration_ms": 0,
       "end_byte": 937,
@@ -272,6 +333,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestClamp",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -282,7 +349,7 @@
       "not_run_reason": null,
       "original": "v",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 0, want 4\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        simple_test.go:22: Clamp(10, 0, 10) = 0, want 10\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 0, want 4\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        simple_test.go:22: Clamp(10, 0, 10) = 0, want 10\nFAIL\ncoverage: 50.0% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -299,6 +366,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestSum",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "1a3a199f10375a6776fd",
       "duration_ms": 0,
       "end_byte": 1063,
@@ -312,6 +385,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestSum",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -322,7 +401,7 @@
       "not_run_reason": null,
       "original": "total",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestSum (0.00s)\n    --- FAIL: TestSum/one (0.00s)\n        simple_test.go:42: Sum([7]) = 0, want 7\n    --- FAIL: TestSum/several (0.00s)\n        simple_test.go:42: Sum([1 2 3 4]) = 0, want 10\n    --- FAIL: TestSum/negatives (0.00s)\n        simple_test.go:42: Sum([5 -2 -1]) = 0, want 2\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestSum (0.00s)\n    --- FAIL: TestSum/one (0.00s)\n        simple_test.go:42: Sum([7]) = 0, want 7\n    --- FAIL: TestSum/several (0.00s)\n        simple_test.go:42: Sum([1 2 3 4]) = 0, want 10\n    --- FAIL: TestSum/negatives (0.00s)\n        simple_test.go:42: Sum([5 -2 -1]) = 0, want 2\nFAIL\ncoverage: 38.5% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -339,6 +418,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestInRange",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "5f1df3464dd768dd9917",
       "duration_ms": 0,
       "end_byte": 1325,
@@ -352,6 +437,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestInRange",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -362,7 +453,7 @@
       "not_run_reason": null,
       "original": "v \u003e= lo \u0026\u0026 v \u003c= hi",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/below (0.00s)\n        simple_test.go:63: InRange(-1, 0, 10) = true, want false\n    --- FAIL: TestInRange/above (0.00s)\n        simple_test.go:63: InRange(11, 0, 10) = true, want false\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/below (0.00s)\n        simple_test.go:63: InRange(-1, 0, 10) = true, want false\n    --- FAIL: TestInRange/above (0.00s)\n        simple_test.go:63: InRange(11, 0, 10) = true, want false\nFAIL\ncoverage: 23.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -379,6 +470,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestInRange",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "7698c36ebc5b747fbbe8",
       "duration_ms": 0,
       "end_byte": 1325,
@@ -392,6 +489,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestInRange",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -402,7 +505,7 @@
       "not_run_reason": null,
       "original": "v \u003e= lo \u0026\u0026 v \u003c= hi",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_low_bound (0.00s)\n        simple_test.go:63: InRange(0, 0, 10) = false, want true\n    --- FAIL: TestInRange/inside (0.00s)\n        simple_test.go:63: InRange(5, 0, 10) = false, want true\n    --- FAIL: TestInRange/at_the_high_bound (0.00s)\n        simple_test.go:63: InRange(10, 0, 10) = false, want true\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_low_bound (0.00s)\n        simple_test.go:63: InRange(0, 0, 10) = false, want true\n    --- FAIL: TestInRange/inside (0.00s)\n        simple_test.go:63: InRange(5, 0, 10) = false, want true\n    --- FAIL: TestInRange/at_the_high_bound (0.00s)\n        simple_test.go:63: InRange(10, 0, 10) = false, want true\nFAIL\ncoverage: 23.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -419,6 +522,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestInRange",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "c819f380fbe6e7ff2632",
       "duration_ms": 0,
       "end_byte": 1311,
@@ -432,6 +541,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestInRange",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -442,7 +557,7 @@
       "not_run_reason": null,
       "original": "\u003e=",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_low_bound (0.00s)\n        simple_test.go:63: InRange(0, 0, 10) = false, want true\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_low_bound (0.00s)\n        simple_test.go:63: InRange(0, 0, 10) = false, want true\nFAIL\ncoverage: 23.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -459,6 +574,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestInRange",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "0a3f9b6908ee9ef9712d",
       "duration_ms": 0,
       "end_byte": 1317,
@@ -472,6 +593,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestInRange",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -482,7 +609,7 @@
       "not_run_reason": null,
       "original": "\u0026\u0026",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/below (0.00s)\n        simple_test.go:63: InRange(-1, 0, 10) = true, want false\n    --- FAIL: TestInRange/above (0.00s)\n        simple_test.go:63: InRange(11, 0, 10) = true, want false\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/below (0.00s)\n        simple_test.go:63: InRange(-1, 0, 10) = true, want false\n    --- FAIL: TestInRange/above (0.00s)\n        simple_test.go:63: InRange(11, 0, 10) = true, want false\nFAIL\ncoverage: 23.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,
@@ -499,6 +626,12 @@
       "covering_test_packages": [
         "fixture.example/simple"
       ],
+      "covering_tests": [
+        {
+          "name": "TestInRange",
+          "package": "fixture.example/simple"
+        }
+      ],
       "display_id": "c424500d028371e3768a",
       "duration_ms": 0,
       "end_byte": 1322,
@@ -512,6 +645,12 @@
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestInRange",
+              "package": "fixture.example/simple"
+            }
+          ],
           "worker": 0
         }
       ],
@@ -522,7 +661,7 @@
       "not_run_reason": null,
       "original": "\u003c=",
       "outcome": "killed",
-      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_high_bound (0.00s)\n        simple_test.go:63: InRange(10, 0, 10) = false, want true\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
+      "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_high_bound (0.00s)\n        simple_test.go:63: InRange(10, 0, 10) = false, want true\nFAIL\ncoverage: 23.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
       "peak_memory_bytes": 0,

@@ -1247,11 +1247,23 @@ func (e *explainer) coverage(r *report.Report, m *report.Mutant) {
 		e.printf("  %s\n", "coverage off: this run measured every mutant against every test binary")
 	case m.Uncovered:
 		e.printf("  no test binary reaches line %d of %s\n", m.Line, m.Path)
+	case len(m.CoveringTests) > 0:
+		e.printf("  covered by: %s\n", strings.Join(testRefStrings(m.CoveringTests), ", "))
 	case len(m.CoveringTestPackages) > 0:
 		e.printf("  covered by: %s\n", strings.Join(m.CoveringTestPackages, ", "))
 	default:
 		e.printf("  %s\n", "this run recorded no covering test package for it")
 	}
+}
+
+// testRefStrings renders test references as `<package> <name>`, the form the
+// covering line names a narrowed run's tests by.
+func testRefStrings(refs []report.TestRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, ref.Package+" "+ref.Name)
+	}
+	return out
 }
 
 // executions is every pass this run made over the test binaries, and — when

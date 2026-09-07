@@ -258,6 +258,7 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 		Attempts:             entry.Attempts,
 		OutputTail:           entry.OutputTail,
 		CoveringTestPackages: st.coverage.covering[id],
+		CoveringTests:        st.coverage.coveringTests[id],
 		Cached:               true,
 		// The two facts an adopted outcome would otherwise lose. A cached
 		// mutant carries no execution rows — this run started no process for it
@@ -279,6 +280,7 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 	shown.KilledBy = entry.KilledBy
 	shown.Attempts = entry.Attempts
 	shown.CoveringTestPackages = st.coverage.covering[id]
+	shown.CoveringTests = st.coverage.coveringTests[id]
 	// Second-hand as well, and the bound with them: a renderer showing the peak
 	// against this run's bound would be comparing one run's measurement with
 	// another run's budget. The entry's own bound is the one it was measured
