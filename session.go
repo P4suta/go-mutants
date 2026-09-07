@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,9 +50,13 @@ const (
 	mainOverlayName      = "main-overlay"
 	probeOverlayName     = "probe-overlay"
 	overlayManifestName  = "overlay.json"
-	privateDirectoryMode = 0o700
-	privateFileMode      = 0o600
-	uncachedTestFlag     = "-count=1"
+	// stageFreezeBuildInputs names the recorded step that copies the frozen
+	// tree. It is a trace stage rather than a [PreparePhase] because the phase
+	// vocabulary is shared with goatest and closed; see [freezeBuildInputs].
+	stageFreezeBuildInputs = "freeze-build-inputs"
+	privateDirectoryMode   = 0o700
+	privateFileMode        = 0o600
+	uncachedTestFlag       = "-count=1"
 )
 
 // Session is a validated mutation catalog with reusable test binaries.
@@ -103,7 +108,6 @@ type Session struct {
 type mainBuildResult struct {
 	options  execute.Options
 	binaries []execute.TestBinary
-	files    map[string]fileState
 }
 
 type probeBuildResult struct {
@@ -308,15 +312,20 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 			})
 		})
 		if err != nil {
-			return failPrepare(probeSnap, err)
+			return failPrepare(probeSnap, "", w.keepTemp, err)
 		}
 	} else {
 		phases.skip(PreparePhaseProbeSnapshot)
 	}
+	// The session's scratch directory, declared here because the failure path
+	// below has to be able to remove it: it is made inside the window, and from
+	// that moment it holds a copy of every frozen file.
+	var scratch string
 	// Every return from here on goes through fail, so that a probe tree copied
-	// and then abandoned does not outlive the call that made it — as Open
-	// cleans up its own snapshot when the scratch directory beside it fails.
-	fail := func(err error) (*Session, error) { return failPrepare(probeSnap, err) }
+	// and then abandoned — or a frozen copy taken and then given up on — does
+	// not outlive the call that made it, as Open cleans up its own snapshot
+	// when the scratch directory beside it fails.
+	fail := func(err error) (*Session, error) { return failPrepare(probeSnap, scratch, w.keepTemp, err) }
 
 	// The instrumentation window: the integrity gate, the check on what
 	// discovery read, and the two phases that rewrite the tree and put it back.
@@ -327,8 +336,8 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	// never corrupt it — and blocks every command issued while it is held,
 	// which runs against the restored tree afterwards.
 	var validated validate.Result
-	var scratch string
 	var overlayPath string
+	var frozen frozenInputs
 	err = w.underTreeWrite(func() (windowErr error) {
 		// The failure is published from *inside* the window, before the unlock
 		// that wakes the commands queued behind it. Leaving it to the deferred
@@ -348,6 +357,26 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 		if driftErr := checkDiscoveredSources(
 			w.snapshot.Manifest, found.SourceDigests, catalog, pristineSources); driftErr != nil {
 			return driftErr
+		}
+		// The build's inputs are taken here, out of a tree the two checks above
+		// have just proved is the manifest and before the next statement
+		// rewrites it. Everything downstream — the overlay, the test binaries,
+		// the baseline [Session.Changes] measures against — is about these
+		// bytes and not about what the tree holds later, so a command writing
+		// there while the binaries compile changes the tree and nothing else.
+		scratch, err = os.MkdirTemp(w.scratch, sessionPrefix)
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare session scratch: %w", err)
+		}
+		// Recorded as a stage rather than as a phase: the phase vocabulary is
+		// goatest's and closed, and this is exactly what a stage is for — a
+		// step inside a phase that a reader of a slow preparation needs to see.
+		endFreeze := w.recorder.Stage(stageFreezeBuildInputs, frozenInputsDetail(w.snapshot.Manifest))
+		frozen, err = freezeBuildInputs(
+			ctx, w.snapshot.Root, w.snapshot.Manifest, filepath.Join(scratch, frozenInputsName))
+		endFreeze(stageResult(err))
+		if err != nil {
+			return fmt.Errorf("gomutants: prepare frozen build inputs: %w", err)
 		}
 		if validationErr := phases.run(PreparePhaseMainValidation, func() error {
 			validated, err = validate.Validate(ctx, validate.Options{
@@ -370,11 +399,8 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 			return validationErr
 		}
 		return phases.run(PreparePhaseMainRestoration, func() error {
-			scratch, err = os.MkdirTemp(w.scratch, sessionPrefix)
-			if err != nil {
-				return fmt.Errorf("gomutants: prepare session scratch: %w", err)
-			}
-			overlayPath, err = writeInstrumentationOverlay(w.snapshot.Root, scratch, mainOverlayName, validated.Instrumented)
+			overlayPath, err = writeInstrumentationOverlay(w.snapshot.Root, frozen.resolvedRoot,
+				scratch, mainOverlayName, validated.Instrumented, frozen.replacements)
 			if err != nil {
 				return fmt.Errorf("gomutants: prepare instrumentation overlay: %w", err)
 			}
@@ -469,11 +495,6 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 					return buildError(PreparePhaseBinaryBuild,
 						fmt.Errorf("gomutants: prepare test binaries: %w", binaryErr))
 				}
-				var scanErr error
-				result.files, scanErr = scanFiles(w.snapshot.Root)
-				if scanErr != nil {
-					return fmt.Errorf("gomutants: prepare snapshot state: %w", scanErr)
-				}
 				return nil
 			}()
 			mainFinished <- mainSpan.complete(buildErr)
@@ -509,21 +530,18 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	if err != nil {
 		return fail(err)
 	}
-	// The last stretch of a preparation nothing else covered, and the longest
-	// one on a real module. The window closed at restoration and the session is
-	// published below; in between, the binaries are compiled from whatever the
-	// tree holds. A command that wrote there would have its bytes compiled into
-	// the binaries *and* recorded by `scanFiles` as the state the session was
-	// prepared in — so [Session.Changes] would compare the tree against the
-	// drift and report nothing at all. One re-digest makes "a write into the
-	// frozen tree during a preparation fails it" true to the end of the
-	// preparation rather than to the end of the window.
-	err = w.underTreeRead(func() error {
-		return checkInitialDrift(w.snapshot, instrument.Result{}, driftStageBinaries)
-	})
-	if err != nil {
-		return fail(err)
-	}
+	// No frozen file reaches the compiler from the tree, and that is why
+	// nothing here re-digests it. The binaries were compiled from the copies
+	// [freezeBuildInputs] took at the top of the window, through the overlay,
+	// so a command that rewrote a frozen file while they compiled — and equally
+	// one that wrote and undid it between two of the compiler's reads, which no
+	// digest could ever have caught — changed nothing the session is made of.
+	// What the go command does still read off the disk is the package
+	// directories themselves, so a file a command *adds* to one is compiled in;
+	// that is the residual named in ADR 0007, and a re-digest here would not be
+	// the fix for it, because it never was one for the transient case. Either
+	// way the tree every later target runs in has moved, and that is reported
+	// by [Session.Changes] against the manifest baseline below.
 
 	accepted := make(map[string]bool, len(validated.AcceptedIDs))
 	for _, id := range validated.AcceptedIDs {
@@ -552,7 +570,7 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 		binaries:       slices.Clone(mainBuild.binaries),
 		executeOptions: mainBuild.options,
 		mutantTimeout:  resolved.MutantTimeout,
-		preparedFiles:  mainBuild.files,
+		preparedFiles:  frozen.files,
 		overlayPath:    overlayPath,
 		probeSnapshot:  probeSnap,
 		probeBinaries:  probeBuild.binaries,
@@ -719,14 +737,29 @@ func buildContextCanceled(err, cause error) bool {
 		errors.Is(cause, context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded))
 }
 
-// failPrepare returns a preparation failure, removing the probe tree first when
-// one had already been copied.
+// failPrepare returns a preparation failure, removing the two whole copies of
+// somebody's module a preparation may have taken by then.
 //
-// A probe tree is a whole second copy of somebody's module, so a Prepare that
-// gives up after taking one has to remove it: nothing else knows it exists —
-// the Session it would have belonged to is never returned — and the Workspace's
-// own Close cleans up only the snapshot it made itself.
-func failPrepare(probeSnap *snapshot.Snapshot, err error) (*Session, error) {
+// A probe tree is one, and the session's scratch directory — which since the
+// binaries stopped being compiled from the tree holds a copy of every frozen
+// file — is the other. Both are taken before a preparation can know it will
+// finish, and nothing else knows either exists: the Session they would have
+// belonged to is never returned, and the Workspace's own Close cleans up only
+// the snapshot and the scratch it made itself. So a Prepare that gives up
+// removes them, and a preparation that failed leaves a workspace no heavier
+// than one that never started.
+//
+// Unless the caller asked to keep them. [OpenOptions.KeepTemp] exists so that
+// somebody debugging a preparation can look at what it built, and the frozen
+// copy is exactly what the binaries would have been compiled from. It needs no
+// artifact of its own: it lives inside the workspace's scratch directory, which
+// Close preserves and records as `kept-scratch`.
+func failPrepare(probeSnap *snapshot.Snapshot, scratch string, keepTemp bool, err error) (*Session, error) {
+	if scratch != "" && !keepTemp {
+		if removeErr := os.RemoveAll(scratch); removeErr != nil {
+			err = errors.Join(err, removeErr)
+		}
+	}
 	if probeSnap == nil {
 		return nil, err
 	}
@@ -734,6 +767,15 @@ func failPrepare(probeSnap *snapshot.Snapshot, err error) (*Session, error) {
 		return nil, errors.Join(err, cleanupErr)
 	}
 	return nil, err
+}
+
+// stageResult is what a recorded stage reports, derived from the step's own
+// error so that no call site can report a failed step as a successful one.
+func stageResult(err error) string {
+	if err != nil {
+		return trace.ResultFailed
+	}
+	return trace.ResultSucceeded
 }
 
 // probeTreeOptions is what [prepareProbeTree] needs, gathered so that the one
@@ -821,7 +863,15 @@ func prepareProbeTree(ctx context.Context, opts probeTreeOptions) (
 		if driftErr := checkInitialDrift(opts.snap, validated.Instrumented, "probe instrumentation"); driftErr != nil {
 			return driftErr
 		}
-		overlayPath, validateErr = writeInstrumentationOverlay(opts.snap.Root, opts.scratch, probeOverlayName, validated.Instrumented)
+		// The probe tree is a snapshot of its own and is not compiled from the
+		// frozen copies, so it resolves its own root — the same spelling
+		// question, asked about a different tree.
+		probeResolved, resolveErr := filepath.EvalSymlinks(opts.snap.Root)
+		if resolveErr != nil {
+			return fmt.Errorf("gomutants: prepare probe instrumentation overlay: %w", resolveErr)
+		}
+		overlayPath, validateErr = writeInstrumentationOverlay(opts.snap.Root, probeResolved,
+			opts.scratch, probeOverlayName, validated.Instrumented, nil)
 		if validateErr != nil {
 			return fmt.Errorf("gomutants: prepare probe instrumentation overlay: %w", validateErr)
 		}
@@ -937,7 +987,31 @@ func restoreInstrumentationSources(root string, images map[string]sourceImage, r
 	return nil
 }
 
-func writeInstrumentationOverlay(root, scratch, name string, result instrument.Result) (string, error) {
+// writeInstrumentationOverlay writes the `go` overlay manifest one tree is
+// compiled and executed through.
+//
+// It is two mappings in one file, and their order is the point. `frozen` is
+// every file the snapshot froze, copied by [freezeBuildInputs] into the
+// preparation's own directory, so that a build reads no byte of the tree at
+// all; the instrumented sources and the generated runtime are written over the
+// top, because the mutated program is what the session exists to run. A file
+// instrumentation did not touch keeps the frozen copy.
+//
+// `frozen` is nil for the probe tree, which is a separate snapshot with a
+// separate overlay and is not covered by this.
+//
+// `resolvedRoot` is `root` with its symbolic links resolved, which is the
+// spelling the go command looks a path up under on a platform that reaches its
+// temporary directory through one. It is passed in rather than derived here so
+// that it is the *same* spelling [freezeBuildInputs] keyed its half by. Two
+// routes to the resolved path would agree in practice and the day they did not
+// would be the worst day this package has: the frozen copy would sit on the key
+// cmd/go reads and the instrumented copy on one it does not, so the session
+// would compile the un-mutated program and report every mutant as a survivor,
+// with nothing failing.
+func writeInstrumentationOverlay(
+	root, resolvedRoot, scratch, name string, result instrument.Result, frozen map[string]string,
+) (string, error) {
 	backingRoot := filepath.Join(scratch, name)
 	if err := os.MkdirAll(backingRoot, privateDirectoryMode); err != nil {
 		return "", err
@@ -968,7 +1042,8 @@ func writeInstrumentationOverlay(root, scratch, name string, result instrument.R
 		return "", err
 	}
 	slices.Sort(paths)
-	replacements := make(map[string]string, len(paths))
+	replacements := make(map[string]string, len(frozen)+2*len(paths))
+	maps.Copy(replacements, frozen)
 	for _, path := range paths {
 		relative := filepath.FromSlash(path)
 		if !filepath.IsLocal(relative) {
@@ -991,14 +1066,11 @@ func writeInstrumentationOverlay(root, scratch, name string, result instrument.R
 			return "", writeErr
 		}
 		replacements[source] = target
-		// The go command resolves the package directory it is given through the
-		// file system before it looks a path up in the overlay, so on a platform
-		// whose temporary directory is reached through a symbolic link — macOS
-		// reaches /var/folders through /private/var — the key written from the
-		// snapshot root would never be the key looked up. Both spellings name
-		// the same file, so both map to the same backing copy.
-		if resolved, resolveErr := filepath.EvalSymlinks(source); resolveErr == nil && resolved != source {
-			replacements[resolved] = target
+		// Both spellings of the same file, for the reason given above the
+		// signature, and spelled from the one resolved root rather than
+		// resolved again per file.
+		if resolvedRoot != root {
+			replacements[filepath.Join(resolvedRoot, relative)] = target
 		}
 	}
 	manifest, err := json.Marshal(struct {

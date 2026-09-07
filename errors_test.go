@@ -327,10 +327,7 @@ func TestMutantSelectionErrors(t *testing.T) {
 //
 // Two of the shapes name a command as the suspect, because a command is not
 // instrumentation and "outside instrumentation" would send a reader looking in
-// the wrong place. The third is every check around instrumentation, including
-// the one after the test binaries are built — by then the pristine sources are
-// back in the tree, so a change there is outside instrumentation like any
-// other.
+// the wrong place. The third is every check around instrumentation.
 func TestDriftErrorRendersEveryKind(t *testing.T) {
 	t.Parallel()
 
@@ -351,7 +348,7 @@ func TestDriftErrorRendersEveryKind(t *testing.T) {
 		t.Errorf("discovery drift = %q, want %q", got, want)
 	}
 	for _, stage := range []string{
-		"source restoration", "verification", "test binaries",
+		"source restoration", "verification",
 		"probe instrumentation", "probe source restoration",
 	} {
 		staged := &DriftError{Stage: stage, Changes: changes}
@@ -365,10 +362,9 @@ func TestDriftErrorRendersEveryKind(t *testing.T) {
 	// header alone is what a hand-built value has to print: a message ending in
 	// a newline reaches a log with a hole in it.
 	for stage, want := range map[string]string{
-		"commands":      "gomutants: prepare commands changed the frozen snapshot:",
-		"discovery":     "gomutants: prepare commands changed the snapshot during discovery:",
-		"verification":  "gomutants: prepare verification changed the snapshot outside instrumentation:",
-		"test binaries": "gomutants: prepare test binaries changed the snapshot outside instrumentation:",
+		"commands":     "gomutants: prepare commands changed the frozen snapshot:",
+		"discovery":    "gomutants: prepare commands changed the snapshot during discovery:",
+		"verification": "gomutants: prepare verification changed the snapshot outside instrumentation:",
 	} {
 		if got := (&DriftError{Stage: stage}).Error(); got != want {
 			t.Errorf("empty %s drift = %q, want %q", stage, got, want)

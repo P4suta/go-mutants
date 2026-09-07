@@ -53,7 +53,7 @@ func clearReadOnly(root string) {
 			return nil
 		}
 		if !d.IsDir() {
-			_ = os.Chmod(extendedPath(path), 0o666)
+			_ = os.Chmod(ExtendedPath(path), 0o666)
 		}
 		return nil
 	})

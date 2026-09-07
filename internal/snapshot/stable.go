@@ -78,7 +78,7 @@ func destination(destParent, absSrc string) (string, bool, error) {
 
 	name := StableName(absSrc)
 	dir := filepath.Join(parent, name)
-	claim := os.Mkdir(extendedPath(dir), 0o700)
+	claim := os.Mkdir(ExtendedPath(dir), 0o700)
 	if claim == nil {
 		return dir, true, nil
 	}
@@ -99,7 +99,7 @@ func destination(destParent, absSrc string) (string, bool, error) {
 	// below is what happens either way, and [Snapshot.StableDir] is where a
 	// caller reads that it did.
 	_, _ = tempowner.Sweep(parent, []string{name}, time.Now())
-	if os.Mkdir(extendedPath(dir), 0o700) == nil {
+	if os.Mkdir(ExtendedPath(dir), 0o700) == nil {
 		return dir, true, nil
 	}
 

@@ -34,14 +34,22 @@ type fileState struct {
 //
 // What it reports is every change in the session's own snapshot, whoever made
 // it: a target under [Session.Exec] or [Session.Control], and equally a
-// [Workspace.Exec] command run beside the session, which the lifecycle allows
-// once a preparation has succeeded. A [Session.Probe] target is *not* among
-// them, and its absence is not an omission: a probe pass runs in the probe
-// tree, a second snapshot beside this one, so what it writes is not in the tree
-// this call scans and no call reports it. The manifest compared against is the
-// one preparation captured after the binaries were built, so the answer is
-// "what has moved since this session was prepared" and not "who moved it". A
-// write does not invalidate the session — the overlay still names the frozen
+// [Workspace.Exec] command run beside the session. A [Session.Probe] target is
+// *not* among them, and its absence is not an omission: a probe pass runs in
+// the probe tree, a second snapshot beside this one, so what it writes is not
+// in the tree this call scans and no call reports it.
+//
+// What it compares against is the **frozen snapshot manifest**, captured at the
+// top of the instrumentation window, which is what the test binaries were
+// compiled from: the copies the overlay names were taken there, and the
+// compiler read no other spelling of them. So the window's end is where a write
+// stops failing a preparation and starts being reported here — a command that
+// writes during the binary build, which is the longest phase of a preparation
+// and one a command is allowed to run beside, is reported by this call and
+// refused by nothing. The answer is "what has moved since this session was
+// frozen" and not "who moved it".
+//
+// A write does not invalidate the session — the overlay still names the frozen
 // sources — but it does change the tree every later target runs in, and this is
 // where a caller finds out that it did.
 func (s *Session) Changes() ([]Change, error) {

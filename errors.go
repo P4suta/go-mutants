@@ -179,11 +179,9 @@ func (e *MutantSelectionError) Unwrap() error { return e.cause }
 type DriftError struct {
 	// Stage names the check that noticed: "commands" for the integrity gate at
 	// the top of the instrumentation window, "discovery" for the comparison
-	// between what discovery read and the frozen manifest, "source
+	// between what discovery read and the frozen manifest, and "source
 	// restoration", "verification", "probe instrumentation" or "probe source
-	// restoration" for the checks around instrumentation, and "test binaries"
-	// for the re-digest after the binaries were built and before the session
-	// is published.
+	// restoration" for the checks around instrumentation.
 	Stage string
 	// Changes are the drifting paths in path order, with the digests on both
 	// sides — [Change.BeforeSHA256] empty for a file that was added,
@@ -232,15 +230,6 @@ const (
 	driftStageCommands  = "commands"
 	driftStageDiscovery = "discovery"
 )
-
-// driftStageBinaries is the check between the instrumentation window and the
-// session: the tree the test binaries were compiled from has to be the frozen
-// one, and nothing else was looking at the longest phase of a preparation.
-//
-// It takes the ordinary sentence rather than one of its own. By then the
-// pristine sources are back in the tree, so a change to it is a change outside
-// instrumentation exactly as one during verification is.
-const driftStageBinaries = "test binaries"
 
 // driftWord is how the snapshot layer spells a change of this kind. It is
 // derived from [snapshot.DriftKind] rather than written out, so the day that

@@ -14,6 +14,73 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The test binaries are compiled from the frozen manifest, so nothing a
+  command writes during the build reaches them.** A preparation's
+  instrumentation window ends at `main_restoration` and the test binaries — the
+  longest phase of a real preparation — were compiled after it, *from the tree*:
+  the overlay replaced the instrumented sources and the compiler read every
+  other file where it lay. A `Workspace.Exec` command running beside the
+  preparation, which is exactly what the overlap above exists to allow, could
+  therefore have its bytes compiled into the binaries. The re-digest that stood
+  under that, `DriftError{Stage: "test binaries"}`, caught every write a command
+  *left* behind and could not catch one made and undone while the compiler was
+  between one file and the next — a transient edit was compiled in and gone
+  before the digest looked.
+
+  So the build's inputs are now the manifest rather than the tree. At the top of
+  the window — under the exclusive lock, from a tree the integrity gate has just
+  proved is byte-identical to the manifest — every file the snapshot froze is
+  copied into a directory the preparation owns, each copy's digest checked
+  against the manifest entry it came from as it is written, and the overlay
+  names all of them. The instrumented sources keep their own mapping and win
+  where the two meet, so the session still compiles the mutated program.
+
+  The file set is the manifest **whole**, not a list of the extensions a build
+  reads. `go` reads Go sources, `go.mod`, `go.sum`, assembly, the cgo inputs and
+  `//go:embed` targets through `-overlay` — all of them verified against the
+  toolchain in use rather than assumed — and a `//go:embed` can name any path in
+  the module, a `testdata/` fixture or a `README.md` included, so a list of
+  extensions would have to parse every source in the module to be sure and every
+  miss in it would be a file read off the disk with nothing saying so.
+
+  **What it costs.** One whole-tree copy per preparation, of exactly the
+  snapshot's bytes, kept for as long as the session — so a prepared workspace
+  holds the module twice over, three times with a probe tree. The time is
+  proportional to the tree and is paid inside the instrumentation window, where
+  a command waits for it: 679 files and 7.7 MiB of this repository in 50-90 ms,
+  and under a millisecond for each `fixtures/` module. Identity mappings cost no
+  build-cache hits. It is recorded in a trace as the `freeze-build-inputs` stage
+  with the file count and byte total, so a slow preparation says how much of
+  itself went there, and it is deliberately **not** a new `PreparePhase`: that
+  vocabulary is shared with goatest and closed. A preparation that gives up
+  removes the copy, on the rule the probe tree already follows, unless
+  `OpenOptions.KeepTemp` asked for it — in which case it stays inside the
+  workspace scratch that `Close` already preserves as `kept-scratch`.
+
+  Two things follow. `DriftError{Stage: "test binaries"}` is **gone** — with no
+  frozen file reaching the compiler off the disk there is nothing left for a
+  re-digest between the last build and the published session to protect. And
+  `Session.Changes`'s baseline is the manifest rather than a scan taken after
+  the build, which is what the binaries were built from: a write a command
+  leaves during the build is now reported by `Session.Changes` and refused by
+  nothing, exactly as a write after a successful `Prepare` is. No message
+  changed — the retired stage used the generic sentence every
+  instrumentation-adjacent check uses — and nothing exported moved.
+
+  One residual is stated rather than hidden, in `docs/library.md` and in
+  [ADR 0007](docs/adr/0007-commands-overlap-preparation.md): `-overlay` replaces
+  the paths it names and the `go` command still lists the real directory, so a
+  **new** file a command creates in a package directory while the binaries
+  compile is still seen by the compiler. `Session.Changes` reports it as an
+  addition. The gap that used to be one transient write wide is now one added
+  file wide.
+
+  None of this is about **run** time, and `Session.Changes` is where the
+  difference shows. A prepared binary still starts in the directory of the
+  package it was built from, so a test that opens `testdata/` reads the tree and
+  one that writes — a golden file, a fuzz crasher the runtime files under
+  `testdata/fuzz/` — writes into it. That is a change to the tree like a
+  command's, reported by the same call and refused by nothing.
 - **`Workspace.Exec` runs beside `Workspace.Prepare`, waiting only for the
   stretch of a preparation that actually rewrites the tree.** A preparation used
   to hold the workspace exclusively for its whole duration — minutes of
@@ -2909,21 +2976,16 @@ Entries say *why* a change was made, not only what changed.
   discovery:` and names the files. `internal/discover.Result` carries the new
   `SourceDigests` map that makes the check total over what was read.
 
-  A second new stage, `"test binaries"`, covers the other end of a preparation.
-  The window ends at `main_restoration` and the binaries are compiled after it,
-  from the tree — the overlay replaces only the instrumented sources — and the
-  state `Session.Changes` compares against is captured there too, so a command
-  writing during the build would have its bytes compiled in *and* reported by
-  nothing at all. One re-digest before the session is published catches every
-  write a command leaves there. It does not catch one made and undone while the
-  compiler is between two files: the tree is held shared during the build, as it
-  is by a command, so a transient edit is compiled in and gone before the
-  digest looks. That gap is stated in `docs/library.md` and in ADR 0007 rather
-  than papered over, together with what closes it — compiling from the frozen
-  manifest through the overlay, so the build never reads the tree — which is
-  the follow-up. The stage takes the sentence every other
-  instrumentation-adjacent check takes: `gomutants: prepare test binaries
-  changed the snapshot outside instrumentation:`.
+  The other end of a preparation needs no stage, because the build reads no byte
+  of the tree. The window ends at `main_restoration` and the binaries are
+  compiled after it, so a command writing during the build could once have had
+  its bytes compiled in; the binaries are now compiled from a copy of every
+  frozen file, taken at the top of the window and mapped through the same
+  overlay, and `Session.Changes` compares against the manifest those copies came
+  from. A write a command leaves there changes the tree and nothing the session
+  is made of, so it is reported by `Session.Changes` and fails nothing — see
+  **The test binaries are compiled from the frozen manifest** above for what
+  that replaced.
 - **`run` and `list` pointed at the root of a `go.work` workspace are refused
   before anything is copied, with GOM4102 and the user's own `go.work` named.**
   Discovery has always refused a workspace — one module path, one set of

@@ -5,7 +5,7 @@
 
 package snapshot
 
-// extendedPath returns p unchanged. Only Windows has an extended-length path
+// ExtendedPath returns p unchanged. Only Windows has an extended-length path
 // syntax; POSIX path limits are per-component and per-call, and nothing about
 // spelling a path differently raises them.
-func extendedPath(p string) string { return p }
+func ExtendedPath(p string) string { return p }
