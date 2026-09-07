@@ -76,12 +76,19 @@ nothing else.
 go-mutants run --trace -vv --keep-temp=on-failure
 ```
 
-A failed run writes a bundle into `reports/mutation/diagnostics/<run-id>/`
-whether or not you asked — the rendered failure, the environment's variable
-names, the `doctor` table, the recording and the report — and `--keep-temp`
-leaves the tree the run worked in. `go-mutants trace summary` says where the time
-went, and `go-mutants explain <mutant-id>` gives one mutant's whole story with a
-command to paste that runs it again.
+A failed run writes a bundle whether or not you asked for one: the rendered
+failure in `error.txt`, the environment's variable names, the `doctor` table,
+the recording and the report. **Where it lands depends on the trace.** A traced
+run — which the command above is — files it in its own recording's directory,
+`reports/mutation/trace/<run-id>/`, so the failure and the account of the run
+are one directory rather than two halves of one story; an untraced run files it
+in `reports/mutation/diagnostics/<run-id>/`. `--no-diagnostics`, or
+`GO_MUTANTS_DIAGNOSTICS=0` for an invocation nobody can add a flag to, writes
+none at all.
+
+`--keep-temp` leaves the tree the run worked in. `go-mutants trace summary` says
+where the time went, and `go-mutants explain <mutant-id>` gives one mutant's
+whole story with a command to paste that runs it again.
 
 [`docs/development.md`](docs/development.md#9-diagnosing-a-failing-run) is the
 walkthrough, and [`docs/trace-v1.md`](docs/trace-v1.md) is the event contract.

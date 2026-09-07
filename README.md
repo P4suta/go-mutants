@@ -420,10 +420,15 @@ nothing will ever remove it.
 
 **Diagnosing.** The three together are one command —
 `go-mutants run --trace -vv --keep-temp=on-failure` — and the order to read what
-they leave is `diagnostics/<run-id>/error.txt` for what failed,
-`go-mutants trace summary` for where the time went and which command was last,
-`go-mutants explain <id>` for one mutant's whole story and the line to paste, and
-the kept snapshot for what the tree looked like.
+they leave is `error.txt` for what failed, `go-mutants trace summary` for where
+the time went and which command was last, `go-mutants explain <id>` for one
+mutant's whole story and the line to paste, and the kept snapshot for what the
+tree looked like. **The bundle goes wherever the account is:** into
+`<report.directory>/trace/<run-id>/` when the run was traced — which the command
+above makes it — and into `<report.directory>/diagnostics/<run-id>/` when it was
+not, so a traced failure leaves one directory rather than two halves of one
+story. Under `--no-diagnostics` or `GO_MUTANTS_DIAGNOSTICS=0` there is no bundle
+at all.
 [`docs/development.md`](docs/development.md#9-diagnosing-a-failing-run) walks
 through it, and covers diagnosing a failing *test* of go-mutants itself as well.
 

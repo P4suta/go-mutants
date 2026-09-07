@@ -1032,9 +1032,15 @@ go-mutants run --trace -vv --keep-temp=on-failure
   when the run fails and not when it is interrupted, which is the mode a CI job
   can leave on. A bare `--keep-temp` keeps them whatever happened.
 
-A run that fails writes a bundle whether or not it was asked to, into
-`<report.directory>/diagnostics/<run-id>/` — or into its trace directory when it
-was traced:
+A run that fails writes a bundle whether or not it was asked to, and **where it
+lands depends on whether the run was traced.** A traced run — which the command
+above is — files it in that run's own recording directory,
+`<report.directory>/trace/<run-id>/`, so the failure and the account of the run
+are one directory rather than two halves of one story. An untraced run has no
+such directory, so its bundle goes in
+`<report.directory>/diagnostics/<run-id>/`. Under `--no-diagnostics`, or
+`GO_MUTANTS_DIAGNOSTICS=0` for an invocation nobody can add a flag to, there is
+no bundle at all. Either way, it holds:
 
 | File | What it holds |
 | --- | --- |
@@ -1053,10 +1059,12 @@ newest ten are kept, `go-mutants trace clean` sweeps them with the recordings, a
 interrupted run writes none, and a bundle that cannot be written is a `GOM1014`
 warning rather than a different exit code.
 
-So the order is: read `error.txt` for what failed, `go-mutants trace summary` for
-where the time went and which command was the last one, `go-mutants explain <id>`
-for one mutant's whole story and the line to paste, and the kept snapshot for
-what the tree looked like. See
+So the order is: read the bundle's `error.txt` for what failed — in
+`trace/<run-id>/` after the traced command above, in `diagnostics/<run-id>/`
+after an untraced one — then `go-mutants trace summary` for where the time went
+and which command was the last one, `go-mutants explain <id>` for one mutant's
+whole story and the line to paste, and the kept snapshot for what the tree
+looked like. See
 [ADR 0003](adr/0003-diagnostics-live-in-the-report-directory.md) for why the
 bundle is in the report directory and never in a temporary one.
 

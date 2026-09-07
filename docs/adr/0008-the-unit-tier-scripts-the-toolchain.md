@@ -8,9 +8,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-07. Implemented by `internal/testkit/mutantkit`'s `FakeGo`,
-`Main` and the tier exemption in `internal/testkit/tiers_test.go` (#49), on the
-tiering [ADR 0005](0005-the-test-harness-owns-its-temporaries.md) records the
-rest of.
+`Main` and the tier exemption in `internal/testkit/tiers_test.go` (#49).
+[ADR 0005](0005-the-test-harness-owns-its-temporaries.md) records the
+temporary-directory and build-cache decisions the tiering rests on; this one is
+about what a test in the unit tier may reach for.
 
 ## Context
 
