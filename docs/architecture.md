@@ -940,9 +940,9 @@ is the whole of what was asked for and a failure is an error.
 | `internal/console` | Deterministic plain-line renderer | implemented |
 | `internal/tui` | The bubbletea dashboard | implemented |
 | `internal/schemas` | Embedded JSON Schemas, validation before writing | catalog, run report, doctor |
-| `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks | test-only support |
-| `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation | test-only support |
-| `internal/devtools/testcache` | The test-owned build cache: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
+| `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks, the keep-on-failure policy and its dumps | test-only support |
+| `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording | test-only support |
+| `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `vendor-assets` | The vendored viewer bundle and its digest check | implemented |
 
 Pure packages have no filesystem or process access, which is what makes the
@@ -957,14 +957,34 @@ and are imported only from external test packages; the import gate treats that
 tree as part of the harness, so it may import `internal/testkit` while nothing
 outside the harness may import either.
 
-That rule is why the test-owned build cache's location, and the name of the
-ownership marker that licenses emptying it, are written down twice: once in
+That rule is why the two directories the harness owns outside a temporary one —
+the test-owned build cache and the kept scratch root — and the names of the
+ownership markers that licence emptying them are written down twice: once in
 `internal/testkit` for the suites, and once in `internal/devtools/testcache` —
-a production `main`, which may not import the harness. `TestPathAgreesWithTestkit`
-and `TestMarkerNamesAgreeWithTestcache` run the tool and compare what it prints
-with what the harness resolved, so the copies cannot drift apart in silence.
-Drift would not fail anywhere else: the suites would fill one directory and the
-collector would empty another.
+a production `main`, which may not import the harness. `TestPathAgreesWithTestkit`,
+`TestKeptRootAgreesWithTestkit` and `TestMarkerNamesAgreeWithTestcache` run the
+tool and compare what it prints with what the harness resolved, so the copies
+cannot drift apart in silence. Drift would not fail anywhere else: the suites
+would fill one directory and the collector would empty another.
+
+What a failing test leaves behind is a policy rather than a habit.
+`GO_MUTANTS_TEST_KEEP` is unset locally, so `testkit.Scratch` is `t.TempDir` and
+nothing changes; set to `1` it keeps the directories of a test that failed, and
+to `always` it keeps every test's. A kept directory carries `KEPT.txt` — the
+test, the fixture, the toolchain, the build cache, the test's other kept
+directories, and every child it ran through `testkit.Exec` — plus whatever
+`testkit.DumpFiles` was pointed at (the instrumented source, for a snapshot),
+one numbered directory per dump, and the recording as `trace.jsonl` in the
+encoding `trace validate` reads. The recording is what accounts for the
+commands `KEPT.txt` cannot: the suites drive `go` through `internal/runner`
+rather than through the harness, so the engine and validate suites attach
+`mutantkit.TraceSink`/`mutantkit.Trace` by default and a failure logs the tail
+of it. Every CI test
+job sets the policy and uploads the root on a failure, so a red build arrives
+with its evidence attached; the dogfood job deliberately does not, because a
+mutation run fails this repository's own tests thousands of times on purpose.
+`GO_MUTANTS_TEST_FORCE_FAIL=<test name>` fails one named test, which is how to
+see any of it without breaking something.
 
 The `-update` flag for golden files is registered once, in `internal/testkit`,
 and is therefore the same flag in every test binary that links the harness.

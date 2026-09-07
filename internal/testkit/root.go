@@ -56,6 +56,7 @@ func Fixture(t testing.TB, name string) string {
 	if err != nil {
 		t.Fatalf("resolving a fixture: %v", err)
 	}
+	rememberFixture(t, path)
 	logInputs(t, "fixture="+path)
 	return path
 }
@@ -175,5 +176,11 @@ func logInputs(t testing.TB, fields ...string) {
 	if len(fields) == 0 {
 		return
 	}
-	t.Logf("testkit: %s", strings.Join(fields, " "))
+	// The forced-failure hook lives here rather than only in [Scratch], because
+	// this is the one line every constructor in the package already writes: a
+	// test that resolves a fixture, locates a toolchain or reads a shared
+	// session takes no scratch directory of its own, and naming one of those in
+	// GO_MUTANTS_TEST_FORCE_FAIL used to do nothing at all.
+	ForceFail(t)
+	t.Logf("testkit: %s keep=%s", strings.Join(fields, " "), KeepPolicy())
 }

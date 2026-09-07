@@ -32,9 +32,55 @@ const (
 // asks for, so a misuse can never be read as a pass.
 const helperMisuseStatus = 97
 
-// TestMain is the [Helper] shape this package both offers and uses.
+// TestMain is the [Helper] shape this package both offers and uses, with the
+// guard that no test in it files evidence in the developer's own kept root.
+//
+// The guard needs a package-level hook and there is nowhere else to put one. A
+// test can only see what it did itself, and the failure being prevented is a
+// test *elsewhere in the package* leaving a directory in
+// `<os.UserCacheDir()>/go-mutants-test/kept` — which is where a real failed run
+// files its evidence, and which CI does not upload because the job names a root
+// of its own. TestKeptRootAgreesWithTestkit did exactly that: it cleared the
+// override to ask what the default was and then took a scratch under it.
+//
+// A root that was already there is left alone and the guard skips: it is the
+// developer's, it may hold evidence they are reading, and this is not the
+// process that gets to decide it is stale.
 func TestMain(m *testing.M) {
-	os.Exit(Helper(m, selfHelperEnv, selfHelperProgram))
+	os.Exit(guardTheDefaultKeptRoot(func() int {
+		return Helper(m, selfHelperEnv, selfHelperProgram)
+	}))
+}
+
+// guardTheDefaultKeptRoot runs the suite and fails it if the default kept root
+// appeared while it ran and had no business appearing.
+//
+// It has business appearing in exactly one case: somebody ran the suite with the
+// policy on and named no root of their own, which is the documented way to keep
+// things locally. Every other case is the defect — a run with the policy off
+// must leave the default root untouched, and a run that named a root must file
+// everything under it, or CI uploads an empty directory while the evidence sits
+// somewhere on the runner that dies with it.
+func guardTheDefaultKeptRoot(run func() int) int {
+	if pinned.userCache == "" {
+		return run()
+	}
+	root := filepath.Join(pinned.userCache, harnessDirName, keptDirName)
+	if _, err := os.Lstat(root); err == nil {
+		// Already the developer's. Nothing here may judge it.
+		return run()
+	}
+	allowed := KeepPolicy() != KeepNever && os.Getenv(KeepDirEnv) == ""
+	code := run()
+	if _, err := os.Lstat(root); err == nil && !allowed {
+		fmt.Fprintf(os.Stderr, "\nthis suite created %s, which is the developer's own kept root and "+
+			"the one CI does not upload: a test that wants the keep policy on has to point %s at a "+
+			"directory of its own\n", root, KeepDirEnv)
+		if code == 0 {
+			return 1
+		}
+	}
+	return code
 }
 
 // selfHelperProgram is the whole helper program: a verb and its arguments,

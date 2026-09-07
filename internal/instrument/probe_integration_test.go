@@ -54,7 +54,7 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 
 	// The pristine suite first, because it is the thing the probe tree has to
@@ -114,7 +114,7 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	})
 
 	t.Run("the probe tree's suite passes while recording", func(t *testing.T) {
-		log := filepath.Join(t.TempDir(), "infection.log")
+		log := filepath.Join(testkit.Scratch(t), "infection.log")
 		recording := runProbeSuite(t, toolchain, snap.Root, env, log)
 		mutantkit.RequireExit(t, recording, 0, "the probe tree's suite with a log")
 		if got := verdictLines(recording); !slices.Equal(got, wantLines) {

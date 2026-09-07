@@ -40,7 +40,7 @@ type Module struct {
 // NewModule starts an empty module under a directory of the test's own.
 func NewModule(t testing.TB) *Module {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "module")
+	root := filepath.Join(Scratch(t), "module")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatalf("creating the module directory %s: %v", root, err)
 	}

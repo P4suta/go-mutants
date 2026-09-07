@@ -53,7 +53,11 @@ const workspaceBarrierEnv = "WORKSPACE_EXEC_BARRIER_HELPER"
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	releasePreparedFixtures()
+	// The status rather than a boolean of this file's own, because it is the
+	// only thing here that knows whether anything failed: the sessions are
+	// shared, so no test owns one, and the keep policy's "on failure" has to be
+	// answered for the package as a whole.
+	releasePreparedFixtures(code != 0)
 	os.Exit(code)
 }
 
@@ -1078,11 +1082,73 @@ const (
 // and a session prepared without it must carry no such thing.
 type preparedFixture struct {
 	parent    string
+	release   func(failed bool)
 	workspace *gomutants.Workspace
 	session   *gomutants.Session
 	catalog   gomutants.Catalog
 	events    []gomutants.PrepareEvent
 	err       error
+
+	// keepTemp is what the workspace was opened with, which under the keep
+	// policy is true — see [prepareFixtureWith]. It is carried here because it
+	// changes what a per-call temporary directory does after the call returns,
+	// and [expectScratchAfterCall] is where that difference is stated.
+	keepTemp bool
+}
+
+// expectScratchAfterCall is what a shared session's per-call temporary
+// directories look like after one call, under either policy.
+//
+// The two answers are both correct and the difference is not a detail. A
+// session opened without KeepTemp removes each per-call scratch as the call
+// ends, so the right expectation is that the set is exactly what it was: a
+// session that leaked one per call would fill a machine over a run, and a count
+// could be satisfied by a leak and a removal cancelling out.
+//
+// Under the keep policy the shared sessions are opened *with* KeepTemp, because
+// that is the only way a kept package scratch holds the trees the sessions
+// actually ran in rather than the fixture copy alone — and KeepTemp keeps every
+// per-execution scratch by design, that being the directory the target's TMPDIR
+// pointed at and where anything it wrote went. So the expectation becomes
+// exactly one new directory: the one this call ran in, kept on purpose.
+//
+// Anything the call *removed* is wrong under both policies and is reported
+// separately, because a call tidying up somebody else's directory is a
+// different defect from one leaking its own.
+func expectScratchAfterCall(t *testing.T, prepared *preparedFixture, before, after []string) {
+	t.Helper()
+
+	added := make([]string, 0, len(after))
+	for _, path := range after {
+		if !slices.Contains(before, path) {
+			added = append(added, path)
+		}
+	}
+	var removed []string
+	for _, path := range before {
+		if !slices.Contains(after, path) {
+			removed = append(removed, path)
+		}
+	}
+
+	if len(removed) != 0 {
+		t.Errorf("the call removed %v, which was there before it: a per-call directory belongs to"+
+			" the call that made it", removed)
+	}
+	if !prepared.keepTemp {
+		if len(added) != 0 {
+			t.Errorf("the call left %v behind; before it there were %v", added, before)
+		}
+		return
+	}
+	if len(added) != 1 {
+		t.Errorf("a KeepTemp session kept %d per-call directories for one call, want exactly the"+
+			" one it ran in: %v", len(added), added)
+		return
+	}
+	if info, err := os.Stat(added[0]); err != nil || !info.IsDir() {
+		t.Errorf("%s was kept and is not a directory on disk: %v", added[0], err)
+	}
 }
 
 var (
@@ -1149,25 +1215,37 @@ func prepareFixtureWith(
 	preparedFixtures = append(preparedFixtures, prepared)
 	preparedMu.Unlock()
 
-	parent, err := os.MkdirTemp("", "go-mutants-"+name+"-fixture-")
-	if err != nil {
-		prepared.err = err
-		return prepared
-	}
+	// testkit.PackageScratch rather than os.MkdirTemp: under the keep policy a
+	// package whose tests failed keeps this directory instead of removing it,
+	// and prints where it is.
+	parent, release := testkit.PackageScratch(name + "-fixture")
 	prepared.parent = parent
+	prepared.release = release
 
 	root := filepath.Join(parent, name)
-	if err = copyFixtureTree(name, root); err != nil {
+	if err := copyFixtureTree(name, root); err != nil {
 		prepared.err = err
 		return prepared
 	}
-	for path, source := range inject {
-		if err = os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(source), 0o644); err != nil {
-			prepared.err = err
-			return prepared
-		}
+	if err := writeInjected(root, inject); err != nil {
+		prepared.err = err
+		return prepared
 	}
 	open.TempDirectory = parent
+	// KeepTemp under the keep policy, and it is what makes a kept directory
+	// worth opening. Close removes the engine's own temporary tree — the
+	// snapshot the session ran, the probe tree beside it, the per-execution
+	// scratch — and TestMain closes each workspace before releasing its
+	// directory, which is the right order: a directory somebody is reading must
+	// not still be written to. Without this the kept parent held the fixture
+	// copy and nothing else, and the fixture copy is the one part of a failed
+	// session a reader can already get from `fixtures/`.
+	//
+	// It costs nothing when nothing is being kept, and when the policy is on and
+	// the package passes, `release(false)` removes the parent with the kept
+	// trees inside it.
+	open.KeepTemp = testkit.KeepPolicy() != testkit.KeepNever
+	prepared.keepTemp = open.KeepTemp
 	workspace, err := gomutants.Open(context.Background(), root, open)
 	if err != nil {
 		prepared.err = err
@@ -1186,6 +1264,54 @@ func prepareFixtureWith(
 	prepared.session = session
 	prepared.catalog = session.Catalog()
 	return prepared
+}
+
+// writeInjected writes the injected sources into a fixture copy.
+//
+// The directories above each file are created first, because an injected path
+// is module-relative and nothing says it is at the top of the module: a fixture
+// that needs a target in `nested/dir/` would otherwise fail with a "no such file
+// or directory" naming a path the caller wrote perfectly correctly, from inside
+// a sync.Once whose error surfaces in whichever test asked for the session
+// first.
+func writeInjected(root string, inject map[string]string) error {
+	for path, source := range inject {
+		target := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, []byte(source), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestInjectedSourceReachesADirectoryThatDoesNotExistYet is the one claim
+// [writeInjected] makes that a caller cannot see for itself.
+//
+// Every injection in this package writes to the top of the module today, so a
+// writer that could not make a directory looked perfectly correct — until the
+// first fixture that needs a target in a package of its own, where the failure
+// arrives as a prepared session that could not be prepared, out of a sync.Once,
+// in whichever test happened to ask for it first.
+func TestInjectedSourceReachesADirectoryThatDoesNotExistYet(t *testing.T) {
+	t.Parallel()
+
+	root := testkit.Scratch(t)
+	sources := map[string]string{
+		"top_test.go":               "package top\n",
+		"nested/dir/nested_test.go": "package dir\n",
+	}
+	if err := writeInjected(root, sources); err != nil {
+		t.Fatalf("injecting %d source(s) into %s: %v", len(sources), root, err)
+	}
+	for path, want := range sources {
+		got := testkit.ReadFile(t, filepath.Join(root, filepath.FromSlash(path)))
+		if string(got) != want {
+			t.Errorf("%s holds %q, want %q", path, got, want)
+		}
+	}
 }
 
 func TestPrepareTraceReportsEveryPhaseInOrder(t *testing.T) {
@@ -1266,17 +1392,23 @@ func TestPrepareTraceReportsEveryPhaseInOrder(t *testing.T) {
 	}
 }
 
-// releasePreparedFixtures closes every session this file prepared and removes
-// the directories they lived in.
-func releasePreparedFixtures() {
+// releasePreparedFixtures closes every session this file prepared and releases
+// the directories they lived in, keeping them when the package failed and the
+// policy says to.
+//
+// The workspace is closed first in either case: closing is what removes the
+// engine's own temporary tree and what a KeepTemp is measured against, and a
+// directory kept with a session still open would be a directory being written
+// to while somebody read it.
+func releasePreparedFixtures(failed bool) {
 	preparedMu.Lock()
 	defer preparedMu.Unlock()
 	for _, prepared := range preparedFixtures {
 		if prepared.workspace != nil {
 			_ = prepared.workspace.Close()
 		}
-		if prepared.parent != "" {
-			_ = os.RemoveAll(prepared.parent)
+		if prepared.release != nil {
+			prepared.release(failed)
 		}
 	}
 	preparedFixtures = nil
@@ -1866,5 +1998,78 @@ func TestCloseRemovesTheProbeTree(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("the temporary parent still holds %v after Close", entries)
+	}
+}
+
+// keptSessionTarget is the subtest the test below re-runs to see what a kept
+// package scratch holds.
+//
+// It is the one test in this package that reads only the rejectable fixture, so
+// running it prepares exactly one shared session — the cheapest of the three,
+// since it asks for no probe tree and no verification — instead of all of them.
+const keptSessionTarget = "TestCatalogInvariants/with_rejections"
+
+// keptSessionTimeout bounds the child. Preparing one session is a snapshot, a
+// discovery pass, an instrumented tree, a compile validation and four test
+// binaries: seconds on a warm cache and minutes on a cold one, where the
+// harness's own minute would be a flake that reads like the failure this test
+// reports.
+const keptSessionTimeout = 5 * time.Minute
+
+// TestAKeptPackageScratchHoldsTheSessionsTrees is the difference between keeping
+// a directory and keeping the evidence in it.
+//
+// The shared sessions live under one [testkit.PackageScratch], and TestMain
+// closes each workspace before releasing it — which is right, because a
+// directory being read must not still be written to. But Close is also what
+// removes the engine's own temporary tree: the snapshot, the probe tree and the
+// per-execution scratch. So a kept parent used to hold the fixture copy and
+// nothing else, which is the one part of a failed session a reader can already
+// get from `fixtures/`.
+//
+// Under the keep policy the workspaces are therefore opened with KeepTemp, and
+// this asserts the consequence a reader cares about: the snapshot the session
+// actually ran is there afterwards.
+//
+// It is asserted through a child because the sessions are prepared once for the
+// whole package, under whatever policy the process started with, and a test
+// cannot change that for itself.
+func TestAKeptPackageScratchHoldsTheSessionsTrees(t *testing.T) {
+	t.Parallel()
+
+	cache, err := testkit.BuildCache()
+	if err != nil {
+		t.Fatalf("resolving the test build cache for the child: %v", err)
+	}
+	kept := filepath.Join(testkit.Scratch(t), "kept")
+	// Composed rather than inherited, and then handed back the three variables
+	// the composition strips because all three begin with the prefix it removes.
+	env := append(testkit.Compose(t, testkit.Scratch(t)),
+		testkit.KeepEnv+"=always",
+		testkit.KeepDirEnv+"="+kept,
+		testkit.BuildCacheEnv+"="+cache,
+	)
+
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), keptSessionTimeout)
+	defer cancel()
+	result := testkit.ExecContext(ctx, t, testkit.Root(t), env, testkit.HelperArgv(keptSessionTarget)...)
+	testkit.RequireExit(t, result, 0, "a child preparing one shared session under the keep policy")
+
+	var snapshots []string
+	err = filepath.WalkDir(kept, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "go-mutants-snap-") {
+			snapshots = append(snapshots, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the kept root %s: %v", kept, err)
+	}
+	if len(snapshots) == 0 {
+		t.Errorf("the kept package scratch holds no snapshot, so a reader gets the fixture copy and "+
+			"nothing the session actually ran:\n%s", strings.Join(testkit.Entries(t, kept), "\n"))
 	}
 }

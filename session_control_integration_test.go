@@ -440,6 +440,13 @@ func assertReservedFlag(t *testing.T, call string, err error, flag string) {
 // that no directory *this call* made survived it — a session that leaked one
 // per control would fill a machine over a run, and a count could be satisfied
 // by a leak and a removal happening to cancel out.
+//
+// The comparison itself is [expectScratchAfterCall], because the answer depends
+// on the keep policy the suite is running under: under one, this shared session
+// is opened with KeepTemp and the control's own scratch is kept on purpose. The
+// promise being checked is the same either way — a call owns exactly the
+// directory it made — and stating it in one place is what keeps the two answers
+// from drifting into two tests.
 func TestControlLeavesNoScratchBehind(t *testing.T) {
 	prepared := controlled(t)
 	before := perCallScratch(t, prepared.parent)
@@ -455,10 +462,7 @@ func TestControlLeavesNoScratchBehind(t *testing.T) {
 		t.Fatalf("control = exit %d, want the original program to pass:\n%s", control.ExitCode, control.Output)
 	}
 
-	after := perCallScratch(t, prepared.parent)
-	if !slices.Equal(before, after) {
-		t.Errorf("the control left %v behind; before it there were %v", after, before)
-	}
+	expectScratchAfterCall(t, prepared, before, perCallScratch(t, prepared.parent))
 }
 
 // perCallScratch is every per-call scratch directory under a workspace's

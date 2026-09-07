@@ -84,7 +84,7 @@ func TestValidateProbeTreeRejectsOnlyTheSiteThatCannotCompile(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
-			env := testkit.Compose(t, t.TempDir())
+			env := testkit.Compose(t, testkit.Scratch(t))
 			snap, found, catalog := shadowedFixture(t, toolchain, env)
 
 			result, err := validate.Validate(t.Context(), validate.Options{
@@ -95,6 +95,7 @@ func TestValidateProbeTreeRejectsOnlyTheSiteThatCannotCompile(t *testing.T) {
 				Toolchain:    toolchain,
 				BuildTimeout: mutantkit.StepTimeout,
 				Env:          env,
+				Trace:        mutantkit.Trace(t),
 				Mode:         c.mode,
 			})
 			if err != nil {

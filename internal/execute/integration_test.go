@@ -70,7 +70,7 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 	catalog := mutantkit.InstrumentWith(t, toolchain, snap, env)
 
@@ -208,7 +208,7 @@ func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 	mutantkit.InstrumentWith(t, toolchain, snap, env)
 
@@ -263,7 +263,7 @@ func TestOnlyTheInstrumentedFilesDriftedDuringExecution(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 	catalog := mutantkit.InstrumentWith(t, toolchain, snap, env)
 
@@ -327,7 +327,7 @@ func TestScopedBuildCompilesOnlyTheNamedPackages(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "coverage")
 
 	const (
@@ -399,7 +399,7 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 	catalog := mutantkit.InstrumentWith(t, toolchain, snap, env)
 

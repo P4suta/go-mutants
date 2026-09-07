@@ -43,22 +43,30 @@ func Snapshot(t testing.TB, name string) *snapshot.Snapshot {
 //     nothing and the second one might, which makes any assertion about cache
 //     entries — or about a build being reused — depend on how long the copy took.
 //
-// The DestParent is t.TempDir() for now; it becomes testkit.Scratch when the
-// keep-on-failure policy lands, and this is the one line that changes.
+// The destination is [testkit.Scratch], so that a failed test's snapshot is what
+// the keep policy keeps — and the removal above is skipped when it is being
+// kept, because a snapshot removed by its own cleanup is precisely the
+// instrumented tree somebody wanted to read. Every `.go` file under it is
+// registered with [testkit.DumpFiles], which is what makes an instrumentation or
+// validation failure print the source it was about rather than only its verdict.
 func SnapshotOf(t testing.TB, root string) *snapshot.Snapshot {
 	t.Helper()
-	parent := t.TempDir()
+	parent := testkit.Scratch(t)
 	snap, err := snapshot.Create(root, snapshot.Options{DestParent: parent})
 	if err != nil {
 		t.Fatalf("snapshotting %s into %s: %v", root, parent, err)
 		return nil
 	}
 	t.Cleanup(func() {
+		if testkit.Keeping(t) {
+			return
+		}
 		if err := snap.Cleanup(); err != nil {
 			t.Errorf("cleaning up the snapshot at %s: %v", snap.Root, err)
 		}
 	})
 	testkit.AgeTree(t, snap.Root)
+	testkit.DumpFiles(t, snap.Root, "**/*.go")
 	logInputs(t, "source="+root, "snapshot="+snap.Root, "digest="+snap.WorkspaceDigest)
 	return snap
 }

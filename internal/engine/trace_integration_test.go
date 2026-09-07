@@ -431,7 +431,7 @@ func (s *failingSink) Close() error           { return nil }
 func TestATraceThatCannotBeWrittenChangesNothingAboutTheRun(t *testing.T) {
 	t.Parallel()
 
-	quiet, _, quietErr := collect(t, t.Context(), options(t, "killable"))
+	quiet, _, quietErr := collect(t, t.Context(), untraced(options(t, "killable")))
 	sink := &failingSink{}
 	loud := options(t, "killable")
 	loud.TraceSink = sink

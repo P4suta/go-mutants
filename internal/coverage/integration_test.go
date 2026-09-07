@@ -104,7 +104,7 @@ func TestParsesWhatTheToolchainWrites(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	root := writeFixtureModule(t)
 
 	dependencyProfile := collect(t, toolchain, root, env, "dependency")
@@ -171,7 +171,7 @@ func TestCommittedSampleStillDescribesTheFormat(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	root := writeFixtureModule(t)
 	fresh := render(t, toolchain, root, env, "dependency")
 

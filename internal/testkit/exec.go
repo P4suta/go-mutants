@@ -147,6 +147,7 @@ func ExecContext(ctx context.Context, t testing.TB, dir string, env []string, ar
 	default:
 		result.ExitCode = 0
 	}
+	rememberChild(t, result)
 	return result
 }
 

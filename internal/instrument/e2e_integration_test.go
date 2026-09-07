@@ -94,7 +94,7 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 
 	found := mutantkit.DiscoverWith(t, toolchain, snap, env)
@@ -251,7 +251,7 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	})
 
 	t.Run("an unknown mutant refuses to run the tests", func(t *testing.T) {
-		binary := filepath.Join(t.TempDir(), "killable.test")
+		binary := filepath.Join(testkit.Scratch(t), "killable.test")
 		if runtime.GOOS == "windows" {
 			binary += ".exe"
 		}
@@ -462,7 +462,7 @@ func TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 
 	source := testkit.NewModule(t).Module(refusedModule).
 		Source("refused.go", refusedSource).
