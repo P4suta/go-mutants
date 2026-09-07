@@ -205,16 +205,25 @@ type Result struct {
 	// asking its own context.
 	TimedOut bool
 
-	// MemoryExceeded reports that [Spec.MemoryLimit] was passed and the tree was
-	// killed for it. It stands beside TimedOut rather than inside it: the two
-	// are different facts about a run, they are never both true, and a caller
-	// that conflated them would report a mutant that ate the machine as one that
-	// merely took too long.
+	// MemoryExceeded reports that [Spec.MemoryLimit] was passed. It stands
+	// beside TimedOut rather than inside it: the two are different facts about a
+	// run, they are never both true, and a caller that conflated them would
+	// report a mutant that ate the machine as one that merely took too long.
 	//
-	// A tree killed for its memory reports ExitCode [ExitCodeUnavailable] and a
-	// nil Err, exactly as a timed-out one does, and the retained output is left
-	// as the child wrote it — this package adds no synthetic line saying what
-	// happened, because what a caller renders is the caller's to word.
+	// It is set two ways, and the second is why ExitCode has to be read with it.
+	// A tree the sampler caught was killed here, and reports ExitCode
+	// [ExitCodeUnavailable] and a nil Err exactly as a timed-out one does. A
+	// tree the *kernel* ended — on Windows the job object refuses its next
+	// commit and the Go runtime dies with "out of memory" — is reported exceeded
+	// too, with its own exit code beside the flag: both are true, and the flag
+	// is what says the status is a consequence of the budget rather than of the
+	// tests. See [exceededAtExit], and note in particular that a tree which went
+	// over the bound and *finished* is not reported as exceeded: that is a fact
+	// about what it cost, which [PeakMemory] carries, and not a cause.
+	//
+	// The retained output is left as the child wrote it either way — this
+	// package adds no synthetic line saying what happened, because what a caller
+	// renders is the caller's to word.
 	MemoryExceeded bool
 
 	// PeakMemory is the highest memory the child's process tree was observed to
@@ -581,6 +590,14 @@ func runProcess(ctx context.Context, spec Spec) Result {
 		result.ExitCode = exitCodeOf(cmd.ProcessState)
 		result.Err = waitFailure(waitErr)
 	}
+	// And once more for a child the *kernel* ended while over the line: a tree
+	// can cross the bound and die inside one sampling tick, and on Windows the
+	// job object's own limit is what stops it there. See [exceededAtExit] for
+	// the three conditions that keep this from reading an ordinary spike as a
+	// kill, and for why such a result carries MemoryExceeded beside a real exit
+	// code.
+	result.MemoryExceeded = result.MemoryExceeded ||
+		exceededAtExit(kernelBoundsMemory, spec.MemoryLimit, result.PeakMemory, result.ExitCode, killed)
 	return result
 }
 

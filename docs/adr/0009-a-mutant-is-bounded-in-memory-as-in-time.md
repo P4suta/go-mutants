@@ -111,7 +111,23 @@ baseline, enforced at the process layer, over the whole tree.**
    — is bounded, because a measurement and the thing it is compared against have
    to have had the same machine.
 
-6. **A bound that cannot be enforced is reported as absent.** Sampling a live
+6. **A derived bound is sound only for a run of the baseline's shape, so a fuzz
+   run gets none.** `go test -fuzz` is a coordinator plus one worker process per
+   core, and every one of them maps the same 100 MiB region the fuzzing engine
+   communicates through (`internal/fuzz`'s `workerSharedMemSize`, mapped with
+   `mmap(MAP_SHARED)` on Unix and `CreateFileMapping`/`MapViewOfFile` on
+   Windows). What that costs is different on each platform and large on both:
+   Windows counts each process's view against the job's committed charge, so a
+   four-core runner is roughly half a gibibyte before an input has been tried;
+   Linux counts each sharer's resident pages, which is why the sampler reads
+   `Pss` (below) and why summing `VmRSS` would have reported eight times one
+   region on an eight-core box. Either way a bound derived from one process
+   running the suite once would kill a legitimate fuzz run for being what it is.
+   A limit the caller *names* still applies — this is go-mutants declining to
+   guess, not fuzzing being unboundable — and the timeout is unaffected, because
+   wall-clock time is the same question whatever shape a run has.
+
+7. **A bound that cannot be enforced is reported as absent.** Sampling a live
    process tree needs `/proc` on Linux or the job object on Windows; macOS
    exposes it only through libproc, which is cgo, and go-mutants is installed
    with `go install` on machines that may have no C toolchain. There the peak is
@@ -140,11 +156,19 @@ baseline, enforced at the process layer, over the whole tree.**
 - Every process go-mutants starts now costs one `getrusage` read it did not
   before, which is part of the `wait4` the runner already makes. Every *bounded*
   one costs, ten times a second, one `/proc` ReadDir plus one `/proc/<pid>/stat`
-  ReadFile per process on the machine — so the per-tick cost scales with the
-  machine's process count rather than with the tree's, and a bounded mutant on a
-  busy host reads a few hundred small files a second. Windows costs one
-  `QueryInformationJobObject` per tick instead, which is O(1). An unbounded run
-  starts no sampler and pays none of it.
+  ReadFile per process on the machine, and one `/proc/<pid>/smaps_rollup` read
+  per process *in the tree* — the group filter runs first, so the second cost is
+  paid for two or three processes rather than for the machine's hundreds. A
+  bounded mutant on a busy host therefore reads a few hundred small files a
+  second. Windows costs one `QueryInformationJobObject` per tick instead, which
+  is O(1). An unbounded run starts no sampler and pays none of it.
+- The Linux sampler reads the **proportional set size** rather than `VmRSS`,
+  because `VmRSS` counts a shared page once in every process that has it
+  resident and a Go program's most interesting shared mapping — the fuzzing
+  engine's 100 MiB region — is mapped by every worker at once. `smaps_rollup`
+  arrived in Linux 4.14; a kernel without it, or one that refuses it, falls back
+  to `VmRSS`, which over-counts and so makes the bound tighter rather than
+  looser.
 - `peak_memory_bytes` is a machine fact and is normalised out of every golden
   report, alongside the durations and the worker numbers. A golden that kept it
   would fail on the next machine, which is the same rule ADR 0004's rendering

@@ -21,6 +21,10 @@ package runner
 // timeout alone.
 const memorySamplingSupported = false
 
+// kernelBoundsMemory: nothing here enforces a bound at all; see
+// [memorySamplingSupported] and [exceededAtExit].
+const kernelBoundsMemory = false
+
 // maxRSSUnit converts ru_maxrss into bytes. Darwin reports it in bytes, which
 // is the one place it disagrees with Linux and the BSDs it descends from.
 const maxRSSUnit = 1

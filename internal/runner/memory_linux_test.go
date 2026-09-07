@@ -4,7 +4,10 @@
 package runner
 
 import (
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +25,7 @@ import (
 func TestAKernelWithoutProcfsCannotEnforceABound(t *testing.T) {
 	// Not parallel: it moves a package-level seam.
 	original := procRoot
+	before := MemoryBoundSupported()
 	t.Cleanup(func() {
 		procRoot = original
 		resetProcfsProbe()
@@ -36,11 +40,36 @@ func TestAKernelWithoutProcfsCannotEnforceABound(t *testing.T) {
 		t.Error("groupResidentMemory answered from a procfs that is not there")
 	}
 
-	procRoot = original
+	// A readable root of this test's own making, rather than the machine's:
+	// asserting that the real /proc answers would be asserting something about
+	// whoever is running the suite — a hardened kernel, a container, a sandbox
+	// — and this test is about the seam rather than about them.
+	procRoot = readableProc(t)
 	resetProcfsProbe()
 	if !MemoryBoundSupported() {
-		t.Error("MemoryBoundSupported() = false on a Linux machine with a readable /proc")
+		t.Error("MemoryBoundSupported() = false with a readable procfs")
 	}
+
+	// And the machine's own answer is restored, whatever it was.
+	procRoot = original
+	resetProcfsProbe()
+	if got := MemoryBoundSupported(); got != before {
+		t.Errorf("MemoryBoundSupported() = %t after restoring the real proc root, want the %t it was before",
+			got, before)
+	}
+}
+
+// readableProc is a proc root with the one entry the probe reads, so a test can
+// arrange the answer "yes" without depending on the machine giving it.
+func readableProc(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	self := filepath.Join(root, "self")
+	if err := os.MkdirAll(self, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", self, err)
+	}
+	writeProcFile(t, filepath.Join(self, "stat"), "1 (go) test) S 1 1 0\n")
+	return root
 }
 
 // TestTheProcfsProbeIsMadeOnce pins that the answer is cached: it is asked
@@ -53,14 +82,138 @@ func TestTheProcfsProbeIsMadeOnce(t *testing.T) {
 		resetProcfsProbe()
 	})
 
+	// A root of this test's own making, so that the cached answer is `true`
+	// whatever the machine would have said.
+	procRoot = readableProc(t)
 	resetProcfsProbe()
 	if !MemoryBoundSupported() {
-		t.Fatal("MemoryBoundSupported() = false on a Linux machine with a readable /proc")
+		t.Fatal("MemoryBoundSupported() = false with a readable procfs")
 	}
 	// The seam moves and the answer does not, because nothing reads procfs a
 	// second time.
 	procRoot = filepath.Join(t.TempDir(), "no-such-proc")
 	if !MemoryBoundSupported() {
 		t.Error("the probe was made again after it had already answered")
+	}
+}
+
+// fakeProc writes a proc root holding the processes a test describes: a `stat`
+// line with the group and a resident page count, and — when the test says so —
+// a `smaps_rollup` carrying a proportional set size.
+//
+// The stat line's second field is deliberately a name with a space and a
+// parenthesis in it, because that is the shape a program can choose for itself
+// and the parser has to survive: split on spaces from the left and the name's
+// own bytes become the numbers this function is trying to report.
+func fakeProc(t *testing.T, procs []fakeProcess) string {
+	t.Helper()
+
+	root := t.TempDir()
+	for _, p := range procs {
+		dir := filepath.Join(root, strconv.Itoa(p.pid))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("creating %s: %v", dir, err)
+		}
+		// pid, comm, then state and the rest: pgrp is field 5 and rss field 24.
+		fields := make([]string, 0, 24)
+		fields = append(fields, strconv.Itoa(p.pid), "(go) test)", "S", "1", strconv.Itoa(p.pgrp))
+		for len(fields) < 24 {
+			fields = append(fields, "0")
+		}
+		fields[23] = strconv.FormatInt(p.rssPages, 10)
+		writeProcFile(t, filepath.Join(dir, "stat"), strings.Join(fields, " ")+"\n")
+
+		if p.pssKB < 0 {
+			continue
+		}
+		writeProcFile(t, filepath.Join(dir, "smaps_rollup"),
+			"55d5e0000000-7ffd00000000 ---p 00000000 00:00 0                          [rollup]\n"+
+				"Rss:              999999 kB\n"+
+				"Pss:              "+strconv.FormatInt(p.pssKB, 10)+" kB\n"+
+				"Shared_Clean:          0 kB\n")
+	}
+	return root
+}
+
+// fakeProcess is one row of a fake proc root. A negative pssKB writes no
+// smaps_rollup at all, which is the older kernel this code has to fall back on.
+type fakeProcess struct {
+	pid      int
+	pgrp     int
+	rssPages int64
+	pssKB    int64
+}
+
+func writeProcFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing %s: %v", path, err)
+	}
+}
+
+// TestTheGroupsMemoryIsSummedProportionallyAcrossSharers is the reason this
+// reads Pss rather than VmRSS, and it is a correctness bug rather than a
+// refinement.
+//
+// A `go test -fuzz` run is a coordinator plus one worker process per core, and
+// every one of them maps the *same* 100 MiB shared-memory region. VmRSS counts
+// a shared page once in every process that has it resident, so summing VmRSS
+// over that group reports the region once per worker — on an eight-core machine
+// that is 800 MiB of memory nobody is using, which is most of a gibibyte bound
+// spent on double counting, and a legitimate fuzz run killed for it.
+//
+// Pss divides a shared page between its sharers, so the same region is counted
+// once however many processes map it. That is the number a budget is about.
+func TestTheGroupsMemoryIsSummedProportionallyAcrossSharers(t *testing.T) {
+	original := procRoot
+	t.Cleanup(func() { procRoot = original })
+
+	// Two processes in one group, each with 200 MiB resident and each with half
+	// of it shared with the other: 100 MiB private plus 100 MiB of one shared
+	// region. VmRSS would say 400 MiB; the truth is 300 MiB.
+	const mib = 1 << 20
+	pages := int64(200 * mib / os.Getpagesize())
+	procRoot = fakeProc(t, []fakeProcess{
+		{pid: 100, pgrp: 100, rssPages: pages, pssKB: 150 * 1024},
+		{pid: 101, pgrp: 100, rssPages: pages, pssKB: 150 * 1024},
+		// A third process in another group, which must not be counted at all.
+		{pid: 200, pgrp: 200, rssPages: pages, pssKB: 150 * 1024},
+	})
+
+	got, ok := groupResidentMemory(100)
+	if !ok {
+		t.Fatal("groupResidentMemory could not read the fake proc root")
+	}
+	if want := int64(300 * mib); got != want {
+		t.Errorf("groupResidentMemory = %d, want %d: a shared region counted once per sharer is %d",
+			got, want, 400*mib)
+	}
+}
+
+// TestAKernelWithoutSmapsRollupFallsBackToTheResidentSet keeps the older kernel
+// working.
+//
+// smaps_rollup arrived in Linux 4.14 and a hardened kernel can refuse it even
+// where it exists. Falling back to VmRSS over-counts a shared region, which
+// makes the bound *tighter* than it should be — the safe direction for a
+// fallback, and the behaviour every version of this code had before Pss.
+func TestAKernelWithoutSmapsRollupFallsBackToTheResidentSet(t *testing.T) {
+	original := procRoot
+	t.Cleanup(func() { procRoot = original })
+
+	const mib = 1 << 20
+	pages := int64(64 * mib / os.Getpagesize())
+	procRoot = fakeProc(t, []fakeProcess{
+		{pid: 300, pgrp: 300, rssPages: pages, pssKB: -1},
+		{pid: 301, pgrp: 300, rssPages: pages, pssKB: 32 * 1024},
+	})
+
+	got, ok := groupResidentMemory(300)
+	if !ok {
+		t.Fatal("groupResidentMemory could not read the fake proc root")
+	}
+	// 64 MiB from the process with no rollup, 32 MiB from the one that has one.
+	if want := int64(96 * mib); got != want {
+		t.Errorf("groupResidentMemory = %d, want %d", got, want)
 	}
 }

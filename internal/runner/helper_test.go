@@ -228,6 +228,15 @@ func runHelper(args []string) int {
 		}
 		return runHogHelper(rest[0], rest[1], rest[2])
 
+	case "burst":
+		// burst TOTAL-BYTES — the process no sampler can catch: it grows as
+		// fast as the machine allows and exits. Whatever ends it, the peak it
+		// reached is what the bound has to be judged against.
+		if len(rest) != 1 {
+			return helperMisuse
+		}
+		return runHogHelper(rest[0], rest[0], "0")
+
 	case "hogtree":
 		// hogtree SENTINEL-PATH SENTINEL-DELAY-MS TOTAL-BYTES STEP-BYTES
 		// STEP-DELAY-MS — "tree" and "hog" at once. It spawns the sentinel

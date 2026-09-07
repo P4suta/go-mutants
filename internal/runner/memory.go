@@ -55,6 +55,40 @@ const MemorySampleInterval = 100 * time.Millisecond
 // memory derivation.
 func MemoryBoundSupported() bool { return memorySamplingSupported && memorySamplingAvailable() }
 
+// exceededAtExit reports whether the bound is what ended a child that this
+// package did not kill.
+//
+// It is the half of the bound the sampler cannot see, and it exists for one
+// platform. On Windows the kernel carries a line of its own a quarter above the
+// sampler's (see the job object's JOB_OBJECT_LIMIT_JOB_MEMORY), so a tree that
+// grows fast enough crosses both between two samples, has its next commit
+// refused, and is killed by the Go runtime with "out of memory" and a non-zero
+// status. Nothing sampled it, and without this the run would report an ordinary
+// failing test — a mutant `killed` for a reason nobody can find, or a control
+// that makes the user's own program look broken.
+//
+// Three conditions, and each of them is there to keep this from becoming a
+// false kill:
+//
+//   - The platform has a kernel line at all. On POSIX nothing but the sampler
+//     can end a tree for its memory, so a peak above the bound there means the
+//     tree went over it and *finished anyway* — a fact, and not a cause. Saying
+//     otherwise would report every suite that spikes between two ticks as
+//     killed by the bound, which on a loaded machine is most of them.
+//   - This package did not kill the tree itself. A timeout and a cancellation
+//     already have their verdict, and [Result.TimedOut] and
+//     [Result.MemoryExceeded] are never both set.
+//   - The child exited non-zero. A tree the kernel refused an allocation to does
+//     not finish; one that exited cleanly was not stopped by anything, whatever
+//     its peak reached.
+//
+// A caller therefore gets [Result.MemoryExceeded] *and* the child's own exit
+// code, and both mean what they say: the tree was over the bound, and this is
+// the status the runtime died with when its next allocation was refused.
+func exceededAtExit(kernelBounded bool, limit, peak int64, exitCode int, killed bool) bool {
+	return kernelBounded && !killed && limit > 0 && peak > limit && exitCode != 0
+}
+
 // memoryWatchdog samples a running tree's resident memory, remembers the
 // highest it saw, and reports the moment the tree passes its limit.
 //

@@ -74,6 +74,32 @@ Entries say *why* a change was made, not only what changed.
   would spend those two seconds allocating hundreds of megabytes more of exactly
   what the bound is there to prevent.
 
+  Two shapes of run are treated as the exceptions they are. The baseline runs
+  unbounded, because it is what the bound is derived from. And a **fuzz run gets
+  no derived bound at all** — `go test -fuzz` is a coordinator plus one worker
+  process per core, each mapping the same 100 MiB region the fuzzing engine
+  communicates through, so a four-core machine is half a gibibyte of mappings
+  before an input has been tried and a bound derived from one process running
+  the suite once would kill it for being what it is. A limit the caller names
+  still applies, to fuzzing like anything else. For the same reason the Linux
+  sampler reads the proportional set size from `/proc/<pid>/smaps_rollup` rather
+  than `VmRSS`, which counts a shared page once per sharer and would have
+  reported that one region eight times on an eight-core box; kernels without
+  `smaps_rollup` fall back to `VmRSS`, which over-counts and so bounds more
+  tightly rather than less.
+
+  On Windows the bound is checked once more after the child has been reaped,
+  because a tree can cross the line and die inside one sampling tick: the job
+  object refuses its next commit and the Go runtime dies with "out of memory"
+  before anything sampled it, and reporting that as an ordinary failing test
+  means a mutant `killed` for a reason nobody can find. Such a result carries
+  `MemoryExceeded` beside the child's own exit code, and both mean what they
+  say. It is deliberately narrow — Windows only, non-zero exit only — because a
+  peak above the bound is a fact about what a run *cost* and not a cause of its
+  ending: measured on a loaded machine, ordinary `-cover` binaries of a
+  three-function fixture peaked at 607 MiB against a 256 MiB bound and finished
+  perfectly well.
+
   Rlimits were rejected rather than overlooked: RLIMIT_AS bounds address space,
   of which the Go runtime reserves hundreds of gigabytes before allocating
   anything, RLIMIT_DATA is Linux-only and covers a segment a Go heap does not

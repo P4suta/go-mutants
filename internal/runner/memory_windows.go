@@ -11,6 +11,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// kernelBoundsMemory: the job object carries a memory line of its own, so a
+// tree can be ended by the kernel rather than by the sampler and
+// [exceededAtExit] has something to detect.
+const kernelBoundsMemory = true
+
 // memorySamplingSupported: the job object accounts for the whole tree at any
 // moment, so a bound is both measured and enforced here — twice over, in fact.
 // See [jobSupervisor.usedMemory].

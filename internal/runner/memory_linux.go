@@ -43,6 +43,13 @@ func procfsProbe() bool {
 // memorySamplingAvailable reports whether this machine's procfs can be read.
 func memorySamplingAvailable() bool { return procfsReadable() }
 
+// kernelBoundsMemory: nothing but the sampler ends a tree for its memory here.
+// The rlimits that could are rejected — see [memoryWatchdog] — and the OOM
+// killer is the machine's decision rather than this bound's, so a peak above
+// the line means the tree went over it and finished anyway. See
+// [exceededAtExit].
+const kernelBoundsMemory = false
+
 // maxRSSUnit converts ru_maxrss into bytes. Linux reports it in kibibytes,
 // which getrusage(2) documents and which every other platform disagrees with,
 // so the conversion is a per-platform constant rather than a shared assumption.
@@ -55,8 +62,20 @@ const (
 	statRSS  = 24
 )
 
-// groupResidentMemory sums the resident memory of every process in pgid, in
-// bytes.
+// groupResidentMemory sums the memory of every process in pgid, in bytes,
+// counting a page shared between them once rather than once each.
+//
+// The proportional set size is what it reads, and the difference is a
+// correctness bug rather than a refinement. A `go test -fuzz` run is a
+// coordinator plus one worker process per core, and every one of them maps the
+// *same* 100 MiB shared-memory region the fuzzing engine communicates through
+// (`internal/fuzz`'s workerSharedMemSize). VmRSS counts a shared page once in
+// every process that has it resident, so summing VmRSS over that group reports
+// the region once per worker: on an eight-core machine, 800 MiB of memory
+// nobody is using, which is most of a gibibyte bound spent on double counting
+// and a legitimate fuzz run killed for it. Pss divides a shared page between
+// its sharers, so the region is counted once however many processes map it,
+// which is the number a budget is about.
 //
 // The process group is this platform's whole notion of the tree — it is what
 // [groupSupervisor] kills — so summing over it measures exactly the set the
@@ -98,9 +117,54 @@ func groupResidentMemory(pgid int) (int64, bool) {
 		if !ok || group != pgid {
 			continue
 		}
+		if pss, ok := processProportionalSet(pid); ok {
+			total += pss
+			continue
+		}
+		// No smaps_rollup: an older kernel, or one that refuses it. The
+		// resident set over-counts a shared region, which makes the bound
+		// tighter than it should be — the safe direction for a fallback, and
+		// exactly what this code did before it could do better.
 		total += pages * pageSize
 	}
 	return total, true
+}
+
+// processProportionalSet reads a process's proportional set size from
+// /proc/<pid>/smaps_rollup, in bytes, and reports whether the kernel would say.
+//
+// smaps_rollup is the pre-summed form of /proc/<pid>/smaps and arrived in Linux
+// 4.14; reading smaps itself would be a line per mapping and hundreds of them
+// per Go process, ten times a second. A kernel without it, or one that refuses
+// it, is answered with false and the caller falls back to the resident set.
+//
+// It costs one more small file read per process *in the group* rather than per
+// process on the machine: the group filter above runs first, so a bounded
+// mutant pays it for its own two or three processes and for nothing else.
+func processProportionalSet(pid int) (int64, bool) {
+	data, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "smaps_rollup"))
+	if err != nil {
+		return 0, false
+	}
+	for line := range strings.Lines(string(data)) {
+		rest, found := strings.CutPrefix(line, "Pss:")
+		if !found {
+			continue
+		}
+		// "Pss:  1234 kB", and the unit is always kB — proc(5) documents it and
+		// the kernel has never written another — so the number is what is
+		// parsed and the suffix is what is checked.
+		fields := strings.Fields(rest)
+		if len(fields) != 2 || fields[1] != "kB" {
+			return 0, false
+		}
+		kb, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || kb < 0 {
+			return 0, false
+		}
+		return kb << 10, true
+	}
+	return 0, false
 }
 
 // processStat reads a process's group id and resident pages from

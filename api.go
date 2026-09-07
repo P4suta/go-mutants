@@ -689,6 +689,9 @@ type ExecRequest struct {
 	// Not every platform can enforce one — macOS reports what a process cost
 	// once it is gone and cannot watch one while it runs — and there the field
 	// is accepted and has no effect. PeakMemory is still reported everywhere.
+	//
+	// A target that starts fuzzing gets no session bound: see [Session.Exec].
+	// A limit named here still applies, to fuzzing like anything else.
 	MemoryLimit int64
 	// OutputLimit caps the retained combined output of each test binary this
 	// execution starts, as [Command.OutputLimit] does: the engine's 1 MiB

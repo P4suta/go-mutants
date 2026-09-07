@@ -609,6 +609,32 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	return session, nil
 }
 
+// effectiveMemoryLimit resolves what one call is bounded by: what the caller
+// asked for, or the session's own — unless the call is a fuzz run, which
+// inherits nothing.
+//
+// A derived bound is `max(floor, what the unmutated tests cost × 4)`, and every
+// word of that is about a run of the *baseline's shape*: one process, running
+// the suite once. A fuzz run is not that shape. `go test -fuzz` starts a
+// coordinator plus one worker process per core, and each of them maps the same
+// 100 MiB shared-memory region the fuzzing engine communicates through
+// (`internal/fuzz`'s workerSharedMemSize) — so a four-core machine is half a
+// gibibyte of mappings before a single input has been tried, and an eight-core
+// one is past the whole derived bound. Holding that to a number derived from
+// something else kills a legitimate run for being what it is, which is what it
+// did.
+//
+// A limit the caller *named* still applies, verbatim and to fuzzing too: a
+// consumer who knows what their own fuzzing costs is entitled to cap it, and
+// this is only about go-mutants declining to guess. The timeout is unaffected
+// either way — wall-clock time is the same question whatever shape a run has.
+func effectiveMemoryLimit(requested, session int64, args []string) int64 {
+	if requested != 0 || hasFuzzTarget(args) {
+		return requested
+	}
+	return session
+}
+
 // sessionMemoryBound resolves the per-mutant memory bound a session applies
 // where a request names none.
 //
@@ -1398,9 +1424,7 @@ func (s *Session) target(
 	if timeout == 0 {
 		timeout = s.mutantTimeout
 	}
-	if memory == 0 {
-		memory = s.mutantMemory
-	}
+	memory = effectiveMemoryLimit(memory, s.mutantMemory, args)
 	scratch, err := os.MkdirTemp(s.scratch, execPrefix)
 	if err != nil {
 		return sessionTarget{}, fmt.Errorf("gomutants: session %s scratch: %w", call, err)
@@ -1441,6 +1465,13 @@ func (s *Session) target(
 
 // Exec runs one mutant against a selected test or fuzz target without
 // rebuilding the prepared test binaries.
+//
+// A fuzz target — anything whose Args carry `-test.fuzz` — is bounded only by a
+// limit the caller names and by its timeout. A fuzz run has no baseline of its
+// own shape: it is a coordinator plus one worker process per core, each mapping
+// the same 100 MiB region the fuzzing engine communicates through, so a bound
+// derived from one process running the suite once would kill it for being what
+// it is. The same rule applies to [Session.Probe] and [Session.Control].
 func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, error) {
 	if s == nil {
 		return MutantResult{}, errors.New("gomutants: session exec: nil session")
@@ -1825,10 +1856,7 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	if timeout == 0 {
 		timeout = s.mutantTimeout
 	}
-	memory := request.MemoryLimit
-	if memory == 0 {
-		memory = s.mutantMemory
-	}
+	memory := effectiveMemoryLimit(request.MemoryLimit, s.mutantMemory, request.Args)
 	scratch, err := os.MkdirTemp(s.scratch, probePrefix)
 	if err != nil {
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe scratch: %w", err)

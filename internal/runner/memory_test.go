@@ -24,12 +24,21 @@ const (
 	// hogStep is how much a helper adds to its resident set per step, and
 	// hogStepDelay how long it waits between steps.
 	//
-	// The pause is the point. A sampler cannot see a peak that lived entirely
-	// between two of its ticks, so the step delay is set well above
-	// [runner.MemorySampleInterval]: a helper that grew as fast as the machine
-	// allows would be testing the scheduler rather than the bound.
-	hogStep      = 8 << 20
-	hogStepDelay = 25 * time.Millisecond
+	// The pace is the point, and it is set against two lines rather than one.
+	// A sampler cannot see a peak that lived entirely between two of its ticks,
+	// so a helper that grew as fast as the machine allows would be testing the
+	// scheduler; and on Windows the kernel's own line sits a quarter above the
+	// sampler's, so a helper that grew by more than that quarter per tick would
+	// cross both between two samples and be killed by the kernel before
+	// anything read a number above the bound. Four mebibytes every twenty
+	// milliseconds is twenty per tick, which is inside the quarter of every
+	// bound these tests set.
+	//
+	// That the arithmetic is close is why [runner.Result.MemoryExceeded] is also
+	// set from the final peak: a helper the sampler misses is still a helper
+	// that went over, and the tests below hold whichever path reports it.
+	hogStep      = 4 << 20
+	hogStepDelay = 20 * time.Millisecond
 
 	// hogTotal is how far a helper grows when nothing stops it. It is the
 	// ceiling on what these tests can cost the machine, and it is deliberately
@@ -329,5 +338,54 @@ func TestAMemoryKillDoesNotWaitForATreeToShutDownPolitely(t *testing.T) {
 	if ceiling := 2 * limit; result.PeakMemory > ceiling {
 		t.Errorf("PeakMemory = %d against a %d bound, over the %d ceiling: the kill waited out the termination grace "+
 			"while the process kept allocating", result.PeakMemory, limit, ceiling)
+	}
+}
+
+// TestABurstThatOutrunsTheSamplerIsStillMeasured pins what a bound does about
+// the tree it cannot sample.
+//
+// This helper allocates its whole budget in one burst and exits, which takes
+// well under a single [runner.MemorySampleInterval]; the sampler's first tick
+// is one interval in, so in the ordinary case it takes no sample at all. What
+// must be true either way is that the *peak* comes back — a run that measured
+// nothing about a child that went over its budget could not tell anybody it
+// had.
+//
+// Whether that is also reported as a memory *kill* is the platform's answer,
+// and the two are deliberately different questions. On Windows the kernel
+// carries a line of its own above the sampler's, so a burst this fast has its
+// commit refused and dies of the bound; elsewhere nothing but the sampler can
+// end a tree for its memory, so a burst that finished finished — the peak is a
+// fact about the run and not the cause of its ending, and calling it a kill
+// would report every suite that spikes between two ticks as killed by the
+// bound.
+func TestABurstThatOutrunsTheSamplerIsStillMeasured(t *testing.T) {
+	t.Parallel()
+	requireEnforcement(t)
+
+	footprint := helperFootprint(t)
+	limit := footprint + boundHeadroom
+
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv:        append(helperCommand(t, "burst"), strconv.Itoa(hogTotal)),
+		Env:         helperEnviron(),
+		Timeout:     30 * time.Second,
+		MemoryLimit: limit,
+	})
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil", result.Err)
+	}
+	if result.TimedOut {
+		t.Fatal("TimedOut = true for a helper that allocates and exits")
+	}
+	if result.PeakMemory <= limit {
+		t.Errorf("PeakMemory = %d, want above the %d bound: the helper did not grow far enough to prove anything",
+			result.PeakMemory, limit)
+	}
+	// Where nothing but the sampler can end a tree, a burst it missed is a run
+	// that completed. Reporting it as a kill is the false kill this rule was
+	// narrowed to avoid.
+	if !runner.KernelBoundsMemory() && result.MemoryExceeded && result.ExitCode == 0 {
+		t.Error("a helper that allocated and exited cleanly was reported as killed by its bound")
 	}
 }

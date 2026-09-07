@@ -173,3 +173,64 @@ func TestACallThatNamesNoBoundGetsTheSessionsOwn(t *testing.T) {
 		t.Errorf("Exec took %s, which is the session's whole timeout", elapsed)
 	}
 }
+
+// TestAFuzzRunIsNotHeldToABoundDerivedFromSomethingElse is the regression this
+// rule exists for, driven end to end.
+//
+// The session's bound is a gibibyte at its floor, and a fuzz run reaches that
+// on nothing but its own machinery: `go test -fuzz` starts a coordinator plus
+// one worker process per core, each mapping the same 100 MiB region the fuzzing
+// engine communicates through. On a four-core runner that is half a gibibyte of
+// mappings before a single input is tried, and this exact target came back
+// `killed` after 221 ms on Windows CI with nothing in its output but a coverage
+// warning.
+//
+// The bound here is deliberately tiny — far below what the fuzz machinery costs
+// — so a run that inherited it could not possibly survive. That it does is the
+// whole claim.
+func TestAFuzzRunIsNotHeldToABoundDerivedFromSomethingElse(t *testing.T) {
+	prepared := controlled(t)
+	args := []string{
+		"-test.run=^$",
+		"-test.fuzz=^FuzzSessionIdentity$",
+		"-test.fuzztime=100ms",
+	}
+
+	control, err := prepared.session.Control(t.Context(), gomutants.ControlRequest{
+		Package: killableModule,
+		Args:    args,
+		Timeout: 60 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Control: %v", err)
+	}
+	if control.MemoryExceeded {
+		t.Errorf("a fuzz run was stopped by a bound it never asked for: peak %d; output:\n%s",
+			control.PeakMemory, control.Output)
+	}
+	if control.ExitCode != 0 {
+		t.Errorf("the fuzz control exited %d, want 0; output:\n%s", control.ExitCode, control.Output)
+	}
+
+	// And the same target, ordinary in every way except that the caller named a
+	// limit. A named limit applies to fuzzing like anything else: this is about
+	// go-mutants declining to guess, not about fuzzing being unboundable.
+	bounded, err := prepared.session.Control(t.Context(), gomutants.ControlRequest{
+		Package:     killableModule,
+		Args:        args,
+		Timeout:     60 * time.Second,
+		MemoryLimit: runawayRequestBound,
+	})
+	if err != nil {
+		t.Fatalf("Control with a named limit: %v", err)
+	}
+	if !runner.MemoryBoundSupported() {
+		return
+	}
+	// It may or may not exceed 256 MiB — that depends on the core count — so
+	// what is asserted is that the limit *reached* the run: the peak came back,
+	// and nothing about the call was refused for naming one.
+	if bounded.PeakMemory <= 0 {
+		t.Error("a bounded fuzz control reports no peak, so nothing measured it")
+	}
+}

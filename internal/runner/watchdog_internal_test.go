@@ -151,3 +151,55 @@ func TestASamplerOnAPlatformThatCannotMeasureStopsRatherThanSpins(t *testing.T) 
 		t.Errorf("observedPeak() = %d, want 0 where nothing could be measured", got)
 	}
 }
+
+// TestOnlyAKernelLineCanEndATreeTheSamplerDidNotSee pins the retroactive half
+// of the bound, and — more importantly — the three things that keep it from
+// becoming a false kill.
+//
+// A sampler ten times a second cannot catch a tree that crosses its line and
+// dies inside one tick, and on Windows that is not a corner case: the kernel
+// limit sits a quarter above the sampler's, so a child growing fast enough
+// crosses both between two samples, has its next commit refused, and the Go
+// runtime kills it with "out of memory" and a non-zero status. The sampler saw
+// nothing, and reporting an ordinary failing test there means a mutant `killed`
+// for a reason nobody can find and a control that makes the user's program look
+// broken.
+//
+// The three refusals matter as much as the acceptance. Measured on a loaded
+// machine, ordinary `-cover` test binaries of a three-function fixture peaked at
+// 607 MiB against a 256 MiB bound and finished perfectly well — so "the peak was
+// over the line" is a fact about a run and not a cause of its ending. A rule
+// that read it as a cause reported every one of those as killed by the bound,
+// which is exactly the false kill this feature exists to avoid.
+func TestOnlyAKernelLineCanEndATreeTheSamplerDidNotSee(t *testing.T) {
+	t.Parallel()
+
+	const limit = 1 << 20
+	for _, c := range []struct {
+		name     string
+		kernel   bool
+		limit    int64
+		peak     int64
+		exitCode int
+		killed   bool
+		want     bool
+	}{
+		{"a kernel-bounded child that died over its line", true, limit, limit + 1, 2, false, true},
+		{"the same child on a platform with no kernel line", false, limit, limit + 1, 2, false, false},
+		{"a child that finished cleanly over the line", true, limit, limit * 4, 0, false, false},
+		{"a child that failed a test under the line", true, limit, limit / 2, 1, false, false},
+		{"a child exactly at the line", true, limit, limit, 2, false, false},
+		{"a child whose peak nobody could measure", true, limit, 0, 2, false, false},
+		{"an unbounded child that used a lot", true, 0, 1 << 40, 2, false, false},
+		{"a tree this package killed", true, limit, limit * 4, ExitCodeUnavailable, true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := exceededAtExit(c.kernel, c.limit, c.peak, c.exitCode, c.killed)
+			if got != c.want {
+				t.Errorf("exceededAtExit(%t, %d, %d, %d, %t) = %t, want %t",
+					c.kernel, c.limit, c.peak, c.exitCode, c.killed, got, c.want)
+			}
+		})
+	}
+}

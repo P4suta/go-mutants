@@ -13,6 +13,10 @@ package runner
 // is POSIX.
 const memorySamplingSupported = false
 
+// kernelBoundsMemory: nothing here enforces a bound at all; see
+// [memorySamplingSupported] and [exceededAtExit].
+const kernelBoundsMemory = false
+
 // maxRSSUnit converts ru_maxrss into bytes. The BSDs and the illumos family
 // report kilobytes, as Linux does and unlike Darwin.
 const maxRSSUnit = 1 << 10

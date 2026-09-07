@@ -753,9 +753,11 @@ the outcome cache.
   repository's own `internal/config`, and took a CI runner down before its
   ten-second timeout could expire — see
   [ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md). While a
-  bounded child runs, `runner` samples the tree every 100 ms and the first
-  sample **strictly above** the limit kills it, with `Result.MemoryExceeded`
-  rather than `Result.TimedOut` — and without the SIGTERM grace a timeout gets,
+  bounded child runs, `runner` samples the tree every 100 ms — the *proportional*
+  set size on Linux, so a page shared between a fuzz coordinator and its workers
+  is counted once rather than once each — and the first sample **strictly above**
+  the limit kills it, with `Result.MemoryExceeded` rather than
+  `Result.TimedOut` — and without the SIGTERM grace a timeout gets,
   because the evidence a memory kill rests on is the peak and that is already
   recorded, while two seconds of politeness for a tree that is already over
   budget is hundreds of megabytes more of what the bound exists to prevent.
@@ -766,6 +768,12 @@ the outcome cache.
   Rlimits are not used: RLIMIT_AS bounds address space, of which the Go runtime
   reserves hundreds of gigabytes before allocating anything, RLIMIT_DATA is
   Linux-only, and neither reaches the child's own children.
+
+  A derived bound is sound only for a run of the baseline's shape, so a **fuzz
+  target gets none**: `go test -fuzz` is a coordinator plus a worker process per
+  core, each mapping the same 100 MiB region the fuzzing engine communicates
+  through, and a bound derived from one process running the suite once would
+  kill it for being what it is. A limit the caller names still applies.
 
   A mutant the bound stops is **`killed`**, with `memory_exceeded` and
   `peak_memory_bytes` beside the outcome on its execution row, in its `mutant-exec`

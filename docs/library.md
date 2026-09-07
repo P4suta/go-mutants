@@ -1056,11 +1056,21 @@ session's process supervisor`, with the call naming itself.
 The timeout has a twin, and it is enforced by the same supervisor over the same
 process tree:
 
-- **`MemoryLimit`** bounds the resident memory of everything the call starts,
-  in bytes. The request's when positive, otherwise the session's own — derived
-  from what the verification run of the unmutated tests cost, as
+- **`MemoryLimit`** bounds the memory of everything the call starts, in bytes.
+  The request's when positive, otherwise the session's own — derived from what
+  the verification run of the unmutated tests cost, as
   `max(1 GiB, verified peak × 4)`, and the floor alone for a session opened with
   `SkipVerify`. Zero means "use the session's".
+- **A fuzz target gets no session bound.** A call whose `Args` carry
+  `-test.fuzz` is bounded only by a limit you name and by its timeout. A fuzz
+  run has no baseline of its own shape: `go test -fuzz` is a coordinator plus
+  one worker process per core, and every one of them maps the same 100 MiB
+  region the fuzzing engine communicates through — half a gibibyte of mappings
+  on a four-core machine before an input has been tried, and past the whole
+  derived bound on an eight-core one. Holding that to a number derived from one
+  process running the suite once kills a legitimate run for being what it is. A
+  limit you name still applies, to fuzzing like anything else; this is
+  go-mutants declining to guess rather than fuzzing being unboundable.
 - A tree that passes it is killed as a timed-out one is, with one difference:
   `MemoryExceeded` is set, `TimedOut` stays false, the exit code is the negative
   one internal/runner reports for any tree it killed — and there is no polite
