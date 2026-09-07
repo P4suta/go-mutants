@@ -35,11 +35,20 @@ func isTestList(c call) bool {
 	return slices.ContainsFunc(c.Argv, func(a string) bool { return strings.HasPrefix(a, "-test.list=") })
 }
 
-// selectedTest is the name a `-test.run=^Name$` argument selects, or "".
+// selectedTest is the name a `-test.run=^Name$` argument selects, or "" when
+// there is none. Both anchors are required: a selector missing either would
+// also select every test whose name has the selected one as a prefix or a
+// suffix, and a test that accepted such a selector would pass for a pass that
+// profiles the wrong tests.
 func selectedTest(c call) string {
 	for _, a := range c.Argv {
-		if rest, ok := strings.CutPrefix(a, "-test.run=^"); ok {
-			return strings.TrimSuffix(rest, "$")
+		if selector, ok := strings.CutPrefix(a, "-test.run="); ok {
+			name, anchored := strings.CutPrefix(selector, "^")
+			name, terminated := strings.CutSuffix(name, "$")
+			if !anchored || !terminated {
+				return "unanchored selector " + selector
+			}
+			return name
 		}
 	}
 	return ""
