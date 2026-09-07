@@ -32,12 +32,11 @@ const (
 	BuildCacheEnv = "GO_MUTANTS_TEST_GOCACHE"
 	// RequireToolsEnv turns a missing `go` or `git` from a skip into a failure.
 	RequireToolsEnv = "GO_MUTANTS_TEST_REQUIRE_TOOLS"
-	// KeepDirEnv names the root a kept scratch directory is filed under. The keep
-	// policy itself is not here yet; the variable is, because
-	// internal/devtools/testcache already reports and empties that root, and the
-	// two have to agree about where it is.
-	KeepDirEnv = "GO_MUTANTS_TEST_KEEP_DIR"
 )
+
+// The keep policy's own four variables — [KeepEnv], [KeepDirEnv], [VerboseEnv]
+// and [ForceFailEnv] — are declared in keep.go, beside the code that reads them
+// and under the same rule about the prefix.
 
 // BuildCacheMarker is the file that says the build cache is the harness's.
 //
@@ -137,7 +136,7 @@ func Env(t testing.TB, opts ...EnvOption) *Environment {
 
 	stampBuildCache(t, gocache)
 
-	p := policy{scratch: t.TempDir(), gocache: gocache}
+	p := policy{scratch: Scratch(t), gocache: gocache}
 	if !cfg.keepHome {
 		// Inheriting one of the home variables while the policy moves the rest
 		// leaves os.UserCacheDir resolving to the machine's real cache directory,
@@ -149,7 +148,7 @@ func Env(t testing.TB, opts ...EnvOption) *Environment {
 				"read and write the developer's own home directory. A test whose subject is the "+
 				"real home wants KeepHome() rather than Inherit(%q).", name, name)
 		}
-		p.home = t.TempDir()
+		p.home = Scratch(t)
 	}
 
 	e := &Environment{Scratch: p.scratch, GoCache: gocache}
@@ -288,7 +287,7 @@ func BuildCache() (string, error) {
 	if pinned.userCache == "" {
 		return "", errors.New("this platform has no user cache directory, so " + BuildCacheEnv + " has to name one")
 	}
-	return filepath.Join(pinned.userCache, "go-mutants-test", "go-build"), nil
+	return filepath.Join(pinned.userCache, harnessDirName, buildCacheDirName), nil
 }
 
 // BuildCacheEntries counts the files a build cache holds that the go command put
@@ -352,43 +351,67 @@ func BuildCacheEntries(t testing.TB, dir string) int {
 // without it and only the collector is worse off.
 func stampBuildCache(t testing.TB, dir string) {
 	t.Helper()
-	marker := filepath.Join(dir, BuildCacheMarker)
-	if _, err := os.Lstat(marker); err == nil {
-		return
+	stamped, err := stampHarnessDirectory(dir, BuildCacheMarker, buildCacheMarkerBody)
+	switch {
+	case err != nil:
+		t.Fatalf("creating the test build cache %s (every child `go` command is about to use it): %v", dir, err)
+	case !stamped:
+		t.Logf("testkit: %s already holds files that are not this harness's, so it was not stamped as "+
+			"the test build cache and `mise run test-clean` will refuse to empty it. If it is a cache "+
+			"from before this file existed, delete it once and the next run will make it again; "+
+			"otherwise point %s at a directory of its own.", dir, BuildCacheEnv)
+	}
+}
+
+// stampHarnessDirectory is the ownership rule both directories the harness owns
+// outside a temporary one are created under, and it reports whether the marker
+// is there rather than writing it unconditionally.
+//
+// Three states, and only two of them get a file. A directory that does not exist
+// is created and stamped, which is the first run on any machine. One that is
+// empty is stamped, because that is a `mkdir -p` in a CI step or a shell. One
+// that already holds files that are not ours is left completely alone, and that
+// exception is the whole reason this is not four lines: a stamp written into
+// whatever a variable happened to name would be a permission slip the harness
+// issues on somebody else's behalf, and `mise run test-clean` would then delete
+// the directory with the marker's blessing. Refusing to stamp costs a directory
+// nothing ever empties, which is the half of the trade worth keeping.
+//
+// A directory that cannot be created is an error the caller reports, because
+// what happens next depends on which directory it was. Anything after that —
+// an unreadable directory, a marker that could not be written — is a false
+// return rather than an error: the run works without the file and only the
+// collector is worse off.
+func stampHarnessDirectory(dir, marker, body string) (bool, error) {
+	path := filepath.Join(dir, marker)
+	if _, err := os.Lstat(path); err == nil {
+		return true, nil
 	}
 
 	entries, err := os.ReadDir(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
-			t.Fatalf("creating the test build cache %s (every child `go` command is about to use it): %v", dir, mkErr)
+			return false, mkErr
 		}
 	case err != nil:
-		t.Logf("testkit: the test build cache %s cannot be read, so it was not stamped and nothing will "+
-			"collect it: %v", dir, err)
-		return
+		return false, nil
 	case len(entries) > 0:
-		t.Logf("testkit: %s already holds files that are not this harness's, so it was not stamped as "+
-			"the test build cache and `mise run test-clean` will refuse to empty it. If it is a cache "+
-			"from before this file existed, delete it once and the next run will make it again; "+
-			"otherwise point %s at a directory of its own.", dir, BuildCacheEnv)
-		return
+		return false, nil
 	}
 
 	// O_EXCL, so that two tests arriving together produce one winner and one
 	// no-op rather than two writers truncating the same file.
-	file, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return true, nil
+	}
 	if err != nil {
-		if !errors.Is(err, fs.ErrExist) {
-			t.Logf("testkit: the test build cache %s could not be stamped, so nothing will collect it: %v", dir, err)
-		}
-		return
+		return false, nil
 	}
-	_, writeErr := file.WriteString(buildCacheMarkerBody)
+	_, writeErr := file.WriteString(body)
 	closeErr := file.Close()
-	if err := errors.Join(writeErr, closeErr); err != nil {
-		t.Logf("testkit: the test build cache marker %s could not be written: %v", marker, err)
-	}
+	return errors.Join(writeErr, closeErr) == nil, nil
 }
 
 // buildCacheMarkerBody is what a person who finds the file reads. It is the only

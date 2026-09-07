@@ -84,11 +84,23 @@ jobs:
       # bash on Windows $RUNNER_TEMP is a `D:\a\_temp` path, so the value is
       # absolute with mixed separators -- which both copies of the rule (testkit
       # and internal/devtools/testcache) normalise with filepath.Clean.
-      - name: Point the test build cache at the runner's temporary directory
+      #
+      # The same step turns keeping on and names where a failed test files what
+      # it left. A test that fails on a runner nobody can log into is diagnosed
+      # from what it printed, and everything else it had -- the fixture copy,
+      # the instrumented tree, the commands it ran -- was removed by the
+      # cleanup that follows the assertion. `1` is keep-on-failure: a green job
+      # leaves nothing, so a passing run pays one mkdir per test and no more.
+      # A typo in the value is refused rather than read as "off", because the
+      # only symptom of that would be a failed job with nothing to upload.
+      - name: Point the test build cache and the kept scratch at the runner
         shell: bash
-        run: >-
-          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-          >> "$GITHUB_ENV"
+        run: |
+          {
+            echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+            echo "GO_MUTANTS_TEST_KEEP=1"
+            echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -160,6 +172,25 @@ jobs:
         if: success() || failure()
         continue-on-error: true
         run: mise run test-cache-status
+      # What the failed tests left behind, off the runner and into an artifact.
+      # One directory per failed test, each with a KEPT.txt naming the test, the
+      # fixture, the toolchain, the build cache, the test's other kept
+      # directories and every child run through testkit.Exec, the instrumented
+      # source the failure dumped, and the recording of what the run actually
+      # executed.
+      #
+      # `if: failure()` because a green job keeps nothing, and
+      # `if-no-files-found: ignore` because a job can go red before any test
+      # does -- a build, a lint step -- and a warning about a missing artifact
+      # on top of that failure explains nothing.
+      - name: Upload what the failed tests kept
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kept-scratch-${{ matrix.os }}
+          path: ${{ runner.temp }}/go-mutants-kept
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The unit tier under the race detector, which had never been run at all.
   #
@@ -185,20 +216,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      # Same rule and the same reason as platform-tests: the suites' child `go`
-      # commands key entries on paths that exist for one run, so their cache
-      # lives in the runner's temporary area and dies with it.
-      - name: Point the test build cache at the runner's temporary directory
+      # Same rule and the same reason as platform-tests, keeping included: the
+      # suites' child `go` commands key entries on paths that exist for one run,
+      # so their cache lives in the runner's temporary area and dies with it,
+      # and a test that fails under -race leaves what it had beside it.
+      - name: Point the test build cache and the kept scratch at the runner
         shell: bash
-        run: >-
-          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-          >> "$GITHUB_ENV"
+        run: |
+          {
+            echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+            echo "GO_MUTANTS_TEST_KEEP=1"
+            echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
           install: true
           cache: true
       - run: mise run test-race
+      # What the failed tests left behind, off the runner and into an artifact.
+      # One directory per failed test, each with a KEPT.txt naming the test, the
+      # fixture, the toolchain, the build cache, the test's other kept
+      # directories and every child run through testkit.Exec, the instrumented
+      # source the failure dumped, and the recording of what the run actually
+      # executed.
+      #
+      # `if: failure()` because a green job keeps nothing, and
+      # `if-no-files-found: ignore` because a job can go red before any test
+      # does -- a build, a lint step -- and a warning about a missing artifact
+      # on top of that failure explains nothing.
+      - name: Upload what the failed tests kept
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kept-scratch-race
+          path: ${{ runner.temp }}/go-mutants-kept
+          retention-days: 14
+          if-no-files-found: ignore
 
   # Coverage of the integration tier, as an artifact and never as a gate.
   #
@@ -234,11 +288,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
-      - name: Point the test build cache at the runner's temporary directory
+      - name: Point the test build cache and the kept scratch at the runner
         shell: bash
-        run: >-
-          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-          >> "$GITHUB_ENV"
+        run: |
+          {
+            echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+            echo "GO_MUTANTS_TEST_KEEP=1"
+            echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -265,6 +322,25 @@ jobs:
         if: success() || failure()
         continue-on-error: true
         run: mise run test-cache-status
+      # What the failed tests left behind, off the runner and into an artifact.
+      # One directory per failed test, each with a KEPT.txt naming the test, the
+      # fixture, the toolchain, the build cache, the test's other kept
+      # directories and every child run through testkit.Exec, the instrumented
+      # source the failure dumped, and the recording of what the run actually
+      # executed.
+      #
+      # `if: failure()` because a green job keeps nothing, and
+      # `if-no-files-found: ignore` because a job can go red before any test
+      # does -- a build, a lint step -- and a warning about a missing artifact
+      # on top of that failure explains nothing.
+      - name: Upload what the failed tests kept
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kept-scratch-coverage
+          path: ${{ runner.temp }}/go-mutants-kept
+          retention-days: 14
+          if-no-files-found: ignore
 
   # Snapshot artifacts for all six targets, plus the smoke that proves the
   # version was stamped. Packaging breaks quietly -- a renamed ldflags target,
@@ -313,6 +389,13 @@ jobs:
       # platform-tests: the runner's temporary area, never restored from an
       # actions cache, published through $GITHUB_ENV because the `runner`
       # context is not available in a job's `env:`.
+      #
+      # GO_MUTANTS_TEST_KEEP is deliberately *not* set here, and it is the one
+      # job where that matters. A mutation run over this repository makes its
+      # own tests fail on purpose, thousands of times, and every one of those
+      # test binaries links the harness: keeping on failure would file a
+      # directory per killed mutant, which is a disk full of evidence of the
+      # run working exactly as intended.
       - name: Point the test build cache at the runner's temporary directory
         shell: bash
         run: >-

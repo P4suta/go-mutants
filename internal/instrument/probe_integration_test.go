@@ -54,7 +54,7 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	snap := mutantkit.Snapshot(t, "killable")
 
 	// The pristine suite first, because it is the thing the probe tree has to

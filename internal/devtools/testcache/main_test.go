@@ -1188,3 +1188,47 @@ func TestExecReportsACommandItCannotStart(t *testing.T) {
 		t.Errorf("the report does not name the command it could not run:\n%s", stderr.String())
 	}
 }
+
+// TestKeptCleanRefusesARootItDoesNotOwn is [TestWipeRefusesADirectoryItDoesNotOwn]
+// pointed at the second directory, and it is not a duplicate of it.
+//
+// The kept scratch root is the one a person is most likely to point somewhere
+// they already keep things: it holds evidence they want to look at, so
+// `GO_MUTANTS_TEST_KEEP_DIR=~/Desktop/failures` is a perfectly natural thing to
+// type — and it is a directory this tool empties. The two roots also travel
+// different code paths inside `clean`: the build cache goes through `wipe`,
+// which asks the go command to evict first, while the kept root is measured and
+// removed directly. A guard proven on one says nothing about the other.
+func TestKeptCleanRefusesARootItDoesNotOwn(t *testing.T) {
+	t.Parallel()
+
+	// The cache half is stamped so that the only reason this `clean` can fail is
+	// the kept root: a test where both halves refuse would pass for the wrong
+	// reason if the kept guard disappeared.
+	cache := filepath.Join(t.TempDir(), "go-build")
+	writeTree(t, cache, map[string]int{"ab/entry": 4096})
+	stamp(t, cache, buildCacheMarker)
+
+	kept := filepath.Join(t.TempDir(), "failures")
+	writeTree(t, kept, map[string]int{"notes.md": 512, "screenshots/one.png": 4096})
+
+	var stdout, stderr bytes.Buffer
+	env := map[string]string{buildCacheEnv: cache, keepDirEnv: kept}
+	d := deps{cleaner: func(string) error { return nil }}
+	if code := run([]string{"clean"}, &stdout, &stderr, env, d); code == 0 {
+		t.Errorf("`clean` exited 0 over a kept root it does not own, want a failure")
+	}
+	if _, err := os.Stat(filepath.Join(kept, "notes.md")); err != nil {
+		t.Errorf("the file this tool had no business touching is gone: %v", err)
+	}
+	for _, needle := range []string{resolved(t, kept), keptMarker, keepDirEnv} {
+		if !strings.Contains(stderr.String(), needle) {
+			t.Errorf("the refusal does not name %q:\n%s", needle, stderr.String())
+		}
+	}
+	// The cache still went, because the two directories are two questions: a
+	// refusal over one is not a reason to leave the other full.
+	if _, err := os.Stat(cache); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the build cache survived a refusal that was about the kept root: %v", err)
+	}
+}

@@ -523,6 +523,89 @@ Entries say *why* a change was made, not only what changed.
   report went — it rides on `engine.ReportPublished` as `TracePath`, so it is
   laid out like the other paths, kept by `--quiet` like the other paths, and
   replayed into the scrollback after a dashboard run like the other paths.
+- **A failed test keeps what it had, and says what it ran.** Every tree a test
+  worked in — the fixture copy, the snapshot, the instrumented source, the
+  composed environment's scratch — lived under a `t.TempDir` that the testing
+  package removed the instant the assertion had been printed. Diagnosing a
+  failure therefore meant reproducing it, which is expensive on a developer's
+  machine and simply unavailable on a CI runner nobody can log into: the log was
+  the whole of the evidence, and the log did not contain the source, the
+  commands or the tree.
+
+  `testkit.Scratch` is now what every constructor here hands a test instead of
+  `t.TempDir`, and what becomes of that directory is a policy.
+  `GO_MUTANTS_TEST_KEEP` unset is the old behaviour exactly — keeping
+  unconditionally filled a disk twice, so the default is off — while `1`
+  (equivalently `true`, `failed`, `on-failure`) keeps the directories of a test
+  that failed and `always` keeps every test's. An unrecognised spelling is
+  refused with the accepted ones named rather than read as "off": the variable
+  is set once for a whole CI job in a file nobody reads again, and the only
+  symptom of a typo would be a failed job with nothing attached to it.
+
+  A kept directory is `<root>/<package>/<test name>-<six hex digits>` — the name
+  folded, cut to 48 bytes and made unique, because a Go subtest name is a path
+  and a directory named after one is a tree — and it holds `KEPT.txt`: the test,
+  the fixture, the toolchain, the build cache in use, every child command the
+  test ran through `testkit.Exec` quoted the way a shell would take them back,
+  and — under `Also kept:` — the test's *other* kept directories. A real
+  integration test takes a scratch for its environment, one for each snapshot and
+  one for a fixture copy; they are siblings named after the same test with
+  different suffixes, and a reader who opened one had no way to know the others
+  existed.
+
+  `testkit.DumpFiles` prints the files a glob matches when the test failed,
+  capped at 64 KiB each and 1 MiB in total so that a dump cannot push the
+  assertion off the top of a CI log, and copies them whole into
+  `dump/<n>-<tree>/` beside the account — one directory per call, because a test
+  that instruments the same fixture twice has two trees holding the same relative
+  paths and one `dump/` gave the reader a single tree made of halves of each.
+  Every printed header names the file by its full path for the same reason.
+  `mutantkit.Snapshot` registers `**/*.go` over the snapshot, which is what makes
+  an instrumentation or validation failure print the instrumented source instead
+  of only its verdict, and it no longer removes the snapshot that is being kept.
+
+  `mutantkit.Trace` and `mutantkit.TraceSink` attach one bounded recording per
+  test — the first for the options that take a `trace.Recorder`, the second for
+  `engine.Options.TraceSink`, which opens a recorder of its own. The engine and
+  validate suites attach one by default, so a failing run there logs the tail of
+  what it actually executed and files the whole ring in the kept directory as
+  `trace.jsonl`. The harness writes the run-end event when the recording is its
+  own: without it every kept recording read as `incomplete`, which is what an
+  interrupted run looks like, and the drop tally was never written at all.
+
+  The root package's shared prepared sessions go through
+  `testkit.PackageScratch`, which is the same policy for a directory a `TestMain`
+  owns and no `testing.TB` can be asked about: `release(m.Run() != 0)` keeps it
+  when the package failed and prints where it is. Under the policy those
+  workspaces are opened with `KeepTemp`, because `Close` is what removes the
+  engine's own snapshot, probe tree and per-execution scratch — so a kept parent
+  used to hold the fixture copy and nothing else, which is the one part of a
+  failed session a reader can already get from `fixtures/`.
+
+  Every CI and nightly test job sets the policy and uploads the root as an
+  artifact on a failure (`if-no-files-found: ignore`, since a job can go red
+  before any test does). The dogfood job deliberately does not: a mutation run
+  makes this repository's own tests fail thousands of times on purpose, and
+  keeping there would be a disk full of evidence of the run working.
+  `mise run test-cache-status` already reported the kept root and
+  `mise run test-clean` already emptied it; the harness now stamps it with the
+  `.go-mutants-kept` marker that licenses that removal, and
+  `TestKeptRootAgreesWithTestkit` pins the harness's copy of the rule against the
+  collector's the way `TestPathAgreesWithTestkit` does for the build cache.
+
+  `GO_MUTANTS_TEST_FORCE_FAIL=<test name>` fails one named test on purpose,
+  which is the documented way to see any of this on a test that works —
+  `TestValidateFailureShowsTheInstrumentedSource` uses it on a real validation
+  test and asserts that the child prints the generated runtime no pristine
+  fixture contains. It fires from the one line every constructor in the harness
+  already logs, so a test that takes no scratch directory of its own can still be
+  named; a test that reaches the harness not at all cannot, and the release of a
+  package scratch says so rather than leaving somebody watching a green run.
+  `GO_MUTANTS_TEST_VERBOSE=1` prints a dump on a test that passed. The four
+  variables are tabulated in `internal/testkit/doc.go`, together with what
+  reclaims a kept root: nothing but `mise run test-clean` — re-running a test
+  files a new directory beside the old one, `always` grows for as long as it is
+  left on, and `testcache trim` never looks at this root.
 - **Test tiers, and the four things nobody was measuring: race, coverage,
   cost and benchmarks.** `mise run test` was paying for forty toolchain-driving
   tests on three operating systems every push — the root package alone took 28

@@ -50,7 +50,7 @@ func TestInstrumentedTreeCompiles(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	root := t.TempDir()
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 
@@ -120,7 +120,7 @@ func TestInstrumentedBinaryActivatesOneMutant(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	root := t.TempDir()
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("pkg/sample/sample.go")), []byte(runtimeSample))
@@ -202,7 +202,7 @@ func TestInstrumentedBinaryTakesEachStatementBranch(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	const src = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -311,7 +311,7 @@ func TestUncompilableMutantsAreLeftToTheValidationPhase(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	const src = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 

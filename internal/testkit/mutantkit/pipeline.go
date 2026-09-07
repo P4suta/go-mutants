@@ -33,7 +33,7 @@ import (
 // nobody needed.
 func Discover(t testing.TB, tc gocmd.Toolchain, snap *snapshot.Snapshot) discover.Result {
 	t.Helper()
-	return DiscoverWith(t, tc, snap, testkit.Compose(t, t.TempDir()))
+	return DiscoverWith(t, tc, snap, testkit.Compose(t, testkit.Scratch(t)))
 }
 
 // DiscoverWith finds every mutation candidate in a snapshot, with the loader
@@ -101,7 +101,7 @@ func Hints(t testing.TB, found discover.Result) instrument.Hints {
 // skip, a rejection or a coordinate — calls the steps itself.
 func Instrument(t testing.TB, tc gocmd.Toolchain, snap *snapshot.Snapshot) *mutation.Catalog {
 	t.Helper()
-	return InstrumentWith(t, tc, snap, testkit.Compose(t, t.TempDir()))
+	return InstrumentWith(t, tc, snap, testkit.Compose(t, testkit.Scratch(t)))
 }
 
 // InstrumentWith is [Instrument] with the discovery pass under the environment

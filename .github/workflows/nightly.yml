@@ -58,11 +58,19 @@ jobs:
       # ends. Same rule as CI: the runner's own temporary area, never restored
       # from an actions cache, published through $GITHUB_ENV because the
       # `runner` context is not available in a job's `env:`.
-      - name: Point the test build cache at the runner's temporary directory
+      #
+      # Keeping is on for the same reason as in CI, and it is worth more here:
+      # nobody is watching a scheduled run, so what a failed test left is the
+      # only account of it there will ever be. `1` is keep-on-failure, so a
+      # green night leaves nothing behind.
+      - name: Point the test build cache and the kept scratch at the runner
         shell: bash
-        run: >-
-          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-          >> "$GITHUB_ENV"
+        run: |
+          {
+            echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+            echo "GO_MUTANTS_TEST_KEEP=1"
+            echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -86,6 +94,18 @@ jobs:
           path: internal/*/testdata/fuzz/**
           retention-days: 14
           if-no-files-found: warn
+      # What the failed tests left behind, off the runner and into an artifact,
+      # exactly as in CI: one directory per failed test, with the account of
+      # what it ran, the source it dumped and the recording of what it executed.
+      # Nobody is watching a scheduled run, so this is all a failure leaves.
+      - name: Upload what the failed tests kept
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kept-scratch-fuzz-${{ matrix.target }}
+          path: ${{ runner.temp }}/go-mutants-kept
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The pgregory.net/rapid suites: the flattener's
   # `parse(flattened) ≡ parse(patched original)` invariant, the interval
@@ -108,11 +128,14 @@ jobs:
     steps:
       # As in the fuzz job above: the test cache lives in the runner's own
       # temporary area and dies with it.
-      - name: Point the test build cache at the runner's temporary directory
+      - name: Point the test build cache and the kept scratch at the runner
         shell: bash
-        run: >-
-          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-          >> "$GITHUB_ENV"
+        run: |
+          {
+            echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+            echo "GO_MUTANTS_TEST_KEEP=1"
+            echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -136,6 +159,18 @@ jobs:
           path: internal/*/testdata/rapid/**
           retention-days: 14
           if-no-files-found: warn
+      # What the failed tests left behind, off the runner and into an artifact,
+      # exactly as in CI: one directory per failed test, with the account of
+      # what it ran, the source it dumped and the recording of what it executed.
+      # Nobody is watching a scheduled run, so this is all a failure leaves.
+      - name: Upload what the failed tests kept
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kept-scratch-property
+          path: ${{ runner.temp }}/go-mutants-kept
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The integration tier under the race detector: the pairing that finds what
   # neither half finds alone.
@@ -164,11 +199,14 @@ jobs:
       # over. Same rule as CI: the runner's own temporary area, never restored
       # from an actions cache, published through $GITHUB_ENV because the
       # `runner` context is not available in a job's `env:`.
-      - name: Point the test build cache at the runner's temporary directory
+      - name: Point the test build cache and the kept scratch at the runner
         shell: bash
-        run: >-
-          echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
-          >> "$GITHUB_ENV"
+        run: |
+          {
+            echo "GO_MUTANTS_TEST_GOCACHE=$RUNNER_TEMP/go-mutants-gocache"
+            echo "GO_MUTANTS_TEST_KEEP=1"
+            echo "GO_MUTANTS_TEST_KEEP_DIR=$RUNNER_TEMP/go-mutants-kept"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
         with:
@@ -180,6 +218,18 @@ jobs:
         if: success() || failure()
         continue-on-error: true
         run: mise run test-cache-status
+      # What the failed tests left behind, off the runner and into an artifact,
+      # exactly as in CI: one directory per failed test, with the account of
+      # what it ran, the source it dumped and the recording of what it executed.
+      # Nobody is watching a scheduled run, so this is all a failure leaves.
+      - name: Upload what the failed tests kept
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kept-scratch-race-integration
+          path: ${{ runner.temp }}/go-mutants-kept
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The benchmarks, kept.
   #

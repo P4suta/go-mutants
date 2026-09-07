@@ -53,8 +53,16 @@ func Toolchain(t testing.TB) gocmd.Toolchain {
 	goBin := testkit.GoBinary(t)
 	toolchain, err := gocmd.LocateContext(t.Context(), gocmd.Options{
 		Explicit: goBin,
-		Env:      testkit.Compose(t, t.TempDir()),
-		Timeout:  StepTimeout,
+		// t.TempDir rather than [testkit.Scratch], and this is the one place in
+		// the harness where that is the right way round. The probe runs `go
+		// version` and `go env` and writes nothing: what the directory holds
+		// afterwards is an empty private home. Kept, it would be the *first*
+		// scratch of almost every integration test in this repository — which is
+		// the directory the dumps and the recording are filed in — so a reader of
+		// a failed test would open the evidence directory and find a `home/` with
+		// nothing in it, while the snapshot sat in a sibling.
+		Env:     testkit.Compose(t, t.TempDir()),
+		Timeout: StepTimeout,
 	})
 	if err != nil {
 		t.Fatalf("locating a Go toolchain at %s: %v", goBin, err)

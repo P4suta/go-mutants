@@ -469,7 +469,7 @@ func TestProbeTreeCompiles(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	root := t.TempDir()
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 
@@ -506,7 +506,7 @@ func TestProbeCapturesEveryResultOfAReturn(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
-	env := testkit.Compose(t, t.TempDir())
+	env := testkit.Compose(t, testkit.Scratch(t))
 	root := t.TempDir()
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	const rel = "pkg/sample/sample.go"

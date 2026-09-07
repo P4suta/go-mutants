@@ -53,9 +53,10 @@ func Copy(t testing.TB, name string) string {
 	if err != nil {
 		t.Fatalf("resolving a fixture to copy: %v", err)
 	}
-	to := filepath.Join(t.TempDir(), name)
+	to := filepath.Join(Scratch(t), name)
 	CopyTree(t, from, to)
 	AgeTree(t, to)
+	rememberFixture(t, from)
 	logInputs(t, "fixture="+from, "scratch="+to)
 	return to
 }

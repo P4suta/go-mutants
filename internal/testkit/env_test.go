@@ -284,21 +284,72 @@ func TestPathAgreesWithTestkit(t *testing.T) {
 		}
 	})
 
-	t.Run("the kept scratch root", func(t *testing.T) {
+}
+
+// TestKeptRootAgreesWithTestkit is [TestPathAgreesWithTestkit] for the second
+// directory the harness owns outside a temporary one.
+//
+// It exists for the same reason and prevents the same silence: the keep policy
+// files a failed test's evidence under a root this package resolves, and
+// `mise run test-clean` empties a root internal/devtools/testcache resolves —
+// a production `main` that may not import a test-only package, so the rule is
+// written twice. Drift would not fail anywhere else. The suites would fill one
+// directory, the collector would empty another, and the only symptom would be a
+// disk that fills up a month later.
+//
+// The marker is compared here too, and it is the half with the worse failure
+// mode: two spellings would have the harness stamping a file the collector never
+// looks for, so every kept directory would be refused as somebody else's.
+func TestKeptRootAgreesWithTestkit(t *testing.T) {
+	t.Run("the default root", func(t *testing.T) {
+		// Cleared for the reason the build cache subtest above clears its own
+		// variable: CI names a root for the whole job, and this subtest is about
+		// the rule that applies when nobody has.
+		//
+		// And the policy is cleared with it, which is not tidiness. Under CI's
+		// GO_MUTANTS_TEST_KEEP=1 the Env below takes a Scratch, and with the
+		// override just removed that scratch is filed in the *developer's* real
+		// kept root — the one directory these tests may never write to, and the
+		// one CI does not upload. Asking what the default path is must not
+		// create it.
+		t.Setenv(KeepEnv, "")
+		t.Setenv(KeepDirEnv, "")
+
 		e := Env(t, KeepHome())
-
-		// T5: replace with testkit.KeepRoot(). Until the keep policy exists there
-		// is no function here to compare against, so the rule is written out once
-		// — and writing it out is itself the point: when KeepRoot arrives it has
-		// to produce this, and this test is where the two meet.
-		want := filepath.Join(pinned.userCache, "go-mutants-test", "kept")
-		if got := testcacheSays(t, e.Vars(), "path", "--kept"); !SamePath(got, want) {
-			t.Errorf("`testcache path --kept` printed %s, want %s", got, want)
+		want, err := KeepRoot()
+		if err != nil {
+			t.Fatalf("KeepRoot: %v", err)
 		}
+		if got := testcacheSays(t, e.Vars(), "path", "--kept"); !SamePath(got, want) {
+			t.Errorf("`testcache path --kept` printed %s, but testkit resolved %s: the two copies "+
+				"of the rule have drifted, and the suites are filing evidence under a root nothing empties",
+				got, want)
+		}
+	})
 
+	t.Run("the named root", func(t *testing.T) {
+		e := Env(t, KeepHome())
 		named := filepath.Join(t.TempDir(), "named-kept")
-		if got := testcacheSays(t, e.With(KeepDirEnv+"="+named), "path", "--kept"); !SamePath(got, named) {
-			t.Errorf("`testcache path --kept` printed %s, want the named %s", got, named)
+		t.Setenv(KeepDirEnv, named)
+		want, err := KeepRoot()
+		if err != nil {
+			t.Fatalf("KeepRoot with %s set: %v", KeepDirEnv, err)
+		}
+		if want != named {
+			t.Fatalf("KeepRoot resolved %s rather than the named %s", want, named)
+		}
+		if got := testcacheSays(t, e.With(KeepDirEnv+"="+named), "path", "--kept"); !SamePath(got, want) {
+			t.Errorf("`testcache path --kept` printed %s, want the named %s", got, want)
+		}
+	})
+
+	t.Run("the marker that licenses emptying it", func(t *testing.T) {
+		t.Setenv(KeepEnv, "")
+		e := Env(t, KeepHome())
+		if got := testcacheSays(t, e.Vars(), "path", "--kept", "--marker"); got != KeptMarker {
+			t.Errorf("`testcache path --kept --marker` printed %s, but testkit stamps %s: the "+
+				"collector would look for a file the harness never writes, and every kept directory "+
+				"would be refused as somebody else's", got, KeptMarker)
 		}
 	})
 }

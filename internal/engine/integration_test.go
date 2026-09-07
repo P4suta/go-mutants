@@ -51,6 +51,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/schemas"
 	"github.com/P4suta/go-mutants/internal/snapshot"
 	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // testToolVersion is the version string the engine records in a test report.
@@ -101,7 +102,7 @@ func optionsAt(t *testing.T, root string) Options {
 	cfg.Test.BaselineRuns = 1
 	cfg.Execution.Jobs = 1
 
-	private := t.TempDir()
+	private := testkit.Scratch(t)
 	// Created, because the snapshot is made with os.MkdirTemp inside it. The
 	// other two are created by whatever writes into them.
 	temp := filepath.Join(private, "temp")
@@ -115,7 +116,30 @@ func optionsAt(t *testing.T, root string) Options {
 		TempDirectory: temp,
 		HistoryRoot:   filepath.Join(private, "history"),
 		CacheRoot:     filepath.Join(private, "cache"),
+		// Every run in this suite is recorded, and the recording costs a bounded
+		// ring in memory and nothing on disk. It is the answer to the question a
+		// failure here always raises — "what did it actually run?" — which the
+		// outcome and the report cannot give: the argv of every child, the
+		// timings, the order of the phases. A failing test logs the tail of it
+		// and, under the keep policy, files the whole recording beside its
+		// directories.
+		//
+		// A test whose subject is a run *without* a recording says so with
+		// [untraced]; every test whose subject is a recording overwrites this
+		// field with a sink it can read.
+		TraceSink: mutantkit.TraceSink(t),
 	}
+}
+
+// untraced is the options with the suite's default recording taken away.
+//
+// It is for the two or three tests whose subject is the absence of a sink — a
+// run that records nothing has to be the run there was before there was a
+// recorder to leave out — and it is a named helper rather than a bare
+// assignment so that grepping for it finds all of them.
+func untraced(opts Options) Options {
+	opts.TraceSink = nil
+	return opts
 }
 
 // collect runs the engine with a drained event channel and returns everything

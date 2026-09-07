@@ -26,6 +26,7 @@ const InitialCommitMessage = "import the tree"
 func GoBinary(t testing.TB) string {
 	t.Helper()
 	path := toolPath(t, "go")
+	rememberToolchain(t, path)
 	logInputs(t, "toolchain="+path)
 	return path
 }
@@ -35,6 +36,7 @@ func GoBinary(t testing.TB) string {
 func GitBinary(t testing.TB) string {
 	t.Helper()
 	path := toolPath(t, "git")
+	rememberToolchain(t, path)
 	logInputs(t, "toolchain="+path)
 	return path
 }
