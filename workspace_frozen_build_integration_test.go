@@ -432,6 +432,11 @@ func TestAFailedPreparationKeepsItsFrozenCopyWhenTempIsKept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Close is idempotent, so the explicit Close below that Preserved reads
+	// from is unaffected; this one only makes sure a Fatalf between here and
+	// there does not leave the workspace holding its directories open when
+	// t.TempDir tries to remove them, which on Windows is a failed removal.
+	t.Cleanup(func() { _ = workspace.Close() })
 
 	session, err := workspace.Prepare(t.Context(), gomutants.PrepareOptions{})
 	if session != nil {
