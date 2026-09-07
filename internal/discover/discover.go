@@ -537,6 +537,22 @@ type Result struct {
 	// declares no `go` directive, which is reported as the empty string rather
 	// than filled in from somewhere else.
 	GoVersion string
+	// SourceDigests is the lowercase hex SHA-256 of every file this pass
+	// actually read, keyed by module-relative path with forward slashes.
+	//
+	// It is what discovery *saw*, which is a bigger set than the files that
+	// produced candidates — and the difference is the point. A caller checking
+	// that the tree did not move underneath the pass cannot do it from the
+	// candidates alone: a file with nothing mutable in it, or one a transient
+	// edit emptied, is loaded, walked and read, and contributes no candidate
+	// at all, so a check built on candidates would never look at it.
+	//
+	// What it does not cover is every file no byte of which was read: a test
+	// file, a generated one, one an include or exclude pattern dropped, one
+	// belonging to a package that imports "C", and all of them when no rule is
+	// selected. Those are [Skip]s where they are skipped for a reason, and a
+	// caller comparing digests has nothing to compare for them.
+	SourceDigests map[string]string
 }
 
 // Discover finds every mutation candidate in the snapshot.
@@ -591,16 +607,18 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 		cgo:      cgoPackages,
 		skips:    make(map[skipKey]int),
 		seen:     make(map[string]bool),
+		digests:  make(map[string]string),
 	}
 	if err := d.run(ctx, loaded); err != nil {
 		return Result{}, err
 	}
 	return Result{
-		Candidates: d.sortedCandidates(),
-		Skips:      d.sortedSkips(),
-		SkipSites:  d.sortedSkipSites(),
-		ModulePath: module.Path,
-		GoVersion:  module.GoVersion,
+		Candidates:    d.sortedCandidates(),
+		Skips:         d.sortedSkips(),
+		SkipSites:     d.sortedSkipSites(),
+		ModulePath:    module.Path,
+		GoVersion:     module.GoVersion,
+		SourceDigests: d.digests,
 	}, nil
 }
 
@@ -651,6 +669,9 @@ type discovery struct {
 	// for one directory: a package and its "[pkg.test]" twin share every
 	// non-test file.
 	seen map[string]bool
+	// digests is the digest of every file whose bytes this pass read, keyed by
+	// module-relative path. It becomes [Result.SourceDigests].
+	digests map[string]string
 }
 
 // skipKey is the aggregation key of [Skip].

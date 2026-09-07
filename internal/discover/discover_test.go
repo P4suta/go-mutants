@@ -1266,3 +1266,64 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 		t.Fatal("no codes are registered")
 	}
 }
+
+// TestResultCarriesTheDigestOfEveryScannedFile pins the answer the library's
+// own drift check is built on.
+//
+// A mutation catalogue can only speak for the files it catalogued, and a
+// preparation that runs while somebody may be writing the tree needs to know
+// what discovery *read* — including the files it read and found nothing in. A
+// file transiently emptied of everything mutable is the case that matters: it
+// still loads, it is still walked, and it produces no candidate at all, so a
+// check built on candidates alone would never look at it.
+//
+// One narrow rule is selected on purpose. It makes most of the fixture's files
+// candidate-free while every one of them is still read, which is exactly the
+// gap the map exists to cover, and it makes the assertion below — that the map
+// is bigger than the set of catalogued paths — a statement rather than a
+// coincidence.
+func TestResultCarriesTheDigestOfEveryScannedFile(t *testing.T) {
+	t.Parallel()
+
+	var narrow []mutation.Rule
+	for _, rule := range SupportedRules() {
+		if rule.Name == "true-to-false" {
+			narrow = append(narrow, rule)
+		}
+	}
+	if len(narrow) != 1 {
+		t.Fatalf("the registry holds %d rules named true-to-false, want exactly one", len(narrow))
+	}
+	root := fixture(t, "mainmod")
+	result := discoverFixture(t, "mainmod", Options{Rules: narrow})
+
+	if len(result.SourceDigests) == 0 {
+		t.Fatal("discovery recorded no source digests at all")
+	}
+	catalogued := make(map[string]bool)
+	for _, candidate := range result.Candidates {
+		catalogued[candidate.Path] = true
+		digest, scanned := result.SourceDigests[candidate.Path]
+		if !scanned {
+			t.Errorf("%s has a candidate and no recorded digest", candidate.Path)
+			continue
+		}
+		if digest != candidate.SourceDigest {
+			t.Errorf("%s: recorded digest %s, candidate digest %s", candidate.Path, digest, candidate.SourceDigest)
+		}
+	}
+	for path, digest := range result.SourceDigests {
+		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			t.Errorf("recorded digest for %s, which cannot be read: %v", path, err)
+			continue
+		}
+		if want := mutation.Digest(src); digest != want {
+			t.Errorf("%s: recorded digest %s, file digests %s", path, digest, want)
+		}
+	}
+	if len(result.SourceDigests) <= len(catalogued) {
+		t.Errorf("discovery recorded %d digests for %d catalogued files, want a digest for the"+
+			" files it read and found nothing in", len(result.SourceDigests), len(catalogued))
+	}
+}

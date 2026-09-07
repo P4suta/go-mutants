@@ -17,11 +17,13 @@
 // sources live only in the overlay manifest the session owns.
 //
 // So the rule is now one line per state, and this file is one test per line. A
-// command waits while a preparation is in flight, runs after one that
-// succeeded, is refused after one that failed — that last because a preparation
-// that stopped part-way makes no promise about the tree at all — and goes on
-// running after the *session* closes, because a closed session releases
-// binaries rather than the tree.
+// command runs beside a preparation in flight — waiting only for the stretch
+// where the sources really are rewritten, which
+// `workspace_prepare_overlap_integration_test.go` is entirely about — runs
+// after one that succeeded, is refused after one that failed — that last
+// because a preparation that stopped part-way makes no promise about the tree
+// at all — and goes on running after the *session* closes, because a closed
+// session releases binaries rather than the tree.
 //
 // Two more tests are about what the claim rests on and what it costs. The
 // byte-identical tree is checked against the session that rewrites the most:
@@ -38,8 +40,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,18 +57,6 @@ import (
 // defect. A tenth of a second is long enough to catch that on any machine and
 // short enough that a suite measured in tens of seconds does not notice it.
 const execWaitProbe = 100 * time.Millisecond
-
-// prepareStartBound is how long a preparation is given to reach its first phase
-// before the test that meant to hold it gives up.
-//
-// Everything above that phase is argument resolution and one re-digest of a
-// tiny fixture, so thirty seconds is three orders of magnitude of slack — which
-// is what a bound whose only job is to turn a deadlock into a sentence should
-// have. It exists because a preparation that fails *before* its first phase, as
-// one with an option this engine does not accept does, emits no event at all,
-// and a test blocked on that event would hang until the package's own budget
-// killed the whole tier.
-const prepareStartBound = 30 * time.Second
 
 // writeAfterPrepareEnv gates the injected target that writes into the tree. Its
 // value, not merely its presence, is what the target reads — the rule
@@ -324,34 +312,33 @@ func TestWorkspaceExecAfterFailedPrepareIsRefused(t *testing.T) {
 	}
 }
 
-// TestWorkspaceExecStillWaitsForPrepare pins the half of the old rule that
-// survives: a command may run beside a *prepared* session, never beside a
-// preparation.
+// TestWorkspaceExecRunsBesideAPreparationOutsideTheWindow is the row of the
+// table this change rewrote, and it used to say the opposite.
 //
-// It matters because the two are one lock and this change moved the line
-// between them. A preparation instruments the tree in place, verifies it, and
-// puts the sources back; a command that observed any of that would be
-// compiling a program nobody wrote, and would be doing it while the integrity
-// gate is the only thing standing between it and a mutation catalogue built
-// over its output. The write lock is what rules that out, and this is the test
-// that says so rather than leaving it to be read out of a mutex.
+// The old rule was that a command waits for the whole of a preparation, and it
+// was one lock held for the whole call. But a preparation is only *dangerous*
+// while it is rewriting the tree: `main_validation` instruments the sources in
+// place and `main_restoration` puts them back, and everywhere else — discovery,
+// the probe copy, verification, both builds — the tree is byte for byte the
+// snapshot `Open` froze. So the lock now covers the window rather than the
+// call, and this is the half that changed: a command issued while a preparation
+// is in one of its safe phases runs, instead of queueing behind minutes of
+// compilation.
 //
-// Both directions are checked. The preparation is held inside its first phase —
-// under the lock — while a command is started and watched for
-// [execWaitProbe], which catches a command that ran through. Then the
-// preparation is released, and the command must come back only after the *last*
-// phase finished: the flag it reads is written under the same write lock, so
-// observing it set is an ordering fact and not a timing one.
+// The preparation is stopped at the start of discovery, which is outside the
+// window, and a `go list ./...` has to come back on its own. What it must *not*
+// do is wait for the release below — a command that did would be blocked for
+// exactly as long as the old rule blocked it, which is what a consumer opened a
+// second workspace to avoid. [TestACommandThatStartsInsideTheWindowWaitsForIt]
+// is the other half, where a command does wait and must.
 //
 // Every wait in it is bounded, and that is not tidiness. A test that holds a
-// lock and then fails has to be able to *report* the failure: an unreleased
-// preparation would sit there until the package's own ten-minute budget expired
-// and the whole tier would come back as a panic naming a goroutine instead of
-// the assertion that broke. So the release is idempotent and registered as
-// cleanup before anything can fail, and the wait for the preparation to reach a
-// phase gives up rather than blocking forever — a preparation that fails before
-// its first phase, which is what a rejected option is, emits no event at all.
-func TestWorkspaceExecStillWaitsForPrepare(t *testing.T) {
+// preparation and then fails has to be able to *report* the failure: an
+// unreleased preparation would sit there until the package's own ten-minute
+// budget expired and the whole tier would come back as a panic naming a
+// goroutine instead of the assertion that broke. [holdPreparation] owns that,
+// and its release is registered as a cleanup before anything can fail.
+func TestWorkspaceExecRunsBesideAPreparationOutsideTheWindow(t *testing.T) {
 	root := copyFixture(t, "simple")
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
 	if err != nil {
@@ -359,71 +346,40 @@ func TestWorkspaceExecStillWaitsForPrepare(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workspace.Close() })
 
-	var (
-		holding     = make(chan struct{})
-		release     = make(chan struct{})
-		holdOnce    sync.Once
-		releaseOnce sync.Once
-		lastPhase   atomic.Bool
-	)
-	// Idempotent and registered before the first thing that can fail, so that
-	// every t.Fatalf below unblocks the preparation on its way out instead of
-	// leaving it holding the workspace. It is a second Once rather than the one
-	// the callback uses: that one is spent the moment the callback runs, and
-	// reusing it would make the cleanup a no-op in exactly the case — a
-	// preparation successfully held — where releasing matters.
-	releasePrepare := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(releasePrepare)
-
-	prepareDone := make(chan error, 1)
-	go func() {
-		_, prepareErr := workspace.Prepare(context.Background(), gomutants.PrepareOptions{
-			SkipVerify: true,
-			Trace: func(event gomutants.PrepareEvent) {
-				// The callback runs inside Prepare, which holds the write lock
-				// for its whole duration, so blocking here holds the lock.
-				holdOnce.Do(func() {
-					close(holding)
-					<-release
-				})
-				if event.Phase == gomutants.PreparePhaseBinaryBuild &&
-					event.State == gomutants.PrepareEventFinished {
-					lastPhase.Store(true)
-				}
-			},
-		})
-		prepareDone <- prepareErr
-	}()
-	select {
-	case <-holding:
-	case prepareErr := <-prepareDone:
-		t.Fatalf("Prepare returned (%v) before its first phase, so this test never held the"+
-			" workspace and proves nothing", prepareErr)
-	case <-time.After(prepareStartBound):
-		t.Fatalf("Prepare did not reach its first phase within %s", prepareStartBound)
-	}
+	held := holdPreparation(t, context.Background(), workspace,
+		gomutants.PrepareOptions{SkipVerify: true},
+		insidePhase(gomutants.PreparePhaseDiscovery, gomutants.PrepareEventStarted), nil)
+	held.awaitHeld(t)
 
 	execDone := make(chan error, 1)
 	go func() {
-		_, execErr := workspace.Exec(context.Background(), gomutants.Command{Argv: []string{"go", "version"}})
+		result, execErr := workspace.Exec(context.Background(), gomutants.Command{
+			Argv: []string{"go", "list", "./..."},
+			Env:  []string{"GOWORK=off"},
+		})
+		if execErr == nil && (result.TimedOut || result.ExitCode != 0) {
+			execErr = errors.New("the command did not pass: " + string(result.Output))
+		}
 		execDone <- execErr
 	}()
 	select {
 	case execErr := <-execDone:
-		t.Fatalf("Exec returned (%v) while Prepare held the workspace", execErr)
-	case <-time.After(execWaitProbe):
+		if execErr != nil {
+			t.Fatalf("a command beside a held preparation: %v", execErr)
+		}
+	case <-time.After(commandBound):
+		t.Fatalf("a command issued while Prepare was held in its discovery phase had not returned"+
+			" after %s: a preparation blocks commands only inside the instrumentation window",
+			commandBound)
 	}
 
-	releasePrepare()
-	if execErr := <-execDone; execErr != nil {
-		t.Fatalf("Exec once Prepare had finished: %v", execErr)
+	held.release()
+	prepared := held.await(t)
+	if prepared.err != nil {
+		t.Fatalf("Prepare: %v", prepared.err)
 	}
-	if !lastPhase.Load() {
-		t.Error("Exec returned before Prepare's last phase finished, so a command can observe" +
-			" a tree that is still being instrumented")
-	}
-	if prepareErr := <-prepareDone; prepareErr != nil {
-		t.Fatalf("Prepare: %v", prepareErr)
+	if closeErr := prepared.session.Close(); closeErr != nil {
+		t.Errorf("closing the session: %v", closeErr)
 	}
 }
 

@@ -47,27 +47,67 @@ var temporaryKeys = []string{"TMP", "TEMP", "TMPDIR"}
 var temporaryPrefixes = []string{snapshot.DirPrefix, scratchPrefix}
 
 // Workspace is a frozen disposable copy of one module. Its zero value is not
-// usable. Open constructs one and Close releases it. Exec calls may run
-// concurrently; Prepare and Close wait until every one of them has finished.
+// usable. Open constructs one and Close releases it.
+//
+// Exec calls may run concurrently with one another and with Prepare: a
+// preparation holds the tree against commands only while it is rewriting it,
+// which is the window [Workspace.Exec] describes. Close waits for every call in
+// flight, preparation included.
 type Workspace struct {
-	mu        sync.RWMutex
+	// mu is this workspace's lifetime. Exec and Prepare hold it *shared* for
+	// the whole of their calls and Close holds it exclusively, which is what
+	// makes Close the one call that may take the snapshot, the scratch
+	// directory and the toolchain away: nothing else can be running while it
+	// does.
+	mu sync.RWMutex
+
+	// tree is the snapshot's bytes. Exec holds it shared while its command
+	// runs; Prepare holds it exclusively from the integrity gate through source
+	// restoration, which is the one stretch of a preparation where the files on
+	// disk are not the program anybody wrote.
+	//
+	// It is a second lock rather than a second use of mu because the two ask
+	// different questions — "may this workspace still be used" and "is the tree
+	// readable right now" — and one lock answering both is what used to make a
+	// command wait out a preparation's compiles, its verification and its
+	// builds for the sake of the seconds it spends instrumenting.
+	//
+	// The order is mu, then tree, then stateMu, and no call takes them the
+	// other way round. Three locks in one order is the whole of the discipline.
+	tree sync.RWMutex
+
 	snapshot  *snapshot.Snapshot
 	toolchain gocmd.Toolchain
 	scratch   string
 	env       []string
-	closed    bool
 	closeDone chan struct{}
 	closeErr  error
 
-	// prepared and session are the workspace's preparation state, and it takes
-	// both to say what it is. Prepare sets prepared before its first phase and
-	// publishes session only once every phase has succeeded, all under the write
-	// lock, so the three states a reader can see are "never prepared"
-	// (!prepared), "prepared successfully" (session != nil) and "a preparation
-	// began and failed" (prepared, session == nil). [Workspace.Exec] answers
-	// differently to each.
-	prepared bool
-	session  *Session
+	// stateMu guards the four fields below, which are what has become of this
+	// workspace. They have a lock of their own because Exec and Prepare read
+	// and write them while holding only the shared half of mu — several of
+	// those running at once is the point of that half — so mu is not what keeps
+	// them consistent.
+	stateMu sync.Mutex
+	// closed is set by Close, and it wins over everything below: Close leaves a
+	// workspace that was prepared and holds no session, and a consumer whose
+	// workspace is gone has to be told that rather than sent to open another
+	// one for a preparation that succeeded.
+	closed bool
+	// prepareStarted is claimed by the one Prepare a workspace gets. It is
+	// claimed before the call reads anything and handed back only by the
+	// refusals that happen before the tree is touched — an option this engine
+	// does not accept — so a second Prepare is refused immediately rather than
+	// queued behind minutes of a preparation it was never going to be allowed
+	// to make.
+	prepareStarted bool
+	// prepareFailed is set by a preparation that began and did not finish. Such
+	// a tree may still hold instrumented sources, so every command after one is
+	// refused with [ErrPrepareFailed].
+	prepareFailed bool
+	// session is published by a preparation that succeeded, and dropped by
+	// Close.
+	session *Session
 
 	// scratchOwner holds the scratch directory's lock and marker for as long as
 	// the workspace is open. The snapshot carries its own.
@@ -390,16 +430,126 @@ func (w *Workspace) ToolchainVersion() string {
 	return w.toolchain.Version.Raw
 }
 
+// underTreeRead runs work while the snapshot's bytes are held against the one
+// thing that rewrites them, which is a preparation's instrumentation window.
+// Any number of readers hold it at once, so two commands, or a command and a
+// preparation's discovery pass, are never each other's problem.
+func (w *Workspace) underTreeRead(work func() error) error {
+	w.tree.RLock()
+	defer w.tree.RUnlock()
+	return work()
+}
+
+// underTreeWrite runs work with the snapshot's bytes held exclusively: nothing
+// else may read the tree until it returns.
+//
+// It is the instrumentation window, and it is a function rather than a pair of
+// calls because every path out of that window — a validation that failed, a
+// restoration that could not write, a drift check that refused — has to release
+// it. A window left locked is a workspace no command and no Close can ever get
+// back.
+func (w *Workspace) underTreeWrite(work func() error) error {
+	w.tree.Lock()
+	defer w.tree.Unlock()
+	return work()
+}
+
+// beginPrepare claims the workspace for the one preparation it gets.
+//
+// The claim is taken before anything is read, so that a second caller is
+// refused now rather than after the first preparation's ten minutes, and it is
+// handed back by [Workspace.abandonPrepare] for the refusals that spend
+// nothing.
+func (w *Workspace) beginPrepare() error {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.closed {
+		return fmt.Errorf("gomutants: prepare: %w", ErrWorkspaceClosed)
+	}
+	if w.prepareStarted {
+		return fmt.Errorf("gomutants: prepare: %w", ErrWorkspacePrepared)
+	}
+	w.prepareStarted = true
+	return nil
+}
+
+// abandonPrepare hands the claim back, for a preparation refused before it read
+// or wrote anything: a cancelled context, an option this engine does not
+// accept. Charging a caller a fresh workspace and a fresh snapshot for a typo
+// in a line number would be charging it for damage nothing did.
+func (w *Workspace) abandonPrepare() {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	w.prepareStarted = false
+}
+
+// prepareDidFail records a preparation that began and did not finish, which is
+// what refuses every later command.
+func (w *Workspace) prepareDidFail() {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	w.prepareFailed = true
+}
+
+// publishSession hands the finished session to the workspace, which is the
+// last thing a successful preparation does.
+func (w *Workspace) publishSession(session *Session) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	w.session = session
+}
+
+// execAllowed is the lifecycle's answer to one command, or nil when the command
+// is the workspace's own business to judge.
+//
+// Closed is asked first, and the order is a contract rather than a habit: a
+// workspace that was closed after a preparation failed carries both facts, and
+// the consumer holding it has to be told that its workspace is gone rather than
+// sent to open another one. TestClosedWorkspaceErrorsAreSentinels pins it.
+func (w *Workspace) execAllowed() error {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.closed {
+		return fmt.Errorf("gomutants: exec: %w", ErrWorkspaceClosed)
+	}
+	if w.prepareFailed {
+		return fmt.Errorf("gomutants: exec: %w", ErrPrepareFailed)
+	}
+	return nil
+}
+
+// claimClose marks the workspace closed and hands over the session to close
+// with it, or reports that somebody else claimed it first.
+func (w *Workspace) claimClose() (*Session, bool) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	if w.closed {
+		return nil, false
+	}
+	w.closed = true
+	session := w.session
+	w.session = nil
+	return session, true
+}
+
 // Exec runs command against the frozen snapshot: a build, a vet, a `go list`, a
 // baseline of the caller's own.
 //
 // Its relationship with Prepare is three rules, one per state of the
 // preparation.
 //
-//   - While a Prepare is *in flight* a command waits. Preparation instruments
-//     the tree in place before it puts the sources back, and a command that
-//     observed that would be compiling a program nobody wrote — so Exec takes
-//     the shared half of the lock Prepare holds exclusively, and blocks.
+//   - While a Prepare is *in flight* a command runs beside it, and waits only
+//     for the *instrumentation window*: the stretch between preparation's
+//     integrity gate and the end of `main_restoration`, during which the
+//     sources on disk have been rewritten and are not the program anybody
+//     wrote. A command issued inside the window blocks until the window ends
+//     and then runs against the restored tree; a command already running when
+//     a preparation reaches the gate makes the preparation wait for it, so a
+//     long baseline delays the window and can never corrupt it. Everything
+//     else a preparation does — discovery, the probe copy, verification, the
+//     two builds — reads the same frozen bytes a command does, so the two
+//     overlap. That is minutes of a preparation a consumer used to open a
+//     second workspace to make use of.
 //   - After a Prepare that *succeeded* a command runs. A returned session is
 //     the proof that main_restoration put the pristine sources back and that
 //     the tree re-digested as the snapshot Open froze; the instrumented
@@ -438,35 +588,35 @@ func (w *Workspace) ToolchainVersion() string {
 //
 // Before Prepare the rule is stricter, because the tree is about to become the
 // source of a mutation catalogue: a command that changed it is refused by
-// Prepare's integrity gate.
+// Prepare's integrity gate. A command that changes it *during* a preparation is
+// refused by the same checks, which now simply notice later — the gate, or the
+// comparison between what discovery read and the frozen manifest, or the drift
+// check after restoration or verification. All of them fail the preparation,
+// and none of them will catalogue mutants of bytes nobody has.
 //
 // Exec is safe to call concurrently. Every call receives a private temporary
 // directory, so commands cannot observe one another through TMP, TEMP or
 // TMPDIR. They deliberately share the frozen working tree.
+//
+// One thing it may not be called from: a [PrepareOptions.Trace] callback. That
+// callback runs on the preparation's own goroutine. Inside the instrumentation
+// window the reason is immediate — the goroutine holds the tree exclusively and
+// the command would wait for it — and outside the window it is worse for being
+// less obvious: the command runs, until the day a [Workspace.Close] queues for
+// the workspace. Go's RWMutex hands out no more read locks once a writer is
+// waiting, so the command then waits for the Close, the Close waits for the
+// preparation, and the preparation waits for the callback.
 func (w *Workspace) Exec(ctx context.Context, command Command) (CommandResult, error) {
 	if w == nil {
 		return CommandResult{}, errors.New("gomutants: exec: nil workspace")
 	}
+	// Shared for the whole call, which is what makes Close — the one caller
+	// that takes it exclusively — wait for this command rather than remove the
+	// tree it is running in.
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	// Closed is asked first, and the order is a contract rather than a habit:
-	// Close leaves prepared true and drops the session, which is byte for byte
-	// the shape the next check reads as a preparation that failed. A consumer
-	// whose workspace is gone has to be told that it is gone — "the preparation
-	// failed" would send it to open another workspace for a preparation that
-	// succeeded — so closed wins, and TestClosedWorkspaceErrorsAreSentinels
-	// pins it.
-	if w.closed {
-		return CommandResult{}, fmt.Errorf("gomutants: exec: %w", ErrWorkspaceClosed)
-	}
-	// An *open* workspace that is prepared and holds no session is a
-	// preparation that began and did not finish. It is the one state the two
-	// fields tell apart: Prepare sets prepared before its first phase and
-	// publishes the session only when every phase has succeeded, and it holds
-	// the write lock for all of it, so a reader holding the read half sees one
-	// or the other and never a half-built session.
-	if w.prepared && w.session == nil {
-		return CommandResult{}, fmt.Errorf("gomutants: exec: %w", ErrPrepareFailed)
+	if err := w.execAllowed(); err != nil {
+		return CommandResult{}, err
 	}
 	scratch, err := os.MkdirTemp(w.scratch, workspaceExecPrefix)
 	if err != nil {
@@ -478,7 +628,26 @@ func (w *Workspace) Exec(ctx context.Context, command Command) (CommandResult, e
 			_ = os.RemoveAll(scratch)
 		}
 	}()
-	result, err := w.runCommand(ctx, command, sanitiseEnvironment(w.env, scratch), trace.ExecKindWorkspaceExec)
+	// The tree only while the child runs. A command holds it against a
+	// preparation's instrumentation window and against nothing else, so a
+	// preparation waits for a running command and a command waits for a running
+	// window.
+	var result CommandResult
+	err = w.underTreeRead(func() error {
+		// Asked again, now that the tree is held. The first answer was given
+		// before this call queued behind an instrumentation window, and a
+		// window can *fail*: the unlock that wakes this command is then the
+		// unlock of a preparation that gave up with the instrumented sources
+		// still in the tree. A command that ran on those would exit zero and
+		// answer about a program nobody wrote, which is the one outcome this
+		// whole feature must not produce.
+		if allowedErr := w.execAllowed(); allowedErr != nil {
+			return allowedErr
+		}
+		var runErr error
+		result, runErr = w.runCommand(ctx, command, sanitiseEnvironment(w.env, scratch), trace.ExecKindWorkspaceExec)
+		return runErr
+	})
 	if w.keepTemp {
 		w.keepExecScratch(scratch)
 		kept = true
@@ -575,7 +744,15 @@ func (w *Workspace) runCommand(
 }
 
 // Close stops accepting work and removes the session scratch directory and
-// snapshot. It is idempotent and waits for in-flight Session.Exec calls.
+// snapshot. It is idempotent.
+//
+// It waits for every call in flight. [Workspace.Exec] and [Workspace.Prepare]
+// hold the workspace shared for the whole of their calls and this one takes it
+// exclusively, so a command that is running and a preparation that is still
+// discovering, instrumenting or compiling both finish first: a workspace that
+// removed its snapshot underneath one of them would be a use-after-free with a
+// friendlier name. An in-flight [Session.Exec] is waited for by the session's
+// own Close, which this one calls.
 func (w *Workspace) Close() error {
 	if w == nil {
 		return nil
@@ -585,20 +762,18 @@ func (w *Workspace) Close() error {
 		w.closeDone = make(chan struct{})
 	}
 	done := w.closeDone
-	if w.closed {
+	session, first := w.claimClose()
+	if !first {
 		w.mu.Unlock()
 		<-done
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		return w.closeErr
 	}
-	w.closed = true
-	session := w.session
 	snap := w.snapshot
 	scratch := w.scratch
 	scratchOwner := w.scratchOwner
 	keep := w.keepTemp
-	w.session = nil
 	w.snapshot = nil
 	w.scratch = ""
 	w.scratchOwner = nil

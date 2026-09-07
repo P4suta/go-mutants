@@ -116,6 +116,27 @@ type probeBuildResult struct {
 // Prepare discovers, validates, instruments, verifies, and builds one reusable
 // mutation session. A Workspace may be prepared exactly once, including when
 // preparation fails after it has begun.
+//
+// It does not hold the workspace against commands. [Workspace.Exec] runs beside
+// a preparation and waits only for its *instrumentation window* — the stretch
+// from the integrity gate to the end of `main_restoration`, during which the
+// sources on disk have been rewritten — so a consumer may run its own `go vet`,
+// `go build` or baseline against the same workspace rather than opening a
+// second one for them. [Workspace.Exec] sets out the whole rule.
+//
+// A second Prepare is refused with [ErrWorkspacePrepared] straight away rather
+// than queued behind the first. A preparation refused for an *option* this
+// engine does not accept leaves the workspace unspent: nothing has been read or
+// written, and the next Prepare is judged on its own request — though a second
+// Prepare that arrives during that first one's argument check is refused, where
+// the exclusive lock this replaced would have made it wait and then serve it.
+//
+// [PrepareOptions.Trace] callbacks run on this call's own goroutine, so one
+// must not call back into the workspace. Inside the instrumentation window that
+// goroutine holds the tree exclusively and the call would wait for it; outside
+// the window the call runs, until a [Workspace.Close] queues for the workspace
+// — Go's RWMutex hands out no more read locks once a writer is waiting, and the
+// command, the Close and the preparation then wait for each other.
 func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Session, error) {
 	if w == nil {
 		return nil, errors.New("gomutants: prepare: nil workspace")
@@ -124,19 +145,67 @@ func (w *Workspace) Prepare(ctx context.Context, options PrepareOptions) (*Sessi
 }
 
 func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (session *Session, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	// Shared rather than exclusive, and held for the whole call. Shared,
+	// because a preparation is minutes of reading the frozen tree and compiling
+	// it and only seconds of rewriting it, and the seconds are what
+	// [Workspace.tree] is for. Held for all of it, because [Workspace.Close]
+	// takes the same lock exclusively, and a workspace that removed its
+	// snapshot while a preparation was still compiling in it would be a
+	// use-after-free with a friendlier name.
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	// Everything above the recorder's note is a refusal rather than a
 	// preparation failure: a closed workspace, one already prepared, a
 	// cancelled context, an option that is not a value this engine accepts.
 	// None of them started a preparation, so a `prepare-failed` note about one
 	// would name no phase and describe nothing that happened.
-	if w.closed {
-		return nil, fmt.Errorf("gomutants: prepare: %w", ErrWorkspaceClosed)
+	//
+	// The claim is taken here, before anything is read, and it is the whole of
+	// what refuses a second Prepare. That used to be the write lock, which
+	// meant a second caller waited out the first preparation's ten minutes in
+	// order to be told it was never going to be allowed one.
+	if err = w.beginPrepare(); err != nil {
+		return nil, err
 	}
-	if w.prepared {
-		return nil, fmt.Errorf("gomutants: prepare: %w", ErrWorkspacePrepared)
-	}
+	// The workspace is spent once the options are accepted, and not one line
+	// earlier. Spending it is about a preparation that *began*: one that
+	// stopped part-way may have left instrumented sources in the frozen tree,
+	// so the tree promises nothing and every Workspace.Exec is refused. Nothing
+	// above that point has read or written anything — the refusals are a state
+	// check and an argument check — so charging a caller a fresh workspace and
+	// a fresh snapshot for a typo in a line number would be charging it for
+	// damage nothing did.
+	//
+	// The integrity gate below is deliberately on the other side: it reads the
+	// tree, and a snapshot that has already moved is spent whatever the caller
+	// does next.
+	spent := false
+	// From here on a failure is one this workspace had, and the recording says
+	// which phase it was in. Deferred rather than written at each return,
+	// because a preparation has a dozen of them and the one that would be
+	// forgotten is the one somebody is reading the recording to find.
+	//
+	// What it keys on is the *session*, not the error, and that is the
+	// difference between a rule and a rule with a hole in it. A panic — a
+	// consumer's own Trace callback is ordinary Go code, and ordinary Go code
+	// panics — unwinds through this function with the named error still nil,
+	// and a workspace that read that as success would go on serving commands
+	// against a tree instrumentation may have been halfway through. So the
+	// question asked here is "did this call publish a session", which only the
+	// one successful path can answer yes to.
+	defer func() {
+		if !spent {
+			w.abandonPrepare()
+			return
+		}
+		if err == nil && session != nil {
+			return
+		}
+		w.prepareDidFail()
+		if err != nil {
+			w.recorder.Note(trace.NotePrepareFailed, "", prepareFailedDetail(err))
+		}
+	}()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("gomutants: prepare: %w", ctxErr)
 	}
@@ -144,34 +213,8 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	if err != nil {
 		return nil, err
 	}
-	// The workspace is spent from here, and not one line earlier. Spending it is
-	// about a preparation that *began*: one that stopped part-way may have left
-	// instrumented sources in the frozen tree, so the tree promises nothing and
-	// both a second Prepare and every Workspace.Exec are refused. Nothing above
-	// this line has read or written anything — the three refusals are a state
-	// check and an argument check — so charging a caller a fresh workspace and a
-	// fresh snapshot for a typo in a line number would be charging it for damage
-	// nothing did.
-	//
-	// The integrity gate below is deliberately on the other side: it reads the
-	// tree, and a snapshot that has already moved is spent whatever the caller
-	// does next. The lock is held for the whole call, so there is no window
-	// between the check above and this assignment for a second Prepare to slip
-	// into.
-	w.prepared = true
+	spent = true
 	phases := newPrepareTrace(resolved.Trace, w.recorder)
-	// From here on a failure is one this workspace had, and the recording says
-	// which phase it was in. Deferred rather than written at each return,
-	// because a preparation has a dozen of them and the one that would be
-	// forgotten is the one somebody is reading the recording to find.
-	defer func() {
-		if err != nil {
-			w.recorder.Note(trace.NotePrepareFailed, "", prepareFailedDetail(err))
-		}
-	}()
-	if pristineErr := checkPristineSnapshot(w.snapshot); pristineErr != nil {
-		return nil, pristineErr
-	}
 	rules, err := selectRules(resolved.Profile, resolved.Operators)
 	if err != nil {
 		return nil, err
@@ -189,32 +232,39 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	var catalog *mutation.Catalog
 	var pristineSources map[string]sourceImage
 	var hints instrument.Hints
-	err = phases.run(PreparePhaseDiscovery, func() error {
-		found, err = discover.Discover(ctx, discover.Options{
-			SnapshotRoot: w.snapshot.Root,
-			Toolchain:    w.toolchain,
-			Env:          slices.Clone(w.env),
-			Rules:        rules,
-			Include:      include,
-			Exclude:      exclude,
-			Packages:     slices.Clone(resolved.DiscoveryPackages),
+	// Discovery reads the tree and does not write it, so it holds the tree
+	// shared and a command may run beside it. What that costs is stated by the
+	// gate below: a command that wrote a source file here would be catalogued,
+	// and the catalogue is checked against the frozen manifest before anything
+	// is built from it.
+	err = w.underTreeRead(func() error {
+		return phases.run(PreparePhaseDiscovery, func() error {
+			found, err = discover.Discover(ctx, discover.Options{
+				SnapshotRoot: w.snapshot.Root,
+				Toolchain:    w.toolchain,
+				Env:          slices.Clone(w.env),
+				Rules:        rules,
+				Include:      include,
+				Exclude:      exclude,
+				Packages:     slices.Clone(resolved.DiscoveryPackages),
+			})
+			if err != nil {
+				return buildError(PreparePhaseDiscovery, fmt.Errorf("gomutants: prepare discovery: %w", err))
+			}
+			catalog, err = discover.BuildCatalog(found)
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare catalog: %w", err)
+			}
+			pristineSources, err = captureInstrumentationSources(w.snapshot.Root, catalog)
+			if err != nil {
+				return err
+			}
+			hints, err = instrument.HintsOf(found.Candidates)
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare instrumentation hints: %w", err)
+			}
+			return nil
 		})
-		if err != nil {
-			return buildError(PreparePhaseDiscovery, fmt.Errorf("gomutants: prepare discovery: %w", err))
-		}
-		catalog, err = discover.BuildCatalog(found)
-		if err != nil {
-			return fmt.Errorf("gomutants: prepare catalog: %w", err)
-		}
-		pristineSources, err = captureInstrumentationSources(w.snapshot.Root, catalog)
-		if err != nil {
-			return err
-		}
-		hints, err = instrument.HintsOf(found.Candidates)
-		if err != nil {
-			return fmt.Errorf("gomutants: prepare instrumentation hints: %w", err)
-		}
-		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -232,23 +282,30 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	// as the mutant tree — so the copy is taken from the pristine snapshot
 	// before the next line rewrites it, and from the snapshot rather than from
 	// the user's tree, which may have moved since Open froze it.
+	//
+	// It is a read of the whole tree, so it holds the tree shared and overlaps
+	// commands like discovery does. Its own digest comparison is what stands in
+	// for the gate here: a copy taken while anything was writing is a copy that
+	// does not digest as the snapshot, and it is refused rather than probed.
 	var probeSnap *snapshot.Snapshot
 	if resolved.Probe {
-		err = phases.run(PreparePhaseProbeSnapshot, func() error {
-			started := time.Now()
-			probeSnap, err = snapshot.Create(w.snapshot.Root, snapshot.Options{
-				DestParent: w.snapshot.Parent(),
+		err = w.underTreeRead(func() error {
+			return phases.run(PreparePhaseProbeSnapshot, func() error {
+				started := time.Now()
+				probeSnap, err = snapshot.Create(w.snapshot.Root, snapshot.Options{
+					DestParent: w.snapshot.Parent(),
+				})
+				recordSnapshot(w.recorder, trace.SnapshotKindProbe, w.snapshot.Root, probeSnap, time.Since(started), err)
+				if err != nil {
+					return fmt.Errorf("gomutants: prepare probe snapshot: %w", err)
+				}
+				if probeSnap.WorkspaceDigest != w.snapshot.WorkspaceDigest {
+					return fmt.Errorf(
+						"gomutants: prepare probe snapshot digest %s does not match the mutant snapshot's %s",
+						probeSnap.WorkspaceDigest, w.snapshot.WorkspaceDigest)
+				}
+				return nil
 			})
-			recordSnapshot(w.recorder, trace.SnapshotKindProbe, w.snapshot.Root, probeSnap, time.Since(started), err)
-			if err != nil {
-				return fmt.Errorf("gomutants: prepare probe snapshot: %w", err)
-			}
-			if probeSnap.WorkspaceDigest != w.snapshot.WorkspaceDigest {
-				return fmt.Errorf(
-					"gomutants: prepare probe snapshot digest %s does not match the mutant snapshot's %s",
-					probeSnap.WorkspaceDigest, w.snapshot.WorkspaceDigest)
-			}
-			return nil
 		})
 		if err != nil {
 			return failPrepare(probeSnap, err)
@@ -261,86 +318,122 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	// cleans up its own snapshot when the scratch directory beside it fails.
 	fail := func(err error) (*Session, error) { return failPrepare(probeSnap, err) }
 
+	// The instrumentation window: the integrity gate, the check on what
+	// discovery read, and the two phases that rewrite the tree and put it back.
+	// It is the only stretch of a preparation during which the files on disk
+	// are not the program anybody wrote, and it is therefore the only stretch a
+	// command has to be kept out of. Taking the tree exclusively here waits for
+	// every command already running — a long baseline delays the window and can
+	// never corrupt it — and blocks every command issued while it is held,
+	// which runs against the restored tree afterwards.
 	var validated validate.Result
-	err = phases.run(PreparePhaseMainValidation, func() error {
-		validated, err = validate.Validate(ctx, validate.Options{
-			Snap:         w.snapshot,
-			Catalog:      catalog,
-			Hints:        hints,
-			ModulePath:   found.ModulePath,
-			Toolchain:    w.toolchain,
-			Jobs:         resolved.Jobs,
-			BuildTimeout: resolved.BuildTimeout,
-			Env:          validationEnv,
-			Packages:     resolved.DiscoveryPackages,
-			Trace:        w.recorder,
-		})
-		if err != nil {
-			return buildError(PreparePhaseMainValidation, fmt.Errorf("gomutants: prepare validation: %w", err))
-		}
-		return nil
-	})
-	if err != nil {
-		return fail(err)
-	}
 	var scratch string
 	var overlayPath string
-	err = phases.run(PreparePhaseMainRestoration, func() error {
-		scratch, err = os.MkdirTemp(w.scratch, sessionPrefix)
-		if err != nil {
-			return fmt.Errorf("gomutants: prepare session scratch: %w", err)
+	err = w.underTreeWrite(func() (windowErr error) {
+		// The failure is published from *inside* the window, before the unlock
+		// that wakes the commands queued behind it. Leaving it to the deferred
+		// note above would have every one of those commands run first, on a
+		// tree this preparation has just given up on with the instrumented
+		// sources still in it — and succeed, quietly answering about a program
+		// nobody wrote. It is the one place stateMu is taken under the tree
+		// lock, which is why the order is mu, then tree, then stateMu.
+		defer func() {
+			if windowErr != nil {
+				w.prepareDidFail()
+			}
+		}()
+		if pristineErr := checkPristineSnapshot(w.snapshot); pristineErr != nil {
+			return pristineErr
 		}
-		overlayPath, err = writeInstrumentationOverlay(w.snapshot.Root, scratch, mainOverlayName, validated.Instrumented)
-		if err != nil {
-			return fmt.Errorf("gomutants: prepare instrumentation overlay: %w", err)
-		}
-		// The manifest is what a consumer needs to reproduce an execution by
-		// hand — `GOFLAGS=-overlay=<manifest>` in the snapshot — so it is in the
-		// recording as well as behind [Session.OverlayManifest].
-		w.recorder.Artifact(trace.ArtifactOverlayManifest, overlayPath)
-		if err = restoreInstrumentationSources(w.snapshot.Root, pristineSources, validated.Instrumented); err != nil {
-			return fmt.Errorf("gomutants: prepare restore source tree: %w", err)
-		}
-		if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "source restoration"); driftErr != nil {
+		if driftErr := checkDiscoveredSources(
+			w.snapshot.Manifest, found.SourceDigests, catalog, pristineSources); driftErr != nil {
 			return driftErr
 		}
-		return nil
+		if validationErr := phases.run(PreparePhaseMainValidation, func() error {
+			validated, err = validate.Validate(ctx, validate.Options{
+				Snap:         w.snapshot,
+				Catalog:      catalog,
+				Hints:        hints,
+				ModulePath:   found.ModulePath,
+				Toolchain:    w.toolchain,
+				Jobs:         resolved.Jobs,
+				BuildTimeout: resolved.BuildTimeout,
+				Env:          validationEnv,
+				Packages:     resolved.DiscoveryPackages,
+				Trace:        w.recorder,
+			})
+			if err != nil {
+				return buildError(PreparePhaseMainValidation, fmt.Errorf("gomutants: prepare validation: %w", err))
+			}
+			return nil
+		}); validationErr != nil {
+			return validationErr
+		}
+		return phases.run(PreparePhaseMainRestoration, func() error {
+			scratch, err = os.MkdirTemp(w.scratch, sessionPrefix)
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare session scratch: %w", err)
+			}
+			overlayPath, err = writeInstrumentationOverlay(w.snapshot.Root, scratch, mainOverlayName, validated.Instrumented)
+			if err != nil {
+				return fmt.Errorf("gomutants: prepare instrumentation overlay: %w", err)
+			}
+			// The manifest is what a consumer needs to reproduce an execution by
+			// hand — `GOFLAGS=-overlay=<manifest>` in the snapshot — so it is in the
+			// recording as well as behind [Session.OverlayManifest].
+			w.recorder.Artifact(trace.ArtifactOverlayManifest, overlayPath)
+			if err = restoreInstrumentationSources(w.snapshot.Root, pristineSources, validated.Instrumented); err != nil {
+				return fmt.Errorf("gomutants: prepare restore source tree: %w", err)
+			}
+			if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "source restoration"); driftErr != nil {
+				return driftErr
+			}
+			return nil
+		})
 	})
 	if err != nil {
 		return fail(err)
 	}
 
 	if !resolved.SkipVerify {
-		err = phases.run(PreparePhaseVerification, func() error {
-			verify := resolved.Verify
-			verifyBase, verifyErr := overlayEnvironment(w.env, verify.Env)
-			if verifyErr != nil {
-				return fmt.Errorf("gomutants: prepare verification environment: %w", verifyErr)
-			}
-			verify.Env = nil
-			verifyBase, verifyErr = instrumentationEnvironment(verifyBase, overlayPath)
-			if verifyErr != nil {
-				return fmt.Errorf("gomutants: prepare verification overlay: %w", verifyErr)
-			}
-			verified, verifyErr := w.runCommand(ctx, verify, verifyBase, trace.ExecKindVerify)
-			if verifyErr != nil {
-				return fmt.Errorf("gomutants: prepare instrumented verification: %w", verifyErr)
-			}
-			if verified.TimedOut || verified.ExitCode != 0 {
-				return &VerificationError{
-					Command:    verify,
-					ExitCode:   verified.ExitCode,
-					TimedOut:   verified.TimedOut,
-					Duration:   verified.Duration,
-					Output:     verified.Output,
-					Truncated:  verified.Truncated,
-					TotalBytes: verified.TotalBytes,
+		// Under the tree's shared half, exactly as [Workspace.Exec] runs: this
+		// is a command against the restored tree like any other, and its drift
+		// check reads the same bytes. It costs nothing — a command holds the
+		// same half, so the two run side by side — and it keeps "everything
+		// that reads the tree holds the tree" a rule with no exceptions to
+		// remember.
+		err = w.underTreeRead(func() error {
+			return phases.run(PreparePhaseVerification, func() error {
+				verify := resolved.Verify
+				verifyBase, verifyErr := overlayEnvironment(w.env, verify.Env)
+				if verifyErr != nil {
+					return fmt.Errorf("gomutants: prepare verification environment: %w", verifyErr)
 				}
-			}
-			if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "verification"); driftErr != nil {
-				return driftErr
-			}
-			return nil
+				verify.Env = nil
+				verifyBase, verifyErr = instrumentationEnvironment(verifyBase, overlayPath)
+				if verifyErr != nil {
+					return fmt.Errorf("gomutants: prepare verification overlay: %w", verifyErr)
+				}
+				verified, verifyErr := w.runCommand(ctx, verify, verifyBase, trace.ExecKindVerify)
+				if verifyErr != nil {
+					return fmt.Errorf("gomutants: prepare instrumented verification: %w", verifyErr)
+				}
+				if verified.TimedOut || verified.ExitCode != 0 {
+					return &VerificationError{
+						Command:    verify,
+						ExitCode:   verified.ExitCode,
+						TimedOut:   verified.TimedOut,
+						Duration:   verified.Duration,
+						Output:     verified.Output,
+						Truncated:  verified.Truncated,
+						TotalBytes: verified.TotalBytes,
+					}
+				}
+				if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "verification"); driftErr != nil {
+					return driftErr
+				}
+				return nil
+			})
 		})
 		if err != nil {
 			return fail(err)
@@ -416,6 +509,21 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	if err != nil {
 		return fail(err)
 	}
+	// The last stretch of a preparation nothing else covered, and the longest
+	// one on a real module. The window closed at restoration and the session is
+	// published below; in between, the binaries are compiled from whatever the
+	// tree holds. A command that wrote there would have its bytes compiled into
+	// the binaries *and* recorded by `scanFiles` as the state the session was
+	// prepared in — so [Session.Changes] would compare the tree against the
+	// drift and report nothing at all. One re-digest makes "a write into the
+	// frozen tree during a preparation fails it" true to the end of the
+	// preparation rather than to the end of the window.
+	err = w.underTreeRead(func() error {
+		return checkInitialDrift(w.snapshot, instrument.Result{}, driftStageBinaries)
+	})
+	if err != nil {
+		return fail(err)
+	}
 
 	accepted := make(map[string]bool, len(validated.AcceptedIDs))
 	for _, id := range validated.AcceptedIDs {
@@ -453,15 +561,21 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 		keepTemp:       w.keepTemp,
 		recorder:       w.recorder,
 	}
-	w.session = session
+	w.publishSession(session)
 	return session, nil
 }
 
-// checkPristineSnapshot is the barrier between arbitrary pre-preparation
-// commands and mutation discovery. Commands may be used for build, vet and
-// baseline controls, but none may silently rewrite the frozen program those
-// controls are meant to justify. Prepare holds the Workspace write lock here,
-// so Redigest cannot observe an Exec halfway through a write.
+// checkPristineSnapshot is the barrier between arbitrary commands and mutation
+// instrumentation. Commands may be used for build, vet and baseline controls,
+// and they may run beside a preparation, but none may silently rewrite the
+// frozen program those controls are meant to justify.
+//
+// It runs at the top of the instrumentation window, with the tree held
+// exclusively, and that is what makes its answer worth having: no command can
+// be halfway through a write while it re-digests, and none can start one until
+// restoration has put the sources back. What it can no longer see is a write
+// that happened *and was undone* before it ran — during discovery, say — which
+// is what [checkDiscoveredSources] is for.
 func checkPristineSnapshot(snap *snapshot.Snapshot) error {
 	drifts, err := snap.Redigest()
 	if err != nil {
@@ -471,6 +585,89 @@ func checkPristineSnapshot(snap *snapshot.Snapshot) error {
 		return nil
 	}
 	return &DriftError{Stage: driftStageCommands, Changes: driftChanges(drifts)}
+}
+
+// checkDiscoveredSources requires every file discovery read to be the file the
+// manifest froze.
+//
+// It exists because discovery reads the tree while a command may write it. The
+// integrity gate above proves the tree is pristine *now*, and a command that
+// changed a source file during discovery and put it back before the gate runs
+// leaves nothing for the gate to find — while the catalogue it produced is full
+// of mutants identified by the digest of bytes that are nowhere on disk. Every
+// later answer about one of those, a cached one most of all, would be about a
+// program nobody has.
+//
+// Three digests can answer for one path, and they are three different claims.
+// [discover.Result.SourceDigests] is what discovery *read*, and it covers every
+// file the pass opened rather than only the ones that yielded a mutant — which
+// matters, because a file a transient edit emptied of everything mutable is
+// read, walked, and catalogued as nothing at all. The catalogue's own
+// SourceDigest answers for a path discovery recorded none for, so that a
+// catalogue built by anything else is still checked. And the captured image is
+// the bytes restoration will write back over the instrumented file, so it
+// settles what the tree *becomes* rather than what it was.
+//
+// A path the manifest never held is the remaining case: a file a command
+// created and removed again, whose mutants name a file the snapshot does not
+// have.
+func checkDiscoveredSources(
+	manifest []snapshot.Entry, scanned map[string]string,
+	catalog *mutation.Catalog, captured map[string]sourceImage,
+) error {
+	// Both sides of every lookup below are module-relative slash paths taken
+	// from a listing of the same tree — the snapshot manifest's and
+	// discovery's — so an exact map lookup is the comparison, and a
+	// case-folding or separator-normalising one would only be able to conflate
+	// two paths the same walk kept apart.
+	frozen := make(map[string]string, len(manifest))
+	for _, entry := range manifest {
+		frozen[entry.RelPath] = entry.SHA256
+	}
+	observed := make(map[string]string, len(scanned)+len(captured))
+	for path, digest := range scanned {
+		observed[path] = digest
+	}
+	if catalog != nil {
+		for _, mutant := range catalog.Mutants() {
+			if _, ok := observed[mutant.Path]; !ok {
+				observed[mutant.Path] = mutant.SourceDigest
+			}
+		}
+	}
+	// The captured image last and only where everything else agreed with the
+	// manifest: what discovery read is what the identities were minted from, so
+	// it is the more interesting answer when the two disagree, and the image is
+	// the answer for a file discovery read pristine and the capture a moment
+	// later did not.
+	for path, image := range captured {
+		if observed[path] == frozen[path] {
+			if digest := mutation.Digest(image.data); digest != observed[path] {
+				observed[path] = digest
+			}
+		}
+	}
+
+	var changes []Change
+	for path, read := range observed {
+		want, recorded := frozen[path]
+		switch {
+		case !recorded:
+			changes = append(changes, Change{Kind: ChangeAdded, Path: path, AfterSHA256: read})
+		case read != want:
+			changes = append(changes, Change{
+				Kind:         ChangeModified,
+				Path:         path,
+				BeforeSHA256: want,
+				AfterSHA256:  read,
+			})
+		}
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	slices.SortFunc(changes, func(a, b Change) int { return strings.Compare(a.Path, b.Path) })
+	return &DriftError{Stage: driftStageDiscovery, Changes: changes}
 }
 
 func runPreparationBuilds(
