@@ -209,9 +209,10 @@ started with those tests selected; it is what `test.narrowing = "test"`, the
 default, produces, and `"package"` produces the mode of the same name.
 
 The numbers are absent — not zero — outside the modes that measure them, and
-the schema refuses them there. An `off` run carrying `binaries: 0` would be stating a
-measurement it never made, and a reader cannot tell a real zero from a default
-one. `mutants_uncovered` is derived from `mutants[]` when the document is built,
+the schema refuses them there. An `off` run carrying `binaries: 0` would be
+stating a measurement it never made, and a reader cannot tell a real zero from
+a default one. `mutants_uncovered` is derived from `mutants[]` when the
+document is built,
 so the summary and the rows underneath it cannot disagree.
 
 `mode` is `package` or `test` exactly when the effective `test.command` is one
