@@ -197,7 +197,7 @@ silent merge.
 | `DiscoveryPackages []string` | `nil` → `./...` | module-relative package patterns whose source is mutated |
 | `Packages []string` | `nil` → `./...` | module-relative package patterns whose test binaries are built |
 | `ProbeCoverPackages []string` | `nil` | package patterns included in probe coverage |
-| `Selection *Selection` | `nil` | module-relative paths onto 1-based inclusive line ranges. Narrows what the caller means to *execute*; `nil` selects everything. See [Selecting by line range](#selecting-by-line-range) |
+| `Selection *Selection` | `nil` | module-relative paths onto 1-based inclusive line ranges. Narrows what the caller means to *execute*; `nil` selects everything, while a non-nil `Selection` that retains no range (an empty map, or paths with no ranges) selects nothing. See [Selecting by line range](#selecting-by-line-range) |
 | `Jobs int` | `0` → `min(NumCPU, 8)`, at most 32 | concurrent validation and test-binary builds |
 | `BuildTimeout time.Duration` | `0` → 10 minutes | bounds each validation and test-binary build. Negative is invalid |
 | `MutantTimeout time.Duration` | `0` → 10 seconds | the default outer timeout `Session.Exec` and `Session.Probe` use. Negative is invalid |
