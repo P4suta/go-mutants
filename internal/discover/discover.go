@@ -22,6 +22,36 @@ import (
 // makes a tree a multi-module workspace, which v1 refuses.
 const WorkspaceFile = "go.work"
 
+// CheckWorkspace reports a directory holding a [WorkspaceFile] as
+// [CodeWorkspace], and nil for one that is a module rather than a workspace.
+//
+// [Discover] calls it on the snapshot, which is where the refusal has to be
+// final: everything below this phase — the identities, the digests, the single
+// baseline — assumes one module path. It is exported so that a caller can ask
+// the question *before* paying for the answer. An engine run pointed at a
+// workspace root would otherwise copy the tree, resolve a test scope against
+// it and measure a baseline before arriving here, and the first thing to go
+// wrong on that route is not this refusal at all: `go list ./...` in a
+// workspace directory places no package, so the run reported a test command
+// whose pattern "matches no package" — a true sentence about the wrong
+// subject, and a diagnosis that sends the reader to their `test.command`.
+//
+// Only the directory it is given is examined. The go command would also find a
+// workspace file in a parent directory or through $GOWORK, and neither is part
+// of the tree under test; the loader runs with GOWORK=off so that neither can
+// decide what a run resolves against. See [environment].
+func CheckWorkspace(dir string) error {
+	if _, err := os.Stat(filepath.Join(dir, WorkspaceFile)); err != nil {
+		return nil
+	}
+	return &Error{
+		Code: CodeWorkspace,
+		Message: "multi-module workspaces are not yet supported: " +
+			filepath.Join(dir, WorkspaceFile) + " makes this a workspace; " +
+			"run go-mutants inside one of its modules instead",
+	}
+}
+
 // Options configures [Discover].
 //
 // The zero value is not usable: [Options.SnapshotRoot] has no sensible
@@ -524,13 +554,8 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 	// also find one in a parent directory or through $GOWORK, and neither is
 	// part of the snapshot; the loader runs with GOWORK=off so that neither can
 	// decide what this run resolves against. See [environment].
-	if _, statErr := os.Stat(filepath.Join(root, WorkspaceFile)); statErr == nil {
-		return Result{}, &Error{
-			Code: CodeWorkspace,
-			Message: "multi-module workspaces are not yet supported: " +
-				filepath.Join(root, WorkspaceFile) + " makes this a workspace; " +
-				"run go-mutants inside one of its modules instead",
-		}
+	if workspaceErr := CheckWorkspace(root); workspaceErr != nil {
+		return Result{}, workspaceErr
 	}
 	matchers, err := newMatchers(opts.Rules)
 	if err != nil {

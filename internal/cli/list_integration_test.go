@@ -797,3 +797,51 @@ func TestListCommandLineEndToEnd(t *testing.T) {
 		t.Errorf("the run left %d entries behind in its temporary directory", len(left))
 	}
 }
+
+// TestListAtAWorkspaceRootIsRefusedBeforeAnythingIsCopied is the same refusal
+// `run` makes, in the command that reaches a workspace first.
+//
+// A multi-module workspace has no single module path, no single set of
+// module-relative identities and no single baseline, and discovery has always
+// said so. What it could not say usefully was *which file*: it is handed the
+// snapshot, so the `go.work` it named was the one inside a `go-mutants-snap-…`
+// directory in the temporary area — which this command's own deferred cleanup
+// removes before the message reaches a terminal. The one actionable thing in
+// the sentence pointed at nothing.
+//
+// So the question is asked of the user's own tree before the copy, and both
+// halves are asserted: the code, which is what somebody searches for, and the
+// path, which is what they open. The empty temporary directory is the third
+// half — a refusal that had already copied the module would leave a snapshot to
+// clean up and would have paid for a tree it never looked at.
+func TestListAtAWorkspaceRootIsRefusedBeforeAnythingIsCopied(t *testing.T) {
+	root := testkit.Copy(t, "workspace")
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+	t.Setenv("TMP", temp)
+	t.Setenv("TEMP", temp)
+	t.Chdir(root)
+
+	var out, errOut bytes.Buffer
+	if code := ExecuteContext(t.Context(), []string{"list", "--json"}, &out, &errOut); code == 0 {
+		t.Fatalf("`go-mutants list` at a go.work root exited 0\nstdout:\n%s", out.String())
+	}
+	if out.String() != "" {
+		t.Errorf("a refused listing wrote %q to standard output, want nothing", out.String())
+	}
+	for _, phrase := range []string{
+		"GOM4102",
+		"multi-module workspaces are not yet supported",
+		"run go-mutants inside one of its modules instead",
+		filepath.Join(root, "go.work"),
+	} {
+		if !strings.Contains(errOut.String(), phrase) {
+			t.Errorf("the refusal does not say %q:\n%s", phrase, errOut.String())
+		}
+	}
+	if left, err := os.ReadDir(temp); err != nil {
+		t.Fatalf("reading %s: %v", temp, err)
+	} else if len(left) != 0 {
+		t.Errorf("the refused listing copied the workspace: %s holds %d entry/entries", temp, len(left))
+	}
+}

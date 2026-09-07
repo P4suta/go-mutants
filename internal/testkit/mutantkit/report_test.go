@@ -453,3 +453,50 @@ func TestElapsedTimesAreFlattenedOnlyOnGoTestsOwnLines(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeRunReportReplacesAToolchainPathHoldingASpace is the case the
+// generic walk cannot answer, and the one the goldens meet on Windows.
+//
+// [mutantkit.NormalizeRunReport]'s path rewriting is a walk over every string in
+// the document, because an absolute path turns up in a warning, in a command's
+// argv and in the tail of a failing test's output — places nothing can
+// enumerate. A walk has to decide where a path *ends*, and it ends it at
+// whitespace: a sentence is mostly not a path, and a rule that ran on past a
+// space would swallow the words after one. That is right for prose and wrong
+// for `C:\Program Files\Go\bin\go.exe`, which the walk leaves as
+// `/normalized/path Files\Go\bin\go.exe` — a value that still names the machine
+// it was recorded on, in a golden compared on three operating systems.
+//
+// So the fields that carry an *installation* path are replaced by name before
+// the walk runs, and this is the test of that list. A new field holding a
+// program's path has to be added to it; a field holding prose is fine where it
+// is.
+func TestNormalizeRunReportReplacesAToolchainPathHoldingASpace(t *testing.T) {
+	t.Parallel()
+
+	const windows = `C:\Program Files\Go\bin\go.exe`
+	original := testkit.ReadFile(t, filepath.Join(testkit.Root(t), "internal", "report", "testdata", "run-report.golden.json"))
+	doc := mutantkit.DecodeJSON(t, original)
+	doc["test"].(map[string]any)["toolchain"].(map[string]any)["go_bin"] = windows
+	doc["test"].(map[string]any)["resolved_command"] = []any{windows, "test", "./..."}
+
+	normalized := string(mutantkit.NormalizeRunReport(t, mutantkit.EncodeJSON(t, doc)))
+
+	for _, machine := range []string{"Program Files", `Go\bin`, "go.exe"} {
+		if strings.Contains(normalized, machine) {
+			t.Errorf("%q survived normalisation, so the document still names the machine it was recorded on:\n%s",
+				machine, normalized)
+		}
+	}
+	if !strings.Contains(normalized, mutantkit.NormalizedPath) {
+		t.Errorf("the toolchain path was not replaced by %s:\n%s", mutantkit.NormalizedPath, normalized)
+	}
+	// The two values beside it are not paths and must survive: a pattern or a
+	// bare program name replaced by a path constant is a report that no longer
+	// says what was run.
+	for _, kept := range []string{`"./..."`, `"go"`, `"test"`} {
+		if !strings.Contains(normalized, kept) {
+			t.Errorf("%s was rewritten as if it were a path:\n%s", kept, normalized)
+		}
+	}
+}

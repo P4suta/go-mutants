@@ -705,6 +705,22 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	}
 	out.WorkspaceRoot = root
 
+	// A workspace is refused here rather than three phases later, and the code
+	// is internal/discover's rather than a second one of this package's: it is
+	// the same condition, and two identifiers for one condition is one for a
+	// user to search for in vain. See [discover.CheckWorkspace].
+	//
+	// What the earliness buys is the *diagnosis*. Discovery would refuse this
+	// tree too, but only after the copy, the scope resolution and a full
+	// baseline — and the scope resolution gets there first with a different
+	// story, because `go list ./...` in a workspace directory places no
+	// package and the run therefore blamed the user's test command for
+	// matching nothing. Asked before anything is copied, the answer names the
+	// user's own `go.work` rather than the snapshot's.
+	if workspaceErr := discover.CheckWorkspace(root); workspaceErr != nil {
+		return workspaceErr
+	}
+
 	command, err := testCommand(cfg, opts.TestArgv)
 	if err != nil {
 		return err
