@@ -79,7 +79,8 @@ type TimeoutSource string
 
 // The timeout sources.
 const (
-	// TimeoutDerived is max(10s, slowest baseline × 5).
+	// TimeoutDerived is max(10s, slowest baseline × 5), where the slowest is
+	// taken over the runs after the first; see [BaselineCompleted.Slowest].
 	TimeoutDerived TimeoutSource = "derived"
 	// TimeoutExplicit is the configured `test.timeout` or `--timeout`.
 	TimeoutExplicit TimeoutSource = "explicit"
@@ -277,7 +278,9 @@ type BaselineCompleted struct {
 	Runs []time.Duration
 	// Average is the mean of Runs.
 	Average time.Duration
-	// Slowest is the maximum of Runs, the number the derivation is built on.
+	// Slowest is the number the derivation is built on: the slowest of Runs
+	// after the first, because the first run of `go test` compiles and a
+	// mutant run never does, or the first itself when it is the only run.
 	Slowest time.Duration
 	// Timeout is the per-mutant timeout this run will use.
 	Timeout time.Duration

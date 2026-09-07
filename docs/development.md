@@ -978,7 +978,8 @@ silently:
   fixture would produce different ids on the machine that wrote it and on every
   other.
 - **Fast.** The baseline is measured several times before anything else happens
-  and the derived timeout is five times the slowest run, so a slow fixture costs
+  and the derived timeout is five times the slowest run after the first, so a
+  slow fixture costs
   the suite twice over.
 - **SPDX headers everywhere**, `go.mod` included: `gofmt -l .` and the licensing
   check walk the filesystem rather than the module graph.
@@ -1250,7 +1251,8 @@ spin**: `negate-loop-condition` on `internal/coverage/textfmt.go`'s `for
 scanner.Scan()`, and the same operator on either loop of `internal/config`'s
 position walk. A spinning mutant holds nothing, so only the clock can catch it,
 and a timeout is measured a second time before it is believed — two waits each,
-of `max(10s, slowest baseline × 5)`. On a warm cache that is the ten-second
+of `max(10s, slowest baseline × 5)` over the runs after the first, the one
+that compiles. On a warm cache that is the ten-second
 floor and sixty seconds of worker time; cold, the first baseline run is the one
 doing the compiling, so the same three mutants cost whatever that build took ×
 5 × 6. It is the largest single term in this gate's wall clock and it belongs to

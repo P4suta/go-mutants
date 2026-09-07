@@ -3356,6 +3356,20 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **The derived per-mutant timeout is sized on a baseline run that did not
+  compile.** The first of the baseline runs is the one that compiles the test
+  binaries, and on a cold build cache — which is what CI measures, its cache
+  being the runner's temporary directory — it is dominated by compilation no
+  mutant run ever pays, since mutant binaries are built once beforehand. This
+  repository's own gate measured a first run of 7.7 s against later runs of
+  2 s, so `max(10s, slowest × 5)` came out at 38 s where the runs a mutant
+  resembles asked for 10, and the four mutants that never return each paid it
+  twice: five minutes of a nine-minute run, waiting for nothing. The budget now
+  takes the slowest of the runs after the first (`BaselineCompleted.Slowest`
+  and `RunOutcome.SlowestBaseline` say so; `Runs` still carries every
+  observation, the first included); a baseline of a single run is taken as it
+  is, compilation and all, because a budget built from nothing would be worse
+  than a loose one. An explicit `test.timeout` is checked against the same run.
 - **A second concurrent `Workspace.Prepare` is refused straight away instead of
   waiting for the first.** A workspace is prepared exactly once, and that used
   to be enforced by the exclusive lock: the second caller queued behind the
