@@ -53,6 +53,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/trace"
@@ -80,6 +81,25 @@ var (
 	_ func(*gomutants.Session) gomutants.Catalog = (*gomutants.Session).Catalog
 	_ func(*gomutants.Session, context.Context, gomutants.ExecRequest) (gomutants.MutantResult, error) = (*gomutants.Session).Exec
 	_ func(*gomutants.Session, context.Context, gomutants.ProbeRequest) (gomutants.ProbeResult, error) = (*gomutants.Session).Probe
+
+	// The control run: the original program through the same prepared binaries,
+	// which is what a consumer used to open a second workspace for.
+	_ func(*gomutants.Session, context.Context, gomutants.ControlRequest) (gomutants.ControlResult, error) = (*gomutants.Session).Control
+	_ string        = gomutants.ControlRequest{}.Package
+	_ []string      = gomutants.ControlRequest{}.Args
+	_ []string      = gomutants.ControlRequest{}.Env
+	_ time.Duration = gomutants.ControlRequest{}.Timeout
+	_ int           = gomutants.ControlRequest{}.OutputLimit
+	_ string        = gomutants.ControlResult{}.Package
+	_ int           = gomutants.ControlResult{}.ExitCode
+	_ bool          = gomutants.ControlResult{}.TimedOut
+	_ time.Duration = gomutants.ControlResult{}.Duration
+	_ []byte        = gomutants.ControlResult{}.Output
+	_ bool          = gomutants.ControlResult{}.Truncated
+	_ int64         = gomutants.ControlResult{}.TotalBytes
+	_ []string      = gomutants.ControlResult{}.Binaries
+	_ []int64       = gomutants.ControlResult{}.ExecSeqs
+	_ int64         = gomutants.ControlResult{}.TraceSeq
 	_ func(*gomutants.Session) ([]gomutants.Change, error) = (*gomutants.Session).Changes
 	_ func(*gomutants.Session) error = (*gomutants.Session).Close
 
@@ -429,7 +449,10 @@ var (
 	_ func(*trace.Recorder, trace.SnapshotRecord)                           = (*trace.Recorder).Snapshot
 	_ func(*trace.Recorder, trace.SweepRecord)                              = (*trace.Recorder).Sweep
 	_ func(*trace.Recorder, string, string)                                 = (*trace.Recorder).Artifact
-	_ func(*trace.Recorder, string, string, string)                         = (*trace.Recorder).Note
+	// Note returns the sequence it recorded at, as the three Exec recorders do:
+	// a control run has no payload of its own in this contract and is
+	// summarised by a note, so ControlResult.TraceSeq needs one to point at.
+	_ func(*trace.Recorder, string, string, string) int64                   = (*trace.Recorder).Note
 	_ func(*trace.Recorder, string, int, error)                             = (*trace.Recorder).RunEnd
 	_ func(trace.Event) trace.Event                                         = trace.Event.Clone
 

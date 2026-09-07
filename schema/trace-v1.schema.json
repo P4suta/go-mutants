@@ -342,6 +342,7 @@
             "coverage-run",
             "mutant-run",
             "probe-run",
+            "control-run",
             "validate-build",
             "workspace-exec",
             "verify"

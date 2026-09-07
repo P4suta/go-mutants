@@ -151,6 +151,15 @@ func TestCodesAreReachable(t *testing.T) {
 	record(execute.RunProbe(t.Context(), options(passing, 1),
 		execute.ProbeRun{Timeout: mutantTimeout, LogPath: damaged}, testBins("example.com/a")).Err)
 
+	// GOM7518: a control run with no timeout, which go-mutants will not start a
+	// test binary under any more than it will a mutant.
+	record(execute.RunControl(t.Context(), execute.Options{},
+		execute.ControlRun{}, testBins("example.com/a")).Err)
+
+	// GOM7519: a control run's test binary that could not be started.
+	record(execute.RunControl(t.Context(), options(unstartableRunner, 1),
+		execute.ControlRun{Timeout: mutantTimeout}, testBins("example.com/a")).Err)
+
 	// GOM7520: a cancelled schedule.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

@@ -81,7 +81,7 @@ var (
 		trace.ArtifactKeptProbeTree,
 		trace.ArtifactKeptExecScratch,
 	}
-	workspaceNoteKinds = []string{trace.NotePrepareFailed}
+	workspaceNoteKinds = []string{trace.NotePrepareFailed, trace.NoteControl}
 )
 
 // TestEveryNewArtifactAndNoteKindIsInTheSchemaAndTheDocs keeps the vocabulary,

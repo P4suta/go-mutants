@@ -999,6 +999,97 @@ func (s *Session) keptScratchDirs() []string {
 	return slices.Clone(s.keptScratch)
 }
 
+// A sessionTarget is everything [Session.Exec] and [Session.Control] settle
+// before a test binary is started: which binaries, which of them the request
+// selected, the arguments and environment they run with, the budget they run
+// under, and the private scratch directory all of it lives in.
+//
+// It is one value built in one place rather than two copies of a procedure,
+// because the whole worth of a control depends on the two agreeing. A control
+// is evidence about an execution only if the same binaries ran the same target
+// under the same budget in the same directory with the same overlay — so a rule
+// that reached one and not the other, a newly reserved flag, a change to how a
+// fuzz target is isolated, a different default timeout, would quietly make the
+// control a measurement of something else and nothing would say so.
+type sessionTarget struct {
+	options  execute.Options
+	binaries []execute.TestBinary
+	indexes  []int
+	args     []string
+	timeout  time.Duration
+	scratch  string
+	// artifactRoot is the private copy of the snapshot a fuzz target runs in,
+	// and is empty for every other target. Only [Session.Exec] captures what a
+	// fuzz run leaves there; see [Session.Control] for why a control does not.
+	artifactRoot string
+}
+
+// target settles one, or refuses the request.
+//
+// call is "exec" or "control" and names itself in every message, so a
+// diagnostic says which of the session's two runs refused — one request
+// vocabulary, one set of reserved flags, one message shape, as
+// [sessionTargetArgs] puts it.
+//
+// The scratch directory is created here and removed again by every failure
+// after it: a directory nothing ran in holds nothing to look at. A target that
+// comes back belongs to the caller, which removes it unless the session is
+// keeping temporaries.
+func (s *Session) target(
+	call, pkg string, args, env []string, timeout time.Duration,
+) (sessionTarget, error) {
+	indexes, err := selectTestPackages(s.root, s.binaries, pkg, call)
+	if err != nil {
+		return sessionTarget{}, err
+	}
+	composed, err := overlayEnvironment(s.env, env)
+	if err != nil {
+		return sessionTarget{}, fmt.Errorf("gomutants: session %s environment: %w", call, err)
+	}
+	composed, err = instrumentationEnvironment(composed, s.overlayPath)
+	if err != nil {
+		return sessionTarget{}, fmt.Errorf("gomutants: session %s overlay: %w", call, err)
+	}
+	if timeout == 0 {
+		timeout = s.mutantTimeout
+	}
+	scratch, err := os.MkdirTemp(s.scratch, execPrefix)
+	if err != nil {
+		return sessionTarget{}, fmt.Errorf("gomutants: session %s scratch: %w", call, err)
+	}
+	settled := false
+	defer func() {
+		if !settled {
+			_ = os.RemoveAll(scratch)
+		}
+	}()
+	targetArgs, err := sessionTargetArgs(args, scratch, call)
+	if err != nil {
+		return sessionTarget{}, err
+	}
+
+	options := s.executeOptions
+	options.ScratchDir = scratch
+	options.Env = composed
+	settledTarget := sessionTarget{
+		options:  options,
+		binaries: s.binaries,
+		indexes:  indexes,
+		args:     targetArgs,
+		timeout:  timeout,
+		scratch:  scratch,
+	}
+	if hasFuzzTarget(args) {
+		settledTarget.artifactRoot = filepath.Join(scratch, "fuzz-workspace")
+		settledTarget.binaries, err = prepareFuzzWorkspace(s.root, settledTarget.artifactRoot, s.binaries)
+		if err != nil {
+			return sessionTarget{}, fmt.Errorf("gomutants: session %s fuzz workspace: %w", call, err)
+		}
+	}
+	settled = true
+	return settledTarget, nil
+}
+
 // Exec runs one mutant against a selected test or fuzz target without
 // rebuilding the prepared test binaries.
 func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, error) {
@@ -1020,25 +1111,9 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	if !s.accepted[mutant.ID] {
 		return MutantResult{}, rejectionError(request.Mutant, mutant.DisplayID, s.rejections[mutant.ID])
 	}
-	binaryIndexes, err := selectTestPackages(s.root, s.binaries, request.Package, "exec")
+	target, err := s.target("exec", request.Package, request.Args, request.Env, request.Timeout)
 	if err != nil {
 		return MutantResult{}, err
-	}
-	env, err := overlayEnvironment(s.env, request.Env)
-	if err != nil {
-		return MutantResult{}, fmt.Errorf("gomutants: session exec environment: %w", err)
-	}
-	env, err = instrumentationEnvironment(env, s.overlayPath)
-	if err != nil {
-		return MutantResult{}, fmt.Errorf("gomutants: session exec overlay: %w", err)
-	}
-	timeout := request.Timeout
-	if timeout == 0 {
-		timeout = s.mutantTimeout
-	}
-	scratch, err := os.MkdirTemp(s.scratch, execPrefix)
-	if err != nil {
-		return MutantResult{}, fmt.Errorf("gomutants: session exec scratch: %w", err)
 	}
 	// Kept only once the execution has actually happened, and removed on every
 	// path that never reached one: a directory nothing ran in holds nothing to
@@ -1047,36 +1122,19 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	kept := false
 	defer func() {
 		if !kept {
-			_ = os.RemoveAll(scratch)
+			_ = os.RemoveAll(target.scratch)
 		}
 	}()
-	targetArgs, err := sessionTargetArgs(request.Args, scratch, "exec")
-	if err != nil {
-		return MutantResult{}, err
-	}
-
-	opts := s.executeOptions
-	opts.ScratchDir = scratch
-	opts.Env = env
-	runBinaries := s.binaries
-	artifactRoot := ""
-	if hasFuzzTarget(request.Args) {
-		artifactRoot = filepath.Join(scratch, "fuzz-workspace")
-		runBinaries, err = prepareFuzzWorkspace(s.root, artifactRoot, s.binaries)
-		if err != nil {
-			return MutantResult{}, fmt.Errorf("gomutants: session exec fuzz workspace: %w", err)
-		}
-	}
 	run := execute.MutantRun{
 		ID:          mutant.ID,
 		DisplayID:   mutant.DisplayID,
 		Package:     s.packageOf(mutant),
-		Timeout:     timeout,
-		Binaries:    binaryIndexes,
-		Args:        targetArgs,
+		Timeout:     target.timeout,
+		Binaries:    target.indexes,
+		Args:        target.args,
 		OutputLimit: request.OutputLimit,
 	}
-	attempt := execute.RunOne(ctx, opts, run, runBinaries)
+	attempt := execute.RunOne(ctx, target.options, run, target.binaries)
 	// One attempt, on the caller's goroutine, with nothing else of this
 	// session's in flight that it shares a worker with: attempt 1 and worker 0
 	// are the facts rather than placeholders. The summary is built by
@@ -1084,10 +1142,10 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	// recorded by a run describe themselves the same way, field for field.
 	traceSeq := s.recorder.MutantExec(execute.AttemptRecord(run, attempt, 1))
 	if s.keepTemp {
-		s.keepScratch(scratch)
+		s.keepScratch(target.scratch)
 		kept = true
 	}
-	artifacts, artifactErr := captureFuzzArtifacts(artifactRoot)
+	artifacts, artifactErr := captureFuzzArtifacts(target.artifactRoot)
 	// The capture is handed over rather than copied. internal/execute already
 	// cloned it out of the runner's buffer, and the attempt is a local value
 	// nothing else can reach, so a second copy of up to the whole output limit
@@ -1137,6 +1195,159 @@ func (s *Session) packageOf(m mutation.Mutant) string {
 		return ""
 	}
 	return public.Package
+}
+
+// Control runs one test or fuzz target against the session's prepared binaries
+// with no mutant activated, which runs the program the user wrote.
+//
+// The mutant tree's binaries are that program plus a switch. Instrumentation
+// leaves every original branch in place and selects between them on one
+// environment variable, and [Session.Exec] is the only thing that ever sets it —
+// the execution layer strips every GO_MUTANTS_ variable out of the frozen
+// environment before it composes a child's, so an activation exported in a
+// developer's shell cannot reach one either. With nothing switched on, those
+// binaries therefore *are* the original program, and this call is an execution
+// minus that one entry.
+//
+// What it is for is the run beside a mutant execution. A mutant's suite going
+// red is evidence about the mutant only if the same suite is green without it,
+// and a prepared session could not say so. goatest reaches that answer two ways
+// today and this replaces both: it opens a *second workspace* over the same root
+// and runs [Workspace.Exec] there — a second snapshot, a second discovery pass
+// and a second compile of everything, to run tests this session had already
+// compiled — and, where a probe tree exists, it reads [Session.Probe]'s
+// [ProbeTestFailed] as "the original program is red", which spends a probe
+// pass, needs [PrepareOptions.Probe], measures the *probe* tree's binaries
+// rather than the mutant tree's, and answers with an outcome vocabulary built
+// for infection facts rather than with the suite's own exit status and output.
+//
+// **The guarantee is the same binaries, the same launch shape, no activation.**
+// A control and an execution of the same package and the same arguments differ
+// in exactly one thing: the argument vector, the working directory, the paired
+// timeouts, the instrumentation overlay and the composed environment are
+// settled by one unexported function for both, and the environment the
+// control's child sees is the execution's minus the activation variable.
+// The `exec` events of the two calls say so in a recording, and the assertion
+// that they do is a test rather than a comment.
+//
+// The run stops at the first binary that does not exit zero, and here that is
+// the answer rather than an optimisation: a control asks whether the original
+// program passes these tests, and the first binary that says no has answered.
+// A failing control is a finding about the *repository* — the suite is red, or
+// flaky, or depends on something the frozen snapshot does not carry — and it
+// comes back as a result with the output rather than as an error, because a
+// consumer has to be able to report it as the user's own failure.
+//
+// Timeouts are the pair [Session.Exec] uses and are documented under *Paired
+// timeouts* in docs/library.md: the supervisor kills the whole process tree at
+// Timeout — the request's when positive, otherwise
+// [PrepareOptions.MutantTimeout] — and the binary is additionally given
+// `-test.timeout` at twice that, so the two never race. A tree the supervisor
+// killed has no exit status, so [ControlResult.TimedOut] is the fact and
+// [ControlResult.ExitCode] stays zero beside it.
+//
+// Errors are [Session.Exec]'s, with `Call` reading "control": a
+// [*PackageNotPreparedError] for a package this session built no binary for, a
+// [*ReservedError] for a flag or variable the engine owns, [ErrSessionClosed]
+// after a close, and an [*ExecutionError] when the measurement itself could not
+// be made — a binary that would not start, or a child a cancellation killed.
+//
+// A cancellation is never an exit status. A child go-mutants killed comes back
+// with none, and reading that as an ordinary non-zero one would report the
+// original program as failing whenever somebody stopped the run — so a control
+// whose child was cut off returns an [*ExecutionError] carrying
+// [ControlResult.Binaries], [ControlResult.ExecSeqs] and
+// [ControlResult.TraceSeq] and no verdict at all. A context that was cancelled
+// *after* the run had already finished is the other case and is reported the
+// way [Session.Exec] reports it: the populated result comes back beside a plain
+// wrapped context error, because the run did establish what it says it did.
+//
+// A fuzz target runs in a private copy of the snapshot, exactly as it does
+// under [Session.Exec], so a corpus entry it writes cannot drift the tree every
+// later mutant is measured against. Unlike an execution, the corpus is *not*
+// captured: [MutantResult.Artifacts] exists to preserve the input that killed a
+// mutant, and a control kills nothing. The copy is removed with the rest of the
+// call's scratch unless [OpenOptions.KeepTemp] asked for it, in which case it is
+// preserved and recorded as `kept-exec-scratch` — the same kind an execution's
+// is, because it is the same kind of directory.
+//
+// Each call gets its own scratch directory, and Control is safe to call
+// concurrently with itself, with [Session.Exec] and with [Session.Probe]; they
+// share the session and nothing else.
+func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlResult, error) {
+	if s == nil {
+		return ControlResult{}, errors.New("gomutants: session control: nil session")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return ControlResult{}, fmt.Errorf("gomutants: session control: %w", ErrSessionClosed)
+	}
+	if request.Timeout < 0 {
+		return ControlResult{}, errors.New("gomutants: session control: timeout is negative")
+	}
+	target, err := s.target("control", request.Package, request.Args, request.Env, request.Timeout)
+	if err != nil {
+		return ControlResult{}, err
+	}
+	kept := false
+	defer func() {
+		if !kept {
+			_ = os.RemoveAll(target.scratch)
+		}
+	}()
+
+	run := execute.ControlRun{
+		Timeout:     target.timeout,
+		Binaries:    target.indexes,
+		Args:        target.args,
+		OutputLimit: request.OutputLimit,
+	}
+	attempt := execute.RunControl(ctx, target.options, run, target.binaries)
+	// Recorded before the failures below become errors, so that a control that
+	// could not be made is in the account of the session rather than only in
+	// the error one caller received. The summary is built by internal/execute,
+	// where the facts about the run are, and it is a note because the trace
+	// contract has no payload for a control: the `control-run` executions
+	// underneath it are the account, and this is the line that names them.
+	record := execute.ControlRecord(run, attempt)
+	traceSeq := s.recorder.Note(record.Kind, record.Code, record.Detail)
+	if s.keepTemp {
+		s.keepScratch(target.scratch)
+		kept = true
+	}
+	// A control that reached an execution and then failed carries its sequence
+	// and its binaries beside the error and nothing else, exactly as a probe
+	// pass does: it is in the recording whatever became of it, and a failure
+	// that handed back a zero sequence would be the one case a consumer most
+	// wants to read about and the one it could not find. The status, the
+	// timeout flag and the capture stay at their zero values, because the run
+	// established none of them.
+	if attempt.Err != nil {
+		return ControlResult{Binaries: attempt.Binaries, ExecSeqs: attempt.ExecSeqs, TraceSeq: traceSeq},
+			executionError("control", request.Package,
+				fmt.Errorf("gomutants: session control: %w", attempt.Err))
+	}
+	// The capture is handed over rather than copied, as [Session.Exec] and
+	// [Session.Probe] hand over their own: internal/execute already cloned it
+	// out of the runner's buffer, and this attempt is a local value nothing
+	// else can reach.
+	result := ControlResult{
+		Package:    attempt.Package,
+		ExitCode:   attempt.ExitCode,
+		TimedOut:   attempt.TimedOut,
+		Duration:   attempt.Duration,
+		Output:     attempt.Output,
+		Truncated:  attempt.Truncated,
+		TotalBytes: attempt.OutputBytes,
+		Binaries:   attempt.Binaries,
+		ExecSeqs:   attempt.ExecSeqs,
+		TraceSeq:   traceSeq,
+	}
+	if err := ctx.Err(); err != nil {
+		return result, fmt.Errorf("gomutants: session control: %w", err)
+	}
+	return result, nil
 }
 
 // Probe runs one test or fuzz target against the session's probe tree and
@@ -1557,9 +1768,10 @@ func captureFuzzArtifacts(root string) ([]Artifact, error) {
 // down by the execution phase, where the same refusal had a code and a sentence
 // about a process supervisor the caller never asked for.
 //
-// The call names itself so that a diagnostic says which of the session's two
-// measurements refused the target. Both go through this function because a
-// caller composing arguments for one has to be able to hand them to the other:
+// The call names itself so that a diagnostic says which of the session's three
+// runs refused the target. All three go through this function because a caller
+// composing arguments for one has to be able to hand them to the others — a
+// mutant execution and the control beside it are the same target twice — so:
 // one request vocabulary, one set of reserved flags, one message shape.
 func sessionTargetArgs(args []string, scratch, call string) ([]string, error) {
 	out := slices.Clone(args)

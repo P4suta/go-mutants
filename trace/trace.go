@@ -336,12 +336,20 @@ func (recorder *Recorder) Artifact(kind, path string) {
 	recorder.emit(Event{Type: TypeArtifact, Artifact: &ArtifactRecord{Kind: kind, Path: path}})
 }
 
-// Note records something the run could not do.
-func (recorder *Recorder) Note(kind, code, detail string) {
+// Note records something the run could not do, and returns the sequence number
+// it was recorded at, or zero when nothing was recorded.
+//
+// The sequence is returned for the reason [Recorder.Exec]'s is: something has
+// to be able to point at the event afterwards. Almost every note is written and
+// forgotten — a warning, a trace directory that could not be opened — and those
+// callers discard it. The one that does not is [NoteControl]: this contract's
+// `type` enum is closed and holds no payload for a control run, so the note is
+// the one line summarising a call whose result has to name an event.
+func (recorder *Recorder) Note(kind, code, detail string) int64 {
 	if recorder == nil {
-		return
+		return 0
 	}
-	recorder.emit(Event{Type: TypeNote, Note: &NoteRecord{Kind: kind, Code: code, Detail: detail}})
+	return recorder.emit(Event{Type: TypeNote, Note: &NoteRecord{Kind: kind, Code: code, Detail: detail}})
 }
 
 // RunEnd closes the recording with the run's verdict and its accounting.

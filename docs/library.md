@@ -26,6 +26,7 @@ once:
 Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Catalog
                                                     Session.Exec*
                                                     Session.Probe*
+                                                    Session.Control*
                                                     Session.Changes*
                                                     Session.Close
                              ──────────────────────────────────────▶ Workspace.Close
@@ -45,6 +46,9 @@ Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Ca
   prepared exactly once, *including when preparation fails after it has begun*.
 - **`Session.Exec` / `Session.Probe`** reuse those binaries for any number of
   (mutant, target) combinations without rebuilding or rewriting anything.
+- **`Session.Control`** reuses the same binaries to run the *original* program:
+  an execution minus the activation. See
+  [`Session.Control`](#sessioncontrol).
 - **`Session.Changes`** reports, in path order, anything a target wrote into
   the prepared snapshot.
 - **`Session.Close`** releases the binaries, the session scratch, and the probe
@@ -73,13 +77,13 @@ So a `Prepare` that takes two minutes is two minutes during which no
 `Workspace.Exec` can start. A consumer that wants to overlap control work with
 preparation runs it against a *second* workspace over the same root today.
 
-`Session.mu` is a second `sync.RWMutex` with the same shape: `Catalog`, `Exec`
-and `Probe` hold it shared, `Changes` and `Close` hold it exclusively. `Exec`
-and `Probe` are therefore safe to call concurrently with each other and with
-themselves — they share the session and nothing else, each getting its own
-scratch directory, its own environment and, for a probe, its own infection log
-— while `Changes` and `Close` wait for every call in flight, so neither can
-observe a target halfway through a write.
+`Session.mu` is a second `sync.RWMutex` with the same shape: `Catalog`, `Exec`,
+`Probe` and `Control` hold it shared, `Changes` and `Close` hold it exclusively.
+The three measuring calls are therefore safe to call concurrently with each
+other and with themselves — they share the session and nothing else, each
+getting its own scratch directory, its own environment and, for a probe, its own
+infection log — while `Changes` and `Close` wait for every call in flight, so
+neither can observe a target halfway through a write.
 
 ## Options and defaults
 
@@ -126,7 +130,7 @@ silent merge.
 | `Probe bool` | `false` | also prepare the probe tree |
 | `Trace func(PrepareEvent)` | `nil` | receives serialized phase start and finish events synchronously |
 
-### `ExecRequest` and `ProbeRequest`
+### `ExecRequest`, `ProbeRequest` and `ControlRequest`
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -272,6 +276,37 @@ The consumer's rule has two clauses and dropping either is unsound:
 > absent from every measurement there will ever be, so treat it as infected by
 > every test.
 
+### `ControlResult`
+
+- `ExitCode` is the status of the binary this run stopped at — the deciding
+  binary's; when nothing decided, the last binary that ran — and `TimedOut`
+  reports one the supervisor had to kill. A killed tree has **no** status, so
+  `ExitCode` is then **negative**, exactly as `CommandResult.ExitCode` is for a
+  workspace command with the same field set: a zero would be a status the child
+  never returned, and a caller that forgot `TimedOut` would read it as green.
+- `Package` is the import path of that deciding binary, and it is empty when
+  every binary passed: the rule `MutantResult.KilledBy` follows.
+- `Output` is **one** binary's bounded combined output — the deciding binary's;
+  when nothing decided, the last binary that ran — with `Truncated` and
+  `TotalBytes` beside it as everywhere else. A consumer that wants one
+  package's output asks for that package. Unlike `MutantResult.Output` it is
+  present **even when everything passed**: a survivor's output is held once per
+  mutant in a run and is what the cap exists to bound, while a control runs at
+  most once per execution and its output is the very thing a consumer shows
+  beside a mutant's failure.
+- `Duration` **sums** over every binary the run started; `TotalBytes` does
+  **not** — it is the total of the single binary `Output` came from. That is
+  deliberate and it is the one place the two disagree. `Duration` is zero when
+  the call returns an error.
+- `Binaries` are the binaries the run started, in launch order and by import
+  path, stopping where it stopped, and `ExecSeqs` are the `exec` events those
+  starts were recorded at, one per binary and in the same order. `TraceSeq` is
+  the `note` event that summarises the run — see
+  [Tracing a session](#tracing-a-session).
+- There is no `Outcome`. A control is not a mutant and has nothing to survive or
+  be killed by; what a status means beside an execution is the caller's
+  judgement.
+
 ### `CommandResult`, `Change`, `SweepResult`
 
 `CommandResult` describes a command that *started*: a non-zero `ExitCode` and a
@@ -316,6 +351,92 @@ holds a lock on), `Kept` (directories a `KeepTemp` run preserved on purpose),
 and `Err` — carried in the value rather than returned, because failing to
 collect somebody else's leftovers is not a reason to refuse to run.
 
+## `Session.Control`
+
+```go
+func (s *Session) Control(
+	ctx context.Context, request ControlRequest,
+) (ControlResult, error)
+```
+
+**What it is.** The same prepared test binaries, run with no mutant activated —
+which runs the program the user wrote. Instrumentation leaves every original
+branch in place and selects between them on one environment variable, `Exec` is
+the only thing that ever sets it, and every `GO_MUTANTS_*` variable is stripped
+out of the frozen environment before a child's is composed. So a control is an
+execution minus one entry, and nothing else.
+
+**Why it exists.** A mutant's suite going red is evidence about the mutant only
+if the same suite is green without it, and a prepared session could not say so.
+goatest reaches that answer two ways today, and this replaces both:
+
+- it opens a **second workspace** over the same root and runs `Workspace.Exec`
+  there — a second snapshot, a second discovery pass, a second compile of every
+  test binary — to run tests the session it already holds had already compiled;
+- and where a probe tree exists it reads `Session.Probe`'s `test-failed` outcome
+  as "the original program is red", which spends a probe pass, requires
+  `PrepareOptions.Probe`, measures the *probe* tree's binaries rather than the
+  mutant tree's, and answers in a vocabulary built for infection facts instead
+  of with the suite's own exit status and output.
+
+**The guarantee: the same binaries, the same launch shape, no activation.** A
+control and an execution of the same package with the same arguments and the
+same budget are settled by one function inside the session, so they cannot come
+to disagree about the argument vector, the working directory, the paired
+timeouts, the instrumentation overlay, the reserved flags, the private scratch
+directory or the fuzz isolation. In a recording the two `exec` events differ in
+their `kind`, their `subject`, and one name in `env_names`:
+`GO_MUTANTS_ACTIVE`. That is asserted by a test rather than promised by this
+paragraph.
+
+**Stopping.** The run stops at the first binary that does not exit zero, and
+that is the answer rather than a saving: a control asks whether the original
+program passes these tests, and the first binary that says no has answered.
+
+**A failing control is a finding about the repository.** It comes back as a
+*result* — exit status, output, deciding package — and not as an error, because
+what it means is that the user's suite is red, flaky, or depends on something
+the frozen snapshot does not carry, and a consumer has to be able to report that
+as the user's own failure rather than as a broken engine.
+
+**Timeouts** are `Exec`'s, exactly: the supervisor kills the whole process tree
+at `Timeout` — the request's when positive, otherwise
+`PrepareOptions.MutantTimeout` — and the binary is additionally given
+`-test.timeout` at twice that. See [Paired timeouts](#paired-timeouts).
+`-test.timeout` in `Args` is refused for the same reason it is refused there.
+
+**`Package: ""`** runs the target in every compiled test package, in order,
+exactly as an `ExecRequest` with no package does. It is the control a caller
+wants beside an execution it did not narrow either.
+
+**Fuzz targets** run in a private copy of the snapshot, as they do under `Exec`,
+so a corpus entry cannot drift the tree every later mutant is measured against.
+The corpus is **not** captured: `MutantResult.Artifacts` exists to preserve the
+input that killed a mutant, and a control kills nothing. The copy goes with the
+rest of the call's scratch unless `KeepTemp` asked for it, in which case it is
+preserved and recorded as `kept-exec-scratch` — the same kind an execution's is,
+because it is the same kind of directory.
+
+**Errors** are `Exec`'s with `Call` reading `control`: `*PackageNotPreparedError`,
+`*ReservedError`, `ErrSessionClosed`, and `*ExecutionError` when the measurement
+itself could not be made. A **cancellation is never an exit status**: a child
+go-mutants killed comes back with none, and reading that as an ordinary non-zero
+one would report the original program as *failing* whenever somebody stopped the
+run — so a control whose child was cut off returns an `*ExecutionError` carrying
+`Binaries`, `ExecSeqs` and `TraceSeq` and no verdict at all. A context cancelled
+*after* the run finished is the other case and is reported as `Exec` reports it:
+the populated result comes back beside a plain wrapped context error, because
+the run did establish what it says it did.
+
+**In a recording** the call is its per-binary `exec` events, of kind
+`control-run`, plus one `note` of kind `control` summarising them.
+`gomutants-trace-v1` closes its event `type` enum and holds no payload for a
+control, so the note is the one line a single call can be named by, and
+`ControlResult.TraceSeq` points at it. Because a `note` has no `exec_seqs` of
+its own, the way down to those executions is `ControlResult.ExecSeqs` — a field,
+so that nobody has to parse the note's `detail`, which is a sentence written for
+a person.
+
 ## Errors
 
 Every failure this API returns is one of four things, and a consumer does
@@ -331,7 +452,7 @@ were introduced, and none of them is a message you may parse.
 |---|---|---|
 | `ErrWorkspaceClosed` | `Workspace.Exec`, `Workspace.Prepare` | the workspace is closed |
 | `ErrWorkspacePrepared` | a second `Workspace.Prepare` | a workspace may be prepared once, a failed preparation included |
-| `ErrSessionClosed` | `Session.Exec`, `Session.Probe`, `Session.Changes` | the session, or the workspace that owned it, is closed |
+| `ErrSessionClosed` | `Session.Exec`, `Session.Probe`, `Session.Control`, `Session.Changes` | the session, or the workspace that owned it, is closed |
 | `ErrInvalidMutantID` | `Session.Exec` | `ExecRequest.Mutant` is not an identity: too short, too long, or not lowercase hex |
 | `ErrMutantNotFound` | `Session.Exec` | a well-formed prefix no catalogued mutant carries |
 | `ErrAmbiguousMutant` | `Session.Exec` | a prefix more than one mutant carries; `Matches` names them |
@@ -378,9 +499,10 @@ Reach all of these with `errors.As`.
   included. `discovery` carries the code alone: a package that will not load is
   decided in this process, with no child command to name.
 - **`*ExecutionError{Call, Package, Code, Output}`** — the measurement itself
-  failed inside `Session.Exec` or `Session.Probe`: a test binary that would not
-  start or could not be supervised, a generated runtime that refused the
-  activation it was handed, an infection log that is there and cannot be read.
+  failed inside `Session.Exec`, `Session.Probe` or `Session.Control`: a test
+  binary that would not start or could not be supervised, a generated runtime
+  that refused the activation it was handed, an infection log that is there and
+  cannot be read. `Call` is `exec`, `probe` or `control`.
   Never a statement about the tests — a killed, survived or timed-out mutant is
   a result and comes back as one.
 
@@ -443,15 +565,15 @@ instead of four characters lifted out of a sentence.
 
 `TMP`, `TEMP` and `TMPDIR` are set on every platform, for every child, to a
 directory created for that call: one per `Workspace.Exec`, one per
-`Session.Exec`, one per `Session.Probe`. Two concurrent calls cannot observe
-each other through a temporary file. The scratch lives *beside* the snapshot,
-never inside it: every byte under the snapshot root has to be a byte that came
-from the user's tree, or "a test wrote into the workspace" stops being
-detectable.
+`Session.Exec`, one per `Session.Probe`, one per `Session.Control`. Two
+concurrent calls cannot observe each other through a temporary file. The
+scratch lives *beside* the snapshot, never inside it: every byte under the
+snapshot root has to be a byte that came from the user's tree, or "a test wrote
+into the workspace" stops being detectable.
 
 Every one of those directories is kept when `OpenOptions.KeepTemp` asked for it
-and removed otherwise — `Workspace.Exec`'s, `Session.Exec`'s and
-`Session.Probe`'s alike. The per-execution scratch is half of the answer
+and removed otherwise — `Workspace.Exec`'s, `Session.Exec`'s, `Session.Probe`'s
+and `Session.Control`'s alike. The per-execution scratch is half of the answer
 `KeepTemp` exists to give: it is where the target's `TMPDIR` pointed, where a
 fuzz cache lived, and where anything the test wrote went, so a keep that left
 the snapshot and removed that was answering half the question.
@@ -496,7 +618,9 @@ look exactly like a detection.
 
 A session target's `Args` are refused the same way for `-test.fuzzcachedir`
 (the session owns the fuzz cache), `-test.fuzzworker` (the Go fuzz coordinator
-owns it) and `-test.timeout` (see below).
+owns it) and `-test.timeout` (see below) — by `Exec`, `Probe` and `Control`
+alike, since a caller composing one request for a mutant run and its control has
+to be able to hand the same arguments to both.
 
 The engine adds its own `GOFLAGS` entries for the instrumented builds:
 `-overlay=<manifest>`, `-vet=off`, and `-count=1`. Instrumented sources live
@@ -518,10 +642,10 @@ Two layers, deliberately unequal:
 
 That is why `-test.timeout` in `Args` is refused rather than merged. Passing it
 would let a target switch off the in-process half while the API still claimed
-the supplied budget. The refusal is a `*ReservedError` from `Exec` and `Probe`
-themselves — before a scratch directory is made or a binary is started — and
-reads `gomutants: session exec: -test.timeout is reserved by the session's
-process supervisor`.
+the supplied budget. The refusal is a `*ReservedError` from `Exec`, `Probe` and
+`Control` themselves — before a scratch directory is made or a binary is
+started — and reads `gomutants: session exec: -test.timeout is reserved by the
+session's process supervisor`, with the call naming itself.
 
 ### The outcome vocabulary is not the report's
 
@@ -628,6 +752,8 @@ costs the event and never the run: the recorder counts the loss and the
 | `CommandResult.TraceSeq` | the `exec` event of that `Workspace.Exec`, kind `workspace-exec` |
 | `MutantResult.TraceSeq` | the `mutant-exec` event of that `Session.Exec` |
 | `ProbeResult.TraceSeq` | the `probe-exec` event of that `Session.Probe` |
+| `ControlResult.TraceSeq` | the `note` event, of kind `control`, summarising that `Session.Control` |
+| `ControlResult.ExecSeqs` | the `exec` events, of kind `control-run`, of the binaries that control started |
 
 `probe-exec.infected` is the pass's **raw** infection set: what the probe runtime
 recorded, by mutant identity, before anything was filtered. `ProbeResult.Infected`
@@ -648,12 +774,22 @@ A *non-zero* sequence names an event that was recorded, not necessarily one that
 can still be read: a sink that refused it kept nothing, and a bounded ring that
 overflowed has since dropped it. The `run-end` reports both.
 
-`MutantResult.Binaries` and `ProbeResult.Binaries` are the test binaries the
-call started, in launch order, by the **import path** of the package each was
-built from. They stop where the call stopped, so a mutant killed by the second
-of three binaries names two: naming all three would describe a measurement that
-was never made. `MutantResult.KilledBy` is one of them, and the `mutant-exec`
-and `probe-exec` events name exactly the same set.
+`ControlResult` has a `note` rather than an event of its own because the `type`
+enum is closed and holds no payload for a control. Its children are ordinary
+`exec` events of kind `control-run`, and they are the account of what ran: same
+argv, same `dir`, same `timeout_ms` as the `mutant-run` beside them, and an
+`env_names` that is the mutant run's minus `GO_MUTANTS_ACTIVE`. A `note` carries
+no `exec_seqs` of its own the way `mutant-exec` and `probe-exec` do, which is
+why `ControlResult.ExecSeqs` is a field: the note's `detail` names the same
+sequences, but it is a sentence for a reader and never a field to branch on.
+
+`MutantResult.Binaries`, `ProbeResult.Binaries` and `ControlResult.Binaries` are
+the test binaries the call started, in launch order, by the **import path** of
+the package each was built from. They stop where the call stopped, so a mutant
+killed by the second of three binaries names two: naming all three would
+describe a measurement that was never made. `MutantResult.KilledBy` is one of
+them, `ControlResult.Package` likewise, and the `mutant-exec` and `probe-exec`
+events name exactly the same set.
 
 **Reproducing a run by hand.** `Session.OverlayManifest()` and
 `Session.ProbeOverlayManifest()` are the two files `go` is pointed at to compile

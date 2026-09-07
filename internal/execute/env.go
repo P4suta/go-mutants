@@ -119,6 +119,30 @@ func probeEnvFrom(source []string, scratch, logPath string) []string {
 	return append(baseEnvFrom(source, scratch), instrument.ProbeEnv+"="+logPath)
 }
 
+// controlEnv is the environment one test binary of the *mutant* tree runs with
+// when nothing is activated, which is the environment the original program runs
+// in.
+//
+// It is [baseEnv] exactly, and giving that a name of its own is the point. The
+// mutant tree's binaries are the user's program plus a switch, and the switch is
+// [instrument.ActiveEnv]: with it unset the generated runtime takes every
+// original branch, so a control run is a mutant run minus one entry. The claim
+// the whole feature rests on is therefore a claim about this function — it adds
+// nothing to the scrubbed base — and it is stated here rather than left implicit
+// in the one call site that happens not to append anything today.
+//
+// [instrument.ProbeEnv] is absent by the same mechanism and for the same reason:
+// [baseEnvFrom] strips every GO_MUTANTS_ variable, so neither an activation nor
+// a probe log exported in a developer's shell can reach the child and make a
+// control a measurement of something other than the program the user wrote.
+func controlEnv(scratch string) []string {
+	return controlEnvFrom(nil, scratch)
+}
+
+func controlEnvFrom(source []string, scratch string) []string {
+	return baseEnvFrom(source, scratch)
+}
+
 // isTempKey reports whether key is one of the temporary-directory variables.
 func isTempKey(key string) bool {
 	return slices.ContainsFunc(tempKeys, func(k string) bool { return sameEnvKey(key, k) })

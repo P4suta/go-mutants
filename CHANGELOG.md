@@ -14,6 +14,55 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`Session.Control` runs the original program through the binaries the
+  session already built, so a consumer no longer needs a second workspace to
+  get a control.** A mutant's suite going red is evidence about the mutant only
+  if the same suite is green without it, and a prepared session could run
+  mutants and probes and nothing else. goatest reaches that answer two ways
+  today and this replaces both: it opens a *second workspace* over the same root
+  and runs `Workspace.Exec` there — a second snapshot, a second discovery pass
+  and a second compile of every test binary, to run tests the first session had
+  already compiled — and, where a probe tree exists, it reads `Session.Probe`'s
+  `test-failed` outcome as "the original program is red", which spends a probe
+  pass, requires `PrepareOptions.Probe`, measures the *probe* tree's binaries
+  rather than the mutant tree's, and answers in a vocabulary built for infection
+  facts instead of with the suite's own exit status and output.
+
+  It was never needed. The mutant tree's binaries are the user's program plus a
+  switch: instrumentation leaves every original branch in place and selects
+  between them on `GO_MUTANTS_ACTIVE`, `Session.Exec` is the only thing that
+  ever sets it, and the execution layer strips every `GO_MUTANTS_*` variable out
+  of the frozen environment before it composes a child's — so those binaries
+  with nothing activated *are* the original program. `Control` is an execution
+  minus that one entry.
+
+  The guarantee is that it is only that. The binaries, the arguments, the
+  working directory, the paired `-test.timeout`, the instrumentation overlay,
+  the reserved flags, the private scratch directory and the fuzz isolation are
+  settled by one function inside the session for both calls, so a rule that
+  reached one and not the other cannot make the control a measurement of
+  something else; in a recording the two `exec` events differ in their kind,
+  their subject, and one name in `env_names`. A control stops at the first
+  binary that does not exit zero — that is the answer, not a saving — and a
+  failing one comes back as a *result* with its output, because a red suite on
+  the original program is a finding about the repository and not a broken
+  engine. Errors are `Exec`'s with `Call` reading `control`.
+
+  It is recorded as its per-binary `exec` events, of the new kind
+  `control-run`, plus one `note` of the new kind `control` that
+  `ControlResult.TraceSeq` points at. Both are additive: `gomutants-trace-v1`
+  closes its event `type` enum, so a control gets no payload of its own, and the
+  note is the one line a single call can be named by. A `note` has no
+  `exec_seqs` the way `mutant-exec` and `probe-exec` do, so
+  `ControlResult.ExecSeqs` carries the way down to those executions as a field
+  rather than leaving a consumer to parse the note's prose.
+
+  That is also why `trace.Recorder.Note` now **returns** the sequence it
+  recorded at, as `Exec`, `MutantExec` and `ProbeExec` already do: something has
+  to be able to point at the event afterwards, and for a control that event is
+  the note. Calling `Note` as a statement is unaffected; a consumer that pinned
+  the method as a `func(*trace.Recorder, string, string, string)` value adds the
+  `int64`.
 - **The run report explains its own cost, and every mutant's execution, without
   a trace.** A report said what happened to each mutant and almost nothing about
   how: `attempts: 2` was the whole of what a reader got about a mutant that took
