@@ -43,16 +43,28 @@ binaries would. Five things make that true, and each is enforced rather than
 assumed.
 
 1. **A survivor under the tests is a survivor under the binary.** Coverage is
-   over-approximate in the safe direction: a test that does not execute a
-   mutant's line cannot observe the edit, so it can only pass. If every test
-   whose coverage reaches a mutant passes, every *other* test would pass too,
-   and the mutant survives the whole binary exactly as it survives the subset.
-   The line-only over-approximation `internal/coverage` already makes — a block
-   counts as reaching a mutant when it covers the line, whether or not the
-   mutated expression was evaluated — only ever adds tests to a mutant's set, so
-   it too errs towards running more, never fewer.
+   over-approximate in the safe direction for a test that observes the mutant
+   *directly*: a test that does not execute a mutant's line cannot fail on the
+   edit itself. The line-only over-approximation `internal/coverage` already
+   makes — a block counts as reaching a mutant when it covers the line, whether
+   or not the mutated expression was evaluated — only ever adds tests to a
+   mutant's set, so it too errs towards running more, never fewer.
 
-2. **A kill under the tests is confirmed against a control.** A set of tests
+   Directly is the word that matters. A test that does not cover the line can
+   still fail *indirectly*: a covering test, run under the mutant, leaves shared
+   state — a package variable, a file — that the non-covering test then reads,
+   and the whole binary kills the mutant through a test the subset never
+   contained. So a survivor of its covering tests is not yet a survivor of the
+   run. It is confirmed against the whole of the binaries that cover it, with no
+   test selection, before the verdict stands: `internal/execute`'s RunOne
+   re-runs a narrowed survivor whole and returns *that* attempt, and only a
+   mutant the whole binary also survives is reported survived. The confirmation
+   costs exactly what the package-level pass costs for a survivor, and it is
+   paid only for survivors — a healthy suite has few — while every kill is
+   settled by the covering tests alone, which is where the saving is.
+
+2. **A kill under the tests is not spurious: the set is checked against a
+   control.** A set of tests
    that each pass on their own can still fail when run *together* without any
    mutant — one leaves state another depends on — and a mutant narrowed to such
    a set would be reported killed by a failure that is not its. So before any

@@ -591,8 +591,8 @@
         {
           "if": { "required": ["uncovered"], "properties": { "uncovered": { "const": true } } },
           "then": {
-            "description": "A mutant no binary reaches has no covering binaries to name.",
-            "not": { "required": ["covering"] }
+            "description": "A mutant no binary reaches has no covering binaries and no covering tests to name.",
+            "not": { "anyOf": [ { "required": ["covering"] }, { "required": ["covering_tests"] } ] }
           }
         }
       ]

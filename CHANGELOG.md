@@ -26,13 +26,15 @@ Entries say *why* a change was made, not only what changed.
   the dogfood gate.
   It reaches the same verdicts a binary-level run does, and
   [ADR 0010](docs/adr/0010-narrowing-to-tests-is-sound.md) is the argument: a
-  survivor under the covering tests is a survivor under the whole binary; a kill
-  is confirmed against a control of the same tests with no mutant, and a set
-  that fails together without one is named in a `GOM7604` warning and its
-  mutants widened to the whole binary; a test that fails when run alone is
-  order-dependent, named in a `GOM7603` warning, and its binary run whole so
-  nothing it covers is lost; and because the outcome does not depend on the mode,
-  the outcome cache does not key on it. `test.narrowing = "package"` selects the
+  survivor of its covering tests is re-run against the whole binary before the
+  verdict stands, so a kill that only happens through shared state a covering
+  test left under the mutant is not lost; a kill is checked against a control of
+  the same tests with no mutant, and a set that fails together without one is
+  named in a `GOM7604` warning and its mutants widened to the whole binary; a
+  test that fails when run alone is order-dependent, named in a `GOM7603`
+  warning, and its binary run whole so nothing it covers is lost; and because
+  the outcome does not depend on the mode, the outcome cache does not key on
+  it. `test.narrowing = "package"` selects the
   coarser binary-level mapping, and a custom `test.command` still turns coverage
   off entirely — neither excludes any mutant from measurement.
   The run report says which mode ran (`coverage.mode` may now be `test`), how

@@ -542,6 +542,7 @@ func (event Event) Clone() Event {
 	if event.Coverage != nil {
 		record := *event.Coverage
 		record.Covering = slices.Clone(record.Covering)
+		record.CoveringTests = slices.Clone(record.CoveringTests)
 		event.Coverage = &record
 	}
 	if event.Cache != nil {

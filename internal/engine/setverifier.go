@@ -36,6 +36,7 @@ type verifierSet struct {
 	tests   map[string][]string
 	timeout time.Duration
 	memory  int64
+	args    []string
 }
 
 // newSetVerifier returns an empty verifier.
@@ -55,6 +56,10 @@ func (v *setVerifier) want(tests map[string][]string, run execute.MutantRun) {
 		tests:   cloneSelection(tests),
 		timeout: run.Timeout,
 		memory:  run.MemoryLimit,
+		// The same arguments the mutant runs with: an accepted flag such as
+		// -test.short changes what the tests do, so a control without it would
+		// be a control of a different invocation.
+		args: slices.Clone(run.Args),
 	}
 }
 
@@ -83,6 +88,7 @@ func (v *setVerifier) run(ctx context.Context, opts execute.Options, bins []exec
 			MemoryLimit: set.memory,
 			Binaries:    indicesOf(slices.Sorted(maps.Keys(set.tests)), index),
 			Tests:       set.tests,
+			Args:        slices.Clone(set.args),
 		})
 	}
 

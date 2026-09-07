@@ -203,3 +203,91 @@ func equalStrings(got, want []string) bool {
 	}
 	return true
 }
+
+// sharedModule is a mutant that survives the only test that covers its line but
+// is killed, through a package variable, by a test that does not — the exact
+// case RunOne's whole-binary confirmation exists for. Both tests pass on their
+// own, so the binary is clean and the mutant is narrowed; the kill appears only
+// when the whole binary runs.
+const sharedModule = "fixture.example/shared"
+
+const sharedSource = `package shared
+
+// mode starts at the value TestModeIsOne expects, so that test passes on its
+// own — the binary is clean and the mutant is narrowed rather than widened.
+var mode = 1
+
+// Enable sets mode from the sign of x. Its ` + "`>`" + ` is the mutant, and
+// TestEnable calls it with 0: unmutated leaves mode at 1, the mutant makes it
+// 2. TestEnable asserts nothing about mode, so it passes either way and is the
+// only test that covers this line.
+func Enable(x int) {
+	if x > 0 {
+		mode = 2
+	} else {
+		mode = 1
+	}
+}
+
+// Mode reports the configured mode.
+func Mode() int {
+	return mode
+}
+`
+
+const sharedSuite = `package shared
+
+import "testing"
+
+func TestEnable(t *testing.T) {
+	Enable(0)
+}
+
+func TestModeIsOne(t *testing.T) {
+	if Mode() != 1 {
+		t.Fatalf("mode = %d, want 1", Mode())
+	}
+}
+`
+
+// TestANarrowedSurvivorIsKilledByTheWholeBinary is the whole-binary
+// confirmation end to end: the `>` in Enable is covered only by TestEnable,
+// which passes with the mutant active, so the narrowed run survives it; the
+// whole binary kills it through TestModeIsOne, which reads the shared variable
+// TestEnable left at 2 under the mutant. Without the confirmation this mutant
+// would be a false survivor; with it the verdict matches a package-level run.
+func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
+	t.Parallel()
+
+	root := testkit.NewModule(t).Module(sharedModule).
+		Source("shared.go", sharedSource).
+		Source("shared_test.go", sharedSuite).
+		Root()
+	opts := optionsAt(t, root)
+
+	outcome, _, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("running the shared-state module: %v", err)
+	}
+	if outcome.Report == nil {
+		t.Fatal("the run published no report")
+	}
+	if outcome.Report.Coverage.Mode != report.CoverageTest {
+		t.Fatalf("coverage mode = %q, want %q", outcome.Report.Coverage.Mode, report.CoverageTest)
+	}
+
+	mutant := onlyMutant(t, outcome.Report, sharedModule, "gt-to-ge")
+	if mutant.Outcome != report.OutcomeKilled {
+		t.Fatalf("the shared-state mutant is %s, want killed by the whole-binary confirmation", mutant.Outcome)
+	}
+	// The confirmation runs the whole binary, so the reported execution names
+	// no tests even though coverage found one test reaching the line.
+	for _, execution := range mutant.Executions {
+		if len(execution.Tests) != 0 {
+			t.Errorf("the confirmed kill's execution was narrowed to %v, want the whole binary", execution.Tests)
+		}
+	}
+	if want := []report.TestRef{{Package: sharedModule, Name: "TestEnable"}}; !equalRefs(mutant.CoveringTests, want) {
+		t.Errorf("covering tests = %v, want %v: coverage still knows the one test that reaches the line", mutant.CoveringTests, want)
+	}
+}

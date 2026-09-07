@@ -274,7 +274,11 @@ something extra about — see [`branch`](#branch) below — `executions`, and
 reaches: the tests whose own coverage reaches its lines, as `{package, name}`
 sorted by package and then name. `covering_test_packages` stays what it was in
 every mode, so a consumer that folds tests to binaries and one that never
-learned about tests read the same list.
+learned about tests read the same list. A mutant a `test` run widened to its
+whole binaries — because the tests that reach it fail together without a
+mutant, or because it survived them and was confirmed against the whole binary
+— carries no `covering_tests` and its executions carry no `tests`: it was
+measured against the whole binary, and `covering_test_packages` names that.
 
 `cached` says the outcome was adopted from the outcome cache rather than
 measured by this run, so `duration_ms`, `attempts`, `killed_by` and
@@ -301,7 +305,7 @@ test binaries, in attempt order.
 | `killed_by` | The binary that detected the mutant on this pass; absent when it detected nothing |
 | `duration_ms` | The wall-clock time this pass took, summed over the binaries it ran |
 | `binaries[]` | The test binaries it started, in launch order, stopping where the pass stopped |
-| `tests[]` | The tests the pass was narrowed to, as `{package, name}`: the binary was started with exactly these selected. Absent when every binary ran whole, which is every pass outside `test` mode |
+| `tests[]` | The tests the pass was narrowed to, as `{package, name}`: the binary was started with exactly these selected. Absent when the pass ran the whole binary — every pass outside `test` mode, and a `test`-mode pass over a mutant that was widened or whose survival was confirmed against the whole binary |
 | `memory_exceeded` | This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline; absent when it was not. Optional. The bound itself is `test.memory_bytes` |
 | `peak_memory_bytes` | The highest the pass was observed to hold, as the **maximum over every binary it started** rather than the deciding binary's: resident memory on Unix, committed charge on Windows, which are close but not the same quantity and are deliberately not converted into one another. Written for every pass and not only the bounded ones — every process is sampled, which on Linux is the only measurement that is the child's own; absent where nothing observed one, which includes a pass that ended before its first sample |
 

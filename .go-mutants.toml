@@ -111,10 +111,10 @@ profile = "balanced"
 #
 # The numbers this gate is sized against, from the run that produced them:
 #
-#   internal/report/*.go         1095 mutants
-#   internal/config/*.go          461
+#   internal/report/*.go         1124 mutants
+#   internal/config/*.go          476
 #   internal/mutation/*.go        450
-#   internal/coverage/*.go        146
+#   internal/coverage/*.go        154
 #   internal/gocmd/*.go           106
 #   internal/schemas/*.go          89
 #   internal/glob/*.go             68
@@ -130,7 +130,7 @@ profile = "balanced"
 # gated packages (2026-09-08); the score held because every new mutant is
 # killed or declared.
 #
-# internal/report is nearly as large as the other nine together, and that is
+# internal/report is nearly as large as the other ten together, and that is
 # what a lossless document costs: every field of it is checked on the way in,
 # every refusal is a sentence somebody reads, and two more documents are derived
 # from it. internal/config is the second largest and did not get there by being

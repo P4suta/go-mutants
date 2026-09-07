@@ -86,11 +86,25 @@ func (s *session) narrowToTests(
 	// A binary is dirty if any of its tests did not pass alone. Those tests
 	// are named in one warning and left out of the narrowing.
 	dirty := make(map[string]bool)
+	profiled := make(map[string]bool)
 	var orderDependent []string
 	for _, data := range collected {
+		profiled[data.ImportPath] = true
 		if !data.Passed {
 			dirty[data.ImportPath] = true
 			orderDependent = append(orderDependent, data.ImportPath+" "+data.Name)
+		}
+	}
+	// A binary whose whole is profiled rather than narrowed to its tests: one
+	// with a test that fails alone, and one with no runnable tests at all,
+	// which CollectTestCoverage returns nothing for. The second contributes no
+	// coverage either way, but profiling its whole keeps the test-narrowed
+	// profile set the same as the package-level pass's rather than missing a
+	// binary the mapping was entitled to see.
+	whole := make(map[string]bool)
+	for _, bin := range bins {
+		if dirty[bin.ImportPath] || !profiled[bin.ImportPath] {
+			whole[bin.ImportPath] = true
 		}
 	}
 	if len(orderDependent) > 0 {
@@ -108,7 +122,7 @@ func (s *session) narrowToTests(
 	// The tests of clean binaries, each profiled on its own.
 	testProfiles := make(map[coverage.TestKey]coverage.Profile)
 	for i, data := range collected {
-		if !data.Passed || dirty[data.ImportPath] {
+		if !data.Passed || whole[data.ImportPath] {
 			continue
 		}
 		path := filepath.Join(profileDir, "t"+strconv.Itoa(i)+".txt")
@@ -122,7 +136,7 @@ func (s *session) narrowToTests(
 	// The whole-binary profile of each dirty binary, so a mutant reached only
 	// by an order-dependent test is still executed rather than reported
 	// uncovered.
-	binProfiles, err := s.dirtyBinaryProfiles(ctx, opts, scratch, profileDir, bins, dirty)
+	binProfiles, err := s.wholeBinaryProfiles(ctx, opts, scratch, profileDir, bins, whole)
 	if err != nil {
 		return nil, coverageResult{}, err
 	}
@@ -337,27 +351,28 @@ func testLabels(tests map[string][]string) []string {
 	return labels
 }
 
-// dirtyBinaryProfiles renders the whole-binary profile of every dirty binary,
-// so that a mutant reached only by an order-dependent test is executed against
-// its binary rather than reported uncovered.
-func (s *session) dirtyBinaryProfiles(
+// wholeBinaryProfiles renders the whole-binary profile of every binary that is
+// not narrowed to its tests: one with an order-dependent test, so that a mutant
+// reached only by that test is executed rather than reported uncovered, and one
+// with no runnable tests, so the profile set matches the package-level pass's.
+func (s *session) wholeBinaryProfiles(
 	ctx context.Context,
 	opts execute.Options,
 	scratch string,
 	profileDir string,
 	bins []execute.TestBinary,
-	dirty map[string]bool,
+	whole map[string]bool,
 ) (map[string]coverage.Profile, error) {
-	if len(dirty) == 0 {
+	if len(whole) == 0 {
 		return nil, nil
 	}
-	var dirtyBins []execute.TestBinary
+	var wholeBins []execute.TestBinary
 	for _, bin := range bins {
-		if dirty[bin.ImportPath] {
-			dirtyBins = append(dirtyBins, bin)
+		if whole[bin.ImportPath] {
+			wholeBins = append(wholeBins, bin)
 		}
 	}
-	collected, err := execute.CollectCoverage(ctx, opts, dirtyBins,
+	collected, err := execute.CollectCoverage(ctx, opts, wholeBins,
 		filepath.Join(scratch, coverageDirName, "whole"))
 	if err != nil {
 		return nil, err

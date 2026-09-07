@@ -408,7 +408,7 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # default test-level narrowing (2026-09-08), which runs each mutant against the
 # tests that reach it rather than every binary that does. Warm, at --jobs 4
 # against a test-owned build cache with the derived timeout at its 10s floor,
-# it measured about 4m08s on the shared machine under a load average near five;
+# it measured about 5m10s on the shared machine under a load average near five (survivors pay a whole-binary confirmation, ADR 0010);
 # the 2497-mutant, 6m13s-6m30s figures the package-level default recorded
 # before this change are kept in the timing narrative below as its ancestor.
 # Cold on GitHub's ubuntu runner is what this PR's own CI first measures under

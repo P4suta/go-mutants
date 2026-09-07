@@ -93,12 +93,6 @@
           "duration_ms": 0,
           "outcome": "survived",
           "peak_memory_bytes": 0,
-          "tests": [
-            {
-              "name": "TestClamp",
-              "package": "fixture.example/simple"
-            }
-          ],
           "worker": 0
         }
       ],
@@ -144,12 +138,6 @@
           "duration_ms": 0,
           "outcome": "survived",
           "peak_memory_bytes": 0,
-          "tests": [
-            {
-              "name": "TestClamp",
-              "package": "fixture.example/simple"
-            }
-          ],
           "worker": 0
         }
       ],
@@ -247,12 +235,6 @@
           "duration_ms": 0,
           "outcome": "survived",
           "peak_memory_bytes": 0,
-          "tests": [
-            {
-              "name": "TestClamp",
-              "package": "fixture.example/simple"
-            }
-          ],
           "worker": 0
         }
       ],
