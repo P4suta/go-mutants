@@ -146,10 +146,6 @@ func PackageScratch(name string) (dir string, release func(failed bool)) {
 			policy = KeepNever
 		}
 	}
-	// Under the kept root the package directory above is pruned with the
-	// directory; under the operating system's temporary one it is /tmp, which is
-	// nobody's to remove.
-	prune := policy != KeepNever
 	if policy == KeepNever {
 		created = temporaryPackageScratch(name)
 	}
@@ -160,7 +156,7 @@ func PackageScratch(name string) (dir string, release func(failed bool)) {
 		// path the path there was before this existed: a package that failed
 		// with the policy off leaves nothing behind.
 		if policy == KeepNever || (policy == KeepOnFailure && !failed) {
-			removeQuietly(created, prune)
+			removeQuietly(created)
 			return
 		}
 		writeReport(created, packageReport(created, name, policy, failed))
@@ -235,38 +231,36 @@ func newKeptDirLocked(t testing.TB, l *ledger) string {
 	return dir
 }
 
-// keptTreeMu serialises creating a kept directory against pruning the package
-// directory it lives in.
-//
-// It is process-wide on purpose. The ledger's lock is one test's, and the two
-// halves of this race belong to two different tests — so a per-test lock is
-// exactly the lock that cannot help.
-var keptTreeMu sync.Mutex
-
 // makeKeptDir creates `<parent>/<name cut short>-<six hex digits>`, retrying a
-// collision.
+// collision — and retrying once more if the parent is gone when the leaf is
+// made.
 //
-// # The race it is holding a lock against
+// # Why the parent could vanish, and why nothing here removes one now
 //
-// The parent is `<kept root>/<package>`, shared by every test in one binary, and
-// [removeKept] prunes it as soon as it is empty. So under t.Parallel one test's
-// cleanup removes its own directory and then the package directory — empty at
-// that instant — while another test is between the MkdirAll of that same parent
-// and the Mkdir of its own directory. The second syscall lands in a directory
-// that no longer exists and the test fails with ENOENT on the harness's
-// bookkeeping rather than on anything it was testing. It is what turned an
-// ubuntu job on PR #48 red:
+// The parent is `<kept root>/<package>` and every test in a binary files under
+// it. It used to be removed by the cleanup of whichever test emptied it, and
+// under t.Parallel that removal landed between another test's MkdirAll of the
+// same parent and the Mkdir of its own directory: the second syscall found no
+// directory, and a test with nothing to do with keeping failed on the harness's
+// own bookkeeping. It is what turned an ubuntu job on PR #48 red:
 //
 //	creating a kept scratch directory under /home/runner/work/_temp/go-mutants-kept:
 //	mkdir …/go-mutants-kept/testkit/TestImportGateNamesAProductionImportOfTh-05eeab:
 //	no such file or directory
 //
-// [keptTreeMu] closes the window inside one process, and the retry closes the
-// one no lock here can reach: `go test ./...` runs several package binaries at
-// once, two of them can be built from packages with the same short name, and one
-// process's prune means nothing to the other's mutex. One retry is enough,
-// because the window is two syscalls wide and the second attempt makes the
-// parent again.
+// A mutex is not an answer to that, because the two racing sides need not be in
+// one process: `go test ./...` runs the root package's binary and
+// cmd/go-mutants' beside each other, [packageShortName] calls both `go-mutants`,
+// both file under `<kept root>/go-mutants`, and one process's removal means
+// nothing to the other's lock. So nothing removes a package directory at all,
+// and an empty one is left where it is — which costs nothing anybody notices:
+// actions/upload-artifact puts files in an artifact and skips empty directories,
+// and `mise run test-clean` empties the whole kept root regardless.
+//
+// The one retry stays for the deleter this package does not control — somebody's
+// `rm -rf`, a CI step tidying the runner's temporary directory, a sweeper with
+// an opinion about stale files. The window is two syscalls wide, and the second
+// attempt makes the parent again.
 func makeKeptDir(parent, name string) (string, error) {
 	dir, err := makeKeptDirOnce(parent, name)
 	if !errors.Is(err, fs.ErrNotExist) {
@@ -275,26 +269,15 @@ func makeKeptDir(parent, name string) (string, error) {
 	return makeKeptDirOnce(parent, name)
 }
 
-// makeKeptDirOnce is one attempt at [makeKeptDir], holding [keptTreeMu] across
-// the two syscalls a prune must not get between.
-//
-// The names are drawn before the lock is taken: what the lock is for is the
-// filesystem, and reading six hex digits of randomness five times under it would
-// widen the window it exists to close.
+// makeKeptDirOnce is one attempt at [makeKeptDir]: the parent, then the leaf,
+// under the collision retry [keptNameAttempts] bounds.
 func makeKeptDirOnce(parent, name string) (string, error) {
-	leaves := make([]string, keptNameAttempts)
-	for i := range leaves {
-		leaves[i] = keptLeaf(name)
-	}
-
-	keptTreeMu.Lock()
-	defer keptTreeMu.Unlock()
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", err
 	}
 	var err error
-	for _, leaf := range leaves {
-		dir := filepath.Join(parent, leaf)
+	for range keptNameAttempts {
+		dir := filepath.Join(parent, keptLeaf(name))
 		// Mkdir rather than MkdirAll, because an existing directory is the
 		// collision this loop is retrying rather than a directory to share.
 		if err = os.Mkdir(dir, 0o755); err == nil {
@@ -374,17 +357,15 @@ var packageShortName = sync.OnceValue(func() string {
 // removeKept removes a directory that is not being kept, retrying a file
 // something still holds open.
 //
-// The package directory above it goes too when it is the last one in it, which
-// is not tidiness: under keep-on-failure every test in a green suite creates and
-// removes one of these, and a run that left the empty parents behind would fill
-// the kept root with a directory per package saying nothing at all — and
-// `if-no-files-found: ignore` in CI would then upload them.
+// The package directory above it stays, empty. Removing it the moment it was
+// empty is the race [makeKeptDir] describes, and no lock closes that one, since
+// the two sides can be two test binaries. What a green run has to leave nothing
+// of is evidence, and evidence is files — an empty directory is neither.
 func removeKept(t testing.TB, dir string) {
 	t.Helper()
 	var err error
 	for attempt := range keptRemovalAttempts {
 		if err = os.RemoveAll(dir); err == nil {
-			pruneKeptParent(dir)
 			return
 		}
 		if attempt < keptRemovalAttempts-1 {
@@ -397,17 +378,11 @@ func removeKept(t testing.TB, dir string) {
 		"(a file in it is probably still open): %v", dir, err)
 }
 
-// removeQuietly is [removeKept] for a caller with no test to report to.
-//
-// prune says whether the directory above may go with it, and the answer is only
-// yes under the kept root: the temporary form's parent is the operating
-// system's temporary directory, which is nobody's to remove.
-func removeQuietly(dir string, prune bool) {
+// removeQuietly is [removeKept] for a caller with no test to report to, and
+// leaves the directory above it alone for the same reason.
+func removeQuietly(dir string) {
 	for attempt := range keptRemovalAttempts {
 		if err := os.RemoveAll(dir); err == nil {
-			if prune {
-				pruneKeptParent(dir)
-			}
 			return
 		}
 		if attempt < keptRemovalAttempts-1 {
@@ -415,18 +390,4 @@ func removeQuietly(dir string, prune bool) {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "testkit: %s could not be removed and is left as it is\n", dir)
-}
-
-// pruneKeptParent removes the package directory above a kept directory, under
-// [keptTreeMu] so that it cannot land between another test's MkdirAll and Mkdir
-// — the race [makeKeptDir] describes.
-//
-// It fails with ENOTEMPTY as soon as any sibling is still there, which is the
-// answer rather than a problem. Only the one syscall is under the lock: the
-// os.RemoveAll of the directory itself walks a whole tree, and holding the lock
-// across that would serialise every test in the binary on the slowest cleanup.
-func pruneKeptParent(dir string) {
-	keptTreeMu.Lock()
-	defer keptTreeMu.Unlock()
-	_ = os.Remove(filepath.Dir(dir))
 }
