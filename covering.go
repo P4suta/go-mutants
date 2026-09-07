@@ -118,7 +118,18 @@ func (s *Session) CoveringTests(ctx context.Context) (map[string][]TestRef, erro
 // test alone, and returns the profile of every test that passed on its own,
 // keyed by test.
 func (s *Session) profilePerTest(ctx context.Context, packages map[string]bool) (map[coverage.TestKey]coverage.Profile, error) {
-	scratch := filepath.Join(s.scratch, "covering")
+	// A directory of this call's own, because CoveringTests holds only a read
+	// lock: two calls at once must not build binaries and write coverage into
+	// the same paths, where one would read the other's. It is collected with
+	// the rest of the call's work unless the session is being kept, in which
+	// case it stays beside everything else the kept session left behind.
+	scratch, err := os.MkdirTemp(s.scratch, "covering-")
+	if err != nil {
+		return nil, fmt.Errorf("gomutants: covering tests: scratch directory: %w", err)
+	}
+	if !s.keepTemp {
+		defer func() { _ = os.RemoveAll(scratch) }()
+	}
 
 	// The session's own build, with coverage turned on and its own
 	// directories: the same instrumented tree, the same overlay carried in the

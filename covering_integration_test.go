@@ -8,6 +8,7 @@ package gomutants_test
 import (
 	"errors"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -116,5 +117,63 @@ func TestSessionCoveringTestsAfterCloseIsRefused(t *testing.T) {
 	}
 	if _, err := session.CoveringTests(t.Context()); !errors.Is(err, gomutants.ErrSessionClosed) {
 		t.Fatalf("CoveringTests on a closed session = %v, want ErrSessionClosed", err)
+	}
+}
+
+// TestSessionCoveringTestsIsSafeForConcurrentCalls: CoveringTests holds only a
+// read lock, so two calls can run at once; each must build and profile in a
+// directory of its own and return the same mapping rather than reading the
+// other's coverage.
+func TestSessionCoveringTestsIsSafeForConcurrentCalls(t *testing.T) {
+	t.Parallel()
+
+	root := copyFixture(t, "killable")
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
+		TempDirectory: t.TempDir(),
+		Env:           hostEnvWithoutFixtureGates(),
+	})
+	if err != nil {
+		t.Fatalf("opening workspace: %v", err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+
+	session, err := workspace.Prepare(t.Context(), gomutants.PrepareOptions{
+		Operators:     []string{"comparison"},
+		MutantTimeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("preparing session: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+
+	const workers = 3
+	results := make([]map[string][]gomutants.TestRef, workers)
+	errs := make([]error, workers)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i], errs[i] = session.CoveringTests(t.Context())
+		}()
+	}
+	wg.Wait()
+
+	for i := range workers {
+		if errs[i] != nil {
+			t.Fatalf("call %d: %v", i, errs[i])
+		}
+	}
+	// Every call agrees: the mapping is a fact about the prepared session, not
+	// about which goroutine measured it.
+	for i := 1; i < workers; i++ {
+		if len(results[i]) != len(results[0]) {
+			t.Fatalf("call %d mapped %d mutants, call 0 mapped %d", i, len(results[i]), len(results[0]))
+		}
+		for id, refs := range results[0] {
+			if !slices.Equal(results[i][id], refs) {
+				t.Errorf("call %d covers %s with %v, call 0 with %v", i, id, results[i][id], refs)
+			}
+		}
 	}
 }
