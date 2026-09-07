@@ -223,21 +223,30 @@ func HelperCoverRoot() string { return os.Getenv(HelperCoverRootEnv) }
 // other than the parent's GOCOVERDIR, so that helper counters stay out of the
 // parent's profile and the concurrent covmeta renames stop colliding.
 //
-// The helper's own GOCOVERDIR decides first. Without one the process is not a
-// coverage run — nothing is instrumented, nothing writes counters — so there is
-// nothing to redirect, whether or not an ancestor's root is still in the
-// environment; creating a directory then would be creating the leak this exists
-// to have stopped, with no owner to remove it. With a GOCOVERDIR and no root the
-// answer is the opposite: that is a coverage run whose root went missing on the
-// way in — a TestMain that ran m.Run itself, an environment policy that stripped
-// the variable — and it is refused, because carrying on means writing covmeta
-// into the directory `go test` is collecting.
+// The root decides, and it decides rather than GOCOVERDIR because GOCOVERDIR
+// is the one of the two that a child may arrive without. internal/execute
+// strips it from every environment it composes — a mutant's test binary must
+// not be able to append its counters into the profile go-mutants' own coverage
+// job is collecting — and that package's unit tests start this very binary as
+// their scripted `go` and as the test binary a scripted compile produced. The
+// variable is gone by the time the helper looks; the instrumentation is not,
+// and the exit hook writes all the same. So the root, which [runSuite]
+// publishes only in a suite that is itself a coverage run and which no policy
+// strips, is what says "this binary is instrumented".
+//
+// Without a root the two remaining shapes are not the same thing. No GOCOVERDIR
+// either is an ordinary `go test`: nothing is instrumented, nothing writes
+// counters, and creating a directory then would be creating the leak this
+// exists to have stopped. A GOCOVERDIR and no root is a coverage run whose root
+// went missing on the way in — a TestMain that ran m.Run itself, an environment
+// policy that stripped it — and it is refused, because carrying on means
+// writing covmeta into the directory `go test` is collecting.
 func isolateCoverageOutput() error {
-	if os.Getenv(CoverDirEnv) == "" {
-		return nil
-	}
 	root := HelperCoverRoot()
 	if root == "" {
+		if os.Getenv(CoverDirEnv) == "" {
+			return nil
+		}
 		return fmt.Errorf("%s is unset, so this helper has nowhere private to write coverage output",
 			HelperCoverRootEnv)
 	}

@@ -73,3 +73,18 @@ internal/testkit/env_test.go
 internal/testkit/module_test.go
 internal/testkit/tiers_test.go
 internal/testkit/tools_test.go
+
+# internal/sourcegate's pointer-conversion gate type-checks this module, which needs
+# a real toolchain by construction: the questions it asks — which package
+# `u.Pointer` names under an import alias, whether the `syscall` in
+# `syscall.SyscallN` is an import or a local with a method of that name — are
+# bindings, and a scan over identifier text is wrong about all of them. It is
+# also the one gate that has to see files this platform does not build, so it
+# loads the module once for `GOOS=windows` and once for the host: a build
+# constraint hides a file from the type checker exactly as it hides it from the
+# compiler, and the Windows job object is where the rule was broken.
+#
+# Tagging it `integration` would retire it from the tier that runs on every
+# push, which is the only tier that would catch the conversion being written
+# back the wrong way round. About four seconds against a warm build cache.
+internal/sourcegate/unsafeptr_test.go

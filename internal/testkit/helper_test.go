@@ -290,17 +290,19 @@ func TestHelperIsolatesCoverageOutputPerProcess(t *testing.T) {
 	}
 }
 
-// TestHelperWithNoCoverageRootReadsItsOwnGOCOVERDIR is how the two ways a root
-// can be missing are told apart, and why they are not the same thing.
+// TestHelperCoverageRedirectionTurnsOnTheRoot pins which of the two variables
+// decides, and what each of the three shapes without both of them means.
 //
 // A helper with neither a root nor a GOCOVERDIR is an ordinary `go test`: it is
 // not instrumented, nothing writes coverage, and there is nothing to redirect —
 // so it runs, and creating a directory for it would be creating the leak. A
 // helper with a GOCOVERDIR and no root is a coverage run whose root went missing
 // on the way in — a TestMain that ran m.Run itself, an environment policy that
-// stripped the variable — and carrying on means writing covmeta into the very
-// directory `go test` is collecting, so it refuses instead.
-func TestHelperWithNoCoverageRootReadsItsOwnGOCOVERDIR(t *testing.T) {
+// stripped the root — and carrying on means writing covmeta into the very
+// directory `go test` is collecting, so it refuses instead. A helper with a
+// root and no GOCOVERDIR is the third shape and the reason the root is what
+// decides: see the case itself.
+func TestHelperCoverageRedirectionTurnsOnTheRoot(t *testing.T) {
 	t.Parallel()
 
 	t.Run("no coverage anywhere runs", func(t *testing.T) {
@@ -331,11 +333,24 @@ func TestHelperWithNoCoverageRootReadsItsOwnGOCOVERDIR(t *testing.T) {
 		RequireOutput(t, result, "the refusal", HelperCoverRootEnv+" is unset")
 	})
 
-	// A root without a GOCOVERDIR is the inverse leftover: an ancestor's root
-	// still in the environment of a process that is not itself a coverage run.
-	// It writes nothing, so it must make nothing — a directory made here would
-	// have no owner at all, since only the suite that made the root removes it.
-	t.Run("a root without coverage makes nothing", func(t *testing.T) {
+	// A root and no GOCOVERDIR is the shape a scrubbing environment policy
+	// produces, and it is why the root rather than the variable is what the
+	// redirection turns on.
+	//
+	// internal/execute strips GOCOVERDIR from every child environment it
+	// composes, so that a mutant's test binary cannot append its counters into
+	// the profile go-mutants' own coverage job is collecting — and that
+	// package's unit tests start this very binary as their scripted `go` and as
+	// the test binary a scripted compile produced. The variable is gone by the
+	// time the helper looks; the instrumentation is not, and the coverage
+	// runtime's exit hook fires all the same. Reading only GOCOVERDIR there
+	// leaves it printing "warning: GOCOVERDIR not set, no coverage data
+	// emitted" onto the stderr those tests assert the exact bytes of.
+	//
+	// The root is what still says "this binary is instrumented": [runSuite]
+	// publishes it only in a suite that is itself a coverage run, and a helper
+	// is that suite's binary re-executed.
+	t.Run("a root without the variable is still a coverage run", func(t *testing.T) {
 		t.Parallel()
 
 		root := t.TempDir()
@@ -344,12 +359,13 @@ func TestHelperWithNoCoverageRootReadsItsOwnGOCOVERDIR(t *testing.T) {
 		result := Exec(t, t.TempDir(), env, os.Args[0], "env", CoverDirEnv)
 
 		RequireExit(t, result, 0, "the helper program")
-		if got := string(result.Stdout); got != "" {
-			t.Errorf("a helper with a root but no coverage set %s = %q, so it made a directory nothing "+
-				"will ever read or remove", CoverDirEnv, got)
+		dir := string(result.Stdout)
+		if !strings.HasPrefix(dir, root+string(filepath.Separator)) {
+			t.Errorf("a helper whose %s was stripped on the way in set it to %q, want a directory under "+
+				"the private root %s", CoverDirEnv, dir, root)
 		}
-		if entries := Entries(t, root); len(entries) != 0 {
-			t.Errorf("a helper with a root but no coverage left %v under the root", entries)
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("the helper's coverage directory was not created: %v", err)
 		}
 	})
 }

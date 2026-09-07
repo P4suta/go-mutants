@@ -3640,6 +3640,98 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- A memory-bound test no longer assumes which of the two enforcement paths won.
+  A tree stopped by the sampler is killed by go-mutants and reports
+  `ExitCodeUnavailable`; a tree that crosses the kernel's own line — Windows'
+  `JOB_OBJECT_LIMIT_JOB_MEMORY`, a quarter above the sampler's — has its next
+  commit refused instead, so the Go runtime dies of it with a status of its own
+  and `MemoryExceeded` is set from the final peak with the child's exit code
+  kept. Both are the bound working, and `internal/runner`'s tests asserted the
+  first: one windows-latest run took the kernel's path and failed with
+  `ExitCode = 2, want ExitCodeUnavailable (-1)`. The assertions now state the
+  contract — `MemoryExceeded` set, `TimedOut` clear, and a status that is either
+  this package's kill or a non-zero one from a platform that carries a kernel
+  line — and the whole-tree test, whose sleeping child cannot carry the
+  grandchild's fate in its own status, says what each path leaves observable.
+- The Windows job object's limits are no longer written through a pointer the
+  Go runtime is free to move. `SetInformationJobObject` and
+  `QueryInformationJobObject` take the structure as an address plus a length,
+  and `golang.org/x/sys/windows` spells that parameter `uintptr` — so both call
+  sites wrote `uintptr(unsafe.Pointer(&info))` in the argument list of an
+  ordinary Go function, which is exactly where the conversion means nothing.
+  It is safe in the argument list of the assembly call and nowhere else:
+  `syscall.SyscallN` carries `//go:uintptrkeepalive` and `//go:nosplit`, and
+  the runtime's note beside those pragmas says why — *"stack copying does not
+  account for uintptrkeepalive, so the stack must not grow"*.
+
+  One frame earlier, nothing holds. `info` is a stack local, because a uintptr
+  is not a pointer and escape analysis has nothing to follow; the x/sys
+  wrapper's own prologue is a stack-growth point. A goroutine that grows there
+  has its frames copied and its old stack span returned to the pool with the
+  uintptr still naming the old address, another goroutine takes the span and
+  writes its own frames into it, and the kernel reads whatever landed at that
+  offset. `LimitFlags` naming a limit the structure does not carry is
+  `ERROR_INVALID_PARAMETER`. The `runtime.KeepAlive` beside each call was the
+  misreading that hid it: it keeps a value from being *collected*, and a stack
+  frame is not collected, it is moved.
+
+  Only a concurrent run can show it, because a freed stack span is only
+  overwritten while something else is running — which is why it appeared once
+  and never again: `GOM7201: could not set kill-on-close on the Windows job
+  object that owns the child process tree: The parameter is incorrect.`, on
+  windows-latest, under the eight concurrent `Workspace.Exec` calls of
+  `TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch`.
+
+  Both calls now go through `syscall.SyscallN` with the conversion written in
+  its argument list, which is the one construction the compiler and the runtime
+  support. The flags and the value each of them names moved into portable code,
+  so the pairing that `ERROR_INVALID_PARAMETER` is the punishment for getting
+  wrong is checked by a `go test` on every platform rather than only on the one
+  where it is a failed run. A failed call now names the flags, the memory limit
+  and the structure size it was refused with, because the previous message left
+  the next occurrence as undiagnosable as the first. And the rule itself is a
+  gate, for which `go vet` has no analyzer: the module is type-checked — once
+  for `GOOS=windows`, because a build constraint hides a file from the type
+  checker exactly as it hides it from the compiler, and once for the host — and
+  any `uintptr(unsafe.Pointer(...))` outside the argument list of a call the
+  compiler treats specially is a failure. It resolves bindings rather than
+  matching names, so an aliased `unsafe` import is still an offender, a local
+  named `syscall` with a `SyscallN` method is not a defence, and an aliased real
+  `syscall` import is not a false positive.
+- A child no longer inherits the parent's `GOCOVERDIR`. Every environment
+  `internal/execute` composes — for the `go` commands, for a mutant's test
+  binary, for a probe pass, for a control run and for the coverage profiling
+  pass — now drops the variable, exactly as it already drops `GO_MUTANTS_*` and
+  redirects the three temporary-directory names.
+
+  `GOCOVERDIR` names a directory a coverage-instrumented program *appends* its
+  meta-data and counter files to, and a parent that has one is not an exotic
+  case: `go test -cover` and `go test -coverprofile` both export it into the
+  test process. So every child go-mutants started underneath its own `cover`
+  and `cover-integration` jobs was handed the directory those jobs are
+  collecting, and anything reaching the coverage runtime's exit hook there wrote
+  into somebody else's profile. The profiling pass is where it reads worst,
+  because that pass is *about* coverage: it hands each binary a directory of its
+  own with `-test.gocoverdir` and reads back what is in it, and an inherited
+  `GOCOVERDIR` beside that flag is a second directory nobody chose. go-mutants
+  says where a child's coverage goes; an ambient setting does not get a vote.
+
+  It showed up as a red test rather than as a corrupt profile:
+  `go test -cover ./internal/execute` failed
+  `TestCoverDirFlagIsWhatTheToolchainReads` with *the profiling run set
+  `GOCOVERDIR="/tmp/go-build.../b001/gocoverdir"`, which a test binary does not
+  read* — the assertion was right and the code under test was wrong.
+
+  The harness moved with it. `testkit.Helper` gives each helper process a
+  private coverage directory, and it used to decide whether to by reading
+  `GOCOVERDIR`; a helper started through a scrubbed environment has none, is
+  instrumented all the same, and printed `warning: GOCOVERDIR not set, no
+  coverage data emitted` onto the stderr `internal/execute`'s scripted-`go`
+  tests assert the exact bytes of. `TESTKIT_HELPER_COVERDIR_ROOT` is now what
+  the redirection turns on: it is published only by a suite that is itself a
+  coverage run, and no environment policy strips it. A `GOCOVERDIR` with no root
+  is still refused with `testkit.HelperMisuse`, because that is the other
+  direction — a coverage run with nowhere private to write.
 - The test harness no longer leaves a coverage directory in the system
   temporary directory once per test binary process. Every suite that runs
   through `testkit.Helper` created a private `go-mutants-helper-cover-*` root

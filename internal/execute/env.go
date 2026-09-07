@@ -22,15 +22,34 @@ import (
 // like a detection.
 const envPrefix = "GO_MUTANTS_"
 
+// coverDirEnv is the one variable outside [envPrefix] that no child of this
+// package inherits.
+//
+// GOCOVERDIR names a directory a coverage-instrumented program *appends* its
+// meta-data and counter files to, so a child that inherits one writes into
+// whatever profile the parent is collecting. The parent that has one is not an
+// exotic case: `go test -cover` and `go test -coverprofile` both export
+// GOCOVERDIR into the test process, so every child started underneath one of
+// go-mutants' own coverage jobs inherits the directory that job is measuring.
+//
+// The profiling pass is where the leak would hurt most, because it is the one
+// pass that is *about* coverage. [CollectCoverage] gives each binary a
+// directory of its own through [coverDirFlag] and reads back what is in it; an
+// inherited GOCOVERDIR beside that flag is a second directory nobody chose,
+// holding data from a different program. go-mutants says where a child's
+// coverage goes and an ambient setting does not get a vote — the same rule the
+// temporary directories are redirected under, and for the same reason.
+const coverDirEnv = "GOCOVERDIR"
+
 // tempKeys are the environment variables redirected at a worker's scratch
 // directory. All three are set on every platform: TMPDIR is the POSIX
 // spelling, TMP and TEMP the Windows ones, and a test helper may read any of
 // them.
 var tempKeys = []string{"TMP", "TEMP", "TMPDIR"}
 
-// baseEnv is this process's environment with every GO_MUTANTS_ variable
-// removed and, when scratch is not empty, the three temporary-directory
-// variables pointed at it.
+// baseEnv is this process's environment with every GO_MUTANTS_ variable and
+// GOCOVERDIR removed and, when scratch is not empty, the three
+// temporary-directory variables pointed at it.
 //
 // Inheriting the rest is deliberate. GOFLAGS, GOMODCACHE, GOPROXY, a private
 // module's credentials, and the PATH that makes a project's tests work are all
@@ -51,6 +70,9 @@ func baseEnvFrom(source []string, scratch string) []string {
 	for _, entry := range source {
 		key, _, _ := strings.Cut(entry, "=")
 		if strings.HasPrefix(strings.ToUpper(key), envPrefix) {
+			continue
+		}
+		if sameEnvKey(key, coverDirEnv) {
 			continue
 		}
 		if scratch != "" && isTempKey(key) {

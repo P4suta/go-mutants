@@ -6,10 +6,8 @@ package runner
 import (
 	"os"
 	"os/exec"
-	"runtime"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -70,24 +68,9 @@ func newSupervisor(memoryLimit int64) (supervisor, error) {
 
 	// KILL_ON_JOB_CLOSE is the backstop. Even if go-mutants panics, is killed
 	// itself, or forgets to terminate, the last handle to the job closing
-	// takes the whole tree with it.
-	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
-		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-		},
-	}
-	// SetInformationJobObject takes the struct as an untyped pointer plus a
-	// length, so the uintptr conversion here is the documented calling
-	// convention rather than pointer arithmetic; KeepAlive pins the value for
-	// the duration of the call.
-	_, err = windows.SetInformationJobObject(
-		job,
-		windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&info)),
-		uint32(unsafe.Sizeof(info)),
-	)
-	runtime.KeepAlive(&info)
-	if err != nil {
+	// takes the whole tree with it. jobLimitsFor(0) is that flag and nothing
+	// else: the memory line, when there is one, is the call below.
+	if err := setJobLimits(job, jobLimitsFor(0)); err != nil {
 		_ = windows.CloseHandle(job)
 		return nil, &Error{
 			Code:    CodeSupervisionUnavailable,

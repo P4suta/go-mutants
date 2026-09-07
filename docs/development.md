@@ -662,6 +662,16 @@ children executed. It is deliberately outside the `GO_MUTANTS_` namespace: `Env`
 and `Compose` strip that prefix, and a cover root stripped on the way into a
 helper is a helper with nowhere private to write.
 
+The root is also what the redirection *turns on*, rather than the helper's own
+`GOCOVERDIR`. `internal/execute` strips `GOCOVERDIR` from every child
+environment it composes — a mutant's test binary may not append its counters
+into a profile somebody else is collecting — and that package's unit tests start
+this very binary as their scripted `go`. The variable is gone by the time such a
+helper looks; the instrumentation is not, and the coverage runtime's exit hook
+writes all the same. The root is published only by a suite that is itself a
+coverage run, so it is the signal that survives. A helper with a `GOCOVERDIR`
+and no root is the opposite shape and is refused with `testkit.HelperMisuse`.
+
 ### The scripted `go`
 
 `mutantkit.Toolchain(t)` locates the machine's real `go`, which is what a test
