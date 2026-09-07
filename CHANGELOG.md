@@ -16,14 +16,17 @@ Entries say *why* a change was made, not only what changed.
 
 - **The dogfood gate reads its own coverage and validates its own documents.**
   This repository's own `.go-mutants.toml` now includes `internal/coverage/*.go`
-  and `internal/schemas/*.go` as well, so the gate is five whole packages rather
-  than three: the mutation model, the glob engine, the interval relation, the
-  coverage reader and mapping that decide which suites a mutant is measured
-  against, and the JSON schema validation every published document passes
-  through. 801 mutants, 775 detected — 774 killed and one caught by the timeout
-  — 26 declared, 100.00%, about half a minute at `--jobs 4` where three packages
-  took ten seconds. CI's `dogfood` job keeps its 25-minute budget, which the run
-  now uses two percent of.
+  and `internal/schemas/*.go` as well, so the gate is eight whole packages rather
+  than six: the six below plus the coverage reader and mapping that decide which
+  suites a mutant is measured against, and the JSON schema validation every
+  published document passes through. 835 mutants — 450 in `internal/mutation`,
+  146 in `internal/coverage`, 89 in `internal/schemas`, 68 in `internal/glob`,
+  48 in `internal/interval`, 16 in `internal/operatorselect`, 11 in
+  `internal/drift`, 7 in `internal/testflag` — 809 detected, 808 killed and one
+  caught by the timeout, 26 declared, **100.00%**, 24–30 seconds at `--jobs 4`
+  against a warm build cache where six packages took ten. CI's `dogfood` job
+  keeps its 25-minute budget: cold runs of the widened scope measured 1m36s and
+  2m14s on a machine that was doing other things at the time.
 
   The two packages are there because the tests that kill their survivors are
   there, which is the only way this list is allowed to grow. The first
@@ -83,12 +86,17 @@ Entries say *why* a change was made, not only what changed.
   down one report format rather than the whole run.
 
   `policy.minimum_score` stays at 99, and the arithmetic is in the file. Growing
-  from 549 scored mutants to 775 moves the slack that floor buys from five
-  survivors to seven; the last time it moved, 96 was buying four survivors at
-  120 mutants and would have bought twenty-one at 544, which is a fivefold
-  loosening wearing an unchanged number. Two is not that. The floor has never
-  been the gate that guards CI — `--strict` fails on the first unexpected
-  survivor, and that is the flag `mise run dogfood` passes.
+  from 583 scored mutants to 809 moves the slack that floor buys from five
+  survivors to eight — 801/809 = 99.01% clears it and 800/809 = 98.89% does not
+  — where the last time it moved, 96 was buying four survivors at 120 mutants
+  and would have bought twenty-one at 544, which is a fivefold loosening wearing
+  an unchanged number. Three is not that. The floor has never been the gate that
+  guards CI — `--strict` fails on the first unexpected survivor, and that is the
+  flag `mise run dogfood` passes.
+
+  `docs/development.md` §11 moves with it, because a scope table that names
+  three packages and quotes 566 mutants is a document describing a gate this
+  repository no longer runs.
 - **`docs/development.md`, six architecture decision records, and the tests
   that keep them true.** The developer infrastructure of this repository grew a
   great deal in a short time — a shared hermetic harness, a test-owned build

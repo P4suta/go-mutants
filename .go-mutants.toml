@@ -63,11 +63,13 @@ profile = "balanced"
 # the twenty-six rows declared below and a score of 100.00%, in the wall clock
 # recorded under [policy].
 #
-# The one timeout is worth naming, because it is most of what internal/coverage
-# costs. Negating ParseTextfmt's scanner loop turns an empty document into an
-# endless one, and there is no way to catch that but to wait: the derived
-# per-mutant timeout is the 10s floor here, and one worker spends it on that
-# mutant while the other three finish everything else.
+# The one timeout is worth naming, because it is a real cost rather than a
+# curiosity. Negating ParseTextfmt's scanner loop turns an empty document into
+# an endless one, and there is no way to catch that but to wait: one worker
+# spends the whole derived per-mutant timeout on it while the other three finish
+# everything else. That timeout is max(10s, slowest baseline x 5), so what the
+# mutant costs is a fact about the machine as much as about the mutant -- see
+# the paired measurements under [policy].
 #
 # internal/mutation was a single file here — shard.go — until its own suites
 # grew the tests that kill what the whole-package scope found; CHANGELOG.md
@@ -398,22 +400,31 @@ strict = false
 # twenty-six expectations fulfilled and none stale.
 #
 # What each widening cost is a paired measurement rather than a remembered one
-# -- the run before it and the run after it, back to back on one machine at
-# --jobs 4:
+# -- the run before it and the run after it, at --jobs 4:
 #
-#   warm test-owned build cache   566 mutants in 8.8-9.0s, 600 in 9.9-10.5s
-#   cold test-owned build cache   38s either way
+#   3 -> 6 packages, back to back on one idle machine
+#     warm test-owned build cache   566 mutants in 8.8-9.0s, 600 in 9.9-10.5s
+#     cold test-owned build cache   38s either way
+#   6 -> 8 packages, on a machine with other work on it
+#     warm test-owned build cache   835 mutants in 24-30s over three runs
+#     cold test-owned build cache   1m36s and 2m14s
 #
-# Thirty-four more mutants for about a second warm, and for nothing at all
-# cold, because a cold run is dominated by compiling the module and its test
-# binaries and internal/testflag, internal/operatorselect and internal/drift are
-# 125 lines between them. Cold is what CI measures: the dogfood job points
-# GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never restores
-# it from an actions cache.
+# The first pair is clean and the second is not, and saying so is the point.
+# Thirty-four more mutants cost about a second warm and nothing at all cold,
+# because a cold run is dominated by compiling the module and its test binaries
+# and internal/testflag, internal/operatorselect and internal/drift are 125
+# lines between them. The last two packages are 235 mutants and two more test
+# binaries, so they cost real time -- but the second pair was measured against a
+# loaded machine, where the same tree's cold run varied by 38 seconds between
+# two attempts, so the honest reading is "tens of seconds warm, one to two
+# minutes cold" rather than a number to hold anybody to. Cold is what CI
+# measures: the dogfood job points GO_MUTANTS_TEST_GOCACHE at the runner's
+# temporary directory and never restores it from an actions cache.
 #
-# internal/coverage and internal/schemas cost more than their 235 mutants
-# suggest, and one mutant is most of it: the timeout named under [mutation]
-# spends the whole 10s floor on one worker whatever else the run has to do.
+# Load is also why the timeout named under [mutation] is not a fixed cost. It is
+# max(10s, slowest baseline x 5), which is the 10s floor on an idle machine and
+# was 29.7s on the loaded one, and the mutant that loops forever spends all of
+# it on one worker whatever else the run has to do.
 #
 # Only the ratio travels; the absolute numbers are the machine. The scope
 # before this one -- three packages, 566 mutants -- was recorded here as
@@ -421,7 +432,8 @@ strict = false
 # one file and two packages, 121 mutants -- took 48-50 seconds and the one
 # before that -- two files, sixteen mutants -- took 7m08s. What does not vary
 # with the machine is the tally: 835 catalogued, 808 killed, one timed out, 26
-# expected, on every run of an unchanged tree.
+# expected, seven of them never executed at all, on every one of the five runs
+# that measured this scope.
 #
 # The floor did not move with the scope this time, and the arithmetic is why.
 # It is worth being exact about which gate the remaining slack belongs to,

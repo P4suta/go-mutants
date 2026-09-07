@@ -404,12 +404,13 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 835 mutants at 100.00%, about half a
-# minute at --jobs 4 against a warm test-owned build cache and about a minute
+# The budget this job is sized against: 835 mutants at 100.00%, 24-30 seconds
+# at --jobs 4 against a warm test-owned build cache and one to two minutes
 # against a cold one. Cold is what CI measures, because the dogfood job points
 # GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never
 # restores it. .go-mutants.toml records that measurement in full under
-# [policy], next to the scope it is a measurement of.
+# [policy], next to the scope it is a measurement of, including why the cold
+# figure is a range rather than a number.
 #
 # What the gate cost before is history, and every figure is labelled with the
 # scope that produced it, because a duration without its scope reads as a
@@ -430,18 +431,21 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 #                                        internal/operatorselect and
 #                                        internal/drift joined the floor with
 #                                        no survivor to kill.
-#   8 packages, 835              ~30s    internal/coverage and internal/schemas
+#   8 packages, 835              24-30s  internal/coverage and internal/schemas
 #                                        joined, and one of their mutants loops
 #                                        forever.
 #
-# The last three rows are one machine and one warm cache, measured back to back;
-# the first two are the machines that measured them. Only the ratios travel.
+# Every row is a warm cache. The middle two were measured back to back on one
+# idle machine; the last was measured on the same machine with other work on it,
+# which is why it is a range and why it is not three times the row above it in
+# any strict sense. Only the ratios travel.
 #
-# Most of the difference between the last two rows is that one mutant rather
+# A good part of the difference between the last two rows is one mutant rather
 # than the other two hundred and thirty-four: negating ParseTextfmt's scanner
 # loop makes an empty document loop forever, and the only way to catch that is
-# to wait out the per-mutant timeout. .go-mutants.toml says so where the number
-# lives.
+# to wait out the per-mutant timeout -- which is itself max(10s, slowest
+# baseline x 5) and so grows with the load. .go-mutants.toml says so where the
+# numbers live.
 #
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
