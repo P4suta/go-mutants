@@ -94,6 +94,21 @@ func TestRunOneRefusesTestSelectionsItCannotHonour(t *testing.T) {
 			tests: map[string][]string{"example.com/a": {}},
 			want:  "example.com/a",
 		},
+		{
+			// An empty name would anchor to nothing, and the binary would
+			// pass having run nothing.
+			name:  "an empty name",
+			tests: map[string][]string{"example.com/a": {"TestOne", ""}},
+			want:  `""`,
+		},
+		{
+			// A subtest is selected through its parent; inside the anchored
+			// alternation the binary's own splitting of -test.run at the
+			// slash would never find it.
+			name:  "a subtest",
+			tests: map[string][]string{"example.com/a": {"TestOne/case_3"}},
+			want:  `"TestOne/case_3"`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

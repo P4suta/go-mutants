@@ -426,6 +426,7 @@
         "tests": {
           "description": "The tests the attempt was narrowed to, as `<import path> <name>` labels in one order — an import path holds no space, so the two halves are recoverable — and absent when every binary ran whole.",
           "type": "array",
+          "minItems": 1,
           "items": { "type": "string", "minLength": 1 }
         },
         "args": { "type": "array", "items": { "type": "string" } },
