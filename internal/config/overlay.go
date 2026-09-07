@@ -49,6 +49,8 @@ type Overlay struct {
 	Memory Set[int64]
 	// BaselineRuns is `test.baseline_runs`.
 	BaselineRuns Set[int]
+	// Narrowing is `test.narrowing`.
+	Narrowing Set[Narrowing]
 
 	// Jobs is `execution.jobs`, overridden by -j/--jobs.
 	Jobs Set[int]
@@ -96,6 +98,7 @@ func (o Overlay) setsAnything() bool {
 		o.Timeout.IsSet() ||
 		o.Memory.IsSet() ||
 		o.BaselineRuns.IsSet() ||
+		o.Narrowing.IsSet() ||
 		o.Jobs.IsSet() ||
 		o.CacheMode.IsSet() ||
 		o.CacheDirectory.IsSet() ||
@@ -176,6 +179,9 @@ func apply(c *Config, o Overlay) {
 	if v, ok := o.BaselineRuns.Get(); ok {
 		c.Test.BaselineRuns = v
 	}
+	if v, ok := o.Narrowing.Get(); ok {
+		c.Test.Narrowing = v
+	}
 
 	if v, ok := o.Jobs.Get(); ok {
 		c.Execution.Jobs = v
@@ -247,6 +253,7 @@ func (c Config) overlay() Overlay {
 		Expect:          Explicit(c.Mutation.Expect),
 		TestCommand:     Explicit(c.Test.Command),
 		BaselineRuns:    Explicit(c.Test.BaselineRuns),
+		Narrowing:       Explicit(c.Test.Narrowing),
 		Jobs:            Explicit(c.Execution.Jobs),
 		CacheMode:       Explicit(c.Cache.Mode),
 		Strict:          Explicit(c.Policy.Strict),

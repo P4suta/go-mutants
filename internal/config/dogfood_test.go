@@ -554,6 +554,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 			// a bound derived from this repository's own baseline.
 			Memory:       0,
 			BaselineRuns: 3,
+			Narrowing:    NarrowingTest,
 		},
 		// `jobs` is pinned in the file rather than defaulted, so that a local
 		// run and a GitHub-hosted CI run are the same run; see the comment there

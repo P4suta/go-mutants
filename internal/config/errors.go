@@ -82,6 +82,8 @@ const (
 	// spelled by omitting the key, which is what asks for the derived bound;
 	// writing it is asking for a bound no process can fit in.
 	CodeNonPositiveMemory Code = "GOM3026"
+	// CodeUnknownNarrowing reports a narrowing that is not test or package.
+	CodeUnknownNarrowing Code = "GOM3027"
 
 	// CodeJobsOutOfRange reports a worker count outside its range.
 	CodeJobsOutOfRange Code = "GOM3030"
@@ -131,6 +133,7 @@ var codes = []Code{
 	CodeEmptyCommandName,
 	CodeInvalidSize,
 	CodeNonPositiveMemory,
+	CodeUnknownNarrowing,
 	CodeJobsOutOfRange,
 	CodeUnknownCacheMode,
 	CodeInvalidCacheDirectory,

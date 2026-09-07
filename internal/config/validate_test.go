@@ -42,6 +42,7 @@ func TestOverlayValidateNamesFlags(t *testing.T) {
 		// A setting with no flag falls back to its TOML key, which is the
 		// truthful answer: there is nowhere else to change it.
 		{"baseline runs", Overlay{BaselineRuns: Explicit(0)}, CodeBaselineRunsOutOfRange, "test.baseline_runs"},
+		{"narrowing", Overlay{Narrowing: Explicit(Narrowing("binary"))}, CodeUnknownNarrowing, "test.narrowing"},
 		{"minimum score", Overlay{MinimumScore: Explicit(101.0)}, CodeMinimumScoreOutOfRange, "policy.minimum_score"},
 		{"report high", Overlay{ReportHigh: Explicit(-1)}, CodeThresholdOutOfRange, "report.high"},
 		{"report directory", Overlay{ReportDirectory: Explicit("/tmp/out")}, CodeInvalidReportDirectory, "report.directory"},
@@ -126,6 +127,12 @@ func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
 			overlay: Overlay{CacheMode: Explicit(CacheMode("maybe"))},
 			code:    CodeUnknownCacheMode,
 			want:    `unknown cache mode "maybe": expected "auto", "on", "off"`,
+		},
+		{
+			name:    "an unknown narrowing lists the narrowings",
+			overlay: Overlay{Narrowing: Explicit(Narrowing("binary"))},
+			code:    CodeUnknownNarrowing,
+			want:    `unknown narrowing "binary": expected "test", "package"`,
 		},
 		{
 			name:    "an unknown report format lists the formats",
@@ -344,6 +351,7 @@ func TestConfigValidateChecksValues(t *testing.T) {
 		{"timeout", func(c *Config) { c.Test.Timeout = -1 }, CodeNonPositiveTimeout, "test.timeout"},
 		{"memory", func(c *Config) { c.Test.Memory = -1 }, CodeNonPositiveMemory, "test.memory"},
 		{"baseline runs", func(c *Config) { c.Test.BaselineRuns = 42 }, CodeBaselineRunsOutOfRange, "test.baseline_runs"},
+		{"narrowing", func(c *Config) { c.Test.Narrowing = "" }, CodeUnknownNarrowing, "test.narrowing"},
 		{"jobs", func(c *Config) { c.Execution.Jobs = 0 }, CodeJobsOutOfRange, "execution.jobs"},
 		{"cache mode", func(c *Config) { c.Cache.Mode = "" }, CodeUnknownCacheMode, "cache.mode"},
 		{"cache directory", func(c *Config) { c.Cache.Directory = "/abs" }, CodeInvalidCacheDirectory, "cache.directory"},

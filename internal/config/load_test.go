@@ -278,6 +278,17 @@ func TestParseRejects(t *testing.T) {
 			message: "outside 1..10",
 		},
 		{
+			// "binary" is the word a reader might reach for; the answer names
+			// the two spellings there are.
+			name:    "an unknown narrowing",
+			source:  "version = 1\n\n[test]\nnarrowing = \"binary\"\n",
+			code:    CodeUnknownNarrowing,
+			key:     "test.narrowing",
+			line:    4,
+			column:  13,
+			message: `unknown narrowing "binary": expected "test", "package"`,
+		},
+		{
 			name:    "jobs below the range",
 			source:  "version = 1\n\n[execution]\njobs = 0\n",
 			code:    CodeJobsOutOfRange,
@@ -854,7 +865,8 @@ func TestParseAccepts(t *testing.T) {
 		"command = [\"go\", \"test\", \"-run\", \"\"]\n" +
 		"timeout = \"1m30s\"\n" +
 		"memory = \"2GiB\"\n" +
-		"baseline_runs = 1\n\n" +
+		"baseline_runs = 1\n" +
+		"narrowing = \"package\"\n\n" +
 		"[execution]\njobs = 32\n\n" +
 		"[cache]\nmode = \"off\"\ndirectory = \"team/cache\"\n\n" +
 		"[policy]\nstrict = true\nminimum_score = 66.5\nrequire_mutants = false\n\n" +
@@ -879,6 +891,7 @@ func TestParseAccepts(t *testing.T) {
 		Timeout:         Explicit(90 * time.Second),
 		Memory:          Explicit(int64(2) << 30),
 		BaselineRuns:    Explicit(1),
+		Narrowing:       Explicit(NarrowingPackage),
 		Jobs:            Explicit(32),
 		CacheMode:       Explicit(CacheOff),
 		CacheDirectory:  Explicit("team/cache"),

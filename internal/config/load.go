@@ -326,6 +326,7 @@ var expectedTypes = map[string]string{
 	"test.timeout":       "a string",
 	"test.memory":        "a string",
 	"test.baseline_runs": "an integer",
+	"test.narrowing":     "a string",
 
 	"execution":      "a table",
 	"execution.jobs": "an integer",
@@ -412,6 +413,7 @@ type documentTest struct {
 	Timeout      *string   `toml:"timeout"`
 	Memory       *string   `toml:"memory"`
 	BaselineRuns *int64    `toml:"baseline_runs"`
+	Narrowing    *string   `toml:"narrowing"`
 }
 
 type documentExecution struct {
@@ -507,6 +509,9 @@ func (d *document) overlay(report reporter) (Overlay, []error) {
 		}
 		if t.BaselineRuns != nil {
 			overlay.BaselineRuns = Explicit(toInt(*t.BaselineRuns))
+		}
+		if t.Narrowing != nil {
+			overlay.Narrowing = Explicit(Narrowing(*t.Narrowing))
 		}
 	}
 

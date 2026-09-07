@@ -231,6 +231,11 @@ command = ` + tomlStrings(c.Test.Command) + `
 # How many times the unmutated tests are measured before any mutant runs. Every
 # observation is kept in the report, not just the slowest.
 baseline_runs = ` + strconv.Itoa(c.Test.BaselineRuns) + `
+# How far coverage narrows what each mutant is measured against: "test" runs
+# each binary with only the tests whose own coverage reaches the mutant
+# selected, "package" runs every binary that reaches it whole. Both reach the
+# same verdicts; "test" is faster wherever a package's tests are one binary.
+narrowing = "` + c.Test.Narrowing.String() + `"
 # Left out, and therefore derived as max(10s, slowest baseline × 5). Write a Go
 # duration to fix it instead; there is no flag that puts derivation back, so
 # removing this line again is how a project returns to it.

@@ -100,6 +100,10 @@ func validateOverlay(o Overlay, report reporter) error {
 		problems = append(problems, report.errorf(CodeBaselineRunsOutOfRange, "test.baseline_runs",
 			"%d baseline runs is outside %d..%d", runs, MinBaselineRuns, MaxBaselineRuns))
 	}
+	if narrowing, ok := o.Narrowing.Get(); ok && !narrowing.Valid() {
+		problems = append(problems, report.errorf(CodeUnknownNarrowing, "test.narrowing",
+			"unknown narrowing %q: expected %s", narrowing.String(), narrowingList()))
+	}
 
 	if jobs, ok := o.Jobs.Get(); ok && (jobs < MinJobs || jobs > MaxJobs) {
 		problems = append(problems, report.errorf(CodeJobsOutOfRange, "execution.jobs",
@@ -312,6 +316,15 @@ func tierList() string {
 	names := make([]string, 0, len(mutation.Tiers()))
 	for _, tier := range mutation.Tiers() {
 		names = append(names, strconv.Quote(tier.String()))
+	}
+	return strings.Join(names, ", ")
+}
+
+// narrowingList renders the narrowings for a diagnostic.
+func narrowingList() string {
+	names := make([]string, 0, len(Narrowings()))
+	for _, narrowing := range Narrowings() {
+		names = append(names, strconv.Quote(narrowing.String()))
 	}
 	return strings.Join(names, ", ")
 }
