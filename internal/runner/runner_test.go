@@ -1609,3 +1609,65 @@ func TestRunRecordsACommandItWasTooLateToStart(t *testing.T) {
 		t.Errorf("TraceSeq = %d, want the recorded sequence %d", result.TraceSeq, event.Seq)
 	}
 }
+
+// TestSeparateStdoutSplitsTheStreamsWithoutLosingTheCombinedOne is the whole of
+// [runner.Spec.SeparateStdout].
+//
+// It exists because one caller needs a stream a parser can read. `go list
+// -json` writes a document to stdout and writes warnings, module downloads and
+// toolchain switches to stderr, and a decoder handed the combined capture fails
+// on the first byte of `go: warning: …` — for a command that exited zero and
+// did exactly what it was asked. The combined stream is still what a *person*
+// needs, so both are kept: `Output` is unchanged and is what the recording
+// digests, and `Stdout` is the half a machine reads.
+//
+// The interleaving is the price and is asserted as such. Two writers mean two
+// pipes, so `Output` holds both halves in an order the operating system chose;
+// the default path keeps one pipe and TestCombinedOutputKeepsWriteOrder still
+// pins that exact concatenation.
+func TestSeparateStdoutSplitsTheStreamsWithoutLosingTheCombinedOne(t *testing.T) {
+	t.Parallel()
+
+	const (
+		out = "{\"ImportPath\":\"example.com/x\"}\n"
+		err = "go: warning: \"./docs/...\" matched no packages\n"
+	)
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv:           helperCommand(t, "emit", out, err),
+		Env:            helperEnviron(),
+		SeparateStdout: true,
+	})
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil", result.Err)
+	}
+	if got := string(result.Stdout); got != out {
+		t.Errorf("Stdout = %q, want the child's stdout alone %q", got, out)
+	}
+	combined := string(result.Output)
+	if !strings.Contains(combined, out) || !strings.Contains(combined, err) {
+		t.Errorf("Output = %q, want both halves of what the child wrote", combined)
+	}
+	if want := int64(len(out) + len(err)); result.OutputBytes != want {
+		t.Errorf("OutputBytes = %d, want %d: both streams count", result.OutputBytes, want)
+	}
+}
+
+// TestStdoutIsNilWithoutSeparateStdout keeps the field opt-in.
+//
+// Every other caller in this repository wants the combined stream and nothing
+// else, and a second capture allocated for all of them would be a second copy
+// of every mutant's output for the one call site that reads a document.
+func TestStdoutIsNilWithoutSeparateStdout(t *testing.T) {
+	t.Parallel()
+
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv: helperCommand(t, "emit", "OUT", "ERR"),
+		Env:  helperEnviron(),
+	})
+	if result.Err != nil {
+		t.Fatalf("Err = %v, want nil", result.Err)
+	}
+	if result.Stdout != nil {
+		t.Errorf("Stdout = %q, want nil for a spec that did not ask for the split", result.Stdout)
+	}
+}

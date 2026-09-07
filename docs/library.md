@@ -40,6 +40,10 @@ Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Ca
 - **`Workspace.Exec`** runs one shell-free command against the frozen snapshot:
   a build, a vet, a baseline `go test`, a `go list`. Calls may run concurrently
   with one another, and with a prepared session.
+- **`Workspace.Module`** reports what the frozen module holds — its path, its
+  `go` directive, the located toolchain, and the packages a query matched — so
+  that a consumer does not have to run `go list -json` itself and parse it. See
+  [Listing the module](#listing-the-module).
 - **`Workspace.Prepare`** discovers candidates, builds the catalogue,
   compile-validates every mutant, instruments the sources, verifies the
   instrumented program once, and compiles the selected packages' test binaries —
@@ -65,7 +69,7 @@ Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Ca
 `Workspace.Exec` and `Workspace.Prepare` share one tree, and the lifecycle rule
 is one line per state of the preparation:
 
-| State | `Workspace.Exec` |
+| State | `Workspace.Exec` and `Workspace.Module` |
 |---|---|
 | no `Prepare` yet | runs; a command that *changes* the tree is refused by `Prepare`'s integrity gate |
 | `Prepare` in flight, outside the instrumentation window | runs, beside the preparation |
@@ -74,6 +78,14 @@ is one line per state of the preparation:
 | `Prepare` failed | refused, carrying `ErrPrepareFailed` |
 | session closed, workspace open | runs — `Session.Close` releases the binaries and the probe tree, not the snapshot |
 | workspace closed | refused, carrying `ErrWorkspaceClosed`, whatever the preparation did |
+
+`Workspace.Module` is in the same column because it is the same call underneath:
+it holds the workspace shared and the tree shared around a `go list` child, so
+it overlaps a preparation everywhere a command does and waits for the window
+where a command waits. The two refusals carry the same sentinels and name
+themselves in the message — `gomutants: module: workspace is closed` beside
+`gomutants: exec: workspace is closed` — because a consumer branches on the
+sentinel and reads the sentence to find the line of its own program.
 
 The last row wins over every other: a workspace can be closed *and* hold a
 preparation that failed, and a consumer whose workspace is gone has to be told
@@ -1073,7 +1085,10 @@ Every call chooses its own budget: `Command.OutputLimit`,
 inside the budget.
 
 Keeping the tail is right for a test failure and wrong for a document: a
-truncated JSON stream is not JSON. See the `go list` recipe below.
+truncated JSON stream is not JSON. `Workspace.Module` sizes its own budget for
+the document and refuses a truncated one rather than decoding it; a consumer
+running its own `go list -json` through `Workspace.Exec` owns that choice — see
+[Listing the module](#listing-the-module).
 
 ### Temporary directories: ownership, sweep and keep
 
@@ -1581,57 +1596,118 @@ options are resolved, and a selection is usually built from a diff — which nam
 deleted files, documents and testdata beside source — so refusing them would
 make every consumer filter the engine's own input on its behalf.
 
-## Recipe: listing the module
+## Listing the module
 
-`Workspace.Exec` is the passthrough for any command that has to see the frozen
-tree, and `go list -json` is the common one. Four details matter:
+`Workspace.Module` answers what the frozen module holds. It is the call that
+replaced the `go list -json` recipe this page used to carry: the workspace had
+already frozen the tree, probed the toolchain and knew the exclusions, so every
+consumer was re-deciding the same four things — which patterns are legal, how
+`-tags` is spelled, how much output to keep, and where the module's Go version
+comes from — and each answer was one more thing to get wrong on its own.
 
 ```go
-listed, err := workspace.Exec(ctx, gomutants.Command{
-	// "go" is replaced by the toolchain Open located.
-	Argv: []string{"go", "list", "-json", "-tags", "integration", "./..."},
-	// Empty Dir is the module root; go list resolves ./... from there.
-	Dir: "",
-	// The go command searches every parent directory for a go.work and obeys
-	// $GOWORK, so a snapshot placed one level below somebody's workspace would
-	// otherwise resolve against a file the snapshot does not contain.
-	Env: []string{"GOWORK=off"},
-	// Sized for a document, not for a test failure: truncation keeps the tail,
-	// and the tail of a JSON stream does not parse.
-	OutputLimit: 32 << 20,
+module, err := workspace.Module(ctx, gomutants.ModuleQuery{
+	// Module-relative patterns as go list reads them. Empty means "./...".
+	Packages: []string{"./..."},
+	// Build tags are the consumer's own; go-mutants invents none.
+	Tags: []string{"integration"},
 })
 if err != nil {
 	return err
 }
-if listed.TimedOut || listed.ExitCode != 0 {
-	return fmt.Errorf("go list exited %d: %s", listed.ExitCode, listed.Output)
-}
-// Before decoding, not after: what survives truncation is the notice line and
-// the tail, which is not a shorter document but an unparsable one.
-if listed.Truncated {
-	return fmt.Errorf("go list produced %d bytes, more than OutputLimit "+
-		"kept; raise it", listed.TotalBytes)
-}
-decoder := json.NewDecoder(bytes.NewReader(listed.Output))
-for decoder.More() {
-	var pkg struct{ ImportPath, Dir string }
-	if decodeErr := decoder.Decode(&pkg); decodeErr != nil {
-		return decodeErr
+for _, pkg := range module.Packages {
+	if !pkg.HasTests {
+		continue
 	}
-	// …
+	// pkg.Dir is absolute and inside the frozen snapshot, so it may be read.
+	fmt.Println(pkg.ImportPath, pkg.Dir, pkg.GoFiles)
 }
 ```
 
+`Module` is `{Path, GoVersion, Toolchain, Packages, TraceSeq}`. `Path` and
+`GoVersion` are go.mod's own — read in this process with
+`golang.org/x/mod/modfile`, with no child — `Toolchain` is what
+`Workspace.ToolchainVersion` reports, and `TraceSeq` names the `exec` event the
+listing was recorded at. `GoVersion` is the directive without its keyword
+(`"1.26"`) and is **empty** for a module whose go.mod declares none, which is
+legal and which a consumer comparing versions has to handle. Each `Package` is
+`{ImportPath, Dir, Name, HasTests, GoFiles, TestGoFiles, XTestGoFiles, Imports,
+Deps, EmbedFiles}`. Every file list is relative to `Dir` and spelled as
+`go list` prints it: the Go source lists hold bare file names, and `EmbedFiles`
+holds slash-separated relative paths, because a `//go:embed` may name a file at
+any depth (`assets/deep/x.txt`).
+
+- **The answer is sorted, and memoised.** `Packages` is in import-path order
+  whatever order the patterns were given in, so two listings can be diffed. One
+  query is listed once and a second identical query is answered from the memo,
+  carrying the same `TraceSeq`. The key is the normalised query — patterns in
+  the order given, tags sorted and deduplicated — so `ModuleQuery{}` and
+  `ModuleQuery{Packages: []string{"./..."}}` are one question and a *different*
+  tag set is a different one. Two listings are not remembered: one that
+  **failed**, and one every caller **abandoned** — every caller gone before it
+  finished — because what a listing being torn down came back with was produced
+  for nobody. A listing that had already finished when its last caller left is a
+  complete listing of a frozen tree and stays.
+- **A listing is reused until a command has run.** Every memoised listing is
+  dropped when a `Workspace.Exec` call returns, because that is the one call
+  that can change the frozen tree: nothing refuses a command that writes into
+  the snapshot — a `go generate`, a test that rewrites a golden file, a fuzz
+  target the go command files a crasher for — and a package set that outlived
+  one would describe a tree nobody has. It is dropped whatever the command did,
+  since "did this one write" cannot be answered without re-freezing the tree.
+  `Prepare` needs no such rule: its integrity gate refuses a tree a command has
+  changed, and a successful preparation leaves the tree byte for byte the one
+  `Open` froze.
 - **`-tags` is the consumer's own.** go-mutants does not invent build tags, and
   a package set listed under different tags is a different package set from the
   one whose tests will be built.
 - **Run it before `Prepare`, or beside the session.** Both are allowed and the
   answer is the same, because a successful preparation leaves the tree byte for
   byte the one `Open` froze. Only a preparation *in flight* makes the call wait,
-  and only a *failed* one refuses it.
-- **Size `OutputLimit` for the whole document.** The default is 1 MiB, which a
-  large module's `go list -json` exceeds; a truncated result is not a shorter
-  document but an unparsable one, because the notice line and the tail are
-  what survive. Check `listed.Truncated` before decoding rather than letting
-  the decoder discover it: the flag says outright what a JSON syntax error at
-  byte zero only implies.
+  and only a *failed* one refuses it. It may not be called from a
+  `PrepareOptions.Trace` callback, for the reason `Workspace.Exec` may not.
+- **One listing is bounded like any other command**: by the caller's context and
+  by the same ten-minute safety default a `Command` with no `Timeout` gets.
+- **Two callers asking the same question share one `go list`.** The listing runs
+  under a context of its own rather than under whichever caller reached the memo
+  first, so a caller that goes away does not take the answer from the one still
+  waiting; when the *last* interested caller leaves before the listing has
+  finished, the child is killed and nothing is remembered — the next caller
+  lists again rather than being handed what a torn-down listing came back with.
+  A caller that leaves on its own cancelled context is told about its own
+  context and never about somebody else's, and the message names the call
+  exactly once.
+- **A bad query is refused before anything runs.** An absolute pattern — POSIX
+  or Windows-shaped, refused the same way on every operating system — one that
+  escapes the module, one that is not module-relative, one beginning with a dash
+  the go command would read as a flag, and a `Tags` element holding a comma or
+  whitespace are all `ErrInvalidQuery`, with the offending element quoted. It is
+  a refusal rather than a listing of nothing, on the rule `ErrInvalidSelection`
+  already states.
+- **Every other failure is an `*ExecutionError` with `Call: "module"`**, whether
+  it was `go list` exiting non-zero, a child that would not start, a cancelled
+  context or a go.mod that could not be read. The message begins
+  `gomutants: module: `, the cause is wrapped so `errors.Is` still reaches it,
+  and `Output` carries the toolchain's own words. The only refusals that are not
+  this type are the two a consumer *branches* on rather than reports:
+  `ErrInvalidQuery`, and the lifecycle sentinels `ErrPrepareFailed` and
+  `ErrWorkspaceClosed`.
+- **Toolchain noise on stderr is not an error.** `go list` writes its document
+  to stdout and writes `go: warning: "./x/..." matched no packages`,
+  `go: downloading …` and toolchain switches to stderr, all on a command that
+  exits zero — so the two streams are captured separately and only the document
+  is decoded. A pattern that matches nothing is an empty `Packages` and no
+  error. The combined capture is what a failure quotes and what the recording
+  digests.
+- **The recording says it happened.** One `exec` event of kind `go-list` with
+  the subject `module`, carrying the argv, the directory, the environment names
+  and the exit status, joined to the answer by `Module.TraceSeq`.
+
+`Workspace.Exec` is still the passthrough for any *other* command that has to
+see the frozen tree — a `go build`, a `go vet`, a baseline of the caller's own.
+A consumer that runs its own `go list -json` through it owns the three details
+`Module` settles: pass `Env: []string{"GOWORK=off"}` so a `go.work` above the
+snapshot cannot change the package set, raise `OutputLimit` from its 1 MiB
+default to something sized for the document, and check `CommandResult.Truncated`
+*before* decoding — what survives truncation is the notice line and the tail,
+which is not a shorter document but an unparsable one.

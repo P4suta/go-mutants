@@ -8,6 +8,8 @@ package gomutants_test
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -185,6 +187,99 @@ func moduleRelativeSlashPath(path string) bool {
 		}
 	}
 	return true
+}
+
+// TestModuleInvariants checks everything [gomutants.Module] promises, against
+// the workspace of a session that is already prepared.
+//
+// A prepared workspace is the interesting one to ask. The tree a successful
+// preparation leaves is byte for byte the one Open froze, so the listing is the
+// same listing a caller would have taken before Prepare — and every claim here
+// is one a consumer reads off the value without checking it: that the packages
+// are in one order so two listings can be diffed, that a Dir may be opened,
+// that HasTests is the file lists and not a second opinion about them, and that
+// the module's own identity is the go.mod in the frozen tree rather than
+// whatever the repository holds now.
+func TestModuleInvariants(t *testing.T) {
+	t.Parallel()
+
+	prepared := probeable(t)
+	module, err := prepared.workspace.Module(t.Context(), gomutants.ModuleQuery{})
+	if err != nil {
+		t.Fatalf("listing a prepared workspace: %v", err)
+	}
+
+	if module.Path != prepared.catalog.ModulePath {
+		t.Errorf("Module.Path = %q, want the catalogue's %q", module.Path, prepared.catalog.ModulePath)
+	}
+	if got, want := module.Toolchain, prepared.workspace.ToolchainVersion(); got != want {
+		t.Errorf("Module.Toolchain = %q, want the workspace's %q", got, want)
+	}
+	if len(module.Packages) == 0 {
+		t.Fatal("the listing names no packages, so every claim below holds vacuously")
+	}
+
+	paths := make([]string, 0, len(module.Packages))
+	for _, pkg := range module.Packages {
+		paths = append(paths, pkg.ImportPath)
+	}
+	if !slices.IsSorted(paths) {
+		t.Errorf("Packages are not sorted by ImportPath: %v", paths)
+	}
+	if len(slices.Compact(slices.Clone(paths))) != len(paths) {
+		t.Errorf("Packages name the same import path twice: %v", paths)
+	}
+
+	for _, pkg := range module.Packages {
+		if pkg.ImportPath == "" || pkg.Name == "" {
+			t.Errorf("a package is unnamed: %+v", pkg)
+		}
+		if !filepath.IsAbs(pkg.Dir) {
+			t.Errorf("%s has Dir %q, which is not absolute", pkg.ImportPath, pkg.Dir)
+		}
+		// Inside the parent that holds the workspace's snapshots, which is what
+		// makes the directory one a consumer may read: the tree the caller
+		// handed Open is never touched, and a path pointing back at it would
+		// send a consumer to the repository instead.
+		//
+		// Asked through underRoot rather than as a string prefix, because the
+		// two sides are not spelled the same. A temporary directory is reached
+		// through a symlink on macOS — TMPDIR sits under /var, which is
+		// /private/var — and the go command reports the resolved path while
+		// t.TempDir hands back the one it was given, so a prefix test would
+		// report every package as outside a parent it is plainly inside.
+		if !underRoot(t, prepared.parent, pkg.Dir) {
+			t.Errorf("%s has Dir %q, which is not inside the workspace's temporary parent %q",
+				pkg.ImportPath, pkg.Dir, prepared.parent)
+		}
+		if info, statErr := os.Stat(pkg.Dir); statErr != nil || !info.IsDir() {
+			t.Errorf("%s has Dir %q, which is not a directory on disk: %v", pkg.ImportPath, pkg.Dir, statErr)
+		}
+		if want := len(pkg.TestGoFiles)+len(pkg.XTestGoFiles) != 0; pkg.HasTests != want {
+			t.Errorf("%s HasTests = %v, want %v for TestGoFiles=%v XTestGoFiles=%v",
+				pkg.ImportPath, pkg.HasTests, want, pkg.TestGoFiles, pkg.XTestGoFiles)
+		}
+	}
+
+	// The go directive of the go.mod in the frozen tree, which is where
+	// GoVersion is read from and the one file a consumer cannot check for
+	// itself without knowing the snapshot's path.
+	root := ""
+	for _, pkg := range module.Packages {
+		if pkg.ImportPath == module.Path {
+			root = pkg.Dir
+		}
+	}
+	if root == "" {
+		t.Fatalf("the listing holds no package at the module root %q, only %v", module.Path, paths)
+	}
+	declared, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("reading the frozen go.mod: %v", err)
+	}
+	if !strings.Contains(string(declared), "\ngo "+module.GoVersion+"\n") {
+		t.Errorf("GoVersion = %q, which the frozen go.mod does not declare:\n%s", module.GoVersion, declared)
+	}
 }
 
 // TestCatalogInvariants checks the catalogue of all three shared sessions.

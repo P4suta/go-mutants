@@ -14,6 +14,96 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`Workspace.Module` answers what the frozen module holds, so a consumer does
+  not have to run `go list -json` itself and parse it.** The library had already
+  frozen the tree, located the toolchain and settled the report and snapshot
+  exclusions, and then handed the question back: docs/library.md carried a
+  recipe, and every consumer re-decided the same four things from it — which
+  package patterns are legal, how `-tags` is spelled, how much output to keep,
+  and where the module's Go version comes from. Four answers per consumer, each
+  able to be wrong on its own, to a question the workspace was already holding
+  every input to.
+
+  So it is answered directly and typed. `Module(ctx, ModuleQuery)` returns
+  `{Path, GoVersion, Toolchain, Packages, TraceSeq}`, each `Package` carrying
+  `{ImportPath, Dir, Name, HasTests, GoFiles, TestGoFiles, XTestGoFiles,
+  Imports, Deps, EmbedFiles}`, sorted by import path so two listings can be
+  diffed. `Path` and `GoVersion` are go.mod's own, read in this process with
+  `golang.org/x/mod/modfile` rather than asked of a child; `Toolchain` is what
+  `ToolchainVersion` reports, so the three identities a consumer keys evidence
+  on come from one call. `HasTests` is carried rather than left to be derived,
+  because two consumers deriving it from two different file lists is two answers
+  to one question.
+
+  It is the same call as `Workspace.Exec` underneath and keeps the whole of its
+  lifecycle: it holds the workspace shared and the tree shared around one
+  `go list -e=false -json=<fields>` child, so it runs before a preparation,
+  beside one — waiting only for the instrumentation window — and after one that
+  succeeded, and it is refused after a failed preparation with
+  `ErrPrepareFailed` and after `Close` with `ErrWorkspaceClosed`. The child is
+  in the recording like every other, as an `exec` event of kind `go-list` with
+  the subject `module`, and `Module.TraceSeq` is the join. None of it is
+  evidence: no new `PreparePhase`, and nothing in an ID, a digest or a cache
+  key.
+
+  Only the *document* is decoded. `go list` writes its JSON to stdout and writes
+  `go: warning: "./x/..." matched no packages`, `go: downloading …` and toolchain
+  switches to stderr, every one of them on a command that exits **zero** — so a
+  decoder reading the combined capture would refuse a perfectly good listing on
+  the first byte of a line the go command wrote as a courtesy, and the advertised
+  "call it before `Prepare`, on a machine that has not built this module yet"
+  case would never have worked. `internal/runner` grew `Spec.SeparateStdout` and
+  `Result.Stdout` for it. The combined capture is unchanged, is what a failure
+  quotes and is still what the recording digests; a pattern that matches nothing
+  is an empty `Packages` and no error.
+
+  The answer is **memoised** per distinct query, and dropped whenever a
+  `Workspace.Exec` call returns. The tree does not change on its own, so a
+  consumer that wants the package list in three places pays one `go list` for it
+  — but a command *can* change it, and nothing refuses one that does: a
+  `go generate`, a test that rewrites a golden file, a fuzz target the go
+  command files a crasher for. A package set that outlived one would describe a
+  tree nobody has, and "did this command write" cannot be answered without
+  re-freezing the tree, so every listing is dropped whatever the command did.
+  `Prepare` needs no such rule: its integrity gate refuses a tree a command has
+  changed, and a successful preparation leaves the tree byte for byte the one
+  `Open` froze. The key is the normalised query — patterns in the order given,
+  tags sorted and deduplicated — so `ModuleQuery{}` and
+  `ModuleQuery{Packages: []string{"./..."}}` are one question, while a different
+  tag set is a different one. That last half is what a memo must not get wrong:
+  a listing under `-tags special` is a different file set and not another
+  spelling of the same one. A query that *failed* is not remembered, so a
+  toolchain that could not answer once is asked again.
+
+  Two callers asking the same question **share one `go list`**, and the listing
+  belongs to neither: it runs under a context detached from every caller's,
+  cancelled only when the last interested caller has left. So the caller that
+  started it may go away and the one still waiting is handed the whole answer
+  rather than somebody else's `context canceled`; when every caller leaves
+  before the listing finishes, the child is cut off and nothing is remembered,
+  so the next caller lists again rather than being handed what a torn-down
+  listing came back with.
+
+  A query the engine will not resolve is refused **before any child starts**,
+  with `ErrInvalidQuery` quoting the element that was wrong: an absolute
+  pattern, one that escapes the module, one that is not module-relative, one
+  beginning with a dash the go command would read as a flag, and a `Tags`
+  element holding a comma or whitespace. It is a refusal rather than a listing
+  of nothing, on the rule `ErrInvalidSelection` already states — a pattern
+  nothing can satisfy names no package, and a consumer told that the module
+  holds nothing would believe it. Absolute is judged the same way on every
+  operating system, Windows shapes included (`C:\x`, `\\?\C:\x`,
+  `\\server\share`), because a query is composed from a consumer's own
+  configuration and a path typed on Windows reaches a Linux runner unchanged.
+
+  Every *other* failure — `go list` exiting non-zero, a child that would not
+  start, a cancelled context, a go.mod that could not be read — is an
+  `*ExecutionError` with `Call: "module"` and a message beginning
+  `gomutants: module: `, wrapping its cause so `errors.Is` still reaches it and
+  carrying the toolchain's own output. That type is borrowed rather than a new
+  one invented, because it already names this fact one call up; the sentinels
+  are the only refusals that keep their own shape, because they are the ones a
+  consumer branches on rather than reports.
 - **The test binaries are compiled from the frozen manifest, so nothing a
   command writes during the build reaches them.** A preparation's
   instrumentation window ends at `main_restoration` and the test binaries — the

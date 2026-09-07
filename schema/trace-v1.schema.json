@@ -349,7 +349,7 @@
           ]
         },
         "subject": {
-          "description": "What the command was about: a mutant id, an import path, a scope pattern — absent when the kind says everything there is to say.",
+          "description": "What the command was about: a mutant id, an import path, a scope pattern, or the name of the library call that issued it — absent when the kind says everything there is to say.",
           "type": "string",
           "minLength": 1
         },

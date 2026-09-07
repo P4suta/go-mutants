@@ -68,6 +68,29 @@ var (
 	_ func(*gomutants.Workspace) []string = (*gomutants.Workspace).Preserved
 	_ func(*gomutants.Workspace) string = (*gomutants.Workspace).ToolchainVersion
 
+	// What the frozen module holds, answered by the library rather than by a
+	// go list a consumer runs and parses itself. Every field is read by name
+	// from outside this module, so the names are as much the contract as the
+	// types are.
+	_ func(*gomutants.Workspace, context.Context, gomutants.ModuleQuery) (gomutants.Module, error) = (*gomutants.Workspace).Module
+	_ []string             = gomutants.ModuleQuery{}.Packages
+	_ []string             = gomutants.ModuleQuery{}.Tags
+	_ string               = gomutants.Module{}.Path
+	_ string               = gomutants.Module{}.GoVersion
+	_ string               = gomutants.Module{}.Toolchain
+	_ []gomutants.Package  = gomutants.Module{}.Packages
+	_ int64                = gomutants.Module{}.TraceSeq
+	_ string               = gomutants.Package{}.ImportPath
+	_ string               = gomutants.Package{}.Dir
+	_ string               = gomutants.Package{}.Name
+	_ bool                 = gomutants.Package{}.HasTests
+	_ []string             = gomutants.Package{}.GoFiles
+	_ []string             = gomutants.Package{}.TestGoFiles
+	_ []string             = gomutants.Package{}.XTestGoFiles
+	_ []string             = gomutants.Package{}.Imports
+	_ []string             = gomutants.Package{}.Deps
+	_ []string             = gomutants.Package{}.EmbedFiles
+
 	// The recording half of the workspace. A consumer either hands Open a sink
 	// of its own or reads the bounded ring back after Close, and both halves
 	// are named from outside this module.
@@ -192,6 +215,7 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 		gomutants.ErrProbeInconsistent,
 		gomutants.ErrTestLogUnsupported,
 		gomutants.ErrInvalidSelection,
+		gomutants.ErrInvalidQuery,
 	} {
 		if !errors.Is(fmt.Errorf("wrapped: %w", sentinel), sentinel) {
 			t.Errorf("%v does not survive wrapping", sentinel)
@@ -318,6 +342,10 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.Selection{}
 	_ = gomutants.LineRange{}
 	_ = gomutants.ErrInvalidSelection
+	_ = gomutants.ModuleQuery{}
+	_ = gomutants.Module{}
+	_ = gomutants.Package{}
+	_ = gomutants.ErrInvalidQuery
 
 	// The two fields a consumer keys on. PreparedDigest is what evidence about a
 	// prepared session is stored under, and EndLine is what a line range is

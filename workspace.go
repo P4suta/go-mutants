@@ -28,6 +28,10 @@ const (
 	scratchPrefix       = "go-mutants-api-"
 	workspaceExecPrefix = "exec-"
 	reservedPrefix      = "GO_MUTANTS_"
+	// execCall is what [Workspace.Exec] calls itself in a refusal. It is a
+	// constant because [Workspace.allowed] composes the sentence from it and
+	// the messages are frozen.
+	execCall = "exec"
 	// reservedEnvironmentOwner is who an environment overlay's refusal names.
 	// The engine sets these variables for itself in every child it starts, so
 	// the owner is the tool rather than one of its calls.
@@ -128,6 +132,17 @@ type Workspace struct {
 	// and a reader cannot take the writer without deadlocking itself.
 	keepMu   sync.Mutex
 	keptExec []string
+
+	// moduleMu guards the listings [Workspace.Module] has answered, keyed by
+	// the normalised query that asked for them.
+	//
+	// It is a lock of its own for the reason keepMu is: the calls that write it
+	// hold the read half of the workspace's, and a reader cannot take the
+	// writer without deadlocking itself. Like stateMu and keepMu it is a leaf —
+	// nothing is taken while it is held — so it adds no order to the three ADR
+	// 0007 states.
+	moduleMu sync.Mutex
+	modules  map[string]*moduleAnswer
 
 	// recording is where this workspace records, and the ring behind it when
 	// nobody supplied a sink. Both are written once, by Open, and read without
@@ -499,24 +514,32 @@ func (w *Workspace) publishSession(session *Session) {
 	w.session = session
 }
 
-// execAllowed is the lifecycle's answer to one command, or nil when the command
-// is the workspace's own business to judge.
+// allowed is the lifecycle's answer to one call against the frozen tree, or nil
+// when the call is the workspace's own business to judge.
 //
 // Closed is asked first, and the order is a contract rather than a habit: a
 // workspace that was closed after a preparation failed carries both facts, and
 // the consumer holding it has to be told that its workspace is gone rather than
 // sent to open another one. TestClosedWorkspaceErrorsAreSentinels pins it.
-func (w *Workspace) execAllowed() error {
+//
+// The call names itself in the sentence and shares the sentinel, and the two
+// halves are used differently: a consumer branches on [ErrWorkspaceClosed] or
+// [ErrPrepareFailed] whichever call was refused, and reads the message to find
+// out which line of its own program to go and look at.
+func (w *Workspace) allowed(call string) error {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 	if w.closed {
-		return fmt.Errorf("gomutants: exec: %w", ErrWorkspaceClosed)
+		return fmt.Errorf("gomutants: %s: %w", call, ErrWorkspaceClosed)
 	}
 	if w.prepareFailed {
-		return fmt.Errorf("gomutants: exec: %w", ErrPrepareFailed)
+		return fmt.Errorf("gomutants: %s: %w", call, ErrPrepareFailed)
 	}
 	return nil
 }
+
+// execAllowed is [Workspace.allowed] for [Workspace.Exec].
+func (w *Workspace) execAllowed() error { return w.allowed(execCall) }
 
 // claimClose marks the workspace closed and hands over the session to close
 // with it, or reports that somebody else claimed it first.
@@ -618,6 +641,14 @@ func (w *Workspace) Exec(ctx context.Context, command Command) (CommandResult, e
 	if err := w.execAllowed(); err != nil {
 		return CommandResult{}, err
 	}
+	// Every listing [Workspace.Module] is holding is dropped as this call
+	// returns, because this is the one call that can change the frozen tree:
+	// nothing refuses a command that writes into the snapshot, and a memoised
+	// package set that outlived one would describe a tree that is no longer
+	// there. "Did this command write" is not a question that can be answered
+	// without re-freezing the tree, which costs more than the listing it would
+	// save, so the answer is dropped whatever the command did.
+	defer w.forgetModules()
 	scratch, err := os.MkdirTemp(w.scratch, workspaceExecPrefix)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("gomutants: exec scratch: %w", err)
@@ -644,8 +675,9 @@ func (w *Workspace) Exec(ctx context.Context, command Command) (CommandResult, e
 		if allowedErr := w.execAllowed(); allowedErr != nil {
 			return allowedErr
 		}
-		var runErr error
-		result, runErr = w.runCommand(ctx, command, sanitiseEnvironment(w.env, scratch), trace.ExecKindWorkspaceExec)
+		run, runErr := w.runCommand(ctx, command, sanitiseEnvironment(w.env, scratch),
+			commandLabel{kind: trace.ExecKindWorkspaceExec})
+		result = run.CommandResult
 		return runErr
 	})
 	if w.keepTemp {
@@ -686,27 +718,55 @@ func (w *Workspace) keptExecScratch() []string {
 	return slices.Clone(w.keptExec)
 }
 
+// A commandLabel is what [Workspace.runCommand] needs to know about a command
+// that the [Command] value itself does not say.
+//
+// kind is the one thing about an execution this package cannot derive — an
+// embedder's baseline and the verification run inside Prepare are the same
+// syscall from here, and an unlabelled command is a recording nobody can read.
+// subject is the other half of that label and is empty wherever the kind says
+// everything there is to say; [Workspace.Module] fills it in, because a
+// `go-list` in a recording is otherwise indistinguishable from the several
+// other things that list packages.
+type commandLabel struct {
+	kind    string
+	subject string
+	// splitStdout asks internal/runner to keep the child's standard output on
+	// its own as well as combined, for the one caller that has to decode what
+	// the command printed. See [runner.Spec.SeparateStdout].
+	splitStdout bool
+}
+
+// A commandRun is one command's result together with the standard output the
+// caller asked to be kept separately, which is nil for every caller that did
+// not ask.
+//
+// It is a wrapper rather than a field on [CommandResult] because the split is
+// an implementation detail of [Workspace.Module]: what a consumer is promised
+// is the combined capture, which is also what the recording digests.
+type commandRun struct {
+	CommandResult
+	stdout []byte
+}
+
 // runCommand runs one command against the frozen snapshot, recording it under
-// the kind the caller says it is. The kind is a parameter because it is the one
-// thing about a command this function cannot know: an embedder's baseline and
-// the verification run inside Prepare are the same syscall from here, and an
-// unlabelled command is a recording nobody can read.
+// the label the caller says it is.
 func (w *Workspace) runCommand(
-	ctx context.Context, command Command, base []string, kind string,
-) (CommandResult, error) {
+	ctx context.Context, command Command, base []string, label commandLabel,
+) (commandRun, error) {
 	if len(command.Argv) == 0 || strings.TrimSpace(command.Argv[0]) == "" {
-		return CommandResult{}, errors.New("gomutants: exec: command has no executable")
+		return commandRun{}, errors.New("gomutants: exec: command has no executable")
 	}
 	if command.Timeout < 0 {
-		return CommandResult{}, errors.New("gomutants: exec: timeout is negative")
+		return commandRun{}, errors.New("gomutants: exec: timeout is negative")
 	}
 	dir, err := moduleDirectory(w.snapshot.Root, command.Dir)
 	if err != nil {
-		return CommandResult{}, fmt.Errorf("gomutants: exec directory: %w", err)
+		return commandRun{}, fmt.Errorf("gomutants: exec directory: %w", err)
 	}
 	env, err := overlayEnvironment(base, command.Env)
 	if err != nil {
-		return CommandResult{}, fmt.Errorf("gomutants: exec environment: %w", err)
+		return commandRun{}, fmt.Errorf("gomutants: exec environment: %w", err)
 	}
 	argv := slices.Clone(command.Argv)
 	if argv[0] == "go" {
@@ -717,22 +777,27 @@ func (w *Workspace) runCommand(
 		timeout = commandTimeout
 	}
 	run := runner.Run(ctx, runner.Spec{
-		Argv:        argv,
-		Dir:         dir,
-		Env:         env,
-		Timeout:     timeout,
-		OutputLimit: command.OutputLimit,
-		Trace:       w.recorder,
-		Kind:        kind,
+		Argv:           argv,
+		Dir:            dir,
+		Env:            env,
+		Timeout:        timeout,
+		OutputLimit:    command.OutputLimit,
+		SeparateStdout: label.splitStdout,
+		Trace:          w.recorder,
+		Kind:           label.kind,
+		Subject:        label.subject,
 	})
-	result := CommandResult{
-		ExitCode:   run.ExitCode,
-		TimedOut:   run.TimedOut,
-		Duration:   run.Duration,
-		Output:     slices.Clone(run.Output),
-		Truncated:  run.Truncated,
-		TotalBytes: run.OutputBytes,
-		TraceSeq:   run.TraceSeq,
+	result := commandRun{
+		CommandResult: CommandResult{
+			ExitCode:   run.ExitCode,
+			TimedOut:   run.TimedOut,
+			Duration:   run.Duration,
+			Output:     slices.Clone(run.Output),
+			Truncated:  run.Truncated,
+			TotalBytes: run.OutputBytes,
+			TraceSeq:   run.TraceSeq,
+		},
+		stdout: slices.Clone(run.Stdout),
 	}
 	if run.Err != nil {
 		return result, fmt.Errorf("gomutants: exec process: %w", run.Err)
@@ -777,6 +842,11 @@ func (w *Workspace) Close() error {
 	w.snapshot = nil
 	w.scratch = ""
 	w.scratchOwner = nil
+	// The listings go with the tree they described. Nothing can read them again
+	// — Module is refused after this — and a workspace whose Close returned
+	// still holding a package set for every query somebody asked is a workspace
+	// that kept the memory it was closed to release.
+	w.forgetModules()
 	w.mu.Unlock()
 
 	var closeErr error

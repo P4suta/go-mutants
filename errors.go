@@ -471,9 +471,20 @@ func invocationArgv(invocation *runner.Invocation) []string {
 // a fuzz workspace that could not be copied, and the artifacts captured after a
 // fuzz target are plain errors today: they happen before or after the
 // measurement, carry no diagnostic code, and a consumer reads their message.
+//
+// [Workspace.Module] borrows it for the same fact one call up: a listing that
+// could not be made is a child go-mutants started and could not use, and what a
+// caller needs is the toolchain's own words rather than a sentence go-mutants
+// wrote. Such a value carries `Call: "module"`, and it covers every way that
+// call can fail short of a query it refuses outright and a workspace that is no
+// longer answering — `go list` exiting non-zero, a child that would not start,
+// a context cancelled underneath it, a go.mod it could not read.
+// [ExecutionError.Code] is filled in only where the failure was go-mutants' own
+// and carried a diagnostic; the go command's own refusals are not go-mutants
+// diagnostics and leave it empty.
 type ExecutionError struct {
-	// Call is "exec", "probe" or "control": which of the session's three runs
-	// failed.
+	// Call is "exec", "probe" or "control" — which of the session's three runs
+	// failed — or "module" for a [Workspace.Module] listing.
 	Call string
 	// Package is the import path of the test binary the failure was about,
 	// whenever the failure named one — the binary that would not start, the one
@@ -483,7 +494,8 @@ type ExecutionError struct {
 	// failures that are about the pass rather than about one binary, and is
 	// empty when neither says anything: the request's field is a *selector*,
 	// which may be a module-relative directory and is empty for the ordinary
-	// request that measures every prepared binary.
+	// request that measures every prepared binary. A `module` listing is about
+	// a set of patterns rather than a package, and leaves it empty.
 	Package string
 	// Code is the stable diagnostic code, for example "GOM7513".
 	Code string
