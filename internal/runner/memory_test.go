@@ -192,9 +192,28 @@ func TestRunKillsATreeThatExceedsItsMemoryLimit(t *testing.T) {
 	if result.TimedOut {
 		t.Error("TimedOut = true: the bound must reach a runaway before the deadline does, which is the point of it")
 	}
-	if result.ExitCode != runner.ExitCodeUnavailable {
-		t.Errorf("ExitCode = %d, want ExitCodeUnavailable (%d), as for any tree this package killed",
-			result.ExitCode, runner.ExitCodeUnavailable)
+	// Two things can enforce this bound and they end the tree differently, so
+	// the assertion is on the contract rather than on whichever one won today.
+	//
+	// The sampler reads a number above the limit and kills the tree, and a tree
+	// this package killed reports [runner.ExitCodeUnavailable] like any other.
+	// Where the platform carries a kernel line of its own — Windows'
+	// JOB_OBJECT_LIMIT_JOB_MEMORY, a quarter above the sampler's — a tree that
+	// crosses both between two samples has its next commit refused instead: the
+	// Go runtime dies of it with a status of its own, nothing killed anything,
+	// and [runner.Result.MemoryExceeded] is set from the final peak by
+	// exceededAtExit, which keeps the child's exit code on purpose. That code
+	// was 2 on the windows-latest run that found this assertion.
+	//
+	// Both are the bound doing its job, and what they have in common is the
+	// pair above — MemoryExceeded set and TimedOut clear — plus a status that
+	// is not success.
+	killedByUs := result.ExitCode == runner.ExitCodeUnavailable
+	endedByTheKernelsLine := runner.KernelBoundsMemory() && result.ExitCode != 0
+	if !killedByUs && !endedByTheKernelsLine {
+		t.Errorf("ExitCode = %d, want ExitCodeUnavailable (%d) for a tree this package killed, or a "+
+			"non-zero status for one the kernel's own line ended (this platform carries such a line: %v)",
+			result.ExitCode, runner.ExitCodeUnavailable, runner.KernelBoundsMemory())
 	}
 	if result.OK() {
 		t.Error("OK() = true for a run the bound stopped")
@@ -223,6 +242,22 @@ func TestRunKillsATreeThatExceedsItsMemoryLimit(t *testing.T) {
 // The direct child does nothing but sleep, so its own footprint is nowhere near
 // the bound; all the growth belongs to a grandchild. A bound that trips is a
 // bound that summed the tree.
+//
+// The same two enforcement paths as
+// [TestRunKillsATreeThatExceedsItsMemoryLimit] end this one differently, and
+// here the difference is not only the exit code. The sampler kills the whole
+// tree and the run ends early with MemoryExceeded. The kernel's own line, where
+// there is one, refuses the *grandchild's* next commit — and this test's direct
+// child only sleeps and then exits 0, so `exceededAtExit`, which needs a
+// non-zero status to attribute anything to the bound, cannot report it. The
+// kill is real and invisible from here.
+//
+// So the claim this test is named for is asserted from the peak, which holds on
+// both paths: the number came from the tree rather than from the sleeping
+// child. The early ending is asserted only on the path where it means the bound
+// stopped something, and the other path is held to the one thing left that
+// tells enforcement from nothing at all — the grandchild did not get its whole
+// budget.
 func TestTheMemoryBoundSeesTheWholeTreeAndNotOnlyTheChild(t *testing.T) {
 	t.Parallel()
 	requireEnforcement(t)
@@ -251,12 +286,34 @@ func TestTheMemoryBoundSeesTheWholeTreeAndNotOnlyTheChild(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("Err = %v, want nil", result.Err)
 	}
-	if !result.MemoryExceeded {
-		t.Fatalf("MemoryExceeded = false with a %d byte bound and a grandchild growing past it: "+
-			"the bound measured the child alone; output: %s", limit, result.Output)
+	// The claim itself, and it does not depend on which path enforced the
+	// bound: a peak above two footprints is a peak that summed a tree, since
+	// neither the sleeping child nor a just-started grandchild costs more than
+	// one.
+	if treeOnly := 2 * footprint; result.PeakMemory <= treeOnly {
+		t.Errorf("PeakMemory = %d, no more than the two footprints (%d) the child and its grandchild "+
+			"cost before either grew: the bound measured a process rather than the tree",
+			result.PeakMemory, treeOnly)
 	}
-	if elapsed >= childIdle {
-		t.Errorf("Run took %v; the child's own %v sleep ended it rather than the bound", elapsed, childIdle)
+	switch {
+	case result.MemoryExceeded:
+		if elapsed >= childIdle {
+			t.Errorf("Run took %v; the child's own %v sleep ended it rather than the bound", elapsed, childIdle)
+		}
+	case runner.KernelBoundsMemory():
+		// The kernel refused the grandchild's commit and the sleeping child
+		// carried none of that in its status. What separates that from a bound
+		// nothing enforced is how far the tree got: a grandchild nothing
+		// stopped grows to the helper's whole budget.
+		if unbounded := footprint + hogTotal; result.PeakMemory >= unbounded {
+			t.Errorf("PeakMemory = %d, which is a footprint plus the helper's whole %d budget: the "+
+				"grandchild ran out of steps rather than out of budget, so nothing bounded the tree",
+				result.PeakMemory, hogTotal)
+		}
+	default:
+		t.Fatalf("MemoryExceeded = false with a %d byte bound and a grandchild growing past it, on a "+
+			"platform whose only enforcement is the sampler: the bound measured the child alone; "+
+			"output: %s", limit, result.Output)
 	}
 }
 

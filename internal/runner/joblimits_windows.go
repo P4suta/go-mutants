@@ -50,9 +50,14 @@ import (
 // TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch, green on
 // every other Windows run before and since.
 //
-// internal/runner/unsafeptr_test.go is the rule as a gate, over the whole
-// module and on every platform, because `go vet` has no analyzer for this
-// direction of the conversion.
+// internal/sourcegate/unsafeptr_test.go is the rule as a gate, over the whole
+// module and for every target this repository builds, because `go vet` has no
+// analyzer for this direction of the conversion. It lives in a package of its
+// own rather than beside this file, and the reason is worth reading before
+// moving it back: type-checking a module is a gigabyte of heap, and a gigabyte
+// of heap in *this* package's test binary is charged to the next child it forks
+// — which is precisely how the memory tests here measure the footprint every
+// bound in them is derived from.
 var (
 	kernel32                      = windows.NewLazySystemDLL("kernel32.dll")
 	procSetInformationJobObject   = kernel32.NewProc("SetInformationJobObject")

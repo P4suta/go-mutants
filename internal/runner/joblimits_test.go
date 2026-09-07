@@ -4,9 +4,25 @@
 package runner
 
 import (
+	"fmt"
 	"math"
+	"math/bits"
 	"testing"
 )
+
+// fitsUnderTheCeiling reports whether a bound of limit bytes leaves a line
+// above it inside a uintptr, which is the rule [kernelJobMemoryLimit] states
+// and the one case in this file whose answer is not the same on every build.
+//
+// A 32-bit uintptr tops out three orders of magnitude below an int64, so a
+// bound near the top of that range has no line above it to give and the kernel
+// is asked for none — while the same bound on a 64-bit build fits with room to
+// spare. The rows below derive their expectation from this rather than typing a
+// literal, because a literal could only be right on one word size and the gate
+// this file is part of runs on both.
+func fitsUnderTheCeiling(limit int64) bool {
+	return limit > 0 && uint64(limit) < uint64(^uintptr(0))
+}
 
 // TestJobLimitsPairEveryFlagWithTheValueItNames is the arithmetic underneath
 // the Windows job object, checked on every platform because it is not a
@@ -36,7 +52,16 @@ func TestJobLimitsPairEveryFlagWithTheValueItNames(t *testing.T) {
 		{"a negative bound", -1, false},
 		{"an ordinary bound", 1 << 30, true},
 		{"a bound of one byte", 1, true},
-		{"the largest bound an int64 holds", math.MaxInt64, true},
+		// The one row whose answer is a property of the build rather than of
+		// the arithmetic: a 64-bit uintptr has room above math.MaxInt64 and a
+		// 32-bit one is three orders of magnitude below it, so there the kernel
+		// is asked for no line at all and the sampler is the whole bound.
+		{
+			fmt.Sprintf("the largest bound an int64 holds, which only a 64-bit uintptr can sit above "+
+				"(this build has %d)", bits.UintSize),
+			math.MaxInt64,
+			fitsUnderTheCeiling(math.MaxInt64),
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()

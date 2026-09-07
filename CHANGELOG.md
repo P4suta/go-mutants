@@ -3529,6 +3529,19 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- A memory-bound test no longer assumes which of the two enforcement paths won.
+  A tree stopped by the sampler is killed by go-mutants and reports
+  `ExitCodeUnavailable`; a tree that crosses the kernel's own line — Windows'
+  `JOB_OBJECT_LIMIT_JOB_MEMORY`, a quarter above the sampler's — has its next
+  commit refused instead, so the Go runtime dies of it with a status of its own
+  and `MemoryExceeded` is set from the final peak with the child's exit code
+  kept. Both are the bound working, and `internal/runner`'s tests asserted the
+  first: one windows-latest run took the kernel's path and failed with
+  `ExitCode = 2, want ExitCodeUnavailable (-1)`. The assertions now state the
+  contract — `MemoryExceeded` set, `TimedOut` clear, and a status that is either
+  this package's kill or a non-zero one from a platform that carries a kernel
+  line — and the whole-tree test, whose sleeping child cannot carry the
+  grandchild's fate in its own status, says what each path leaves observable.
 - The Windows job object's limits are no longer written through a pointer the
   Go runtime is free to move. `SetInformationJobObject` and
   `QueryInformationJobObject` take the structure as an address plus a length,
@@ -3566,9 +3579,14 @@ Entries say *why* a change was made, not only what changed.
   where it is a failed run. A failed call now names the flags, the memory limit
   and the structure size it was refused with, because the previous message left
   the next occurrence as undiagnosable as the first. And the rule itself is a
-  gate: a source scan over the whole module fails on any
-  `uintptr(unsafe.Pointer(...))` outside a syscall's argument list, which `go
-  vet` has no analyzer for.
+  gate, for which `go vet` has no analyzer: the module is type-checked — once
+  for `GOOS=windows`, because a build constraint hides a file from the type
+  checker exactly as it hides it from the compiler, and once for the host — and
+  any `uintptr(unsafe.Pointer(...))` outside the argument list of a call the
+  compiler treats specially is a failure. It resolves bindings rather than
+  matching names, so an aliased `unsafe` import is still an offender, a local
+  named `syscall` with a `SyscallN` method is not a defence, and an aliased real
+  `syscall` import is not a false positive.
 - A child no longer inherits the parent's `GOCOVERDIR`. Every environment
   `internal/execute` composes — for the `go` commands, for a mutant's test
   binary, for a probe pass, for a control run and for the coverage profiling
