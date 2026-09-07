@@ -404,9 +404,13 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 560 mutants, about 1m20s, 100.00%. It
-# was 121 mutants in 48-50 seconds before internal/mutation's suites grew the
-# tests that let the scope take that whole package, and 16 mutants in 7m08s
+# The budget this job is sized against: 600 mutants, 100.00%, and a wall clock
+# written down in .go-mutants.toml under [policy] rather than here, next to the
+# scope it belongs to. It was 566 mutants before internal/testflag,
+# internal/operatorselect and internal/drift joined the floor -- thirty-four
+# more mutants for about a second of warm wall clock and for nothing at all
+# cold -- 121 mutants in 48-50 seconds before internal/mutation's suites grew
+# the tests that let the scope take that whole package, and 16 mutants in 7m08s
 # before a `test.command` naming package patterns began to scope the *test
 # binaries* rather than only the baseline -- so a mutant runs the suites that
 # cover it instead of every suite in the module, internal/discover's
