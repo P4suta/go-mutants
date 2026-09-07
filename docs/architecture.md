@@ -974,7 +974,7 @@ test at all — a `go` that hangs cannot be installed. It also gives the unit ti
 an assertion it never had: the call log is the argv, the working directory and
 the composed `GOFLAGS`, `GOWORK`, `GOCACHE` and activation variables a child
 process really received, so "the compile carries `-vet=off` and the listing does
-not" is now a claim about a process rather than about a struct. Only those five
+not" is now a claim about a process rather than about a struct. Only nine
 values are kept — `GOFLAGS`, `GOWORK`, `GOCACHE`, `GOTOOLCHAIN`, `GOENV`,
 `GOMODCACHE`, `PATH` and the two activation variables, all of them flag lists or
 paths; every other variable is logged by name alone, because a call log is
