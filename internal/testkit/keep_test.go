@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -194,7 +195,15 @@ func TestScratchIsKeptWhenTheTestFailsUnderThePolicy(t *testing.T) {
 
 // TestScratchIsRemovedWhenTheTestPassesUnderKeepOnFailure is the other half of
 // the same policy, and the half a disk depends on: CI turns keeping on for every
-// job, and a green job must leave nothing behind.
+// job, and a green job must leave no evidence behind.
+//
+// No evidence, rather than no directory. The package directory the scratch was
+// filed under is left exactly where it is, empty, and this test says so on
+// purpose — removing it as soon as it was empty is what raced two test binaries
+// filing under the same short name against each other, and an empty directory
+// buys nothing: actions/upload-artifact puts files in an artifact and skips
+// empty directories, `if-no-files-found: ignore` says nothing about them, and
+// `mise run test-clean` empties the whole root regardless.
 func TestScratchIsRemovedWhenTheTestPassesUnderKeepOnFailure(t *testing.T) {
 	root := keptRootFor(t, "on-failure")
 
@@ -206,12 +215,15 @@ func TestScratchIsRemovedWhenTheTestPassesUnderKeepOnFailure(t *testing.T) {
 	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("the scratch directory %s outlived a test that passed: %v", dir, err)
 	}
-	// The package directory above it goes too. Under keep-on-failure every test
-	// in a green suite makes and removes one of these, and a run that left the
-	// empty parents behind would fill the kept root with a directory per package
-	// saying nothing — which CI would then upload.
-	if _, err := os.Stat(filepath.Join(root, packageShortName())); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("the package directory outlived the only test in it: %v", err)
+	pkg := filepath.Join(root, packageShortName())
+	entries, err := os.ReadDir(pkg)
+	if err != nil {
+		t.Fatalf("the package directory %s was removed rather than left empty, which is the prune "+
+			"that cannot be made safe across two test binaries: %v", pkg, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("%s still holds %d entry/entries after the only test in it passed: %v",
+			pkg, len(entries), entries)
 	}
 }
 
@@ -612,5 +624,69 @@ func TestForceFailFiresForATestThatTakesNoScratch(t *testing.T) {
 	if len(tb.errors) != 1 {
 		t.Errorf("a test that took no scratch was reported %d time(s), want 1: %q",
 			len(tb.errors), tb.errors)
+	}
+}
+
+// TestConcurrentScratchesSurviveConcurrentSiblings is the CI failure that turned
+// an ubuntu job red on PR #48 with the keep policy on:
+//
+//	creating a kept scratch directory under /home/runner/work/_temp/go-mutants-kept:
+//	mkdir …/go-mutants-kept/testkit/TestImportGateNamesAProductionImportOfTh-05eeab:
+//	no such file or directory
+//
+// Nothing was wrong with the name and nothing was wrong with the root. Parallel
+// tests file their directories under one package directory, and the cleanup of
+// the one that finished first removed its own directory and then removed that
+// package directory, empty at that instant — while another was between the
+// [os.MkdirAll] of the parent and the [os.Mkdir] of its own directory. The
+// second syscall landed in a directory that no longer existed, and a test with
+// nothing to do with keeping failed on the harness's own bookkeeping.
+//
+// Nothing removes the package directory any more, so this is now the guard that
+// the removals still happening — one per test that passed — cannot break a
+// creation beside them. It stays because the failure it reproduced was
+// timing-dependent and rare enough to be argued with: many workers creating and
+// removing under one package directory, every creation asserted to succeed.
+func TestConcurrentScratchesSurviveConcurrentSiblings(t *testing.T) {
+	keptRootFor(t, "1")
+
+	const (
+		workers = 32
+		rounds  = 40
+	)
+	var (
+		mu       sync.Mutex
+		failures []string
+		wg       sync.WaitGroup
+	)
+	for worker := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for round := range rounds {
+				// A name of its own per directory, because the ledger is keyed
+				// by the test's name and these stand in for different tests.
+				tb := newKeepTB(t, fmt.Sprintf("TestParallelWorker%02d/round=%02d", worker, round))
+				tb.run(func(inner testing.TB) { Scratch(inner) })
+				// The policy is on-failure and the fake passed, so this removes
+				// the directory again — the other half of what runs concurrently
+				// under one package directory.
+				tb.finish()
+				if len(tb.fatals) == 0 {
+					continue
+				}
+				mu.Lock()
+				failures = append(failures, tb.fatals...)
+				mu.Unlock()
+				return
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(failures) != 0 {
+		t.Fatalf("%d of %d kept directories could not be created while a sibling was being removed; "+
+			"the first few:\n  %s", len(failures), workers*rounds,
+			strings.Join(failures[:min(len(failures), 5)], "\n  "))
 	}
 }

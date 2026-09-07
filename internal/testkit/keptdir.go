@@ -146,10 +146,6 @@ func PackageScratch(name string) (dir string, release func(failed bool)) {
 			policy = KeepNever
 		}
 	}
-	// Under the kept root the package directory above is pruned with the
-	// directory; under the operating system's temporary one it is /tmp, which is
-	// nobody's to remove.
-	prune := policy != KeepNever
 	if policy == KeepNever {
 		created = temporaryPackageScratch(name)
 	}
@@ -160,7 +156,7 @@ func PackageScratch(name string) (dir string, release func(failed bool)) {
 		// path the path there was before this existed: a package that failed
 		// with the policy off leaves nothing behind.
 		if policy == KeepNever || (policy == KeepOnFailure && !failed) {
-			removeQuietly(created, prune)
+			removeQuietly(created)
 			return
 		}
 		writeReport(created, packageReport(created, name, policy, failed))
@@ -236,8 +232,46 @@ func newKeptDirLocked(t testing.TB, l *ledger) string {
 }
 
 // makeKeptDir creates `<parent>/<name cut short>-<six hex digits>`, retrying a
-// collision.
+// collision — and retrying once more if the parent is gone when the leaf is
+// made.
+//
+// # Why the parent could vanish, and why nothing here removes one now
+//
+// The parent is `<kept root>/<package>` and every test in a binary files under
+// it. It used to be removed by the cleanup of whichever test emptied it, and
+// under t.Parallel that removal landed between another test's MkdirAll of the
+// same parent and the Mkdir of its own directory: the second syscall found no
+// directory, and a test with nothing to do with keeping failed on the harness's
+// own bookkeeping. It is what turned an ubuntu job on PR #48 red:
+//
+//	creating a kept scratch directory under /home/runner/work/_temp/go-mutants-kept:
+//	mkdir …/go-mutants-kept/testkit/TestImportGateNamesAProductionImportOfTh-05eeab:
+//	no such file or directory
+//
+// A mutex is not an answer to that, because the two racing sides need not be in
+// one process: `go test ./...` runs the root package's binary and
+// cmd/go-mutants' beside each other, [packageShortName] calls both `go-mutants`,
+// both file under `<kept root>/go-mutants`, and one process's removal means
+// nothing to the other's lock. So nothing removes a package directory at all,
+// and an empty one is left where it is — which costs nothing anybody notices:
+// actions/upload-artifact puts files in an artifact and skips empty directories,
+// and `mise run test-clean` empties the whole kept root regardless.
+//
+// The one retry stays for the deleter this package does not control — somebody's
+// `rm -rf`, a CI step tidying the runner's temporary directory, a sweeper with
+// an opinion about stale files. The window is two syscalls wide, and the second
+// attempt makes the parent again.
 func makeKeptDir(parent, name string) (string, error) {
+	dir, err := makeKeptDirOnce(parent, name)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return dir, err
+	}
+	return makeKeptDirOnce(parent, name)
+}
+
+// makeKeptDirOnce is one attempt at [makeKeptDir]: the parent, then the leaf,
+// under the collision retry [keptNameAttempts] bounds.
+func makeKeptDirOnce(parent, name string) (string, error) {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", err
 	}
@@ -323,19 +357,15 @@ var packageShortName = sync.OnceValue(func() string {
 // removeKept removes a directory that is not being kept, retrying a file
 // something still holds open.
 //
-// The package directory above it goes too when it is the last one in it, which
-// is not tidiness: under keep-on-failure every test in a green suite creates and
-// removes one of these, and a run that left the empty parents behind would fill
-// the kept root with a directory per package saying nothing at all — and
-// `if-no-files-found: ignore` in CI would then upload them.
+// The package directory above it stays, empty. Removing it the moment it was
+// empty is the race [makeKeptDir] describes, and no lock closes that one, since
+// the two sides can be two test binaries. What a green run has to leave nothing
+// of is evidence, and evidence is files — an empty directory is neither.
 func removeKept(t testing.TB, dir string) {
 	t.Helper()
 	var err error
 	for attempt := range keptRemovalAttempts {
 		if err = os.RemoveAll(dir); err == nil {
-			// Fails with ENOTEMPTY as soon as any sibling is still there, which
-			// is the answer rather than a problem.
-			_ = os.Remove(filepath.Dir(dir))
 			return
 		}
 		if attempt < keptRemovalAttempts-1 {
@@ -348,17 +378,11 @@ func removeKept(t testing.TB, dir string) {
 		"(a file in it is probably still open): %v", dir, err)
 }
 
-// removeQuietly is [removeKept] for a caller with no test to report to.
-//
-// prune says whether the directory above may go with it, and the answer is only
-// yes under the kept root: the temporary form's parent is the operating
-// system's temporary directory, which is nobody's to remove.
-func removeQuietly(dir string, prune bool) {
+// removeQuietly is [removeKept] for a caller with no test to report to, and
+// leaves the directory above it alone for the same reason.
+func removeQuietly(dir string) {
 	for attempt := range keptRemovalAttempts {
 		if err := os.RemoveAll(dir); err == nil {
-			if prune {
-				_ = os.Remove(filepath.Dir(dir))
-			}
 			return
 		}
 		if attempt < keptRemovalAttempts-1 {

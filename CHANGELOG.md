@@ -2900,6 +2900,26 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- Parallel tests under the keep policy no longer fail on the test harness's own
+  bookkeeping. Every test in one binary files its scratch directory under the
+  same `<kept root>/<package>` directory, and a passing test's cleanup removed
+  its own directory and then that package directory as soon as it was empty — so
+  one test's removal could land between another test's `MkdirAll` of the parent
+  and the `Mkdir` of its own directory, and the second syscall failed with
+  `ENOENT` in a test that had nothing to do with keeping. It is what turned an
+  ubuntu job red: the `mkdir` of a kept directory under the run's
+  `go-mutants-kept/testkit` came back `no such file or directory`.
+
+  The fix is that nothing removes a package directory any more. A lock would
+  have been the wrong answer, because the two racing sides need not be in one
+  process: `go test ./...` runs the root package's test binary and
+  `cmd/go-mutants`' beside each other, both are named `go-mutants` after the
+  binary, both file under `<kept root>/go-mutants`, and one process's removal
+  means nothing to the other's mutex. An empty package directory is the cheaper
+  end of that trade — `actions/upload-artifact` puts files in an artifact and
+  skips empty directories, so a green job still uploads nothing, and `mise run
+  test-clean` empties the whole kept root regardless. A creation that loses to a
+  deleter nothing here controls is still retried once.
 - A run no longer stops because `go vet` disapproves of go-mutants' own
   generated code. A Form C guard renders each alternative from the pristine
   bytes with one edit applied and splices it in beside the original, so the

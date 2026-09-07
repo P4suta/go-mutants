@@ -131,6 +131,16 @@
 // who has been keeping things is expected to empty it; nothing here decides
 // that somebody else's evidence is stale.
 //
+// Empty package directories remain until `mise run test-clean` as well.
+// `<kept root>/<package>` is made when the first test of a binary files
+// something and nothing removes it afterwards — not even a green run that
+// removed everything in it. Removing it the moment it was empty is what raced
+// two test binaries filing under one short name against each other, with an
+// ENOENT in whichever was between making the parent and making its own
+// directory; and an empty directory is not evidence, so a green job still
+// uploads nothing, since actions/upload-artifact puts files in an artifact and
+// skips empty directories.
+//
 // GO_MUTANTS_TEST_KEEP_DIR is also how to put the root somewhere fast. The
 // default is under the user cache directory, which is on the machine's disk;
 // pointing it at a tmpfs makes every kept directory a memory write and every
