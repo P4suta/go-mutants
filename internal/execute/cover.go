@@ -66,38 +66,7 @@ type CoverageData struct {
 // data written inside it would be indistinguishable from a test writing into
 // the tree, which is exactly what the drift gate exists to catch.
 func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir string) ([]CoverageData, error) {
-	opts, err := opts.resolve()
-	if err != nil {
-		return nil, err
-	}
-	if opts.CoverPkg == "" {
-		return nil, &Error{
-			Code:    CodeOptions,
-			Message: "the test binaries were not built with coverage instrumentation, so there is nothing to collect",
-		}
-	}
-	root, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, &Error{
-			Code: CodeCoverageDir,
-			Message: "the coverage directory " + strconv.Quote(dir) +
-				" cannot be resolved against the working directory",
-			Err: err,
-		}
-	}
-	if insideSnapshot(root, opts.SnapshotRoot) {
-		return nil, &Error{
-			Code: CodeCoverageDir,
-			Message: "the coverage directory " + strconv.Quote(root) +
-				" is inside the snapshot; coverage data written into the tree is indistinguishable from a test that wrote into it",
-		}
-	}
-
-	// The same temporary-directory redirection every mutant run gets, resolved
-	// and created once. A `-cover` binary writes into the temporary directory
-	// even when it is told where to put its coverage data, so this pass needs
-	// one that exists as much as an execution worker does.
-	scratch, err := workerScratch(opts.ScratchDir)
+	opts, root, scratch, err := coverageTarget(opts, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -105,16 +74,10 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 	collected := make([]CoverageData, 0, len(bins))
 	for i, bin := range bins {
 		// One directory per binary, named by position rather than by import
-		// path: an import path is not a file name, and the order here is the
-		// sorted order [BuildTestBinaries] returned, so the names are stable
-		// between two runs of one workspace.
-		binDir := filepath.Join(root, strconv.Itoa(i))
-		if err := os.MkdirAll(binDir, 0o755); err != nil {
-			return nil, &Error{
-				Code:    CodeCoverageDir,
-				Message: "the coverage directory " + strconv.Quote(binDir) + " could not be created",
-				Err:     err,
-			}
+		// path; see profileDir.
+		binDir, err := profileDir(root, i)
+		if err != nil {
+			return nil, err
 		}
 
 		spec := runner.Spec{
@@ -147,4 +110,68 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 		collected = append(collected, CoverageData{ImportPath: bin.ImportPath, Dir: binDir})
 	}
 	return collected, nil
+}
+
+// coverageTarget is what both profiling passes check before they start a
+// binary: options that can profile, a directory outside the snapshot to write
+// into, and the temporary directory every run is redirected to.
+//
+// It returns the resolved options, the absolute directory the profiles go
+// under, and the scratch directory, in that order.
+func coverageTarget(opts Options, dir string) (Options, string, string, error) {
+	opts, err := opts.resolve()
+	if err != nil {
+		return opts, "", "", err
+	}
+	if opts.CoverPkg == "" {
+		return opts, "", "", &Error{
+			Code:    CodeOptions,
+			Message: "the test binaries were not built with coverage instrumentation, so there is nothing to collect",
+		}
+	}
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return opts, "", "", &Error{
+			Code: CodeCoverageDir,
+			Message: "the coverage directory " + strconv.Quote(dir) +
+				" cannot be resolved against the working directory",
+			Err: err,
+		}
+	}
+	if insideSnapshot(root, opts.SnapshotRoot) {
+		return opts, "", "", &Error{
+			Code: CodeCoverageDir,
+			Message: "the coverage directory " + strconv.Quote(root) +
+				" is inside the snapshot; coverage data written into the tree is indistinguishable from a test that wrote into it",
+		}
+	}
+
+	// The same temporary-directory redirection every mutant run gets, resolved
+	// and created once. A `-cover` binary writes into the temporary directory
+	// even when it is told where to put its coverage data, so this pass needs
+	// one that exists as much as an execution worker does.
+	scratch, err := workerScratch(opts.ScratchDir)
+	if err != nil {
+		return opts, "", "", err
+	}
+	return opts, root, scratch, nil
+}
+
+// profileDir creates one directory for one profile under root and names it by
+// the positions given, which is a name that is stable between two runs of one
+// workspace: an import path or a test name is not a file name, and the order
+// the callers walk in is the sorted order [BuildTestBinaries] returned.
+func profileDir(root string, positions ...int) (string, error) {
+	dir := root
+	for _, position := range positions {
+		dir = filepath.Join(dir, strconv.Itoa(position))
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", &Error{
+			Code:    CodeCoverageDir,
+			Message: "the coverage directory " + strconv.Quote(dir) + " could not be created",
+			Err:     err,
+		}
+	}
+	return dir, nil
 }

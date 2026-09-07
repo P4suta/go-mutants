@@ -249,3 +249,49 @@ func TestRelativeTo(t *testing.T) {
 		})
 	}
 }
+
+// TestCompareTestKeysOrdersByImportPathThenName pins the one order every list
+// of keys uses, field by field, because the callers sort sets that come out of
+// a map: a comparator that answered 0 too often would leave those lists in
+// iteration order, which is a different order on every run and a flake in
+// every test that reads one.
+func TestCompareTestKeysOrdersByImportPathThenName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a, b TestKey
+		want int
+	}{
+		{
+			name: "the import path decides before the name is looked at",
+			a:    TestKey{ImportPath: "example.com/m/a", Name: "TestZ"},
+			b:    TestKey{ImportPath: "example.com/m/b", Name: "TestA"},
+			want: -1,
+		},
+		{
+			name: "the name decides within one binary",
+			a:    TestKey{ImportPath: "example.com/m/a", Name: "TestA"},
+			b:    TestKey{ImportPath: "example.com/m/a", Name: "TestB"},
+			want: -1,
+		},
+		{
+			name: "equal keys compare equal",
+			a:    TestKey{ImportPath: "example.com/m/a", Name: "TestA"},
+			b:    TestKey{ImportPath: "example.com/m/a", Name: "TestA"},
+			want: 0,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := compareTestKeys(test.a, test.b); got != test.want {
+				t.Errorf("compareTestKeys(%v, %v) = %d, want %d", test.a, test.b, got, test.want)
+			}
+			if got := compareTestKeys(test.b, test.a); got != -test.want {
+				t.Errorf("compareTestKeys(%v, %v) = %d, want %d: the order is not antisymmetric", test.b, test.a, got, -test.want)
+			}
+		})
+	}
+}

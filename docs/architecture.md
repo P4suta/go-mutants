@@ -1001,10 +1001,10 @@ is the whole of what was asked for and a failure is an error.
 | `internal/tempowner` | Temporary-directory lock, marker, and orphan sweep | implemented |
 | `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
 | `internal/runner` | One process, timed, supervised and recorded; tree kill | implemented |
-| `internal/coverage` | covdata textfmt parsing, line overlap mapping | implemented |
+| `internal/coverage` | covdata textfmt parsing, line overlap mapping per binary and per test | implemented |
 | `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
-| `internal/execute` | Test-binary build, scheduling, timeout retry | implemented |
+| `internal/execute` | Test-binary build, profiling per binary and per test, scheduling, timeout retry | implemented |
 | `internal/operatorselect` | Shared profile/family/rule selection | implemented |
 | `internal/drift` | Shared instrumentation-aware snapshot drift gate | implemented |
 | `internal/testflag` | Shared Go test-binary flag recognition | implemented |
