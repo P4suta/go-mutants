@@ -96,7 +96,7 @@ profile = "balanced"
 # os.ReadFile in LoadFile: everything a mutant can reach below that takes bytes
 # and returns an answer.
 #
-# The tenth is the one that breaks that sentence, and it is the largest.
+# The eleventh is the one that breaks that sentence, and it is the largest.
 # internal/report is what a run writes down: the RunReport v1 document every
 # other output is derived from, the history store kept under the operating
 # system's cache directory, the projection into the published
@@ -643,7 +643,7 @@ id = "e136ee1f2165220ec767905f8c86ed8a73d44f043657f2ac293afc970793a275"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [test]
-# An argv vector, never a shell string. Scoped to the ten packages the mutated
+# An argv vector, never a shell string. Scoped to the eleven packages the mutated
 # files live in, which is what the baseline proves before any mutant runs. The
 # list has to track `include` above line for line: a package whose files are
 # mutated but whose suite is not named here has no binary covering it, so every

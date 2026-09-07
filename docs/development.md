@@ -1208,7 +1208,7 @@ undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
-the settings they justify. It covers ten whole packages:
+the settings they justify. It covers eleven whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
@@ -1385,18 +1385,12 @@ different number of survivors at every size, so leaving `minimum_score` alone
 while the catalogue grows can make the gate looser without anybody deciding to.
 Re-checked is not the same as moved. It went 96 → 99 when the catalogue went
 from 120 scored mutants to 544, where the old number would have bought
-twenty-one survivors of slack instead of four; it has stayed at 99 through the
-widenings since, because one percent of 549, 583, 809, 1266 and 1371 is five,
-five, eight, twelve and thirteen — the largest of those, and still short of the
-twenty-one that moved it last time. Do the arithmetic, write the answer next to
-the number, and only then decide whether it moves.
-It went 96 → 99 when the catalogue went from 120 scored mutants to 544, where
-the old number would have bought twenty-one survivors of slack instead of four;
-it then stayed at 99 through five widenings, because one percent of 549, 583,
-809 and 1266 is five, five, eight and twelve — always short of the twenty-one
-that moved it the time before. One percent of 2327 is twenty-three, which is not
-short of it, so with the tenth package the same rule moved the number again, to
-99.5: eleven survivors of slack where 99 bought twelve before the widening. The
-floor is a fixed number of survivors rather than a fixed percentage of a growing
-catalogue. Do the arithmetic, write the answer next to the number, and only then
-decide whether it moves.
+twenty-one survivors of slack instead of four; it then stayed at 99 through six
+widenings, because one percent of 549, 583, 809, 1266 and 1371 is five, five,
+eight, twelve and thirteen — always short of the twenty-one that moved it the
+time before. One percent of 2432 is twenty-four, which is not short of it, so
+with the eleventh package the same rule moved the number again, to 99.5: twelve
+survivors of slack (2420/2432 clears, 2419/2432 does not) where 99 bought
+thirteen before the widening. The floor is a fixed number of survivors rather
+than a fixed percentage of a growing catalogue. Do the arithmetic, write the
+answer next to the number, and only then decide whether it moves.

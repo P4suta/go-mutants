@@ -490,8 +490,13 @@ func TestReadMarkerReportsAMarkerItCouldNotRead(t *testing.T) {
 // touch the disk — so this asks only where the answer is, and where it is when
 // the operating system will not say.
 func TestTheDefaultStoreIsUnderTheCacheDirectory(t *testing.T) {
-	cache := t.TempDir()
-	withCacheDir(t, cache)
+	withCacheDir(t, t.TempDir())
+	// Asked of the operating system after the move rather than assumed: on
+	// macOS the cache directory is Library/Caches under the home, not the home.
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatalf("UserCacheDir under the moved home: %v", err)
+	}
 
 	dir, err := report.History{}.WorkspaceDir(fixtureDigest)
 	if err != nil {
@@ -678,8 +683,6 @@ func TestAFailedRollbackIsTheMoreUrgentFact(t *testing.T) {
 
 // TestARollbackThatRemovesReportsWhatItCouldNotRemove is the other rollback,
 // where there was no previous document and the one just written has to go.
-//
-// It cannot be parallel; see [report.FailTempFiles].
 func TestARollbackThatRemovesReportsWhatItCouldNotRemove(t *testing.T) {
 	t.Parallel()
 

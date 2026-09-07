@@ -499,7 +499,8 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 			// had no survivor to kill, and the four after that were bought
 			// the same way the third was. The ninth is this package: the
 			// file this test reads is inside the scope that reads it. The
-			// tenth is internal/report, which is what a run writes down.
+			// tenth is internal/gocmd, the toolchain wrapper, and the
+			// eleventh is internal/report, which is what a run writes down.
 			//
 			// The order is the file's order, and it is asserted rather than
 			// sorted for the same reason the expectation ids are: a list
@@ -559,10 +560,11 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// for why it is no longer pinned for correctness.
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		// The floor moved with the tenth package, for the first time since it
-		// went to 99: one percent of 2327 scored mutants is twenty-three
+		// The floor moved with the eleventh package, for the first time since
+		// it went to 99: one percent of 2432 scored mutants is twenty-four
 		// survivors of slack, which is more than the twenty-one that was
-		// judged too much at 544. 99.5 buys eleven, where 99 bought twelve
+		// judged too much at 544. 99.5 buys twelve (2420/2432 = 99.51%
+		// clears, 2419/2432 = 99.47% does not), where 99 bought thirteen
 		// before this widening, so the backstop is the same backstop at a
 		// larger size. The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},

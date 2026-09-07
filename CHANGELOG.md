@@ -15,8 +15,8 @@ Entries say *why* a change was made, not only what changed.
 ### Added
 
 - **The dogfood gate covers what a run writes down.** This repository's own
-  `.go-mutants.toml` now includes `internal/report/*.go`, so the gate is ten
-  whole packages rather than nine, and the tenth is the RunReport v1 document
+  `.go-mutants.toml` now includes `internal/report/*.go`, so the gate is eleven
+  whole packages rather than ten, and the eleventh is the RunReport v1 document
   every other output is derived from: the builder that assembles it and refuses
   every way it could contradict itself, the history store under the operating
   system's cache directory, the projection into the published
@@ -111,11 +111,12 @@ Entries say *why* a change was made, not only what changed.
   operating system has just resolved.
 
   `policy.minimum_score` moved, for the first time since it went to 99, and the
-  arithmetic is why rather than the conclusion. One percent of 2327 scored
-  mutants is twenty-three survivors of slack — more than the twenty-one that was
+  arithmetic is why rather than the conclusion. One percent of 2432 scored
+  mutants is twenty-four survivors of slack — more than the twenty-one that was
   judged too much at 544 and moved this number from 96, and the rule that kept it
-  at 99 through five widenings is the rule that moves it now. It goes to **99.5**,
-  which buys eleven survivors where 99 bought twelve before this widening: the
+  at 99 through six widenings is the rule that moves it now. It goes to **99.5**,
+  which buys twelve survivors (2420/2432 clears, 2419/2432 does not) where 99
+  bought thirteen before this widening: the
   floor is a fixed number of survivors rather than a fixed percentage of a
   growing catalogue. A fraction is new here and is the only spelling available,
   because the next integer up is 100, which is `--strict` under another name —

@@ -150,8 +150,6 @@ func TestTheListingIsOrderedByThisPackageAndNotByTheFilesystem(t *testing.T) {
 // front of every line of it is noise — and the sentence after the code is the
 // one that says which of the two refusals this is: no marker at all, or a
 // marker this build cannot read.
-//
-// It cannot be parallel; see [report.FailReadDir].
 func TestASkippedDirectoryIsGivenAReasonWithoutACode(t *testing.T) {
 	t.Parallel()
 
@@ -775,6 +773,7 @@ func TestRemoveInsideRefusesToDeleteWhatItCannotPlace(t *testing.T) {
 
 	t.Run("a path that cannot be resolved", func(t *testing.T) {
 		t.Parallel()
+		requireRefusalUnderAFile(t, filepath.Join(root, "afile"))
 		err := report.RemoveInside(filepath.Join(root, "afile", "deeper", "runs"), root)
 		if got := report.CodeOf(err); got != report.CodeHistoryNotRemoved {
 			t.Fatalf("RemoveInside = %v (code %q), want %s", err, got, report.CodeHistoryNotRemoved)
@@ -839,6 +838,7 @@ func TestResolvePathAnswersForNamesThatAreNotAllThere(t *testing.T) {
 
 	t.Run("a name under something that is not a directory", func(t *testing.T) {
 		t.Parallel()
+		requireRefusalUnderAFile(t, filepath.Join(root, "afile"))
 		got, resolveErr := report.ResolvePath(filepath.Join(root, "afile", "runs"))
 		if resolveErr == nil {
 			t.Fatalf("ResolvePath of a path under a file = %q, want a failure", got)
@@ -873,8 +873,22 @@ func TestResolveParentLeavesTheLastElementAlone(t *testing.T) {
 		t.Errorf("ResolveParent = %q, want %q", got, want)
 	}
 
+	requireRefusalUnderAFile(t, filepath.Join(root, "afile"))
 	if got, err = report.ResolveParent(filepath.Join(root, "afile", "deeper", "runs")); err == nil {
 		t.Errorf("ResolveParent under a file = %q, want a failure", got)
+	}
+}
+
+// requireRefusalUnderAFile skips a case that stages "a path under a regular
+// file" where the platform does not refuse one. Linux and macOS answer ENOTDIR
+// for a name under a file; Windows resolves it — EvalSymlinks there does not
+// check that every parent is a directory — so the refusal the case is about
+// cannot be produced, and pretending otherwise would be asserting the
+// platform rather than the code. It probes rather than naming the platform.
+func requireRefusalUnderAFile(t *testing.T, file string) {
+	t.Helper()
+	if _, err := filepath.EvalSymlinks(filepath.Join(file, "under")); err == nil {
+		t.Skip("this platform resolves a path under a regular file, so the refusal this case stages cannot happen here")
 	}
 }
 
