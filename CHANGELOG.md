@@ -14,6 +14,44 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`docs/development.md`, six architecture decision records, and the tests
+  that keep them true.** The developer infrastructure of this repository grew a
+  great deal in a short time — a shared hermetic harness, a test-owned build
+  cache, two tiers with an allowlist ratchet, keep-on-failure scratch, a
+  per-package cost table, an execution trace, a diagnostics bundle, `-v`/`-vv`,
+  `explain` — and every piece of it was documented where it was implemented: in
+  a package doc, in a `mise.toml` comment, in a workflow step. Each of those is
+  the right place for *why that thing is the way it is*, and none of them
+  answers "I have a failing test on a runner I cannot log into, what do I do".
+  There was no page a contributor could be pointed at, so the answer was a
+  conversation every time. `docs/development.md` is that page: the hermetic
+  policy table, the tiers and what they cost, where tests write and who collects
+  it, a walkthrough for a failing test and one for a failing run, the goldens,
+  the helper processes and the scripted `go`, the corpus, and the dogfood
+  gate's floor and how to widen it — always by writing the tests that kill the
+  survivors first, never by excluding what survives.
+
+  The records are for the decisions that constrain what may be built on top:
+  every subprocess is recorded at the runner and every `runner.Spec` names a
+  `Kind` (0002); diagnostics live in the report directory, which is the one
+  in-tree place the snapshot never reads, and never in a temporary one (0003);
+  verbosity is a rendering of the events a run already records rather than a
+  second set of print statements (0004); the test harness owns its temporaries,
+  says so with a marker file, and one tool collects them (0005); a selection
+  is advisory and takes no part in `Catalog.PreparedDigest` (0006); and the unit
+  tier scripts the `go` command rather than needing one installed, which is why
+  a file that constructs a fake is not driving a toolchain (0008). 0007 is left
+  free for a decision still in flight.
+
+  Prose drifts silently, so the derivable parts are derived and pinned.
+  `internal/testkit/devdocs_test.go` fails when the page stops naming a
+  `GO_MUTANTS_TEST_*` or `TESTKIT_*` variable the harness declares, stops naming
+  a `mise` task, documents a `mise run` that is not a task, or when an ADR is
+  written and never linked from the index. `trace/docs_test.go` fails when an
+  exec kind exists in the code and nowhere in `docs/trace-v1.md`, in both
+  directions. `run --help` now names `GO_MUTANTS_TRACE` beside its flag, as
+  `--keep-temp` and `--no-diagnostics` already named theirs, and a test in
+  `internal/cli` says so.
 - **The dogfood gate covers `internal/testflag`, `internal/operatorselect` and
   `internal/drift`.** The floor is six packages where it was three: 600 mutants
   against 566, all 34 new ones killed, still 100.00%, still seventeen declared

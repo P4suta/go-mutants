@@ -102,10 +102,16 @@
 //	GO_MUTANTS_TEST_FORCE_FAIL fail the test of this exact name on purpose,
 //	                           which is how to see what a failure leaves
 //
-// and the two the rest of the harness reads:
+// and the three the rest of the harness reads:
 //
 //	GO_MUTANTS_TEST_GOCACHE        the shared build cache the suites' children use
 //	GO_MUTANTS_TEST_REQUIRE_TOOLS  a missing `go` or `git` fails rather than skips
+//	TESTKIT_HELPER_COVERDIR_ROOT   where a [Helper] process carves its GOCOVERDIR
+//	                               out of; it wears a different prefix precisely
+//	                               because the policy above strips GO_MUTANTS_
+//
+// docs/development.md is the prose version of all of it, and a test there fails
+// when this list grows a variable that page does not name.
 //
 // Locally the policy is off, because keeping unconditionally filled a disk
 // twice. CI sets it to `1` for every test job and uploads the root as an

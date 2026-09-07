@@ -23,6 +23,76 @@ mise run hooks
 `mise run check` locally and a green CI run mean the same thing. There is no
 supported setup that installs these tools some other way.
 
+[`docs/development.md`](docs/development.md) is the reference for everything
+below: what a test gets from the harness, where it writes, what a failure leaves
+behind, and how to read the account a run keeps of itself.
+
+## The two tiers
+
+`mise run test` is the unit tier — everything that needs a compiler and nothing
+else — and it is what to run on every save. `mise run test-integration` adds the
+suites that drive a real toolchain: a `go build`, a `go test -c`, a mutation run.
+
+A test that starts a `go` or a `git` command belongs in the second tier and
+carries `//go:build integration`. `internal/testkit/tiers_test.go` enforces that
+by scanning every `_test.go` in the tree, and the exceptions are written down one
+path at a time, each with a paragraph saying why, in
+`internal/testkit/testdata/unit-toolchain-allowlist.txt`. **That file is a ledger
+rather than a configuration**: a stale entry is reported as loudly as an
+offender, so it shrinks when a suite is tagged and grows only when somebody adds
+a path and argues for it. Adding a line to silence the gate is not a fix.
+
+Often neither is the answer. `mutantkit.FakeGo` hands a test a `go` command it
+writes the answers for, so "what happens when the toolchain misbehaves" is a
+unit test on a machine with no Go on it — and a file that constructs one is
+exempt by construction, because it supplies the toolchain rather than reaching
+for the machine's. The exemption is per file and covers only the calls a fake
+can be handed, so a file that also calls `exec.LookPath("go")` or
+`testkit.GoBinary` is reported like any other.
+
+## Diagnosing a failing test
+
+Turn the keep policy on for the one test and read what it left:
+
+```console
+GO_MUTANTS_TEST_KEEP=1 \
+    go test -tags integration ./internal/engine -run TestSomething -v
+```
+
+The directory it prints holds `KEPT.txt` — which test, which fixture, which
+toolchain, which build cache, and every child it ran — plus the tree the test
+worked in, any `dump/` the failure took, and the recording if the test made one.
+`GO_MUTANTS_TEST_FORCE_FAIL=TestSomething` fails a chosen test on purpose, which
+is how to see all of that on a test that works. In CI it is already on, and a
+failed job's `kept-scratch-*` artifact is the same thing.
+
+[`docs/development.md`](docs/development.md#4-diagnosing-a-failing-test) walks
+through it, and names what collects it afterwards: `mise run test-clean`, and
+nothing else.
+
+## Diagnosing a failing run
+
+```console
+go-mutants run --trace -vv --keep-temp=on-failure
+```
+
+A failed run writes a bundle by default: the rendered
+failure in `error.txt`, the environment's variable names, the `doctor` table,
+the recording and the report. **Where it lands depends on the trace.** A traced
+run — which the command above is — files it in its own recording's directory,
+`reports/mutation/trace/<run-id>/`, so the failure and the account of the run
+are one directory rather than two halves of one story; an untraced run files it
+in `reports/mutation/diagnostics/<run-id>/`. `--no-diagnostics`, or
+`GO_MUTANTS_DIAGNOSTICS=0` for an invocation nobody can add a flag to, writes
+none at all.
+
+`--keep-temp` leaves the tree the run worked in. `go-mutants trace summary` says
+where the time went, and `go-mutants explain <mutant-id>` gives one mutant's
+whole story with a command to paste that runs it again.
+
+[`docs/development.md`](docs/development.md#9-diagnosing-a-failing-run) is the
+walkthrough, and [`docs/trace-v1.md`](docs/trace-v1.md) is the event contract.
+
 ## Expectations
 
 - Run `mise run check` before submitting; run `mise run test-integration` when

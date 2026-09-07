@@ -92,10 +92,17 @@
 // package calls `note` a `progress` record, with the same `kind` and `detail`
 // fields, so a consumer joining the streams reads the two as one kind of line.
 //
-// There is no hook yet for handing go-mutants a sink of your own: the option
-// that takes one arrives with the rest of the wiring in a later change. What
-// the alignment already fixes is the part that would be expensive to change
-// afterwards — the field names — so a consumer can write the join now.
+// The hook for handing go-mutants a sink of your own is `OpenOptions.Trace` in
+// the root package. A workspace records into that [Sink], and the `TraceSeq` on
+// every result is what the join is written against. A nil sink does not switch
+// recording off — the workspace keeps a bounded ring, which
+// `Workspace.Recording` hands back at any point and after `Close` — so the
+// choice is where the account goes rather than whether there is one.
+//
+// A supplied sink is deliberately *not* wrapped in [Digested]: it receives the
+// captured output an exec event carries, because a sink writing to disk is
+// meant to preserve it. A sink that keeps its events in memory should wrap
+// itself, or it grows with the run rather than with its own capacity.
 //
 // # Concurrency
 //
