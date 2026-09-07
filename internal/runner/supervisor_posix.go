@@ -97,11 +97,13 @@ func (s *groupSupervisor) terminate(exited <-chan struct{}, grace time.Duration)
 	_ = syscall.Kill(-s.pgid, syscall.SIGKILL)
 }
 
-// usedMemory sums what every process in the group is holding. It is the
-// same set the kill above reaches, and it has the same hole: see
-// [groupResidentMemory].
+// usedMemory sums what the child and every descendant of it are holding — a
+// superset of the group the kill above reaches, walked from the child so that
+// a sample is cheap enough to take the moment the child starts; see
+// [treeResidentMemory]. The group id is the child's pid, which is where the
+// walk begins.
 func (s *groupSupervisor) usedMemory() (int64, bool) {
-	return groupResidentMemory(s.pgid)
+	return treeResidentMemory(s.pgid)
 }
 
 // peakMemory reads the high-water mark the kernel kept for the reaped child.

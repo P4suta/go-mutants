@@ -50,6 +50,20 @@ func memorySamplingAvailable() bool { return procfsReadable() }
 // [exceededAtExit].
 const kernelBoundsMemory = false
 
+// accountedPeakBelongsToTheChild: it is not. Linux fills wait4's ru_maxrss from
+// the mm the child ran on, and a child that os/exec started — with
+// clone(CLONE_VM|CLONE_VFORK), on every Linux Go supports — begins its life on
+// the parent's mm and carries the parent's high-water mark with it, so the
+// number wait4 returns is max(what the parent had ever held when it forked,
+// what the child itself reached). Measured on this repository's own machine:
+// a `/bin/true` started by a Go process that had touched a gibibyte reported
+// 1,052,672 KiB. For a tool whose parent process has just run discovery over a
+// module, that is the parent's size wearing the child's name, and a bound
+// derived from it would be four times the wrong program. So on Linux the
+// sampler is the only witness ([peakOf]), and ru_maxrss is used for nothing
+// but the burst-detection it cannot be trusted with either.
+const accountedPeakBelongsToTheChild = false
+
 // maxRSSUnit converts ru_maxrss into bytes. Linux reports it in kibibytes,
 // which getrusage(2) documents and which every other platform disagrees with,
 // so the conversion is a per-platform constant rather than a shared assumption.
@@ -62,8 +76,95 @@ const (
 	statRSS  = 24
 )
 
+// treeResidentMemory sums the memory of a child and every descendant it has,
+// in bytes, walking the kernel's own record of who started whom.
+//
+// It exists for two reasons, and speed is the first. A sample that has to find
+// the tree by scanning every process on the machine costs one file read per
+// process — several hundred on a developer's box — and takes milliseconds,
+// which is longer than most of what a mutation run starts lives: a test
+// binary that fails its first assertion is gone in ten. Walking from the child
+// through /proc/<pid>/task/<tid>/children reads the tree's own few files and
+// is over in microseconds, which is what lets the first sample be taken at
+// once and be a number rather than a miss.
+//
+// The second is that the walk sees a little more than the group scan. A
+// descendant that called setsid or setpgid left the process group — the group
+// is what [groupSupervisor] kills, and that hole is documented there — but it
+// is still in this tree, still holding memory the run is paying for, and it is
+// counted here. Measuring more than can be killed is the honest direction: a
+// bound may then trip on a process the kill does not reach, which is reported
+// as exceeded exactly as the rest of the tree is.
+//
+// The children file needs CONFIG_PROC_CHILDREN, which every distribution
+// kernel sets; where the root's own file cannot be read the sample falls back
+// to [groupResidentMemory], the scan this code did before it could do better.
+func treeResidentMemory(pid int) (int64, bool) {
+	if pid <= 0 {
+		return 0, false
+	}
+	kids, ok := processChildren(pid)
+	if !ok {
+		return groupResidentMemory(pid)
+	}
+	pageSize := int64(os.Getpagesize())
+	seen := map[int]bool{pid: true}
+	queue := append([]int{pid}, kids...)
+	var total int64
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current != pid {
+			if seen[current] {
+				continue
+			}
+			seen[current] = true
+			if more, ok := processChildren(current); ok {
+				queue = append(queue, more...)
+			}
+		}
+		if pss, ok := processProportionalSet(current); ok {
+			total += pss
+			continue
+		}
+		if _, pages, ok := processStat(current); ok {
+			total += pages * pageSize
+		}
+	}
+	return total, true
+}
+
+// processChildren reads the pids a process started, across all of its
+// threads, and reports whether the kernel keeps that record for it. A process
+// that exited between the walk's steps is not an error: it has no children
+// and nothing to add.
+func processChildren(pid int) ([]int, bool) {
+	taskDir := filepath.Join(procRoot, strconv.Itoa(pid), "task")
+	threads, err := os.ReadDir(taskDir)
+	if err != nil {
+		return nil, false
+	}
+	var kids []int
+	readAny := false
+	for _, thread := range threads {
+		data, err := os.ReadFile(filepath.Join(taskDir, thread.Name(), "children"))
+		if err != nil {
+			continue
+		}
+		readAny = true
+		for _, field := range strings.Fields(string(data)) {
+			if kid, err := strconv.Atoi(field); err == nil && kid > 0 {
+				kids = append(kids, kid)
+			}
+		}
+	}
+	return kids, readAny
+}
+
 // groupResidentMemory sums the memory of every process in pgid, in bytes,
-// counting a page shared between them once rather than once each.
+// counting a page shared between them once rather than once each. It is the
+// sample [treeResidentMemory] falls back to on a kernel that cannot name a
+// process's children.
 //
 // The proportional set size is what it reads, and the difference is a
 // correctness bug rather than a refinement. A `go test -fuzz` run is a

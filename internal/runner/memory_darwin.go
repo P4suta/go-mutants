@@ -25,12 +25,18 @@ const memorySamplingSupported = false
 // [memorySamplingSupported] and [exceededAtExit].
 const kernelBoundsMemory = false
 
+// accountedPeakBelongsToTheChild: it is. Darwin starts a child with posix_spawn,
+// on a fresh address space, so wait4's ru_maxrss is the child's own high-water
+// mark and not the parent's; see the Linux file for the platform where it is
+// not.
+const accountedPeakBelongsToTheChild = true
+
 // maxRSSUnit converts ru_maxrss into bytes. Darwin reports it in bytes, which
 // is the one place it disagrees with Linux and the BSDs it descends from.
 const maxRSSUnit = 1
 
-// groupResidentMemory cannot answer here; see [memorySamplingSupported].
-func groupResidentMemory(int) (int64, bool) { return 0, false }
+// treeResidentMemory cannot answer here; see [memorySamplingSupported].
+func treeResidentMemory(int) (int64, bool) { return 0, false }
 
 // memorySamplingAvailable has nothing to probe: the mechanism is absent at
 // compile time, so there is no runtime question to ask.

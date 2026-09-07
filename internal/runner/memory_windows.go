@@ -14,6 +14,10 @@ import (
 // [exceededAtExit] has something to detect.
 const kernelBoundsMemory = true
 
+// accountedPeakBelongsToTheChild: it is. The job's peak is the job's, and the
+// parent is not in it.
+const accountedPeakBelongsToTheChild = true
+
 // memorySamplingSupported: the job object accounts for the whole tree at any
 // moment, so a bound is both measured and enforced here — twice over, in fact.
 // See [jobSupervisor.usedMemory].

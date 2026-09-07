@@ -119,20 +119,54 @@ type memoryWatchdog struct {
 	stopped chan struct{}
 }
 
-// watchMemory starts sampling sup's tree every [MemorySampleInterval].
+// memoryWarmUp is the sampling schedule between the first sample and the
+// steady interval: the offsets, from the moment the child is adopted, of the
+// next few.
 //
-// The first sample is taken one interval in rather than immediately: a child
-// that has just been resumed has not yet mapped its heap, and a bound measured
-// against a process that is still becoming one would be measuring the
-// toolchain's start-up rather than the program's appetite.
+// It exists because most children are short. A mutant that fails its first
+// assertion is gone in ten milliseconds, and a sampler that first looked a
+// hundred milliseconds in would report nothing for the majority of what a run
+// executes — which on Linux, where the sample is the only measurement there is,
+// would be no peak at all. So the very first sample is taken on the caller's
+// goroutine before [watchMemory] returns, and these follow it closely. Early
+// samples are small numbers about a process that is still becoming one, and a
+// small true number is worth more than a missing one; the bound is checked
+// against them too, since a tree that has already passed its limit at 10 ms
+// has certainly passed it.
+var memoryWarmUp = []time.Duration{10 * time.Millisecond, 25 * time.Millisecond, 50 * time.Millisecond}
+
+// watchMemory takes one sample of sup's tree at once, then keeps sampling it:
+// on the [memoryWarmUp] schedule, then every [MemorySampleInterval]. A limit of
+// zero means the sampler only measures: it remembers the highest sample and
+// trips on nothing.
 func watchMemory(sup supervisor, limit int64) *memoryWatchdog {
 	w := &memoryWatchdog{
 		exceeded: make(chan struct{}),
 		done:     make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
+	if !w.take(sup, limit) {
+		close(w.stopped)
+		return w
+	}
 	go w.sample(sup, limit)
 	return w
+}
+
+// take is one sample; it reports whether the sampler should go on. A platform
+// that cannot answer ends it (see [memoryWatchdog.sample]), and so does the
+// sample that passes the limit.
+func (w *memoryWatchdog) take(sup supervisor, limit int64) bool {
+	used, ok := sup.usedMemory()
+	if !ok {
+		return false
+	}
+	w.record(used)
+	if limit > 0 && used > limit {
+		close(w.exceeded)
+		return false
+	}
+	return true
 }
 
 // sample is the watchdog's loop.
@@ -147,23 +181,27 @@ func watchMemory(sup supervisor, limit int64) *memoryWatchdog {
 func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
 	defer close(w.stopped)
 
+	started := time.Now()
+	for _, at := range memoryWarmUp {
+		select {
+		case <-w.done:
+			return
+		case <-time.After(time.Until(started.Add(at))):
+		}
+		if !w.take(sup, limit) {
+			return
+		}
+	}
+
 	ticker := time.NewTicker(MemorySampleInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-w.done:
 			return
 		case <-ticker.C:
 		}
-
-		used, ok := sup.usedMemory()
-		if !ok {
-			return
-		}
-		w.record(used)
-		if used > limit {
-			close(w.exceeded)
+		if !w.take(sup, limit) {
 			return
 		}
 	}

@@ -56,9 +56,26 @@ and come back with a verdict about it.
 baseline, enforced at the process layer, over the whole tree.**
 
 1. **The runner measures every process and bounds the ones it is asked to.**
-   `runner.Result.PeakMemory` is reported for every child go-mutants starts, from
-   `wait4`'s `ru_maxrss` on POSIX and from the job object's `PeakJobMemoryUsed`
-   on Windows. The two are not the same quantity — resident pages against
+   `runner.Result.PeakMemory` comes from the job object's `PeakJobMemoryUsed`
+   on Windows, from `wait4`'s `ru_maxrss` on macOS, and on Linux from the
+   sampler alone — every run is sampled: once at the moment the child is
+   adopted, on the caller's own goroutine, then at 10, 25 and 50 ms, then
+   every 100 ms — and one that ended before its first sample reports no peak.
+   A sample walks the child's own tree through `/proc/<pid>/task/*/children`
+   rather than scanning every process on the machine, which is what makes the
+   first one cheap enough to take at once (a scan of a busy machine costs
+   milliseconds, which is most of what a short test binary lives) and which
+   also counts a descendant that left the process group; a kernel without
+   `CONFIG_PROC_CHILDREN` falls back to the group scan. The Linux exception
+   was found after this decision
+   was first written:
+   Go starts every child with `clone(CLONE_VM|CLONE_VFORK)`, and the
+   `ru_maxrss` the kernel then reports for the child begins at the *parent's*
+   high-water mark — measured on the repository's own machine, a `/bin/true`
+   started by a process that had touched a gibibyte reported 1,052,672 KiB.
+   A baseline peak taken that way would be the go-mutants process's own size,
+   and four times it a bound that stops nothing. The two are not the same
+   quantity — resident pages against
    committed charge — and neither is converted into the other, because a
    conversion between two things the kernels measure differently would be a
    number go-mutants invented. `runner.Spec.MemoryLimit` bounds one; while the

@@ -3640,6 +3640,31 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- **On Linux a child's `PeakMemory` was its parent's.** `wait4`'s `ru_maxrss`
+  for a process Go starts — with `clone(CLONE_VM|CLONE_VFORK)`, on every Linux
+  it supports — begins at the parent's own high-water mark, so a `/bin/true`
+  started by a process that had once held a gibibyte reported a gibibyte
+  (measured here: 2,432 KiB before the parent touched memory, 1,052,672 KiB
+  after). Every peak this tool reported on Linux was therefore
+  `max(the go-mutants process, the child)`, and the bound derived from the
+  baseline was four times whatever discovery had left resident rather than
+  four times what the tests need — a bound that looked derived and stopped
+  less than it claimed. The runner now takes the Linux number from its own
+  sampler alone — the proportional set size, the same reading that enforces a
+  bound — and never from `ru_maxrss` there, and every process is sampled,
+  bounded or not: once the moment it is adopted, then at 10, 25 and 50 ms,
+  then every 100 ms (most children a run starts are gone in ten). A sample
+  now walks the child's own tree through `/proc/<pid>/task/*/children`
+  instead of scanning every process on the machine — a scan costs
+  milliseconds on a busy box, which was most of a short binary's life — and
+  in passing counts a descendant that left the process group. A run that ends before
+  its first sample reports zero rather than a number that belongs to somebody
+  else. macOS (`posix_spawn`, a fresh address
+  space) and Windows (the job's own accounting) were measuring the child all
+  along and are unchanged. The test harness's own footprint measurement had
+  the same fault and was the thing that exposed it: a type-checking gate in the
+  same test binary grew the parent to 1.2 GiB and every memory bound derived
+  from "a helper that does nothing" became fifty times too large.
 - **The test harness no longer makes a mutant's own test binary print a warning
   onto the stream a test is asserting the bytes of.** `testkit.Helper` gives
   each helper process a private coverage directory, and whether it makes one at

@@ -203,3 +203,19 @@ func TestOnlyAKernelLineCanEndATreeTheSamplerDidNotSee(t *testing.T) {
 		})
 	}
 }
+
+// TestTheFirstSampleIsTakenBeforeWatchMemoryReturns pins why a child that
+// lives ten milliseconds still reports a peak: the sampler's first look is
+// taken on the caller's goroutine, before the child has had a chance to
+// finish, and only the later ones wait.
+func TestTheFirstSampleIsTakenBeforeWatchMemoryReturns(t *testing.T) {
+	t.Parallel()
+
+	sup := &scriptedSupervisor{samples: []int64{7 << 20}}
+	w := watchMemory(sup, 0)
+	if got := w.observedPeak(); got != 7<<20 {
+		t.Errorf("observedPeak right after watchMemory = %d, want the first sample %d, taken synchronously",
+			got, 7<<20)
+	}
+	w.stop()
+}
