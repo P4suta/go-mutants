@@ -99,7 +99,7 @@ Entries say *why* a change was made, not only what changed.
   Every *other* failure — `go list` exiting non-zero, a child that would not
   start, a cancelled context, a go.mod that could not be read — is an
   `*ExecutionError` with `Call: "module"` and a message beginning
-  `gomutants: module: `, wrapping its cause so `errors.Is` still reaches it and
+  `gomutants: module:` and a space, wrapping its cause so `errors.Is` still reaches it and
   carrying the toolchain's own output. That type is borrowed rather than a new
   one invented, because it already names this fact one call up; the sentinels
   are the only refusals that keep their own shape, because they are the ones a

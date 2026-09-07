@@ -591,11 +591,11 @@ func readModuleFile(root string) (Module, error) {
 	path := filepath.Join(root, "go.mod")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Module{}, fmt.Errorf("gomutants: module: read go.mod: %w", err)
+		return Module{}, fmt.Errorf("read go.mod: %w", err)
 	}
 	parsed, err := modfile.ParseLax("go.mod", data, nil)
 	if err != nil {
-		return Module{}, fmt.Errorf("gomutants: module: parse go.mod: %w", err)
+		return Module{}, fmt.Errorf("parse go.mod: %w", err)
 	}
 	var module Module
 	if parsed.Module != nil {
@@ -782,13 +782,16 @@ func checkModulePattern(pattern string) error {
 //     (`\\server\share`, `\\?\C:\x`);
 //   - a drive letter followed by a colon and a separator (`C:\x`, `C:/x`), or a
 //     bare `C:`. A drive-*relative* `C:x` is left to the module-relative check,
-//     because it is not absolute and saying so would be wrong.
+//     because it is not absolute and saying so would be wrong — which is why
+//     [filepath.VolumeName] is not consulted: on Windows it names `C:` as the
+//     volume of `C:x` too, and the same input would then be refused with two
+//     different sentences depending on the operating system.
 func absoluteAnywhere(pattern string) bool {
 	native := filepath.FromSlash(pattern)
 	switch {
 	case strings.HasPrefix(pattern, "/"), strings.HasPrefix(pattern, `\\`):
 		return true
-	case filepath.IsAbs(native), filepath.VolumeName(native) != "":
+	case filepath.IsAbs(native):
 		return true
 	case len(pattern) < 2 || pattern[1] != ':' || !isDriveLetter(pattern[0]):
 		return false
