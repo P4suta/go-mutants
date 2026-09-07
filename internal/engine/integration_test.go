@@ -343,9 +343,12 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	// a second measurement: runner.Result.Duration is the outer, supervised
 	// time, and anything this test timed independently would be a different
 	// number.
-	slowest := slices.Max(outcome.BaselineRuns)
+	// The budget is sized on the runs after the first: the first run of
+	// `go test` compiles, and a mutant run never does.
+	slowest := slices.Max(outcome.BaselineRuns[1:])
 	if outcome.SlowestBaseline != slowest {
-		t.Errorf("SlowestBaseline = %s, want %s", outcome.SlowestBaseline, slowest)
+		t.Errorf("SlowestBaseline = %s, want %s, the slowest of the runs after the first",
+			outcome.SlowestBaseline, slowest)
 	}
 	want := max(MinDerivedTimeout, TimeoutFactor*slowest)
 	if outcome.Timeout != want {

@@ -73,7 +73,8 @@ set out to execute.
 `test.baseline` carries every unmutated observation — `runs`, `durations_ms`,
 `slowest_ms` — not just the summary of them, because the derived timeout is a
 function of the slowest run and a reader deserves the numbers it came from.
-`test.timeout_source` is `derived` for `max(10s, slowest baseline × 5)` or
+`test.timeout_source` is `derived` for `max(10s, slowest baseline × 5)` — the
+slowest of the runs after the first, which is the one that compiles — or
 `explicit` for a configured `test.timeout` or `--timeout`.
 
 ### Narrowed runs: `selection.mode`, `changed_ref`, and `shard`

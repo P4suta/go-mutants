@@ -541,3 +541,29 @@ func TestCoverageBuildFallbackKeepsTheWholeFailure(t *testing.T) {
 		t.Errorf("the warning is no longer one line:\n%s", s.warnings[0].Message)
 	}
 }
+
+// TestTheBudgetIsSizedOnARunThatDidNotCompile pins [budgetBaseline]: the first
+// baseline run of `go test` is the one that compiles, so with more than one run
+// the budget takes the slowest of the rest; with one run it takes that run.
+func TestTheBudgetIsSizedOnARunThatDidNotCompile(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		runs []time.Duration
+		want time.Duration
+	}{
+		{"no runs", nil, 0},
+		{"one run is taken as it is", []time.Duration{7 * time.Second}, 7 * time.Second},
+		{"the compiling first run is excluded", []time.Duration{7 * time.Second, 2 * time.Second, 1900 * time.Millisecond}, 2 * time.Second},
+		{"a slow later run still counts", []time.Duration{2 * time.Second, 5 * time.Second, 2 * time.Second}, 5 * time.Second},
+		{"two runs size on the second", []time.Duration{4 * time.Second, 3 * time.Second}, 3 * time.Second},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := budgetBaseline(c.runs); got != c.want {
+				t.Errorf("budgetBaseline(%v) = %s, want %s", c.runs, got, c.want)
+			}
+		})
+	}
+}

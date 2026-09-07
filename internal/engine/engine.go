@@ -55,7 +55,8 @@ const (
 	// misreport as scheduling noise.
 	MinDerivedTimeout = 10 * time.Second
 
-	// TimeoutFactor multiplies the slowest baseline run.
+	// TimeoutFactor multiplies the slowest baseline run after the first — or
+	// the only run, when there is one; see [budgetBaseline].
 	TimeoutFactor = 5
 
 	// MinDerivedMemory is the floor under a derived per-mutant memory bound.
@@ -340,7 +341,11 @@ type RunOutcome struct {
 	ResolvedTestCommand []string
 	// BaselineRuns holds every baseline observation, in measurement order.
 	BaselineRuns []time.Duration
-	// AverageBaseline and SlowestBaseline summarise BaselineRuns.
+	// AverageBaseline and SlowestBaseline summarise BaselineRuns. Slowest is
+	// the run the budget is sized on — the slowest of the runs after the
+	// first, because the first is the one that compiles, or the only run
+	// when there is one; see [budgetBaseline] — and not necessarily the
+	// slowest observation, which BaselineRuns still carries.
 	AverageBaseline time.Duration
 	SlowestBaseline time.Duration
 	// Timeout is the per-mutant timeout, and TimeoutSource says where it came
@@ -991,7 +996,7 @@ func (s *session) baseline(
 	}
 	out.BaselineRuns = durations
 	out.AverageBaseline = mean(durations)
-	out.SlowestBaseline = slices.Max(durations)
+	out.SlowestBaseline = budgetBaseline(durations)
 
 	endTimeout := s.stage("timeout", "")
 	timeout, source, err := deriveTimeout(cfg.Test.Timeout, out.SlowestBaseline)
@@ -2572,6 +2577,30 @@ func interrupted(err error) bool {
 // implementation of "was this an interruption" is a second answer waiting to
 // disagree with this one.
 func Interrupted(err error) bool { return interrupted(err) }
+
+// budgetBaseline is the baseline run a budget is sized on: the slowest of the
+// runs after the first, or the first itself when it is the only one.
+//
+// The first run of `go test` is the one that compiles. On a cold build cache —
+// which is what CI measures, its cache being the runner's temporary directory
+// — that run is dominated by compilation the mutant runs never pay, since
+// their binaries are built once beforehand: this repository's own gate
+// measured a first run of 7.7 s against later runs of 2 s, and a budget sized
+// on the first was 38 s where the later runs asked for 10. Every mutant that
+// never returns pays that budget twice, so the difference was five minutes of
+// a nine-minute run, spent waiting for nothing. The runs after the first are
+// the shape a mutant run has, and they are what the budget is for. A single
+// run is still taken as it is, compilation and all, because a budget built
+// from nothing would be worse than a loose one.
+func budgetBaseline(runs []time.Duration) time.Duration {
+	if len(runs) == 0 {
+		return 0
+	}
+	if len(runs) == 1 {
+		return runs[0]
+	}
+	return slices.Max(runs[1:])
+}
 
 // deriveTimeout resolves the per-mutant timeout.
 //
