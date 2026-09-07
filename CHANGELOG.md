@@ -3640,6 +3640,51 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- **The test harness no longer makes a mutant's own test binary print a warning
+  onto the stream a test is asserting the bytes of.** `testkit.Helper` gives
+  each helper process a private coverage directory, and whether it makes one at
+  all is now `testing.CoverMode()` — the compiled-in fact that this binary was
+  built with `-cover` — rather than `GOCOVERDIR`.
+
+  `GOCOVERDIR` is the wrong question for the one run this project cares most
+  about. A *test* binary emits through `testing`'s `coverTearDown`, which is
+  handed the value of `-test.gocoverdir` and never reads the variable, so
+  go-mutants passes the flag; and since a child no longer inherits a parent's
+  `GOCOVERDIR`, a mutant's test binary is a fully instrumented process with no
+  variable to read at all. It therefore answered "there is no coverage to keep
+  apart", published no root, and every `mutantkit.FakeGo` child of it left
+  through its exit hook printing `warning: GOCOVERDIR not set, no coverage data
+  emitted` onto stderr — which is precisely the stream `internal/gocmd`'s tests
+  compare byte for byte. The result was a mutation run in which the mutants were
+  killed by the harness rather than by the mutation. Measured over that package:
+  103 of its 104 mutants were reported killed, at a score of 100.00%, and 90 of
+  those kills carry the warning in their output; with the root published the
+  same run kills 91, reports the twelve survivors that were being hidden, and
+  scores 88.46%. In an eleven-package gate 1723 of 2495 kills were this. It
+  reproduces with no mutation run at all — `go test -c -cover -coverpkg=./... -o
+  $D/gocmd.test ./internal/gocmd && $D/gocmd.test -test.gocoverdir=$D` failed,
+  and the same binary with a `GOCOVERDIR` exported passed.
+
+  Everything the two changes before it established is kept. A plain `go test`
+  makes no directory, because an uninstrumented binary has no exit hook to
+  redirect and a directory that is never created cannot be left behind. A helper
+  still keys on `TESTKIT_HELPER_COVERDIR_ROOT` rather than on its own
+  `GOCOVERDIR` — the root is published only by a suite that is itself
+  instrumented and no environment policy strips it, and a helper is that suite's
+  binary re-executed, so it does not ask a second time — and a `GOCOVERDIR` with
+  no root is still refused with `testkit.HelperMisuse`.
+
+  What a killed process leaves behind is worth stating, because this is the
+  change that creates the case. The root is made under `os.TempDir()` and
+  removed by a deferred function, which is exactly what a killed process does
+  not run. Under a mutation run that directory is not the machine's: the
+  worker's scratch is resolved by `internal/execute`'s `workerScratch` and
+  published as `TMPDIR`, `TMP` and `TEMP` by its `baseEnvFrom`, and
+  `internal/engine` removes the run's whole temporary tree when the run ends —
+  so a killed mutant's root goes with it, which is where kills are common. Under
+  a developer's own `go test -cover` or CI's coverage job, `TMPDIR` is the
+  machine's and a Ctrl-C or a `-timeout` leaves one: the residual the previous
+  change accepted, now written down.
 - A memory-bound test no longer assumes which of the two enforcement paths won.
   A tree stopped by the sampler is killed by go-mutants and reports
   `ExitCodeUnavailable`; a tree that crosses the kernel's own line — Windows'

@@ -662,15 +662,43 @@ children executed. It is deliberately outside the `GO_MUTANTS_` namespace: `Env`
 and `Compose` strip that prefix, and a cover root stripped on the way into a
 helper is a helper with nowhere private to write.
 
-The root is also what the redirection *turns on*, rather than the helper's own
-`GOCOVERDIR`. `internal/execute` strips `GOCOVERDIR` from every child
-environment it composes — a mutant's test binary may not append its counters
-into a profile somebody else is collecting — and that package's unit tests start
-this very binary as their scripted `go`. The variable is gone by the time such a
-helper looks; the instrumentation is not, and the coverage runtime's exit hook
-writes all the same. The root is published only by a suite that is itself a
-coverage run, so it is the signal that survives. A helper with a `GOCOVERDIR`
-and no root is the opposite shape and is refused with `testkit.HelperMisuse`.
+Two questions decide this, and they have two different answers.
+
+**Whether a suite publishes a root at all is `testing.CoverMode()`** — the
+compiled-in fact that this binary was built with `-cover`, which is `"set"`,
+`"count"` or `"atomic"` there and empty otherwise. It is emphatically not
+`GOCOVERDIR`: a *test* binary emits through `testing`'s `coverTearDown`, which
+reads `-test.gocoverdir` and not the variable, so go-mutants passes the flag —
+and since a child no longer inherits a parent's `GOCOVERDIR`, a mutant's test
+binary is an instrumented process with no variable to read at all. While
+`GOCOVERDIR` was the test, every such binary answered "no coverage here",
+published no root, and left each of its helper children printing `warning:
+GOCOVERDIR not set, no coverage data emitted` onto the stderr `internal/gocmd`
+asserts the exact bytes of. Measured over that package: 103 of its 104 mutants
+were reported killed at a score of 100.00%, and 90 of those kills carry the
+warning in their output; with the root published the same run kills 91 and
+reports the twelve survivors that were being hidden.
+
+**What a helper does about its own output is the root**, rather than the
+helper's own `GOCOVERDIR`. `internal/execute` strips `GOCOVERDIR` from every
+child environment it composes — a mutant's test binary may not append its
+counters into a profile somebody else is collecting — and that package's unit
+tests start this very binary as their scripted `go`. The variable is gone by the
+time such a helper looks; the instrumentation is not, and the coverage runtime's
+exit hook writes all the same. The root is published only by a suite that is
+itself instrumented and no policy strips it, so it is the signal that survives —
+and a helper is that suite's binary re-executed, so it does not ask about the
+cover mode a second time. A helper with a `GOCOVERDIR` and no root is the
+opposite shape and is refused with `testkit.HelperMisuse`.
+
+The root is made under `os.TempDir()` and removed by a deferred function, which
+is exactly what a killed process does not run — so what a kill leaves behind
+depends on where that is. Under a mutation run it is the worker's scratch
+directory, which `internal/execute`'s `workerScratch` resolves and whose
+`baseEnvFrom` points `TMPDIR`, `TMP` and `TEMP` at it; the run removes the whole
+thing afterwards, so a killed mutant's root goes with it. Under a developer's
+own `go test -cover`, or CI's coverage job, `TMPDIR` is the machine's, and a
+Ctrl-C or a `-timeout` there does leave one behind.
 
 ### The scripted `go`
 
