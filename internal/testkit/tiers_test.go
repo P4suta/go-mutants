@@ -59,6 +59,37 @@ var toolchainNeedles = []string{
 	"Toolchain" + "(",
 }
 
+// fakeToolchainNeedle is the call that means "this file supplies the toolchain
+// rather than reaching for one".
+//
+// internal/testkit/mutantkit's scripted `go` is an executable that re-executes
+// the test binary and answers from a table, so a file that builds one and then
+// hands its path to gocmd.Locate is not driving a toolchain: it is driving a
+// process it wrote itself, on a machine that need not have Go installed at all.
+// Several of the needles above still match such a file — a fake-driven test
+// calls gocmd.Locate like any other — and without this the ledger would grow an
+// entry for each test that made it shorter.
+//
+// The exemption is for the *file* rather than for the call, because the two
+// halves are always written together and a rule that tried to pair them up
+// would be a parser rather than a scan. It is deliberately narrow in exchange:
+// constructing a fake is the only thing that grants it, so a file that wants
+// both a scripted toolchain and a real one has to be two files — which is what
+// internal/gocmd now is, and why it is no longer in the ledger.
+//
+// Like every needle above it is matched as text and not as a call the compiler
+// resolved, so a file that names the helper in a comment is exempted too. That
+// is the same trade the rest of this scan makes — a parse would need the module
+// loaded, with a toolchain, in the tier this test belongs to — and it costs a
+// conversation at review rather than a silent hole, because a file has to
+// mention the fake on purpose to get there.
+//
+// It is written as two pieces joined at compile time for the same reason the
+// needles above are: this file would otherwise exempt *itself* by defining the
+// rule, and its own ledger entry — which it earns by running two `go test
+// -list` commands — would go stale without anybody meaning it to.
+var fakeToolchainNeedle = "mutantkit." + "FakeGo("
+
 // heavyweightRootTests is one toolchain-driving test out of each root file the
 // tiering moved.
 //
@@ -338,6 +369,41 @@ func TestAnUnsatisfiableTagIsNotTheIntegrationTier(t *testing.T) {
 	}
 }
 
+// TestAFileThatScriptsTheToolchainIsNotDrivingOne pins the one exemption the
+// scan has, and pins that it is an exemption rather than a hole.
+//
+// A fake-driven test calls gocmd.Locate exactly like a real one — that is the
+// point of the fake, since the code under test must not be able to tell — so
+// the scan cannot separate them by the call. It separates them by the *other*
+// call: a file that constructs a scripted `go` is supplying the toolchain, and
+// a file that does not is reaching for the machine's.
+//
+// The second file here is what makes this a test rather than a restatement:
+// the same gocmd.Locate call, no fake, and it has to be reported.
+func TestAFileThatScriptsTheToolchainIsNotDrivingOne(t *testing.T) {
+	t.Parallel()
+
+	m := NewModule(t).Module("fixture.example/tiers")
+	m.Source("scripted/scripted_test.go",
+		"package scripted\n\nfunc use() {\n\tf := "+fakeToolchainNeedle+"nil)\n"+
+			"\tgocmd."+"Locate(f.Bin())\n}\n")
+	m.Source("real/real_test.go",
+		"package real\n\nfunc use() { gocmd."+"Locate(nil) }\n")
+
+	found, err := toolchainDrivingTests(m.Root())
+	if err != nil {
+		t.Fatalf("scanning the synthesized module: %v", err)
+	}
+	var paths []string
+	for _, file := range found {
+		paths = append(paths, file.path)
+	}
+	if want := []string{"real/real_test.go"}; !slices.Equal(paths, want) {
+		t.Errorf("the scan reported %q, want %q: a file that scripts the toolchain does not drive "+
+			"it, and a file that merely names the helper does", paths, want)
+	}
+}
+
 // drivingFile is one test file that starts a `go` command, and whether it is in
 // the integration tier.
 type drivingFile struct {
@@ -380,7 +446,7 @@ func toolchainDrivingTests(root string) ([]drivingFile, error) {
 		index := slices.IndexFunc(toolchainNeedles, func(needle string) bool {
 			return containsCall(text, needle)
 		})
-		if index < 0 {
+		if index < 0 || containsCall(text, fakeToolchainNeedle) {
 			return nil
 		}
 		rel, relErr := filepath.Rel(root, path)

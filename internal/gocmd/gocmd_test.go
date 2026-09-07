@@ -1,6 +1,19 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// The unit tier of the toolchain wrapper: every way `go` can misbehave, driven
+// by a scripted stand-in rather than by a real toolchain.
+//
+// A probe that hangs, one that answers garbage, one that exits non-zero, a
+// listing that fails — those are the failures this package exists to report, and
+// none of them can be installed. They used to be tested by compiling a small
+// program per case with a real `go build`, which cost a toolchain and about a
+// second and a half of the unit tier; the scripted stand-in
+// internal/testkit/mutantkit hands out answers them from a table instead.
+//
+// What is left needing a real toolchain — that the probe agrees with the `go`
+// this machine actually has — is in toolchain_integration_test.go.
+
 package gocmd_test
 
 import (
@@ -11,7 +24,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,57 +31,286 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestLocateFindsTheToolchainOnPath is the happy path against the real
-// toolchain. It is not skipped when `go` is missing: these tests are run by
-// `go test`, so a machine without a Go toolchain cannot have got this far, and
-// a skip here would quietly delete the only test that proves the probe agrees
-// with reality.
-func TestLocateFindsTheToolchainOnPath(t *testing.T) {
+// TestMain turns this binary into the scripted `go` when it is started as one.
+// Every fake-driven test below runs this very binary as its toolchain, so
+// without the dispatch each of them would run the whole package again.
+func TestMain(m *testing.M) {
+	os.Exit(mutantkit.Main(m))
+}
+
+// probeTimeout bounds every scripted probe here.
+//
+// It is far shorter than [gocmd.DefaultProbeTimeout], because the fake answers
+// from a table: anything approaching this is a fake that did not start, and
+// waiting out thirty seconds to learn that is thirty seconds nobody has.
+const probeTimeout = 30 * time.Second
+
+// hangTimeout is what the hanging probe is given.
+//
+// It is a deadline this test pays in full every run, so it is as short as the
+// claim allows. Two hundred milliseconds is far longer than the fake takes to
+// start and far shorter than [gocmd.DefaultProbeTimeout]; a machine so loaded
+// that the child has not started yet still produces the same verdict, because a
+// probe whose context expired before its process began is a probe that did not
+// answer either.
+const hangTimeout = 200 * time.Millisecond
+
+// fakeEnv is the environment a scripted toolchain runs with: the harness's
+// hermetic policy plus the two variables that make the child answer as `go`.
+func fakeEnv(t *testing.T, f *mutantkit.Fake) []string {
+	t.Helper()
+	return f.Env(testkit.Compose(t, testkit.Scratch(t)))
+}
+
+// TestLocateReportsAProbeThatExitsNonZero is the error a fresh machine hits
+// second: something is at the configured path and it is not a Go toolchain.
+//
+// What it printed is the whole diagnosis, so the error keeps it — and keeps the
+// command, because "`/opt/go/bin/go version` exited 3" is only actionable if the
+// reader can run it themselves. The recording keeps both as well, and the error
+// points at the event, which is what turns a one-line failure into the whole
+// command's preserved output.
+func TestLocateReportsAProbeThatExitsNonZero(t *testing.T) {
 	t.Parallel()
 
-	tc, err := gocmd.Locate(gocmd.Options{})
-	if err != nil {
-		t.Fatalf("Locate = %v, want the toolchain running this test", err)
+	const garbage = "this executable is not a go toolchain"
+	f := mutantkit.FakeGo(t)
+	f.On("version").Stderr(garbage + "\n").Exit(3)
+
+	sink := trace.NewMemorySink(0)
+	recorder := trace.New(sink, time.Now, trace.StartRecord{Kind: trace.StartKindRun, ToolVersion: "test"})
+
+	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
+		Explicit: f.Bin(),
+		Env:      fakeEnv(t, f),
+		Timeout:  probeTimeout,
+		Trace:    recorder,
+	})
+	if err == nil {
+		t.Fatalf("LocateContext(%q) = %+v, want an error", f.Bin(), tc)
 	}
-	if !filepath.IsAbs(tc.GoBin) {
-		t.Errorf("GoBin = %q, want an absolute path so a later PATH change cannot re-resolve it", tc.GoBin)
+	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
+		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionProbeFailed)
 	}
-	if tc.Version.Raw == "" {
-		t.Error("Version.Raw is empty")
+
+	var failure *gocmd.Error
+	if !errors.As(err, &failure) {
+		t.Fatalf("err = %v, want a *gocmd.Error", err)
 	}
-	if !strings.HasPrefix(tc.Version.Release, "go") && !tc.Version.IsDevel() {
-		t.Errorf("Version.Release = %q, want a go release or a devel build", tc.Version.Release)
+	invocation := failure.Command()
+	if invocation == nil {
+		t.Fatal("Command() = nil, want the probe that failed")
 	}
-	// The toolchain that built this test binary is the toolchain that runs it,
-	// so the target it reports has to be the one this code is executing on.
-	if tc.Version.GOOS != runtime.GOOS || tc.Version.GOARCH != runtime.GOARCH {
-		t.Errorf("target = %s/%s, want %s/%s", tc.Version.GOOS, tc.Version.GOARCH, runtime.GOOS, runtime.GOARCH)
+	if argv := []string{f.Bin(), "version"}; !slices.Equal(invocation.Argv, argv) {
+		t.Errorf("Argv = %q, want %q", invocation.Argv, argv)
 	}
-	if !strings.Contains(tc.String(), tc.GoBin) || !strings.Contains(tc.String(), tc.Version.Raw) {
-		t.Errorf("String() = %q, want it to name both the path and the version", tc.String())
+	if invocation.Kind != trace.ExecKindGoVersion {
+		t.Errorf("Kind = %q, want %q", invocation.Kind, trace.ExecKindGoVersion)
+	}
+	events := execEvents(sink)
+	if len(events) != 1 {
+		t.Fatalf("the recording holds %d exec events, want exactly one for the version probe", len(events))
+	}
+	if invocation.TraceSeq != events[0].Seq {
+		t.Errorf("TraceSeq = %d, want the recorded sequence %d", invocation.TraceSeq, events[0].Seq)
+	}
+	if rec := events[0].Exec; rec.ExitCode != 3 {
+		t.Errorf("exit_code = %d, want 3", rec.ExitCode)
+	}
+
+	if !strings.Contains(failure.RetainedOutput(), garbage) {
+		t.Errorf("RetainedOutput() = %q, want it to hold what the stand-in printed, %q",
+			failure.RetainedOutput(), garbage)
+	}
+	// The message a user reads has not changed.
+	if want := "exited with status 3"; !strings.Contains(err.Error(), want) {
+		t.Errorf("Error() = %q, want it to contain %q", err, want)
 	}
 }
 
-// TestLocateHonoursAnExplicitPath checks that configuration wins over PATH,
-// using the toolchain PATH would have found anyway so the assertion is about
-// which mechanism was used rather than about which binary exists.
-func TestLocateHonoursAnExplicitPath(t *testing.T) {
+// TestLocateReportsAProbeThatHangs is the failure that has no other way to be
+// written: a `go` that never answers.
+//
+// It is the worst kind of hang to debug — a run that stops before it has started
+// — and the reason [gocmd.DefaultProbeTimeout] exists at all. There is no way to
+// install a toolchain that behaves this way, so before the scripted stand-in
+// this branch of [gocmd.LocateContext] had no test of any kind.
+//
+// The assertion is on the verdict rather than on the clock: the fake sleeps far
+// longer than the deadline it is given, so a call that returned at all can only
+// have killed it.
+func TestLocateReportsAProbeThatHangs(t *testing.T) {
 	t.Parallel()
 
-	found, err := exec.LookPath("go")
+	f := mutantkit.FakeGo(t)
+	f.On("version").Sleep(2 * time.Minute)
+
+	started := time.Now()
+	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
+		Explicit: f.Bin(),
+		Env:      fakeEnv(t, f),
+		Timeout:  hangTimeout,
+	})
+	if err == nil {
+		t.Fatalf("LocateContext against a toolchain that never answers = %+v, want an error", tc)
+	}
+	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
+		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionProbeFailed)
+	}
+	if want := "did not answer within " + hangTimeout.String(); !strings.Contains(err.Error(), want) {
+		t.Errorf("Error() = %q, want it to say %q: a hang is not an exit status and must not read as one",
+			err, want)
+	}
+	if elapsed := time.Since(started); elapsed > probeTimeout {
+		t.Errorf("the probe took %s, want the deadline rather than the sleep", elapsed)
+	}
+	// The command is attached to a timeout as much as to a failure: it is the
+	// one a reader has to run by hand to see the hang for themselves.
+	var failure *gocmd.Error
+	if !errors.As(err, &failure) || failure.Command() == nil {
+		t.Fatalf("err = %v, want a *gocmd.Error naming the probe that hung", err)
+	}
+	if argv := []string{f.Bin(), "version"}; !slices.Equal(failure.Command().Argv, argv) {
+		t.Errorf("Argv = %q, want %q", failure.Command().Argv, argv)
+	}
+}
+
+// TestLocateRejectsGarbageVersionOutput is why locating probes rather than
+// stats. Something on PATH called `go` that exits zero and answers with anything
+// else must be rejected here, not halfway through building test binaries.
+//
+// It is kept separate from a failed probe because the remedy differs: this one
+// is either not the Go toolchain at all or a format change worth a bug report,
+// and the message therefore quotes what was printed.
+func TestLocateRejectsGarbageVersionOutput(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		printed string
+		says    string
+	}{
+		{
+			name:    "another program's banner",
+			printed: "gnu make 4.4.1\n",
+			says:    "does not begin with a release",
+		},
+		{
+			name:    "a version line with no target",
+			printed: "go version go1.99.0 something\n",
+			says:    `does not end in a "os/arch" target`,
+		},
+		{
+			name:    "nothing at all",
+			printed: "",
+			says:    "printed nothing",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := mutantkit.FakeGo(t)
+			f.On("version").Stdout(test.printed)
+
+			tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
+				Explicit: f.Bin(),
+				Env:      fakeEnv(t, f),
+				Timeout:  probeTimeout,
+			})
+			if err == nil {
+				t.Fatalf("LocateContext against a toolchain that printed %q = %+v, want an error",
+					test.printed, tc)
+			}
+			if code := gocmd.CodeOf(err); code != gocmd.CodeVersionUnparsable {
+				t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionUnparsable)
+			}
+			if !strings.Contains(err.Error(), test.says) {
+				t.Errorf("Error() = %q, want it to say %q", err, test.says)
+			}
+			// An unreadable version line is a probe that failed too, however
+			// successfully the process exited: the reader needs the same
+			// command and the same bytes to see why.
+			var failure *gocmd.Error
+			if !errors.As(err, &failure) || failure.Command() == nil {
+				t.Fatalf("err = %v, want a *gocmd.Error naming the probe", err)
+			}
+			if got := failure.RetainedOutput(); got != test.printed {
+				t.Errorf("RetainedOutput() = %q, want exactly what the stand-in printed, %q",
+					got, test.printed)
+			}
+		})
+	}
+}
+
+// TestListFailureCarriesTheToolchainOutput is the other half of what this
+// package hands out: a [gocmd.Toolchain.Command] fragment that a phase fills in
+// and runs, and whose failure has to arrive with the toolchain's own words.
+//
+// The version probe is the one command this package issues itself, so its own
+// error keeps the invocation and the output. Every other `go` command — the
+// listing here, a `go test -c`, a `go build` — is issued by the phase that needs
+// it, and what makes those diagnosable is that the pairing survives the process
+// boundary: the exit status, the bytes the go command wrote on *stderr*, and the
+// argv the phase composed, all reachable from one result.
+func TestListFailureCarriesTheToolchainOutput(t *testing.T) {
+	t.Parallel()
+
+	const refusal = "go: cannot find module providing package ./nope: directory not found"
+	f := mutantkit.FakeGo(t)
+	f.Version("1.99.0")
+	f.On("list").Stderr(refusal + "\n").Exit(1)
+
+	env := fakeEnv(t, f)
+	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
+		Explicit: f.Bin(),
+		Env:      env,
+		Timeout:  probeTimeout,
+	})
 	if err != nil {
-		t.Fatalf("looking up the go that is running this test: %v", err)
+		t.Fatalf("LocateContext = %v, want the scripted toolchain", err)
 	}
 
-	tc, err := gocmd.Locate(gocmd.Options{Explicit: found})
-	if err != nil {
-		t.Fatalf("Locate with an explicit path = %v, want a toolchain", err)
+	dir := t.TempDir()
+	spec := tc.Command("list", "-e", "-f", "{{.Dir}}", "./nope/...")
+	spec.Dir = dir
+	spec.Env = env
+	spec.Timeout = probeTimeout
+	spec.Kind = trace.ExecKindGoList
+
+	result := runner.Run(t.Context(), spec)
+	if result.Err != nil {
+		t.Fatalf("running the scripted listing: %v", result.Err)
 	}
-	if tc.GoBin != found {
-		t.Errorf("GoBin = %q, want the explicitly configured %q", tc.GoBin, found)
+	if result.ExitCode != 1 {
+		t.Fatalf("ExitCode = %d, want 1:\n%s", result.ExitCode, result.Output)
+	}
+	if !strings.Contains(string(result.Output), refusal) {
+		t.Errorf("Output = %q, want the toolchain's own refusal %q", result.Output, refusal)
+	}
+	invocation := runner.CommandOf(spec, result)
+	want := []string{tc.GoBin, "list", "-e", "-f", "{{.Dir}}", "./nope/..."}
+	if !slices.Equal(invocation.Argv, want) {
+		t.Errorf("Argv = %q, want %q", invocation.Argv, want)
+	}
+	if invocation.Dir != dir {
+		t.Errorf("Dir = %q, want the directory the phase chose, %q", invocation.Dir, dir)
+	}
+
+	// And the same command as the toolchain saw it, which is the assertion no
+	// injected runner can make: these are the arguments a real process received.
+	calls := f.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("the toolchain was called %d times, want the probe and the listing: %+v", len(calls), calls)
+	}
+	if listed := []string{"list", "-e", "-f", "{{.Dir}}", "./nope/..."}; !slices.Equal(calls[1].Argv, listed) {
+		t.Errorf("the toolchain received %q, want %q", calls[1].Argv, listed)
+	}
+	if !testkit.SamePath(calls[1].Dir, dir) {
+		t.Errorf("the listing ran in %q, want %q", calls[1].Dir, dir)
 	}
 }
 
@@ -89,19 +330,22 @@ func TestLocateAbsolutisesARelativeExplicitPath(t *testing.T) {
 	// No t.Parallel: t.Chdir is what gives a relative path a meaning, and the
 	// two are mutually exclusive.
 	workspace := t.TempDir()
-	tools := filepath.Join(workspace, "tools")
-	if err := os.MkdirAll(tools, 0o750); err != nil {
-		t.Fatalf("creating %q: %v", tools, err)
-	}
+	f := mutantkit.FakeGo(t)
 	// A version line no released toolchain will ever print, so that a result
 	// accidentally produced by the real `go` could not be mistaken for this one.
-	const release = "go1.99.0"
-	want := "go version " + release + " " + runtime.GOOS + "/" + runtime.GOARCH
-	buildFakeGo(t, tools, want)
+	const release = "1.99.0"
+	want := "go version go" + release + " " + runtime.GOOS + "/" + runtime.GOARCH
+	f.Version(release)
+	f.Install(filepath.Join(workspace, "tools"))
 
+	env := fakeEnv(t, f)
 	t.Chdir(workspace)
 
-	tc, err := gocmd.Locate(gocmd.Options{Explicit: filepath.Join("tools", "go")})
+	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
+		Explicit: filepath.Join("tools", "go"),
+		Env:      env,
+		Timeout:  probeTimeout,
+	})
 	if err != nil {
 		t.Fatalf("Locate with a relative explicit path = %v, want a toolchain", err)
 	}
@@ -117,7 +361,8 @@ func TestLocateAbsolutisesARelativeExplicitPath(t *testing.T) {
 	elsewhere := t.TempDir()
 	spec := tc.Command("version")
 	spec.Dir = elsewhere
-	spec.Timeout = gocmd.DefaultProbeTimeout
+	spec.Env = env
+	spec.Timeout = probeTimeout
 	result := runner.Run(t.Context(), spec)
 	if result.Err != nil {
 		t.Fatalf("running the located toolchain with Dir = %q: %v", elsewhere, result.Err)
@@ -174,34 +419,35 @@ func TestLocateWithAMissingExplicitPath(t *testing.T) {
 	}
 }
 
-// TestLocateRejectsAnExecutableThatIsNotGo is why locating probes rather than
-// stats. Something on PATH called `go` that answers with anything else must be
-// rejected here, not halfway through building test binaries.
-func TestLocateRejectsAnExecutableThatIsNotGo(t *testing.T) {
-	t.Parallel()
-
-	impostor := buildImpostor(t)
-	tc, err := gocmd.Locate(gocmd.Options{Explicit: impostor})
-	if err == nil {
-		t.Fatalf("Locate(%q) = %+v, want an error", impostor, tc)
-	}
-	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionUnparsable {
-		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionUnparsable)
-	}
-}
-
 // TestLocateIsCancellable pins that a probe respects the caller's context, so
 // a Ctrl-C during start-up does not have to wait out the probe timeout.
+//
+// The stand-in is named explicitly rather than looked up on PATH, because
+// [gocmd.LocateContext] resolves the executable before it consults the context:
+// on a machine with no `go` the failure would otherwise be the lookup's rather
+// than the cancellation's, and the test would pass for the wrong reason.
 func TestLocateIsCancellable(t *testing.T) {
 	t.Parallel()
+
+	f := mutantkit.FakeGo(t)
+	f.Version("1.99.0")
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	if tc, err := gocmd.LocateContext(ctx, gocmd.Options{}); err == nil {
+	tc, err := gocmd.LocateContext(ctx, gocmd.Options{
+		Explicit: f.Bin(),
+		Env:      fakeEnv(t, f),
+		Timeout:  probeTimeout,
+	})
+	if err == nil {
 		t.Fatalf("LocateContext with a cancelled context = %+v, want an error", tc)
-	} else if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
+	}
+	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
 		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionProbeFailed)
+	}
+	if calls := f.Calls(); len(calls) != 0 {
+		t.Errorf("the cancelled probe still ran %+v, want nothing started", calls)
 	}
 }
 
@@ -245,30 +491,6 @@ func TestCommandIsAFragment(t *testing.T) {
 
 	if spec := tc.Command(); len(spec.Argv) != 1 || spec.Argv[0] != tc.GoBin {
 		t.Errorf("Command() = %q, want just the toolchain path", spec.Argv)
-	}
-}
-
-// TestCommandProducesARunnableSpec closes the loop between the two packages:
-// the fragment Command returns really is something runner.Run accepts.
-func TestCommandProducesARunnableSpec(t *testing.T) {
-	t.Parallel()
-
-	tc, err := gocmd.Locate(gocmd.Options{})
-	if err != nil {
-		t.Fatalf("Locate = %v", err)
-	}
-
-	spec := tc.Command("version")
-	spec.Timeout = gocmd.DefaultProbeTimeout
-	result := runner.Run(t.Context(), spec)
-	if result.Err != nil {
-		t.Fatalf("Err = %v, want nil", result.Err)
-	}
-	if result.ExitCode != 0 {
-		t.Fatalf("ExitCode = %d, want 0; output: %s", result.ExitCode, result.Output)
-	}
-	if got := strings.TrimSpace(string(result.Output)); got != tc.Version.Raw {
-		t.Errorf("`go version` printed %q, want the located %q", got, tc.Version.Raw)
 	}
 }
 
@@ -328,113 +550,6 @@ func TestErrorRendering(t *testing.T) {
 	}
 }
 
-// TestLocateRecordsTheVersionProbeAsGoVersion is the first labelled command in
-// a run: the toolchain probe. It is here rather than in internal/runner because
-// the label belongs to the call site, and this is the only call site that has
-// one until the engine's own commands are labelled.
-func TestLocateRecordsTheVersionProbeAsGoVersion(t *testing.T) {
-	t.Parallel()
-
-	found := testkit.GoBinary(t)
-	sink := trace.NewMemorySink(0)
-	recorder := trace.New(sink, time.Now, trace.StartRecord{
-		Kind:        trace.StartKindWorkspace,
-		ToolVersion: "test",
-		PID:         os.Getpid(),
-	})
-
-	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{Trace: recorder})
-	if err != nil {
-		t.Fatalf("LocateContext = %v, want the toolchain running this test", err)
-	}
-	want, err := filepath.Abs(found)
-	if err != nil {
-		t.Fatalf("resolving %q: %v", found, err)
-	}
-	if tc.GoBin != want {
-		t.Fatalf("GoBin = %q, want the toolchain on PATH, %q", tc.GoBin, want)
-	}
-
-	events := execEvents(sink)
-	if len(events) != 1 {
-		t.Fatalf("the recording holds %d exec events, want exactly one for the version probe", len(events))
-	}
-	rec := events[0].Exec
-	if rec.Kind != trace.ExecKindGoVersion {
-		t.Errorf("kind = %q, want %q", rec.Kind, trace.ExecKindGoVersion)
-	}
-	if argv := []string{tc.GoBin, "version"}; !slices.Equal(rec.Argv, argv) {
-		t.Errorf("argv = %q, want %q", rec.Argv, argv)
-	}
-	if rec.ExitCode != 0 {
-		t.Errorf("exit_code = %d, want 0", rec.ExitCode)
-	}
-	if rec.TimeoutMS != gocmd.DefaultProbeTimeout.Milliseconds() {
-		t.Errorf("timeout_ms = %d, want the probe timeout %d", rec.TimeoutMS, gocmd.DefaultProbeTimeout.Milliseconds())
-	}
-	if rec.OutputBytes == 0 || rec.OutputSHA256 == "" {
-		t.Errorf("output_bytes = %d and output_sha256 = %q, want the digest of the version line",
-			rec.OutputBytes, rec.OutputSHA256)
-	}
-}
-
-// TestVersionProbeFailureCarriesTheInvocationAndOutput is the error a fresh
-// machine hits second: something is at the configured path and it is not a Go
-// toolchain. What it printed is the whole diagnosis, so the error keeps it — and
-// keeps the command, because "`/opt/go/bin/go version` exited 3" is only
-// actionable if the reader can run it themselves.
-func TestVersionProbeFailureCarriesTheInvocationAndOutput(t *testing.T) {
-	t.Parallel()
-
-	const garbage = "this executable is not a go toolchain"
-	standIn := buildGoStandIn(t, t.TempDir(), garbage, 3)
-
-	sink := trace.NewMemorySink(0)
-	recorder := trace.New(sink, time.Now, trace.StartRecord{Kind: trace.StartKindRun, ToolVersion: "test"})
-
-	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{Explicit: standIn, Trace: recorder})
-	if err == nil {
-		t.Fatalf("LocateContext(%q) = %+v, want an error", standIn, tc)
-	}
-	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
-		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionProbeFailed)
-	}
-
-	var failure *gocmd.Error
-	if !errors.As(err, &failure) {
-		t.Fatalf("err = %v, want a *gocmd.Error", err)
-	}
-	invocation := failure.Command()
-	if invocation == nil {
-		t.Fatal("Command() = nil, want the probe that failed")
-	}
-	if argv := []string{standIn, "version"}; !slices.Equal(invocation.Argv, argv) {
-		t.Errorf("Argv = %q, want %q", invocation.Argv, argv)
-	}
-	if invocation.Kind != trace.ExecKindGoVersion {
-		t.Errorf("Kind = %q, want %q", invocation.Kind, trace.ExecKindGoVersion)
-	}
-	events := execEvents(sink)
-	if len(events) != 1 {
-		t.Fatalf("the recording holds %d exec events, want exactly one for the version probe", len(events))
-	}
-	if invocation.TraceSeq != events[0].Seq {
-		t.Errorf("TraceSeq = %d, want the recorded sequence %d", invocation.TraceSeq, events[0].Seq)
-	}
-	if rec := events[0].Exec; rec.ExitCode != 3 {
-		t.Errorf("exit_code = %d, want 3", rec.ExitCode)
-	}
-
-	if !strings.Contains(failure.RetainedOutput(), garbage) {
-		t.Errorf("RetainedOutput() = %q, want it to hold what the stand-in printed, %q",
-			failure.RetainedOutput(), garbage)
-	}
-	// The message a user reads has not changed.
-	if want := "exited with status 3"; !strings.Contains(err.Error(), want) {
-		t.Errorf("Error() = %q, want it to contain %q", err, want)
-	}
-}
-
 // execEvents is every exec event a recording kept, in order.
 func execEvents(sink *trace.MemorySink) []trace.Event {
 	var found []trace.Event
@@ -444,61 +559,4 @@ func execEvents(sink *trace.MemorySink) []trace.Event {
 		}
 	}
 	return found
-}
-
-// buildImpostor compiles a program that answers `version` with something the
-// Go toolchain would never print, and returns its path.
-func buildImpostor(t *testing.T) string {
-	t.Helper()
-	return buildFakeGo(t, t.TempDir(), "this is not the go toolchain")
-}
-
-// buildFakeGo compiles a stand-in toolchain that answers successfully.
-func buildFakeGo(t *testing.T, dir, prints string) string {
-	t.Helper()
-	return buildGoStandIn(t, dir, prints, 0)
-}
-
-// buildGoStandIn compiles a program that answers any invocation by printing the
-// given line and exiting with the given status, installs it into dir under the
-// name a toolchain has, and returns its path.
-//
-// Three tests need a `go` that is not the real one, for three reasons: the
-// impostor, which has to be rejected for what it printed; a stand-in that has
-// to be reachable at a path of the test's choosing — copying the real
-// twenty-megabyte toolchain into a fixture directory to prove a point about
-// path resolution would be a much slower way to say the same thing; and one
-// that fails outright, which is the only way to observe what a failed probe
-// keeps.
-func buildGoStandIn(t *testing.T, dir, prints string, status int) string {
-	t.Helper()
-
-	work := t.TempDir()
-	source := filepath.Join(work, "main.go")
-	program := "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nfunc main() {\n\tfmt.Println(" +
-		strconv.Quote(prints) + ")\n\tos.Exit(" + strconv.Itoa(status) + ")\n}\n"
-	if err := os.WriteFile(source, []byte(program), 0o600); err != nil {
-		t.Fatalf("writing the stand-in source: %v", err)
-	}
-
-	binary := filepath.Join(dir, "go")
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
-	}
-	goBin := testkit.GoBinary(t)
-	build := exec.Command(goBin, "build", "-o", binary, source)
-	build.Dir = work
-	// The harness's environment, so this build lands in the suites' shared
-	// build cache rather than in the developer's own — three stand-ins per run
-	// of this package, each keyed on a temporary path that exists for one test,
-	// is exactly the kind of entry that filled that cache up.
-	//
-	// Two rows are then overridden: the build is module-less and has to be told
-	// not to look for a module, and the harness's `-mod=readonly` means nothing
-	// outside module mode.
-	build.Env = append(testkit.Compose(t, t.TempDir()), "GO111MODULE=off", "GOFLAGS=")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building the stand-in toolchain: %v\n%s", err, out)
-	}
-	return binary
 }

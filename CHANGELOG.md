@@ -14,6 +14,108 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A scripted `go` command, so that "what happens when the toolchain
+  misbehaves" is a unit test.** `mutantkit.FakeGo` hands a test an executable
+  named `go` that re-executes the test binary and answers from a rule table the
+  test writes: `f.Version("1.99.0")`, `f.On("test", "-c").Stderr(diags).Exit(2)`,
+  `f.On("version").Sleep(2 * time.Minute)`. It reaches the code under test the
+  same way a real toolchain does — by path through `gocmd.Options.Explicit`,
+  `execute.Options.Toolchain` and `OpenOptions.GoBinary`, or on `PATH` through
+  `Fake.Export` for `doctor` and `internal/engine`, which locate one themselves.
+
+  Every failure this project exists to report clearly used to be untestable
+  cheaply or at all. A version probe that hangs cannot be installed; a `go list`
+  that refuses a pattern needs a broken module; a baseline suite that is red
+  needs a fixture every other test has to route around. Those tests either lived
+  in the integration tier at a cost of minutes and a toolchain, or did not
+  exist. Twelve of them now run in the unit tier on a machine with no Go on it:
+  `internal/gocmd` covers a probe that exits non-zero, one that hangs, one that
+  answers garbage and a listing whose failure has to carry the toolchain's own
+  words; `internal/execute` covers a compile that fails with diagnostics;
+  `internal/validate` covers a snapshot that does not build with *no* mutants in
+  it; `internal/engine` covers an unresolvable scope pattern and a red baseline;
+  `internal/cli` covers `doctor`'s toolchain row; and the root package covers
+  what `Open` does when the probe fails.
+
+  It also gives the unit tier an assertion it never had. Every call is written
+  to a log, so `f.Calls()` is the argv a phase issued, the directory it issued
+  it from and the environment a child process really received — which is how
+  "the compile carries `-vet=off` and the listing does not" stopped being a
+  claim about a `runner.Spec` and became a claim about a process, how `doctor`
+  probing the toolchain exactly once and sharing the answer with its platform
+  row became checkable at all, and how the rule that puts the located
+  toolchain's own directory in front of a child's `PATH` — so that a `go`
+  cannot hand work to a different `go` it finds ahead of itself — got its first
+  test of any kind. Only `GOFLAGS`, `GOWORK`, `GOCACHE`, `GOTOOLCHAIN`,
+  `GOENV`, `GOMODCACHE`, `PATH`, `GO_MUTANTS_ACTIVE` and `GO_MUTANTS_PROBE` are
+  kept by value — the ones go-mutants itself composes, every one of them a flag
+  list or a filesystem path; every other variable is logged by name alone,
+  because a call log is written into a scratch directory CI uploads.
+
+  A scripted compile produces the fake again rather than an inert file, on
+  every platform, and that is what carries the fake past the build. `RunOne`
+  starts a compiled test binary directly, so the output of a scripted
+  `go test -c -o X` being the fake means the scheduler's own child answers the
+  same rule table: a mutant can be scripted killed or survived by exit status,
+  and the `-test.timeout` the supervisor owns and the single
+  `GO_MUTANTS_ACTIVE` it sets are read back off the log. A run past the
+  baseline still needs real source, because discovery type-checks the module
+  with go/packages.
+
+  The binary is installed once per *test binary*, not once per fake. It is a
+  link to the test binary — six megabytes — and a unit-tier run builds
+  twenty-eight fakes; on a Windows runner, where `RUNNER_TEMP` and the build
+  cache sit on different volumes and `os.Link` cannot answer, that would be a
+  hundred and seventy megabytes of copying per run. It also keeps the evidence
+  small: a failing fake test's kept scratch holds the rule table and the call
+  log, two text files, rather than a copy of the program. `mutantkit.Main`
+  removes the shared directory after the suite, retrying the way the harness
+  retries a scratch removal, because a child the supervisor has just killed can
+  still hold its own image open on Windows.
+
+  `Fake.Export`, which is the `PATH` form, forces
+  `testkit.ResolveToolchainDirectories` before it changes anything. Putting the
+  fake in front of `PATH` hijacks every `go` this process starts afterwards,
+  and one of them is the harness's own once-per-process `go env GOENV GOPATH
+  GOMODCACHE` probe. That probe is lazy, so whether it reached the machine's
+  toolchain or the fake depended on which tests had run first — and when it
+  reached the fake it recorded a call nobody asked for, aimed squarely at the
+  exact-count assertions above, and fell back to `build.Default` for the go
+  command's directories.
+
+  Three rules make it trustworthy. A call is recorded *before* it is answered,
+  so a command nobody scripted is in the log rather than only on stderr. A call
+  no rule matches is refused with exit 97 and a message naming the argv, never
+  answered with a silent success — a fake that guessed would let a test pass on
+  a command its author never considered. And the control variables are
+  `TESTKIT_FAKE_GO_RULES` and `TESTKIT_FAKE_GO_CALLS` rather than anything under
+  `GO_MUTANTS_`, which `internal/execute` and `internal/engine` strip from every
+  child: a switch wearing that prefix would be removed from the very
+  environments the fake exists to observe, and the test binary would then run
+  its own suite in place of the go command. `mutantkit.Main` is the `TestMain`
+  hook that dispatches, `mutantkit.IsFakeGo` composes it with a `TestMain` that
+  has something of its own to do — the root package's, which releases its
+  prepared sessions — and a binary started as `go` with the switch unset is
+  refused outright rather than left to recurse.
+
+  The ledger shrank, which is the point of having one.
+  `internal/gocmd/gocmd_test.go` is out of
+  `internal/testkit/testdata/unit-toolchain-allowlist.txt`: its unit tier now
+  scripts every misbehaviour and compiles nothing, where before it built three
+  stand-in programs with a real `go build`. On a cold build cache that package's
+  unit tier went from 16.2 s and 34 MB of cache entries to 0.42 s and 8 KB, and
+  on a warm one from about 0.50 s to 0.55 s; the whole suite's added unit-tier
+  time is about two seconds, a fifth of it the two deliberate 200 ms hangs.
+  The four claims that are about a *real* `go` rather than about go-mutants'
+  code — that the parser agrees with what a released toolchain prints, that an
+  explicit path beats `PATH`, that the fragment `Command` returns is runnable,
+  and that the probe is recorded as the run's first `exec` — moved intact to
+  `internal/gocmd/toolchain_integration_test.go`. `TestEveryToolchainDrivingTestIsIntegrationTagged`
+  learned one exemption to make that possible: a file that *constructs* a fake
+  is supplying the toolchain rather than reaching for one, so it is not an
+  offender. It is per file, which is why the split above is a second file, and
+  `TestAFileThatScriptsTheToolchainIsNotDrivingOne` pins both halves — the
+  scripted file exempt, the same `gocmd.Locate` call without a fake reported.
 - **`PrepareOptions.Selection` narrows a prepared session by line range, so a
   consumer that used to narrow by *file* stops over-selecting.** A tool that
   runs mutation over "what changed" could only ask the library for the whole

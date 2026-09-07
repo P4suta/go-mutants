@@ -946,7 +946,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/tui` | The bubbletea dashboard | implemented |
 | `internal/schemas` | Embedded JSON Schemas, validation before writing | catalog, run report, doctor |
 | `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks, the keep-on-failure policy and its dumps | test-only support |
-| `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording | test-only support |
+| `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording, a scripted `go` command | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `vendor-assets` | The vendored viewer bundle and its digest check | implemented |
 
@@ -961,6 +961,54 @@ behind them. Helpers that do need engine types live in `internal/testkit/mutantk
 and are imported only from external test packages; the import gate treats that
 tree as part of the harness, so it may import `internal/testkit` while nothing
 outside the harness may import either.
+
+`mutantkit.FakeGo` is the harness's answer to the other half of the toolchain
+question. `mutantkit.Toolchain` locates the machine's real `go`, which is what a
+test that wants to know whether a mutant is really killed needs; the fake is an
+executable named `go` that re-executes the test binary and answers from a rule
+table the test writes, which is what a test of what go-mutants does when the
+toolchain misbehaves needs. A version probe that hangs, one that answers
+garbage, a `go list` that refuses a pattern and a baseline suite that is red
+were all either integration-tier tests costing minutes and a toolchain or no
+test at all — a `go` that hangs cannot be installed. It also gives the unit tier
+an assertion it never had: the call log is the argv, the working directory and
+the composed `GOFLAGS`, `GOWORK`, `GOCACHE` and activation variables a child
+process really received, so "the compile carries `-vet=off` and the listing does
+not" is now a claim about a process rather than about a struct. Only those five
+values are kept — `GOFLAGS`, `GOWORK`, `GOCACHE`, `GOTOOLCHAIN`, `GOENV`,
+`GOMODCACHE`, `PATH` and the two activation variables, all of them flag lists or
+paths; every other variable is logged by name alone, because a call log is
+uploaded as a CI artifact. A call no rule matches is refused with exit 97 naming
+the argv, so a test can never pass on a command nobody scripted, and the
+package's `TestMain` dispatches through `mutantkit.Main` because the fake is the
+test binary itself.
+
+A scripted `go test -c -o X` produces the fake rather than an inert file, so the
+binary the scheduler then starts answers the same rule table and a mutant can be
+scripted killed or survived by exit status — `RunOne`, the per-worker scratch,
+the `-test.timeout` the supervisor owns and the single `GO_MUTANTS_ACTIVE` it
+sets all run with no toolchain. A whole run past the baseline still needs real
+source, because discovery type-checks the module with go/packages. The binary is
+installed once per test binary rather than once per fake, because it is a link
+to the test binary and a Windows runner cannot link across the volumes its
+temporary directory and build cache sit on; `mutantkit.Main` removes the shared
+directory after the suite, and what a failing test's kept scratch holds is the
+rule table and the call log. `Fake.Export`, the PATH form, forces
+`testkit.ResolveToolchainDirectories` first: after it, every `go` this process
+starts is the fake, and the harness's own lazy `go env` probe would otherwise
+reach it in some orderings and not others.
+
+The tier ledger reads the fake as the opposite of driving a toolchain.
+`TestEveryToolchainDrivingTestIsIntegrationTagged` scans every `_test.go` for
+the calls that start a `go` command and requires each one to carry
+`//go:build integration` or to be named in
+`internal/testkit/testdata/unit-toolchain-allowlist.txt`; a file that constructs
+a fake is exempt, because it supplies the toolchain rather than reaching for
+one. That is what let `internal/gocmd` leave the ledger: its unit tier scripts
+every misbehaviour, and the four claims that are about a real `go` moved to
+`internal/gocmd/toolchain_integration_test.go`. The exemption is per file, so a
+file may not do both — which is why the split is a second file rather than a
+build tag on a function.
 
 That rule is why the two directories the harness owns outside a temporary one —
 the test-owned build cache and the kept scratch root — and the names of the

@@ -52,7 +52,19 @@ import (
 const workspaceBarrierEnv = "WORKSPACE_EXEC_BARRIER_HELPER"
 
 func TestMain(m *testing.M) {
-	code := m.Run()
+	// The suite runs through [mutantkit.Main] rather than through m.Run
+	// directly, and both halves of that matter. This binary is also the
+	// scripted `go` that fakego_test.go runs — that file is untagged, so it is
+	// in this tier's binary too — and Main is what dispatches to it. It is also
+	// what publishes the private coverage root every re-executed child of this
+	// binary needs, so a suite that called m.Run itself would leave the fake
+	// with nowhere to write coverage output and it would refuse to answer.
+	code := mutantkit.Main(m)
+	// A fake process never reached a test, so there is nothing prepared for it
+	// to release.
+	if mutantkit.IsFakeGo() {
+		os.Exit(code)
+	}
 	// The status rather than a boolean of this file's own, because it is the
 	// only thing here that knows whether anything failed: the sessions are
 	// shared, so no test owns one, and the keep policy's "on failure" has to be
