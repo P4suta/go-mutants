@@ -14,6 +14,81 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The dogfood gate reads its own coverage and validates its own documents.**
+  This repository's own `.go-mutants.toml` now includes `internal/coverage/*.go`
+  and `internal/schemas/*.go` as well, so the gate is five whole packages rather
+  than three: the mutation model, the glob engine, the interval relation, the
+  coverage reader and mapping that decide which suites a mutant is measured
+  against, and the JSON schema validation every published document passes
+  through. 801 mutants, 775 detected — 774 killed and one caught by the timeout
+  — 26 declared, 100.00%, about half a minute at `--jobs 4` where three packages
+  took ten seconds. CI's `dogfood` job keeps its 25-minute budget, which the run
+  now uses two percent of.
+
+  The two packages are there because the tests that kill their survivors are
+  there, which is the only way this list is allowed to grow. The first
+  measurement over `internal/coverage` reported 28 unexpected survivors and 7
+  mutants no binary reached at all; the first over `internal/schemas` reported
+  21 and 11. Forty of those 49 are now dead, killed by sixteen named tests and
+  ten new cases in tables that already existed, and every uncovered mutant in
+  `internal/coverage` is now executed. Nothing was excluded and no budget was
+  cut: the survivors that are left are argued, one row each.
+
+  What the tests found is worth more than the score. `ParseTextfmt` had never
+  been asked about a *reader* that fails — only about documents that are wrong —
+  so a profile truncated halfway through a pipe was returned as a short profile
+  and no error, which is a coverage map quietly missing the blocks it never read
+  and mutants reported as uncovered survivors with nothing saying why. It had
+  never been given a coordinate too large for an `int` either, where
+  `strconv.Atoi` returns `math.MaxInt64` *and* an error and the 1-based check
+  alone waves it through. Its closing position and its statement count were
+  never malformed in any test, only its opening position and its execution
+  count, so the second of each pair was unchecked by construction. `Map` had
+  never been given a file's blocks out of the order the toolchain writes them,
+  which is the case the index sorts for, nor two blocks that nest, nor a span
+  whose end precedes its start. `resourceURL` had never been given a schema
+  without an `$id`, because every schema in this repository has one that is
+  exactly the fallback — so both branches returned the same string and nothing
+  told them apart. And `firstViolation`'s second and third sort keys had never
+  run at all, because no test document had ever produced two violations at one
+  location; a trace event carrying a payload that belongs to another event type
+  produces one per foreign payload, all of them at `/type`, and now two of them
+  pin which complaint a reader is shown.
+
+  Four of those tests are white-box, in a new `map_internal_test.go`, and the
+  file's header says why: the index records a file it never reached and nothing
+  downstream reads that record back, `merge` joins two adjacent ranges into one
+  and `covers` answers a query about the join exactly as it answers one about
+  the pair, and `relativeTo` refuses a name that is not a path. Each is a
+  documented promise and each is what makes the structure above it cheap or
+  honest, and none of them changes an answer `Map` gives — so a test written
+  through `Map` could not reach them, and the mutation run said so by leaving
+  the lines alive.
+
+  The nine new `[[mutation.expect]]` rows are two claims. Two of them are one
+  comparator's secondary key in `internal/coverage`, mutated two ways: the key
+  orders only intervals that already share a start line, and `merge` folds any
+  run of those into one interval reaching the furthest of their ends whatever
+  order the sort leaves them in, so no permutation of a tie changes the merged
+  list and `covers` reads nothing else. Both are executed rather than skipped —
+  a case in `map_test.go` gives one file two blocks opening on one line — so the
+  rows are fulfilled by a test binary that ran. The other seven are the
+  "embedded schema that cannot be used" branches in `internal/schemas`:
+  `schema.FS` is an `embed.FS` fixed at build time, so no input, flag or file on
+  disk can make it fail to read, stop being JSON, refuse its `$id` or fail to
+  compile. `TestEveryRegisteredSchemaCompiles` is the negation of all seven,
+  asserted on every run of the suite, so the day one becomes reachable is a day
+  that test is already red and these rows are stale — which is exit 2, not a
+  quiet pass. The guards stay, because they are what makes a broken schema take
+  down one report format rather than the whole run.
+
+  `policy.minimum_score` stays at 99, and the arithmetic is in the file. Growing
+  from 549 scored mutants to 775 moves the slack that floor buys from five
+  survivors to seven; the last time it moved, 96 was buying four survivors at
+  120 mutants and would have bought twenty-one at 544, which is a fivefold
+  loosening wearing an unchanged number. Two is not that. The floor has never
+  been the gate that guards CI — `--strict` fails on the first unexpected
+  survivor, and that is the flag `mise run dogfood` passes.
 - **`docs/development.md`, six architecture decision records, and the tests
   that keep them true.** The developer infrastructure of this repository grew a
   great deal in a short time — a shared hermetic harness, a test-owned build
