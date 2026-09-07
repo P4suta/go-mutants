@@ -76,7 +76,7 @@ nothing else.
 go-mutants run --trace -vv --keep-temp=on-failure
 ```
 
-A failed run writes a bundle whether or not you asked for one: the rendered
+A failed run writes a bundle by default: the rendered
 failure in `error.txt`, the environment's variable names, the `doctor` table,
 the recording and the report. **Where it lands depends on the trace.** A traced
 run — which the command above is — files it in its own recording's directory,

@@ -1032,7 +1032,7 @@ go-mutants run --trace -vv --keep-temp=on-failure
   when the run fails and not when it is interrupted, which is the mode a CI job
   can leave on. A bare `--keep-temp` keeps them whatever happened.
 
-A run that fails writes a bundle whether or not it was asked to, and **where it
+A run that fails writes a bundle by default, and **where it
 lands depends on whether the run was traced.** A traced run — which the command
 above is — files it in that run's own recording directory,
 `<report.directory>/trace/<run-id>/`, so the failure and the account of the run
