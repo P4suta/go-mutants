@@ -160,6 +160,89 @@ func TestCodesAreUniqueAndOwned(t *testing.T) {
 	}
 }
 
+// Codes() is the list `doctor` prints so that a code seen in a log can be
+// looked up without reading the source, and it is handed out rather than
+// shared: a caller that sorts or truncates what it got must not be able to
+// change what the next caller is told.
+func TestCodesIsAFreshCopyOfTheWholeLedger(t *testing.T) {
+	got := Codes()
+	if diff := cmp.Diff(codes, got); diff != "" {
+		t.Fatalf("Codes() is not the ledger (-want +got):\n%s", diff)
+	}
+
+	got[0] = "GOM3999"
+	if again := Codes(); again[0] == "GOM3999" {
+		t.Errorf("a caller's edit reached the next Codes()")
+	}
+}
+
+// A code is printed on its own — in a console line, in a CI log, in an issue
+// report — and String is how. Nothing else in this package reaches it, because
+// Error.Error writes the field rather than calling it.
+func TestCodeStringIsTheCodeItself(t *testing.T) {
+	if got := CodeThresholdsInverted.String(); got != "GOM3064" {
+		t.Errorf("CodeThresholdsInverted.String() = %q, want %q", got, "GOM3064")
+	}
+	for _, code := range codes {
+		if got := code.String(); got != string(code) {
+			t.Errorf("%s.String() = %q", string(code), got)
+		}
+	}
+}
+
+// A Position renders three ways, and only one of them is what an *Error
+// carrying a located value prints. The other two are the honest answers for a
+// key with no position and for a layer that could name the line but not a
+// column inside it, and neither has anywhere else in this repository to be
+// exercised.
+func TestPositionString(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		position Position
+		known    bool
+		want     string
+	}{
+		{"unknown", Position{}, false, "-"},
+		{"line and column", Position{Line: 55, Column: 8}, true, "55:8"},
+		// A line with no column is not "column zero": the column is dropped
+		// rather than printed as a number no editor would accept.
+		{"line only", Position{Line: 55}, true, "55"},
+		// A column with no line points at nothing, which is what the zero
+		// Position means.
+		{"column only", Position{Column: 8}, false, "-"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.position.Known(); got != test.known {
+				t.Errorf("Known() = %v, want %v", got, test.known)
+			}
+			if got := test.position.String(); got != test.want {
+				t.Errorf("String() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// baseKey is what lets a diagnostic about `mutation.include[3]` find the flag
+// registered for `mutation.include`. It strips from the first '[' and does not
+// look for a matching one, which is a decision rather than an oversight: every
+// key the validators build puts the index last or last but one.
+func TestBaseKeyStripsTheIndexAndWhatFollowsIt(t *testing.T) {
+	for _, test := range []struct{ key, want string }{
+		{"report.low", "report.low"},
+		{"mutation.include[3]", "mutation.include"},
+		{"mutation.expect[1].id", "mutation.expect"},
+		// A key that is nothing but an index has the empty prefix in front of
+		// it, and that — rather than the key itself — is what no flag is
+		// registered under.
+		{"[0]", ""},
+		{"", ""},
+	} {
+		if got := baseKey(test.key); got != test.want {
+			t.Errorf("baseKey(%q) = %q, want %q", test.key, got, test.want)
+		}
+	}
+}
+
 func TestSet(t *testing.T) {
 	var unset Set[int]
 	if unset.IsSet() {
@@ -170,6 +253,14 @@ func TestSet(t *testing.T) {
 	}
 	if got := unset.String(); got != "unset" {
 		t.Errorf("String() on an unset Set = %q", got)
+	}
+	// A set value renders as the value, which is what makes "unset" mean
+	// something rather than being one rendering among two that look alike.
+	if got := Explicit(3).String(); got != "3" {
+		t.Errorf("String() on Explicit(3) = %q, want %q", got, "3")
+	}
+	if got := Explicit([]string{"a", "b"}).String(); got != "[a b]" {
+		t.Errorf("String() on a set slice = %q, want %q", got, "[a b]")
 	}
 
 	// A deliberate zero is a value: this is the whole reason the type exists.

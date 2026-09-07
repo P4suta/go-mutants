@@ -363,8 +363,8 @@ is on the order of ten seconds. `mise.toml` describes the whole unit tier as
 seconds on a warm machine and a couple of minutes cold, which is what its 15m
 alarm is sized around; the integration tier is tens of minutes, of which
 `internal/engine` alone is eight to ten of real toolchain work; and
-`.go-mutants.toml` sizes `mise run dogfood` at 24–30 seconds at `--jobs 4`
-against a warm build cache, and one to two minutes against a cold one.
+`.go-mutants.toml` sizes `mise run dogfood` at 78–79 seconds at `--jobs 4`
+against a warm build cache, and 1m52s against a cold one.
 Anything far from those shapes is worth a `mise run test-cost` before it is
 worth a workaround.
 
@@ -1160,11 +1160,12 @@ undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
-the settings they justify. It covers eight whole packages:
+the settings they justify. It covers nine whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
 | `internal/mutation` | 450 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
+| `internal/config` | 425 | the reader of the file above — decoding, validation, precedence, and the walk that locates a diagnostic in it |
 | `internal/coverage` | 146 | the profile reader, and the mapping that decides which suites a mutant is measured against |
 | `internal/schemas` | 89 | the JSON schema validation every published document goes through |
 | `internal/glob` | 68 | the glob engine those identities depend on |
@@ -1173,18 +1174,30 @@ the settings they justify. It covers eight whole packages:
 | `internal/drift` | 11 | which change to an instrumented snapshot the instrumentation did not make |
 | `internal/testflag` | 7 | which argument names a test-binary flag |
 
-All eight are pure arithmetic, pure text matching, a pure filter over a digest
-table, or a pure decision over values handed in, with no clock, no network and
-no filesystem, so a mutant either changes an answer or it does not.
+All nine are pure arithmetic, pure text matching, a pure filter over a digest
+table, or a pure decision over values handed in, with no clock and no network,
+so a mutant either changes an answer or it does not. `internal/config` reaches
+the filesystem in exactly one place — `os.ReadFile` in `LoadFile` — and
+everything under it takes bytes and returns an answer.
 
-The numbers the gate is sized against: 835 mutants catalogued, 809 detected —
-808 killed and one caught by the per-mutant timeout, which is what an infinite
-loop looks like from outside — twenty-six declared expectations, **a score of
-100.00%**, in 24–30 seconds at `--jobs 4` against a warm test-owned build cache
-and one to two minutes against a cold one. `policy.minimum_score = 99` is
-compared on every run, `--strict` or not, and at this size it does not fail
-until the ninth unexpected survivor — so `--strict` is the thing that actually
-fails this job, on the first.
+The numbers the gate is sized against: 1260 mutants catalogued, 1230 detected —
+1225 killed and five caught by the per-mutant timeout, which is what a loop that
+never returns looks like from outside — thirty declared expectations, **a score
+of 100.00%**, in 78–79 seconds at `--jobs 4` against a warm test-owned build
+cache and 1m52s against a cold one. `policy.minimum_score = 99` is compared on
+every run, `--strict` or not, and at this size it does not fail until the
+thirteenth unexpected survivor — so `--strict` is the thing that actually fails
+this job, on the first.
+
+One number in that summary is not stable, and it is worth knowing which before
+diffing two runs. A timeout is measured a second time before it is believed, and
+the five mutants that never return are what sets this gate's wall clock: a
+hundred seconds of worker time on a run whose other 1255 mutants are
+milliseconds each. Four of the five time out every time. The fifth — `i < 0`
+negated in `internal/config`'s `lineStarts` — appends to a slice rather than
+spinning, so it is recorded as killed when the allocator reaches it before the
+clock does and as timed out when it does not. Both are detections, so the total,
+the score and the verdict do not move; only the killed/timeout split does.
 
 The one mutant the timeout catches is `negate-loop-condition` on
 `internal/coverage/textfmt.go`'s `for scanner.Scan()`, and it is caught by the
@@ -1228,6 +1241,7 @@ while the catalogue grows can make the gate looser without anybody deciding to.
 Re-checked is not the same as moved. It went 96 → 99 when the catalogue went
 from 120 scored mutants to 544, where the old number would have bought
 twenty-one survivors of slack instead of four; it has stayed at 99 through the
-widenings since, because one percent of 549, 583 and 809 is five, five and
-eight. Do the arithmetic, write the answer next to the number, and only then
-decide whether it moves.
+widenings since, because one percent of 549, 583, 809 and 1230 is five, five,
+eight and twelve — the largest of those, and still short of the twenty-one that
+moved it last time. Do the arithmetic, write the answer next to the number, and
+only then decide whether it moves.

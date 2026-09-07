@@ -432,19 +432,27 @@ jobs:
   # declared expectations all live in .go-mutants.toml; the task adds --strict,
   # so an undeclared survivor fails this job.
   #
-  # The budget is generous relative to the one to two minutes this scope
-  # measures at --jobs 4 locally, because the cost per mutant here is dominated
-  # by this repository's own slowest test package rather than by anything
-  # go-mutants does, and a runner having a bad day should show up as a slow job
-  # rather than a red one. It survived the scope growing from 566 mutants to 600
-  # without being touched, and that is measured rather than assumed: back to
-  # back on one machine the two scopes take the same 38 seconds against a cold
-  # build cache, which is the only kind this job ever gets, because
-  # GO_MUTANTS_TEST_GOCACHE below points at the runner's temporary directory and
-  # is never restored. Growing again to 835 cost real time and still did not
-  # move it: cold runs of the widened scope measured 1m36s and 2m14s on a
-  # machine that was doing other things, a good part of that one mutant waiting
-  # out the per-mutant timeout, against a budget of twenty-five minutes.
+  # The budget is generous relative to the under two minutes this scope measures
+  # at --jobs 4 locally, because the cost per mutant here is dominated by this
+  # repository's own slowest test package rather than by anything go-mutants
+  # does, and a runner having a bad day should show up as a slow job rather than
+  # a red one. It survived the scope growing from 566 mutants to 600 without
+  # being touched, and that is measured rather than assumed: back to back on one
+  # machine the two scopes take the same 38 seconds against a cold build cache,
+  # which is the only kind this job ever gets, because GO_MUTANTS_TEST_GOCACHE
+  # below points at the runner's temporary directory and is never restored.
+  # Growing again to 835 cost real time and still did not move it: cold runs of
+  # that scope measured 1m36s and 2m14s on a machine that was doing other
+  # things, a good part of that one mutant waiting out the per-mutant timeout,
+  # against a budget of twenty-five minutes.
+  #
+  # 1260 mutants does not move it either, and the shape of that growth is worth
+  # a sentence rather than another ratio. On one machine, minutes apart, the
+  # eight-package scope ran cold in 52s and the nine-package scope in 1m52s --
+  # and almost the whole minute is four more mutants that never return, each
+  # waiting out two per-mutant timeouts, rather than the other 421 this widening
+  # added. So the number to watch as the scope grows is how many mutants hang,
+  # not how many there are; twenty-five minutes has room for many more of both.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25

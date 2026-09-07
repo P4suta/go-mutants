@@ -404,13 +404,13 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 835 mutants at 100.00%, 24-30 seconds
-# at --jobs 4 against a warm test-owned build cache and one to two minutes
-# against a cold one. Cold is what CI measures, because the dogfood job points
+# The budget this job is sized against: 1260 mutants at 100.00%, 78-79 seconds
+# at --jobs 4 against a warm test-owned build cache and 1m52s against a cold
+# one. Cold is what CI measures, because the dogfood job points
 # GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never
 # restores it. .go-mutants.toml records that measurement in full under
-# [policy], next to the scope it is a measurement of, including why the cold
-# figure is a range rather than a number.
+# [policy], next to the scope it is a measurement of, including the run of the
+# previous scope it is paired with.
 #
 # What the gate cost before is history, and every figure is labelled with the
 # scope that produced it, because a duration without its scope reads as a
@@ -434,25 +434,36 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 #   8 packages, 835              24-30s  internal/coverage and internal/schemas
 #                                        joined, and one of their mutants loops
 #                                        forever.
+#   9 packages, 1260             78-79s  internal/config joined, and four more
+#                                        of its mutants never return.
 #
 # Every row is a warm cache. The middle two were measured back to back on one
-# idle machine; the last was measured on the same machine with other work on it,
-# which is why it is a range and why it is not three times the row above it in
-# any strict sense. Only the ratios travel.
+# idle machine; the fifth was measured on the same machine with other work on
+# it, which is why it is a range and why it is not three times the row above it
+# in any strict sense; the last was measured on a different machine, which also
+# reran the row above it and got 24-28s, so those two are the pair to compare.
+# Only the ratios travel.
 #
-# A good part of the difference between the last two rows is one mutant rather
-# than the other two hundred and thirty-four: negating ParseTextfmt's scanner
-# loop makes an empty document loop forever, and the only way to catch that is
-# to wait out the per-mutant timeout -- which is itself max(10s, slowest
-# baseline x 5) and so grows with the load. .go-mutants.toml says so where the
-# numbers live.
+# A good part of the difference between the fourth and fifth rows is one mutant
+# rather than the other two hundred and thirty-four, and almost all of the
+# difference between the fifth and the last is four mutants rather than the
+# other four hundred and twenty-one. Negating ParseTextfmt's scanner loop makes
+# an empty document loop forever, and negating either loop of internal/config's
+# position walk -- or turning lineStarts' stride into a subtraction -- does the
+# same to a TOML document. The only way to catch that is to wait out the
+# per-mutant timeout, twice, because a timeout is measured again before it is
+# believed: five such mutants are 100 seconds of worker time on a run whose
+# other 1255 mutants are milliseconds each. The timeout is itself max(10s,
+# slowest baseline x 5) and so grows with the load. .go-mutants.toml says so
+# where the numbers live.
 #
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
 # developer's machine reports a survivor instead of failing on it, and this
 # task is the caller that insists. That flag is the whole difference between
 # the two runs, and it is the only thing that fails this job on one survivor --
-# policy.minimum_score = 99 is compared either way and does not fail until nine.
+# policy.minimum_score = 99 is compared either way and, at this size, does not
+# fail until thirteen.
 # --profile balanced is redundant with the file and stated anyway, so that a
 # change to the file's profile shows up as a conflict to resolve rather than as
 # a silently different gate.
