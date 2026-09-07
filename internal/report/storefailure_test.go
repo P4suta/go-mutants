@@ -917,6 +917,13 @@ func TestAClaimReadsBackTheMarkerThatWonTheRace(t *testing.T) {
 	if want := "the workspace marker " + marker + " could not be read back"; !strings.Contains(err.Error(), want) {
 		t.Errorf("the failure does not say %q: %v", want, err)
 	}
+	// The cause travels with the sentence: a marker that is a directory fails
+	// to read with the operating system's own error, and a caller that wants
+	// to know which failure it was can still reach it.
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Errorf("the failure does not wrap the read's own error: %v", err)
+	}
 }
 
 // TestAClaimFallsBackWhenTheTemporaryFileIsSweptAway is the other half of

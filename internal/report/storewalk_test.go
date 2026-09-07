@@ -684,6 +684,11 @@ func TestWithinIsAboutWhereAPathResolvesRatherThanHowItIsSpelled(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			if tc.wantErr != "" {
+				// Both refusing cases stage a regular file where a directory
+				// has to be; see the probe.
+				requireRefusalUnderAFile(t, file)
+			}
 			got, err := report.Within(tc.path, tc.root)
 			if tc.wantErr != "" {
 				if code := report.CodeOf(err); code != tc.wantErr {
@@ -880,15 +885,19 @@ func TestResolveParentLeavesTheLastElementAlone(t *testing.T) {
 }
 
 // requireRefusalUnderAFile skips a case that stages "a path under a regular
-// file" where the platform does not refuse one. Linux and macOS answer ENOTDIR
-// for a name under a file; Windows resolves it — EvalSymlinks there does not
-// check that every parent is a directory — so the refusal the case is about
-// cannot be produced, and pretending otherwise would be asserting the
-// platform rather than the code. It probes rather than naming the platform.
+// file" where the platform cannot tell one from a path that is simply not
+// there. Linux and macOS answer ENOTDIR for a name under a file, which the
+// resolution treats as a hard failure; Windows answers ERROR_PATH_NOT_FOUND,
+// which is fs.ErrNotExist — the same answer a missing directory gets — so the
+// walk up to the first existing ancestor lands on the file and resolves it,
+// and the refusal the case is about cannot be produced. Pretending otherwise
+// would be asserting the platform rather than the code, so the case probes
+// for the distinction rather than naming the platform.
 func requireRefusalUnderAFile(t *testing.T, file string) {
 	t.Helper()
-	if _, err := filepath.EvalSymlinks(filepath.Join(file, "under")); err == nil {
-		t.Skip("this platform resolves a path under a regular file, so the refusal this case stages cannot happen here")
+	_, err := os.Stat(filepath.Join(file, "deeper", "runs"))
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Skip("this platform reports a path under a regular file as merely absent, so the refusal this case stages cannot happen here")
 	}
 }
 
