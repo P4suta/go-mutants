@@ -97,6 +97,26 @@ var (
 	// an empty result would be read as a pass that infected nothing. Neither is
 	// true, and both are silent.
 	ErrProbeInconsistent = errors.New("the probe log names a mutant the catalogue cannot account for")
+	// ErrInvalidSelection reports a [PrepareOptions.Selection] the engine will
+	// not narrow a catalogue by: a path that is empty, absolute,
+	// backslash-separated or escaping the module, or a [LineRange] that starts
+	// below line 1 or ends before it starts. The sentence around it names the
+	// entry that was wrong.
+	//
+	// It is a refusal rather than a selection of nothing on purpose, and it is
+	// the judgement `--changed` already makes: a narrowing nothing can satisfy
+	// selects no mutants, and a run that measured none and reported a perfect
+	// score is the one failure a selection feature must not produce. So the
+	// selection is refused before discovery starts rather than believed and
+	// then found to match nothing.
+	//
+	// A path the engine *can* read and the module does not hold is not one of
+	// them. Prepare has looked at no source when the options are resolved, a
+	// selection is usually built from a diff — which names deleted files,
+	// testdata and documents beside source — and a path naming no mutated file
+	// simply selects nothing. Refusing it would make every consumer filter the
+	// engine's own input on the engine's behalf.
+	ErrInvalidSelection = errors.New("selection is invalid")
 )
 
 // A MutantSelectionError is [Session.Exec] refusing the mutant it was asked

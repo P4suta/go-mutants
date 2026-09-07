@@ -492,6 +492,16 @@ result, err := session.Exec(ctx, gomutants.ExecRequest{
 })
 ```
 
+`PrepareOptions.Selection` narrows what the session sets out to *execute*, by
+line range rather than by file: module-relative paths onto 1-based inclusive
+ranges, intersected with each mutant's `[Line, EndLine]` span by the same rule
+`--changed` applies to a diff. It is applied after discovery and validation, so
+the catalogue, the identities, the rejections and both digests are a full run's,
+and it is advisory — `Session.Exec` still runs an unselected mutant, and a
+consumer's stored evidence keeps hitting so long as it never records an
+unselected mutant as a result. See
+[Selecting by line range](docs/library.md#selecting-by-line-range).
+
 A session prepared with `Probe: true` also builds a **probe tree**: a second
 instrumented snapshot of the same source in which no mutant is ever active and
 each site go-mutants has a probe form for records, without side effects, whether

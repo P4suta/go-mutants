@@ -71,6 +71,7 @@ func TestProbedImpliesAccepted(t *testing.T) {
 		map[string]bool{},
 		map[string]bool{id: true},
 		nil,
+		nil,
 	)
 	if len(public.Mutants) != 1 {
 		t.Fatalf("the public catalogue holds %d mutants, want 1", len(public.Mutants))

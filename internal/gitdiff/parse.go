@@ -68,7 +68,7 @@ func parseDiff(out, prefix string) (map[string][]Range, error) {
 	}
 
 	for path, ranges := range files {
-		files[path] = merge(ranges)
+		files[path] = Merge(ranges)
 	}
 	return files, nil
 }
@@ -157,10 +157,25 @@ func relative(path, prefix string) string {
 	return rest
 }
 
-// merge sorts a file's ranges and joins the ones that touch or overlap, so that
+// Merge sorts a file's ranges and joins the ones that touch or overlap, so that
 // the stored set is canonical: two diffs describing the same lines produce the
 // same ranges whatever order git emitted the hunks in.
-func merge(ranges []Range) []Range {
+//
+// The join test is written as `r.First-1 <= last` rather than as the more
+// obvious `r.First <= last+1`, and the difference is not style. A range ending
+// at math.MaxInt is a legal one — "from line 41 to the end of the file" is how a
+// caller spells a range whose end it does not know — and adding one to it wraps
+// to a negative number, at which point every following range compares as
+// disjoint and the result is not canonical at all. Subtracting cannot wrap here:
+// every producer of a Range refuses a First below 1.
+//
+// It is exported because the engine API's Selection is the same shape asked for
+// from the other end — a caller naming the lines it cares about rather than git
+// naming the lines it changed — and the two have to canonicalise identically or
+// a selection and a diff describing one file could compare unequal while
+// selecting the same mutants. The argument is sorted in place and the result
+// aliases its storage, so a caller that still needs the input passes a copy.
+func Merge(ranges []Range) []Range {
 	slices.SortFunc(ranges, func(x, y Range) int {
 		if c := x.First - y.First; c != 0 {
 			return c
@@ -169,7 +184,7 @@ func merge(ranges []Range) []Range {
 	})
 	out := ranges[:0]
 	for _, r := range ranges {
-		if n := len(out); n > 0 && r.First <= out[n-1].Last+1 {
+		if n := len(out); n > 0 && r.First-1 <= out[n-1].Last {
 			out[n-1].Last = max(out[n-1].Last, r.Last)
 			continue
 		}

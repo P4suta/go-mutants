@@ -137,7 +137,6 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	if w.prepared {
 		return nil, fmt.Errorf("gomutants: prepare: %w", ErrWorkspacePrepared)
 	}
-	w.prepared = true
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("gomutants: prepare: %w", ctxErr)
 	}
@@ -145,6 +144,21 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	if err != nil {
 		return nil, err
 	}
+	// The workspace is spent from here, and not one line earlier. Spending it is
+	// about a preparation that *began*: one that stopped part-way may have left
+	// instrumented sources in the frozen tree, so the tree promises nothing and
+	// both a second Prepare and every Workspace.Exec are refused. Nothing above
+	// this line has read or written anything — the three refusals are a state
+	// check and an argument check — so charging a caller a fresh workspace and a
+	// fresh snapshot for a typo in a line number would be charging it for damage
+	// nothing did.
+	//
+	// The integrity gate below is deliberately on the other side: it reads the
+	// tree, and a snapshot that has already moved is spent whatever the caller
+	// does next. The lock is held for the whole call, so there is no window
+	// between the check above and this assignment for a second Prepare to slip
+	// into.
+	w.prepared = true
 	phases := newPrepareTrace(resolved.Trace, w.recorder)
 	// From here on a failure is one this workspace had, and the recording says
 	// which phase it was in. Deferred rather than written at each return,
@@ -417,6 +431,7 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 		accepted,
 		probeBuild.probed,
 		mainBuild.binaries,
+		resolved.Selection,
 	)
 	session = &Session{
 		root:           w.snapshot.Root,
@@ -871,6 +886,17 @@ func resolvePrepareOptions(opts PrepareOptions) (PrepareOptions, error) {
 			return PrepareOptions{}, fmt.Errorf("gomutants: prepare probe coverage package %q is invalid", pattern)
 		}
 	}
+	// Here rather than where the catalogue is narrowed, which is the far side
+	// of discovery, validation and two tree builds. A selection nobody can read
+	// is a mistake in the caller's own request, and finding it after ten
+	// minutes of preparation would be finding it after the expensive part.
+	// Normalising here also means the value the session keeps is the canonical
+	// one, and nothing downstream ever sees the caller's spelling.
+	selection, err := normaliseSelection(opts.Selection)
+	if err != nil {
+		return PrepareOptions{}, err
+	}
+	opts.Selection = selection
 	if opts.SkipVerify && (len(opts.Verify.Argv) != 0 || len(opts.Verify.Env) != 0 || opts.Verify.Dir != "" ||
 		opts.Verify.Timeout != 0 || opts.Verify.OutputLimit != 0) {
 		return PrepareOptions{}, errors.New("gomutants: prepare cannot combine skip verify with a verification command")
@@ -1970,6 +1996,7 @@ func makeCatalog(
 	accepted map[string]bool,
 	probed map[string]bool,
 	binaries []execute.TestBinary,
+	selection *Selection,
 ) (Catalog, map[string]Rejection) {
 	type locationKey struct {
 		path string
@@ -2017,7 +2044,21 @@ func makeCatalog(
 			Probed: probed[internal.ID] && accepted[internal.ID],
 		}
 		mutants = append(mutants, public)
-		byID[public.ID] = public
+	}
+	// After the whole slice is built, and after discovery and validation have
+	// had their say: a selection narrows what a caller means to execute and
+	// nothing else, so it runs over finished mutants rather than deciding which
+	// ones exist. Everything above this line is what a preparation with no
+	// selection produces, byte for byte.
+	//
+	// The index is filled from the finished slice rather than inside the loop
+	// above, so that there is exactly one description of each mutant. Filling it
+	// as each mutant was built would leave it holding values from before
+	// applySelection ran, and the rejections rendered from it just below would
+	// then disagree with the catalogue about Selected.
+	applySelection(mutants, selection)
+	for _, mutant := range mutants {
+		byID[mutant.ID] = mutant
 	}
 	rejections := make([]Rejection, 0, len(rejected))
 	rejectionIndex := make(map[string]Rejection, len(rejected))
@@ -2049,6 +2090,7 @@ func makeCatalog(
 		Mutants:         mutants,
 		Rejections:      rejections,
 		TestPackages:    packages,
+		Selection:       cloneSelection(selection),
 	}
 	// Last, over the finished value: the prepared digest is a function of every
 	// other field, so computing it anywhere but here would leave one of them
@@ -2083,6 +2125,7 @@ func cloneCatalog(c Catalog) Catalog {
 	}
 	c.Rejections = slices.Clone(c.Rejections)
 	c.TestPackages = slices.Clone(c.TestPackages)
+	c.Selection = cloneSelection(c.Selection)
 	return c
 }
 

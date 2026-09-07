@@ -191,6 +191,7 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 		gomutants.ErrProbeNotPrepared,
 		gomutants.ErrProbeInconsistent,
 		gomutants.ErrTestLogUnsupported,
+		gomutants.ErrInvalidSelection,
 	} {
 		if !errors.Is(fmt.Errorf("wrapped: %w", sentinel), sentinel) {
 			t.Errorf("%v does not survive wrapping", sentinel)
@@ -314,6 +315,9 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.ErrProbeNotPrepared
 	_ = gomutants.ErrProbeInconsistent
 	_ = gomutants.ErrTestLogUnsupported
+	_ = gomutants.Selection{}
+	_ = gomutants.LineRange{}
+	_ = gomutants.ErrInvalidSelection
 
 	// The two fields a consumer keys on. PreparedDigest is what evidence about a
 	// prepared session is stored under, and EndLine is what a line range is
@@ -321,6 +325,19 @@ func TestPublicDataTypes(t *testing.T) {
 	// name is the contract and not only the type.
 	_ = gomutants.Catalog{PreparedDigest: ""}
 	_ = gomutants.Mutant{EndLine: 0}
+
+	// Selecting by line range, end to end: the ranges a consumer asks for, the
+	// per-mutant answer it reads, and the normalised copy the catalogue hands
+	// back. All three are read by name — a consumer builds the request, branches
+	// on Selected, and reports Selection beside a score — so the names are as
+	// much the contract as the types.
+	_ = gomutants.LineRange{First: 0, Last: 0}
+	_ = gomutants.Selection{Lines: map[string][]gomutants.LineRange{
+		"internal/alpha/alpha.go": {{First: 12, Last: 20}},
+	}}
+	_ = gomutants.PrepareOptions{Selection: nil}
+	_ = gomutants.Mutant{Selected: false}
+	_ = gomutants.Catalog{Selection: nil}
 
 	// How much output a call is willing to hold, and what every result says
 	// about what it could not keep. A consumer reads the flag rather than the

@@ -372,7 +372,7 @@ func (g git) addUntracked(ctx context.Context, files map[string][]Range, prefix 
 		if lines == 0 {
 			continue
 		}
-		files[rel] = merge(append(files[rel], Range{First: 1, Last: lines}))
+		files[rel] = Merge(append(files[rel], Range{First: 1, Last: lines}))
 	}
 	return nil
 }

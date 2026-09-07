@@ -4,6 +4,7 @@
 package gitdiff
 
 import (
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -264,6 +265,59 @@ func TestPathsAreSorted(t *testing.T) {
 	}}
 	if got := changed.Paths(); !slices.Equal(got, []string{"a.go", "m.go", "z.go"}) {
 		t.Errorf("Paths() = %v", got)
+	}
+}
+
+// TestMergeJoinsTouchingRangesWithoutOverflowing is [Merge]'s own table, and
+// the last row is why it exists as a test rather than as a line inside the
+// parser's.
+//
+// The join is "r starts at or before one past the end of the last range", and
+// the obvious way to write it — `r.First <= out[n-1].Last+1` — wraps to a
+// negative number when the last range ends at math.MaxInt, at which point every
+// following range compares as disjoint and the result stops being canonical.
+// `r.First-1 <= out[n-1].Last` says the same thing and cannot wrap, because
+// [checkLineRange] and the hunk parser both refuse a First below 1.
+//
+// A range that ends at math.MaxInt is not hypothetical from this side: the
+// public Selection takes ranges from a caller, and "everything from line 41 on"
+// is the natural way to spell a range whose end nobody knows.
+func TestMergeJoinsTouchingRangesWithoutOverflowing(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		in   []Range
+		want []Range
+	}{
+		{name: "nothing", in: nil, want: []Range{}},
+		{
+			name: "disjoint ranges are sorted and left apart",
+			in:   []Range{{First: 20, Last: 21}, {First: 1, Last: 2}},
+			want: []Range{{First: 1, Last: 2}, {First: 20, Last: 21}},
+		},
+		{
+			name: "overlapping ranges are joined",
+			in:   []Range{{First: 1, Last: 10}, {First: 3, Last: 4}},
+			want: []Range{{First: 1, Last: 10}},
+		},
+		{
+			name: "adjacent ranges are joined",
+			in:   []Range{{First: 5, Last: 7}, {First: 1, Last: 3}, {First: 4, Last: 4}},
+			want: []Range{{First: 1, Last: 7}},
+		},
+		{
+			name: "a range inside an unbounded one is swallowed rather than left beside it",
+			in:   []Range{{First: 41, Last: math.MaxInt}, {First: 50, Last: 60}},
+			want: []Range{{First: 41, Last: math.MaxInt}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Merge(slices.Clone(test.in)); !slices.Equal(got, test.want) {
+				t.Errorf("Merge(%v) = %v, want %v", test.in, got, test.want)
+			}
+		})
 	}
 }
 

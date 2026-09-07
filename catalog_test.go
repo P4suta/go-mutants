@@ -51,6 +51,7 @@ func samplePreparedCatalog() Catalog {
 				Replacement:  "!=",
 				Accepted:     true,
 				Probed:       true,
+				Selected:     true,
 			},
 			{
 				Index:        1,
@@ -71,6 +72,7 @@ func samplePreparedCatalog() Catalog {
 				Replacement:  "false",
 				Accepted:     true,
 				Probed:       false,
+				Selected:     true,
 			},
 			{
 				Index:        2,
@@ -91,6 +93,7 @@ func samplePreparedCatalog() Catalog {
 				Replacement:  "-",
 				Accepted:     false,
 				Probed:       false,
+				Selected:     true,
 			},
 		},
 		Rejections: []Rejection{{
@@ -243,6 +246,17 @@ func TestPreparedDigestIsSensitiveToExactlyItsInputs(t *testing.T) {
 		{name: "the prepared digest already on the value", mutate: func(c *Catalog) {
 			c.PreparedDigest = strings.Repeat("e", 64)
 		}},
+		// Both halves of a selection are outside the recipe, and
+		// [TestPreparedDigestIsUnchangedBySelection] argues why at length: a
+		// selection is the caller's plan, it changes nothing the engine does,
+		// and per-mutant evidence keyed on this digest is a fact about the tree
+		// and the mutant rather than about what somebody meant to run.
+		{name: "the selected flag", mutate: func(c *Catalog) {
+			c.Mutants[0].Selected = false
+		}},
+		{name: "the selection ranges it came from", mutate: func(c *Catalog) {
+			c.Selection = &Selection{Lines: map[string][]LineRange{"alpha/alpha.go": {{First: 1, Last: 400}}}}
+		}},
 		{name: "an index", mutate: func(c *Catalog) {
 			c.Mutants[0].Index = 999
 		}},
@@ -326,6 +340,82 @@ func TestPreparedDigestIsSensitiveToExactlyItsInputs(t *testing.T) {
 				t.Errorf("changing %s moved the prepared digest from %s to %s; it is outside the"+
 					" recipe, so every consumer's cache would miss for a fact it already holds",
 					test.name, base, got)
+			}
+		})
+	}
+}
+
+// TestPreparedDigestIsUnchangedBySelection is the decision that a selection is
+// *not* part of a prepared session's identity, pinned from both directions.
+//
+// The temptation is obvious: a narrowed session executes fewer mutants, so it
+// looks like a different session. It is not, and hashing [Mutant.Selected] would
+// be the most expensive kind of wrong. PreparedDigest is what a consumer keys
+// **per-mutant evidence** on — "this mutant survived against this prepared
+// tree" — and that evidence is a fact about the tree, the toolchain and the
+// mutant, none of which a selection touches. Move the key with the selection
+// and the first narrowed run of the very consumer this feature was built for
+// misses on every row it has ever stored, then re-measures a module's worth of
+// mutants to write down answers it already had.
+//
+// The rule that makes this safe is the caller's, and it is one line: **never
+// store "not run, out of selection" as evidence.** A mutant the selection left
+// out was not measured, so there is nothing to record about it; recording an
+// absence as a result is what would make two sessions under one key disagree.
+// Selected is advisory — it changes nothing the engine does, and [Session.Exec]
+// runs an unselected mutant like any other — so it is a fact about the caller's
+// plan rather than about the session, and it stays out of the session's name.
+//
+// The literal is the pin on the other side. The recipe's third flag byte was
+// and remains the constant 's', so this value is what it was before selection
+// existed and what it will be after. If this ever fails, the answer is not to
+// update the number — it is to stop, because every key any consumer has stored
+// has just moved.
+func TestPreparedDigestIsUnchangedBySelection(t *testing.T) {
+	t.Parallel()
+
+	const beforeSelectionExisted = "80f70d7825f17f43121bbe7c0619d635b6106110f6d77594275e3cb027d72f80"
+
+	full := samplePreparedCatalog()
+	for i, mutant := range full.Mutants {
+		if !mutant.Selected {
+			t.Fatalf("mutant %d of the sample catalogue is not Selected; the sample stands for a"+
+				" preparation with no selection, where every mutant is", i)
+		}
+	}
+	if got := preparedDigest(full); got != beforeSelectionExisted {
+		t.Errorf("preparedDigest() = %s, want %s — the value it had before a selection could"+
+			" narrow a session. Every consumer keyed on this has just missed for a session"+
+			" that has not changed", got, beforeSelectionExisted)
+	}
+
+	for _, test := range []struct {
+		name   string
+		narrow func(*Catalog)
+	}{
+		{name: "a mutant left out of the selection", narrow: func(c *Catalog) {
+			c.Mutants[1].Selected = false
+		}},
+		{name: "every mutant left out of the selection", narrow: func(c *Catalog) {
+			for i := range c.Mutants {
+				c.Mutants[i].Selected = false
+			}
+		}},
+		{name: "the ranges the caller asked for", narrow: func(c *Catalog) {
+			c.Selection = &Selection{Lines: map[string][]LineRange{
+				"alpha/alpha.go": {{First: 1, Last: 400}},
+			}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			c := cloneCatalog(samplePreparedCatalog())
+			test.narrow(&c)
+			if got := preparedDigest(c); got != beforeSelectionExisted {
+				t.Errorf("preparedDigest() = %s after narrowing by %s, want the unchanged %s;"+
+					" a consumer's per-mutant evidence is about the tree and the mutant, and"+
+					" moving its key for a plan it did not act on costs it every stored row",
+					got, test.name, beforeSelectionExisted)
 			}
 		})
 	}
