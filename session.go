@@ -1036,7 +1036,7 @@ type sessionTarget struct {
 // comes back belongs to the caller, which removes it unless the session is
 // keeping temporaries.
 func (s *Session) target(
-	call, pkg string, args, env []string, timeout time.Duration,
+	call, pkg string, args, env []string, timeout time.Duration, recordTestLog bool,
 ) (sessionTarget, error) {
 	indexes, err := selectTestPackages(s.root, s.binaries, pkg, call)
 	if err != nil {
@@ -1063,7 +1063,7 @@ func (s *Session) target(
 			_ = os.RemoveAll(scratch)
 		}
 	}()
-	targetArgs, err := sessionTargetArgs(args, scratch, call)
+	targetArgs, err := sessionTargetArgs(args, scratch, call, recordTestLog)
 	if err != nil {
 		return sessionTarget{}, err
 	}
@@ -1111,7 +1111,8 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	if !s.accepted[mutant.ID] {
 		return MutantResult{}, rejectionError(request.Mutant, mutant.DisplayID, s.rejections[mutant.ID])
 	}
-	target, err := s.target("exec", request.Package, request.Args, request.Env, request.Timeout)
+	target, err := s.target("exec", request.Package, request.Args, request.Env,
+		request.Timeout, request.RecordTestLog)
 	if err != nil {
 		return MutantResult{}, err
 	}
@@ -1126,13 +1127,14 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		}
 	}()
 	run := execute.MutantRun{
-		ID:          mutant.ID,
-		DisplayID:   mutant.DisplayID,
-		Package:     s.packageOf(mutant),
-		Timeout:     target.timeout,
-		Binaries:    target.indexes,
-		Args:        target.args,
-		OutputLimit: request.OutputLimit,
+		ID:            mutant.ID,
+		DisplayID:     mutant.DisplayID,
+		Package:       s.packageOf(mutant),
+		Timeout:       target.timeout,
+		Binaries:      target.indexes,
+		Args:          target.args,
+		OutputLimit:   request.OutputLimit,
+		RecordTestLog: request.RecordTestLog,
 	}
 	attempt := execute.RunOne(ctx, target.options, run, target.binaries)
 	// One attempt, on the caller's goroutine, with nothing else of this
@@ -1163,6 +1165,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		Artifacts:  artifacts,
 		Binaries:   attempt.Binaries,
 		TraceSeq:   traceSeq,
+		TestLogs:   publicTestLogs(attempt.TestLogs),
 	}
 	if artifactErr != nil {
 		return result, fmt.Errorf("gomutants: session exec artifacts: %w", artifactErr)
@@ -1286,7 +1289,8 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 	if request.Timeout < 0 {
 		return ControlResult{}, errors.New("gomutants: session control: timeout is negative")
 	}
-	target, err := s.target("control", request.Package, request.Args, request.Env, request.Timeout)
+	target, err := s.target("control", request.Package, request.Args, request.Env,
+		request.Timeout, request.RecordTestLog)
 	if err != nil {
 		return ControlResult{}, err
 	}
@@ -1298,10 +1302,11 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 	}()
 
 	run := execute.ControlRun{
-		Timeout:     target.timeout,
-		Binaries:    target.indexes,
-		Args:        target.args,
-		OutputLimit: request.OutputLimit,
+		Timeout:       target.timeout,
+		Binaries:      target.indexes,
+		Args:          target.args,
+		OutputLimit:   request.OutputLimit,
+		RecordTestLog: request.RecordTestLog,
 	}
 	attempt := execute.RunControl(ctx, target.options, run, target.binaries)
 	// Recorded before the failures below become errors, so that a control that
@@ -1324,7 +1329,12 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 	// timeout flag and the capture stay at their zero values, because the run
 	// established none of them.
 	if attempt.Err != nil {
-		return ControlResult{Binaries: attempt.Binaries, ExecSeqs: attempt.ExecSeqs, TraceSeq: traceSeq},
+		return ControlResult{
+				Binaries: attempt.Binaries,
+				ExecSeqs: attempt.ExecSeqs,
+				TraceSeq: traceSeq,
+				TestLogs: publicTestLogs(attempt.TestLogs),
+			},
 			executionError("control", request.Package,
 				fmt.Errorf("gomutants: session control: %w", attempt.Err))
 	}
@@ -1343,6 +1353,7 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 		Binaries:   attempt.Binaries,
 		ExecSeqs:   attempt.ExecSeqs,
 		TraceSeq:   traceSeq,
+		TestLogs:   publicTestLogs(attempt.TestLogs),
 	}
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("gomutants: session control: %w", err)
@@ -1461,7 +1472,7 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 			_ = os.RemoveAll(scratch)
 		}
 	}()
-	targetArgs, err := sessionTargetArgs(request.Args, scratch, "probe")
+	targetArgs, err := sessionTargetArgs(request.Args, scratch, "probe", request.RecordTestLog)
 	if err != nil {
 		return ProbeResult{}, err
 	}
@@ -1470,13 +1481,14 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	opts.ScratchDir = scratch
 	opts.Env = env
 	pass := execute.ProbeRun{
-		Timeout:     timeout,
-		Binaries:    binaryIndexes,
-		Args:        targetArgs,
-		OutputLimit: request.OutputLimit,
-		LogPath:     filepath.Join(scratch, infectionLogName),
-		Digest:      s.catalog.Digest(),
-		Mutants:     s.catalog.Len(),
+		Timeout:       timeout,
+		Binaries:      binaryIndexes,
+		Args:          targetArgs,
+		OutputLimit:   request.OutputLimit,
+		RecordTestLog: request.RecordTestLog,
+		LogPath:       filepath.Join(scratch, infectionLogName),
+		Digest:        s.catalog.Digest(),
+		Mutants:       s.catalog.Len(),
 	}
 	attempt := execute.RunProbe(ctx, opts, pass, s.probeBinaries)
 	// Recorded before the failures below are turned into errors, so that a pass
@@ -1497,7 +1509,11 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	// most wants to read about and the one case it cannot find. What it carries
 	// is what the pass established and nothing it did not: the binaries it
 	// started and the account of them, never an outcome or an infection set.
-	partial := ProbeResult{Binaries: attempt.Binaries, TraceSeq: traceSeq}
+	partial := ProbeResult{
+		Binaries: attempt.Binaries,
+		TraceSeq: traceSeq,
+		TestLogs: publicTestLogs(attempt.TestLogs),
+	}
 	if attempt.Err != nil {
 		return partial, executionError("probe", request.Package,
 			fmt.Errorf("gomutants: session probe: %w", attempt.Err))
@@ -1535,7 +1551,40 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		TotalBytes: attempt.OutputBytes,
 		Binaries:   attempt.Binaries,
 		TraceSeq:   traceSeq,
+		TestLogs:   publicTestLogs(attempt.TestLogs),
 	}, nil
+}
+
+// publicTestLogs is the execution layer's record of what each binary consulted,
+// as the public value.
+//
+// It is a copy rather than a re-typing, because the two vocabularies are
+// separate on purpose: the public [TestLogOp] is what a consumer serialises and
+// switches on, and the internal one is what internal/testlog parses. Nil stays
+// nil, which is the whole of the field's contract — nil is "nothing was
+// recorded" and an empty slice would be "these binaries touched nothing".
+func publicTestLogs(logs []execute.TestLog) []TestLog {
+	if logs == nil {
+		return nil
+	}
+	out := make([]TestLog, len(logs))
+	for i, log := range logs {
+		out[i] = TestLog{
+			Package:  log.Package,
+			Dir:      log.Dir,
+			Complete: log.Complete,
+			Err:      log.Err,
+		}
+		if log.Entries == nil {
+			continue
+		}
+		entries := make([]TestLogEntry, len(log.Entries))
+		for j, entry := range log.Entries {
+			entries[j] = TestLogEntry{Op: TestLogOp(entry.Op), Name: entry.Name}
+		}
+		out[i].Entries = entries
+	}
+	return out
 }
 
 // probePassRecord is one pass as the recording holds it: what internal/execute
@@ -1768,12 +1817,20 @@ func captureFuzzArtifacts(root string) ([]Artifact, error) {
 // down by the execution phase, where the same refusal had a code and a sentence
 // about a process supervisor the caller never asked for.
 //
+// A fourth is refused *conditionally*, and it is the only one that is.
+// `-test.testlogfile` belongs to the session exactly while a request asked it
+// to record one, because two of them are not two logs: the standard flag
+// package keeps the last value it sees, so one of the two would silently win
+// and the other would report on a file nobody wrote. A request that did not ask
+// is not composing anything, so the flag passes through verbatim — that is the
+// method a consumer smuggling its own has been using, and it goes on working.
+//
 // The call names itself so that a diagnostic says which of the session's three
 // runs refused the target. All three go through this function because a caller
 // composing arguments for one has to be able to hand them to the others — a
 // mutant execution and the control beside it are the same target twice — so:
 // one request vocabulary, one set of reserved flags, one message shape.
-func sessionTargetArgs(args []string, scratch, call string) ([]string, error) {
+func sessionTargetArgs(args []string, scratch, call string, recordTestLog bool) ([]string, error) {
 	out := slices.Clone(args)
 	fuzz := false
 	for _, argument := range args {
@@ -1786,6 +1843,10 @@ func sessionTargetArgs(args []string, scratch, call string) ([]string, error) {
 			return nil, &ReservedError{Call: call, Flag: "-test.fuzzworker", Owner: "the Go fuzz coordinator"}
 		case testflag.Match(argument, "test.timeout"):
 			return nil, &ReservedError{Call: call, Flag: "-test.timeout", Owner: "the session's process supervisor"}
+		case recordTestLog && testflag.Match(argument, "test.testlogfile"):
+			return nil, &ReservedError{
+				Call: call, Flag: "-test.testlogfile", Owner: "the request's test log recording",
+			}
 		}
 	}
 	if !fuzz {

@@ -393,7 +393,7 @@ func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 		},
 	}
 	for _, c := range flags {
-		_, err := sessionTargetArgs([]string{c.argument}, scratch, "exec")
+		_, err := sessionTargetArgs([]string{c.argument}, scratch, "exec", false)
 		var reserved *ReservedError
 		if !errors.As(err, &reserved) {
 			t.Fatalf("sessionTargetArgs(%q) = %v, want a *ReservedError", c.argument, err)
@@ -410,7 +410,7 @@ func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 	// the call names itself: a consumer composing arguments for a mutant run and
 	// handing them to the control beside it has to be told which one said no.
 	for _, c := range flags {
-		_, err := sessionTargetArgs([]string{c.argument}, scratch, "control")
+		_, err := sessionTargetArgs([]string{c.argument}, scratch, "control", false)
 		var reserved *ReservedError
 		if !errors.As(err, &reserved) {
 			t.Fatalf("sessionTargetArgs(%q) for a control = %v, want a *ReservedError", c.argument, err)
@@ -425,7 +425,40 @@ func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 		}
 	}
 
-	_, err := overlayEnvironment([]string{"PATH=one"}, []string{"GO_MUTANTS_ACTIVE=stolen"})
+	// The fourth flag, which is the only one reserved *conditionally*: it
+	// belongs to the request exactly while the request asked for a test log,
+	// and passes through untouched when it did not. The message is new and it
+	// is the same sentence the other three are written in, so a consumer that
+	// renders one renders all four.
+	const testLogFlagArgument = "-test.testlogfile=/tmp/caller.log"
+	for _, call := range []string{"exec", "probe", "control"} {
+		_, err := sessionTargetArgs([]string{testLogFlagArgument}, scratch, call, true)
+		var reserved *ReservedError
+		if !errors.As(err, &reserved) {
+			t.Fatalf("sessionTargetArgs(%q) while recording = %v, want a *ReservedError",
+				testLogFlagArgument, err)
+		}
+		if reserved.Flag != "-test.testlogfile" || reserved.Variable != "" || reserved.Call != call {
+			t.Errorf("sessionTargetArgs(%q) = %+v, want the flag refused for %s",
+				testLogFlagArgument, reserved, call)
+		}
+		want := "gomutants: session " + call +
+			": -test.testlogfile is reserved by the request's test log recording"
+		if got := err.Error(); got != want {
+			t.Errorf("message = %q, want %q", got, want)
+		}
+	}
+	passedThrough, err := sessionTargetArgs([]string{testLogFlagArgument}, scratch, "exec", false)
+	if err != nil {
+		t.Fatalf("sessionTargetArgs(%q) without recording = %v, want it passed through",
+			testLogFlagArgument, err)
+	}
+	if !slices.Equal(passedThrough, []string{testLogFlagArgument}) {
+		t.Errorf("args = %v, want the caller's own flag verbatim: a consumer supplying its own"+
+			" log is not composing anything with the session", passedThrough)
+	}
+
+	_, err = overlayEnvironment([]string{"PATH=one"}, []string{"GO_MUTANTS_ACTIVE=stolen"})
 	var reserved *ReservedError
 	if !errors.As(err, &reserved) {
 		t.Fatalf("overlayEnvironment = %v, want a *ReservedError", err)

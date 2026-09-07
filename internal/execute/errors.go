@@ -117,6 +117,15 @@ const (
 	// returned alongside it, with everything that never ran marked
 	// [mutation.OutcomeNotRun].
 	CodeInterrupted Code = "GOM7520"
+	// CodeTestLogUnsupported reports a test binary that refused
+	// [testLogFlagName]: the standard flag package printed "flag provided but
+	// not defined" and exited 2. It is a code of its own because that status is
+	// non-zero, and a non-zero status is how this package recognises a kill —
+	// so without it a run that asked for the test log would report every mutant
+	// as detected by a binary that never ran a test. The cause is
+	// [testlog.ErrUnsupported], which is what tells a caller that the request
+	// rather than the repository is what has to change.
+	CodeTestLogUnsupported Code = "GOM7521"
 )
 
 // The coverage-collection codes.
@@ -158,6 +167,7 @@ var codes = []Code{
 	CodeControlInvalid,
 	CodeControlStart,
 	CodeInterrupted,
+	CodeTestLogUnsupported,
 	CodeCoverageDir,
 	CodeCoverageFailed,
 }

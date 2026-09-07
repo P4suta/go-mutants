@@ -6,6 +6,7 @@
 package gomutants_test
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -402,6 +403,46 @@ func TestResultsCarryTraceSeqAndBinaries(t *testing.T) {
 	}
 }
 
+// TestTestLogSurfaceIsPinned names every field of the recorded action log, on
+// all three requests and all three results at once.
+//
+// A consumer reads these by name and keeps what it finds beside a verdict, so a
+// rename is a breaking change whatever shape the struct keeps. The zero values
+// are pinned beside them for the one distinction the field exists to make: nil
+// TestLogs is "nothing was recorded", while an empty slice would say "these
+// binaries touched nothing" — which is the sentence a consumer acts on.
+func TestTestLogSurfaceIsPinned(t *testing.T) {
+	t.Parallel()
+
+	pinType[bool](gomutants.ExecRequest{}.RecordTestLog)
+	pinType[bool](gomutants.ProbeRequest{}.RecordTestLog)
+	pinType[bool](gomutants.ControlRequest{}.RecordTestLog)
+	pinType[[]gomutants.TestLog](gomutants.MutantResult{}.TestLogs)
+	pinType[[]gomutants.TestLog](gomutants.ProbeResult{}.TestLogs)
+	pinType[[]gomutants.TestLog](gomutants.ControlResult{}.TestLogs)
+	pinType[string](gomutants.TestLog{}.Package)
+	pinType[string](gomutants.TestLog{}.Dir)
+	pinType[[]gomutants.TestLogEntry](gomutants.TestLog{}.Entries)
+	pinType[bool](gomutants.TestLog{}.Complete)
+	pinType[string](gomutants.TestLog{}.Err)
+	pinType[gomutants.TestLogOp](gomutants.TestLogEntry{}.Op)
+	pinType[string](gomutants.TestLogEntry{}.Name)
+
+	if (gomutants.MutantResult{}).TestLogs != nil || (gomutants.ProbeResult{}).TestLogs != nil ||
+		(gomutants.ControlResult{}).TestLogs != nil {
+		t.Error("a zero result carries test logs nothing recorded")
+	}
+	if (gomutants.ExecRequest{}).RecordTestLog || (gomutants.ProbeRequest{}).RecordTestLog ||
+		(gomutants.ControlRequest{}).RecordTestLog {
+		t.Error("the zero request records a test log; it is a file per binary per call, so it" +
+			" is asked for rather than assumed")
+	}
+	if !errors.Is(fmt.Errorf("wrapped: %w", gomutants.ErrTestLogUnsupported),
+		gomutants.ErrTestLogUnsupported) {
+		t.Error("ErrTestLogUnsupported does not survive wrapping")
+	}
+}
+
 // TestVocabulariesArePinned writes out every string constant a consumer may
 // have serialized, so that changing one is a decision rather than an accident.
 //
@@ -440,6 +481,14 @@ func TestVocabulariesArePinned(t *testing.T) {
 		"ChangeAdded":    {string(gomutants.ChangeAdded), "added"},
 		"ChangeRemoved":  {string(gomutants.ChangeRemoved), "removed"},
 		"ChangeModified": {string(gomutants.ChangeModified), "modified"},
+
+		// The action-log operations are package os's own spellings, written
+		// into a file by the testing package and read back by the engine
+		// verbatim. A consumer switching on them is switching on these.
+		"TestLogGetenv": {string(gomutants.TestLogGetenv), "getenv"},
+		"TestLogOpen":   {string(gomutants.TestLogOpen), "open"},
+		"TestLogStat":   {string(gomutants.TestLogStat), "stat"},
+		"TestLogChdir":  {string(gomutants.TestLogChdir), "chdir"},
 
 		"BranchDecreasing": {gomutants.BranchDecreasing, "decreasing"},
 	} {

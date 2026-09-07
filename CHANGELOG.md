@@ -14,6 +14,72 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`ExecRequest.RecordTestLog`, `ProbeRequest.RecordTestLog` and
+  `ControlRequest.RecordTestLog` record which environment variables and files a
+  target consulted, and the three results carry the answers in `TestLogs`.** A
+  Go test binary can be told to write that down — it is how the go command
+  decides whether a cached test result is still valid — and a consumer keeping
+  evidence about a (mutant, target) pair needs the same answer for the same
+  reason: the inputs a target read are what say whether yesterday's verdict is
+  still about today's repository. goatest reaches it today by smuggling its own
+  `-test.testlogfile=<path>` through `Args` and stripping the flag out again on
+  both sides of its trace, which means composing a flag the engine also owns,
+  choosing a path in a directory the engine manages, and rewriting the recording
+  to hide it. This is that answer as a request option.
+
+  **The engine resolves nothing and interprets nothing.** `TestLogEntry.Name` is
+  the bytes the testing package wrote: a relative path stays relative, a name
+  that no longer exists on disk is reported as written, and `TestLog.Dir` is the
+  directory the binary ran in so a caller can resolve one itself. `TestLogOp` is
+  `getenv`, `open`, `stat` or `chdir` — the four package `os` reports — and the
+  vocabulary is open, so an operation a later Go release writes is carried
+  through verbatim rather than dropped. A dropped operation reads as an input
+  nothing consulted, and that is the one answer a consumer must never be handed
+  by accident.
+
+  `TestLog.Complete` is the field to read before acting on `Entries`, and it is
+  two claims rather than one: the log ends at a line boundary **and** the binary
+  exited on its own. The testing package writes through a 4096-byte buffer that
+  flushes whenever it fills, as well as from the deferred call at the end of
+  `M.Run`, so a chatty target the supervisor killed leaves a log ending in a
+  newline that is a fraction of what it touched — the bytes alone cannot say so,
+  and a binary the engine timed out or cancelled therefore reports `false`
+  whatever the last byte is. A quiet one leaves the empty file it created and
+  carries `Err` instead. `Err` is a string beside the facts rather than an
+  error, because a run that could not record what a target touched is not a run
+  that failed. The go command's further rule — trust a log only from a test that
+  exited 0 — is left to the caller, which has the exit status; and a `TestMain`
+  calling `m.Run` twice flushes only the first run's entries, while a test
+  calling `os.Exit` skips the flush altogether. The go command's companion
+  `-test.paniconexit0` is deliberately not passed, because it would change what
+  the binary does.
+
+  One failure is a sentinel, and it is one no standard Go test binary produces:
+  a binary that does not define the flag is refused by the standard flag package
+  with `flag provided but not defined: -test.testlogfile` and exit **2**. Exit 2
+  is a non-zero status, which is how the engine recognises a detection, so the
+  branch exists to keep a status of 2 from ever being scored as a kill: it comes
+  back as `ErrTestLogUnsupported` inside an `*ExecutionError` (`GOM7521`) with
+  the outcome `errored`. It fires only for a binary the engine really did hand
+  the flag to, so a target that exits 2 having printed that line for its own
+  reasons is still a kill.
+
+  A `-test.fuzz` target is given no flag and says so in `Err`: `internal/fuzz`
+  starts every worker with the coordinator's own arguments, so a worker inherits
+  the flag and truncates the file the coordinator is writing. The go command
+  never combines the two either, `-test.fuzz` not being a cacheable test
+  argument.
+
+  A caller-supplied `-test.testlogfile` is refused with a `*ReservedError` while
+  `RecordTestLog` is set — two of them are not two logs, since the standard flag
+  package keeps the last value it sees — and passes through verbatim when it is
+  not, so the method this replaces goes on working unchanged. The logs live in a
+  `testlogs/` directory inside the call's own scratch, one file per binary,
+  removed with it unless `OpenOptions.KeepTemp` asked otherwise; a directory of
+  their own because that scratch is the target's `TMPDIR`. In a recording the
+  flag is simply part of the `exec` event's `argv`, ahead of the caller's
+  arguments where the go command puts it: no new event, no new field, and
+  `env_names` identical to the same target run without it.
 - **`go-mutants explain` answers "why did *this* mutant get that verdict, and
   how do I run it again".** Every fact it prints was already written down and
   nobody had joined it up. The run report said a mutant survived, which packages
