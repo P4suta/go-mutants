@@ -575,6 +575,13 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
+        "covering_tests": {
+          "description": "The tests whose own coverage profile reaches that block, as `<import path> <name>` labels in one order, in a run narrowed to tests. Absent in a run narrowed to binaries, and for a mutant no test reaches.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
         "uncovered": {
           "description": "The same statement as an empty covering set, recorded explicitly so that a reader is not asked to infer a decision from an omitted array.",
           "type": "boolean"

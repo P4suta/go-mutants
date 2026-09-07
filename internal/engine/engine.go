@@ -1234,7 +1234,8 @@ func (s *session) mutate(
 	}
 
 	if execOpts.CoverPkg != "" {
-		runs, st.coverage, err = s.coveragePhase(ctx, execOpts, scratch, found.ModulePath, bins, runs, st)
+		runs, st.coverage, err = s.coveragePhase(ctx, execOpts, scratch, found.ModulePath, bins, runs, st,
+			cfg.Test.Narrowing)
 		if err != nil {
 			return err
 		}
@@ -1262,6 +1263,7 @@ func (s *session) mutate(
 			Executions:           executionsOf(result),
 			OutputTail:           result.OutputTail,
 			CoveringTestPackages: st.coverage.covering[result.ID],
+			CoveringTests:        st.coverage.coveringTests[result.ID],
 		}
 	}
 	// Written back before the error is returned, interruption included: a mutant
@@ -1325,6 +1327,7 @@ func executionsOf(result execute.MutantResult) []report.Execution {
 			KilledBy:   attempt.KilledBy,
 			DurationMS: attempt.Duration.Milliseconds(),
 			Binaries:   slices.Clone(attempt.Binaries),
+			Tests:      testRefsOf(attempt.Tests),
 			// What the pass cost the machine, and — for the one outcome that
 			// needs it — why a kill names a binary that reported no failure.
 			MemoryExceeded:  attempt.MemoryExceeded,
@@ -1332,6 +1335,33 @@ func executionsOf(result execute.MutantResult) []report.Execution {
 		})
 	}
 	return executions
+}
+
+// testRefsOf turns one attempt's test selection — a map of import path to the
+// names selected — into the sorted report references the document carries.
+// Nil stays nil: an attempt that ran its binaries whole names no tests, and an
+// empty list would read as a claim that it named some.
+func testRefsOf(tests map[string][]string) []report.TestRef {
+	if len(tests) == 0 {
+		return nil
+	}
+	refs := make([]report.TestRef, 0, len(tests))
+	for importPath, names := range tests {
+		for _, name := range names {
+			refs = append(refs, report.TestRef{Package: importPath, Name: name})
+		}
+	}
+	slices.SortFunc(refs, compareTestRefs)
+	return refs
+}
+
+// compareTestRefs orders references by package and then by name, the one order
+// every list of them in this package uses.
+func compareTestRefs(a, b report.TestRef) int {
+	if c := strings.Compare(a.Package, b.Package); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Name, b.Name)
 }
 
 // buildTestBinaries compiles the test binaries, and falls back to a plain build
@@ -1662,6 +1692,7 @@ func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 			shown.KilledBy = result.KilledBy
 			shown.Attempts = len(result.Attempts)
 			shown.CoveringTestPackages = st.coverage.covering[result.ID]
+			shown.CoveringTests = st.coverage.coveringTests[result.ID]
 			// The worst moment across every pass, and whether any of them was
 			// stopped for it. Both are read off the attempts rather than kept
 			// beside them, so a mutant retried serially reports the peak of the
@@ -1762,6 +1793,7 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		MemorySource:     reportMemorySource(out.MemorySource),
 		CoverageMode:     reportCoverageMode(st.coverage.Mode()),
 		CoverageBinaries: st.coverage.binaries,
+		CoverageTests:    st.coverage.tests,
 		// The same event the GOM7602 warning above reports, in the two forms a
 		// document needs it: a flag a consumer can branch on and the whole
 		// failure a person reads. See [RunOutcome.CoverageFallback].
@@ -2018,6 +2050,7 @@ func notable(st *state, rep *report.Report) []MutantResult {
 		}
 		shown.Attempts = m.Attempts
 		shown.CoveringTestPackages = slices.Clone(m.CoveringTestPackages)
+		shown.CoveringTests = slices.Clone(m.CoveringTests)
 		out = append(out, shown)
 	}
 	slices.SortFunc(out, func(x, y MutantResult) int {

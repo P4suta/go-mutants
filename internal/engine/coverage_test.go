@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
@@ -377,7 +378,7 @@ func TestCoveragePassSkipsARunWithNothingToNarrow(t *testing.T) {
 			// at all would fail, so a pass that returns cleanly is a pass that
 			// never started.
 			runs, result, err := s.coveragePhase(t.Context(), execute.Options{}, "", "example.com/m",
-				test.bins, test.runs, st)
+				test.bins, test.runs, st, config.NarrowingPackage)
 			if err != nil {
 				t.Fatalf("coveragePhase: %v", err)
 			}

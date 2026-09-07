@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -57,9 +58,17 @@ type coverageResult struct {
 	mode CoverageMode
 	// binaries is how many test binaries were profiled.
 	binaries int
+	// tests is how many tests were profiled on their own, in [CoverageTest].
+	tests int
+	// widened is how many covered mutants a [CoverageTest] run measured
+	// against a whole binary after all; see [CoverageMapped.Widened].
+	widened int
 	// covering maps a mutant id onto the sorted import paths of the binaries
 	// that reach it. Empty in [CoverageOff].
 	covering map[string][]string
+	// coveringTests maps a mutant id onto the sorted tests that reach it, in
+	// [CoverageTest]; empty in every other mode.
+	coveringTests map[string][]report.TestRef
 	// coverageFallback is the whole failure that made the run give coverage up:
 	// the coded message and the compiler's own diagnostics under it, as
 	// [session.buildTestBinaries] kept them. It is empty on every run that
@@ -119,6 +128,7 @@ func (s *session) coveragePhase(
 	bins []execute.TestBinary,
 	runs []execute.MutantRun,
 	st *state,
+	narrowing config.Narrowing,
 ) ([]execute.MutantRun, coverageResult, error) {
 	// Nothing to narrow. Skipping is not merely tidy: the pass costs a full run
 	// of every test binary, and paying that to decide the fate of no mutants is
@@ -134,6 +144,9 @@ func (s *session) coveragePhase(
 	// to reach it is to look.
 	if len(runs) == 0 || len(bins) == 0 {
 		return runs, coverageResult{}, nil
+	}
+	if narrowing != config.NarrowingPackage {
+		return s.testCoveragePhase(ctx, opts, scratch, modulePath, bins, runs, st)
 	}
 
 	endProfile := s.stage("coverage-profile", countNoun(len(bins), "binary"))
@@ -293,42 +306,9 @@ func (s *session) profile(
 	profiles := make(map[string]coverage.Profile, len(collected))
 	for i, data := range collected {
 		path := filepath.Join(profileDir, strconv.Itoa(i)+".txt")
-		spec := opts.Toolchain.Command("tool", "covdata", "textfmt", "-i="+data.Dir, "-o="+path)
-		spec.Dir = opts.SnapshotRoot
-		spec.Env = childEnv(scratch)
-		spec.Timeout = BaselineCap
-		spec.Trace = s.trace
-		spec.Kind = trace.ExecKindCovdataTextfmt
-		spec.Subject = data.ImportPath
-
-		if err := check(ctx, spec, runner.Run(ctx, spec), CodeCoverageRender,
-			"`go tool covdata textfmt` over the profile of "+data.ImportPath+" failed"); err != nil {
-			return nil, err
-		}
-		// The rendered profile is a file the run wrote and the only readable
-		// form the coverage decision was made from, so a `--keep-temp` run has
-		// something to point somebody at.
-		s.trace.Artifact(trace.ArtifactCoverageProfile, path)
-
-		file, err := os.Open(path)
+		profile, err := s.renderProfile(ctx, opts, scratch, data.Dir, data.ImportPath, path)
 		if err != nil {
-			return nil, &Error{
-				Code:    CodeCoverageRender,
-				Message: "the rendered coverage profile for " + data.ImportPath + " could not be read",
-				Err:     err,
-			}
-		}
-		profile, parseErr := coverage.ParseTextfmt(file)
-		closeErr := file.Close()
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		if closeErr != nil {
-			return nil, &Error{
-				Code:    CodeCoverageRender,
-				Message: "the rendered coverage profile for " + data.ImportPath + " could not be closed",
-				Err:     closeErr,
-			}
+			return nil, err
 		}
 		profiles[data.ImportPath] = profile
 	}
@@ -336,6 +316,58 @@ func (s *session) profile(
 		return nil, err
 	}
 	return profiles, nil
+}
+
+// renderProfile turns one coverage directory into a textfmt document at path
+// and reads it back. subject is what the rendering is about — an import path,
+// or an import path and a test — and is what the recording and every message
+// name it by.
+func (s *session) renderProfile(
+	ctx context.Context,
+	opts execute.Options,
+	scratch string,
+	dir string,
+	subject string,
+	path string,
+) (coverage.Profile, error) {
+	spec := opts.Toolchain.Command("tool", "covdata", "textfmt", "-i="+dir, "-o="+path)
+	spec.Dir = opts.SnapshotRoot
+	spec.Env = childEnv(scratch)
+	spec.Timeout = BaselineCap
+	spec.Trace = s.trace
+	spec.Kind = trace.ExecKindCovdataTextfmt
+	spec.Subject = subject
+
+	if err := check(ctx, spec, runner.Run(ctx, spec), CodeCoverageRender,
+		"`go tool covdata textfmt` over the profile of "+subject+" failed"); err != nil {
+		return coverage.Profile{}, err
+	}
+	// The rendered profile is a file the run wrote and the only readable
+	// form the coverage decision was made from, so a `--keep-temp` run has
+	// something to point somebody at.
+	s.trace.Artifact(trace.ArtifactCoverageProfile, path)
+
+	file, err := os.Open(path)
+	if err != nil {
+		return coverage.Profile{}, &Error{
+			Code:    CodeCoverageRender,
+			Message: "the rendered coverage profile for " + subject + " could not be read",
+			Err:     err,
+		}
+	}
+	profile, parseErr := coverage.ParseTextfmt(file)
+	closeErr := file.Close()
+	if parseErr != nil {
+		return coverage.Profile{}, parseErr
+	}
+	if closeErr != nil {
+		return coverage.Profile{}, &Error{
+			Code:    CodeCoverageRender,
+			Message: "the rendered coverage profile for " + subject + " could not be closed",
+			Err:     closeErr,
+		}
+	}
+	return profile, nil
 }
 
 // usable refuses a profile set that parsed but says nothing.
@@ -491,8 +523,12 @@ func indicesOf(covering []string, index map[string]int) []int {
 // reportCoverageMode maps this package's spelling onto the document's, as
 // [reportTimeoutSource] does for the other enum the two share.
 func reportCoverageMode(mode CoverageMode) report.CoverageMode {
-	if mode == CoveragePackage {
+	switch mode {
+	case CoveragePackage:
 		return report.CoveragePackage
+	case CoverageTest:
+		return report.CoverageTest
+	default:
+		return report.CoverageOff
 	}
-	return report.CoverageOff
 }

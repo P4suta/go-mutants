@@ -271,11 +271,16 @@ func assertFamiliesSurvivors(t *testing.T, events []Event) {
 func assertFamiliesCoverage(t *testing.T, outcome RunOutcome, events []Event) {
 	t.Helper()
 	block := outcome.Report.Coverage
-	if block.Mode != report.CoveragePackage {
-		t.Fatalf("coverage mode = %q, want %q with the built-in test command", block.Mode, report.CoveragePackage)
+	// The default narrowing is test-level, so a default run of this fixture
+	// narrows each mutant to the tests that reach it and the block says so.
+	if block.Mode != report.CoverageTest {
+		t.Fatalf("coverage mode = %q, want %q with the built-in test command", block.Mode, report.CoverageTest)
 	}
 	if block.Binaries == nil || *block.Binaries != 1 {
 		t.Errorf("coverage.binaries = %v, want the fixture's 1", block.Binaries)
+	}
+	if block.Tests == nil || *block.Tests < 1 {
+		t.Errorf("coverage.tests = %v, want the tests the pass profiled", block.Tests)
 	}
 	if block.MutantsUncovered == nil || *block.MutantsUncovered != familiesUncovered {
 		t.Errorf("coverage.mutants_uncovered = %v, want %d", block.MutantsUncovered, familiesUncovered)

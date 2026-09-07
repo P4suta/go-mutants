@@ -238,9 +238,7 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 		// so it is stated as a count and not only as the remainder: "3 of 4
 		// covered" leaves the reader doing the subtraction that is the whole
 		// point of the phase.
-		return r.paint(styleDetail, fmt.Sprintf("coverage: %d test %s, %d of %d mutants covered, %d uncovered",
-			e.Binaries, plural(e.Binaries, "binary", "binaries"),
-			e.Covered, e.Covered+e.Uncovered, e.Uncovered)), true
+		return r.paint(styleDetail, coverageMappedLine(e)), true
 
 	case engine.MutantStarted:
 		return "", false
@@ -413,7 +411,7 @@ func (r *PlainRenderer) summary(s engine.RunSummary, status engine.Status) strin
 	// in a coverage-guided run — including as "uncovered 0", which is a
 	// measurement worth stating — and never in one that did not ask, where the
 	// number would be a zero nobody went looking for.
-	if s.Coverage == engine.CoveragePackage {
+	if s.Coverage.Narrowed() {
 		fmt.Fprintf(&b, "  uncovered %d", c.Uncovered)
 	}
 	// Appended on the same terms and for the same reason: a cached mutant is
@@ -577,6 +575,19 @@ func countNoun(n int, noun string) string {
 
 // plural picks between two spellings of a noun, for the ones an "s" does not
 // make plural.
+func coverageMappedLine(e engine.CoverageMapped) string {
+	scope := fmt.Sprintf("%d test %s", e.Binaries, plural(e.Binaries, "binary", "binaries"))
+	if e.Tests > 0 {
+		scope = fmt.Sprintf("%d %s of %s", e.Tests, plural(e.Tests, "test", "tests"), scope)
+	}
+	line := fmt.Sprintf("coverage: %s, %d of %d mutants covered, %d uncovered",
+		scope, e.Covered, e.Covered+e.Uncovered, e.Uncovered)
+	if e.Widened > 0 {
+		line += fmt.Sprintf(", %d widened to whole binaries", e.Widened)
+	}
+	return line
+}
+
 func plural(n int, singular, many string) string {
 	if n == 1 {
 		return singular

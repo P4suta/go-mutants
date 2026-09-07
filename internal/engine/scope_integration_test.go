@@ -73,8 +73,8 @@ func TestScopedTestCommandBuildsAndRunsOnlyTheScopedPackage(t *testing.T) {
 		t.Errorf("a scoped `go test` was treated as an opaque command: %s", warning.Message)
 	}
 	block := outcome.Report.Coverage
-	if block.Mode != report.CoveragePackage {
-		t.Fatalf("coverage mode = %q, want %q for a command go-mutants can read", block.Mode, report.CoveragePackage)
+	if block.Mode != report.CoverageTest {
+		t.Fatalf("coverage mode = %q, want %q for a command go-mutants can read", block.Mode, report.CoverageTest)
 	}
 	// One binary, where the unscoped run of this fixture reports two. This is
 	// the assertion the whole feature lives or dies on: `caller`'s test binary

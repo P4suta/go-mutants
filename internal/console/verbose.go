@@ -11,6 +11,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -228,6 +229,8 @@ func (r *PlainRenderer) covering(m engine.MutantResult) string {
 		return ""
 	}
 	switch {
+	case len(m.CoveringTests) > 0:
+		return "\n" + diffIndent + r.paint(styleDetail, "covered by: "+strings.Join(coveringTestLabels(m.CoveringTests), ", "))
 	case len(m.CoveringTestPackages) > 0:
 		return "\n" + diffIndent + r.paint(styleDetail, "covered by: "+strings.Join(m.CoveringTestPackages, ", "))
 	case m.Uncovered:
@@ -731,3 +734,13 @@ func shellQuote(arg string) string {
 // than being allowed to break the promise wherever such a field happens to be
 // set.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// coveringTestLabels renders test references as `<package> <name>`, the form
+// the covering line names a narrowed run's tests by.
+func coveringTestLabels(refs []report.TestRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, ref.Package+" "+ref.Name)
+	}
+	return out
+}

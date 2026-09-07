@@ -481,8 +481,8 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	if mapped := events[13].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != simpleMutants || mapped.Uncovered != 0 {
 		t.Errorf("CoverageMapped = %+v, want 1 binary covering all %d mutants", mapped, simpleMutants)
 	}
-	if mode := outcome.Report.Coverage.Mode; mode != report.CoveragePackage {
-		t.Errorf("coverage mode = %q, want %q with the built-in test command", mode, report.CoveragePackage)
+	if mode := outcome.Report.Coverage.Mode; mode != report.CoverageTest {
+		t.Errorf("coverage mode = %q, want %q with the built-in test command", mode, report.CoverageTest)
 	}
 	if final := events[len(events)-1].(RunCompleted); final.Status != StatusOK || final.Run == nil {
 		t.Errorf("RunCompleted = %+v, want an ok run carrying its summary", final)
@@ -1470,7 +1470,7 @@ func TestCommandLineEndToEnd(t *testing.T) {
 		"    + ==",
 		"mutants 13  killed 10  survived 3",
 		"  uncovered 3",
-		"coverage: 1 test binary, 10 of 13 mutants covered, 3 uncovered",
+		"tests of 1 test binary, 10 of 13 mutants covered, 3 uncovered",
 		"score 76.92%",
 		// The gate is named on the console and nowhere else: a policy failure
 		// is deliberately not printed to standard error.
@@ -1695,8 +1695,8 @@ func TestCoverageGuidedRunExecutesOnlyWhatTheProfilesReach(t *testing.T) {
 	}
 
 	block := outcome.Report.Coverage
-	if block.Mode != report.CoveragePackage {
-		t.Fatalf("coverage mode = %q, want %q", block.Mode, report.CoveragePackage)
+	if block.Mode != report.CoverageTest {
+		t.Fatalf("coverage mode = %q, want %q", block.Mode, report.CoverageTest)
 	}
 	if block.Binaries == nil || *block.Binaries != 2 {
 		t.Errorf("coverage.binaries = %v, want the fixture's 2", block.Binaries)

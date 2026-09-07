@@ -59,7 +59,7 @@ batch compile + delta debugging   (rejected[] with diagnostics)
 instrumented baseline             (no mutant active: meaning preserved)
             |
             v
-profile each test binary once     (coverage-guided selection)
+profile each test, then each mutant against the tests that reach it
             |
             v
 worker pool over one snapshot     (per-process activation, tree kill)
@@ -811,7 +811,27 @@ the outcome cache.
   missing a kill. A mutant no binary reaches is not executed at all and is
   reported as `survived (uncovered)`.
 
-  Two rules bound it. Narrowing is auto-on exactly when `test.command` is one
+  **Narrowing to tests.** By default (`test.narrowing = "test"`) the pass goes
+  one step finer than the binary: it profiles every test on its own —
+  `-test.list` names them, and each runs under `-test.run=^(name)$` with a
+  coverage directory of its own — and runs each mutant against only the tests
+  whose profile reaches its lines, the binary started with those tests
+  selected. Two things keep that sound, and [ADR 0010](adr/0010-narrowing-to-tests-is-sound.md)
+  is the whole argument. A test that does not pass on its own is order-dependent
+  and cannot be isolated: it is named in a `GOM7603` warning and left out, and
+  its binary is run whole for every mutant it reaches, so nothing it covers is
+  lost. And a set of tests that each pass alone but fail *together* without a
+  mutant is checked with a control — the same tests, nothing activated — before
+  any kill is trusted; a set whose control fails is named in a `GOM7604`
+  warning and its mutants are measured against the whole binary. Because the
+  outcome does not depend on which mode ran, the outcome cache does not key on
+  it, and `test.narrowing = "package"` selects the coarser binary-level mapping
+  for a project that prefers it. Neither narrows what is *measured*: every mode
+  measures every mutant, and only how much of the suite each mutant is measured
+  against differs.
+
+  Two rules bound the whole optimisation. Narrowing is auto-on exactly when
+  `test.command` is one
   go-mutants can read as a scope — `go test` over package patterns, the built-in
   `go test ./...` included — and off with a `GOM7601` warning for anything else,
   because an opaque command's coverage cannot be attributed to go-mutants' own

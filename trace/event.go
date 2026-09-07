@@ -384,6 +384,11 @@ type CoverageRecord struct {
 	// same one the run report's `covering_test_packages` carries.
 	Covering []string `json:"covering,omitempty"`
 
+	// CoveringTests are the tests whose own profile reaches the block, as
+	// `<import path> <name>` labels in one order, in a run narrowed to tests.
+	// Absent in a run narrowed to binaries, and for a mutant no test reaches.
+	CoveringTests []string `json:"covering_tests,omitempty"`
+
 	// Uncovered is the same statement as an empty Covering, recorded
 	// explicitly so that a reader is not asked to infer a decision from an
 	// omitted array.

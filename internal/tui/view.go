@@ -480,9 +480,16 @@ func narrowedLine(e engine.SelectionNarrowed) string {
 // is about to be skipped is the single most useful number a coverage-guided run
 // has, and a dashboard that dropped it would be the one renderer that did.
 func coverageLine(e engine.CoverageMapped) string {
-	return fmt.Sprintf("coverage: %d test %s, %d of %d mutants covered, %d uncovered",
-		e.Binaries, plural(e.Binaries, "binary", "binaries"),
-		e.Covered, e.Covered+e.Uncovered, e.Uncovered)
+	scope := fmt.Sprintf("%d test %s", e.Binaries, plural(e.Binaries, "binary", "binaries"))
+	if e.Tests > 0 {
+		scope = fmt.Sprintf("%d %s of %s", e.Tests, plural(e.Tests, "test", "tests"), scope)
+	}
+	line := fmt.Sprintf("coverage: %s, %d of %d mutants covered, %d uncovered",
+		scope, e.Covered, e.Covered+e.Uncovered, e.Uncovered)
+	if e.Widened > 0 {
+		line += fmt.Sprintf(", %d widened to whole binaries", e.Widened)
+	}
+	return line
 }
 
 // countNoun renders "1 candidate" or "3 candidates".

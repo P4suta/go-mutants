@@ -7,8 +7,9 @@
   },
   "coverage": {
     "binaries": 1,
-    "mode": "package",
-    "mutants_uncovered": 0
+    "mode": "test",
+    "mutants_uncovered": 0,
+    "tests": 1
   },
   "document_type": "go-mutants/run-report",
   "duration_ms": 0,
@@ -21,6 +22,12 @@
       "column": 9,
       "covering_test_packages": [
         "fixture.example/tagged"
+      ],
+      "covering_tests": [
+        {
+          "name": "TestPlain",
+          "package": "fixture.example/tagged"
+        }
       ],
       "display_id": "ffe9f1814d7a254c6768",
       "duration_ms": 0,
@@ -35,6 +42,12 @@
           "killed_by": "fixture.example/tagged",
           "outcome": "killed",
           "peak_memory_bytes": 0,
+          "tests": [
+            {
+              "name": "TestPlain",
+              "package": "fixture.example/tagged"
+            }
+          ],
           "worker": 0
         }
       ],
