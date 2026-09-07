@@ -248,7 +248,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env,
-			p.Timeout, p.MemoryLimit, p.Args, logPath, p.OutputLimit)
+			p.Timeout, p.MemoryLimit, p.Args, nil, logPath, p.OutputLimit)
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.ExitCode = result.ExitCode

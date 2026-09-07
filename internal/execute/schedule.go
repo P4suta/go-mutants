@@ -315,6 +315,7 @@ func AttemptRecord(m MutantRun, attempt Attempt, number int) trace.MutantRecord 
 		// argument vector: the record is handed to a sink that may keep it, and
 		// a caller may reuse a mutant's arguments for the retry.
 		Binaries:   slices.Clone(attempt.Binaries),
+		Tests:      testLabels(attempt.Tests),
 		Args:       slices.Clone(m.Args),
 		ExecSeqs:   slices.Clone(attempt.ExecSeqs),
 		Outcome:    attempt.Outcome.String(),

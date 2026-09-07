@@ -103,6 +103,27 @@ type MutantRun struct {
 	// and a caller that wants each binary once passes each index once.
 	Binaries []int
 
+	// Tests narrows what each selected binary runs to the named top-level
+	// tests, keyed by the binary's import path. It is how test-level
+	// narrowing reaches this package: internal/coverage decides which tests
+	// of a binary reach a mutant's lines, and the binary is started with only
+	// those selected — `-test.run` anchored to an alternation of their escaped
+	// names, placed with the harness-owned flags ahead of Args.
+	//
+	// A binary with no entry runs whole, which is what every caller before
+	// test-level narrowing was asking for. An entry for a binary the run does
+	// not start — one not in Binaries — is refused with [CodeMutantInvalid],
+	// because it would describe a measurement never made; so is an empty
+	// list, for the reason an empty Binaries is: a binary told to run no
+	// tests passes having run nothing. While any entry is present Args may not
+	// supply `-test.run`, since the binary's flag package would let the last
+	// one win and the measurement would not be the one the selection
+	// describes.
+	//
+	// Names are matched whole. A subtest is selected through its parent, and
+	// a name is the parent's: `TestX/case_3` is not a name this accepts.
+	Tests map[string][]string
+
 	// Args are passed verbatim to each selected Go test binary after the
 	// harness-owned timeout flag. They make one prepared binary reusable for a
 	// top-level test, a fuzz target, or an ordinary whole-package run without
@@ -170,6 +191,13 @@ type Attempt struct {
 	// run deletes, and the import path is what a report renders and what stays
 	// meaningful between runs.
 	Binaries []string
+	// Tests are the tests each of those binaries was narrowed to, keyed by
+	// import path, exactly as [MutantRun.Tests] named them — for the binaries
+	// this attempt started and had a selection for. It is nil when nothing was
+	// narrowed, and a binary that ran whole has no entry: an attempt reports
+	// what it did, and a selection for a binary it never reached is not
+	// something it did.
+	Tests map[string][]string
 	// ExecSeqs are the `exec` events those starts were recorded at, in the same
 	// order. They are how an attempt is joined to the commands underneath it,
 	// and through them to the output the recording preserved.
@@ -281,6 +309,14 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 	if err != nil {
 		return errored(err)
 	}
+	if err = validateTestSelection(m.Tests, selected, func(importPath, why string) error {
+		return &Error{
+			Code:    CodeMutantInvalid,
+			Message: "the mutant " + display(m.ID) + " names tests of " + importPath + " " + why,
+		}
+	}); err != nil {
+		return errored(err)
+	}
 
 	scratch, err := workerScratch(opts.ScratchDir)
 	if err != nil {
@@ -301,11 +337,18 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		}
 
 		logPath := logs.path(i)
+		tests := m.Tests[bin.ImportPath]
 		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env,
-			m.Timeout, m.MemoryLimit, m.Args, logPath, m.OutputLimit)
+			m.Timeout, m.MemoryLimit, m.Args, tests, logPath, m.OutputLimit)
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
+		if len(tests) > 0 {
+			if attempt.Tests == nil {
+				attempt.Tests = make(map[string][]string)
+			}
+			attempt.Tests[bin.ImportPath] = slices.Clone(tests)
+		}
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
 		}
@@ -506,13 +549,17 @@ func startTarget(
 	timeout time.Duration,
 	memoryLimit int64,
 	args []string,
+	tests []string,
 	testLogPath string,
 	outputLimit int,
 ) (runner.Spec, runner.Result) {
-	argv := make([]string, 0, len(args)+3)
+	argv := make([]string, 0, len(args)+4)
 	argv = append(argv, bin.BinPath, "-test.timeout="+(InProcessTimeoutFactor*timeout).String())
 	if testLogPath != "" {
 		argv = append(argv, testLogFlagName+"="+testLogPath)
+	}
+	if len(tests) > 0 {
+		argv = append(argv, testRunSelector(tests))
 	}
 	argv = append(argv, args...)
 	spec := runner.Spec{
@@ -555,6 +602,12 @@ func validateArgs(m MutantRun) error {
 			Code: CodeMutantInvalid,
 			Message: "the mutant " + display(m.ID) +
 				" target overrides -test.timeout, which is reserved by the process supervisor",
+		}
+	case len(m.Tests) > 0 && suppliesTestRun(m.Args):
+		return &Error{
+			Code: CodeMutantInvalid,
+			Message: "the mutant " + display(m.ID) +
+				" target supplies -test.run, which this run reserved by narrowing the measurement to named tests",
 		}
 	case m.RecordTestLog && suppliesTestLog(m.Args):
 		return &Error{
