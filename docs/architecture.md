@@ -515,7 +515,11 @@ every one. Each call has its own temporary directory; any change a command
 leaves in the shared frozen tree before that gate is a deterministic preparation
 failure, never an input silently accepted by discovery, and a change made *and
 undone* while discovery was reading is caught by comparing the catalogue's own
-source digests against the frozen manifest. Commands are also
+source digests against the frozen manifest. After the window the
+binaries are compiled from the tree under the shared lock, and a re-digest
+before the session is published catches any write a command left there — a
+write made and undone while the compiler was between two files is the one gap,
+named in ADR 0007 with the overlay build that closes it. Commands are also
 allowed after a preparation has succeeded — the tree they run against is then
 byte for byte the snapshot `Open` froze — and a change one of those leaves is
 nobody's failure: there is no later discovery for it to corrupt, the frozen

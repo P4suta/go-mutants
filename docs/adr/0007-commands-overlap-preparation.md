@@ -38,7 +38,11 @@ exactly the bytes a command reads.
 A preparation holds the tree against commands only for the stretch that rewrites
 it, and holds the workspace's lifetime shared for all of it.
 
-Three locks, taken in this order:
+Three locks. No call takes all three but the two that must, and whenever a call
+holds more than one, the outer is the earlier in this list — `mu` before `tree`
+before `stateMu`. `Prepare`'s claim and `Close` hold `mu` and then `stateMu`,
+with no `tree` between; `Exec`'s re-check under the tree, and a window that
+publishes its failure before it unlocks, hold `mu`, then `tree`, then `stateMu`:
 
 - `mu` guards the workspace's lifetime — its snapshot, scratch directory and
   toolchain. `Exec` and `Prepare` hold it **shared** for the whole of their
@@ -115,13 +119,25 @@ is refused by the probe snapshot's own digest comparison instead. Both refuse;
 the message differs.
 
 The window is not the end of the preparation, and the binaries are compiled
-after it. A command writing there would have its bytes compiled into the test
-binaries *and* recorded as the state the session was prepared in, so
-`Session.Changes` would compare the tree against the drift and report nothing.
-One re-digest between the last build and the published session — `Stage:
-"test binaries"` — makes "a write into the frozen tree during a preparation
-fails it" true to the end of the preparation rather than to the end of the
-window.
+after it, from the tree: the overlay replaces only the instrumented sources, and
+the compiler reads every other file where it lies. A command writing there would
+have its bytes compiled into the test binaries *and* recorded as the state the
+session was prepared in, so `Session.Changes` would compare the tree against the
+drift and report nothing. One re-digest between the last build and the published
+session — `Stage: "test binaries"` — catches a write that is still there when
+the build ends, which is every write a command *leaves*. It does not catch a
+write that is made and undone while the compiler is between one file and the
+next: a transient edit is compiled in and gone before the digest looks. The tree
+is held shared during the build, and shared is what a command holds too, so
+nothing in this design excludes it; holding the tree exclusively for the build
+would exclude commands from the longest phase of a preparation, which is the
+one thing this decision exists to stop. The rule a consumer is held to is
+therefore the one stated at the top: a command must not write the frozen tree.
+The checks are the net under that rule, and after the window the net has a gap
+exactly one transient write wide. Closing it soundly means compiling from the
+frozen manifest rather than from the tree — every source of the module mapped
+through the overlay, so the compiler never reads the tree at all — and that is
+the second residual below.
 
 The check on what discovery read is total over what discovery read, which is a
 wider set than the catalogue and deliberately so: a file a transient edit
@@ -138,3 +154,13 @@ already runs the same sources — would need no exclusive window at all, and a
 preparation would then never take the tree from a command. That is engine work
 in `internal/validate`, not API work, and it is the next thing this design is
 waiting for.
+
+The build reads the tree, and that is the second residual. `Stage: "test
+binaries"` catches a write a command leaves behind and not one it undoes before
+the build ends. Compiling the test binaries from the frozen manifest — every
+Go source, `go.mod` and `go.sum` mapped through the overlay to bytes the
+preparation owns — would make the build's inputs exactly the manifest, whatever
+a command does to the tree meanwhile, and would let the drift check after the
+build go, since there would be nothing left for it to catch. That is
+`internal/execute` work on the overlay `Prepare` already writes, and it is the
+follow-up to this decision.

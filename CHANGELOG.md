@@ -2909,16 +2909,21 @@ Entries say *why* a change was made, not only what changed.
   discovery:` and names the files. `internal/discover.Result` carries the new
   `SourceDigests` map that makes the check total over what was read.
 
-  A second new stage, `"test binaries"`, closes the other end of a preparation.
+  A second new stage, `"test binaries"`, covers the other end of a preparation.
   The window ends at `main_restoration` and the binaries are compiled after it,
-  from whatever the tree holds — and the state `Session.Changes` compares
-  against is captured there too, so a command writing during the build would
-  have its bytes compiled in *and* reported by nothing at all. One re-digest
-  before the session is published makes "a write into the frozen tree during a
-  preparation fails it" true to the end of the preparation. It takes the
-  sentence every other instrumentation-adjacent check takes:
-  `gomutants: prepare test binaries changed the snapshot outside
-  instrumentation:`.
+  from the tree — the overlay replaces only the instrumented sources — and the
+  state `Session.Changes` compares against is captured there too, so a command
+  writing during the build would have its bytes compiled in *and* reported by
+  nothing at all. One re-digest before the session is published catches every
+  write a command leaves there. It does not catch one made and undone while the
+  compiler is between two files: the tree is held shared during the build, as it
+  is by a command, so a transient edit is compiled in and gone before the
+  digest looks. That gap is stated in `docs/library.md` and in ADR 0007 rather
+  than papered over, together with what closes it — compiling from the frozen
+  manifest through the overlay, so the build never reads the tree — which is
+  the follow-up. The stage takes the sentence every other
+  instrumentation-adjacent check takes: `gomutants: prepare test binaries
+  changed the snapshot outside instrumentation:`.
 - **`run` and `list` pointed at the root of a `go.work` workspace are refused
   before anything is copied, with GOM4102 and the user's own `go.work` named.**
   Discovery has always refused a workspace — one module path, one set of

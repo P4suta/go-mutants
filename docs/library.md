@@ -157,7 +157,11 @@ the answer is to open another one.
 ## Locking and concurrency
 
 A workspace keeps three locks, and they are three because they answer three
-different questions. Taken in this order, always:
+different questions. Whenever a call holds more than one, the outer is the
+earlier in this table — `mu` before `tree` before `stateMu` — and only two paths
+hold all three: `Exec`'s re-check once it has the tree, and a window that
+publishes its failure before it unlocks. `Prepare`'s claim and `Close` hold `mu`
+and then `stateMu`, never `tree`:
 
 | Lock | Guards | Held by |
 |---|---|---|
@@ -249,12 +253,22 @@ covers is a file no byte of which was read — a test file, a generated one, one
 an include or exclude pattern dropped — and none of those can move a mutant's
 identity, because no mutant was minted from one.
 
-The `test binaries` stage closes the other end. The window ends at
-`main_restoration`, but the binaries are compiled after it, from whatever the
-tree holds — and `Session.Changes`'s own baseline is captured there too, so a
-write during the build would be compiled in *and* invisible. One re-digest
-before the session is published makes "a write during a preparation fails it"
-true to the end of the preparation.
+The `test binaries` stage covers the other end, with one gap that is stated
+here rather than hidden. The window ends at `main_restoration`, but the binaries
+are compiled after it, from the tree — the overlay replaces the instrumented
+sources and nothing else — and `Session.Changes`'s own baseline is captured
+there too, so a write during the build would be compiled in *and* invisible.
+One re-digest before the session is published catches every write a command
+*leaves*: the tree at the end of the build has to be the frozen one. It cannot
+catch a write that is made and undone while the compiler is between one file
+and the next; the tree is held shared during the build, which is what a command
+holds too, so a transient edit there is compiled in and gone before the digest
+looks. The rule is the one at the top of this section — a command must not
+write the frozen tree — and the checks are the net under it, total inside the
+window and over what discovery read, and one transient write short of total
+after the build. Compiling from the frozen manifest through the overlay would
+close that gap and is the follow-up named in
+[ADR 0007](adr/0007-commands-overlap-preparation.md).
 
 ### The session's own lock
 

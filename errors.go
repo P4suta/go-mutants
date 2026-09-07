@@ -179,9 +179,11 @@ func (e *MutantSelectionError) Unwrap() error { return e.cause }
 type DriftError struct {
 	// Stage names the check that noticed: "commands" for the integrity gate at
 	// the top of the instrumentation window, "discovery" for the comparison
-	// between what discovery read and the frozen manifest, and "source
+	// between what discovery read and the frozen manifest, "source
 	// restoration", "verification", "probe instrumentation" or "probe source
-	// restoration" for the checks around instrumentation.
+	// restoration" for the checks around instrumentation, and "test binaries"
+	// for the re-digest after the binaries were built and before the session
+	// is published.
 	Stage string
 	// Changes are the drifting paths in path order, with the digests on both
 	// sides — [Change.BeforeSHA256] empty for a file that was added,
