@@ -6,7 +6,6 @@
 package engine
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -307,13 +306,22 @@ func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
 		if e.Type != trace.TypeExec || e.Exec == nil || e.Exec.Kind != trace.ExecKindMutantRun || e.Exec.Subject != mutant.ID {
 			continue
 		}
-		if slices.ContainsFunc(e.Exec.Argv, func(a string) bool { return strings.HasPrefix(a, "-test.run=") }) {
+		selector := ""
+		for _, a := range e.Exec.Argv {
+			if rest, ok := strings.CutPrefix(a, "-test.run="); ok {
+				selector = rest
+			}
+		}
+		switch selector {
+		case "^(TestEnable)$":
 			narrowed++
-		} else {
+		case "":
 			whole++
+		default:
+			t.Errorf("a mutant run selected %q, want either the TestEnable narrowing or nothing", selector)
 		}
 	}
 	if narrowed != 1 || whole != 1 {
-		t.Errorf("recorded %d narrowed and %d whole-binary runs of the mutant, want one of each", narrowed, whole)
+		t.Errorf("recorded %d narrowed (TestEnable) and %d whole-binary runs of the mutant, want one of each", narrowed, whole)
 	}
 }
