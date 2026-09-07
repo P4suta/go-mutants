@@ -110,10 +110,23 @@ func mergeFlag(value, flag string) string {
 }
 
 // sameEnvKey compares two environment variable names the way the operating
-// system does: case-insensitively on Windows, where a variable answers to any
-// spelling of its name, and exactly everywhere else.
-func sameEnvKey(a, b string) bool {
-	if runtime.GOOS == "windows" {
+// system this process is running on does.
+func sameEnvKey(a, b string) bool { return sameEnvKeyOn(runtime.GOOS, a, b) }
+
+// sameEnvKeyOn is that comparison as a function of the platform name:
+// case-insensitive on Windows, where a variable answers to any spelling of its
+// name, and exact everywhere else.
+//
+// The platform arrives as a value rather than as the build this file was
+// compiled into, and that is the whole reason the split exists. Written as a
+// `runtime.GOOS` branch inside one function, the Windows half is a line only a
+// Windows runner ever executes — so the claim it makes is a claim only a
+// Windows runner can check, and the merge rule above is the one place in this
+// package where getting it wrong loses a `-mod=readonly` somebody set. As a
+// parameter it is decided by a value handed in, so both halves are asserted on
+// every platform the suite runs on.
+func sameEnvKeyOn(goos, a, b string) bool {
+	if goos == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b

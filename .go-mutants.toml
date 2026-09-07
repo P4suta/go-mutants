@@ -13,7 +13,7 @@
 #   deterministic the same tree has to produce the same score twice, or the
 #                 minimum_score floor below is a coin flip rather than a gate.
 #
-# The scope is nine whole packages, where it used to be two files, and two
+# The scope is ten whole packages, where it used to be two files, and two
 # things bought that. A scoped test command now scopes the test binaries as
 # well, so a mutant is measured against the suites that cover it rather than
 # against every suite in the module -- that reason is written down under [test].
@@ -21,7 +21,7 @@
 # how every one of them arrived and the only way the next one will: that story
 # is in CHANGELOG.md, which [mutation] points at rather than retelling.
 #
-# Three of the nine joined for free, which is the one way a floor is allowed to
+# Three of the ten joined for free, which is the one way a floor is allowed to
 # widen without a test being written first: they were measured before the line
 # was added and every mutant in them was already dead, so this file grew three
 # include lines and three test patterns and not one expectation. That is the
@@ -37,20 +37,30 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 1263 killed, three caught by the timeout, thirty declared, 100.00%,
+# race: 1368 killed, three caught by the timeout, thirty-one declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
 # the original program was measured under the budget the bound came from, so a
 # tree needing four times what the whole suite needed has been changed
 # observably.
+#
+# The tenth package is the first one here that starts processes, and it is worth
+# saying what that did and did not cost. internal/gocmd's suite scripts a `go`
+# rather than reaching for one, so it stays deterministic -- but the baseline it
+# is part of got slower, and the per-mutant timeout is derived from that
+# baseline, so the three mutants that never return each pay for it twice. That
+# is the whole of what the widening cost in wall clock, and the paired
+# measurements under [policy] show it as a fact rather than as an estimate. What
+# it did not cost is a fourth such mutant: internal/gocmd had one, and it was
+# turned into a kill rather than accepted. See CHANGELOG.md.
 
 version = 1
 
 [mutation]
 # Tiers are monotonically inclusive: balanced ⊂ strong ⊂ all.
 profile = "balanced"
-# Nine whole packages. The first three are the pure core: the mutation model
+# Ten whole packages. The first three are the pure core: the mutation model
 # everything downstream is built on -- catalogue, mutant identity, rule set,
 # scoring, shard assignment and exit policy -- the glob engine those identities
 # depend on, and the five-way span relation the interval forest is built on.
@@ -63,17 +73,35 @@ profile = "balanced"
 # goes through. The ninth is this file's own reader -- decoding, validation,
 # precedence, and the position walk that puts a caret under the value a
 # diagnostic is about -- which makes the worked example below one of the
-# documents the scope is measured on. All nine are pure arithmetic, pure text
-# matching, a pure filter over a digest table, or a pure decision over values
-# handed in, and none of them reads a clock or a network. internal/config
-# reads a file, and only through os.ReadFile in LoadFile: everything a mutant
-# can reach below that takes bytes and returns an answer.
+# documents the scope is measured on.
+#
+# The tenth is the toolchain wrapper, and it is the first one here that is not
+# a decision over values handed in. internal/gocmd finds `go`, probes it,
+# parses what it printed, shapes the environment a child is handed, and hands
+# back an argument vector -- so a mutant in it can change which binary a run
+# uses, how long it waits for one that never answers, whether a `-mod=readonly`
+# somebody set survives, or whether a failure arrives with the bytes that
+# explain it. Its unit tier is process-level for exactly that reason and stays
+# toolchain-free anyway: internal/testkit/mutantkit's scripted `go` answers from
+# a table, so a probe that hangs, one that exits non-zero, one that cannot be
+# started at all and one that answers garbage are all real processes and none of
+# them is the machine's toolchain. The one thing that has to meet a real `go` --
+# that the parser agrees with what a released toolchain prints -- carries
+# `//go:build integration` and is outside this scope, which is correct: it is a
+# claim about Go rather than about go-mutants.
+#
+# The other nine are pure arithmetic, pure text matching, a pure filter over a
+# digest table, or a pure decision over values handed in, and none of them reads
+# a clock or a network. internal/config reads a file, and only through
+# os.ReadFile in LoadFile: everything a mutant can reach below that takes bytes
+# and returns an answer.
 #
 # The numbers this gate is sized against, from the run that produced them:
 #
 #   internal/config/*.go          461 mutants
 #   internal/mutation/*.go        450
 #   internal/coverage/*.go        146
+#   internal/gocmd/*.go           106
 #   internal/schemas/*.go          89
 #   internal/glob/*.go             68
 #   internal/interval/*.go         48
@@ -81,15 +109,15 @@ profile = "balanced"
 #   internal/drift/*.go            11
 #   internal/testflag/*.go          7
 #
-# catalogues 1296 mutants and detects 1266 of them -- 1263 killed and three
-# caught by the timeout -- leaving the thirty rows declared below and a score of
-# 100.00%, in the wall clock recorded under [policy].
+# catalogues 1402 mutants and detects 1371 of them -- 1368 killed and three
+# caught by the timeout -- leaving the thirty-one rows declared below and a
+# score of 100.00%, in the wall clock recorded under [policy].
 #
-# internal/config is the largest of the nine now, and it did not get there by
-# being included: it grew `test.memory` and the byte-size vocabulary that reads
-# it, which is 36 more mutants and the direct consequence of the paragraph
-# below. A scope that catches what it costs is a scope that then has to be
-# measured again, which is what happened here.
+# internal/config is the largest of the ten, and it did not get there by being
+# included: it grew `test.memory` and the byte-size vocabulary that reads it,
+# which is 36 more mutants and the direct consequence of the paragraph below. A
+# scope that catches what it costs is a scope that then has to be measured
+# again, which is what happened here.
 #
 # The five that never return are worth naming, because they are a real cost
 # rather than a curiosity, and because they are no longer one kind of thing.
@@ -110,12 +138,27 @@ profile = "balanced"
 # they are now cheaper than the three that spin. See the paired measurements
 # under [policy].
 #
+# Five is also what internal/gocmd did not make six, and that is the one part of
+# this list that a test moved. Negating `timeout <= 0` in LocateContext replaces
+# a probe's configured deadline with the thirty-second default, and the suite's
+# hanging-probe case scripted a `go` that slept for two minutes -- so the mutant
+# waited, and only the per-mutant timeout could end it, twice. The sleep bought
+# nothing the test's own assertion did not already buy: it fails a probe that is
+# still running at five times its deadline, so anything past that is unreachable
+# by the claim. Shortened to three seconds -- fifteen times the deadline, three
+# times the bound, and well under the default -- the mutant comes back with a
+# parse error instead of a deadline and dies in about three seconds. A mutant
+# that never returns is sometimes a fact about the code and sometimes a fact
+# about a constant in a test, and the two are worth telling apart before the
+# gate pays for one twice on every run.
+#
 # internal/mutation was a single file here — shard.go — until its own suites
 # grew the tests that kill what the whole-package scope found; CHANGELOG.md
 # tells that story under "The dogfood gate covers every pure-core package", the
 # two readers under "The dogfood gate reads its own coverage and validates its
-# own documents", and this file's own reader under "The dogfood gate reads its
-# own configuration".
+# own documents", this file's own reader under "The dogfood gate reads its own
+# configuration", and the toolchain wrapper under "The dogfood gate covers the
+# toolchain wrapper".
 #
 # What outlives the story is the rule it produced. Widen this list by writing
 # the tests that kill the survivors first, and only then the line: excluding the
@@ -131,6 +174,7 @@ include = [
   "internal/coverage/*.go",
   "internal/schemas/*.go",
   "internal/config/*.go",
+  "internal/gocmd/*.go",
 ]
 exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # `operators` is intentionally omitted: the profile decides the families, which
@@ -140,7 +184,7 @@ exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # A declared equivalent mutant. An expectation is evidence to check, not a skip
 # list: the row is judged on every run, survival fulfills it, a kill is exit 2,
 # and an ID that no longer exists in the catalog is stale and also exit 2. The
-# row below is judged by a test binary that ran; nine of the rows further down
+# row below is judged by a test binary that ran; ten of the rows further down
 # are settled by coverage without a process being started, and the notes there
 # say why that is the same verdict rather than a weaker one.
 #
@@ -378,8 +422,30 @@ reason = "Equivalent on every platform: the same argument as the `>` row above, 
 id = "0465760a7c7529075e78c437ba8017e0d96ab3156b1dc7b484ee89256c7ba60c"
 reason = "Unreachable on a 64-bit build: minInt is -maxInt - 1, so int64(minInt) is math.MinInt64 and no int64 is less than it -- the mirror of the maxInt row above, and reachable on the same 32-bit GOARCH."
 
+# internal/gocmd, whose 106 mutants brought exactly one row, and it is a
+# narrowing that cannot fail. LocateContext asks whether the error parseVersion
+# returned is one of this package's own, and forwards it unchanged if it is not.
+# parseVersion has four failure returns and every one of them is `&Error{Code:
+# CodeVersionUnparsable, ...}`, so the narrowing always matches and the line
+# below it is never reached.
+#
+# It is the same kind of row as internal/mutation's Build guard: a branch this
+# package's own code cannot produce, kept because deleting it is what would make
+# it dangerous. Narrowing an error and dropping what did not match is how a
+# future failure mode gets swallowed silently, and the whole point of the two
+# codes this package distinguishes is that they are not interchangeable.
+#
+# Every other survivor this package first reported is dead -- eleven of the
+# twelve, killed by seven named tests and a seam that turns one platform's
+# spelling rule into a value handed in. CHANGELOG.md names them under "The
+# dogfood gate covers the toolchain wrapper".
+
+[[mutation.expect]]
+id = "79dfe6684299febc066964f5ab3c6752751da3f855030841483911d3c133387a"
+reason = "Unreachable: parseVersion has four failure returns and every one of them is a *Error carrying CodeVersionUnparsable, so errors.As above always matches and this forwarding return is reached only by an error kind parseVersion does not produce."
+
 [test]
-# An argv vector, never a shell string. Scoped to the nine packages the mutated
+# An argv vector, never a shell string. Scoped to the ten packages the mutated
 # files live in, which is what the baseline proves before any mutant runs. The
 # list has to track `include` above line for line: a package whose files are
 # mutated but whose suite is not named here has no binary covering it, so every
@@ -445,6 +511,7 @@ command = [
   "./internal/coverage/...",
   "./internal/schemas/...",
   "./internal/config/...",
+  "./internal/gocmd/...",
 ]
 # Deliberately omitted, where this file used to pin 180s. The old number was
 # derived from a fact that scoping has deleted: the timeout had to clear
@@ -494,26 +561,35 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 1296 mutants. One thousand two
-# hundred and sixty-six are detected -- 1263 killed, of which two are killed by
-# the memory bound, and three caught by the timeout -- and the other thirty are
-# the rows declared above, which leave the denominator rather than counting
-# against it, so the measured score is 100.00%, with all thirty expectations
-# fulfilled and none stale. Every one of those numbers was the same on all
-# eleven runs of this scope, the killed/timeout split included; before the memory bound
-# it was not, and the note at the top of this file says why.
+# Measured, not wished for. The scope catalogues 1402 mutants. One thousand
+# three hundred and seventy-one are detected -- 1368 killed, of which two are
+# killed by the memory bound, and three caught by the timeout -- and the other
+# thirty-one are the rows declared above, which leave the denominator rather
+# than counting against it, so the measured score is 100.00%, with all
+# thirty-one expectations fulfilled and none stale. Every one of those numbers
+# was the same on all seven runs of this scope, the killed/timeout split
+# included; before the memory bound it was not, and the note at the top of this
+# file says why.
 #
 # The bound itself is derived and worth quoting, because it is the one number
 # here that is a fact about this repository's own suite rather than about the
 # catalogue -- `go-mutants run -v` prints it:
 #
-#   memory: baseline peak 118.2 MiB, bound 1.0 GiB (derived)
+#   memory: baseline peak 147.4 MiB, bound 1.0 GiB (derived)
 #
-# 118.2 MiB x 4 is 473 MiB, so the 1 GiB floor is what applies and the bound is
-# seven times what the unmutated suite needs. Nothing legitimate is close to it;
-# the two mutants it stops reach 1.1 GiB in about a second and a half, which is
-# the difference between a bound that catches runaways and one that fails
+# 147.4 MiB x 4 is 590 MiB, so the 1 GiB floor is what applies and the bound is
+# about seven times what the unmutated suite needs. Nothing legitimate is close
+# to it; the two mutants it stops reach 1.0-1.1 GiB in about two seconds, which
+# is the difference between a bound that catches runaways and one that fails
 # honest tests.
+#
+# The peak is the one figure here that is not the same twice, and it is quoted
+# as one reading rather than as a constant: three -v runs of this scope read
+# 141.5, 141.9 and 147.4 MiB, where the nine-package scope beside them read
+# 125.2 MiB. Adding a suite that starts processes is what moved it. It moves the
+# bound not at all -- four times any of those is still under the 1 GiB floor --
+# which is exactly what a floor is for, and why the tally stayed identical while
+# the number the bound is derived from did not.
 #
 # What each widening cost is a paired measurement rather than a remembered one
 # -- the run before it and the run after it, at --jobs 4:
@@ -532,6 +608,10 @@ strict = false
 #     warm test-owned build cache   1260 mutants in 78-79s over three runs,
 #                                   1296 in 52-58s over seven
 #     cold test-owned build cache   1m52s and 1m48s
+#   9 -> 10 packages, interleaved on one shared machine
+#     warm test-owned build cache   1296 mutants in 1m07s, 1m29s and 1m33s,
+#                                   1402 in 1m28s, 1m33s and 1m38s
+#     cold test-owned build cache   2m05s and 3m45s
 #
 # The third pair is the one that needed explaining, because 425 more mutants did
 # not cost fifty seconds; four more mutants that never return did. A timeout is
@@ -558,6 +638,36 @@ strict = false
 # something only while it describes one machine doing one thing. The tally was
 # identical on both, which is the number this gate is actually judged on.
 #
+# The fifth pair is the noisiest of the five and is written out anyway, because
+# a measurement taken on a shared machine is still a measurement and a
+# remembered number from a different one is not a comparison. Both halves were
+# measured minutes apart, interleaved, on the machine that widened the scope;
+# neither half is comparable with the rows above it, which is why the
+# nine-package figures there (52-58s warm, 1m48s cold) and here (1m07-1m33s
+# warm, 2m05s cold) are the same scope and different machines.
+#
+# Warm, the two halves overlap, and the back-to-back pair is the one to read:
+# 1m32.8s for 1296 mutants, then 1m28.3s for 1402. The derived timeout was at
+# its 10s floor on both sides, so the three mutants that never return cost the
+# same 60 seconds of worker time in each, and 106 more mutants cost about what
+# 106 fast mutants cost.
+#
+# Cold is where the widening is visible, and the cause is the derived timeout
+# rather than the catalogue. Cold, the first of the three baseline runs is the
+# one doing the compiling, so max(10s, slowest baseline x 5) is set by a build
+# and not by a test: the tenth package took that run from 4.0s to 5.5s, and the
+# timeout from 20.1s to 27.7s with it. Three mutants wait that out twice each,
+# which is 45 more seconds of worker time and a longer serial tail at the end,
+# when they are all that is left to finish. That is most of 2m05s -> 3m45s, and
+# it is a cost that shrinks on a machine whose cold compile is faster rather
+# than a cost that is 106 mutants.
+#
+# Two further warm runs of the ten-package scope measured 2m39.6s and 2m47.5s,
+# and they are named for the same reason the 70s and 78s above are: the machine
+# had picked up other work, the derived timeout read 18.1s and 20.3s instead of
+# the floor, and the three that wait paid the difference twice each. The tally
+# was identical on both, which is the number this gate is actually judged on.
+#
 # The first pair is clean, the second is not, and saying so is still the point.
 # Thirty-four more mutants cost about a second warm and nothing at all cold,
 # because a cold run is dominated by compiling the module and its test binaries
@@ -572,23 +682,28 @@ strict = false
 #
 # Load is also why the timeout named under [mutation] is not a fixed cost. It is
 # max(10s, slowest baseline x 5), which is the 10s floor on the machine that
-# measured the pairs above and was 29.7s on the loaded one, and the three mutants
-# that spin spend two of them each whatever else the run has to do. The memory
-# bound is derived from the same baseline and is not load-bearing in the same
-# way: max(1GiB, largest peak x 4) is the 1 GiB floor here and would stay the
-# floor until this repository's suite needed 256 MiB.
+# measured the first four pairs above, was 29.7s on the loaded one, and read
+# 10s, 18.1s, 20.3s and 27.7s across the seven runs of the scope this file now
+# describes -- and the three mutants that spin spend two of them each whatever
+# else the run has to do. That is the single largest variable in this gate's
+# wall clock and it belongs to the machine rather than to the catalogue. The
+# memory bound is derived from the same baseline and is not load-bearing in the
+# same way: max(1GiB, largest peak x 4) is the 1 GiB floor here and would stay
+# the floor until this repository's suite needed 256 MiB.
 #
 # Only the ratio travels; the absolute numbers are the machine. The scope
-# before this one -- eight packages, 835 mutants -- was recorded here as
-# 24-30s warm, where the scope before that -- three packages, 566 mutants --
-# was 1m10s-1m30s on the machine that measured it, the one before that -- one
-# file and two packages, 121 mutants -- took 48-50 seconds, and the one before
-# that -- two files, sixteen mutants -- took 7m08s. What does not vary with the
-# machine is the tally: 1296 catalogued, 1266 detected, 1263 of them killed and
-# three timed out, 30 expected, nine of those never executed at all, on every
-# one of the eleven runs that measured this scope. The killed/timeout split is
-# part of that tally again rather than an exception to it; the note at the top
-# of this file says what it took.
+# before this one -- nine packages, 1296 mutants -- was recorded here as 52-58s
+# warm on the machine that measured it and 1m07-1m33s on the machine that
+# measured the pair above, where the scope before that -- eight packages, 835
+# mutants -- was 24-30s, the one before that -- three packages, 566 mutants --
+# was 1m10s-1m30s, the one before that -- one file and two packages, 121
+# mutants -- took 48-50 seconds, and the one before that -- two files, sixteen
+# mutants -- took 7m08s. What does not vary with the machine is the tally: 1402
+# catalogued, 1371 detected, 1368 of them killed and three timed out, 31
+# expected, ten of those never executed at all, on every one of the seven runs
+# that measured this scope. The killed/timeout split is part of that tally again
+# rather than an exception to it; the note at the top of this file says what it
+# took.
 #
 # The floor did not move with the scope this time either, and the arithmetic is
 # why. It is worth being exact about which gate the remaining slack belongs to,
@@ -599,22 +714,23 @@ strict = false
 #                       task and for CI. There is no headroom on that gate at
 #                       all, and none is wanted.
 #   minimum_score = 99  compared against the measured score whether or not
-#                       --strict was passed. One thousand two hundred and
-#                       sixty-six scored mutants are worth 0.079 points each, so
-#                       1254/1266 = 99.05% clears 99 and 1253/1266 = 98.97%
+#                       --strict was passed. One thousand three hundred and
+#                       seventy-one scored mutants are worth 0.073 points each,
+#                       so 1358/1371 = 99.05% clears 99 and 1357/1371 = 98.98%
 #                       does not: an ungated `go-mutants run` reports up to
-#                       twelve survivors and exits 0, and fails at thirteen.
+#                       thirteen survivors and exits 0, and fails at fourteen.
 #
 # Ninety-six is what stood here while 120 mutants were scored, where it bought
 # four survivors of slack. At 544 the same number would buy twenty-one, which is
 # a materially weaker backstop wearing a number that had not changed, so it went
 # up rather than staying put. Ninety-nine has stayed put through every widening
 # since, and that is arithmetic rather than inertia: one percent of 549 is 5.49,
-# of 583 is 5.83, of 809 is 8.09 and of 1266 is 12.66, so the slack this floor
-# buys went five, five, eight, twelve while the catalogue grew tenfold. Twelve
-# is the largest it has ever been and it is still not the twenty-one that moved
-# this number the last time, so the number stays and the arithmetic is written
-# down rather than the conclusion. The floor is still deliberately the looser of
+# of 583 is 5.83, of 809 is 8.09, of 1266 is 12.66 and of 1371 is 13.71, so the
+# slack this floor buys went five, five, eight, twelve, thirteen while the
+# catalogue grew elevenfold. Thirteen is the largest it has ever been and it is
+# still not the twenty-one that moved this number the last time, so the number
+# stays and the arithmetic is written down rather than the conclusion. The
+# floor is still deliberately the looser of
 # the two gates: it is the backstop for a run that did not ask to be gated,
 # never the thing keeping CI honest, and a green CI run is never green because
 # of it. Raise it when the scope grows enough to make that count material; do

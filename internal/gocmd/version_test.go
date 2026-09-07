@@ -4,6 +4,7 @@
 package gocmd_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -141,6 +142,98 @@ func TestParseVersionRejects(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestParseVersionReadsTheShortestDevelLine is the boundary the devel guard
+// sits on, and the table above cannot stand on it.
+//
+// "devel" alone names every unreleased build there has ever been, so the parser
+// requires a pseudo-version after it — which it spells as "there are at least
+// five fields". Five is the shortest line that has one: `go`, `version`,
+// `devel`, the pseudo-version, and the target. Every devel row in the table
+// carries a build date as well and so has eight or more, which is why a guard
+// that rejected the minimum too would pass all of them.
+func TestParseVersionReadsTheShortestDevelLine(t *testing.T) {
+	t.Parallel()
+
+	const line = "go version devel go1.27-a1b2c3d4e5 linux/amd64"
+	got, err := gocmd.ParseVersion(line + "\n")
+	if err != nil {
+		t.Fatalf("ParseVersion(%q) = error %v, want a version: five fields is a devel line with a "+
+			"pseudo-version after it and nothing else", line, err)
+	}
+	if want := "devel go1.27-a1b2c3d4e5"; got.Release != want {
+		t.Errorf("Release = %q, want %q", got.Release, want)
+	}
+	if !got.IsDevel() {
+		t.Errorf("IsDevel() = false for %q", got.Release)
+	}
+	if got.GOOS != "linux" || got.GOARCH != "amd64" {
+		t.Errorf("target = %s/%s, want linux/amd64", got.GOOS, got.GOARCH)
+	}
+}
+
+// TestParseVersionQuotesWhatWasPrintedAndBoundsIt pins the rendering the
+// message is built from, which is what makes a rejected line diagnosable: the
+// reader has to see the bytes that were rejected, and has to see all of them
+// unless there are too many.
+//
+// The limit is restated here rather than read out of the package, because a
+// test that took the constant from the code could not tell a changed limit from
+// a changed rule — and the rule is what the two cases below are about. It is
+// the boundary that needs saying out loud: a line of exactly the limit fits, so
+// cutting it would relay 200 bytes and an ellipsis where 200 bytes were asked
+// for, and no length assertion would notice.
+func TestParseVersionQuotesWhatWasPrintedAndBoundsIt(t *testing.T) {
+	t.Parallel()
+
+	// The length quote() cuts above, as version.go spells it.
+	const limit = 200
+	// The marker quote() leaves in place of what it dropped.
+	const cut = "…"
+
+	t.Run("a short line is relayed whole and escaped", func(t *testing.T) {
+		t.Parallel()
+
+		const printed = "gnu make 4.4.1"
+		_, err := gocmd.ParseVersion(printed + "\n")
+		if err == nil {
+			t.Fatalf("ParseVersion(%q) = nil error, want an error", printed)
+		}
+		if want := strconv.Quote(printed); !strings.Contains(err.Error(), want) {
+			t.Errorf("Error() = %q, want it to quote what was printed, %q", err, want)
+		}
+	})
+
+	t.Run("a line of exactly the limit is not cut", func(t *testing.T) {
+		t.Parallel()
+
+		printed := strings.Repeat("x", limit)
+		_, err := gocmd.ParseVersion(printed + "\n")
+		if err == nil {
+			t.Fatalf("ParseVersion of a %d-byte line = nil error, want an error", limit)
+		}
+		if want := strconv.Quote(printed); !strings.Contains(err.Error(), want) {
+			t.Errorf("Error() = %q, want the whole %d-byte line quoted: the limit is what may be "+
+				"relayed, not one byte less", err, limit)
+		}
+		if strings.Contains(err.Error(), cut) {
+			t.Errorf("Error() = %q, want no %q: a line of exactly the limit was not cut", err, cut)
+		}
+	})
+
+	t.Run("a longer line is cut at the limit and marked", func(t *testing.T) {
+		t.Parallel()
+
+		printed := strings.Repeat("x", limit+1)
+		_, err := gocmd.ParseVersion(printed + "\n")
+		if err == nil {
+			t.Fatalf("ParseVersion of a %d-byte line = nil error, want an error", limit+1)
+		}
+		if want := strconv.Quote(strings.Repeat("x", limit) + cut); !strings.Contains(err.Error(), want) {
+			t.Errorf("Error() = %q, want the first %d bytes and %q, %q", err, limit, cut, want)
+		}
+	})
 }
 
 // TestParseVersionErrorIsBounded keeps a chatty impostor from turning an error

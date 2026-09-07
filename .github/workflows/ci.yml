@@ -461,11 +461,22 @@ jobs:
   # eaten the machine before the ten-second timeout could fire. Every mutant is
   # now bounded in memory the way it is bounded in time, at a derived
   # max(1GiB, largest baseline peak x 4), so a runaway is killed in about a
-  # second and reported as a kill. The scope is 1296 mutants and runs cold in
+  # second and reported as a kill. That scope was 1296 mutants and ran cold in
   # 1m48s -- larger and faster than before the bound, because the two that
-  # allocate no longer wait out two timeouts each. Twenty-five minutes has room
-  # for many more of both, and the bound is what keeps a runner from being the
-  # thing that runs out first.
+  # allocate no longer wait out two timeouts each.
+  #
+  # The scope is now 1402 mutants, and the tenth package moved the cold figure
+  # by more than its share: on one shared machine the nine-package scope ran
+  # cold in 2m05s and the ten-package scope in 3m45s. That is the paragraph
+  # above being true again, with the cause named exactly. Cold, the first of the
+  # three baseline runs is the one doing the compiling, and the per-mutant
+  # timeout is max(10s, slowest baseline x 5) -- so a tenth package took that
+  # run from 4.0s to 5.5s and the timeout from 20.1s to 27.7s, which the three
+  # mutants that never return each pay twice. What to watch as the scope grows
+  # is still how many mutants hang, and now also how slow the baseline's first
+  # run is, because that is what sets what each hang costs. Twenty-five minutes
+  # has room for many more of both, and the memory bound is what keeps a runner
+  # from being the thing that runs out first.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25
