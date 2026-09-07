@@ -2780,6 +2780,23 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- Parallel tests under the keep policy no longer fail on the test harness's own
+  bookkeeping. Every test in one binary files its scratch directory under the
+  same `<kept root>/<package>` directory, and a passing test's cleanup removes
+  its own directory and then prunes that package directory as soon as it is
+  empty — so one test's prune could land between another test's `MkdirAll` of
+  the parent and the `Mkdir` of its own directory, and the second syscall failed
+  with `ENOENT` in a test that had nothing to do with keeping. It is what turned
+  an ubuntu job red: the `mkdir` of a kept directory under the run's
+  `go-mutants-kept/testkit` came back `no such file or directory`.
+
+  Creating and pruning now take one process-wide lock, held across the two
+  syscalls and nothing else — the ledger's lock is one test's, and the two
+  halves of this race belong to two different tests, so a per-test lock is
+  exactly the lock that cannot help. A creation that loses to a prune from
+  another test binary of the same package, which no lock in this process can
+  reach, is retried once: the window is two syscalls wide and the second attempt
+  makes the parent again.
 - A run no longer stops because `go vet` disapproves of go-mutants' own
   generated code. A Form C guard renders each alternative from the pristine
   bytes with one edit applied and splices it in beside the original, so the

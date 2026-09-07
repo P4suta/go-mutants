@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -612,5 +613,69 @@ func TestForceFailFiresForATestThatTakesNoScratch(t *testing.T) {
 	if len(tb.errors) != 1 {
 		t.Errorf("a test that took no scratch was reported %d time(s), want 1: %q",
 			len(tb.errors), tb.errors)
+	}
+}
+
+// TestConcurrentScratchesSurviveSiblingPruning is the CI failure that turned
+// PR #48 red on ubuntu with the keep policy on:
+//
+//	creating a kept scratch directory under /home/runner/work/_temp/go-mutants-kept:
+//	mkdir …/go-mutants-kept/testkit/TestImportGateNamesAProductionImportOfTh-05eeab:
+//	no such file or directory
+//
+// Nothing was wrong with the name and nothing was wrong with the root. Two
+// parallel tests of one test binary file their directories under the same
+// package directory, and the cleanup of the one that finished first removes its
+// own directory and then prunes that package directory, which is empty at that
+// instant — while the other is between the [os.MkdirAll] of the parent and the
+// [os.Mkdir] of its own directory. The second syscall then lands in a directory
+// that no longer exists, and a test that had nothing to do with keeping fails on
+// the harness's own bookkeeping.
+//
+// So the two are serialised, and this is the test that says so: many workers
+// creating and pruning under one package directory, every creation asserted to
+// succeed. The ledger's lock is per test and cannot help here — the tests racing
+// are different tests.
+func TestConcurrentScratchesSurviveSiblingPruning(t *testing.T) {
+	keptRootFor(t, "1")
+
+	const (
+		workers = 32
+		rounds  = 40
+	)
+	var (
+		mu       sync.Mutex
+		failures []string
+		wg       sync.WaitGroup
+	)
+	for worker := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for round := range rounds {
+				// A name of its own per directory, because the ledger is keyed
+				// by the test's name and these stand in for different tests.
+				tb := newKeepTB(t, fmt.Sprintf("TestParallelWorker%02d/round=%02d", worker, round))
+				tb.run(func(inner testing.TB) { Scratch(inner) })
+				// The policy is on-failure and the fake passed, so this removes
+				// the directory and prunes the package directory above it —
+				// which is the other half of the race.
+				tb.finish()
+				if len(tb.fatals) == 0 {
+					continue
+				}
+				mu.Lock()
+				failures = append(failures, tb.fatals...)
+				mu.Unlock()
+				return
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(failures) != 0 {
+		t.Fatalf("%d of %d kept directories could not be created while a sibling was being pruned; "+
+			"the first few:\n  %s", len(failures), workers*rounds,
+			strings.Join(failures[:min(len(failures), 5)], "\n  "))
 	}
 }

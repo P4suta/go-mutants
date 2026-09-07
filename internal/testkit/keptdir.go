@@ -235,15 +235,66 @@ func newKeptDirLocked(t testing.TB, l *ledger) string {
 	return dir
 }
 
+// keptTreeMu serialises creating a kept directory against pruning the package
+// directory it lives in.
+//
+// It is process-wide on purpose. The ledger's lock is one test's, and the two
+// halves of this race belong to two different tests — so a per-test lock is
+// exactly the lock that cannot help.
+var keptTreeMu sync.Mutex
+
 // makeKeptDir creates `<parent>/<name cut short>-<six hex digits>`, retrying a
 // collision.
+//
+// # The race it is holding a lock against
+//
+// The parent is `<kept root>/<package>`, shared by every test in one binary, and
+// [removeKept] prunes it as soon as it is empty. So under t.Parallel one test's
+// cleanup removes its own directory and then the package directory — empty at
+// that instant — while another test is between the MkdirAll of that same parent
+// and the Mkdir of its own directory. The second syscall lands in a directory
+// that no longer exists and the test fails with ENOENT on the harness's
+// bookkeeping rather than on anything it was testing. It is what turned an
+// ubuntu job on PR #48 red:
+//
+//	creating a kept scratch directory under /home/runner/work/_temp/go-mutants-kept:
+//	mkdir …/go-mutants-kept/testkit/TestImportGateNamesAProductionImportOfTh-05eeab:
+//	no such file or directory
+//
+// [keptTreeMu] closes the window inside one process, and the retry closes the
+// one no lock here can reach: `go test ./...` runs several package binaries at
+// once, two of them can be built from packages with the same short name, and one
+// process's prune means nothing to the other's mutex. One retry is enough,
+// because the window is two syscalls wide and the second attempt makes the
+// parent again.
 func makeKeptDir(parent, name string) (string, error) {
+	dir, err := makeKeptDirOnce(parent, name)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return dir, err
+	}
+	return makeKeptDirOnce(parent, name)
+}
+
+// makeKeptDirOnce is one attempt at [makeKeptDir], holding [keptTreeMu] across
+// the two syscalls a prune must not get between.
+//
+// The names are drawn before the lock is taken: what the lock is for is the
+// filesystem, and reading six hex digits of randomness five times under it would
+// widen the window it exists to close.
+func makeKeptDirOnce(parent, name string) (string, error) {
+	leaves := make([]string, keptNameAttempts)
+	for i := range leaves {
+		leaves[i] = keptLeaf(name)
+	}
+
+	keptTreeMu.Lock()
+	defer keptTreeMu.Unlock()
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", err
 	}
 	var err error
-	for range keptNameAttempts {
-		dir := filepath.Join(parent, keptLeaf(name))
+	for _, leaf := range leaves {
+		dir := filepath.Join(parent, leaf)
 		// Mkdir rather than MkdirAll, because an existing directory is the
 		// collision this loop is retrying rather than a directory to share.
 		if err = os.Mkdir(dir, 0o755); err == nil {
@@ -333,9 +384,7 @@ func removeKept(t testing.TB, dir string) {
 	var err error
 	for attempt := range keptRemovalAttempts {
 		if err = os.RemoveAll(dir); err == nil {
-			// Fails with ENOTEMPTY as soon as any sibling is still there, which
-			// is the answer rather than a problem.
-			_ = os.Remove(filepath.Dir(dir))
+			pruneKeptParent(dir)
 			return
 		}
 		if attempt < keptRemovalAttempts-1 {
@@ -357,7 +406,7 @@ func removeQuietly(dir string, prune bool) {
 	for attempt := range keptRemovalAttempts {
 		if err := os.RemoveAll(dir); err == nil {
 			if prune {
-				_ = os.Remove(filepath.Dir(dir))
+				pruneKeptParent(dir)
 			}
 			return
 		}
@@ -366,4 +415,18 @@ func removeQuietly(dir string, prune bool) {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "testkit: %s could not be removed and is left as it is\n", dir)
+}
+
+// pruneKeptParent removes the package directory above a kept directory, under
+// [keptTreeMu] so that it cannot land between another test's MkdirAll and Mkdir
+// — the race [makeKeptDir] describes.
+//
+// It fails with ENOTEMPTY as soon as any sibling is still there, which is the
+// answer rather than a problem. Only the one syscall is under the lock: the
+// os.RemoveAll of the directory itself walks a whole tree, and holding the lock
+// across that would serialise every test in the binary on the slowest cleanup.
+func pruneKeptParent(dir string) {
+	keptTreeMu.Lock()
+	defer keptTreeMu.Unlock()
+	_ = os.Remove(filepath.Dir(dir))
 }
