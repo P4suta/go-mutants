@@ -70,6 +70,19 @@
 //     and the outcome errored: go-mutants failed, and the run has learned
 //     nothing about this mutant.
 //
+// # The same binaries with nothing switched on
+//
+// [RunControl] starts those same binaries with no activation, which runs the
+// original program: the generated runtime takes every original branch when
+// [instrument.ActiveEnv] is unset, and [baseEnvFrom] strips that variable out
+// of every child environment this package composes. It shares [startTarget]
+// with [RunOne] for the reason [RunProbe] does — a control is comparable with
+// an execution only if the same binary ran the same target in the same
+// directory under the same paired timeouts — and the two specs differ in
+// exactly one environment entry. It stops at the first non-zero exit, because a
+// control asks whether the original program passes and the first binary that
+// says no has answered.
+//
 // # Timeouts are retried before they are believed
 //
 // A first timeout is not evidence. A loaded machine running N test binaries at

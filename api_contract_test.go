@@ -379,6 +379,9 @@ func TestResultsCarryTraceSeqAndBinaries(t *testing.T) {
 	pinType[int64](gomutants.MutantResult{}.TraceSeq)
 	pinType[[]string](gomutants.ProbeResult{}.Binaries)
 	pinType[int64](gomutants.ProbeResult{}.TraceSeq)
+	pinType[[]string](gomutants.ControlResult{}.Binaries)
+	pinType[[]int64](gomutants.ControlResult{}.ExecSeqs)
+	pinType[int64](gomutants.ControlResult{}.TraceSeq)
 
 	// Zero and nil are what a call that never reached an execution reports, and
 	// they are the values a consumer has to be able to tell from a real one: a
@@ -387,12 +390,14 @@ func TestResultsCarryTraceSeqAndBinaries(t *testing.T) {
 		"CommandResult": gomutants.CommandResult{}.TraceSeq,
 		"MutantResult":  gomutants.MutantResult{}.TraceSeq,
 		"ProbeResult":   gomutants.ProbeResult{}.TraceSeq,
+		"ControlResult": gomutants.ControlResult{}.TraceSeq,
 	} {
 		if seq != 0 {
 			t.Errorf("the zero %s carries TraceSeq %d, want 0", name, seq)
 		}
 	}
-	if (gomutants.MutantResult{}).Binaries != nil || (gomutants.ProbeResult{}).Binaries != nil {
+	if (gomutants.MutantResult{}).Binaries != nil || (gomutants.ProbeResult{}).Binaries != nil ||
+		(gomutants.ControlResult{}).Binaries != nil || (gomutants.ControlResult{}).ExecSeqs != nil {
 		t.Error("a zero result names test binaries it never ran")
 	}
 }

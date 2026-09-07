@@ -427,52 +427,86 @@ func startTarget(
 	return spec, opts.runProcess(ctx, spec)
 }
 
-// validateArgs protects the timeout owned by RunOne. Both spellings accepted
-// by the standard flag package are refused, including the separated value
-// form; allowing either would let a target turn off the in-process half of the
-// timeout guarantee while the public API still claimed the supplied budget.
+// overridesTimeout reports whether a target's arguments try to set the flag the
+// process supervisor owns. Both spellings accepted by the standard flag package
+// are matched, including the separated value form; allowing either would let a
+// target turn off the in-process half of the timeout guarantee while the public
+// API still claimed the supplied budget.
+//
+// The rule is one function and the sentences are three, because the three
+// passes — a mutant run, a probe pass and a control run — refuse the same flag
+// and have to say so about three different things. A second copy of the *rule*
+// is what would go wrong: a spelling added to one and not the others would
+// leave one of the three able to disarm its own supervisor.
+func overridesTimeout(args []string) bool {
+	return slices.ContainsFunc(args, func(argument string) bool {
+		return testflag.Match(argument, "test.timeout")
+	})
+}
+
+// validateArgs protects the timeout owned by RunOne.
 func validateArgs(m MutantRun) error {
-	for _, arg := range m.Args {
-		if testflag.Match(arg, "test.timeout") {
-			return &Error{
-				Code: CodeMutantInvalid,
-				Message: "the mutant " + display(m.ID) +
-					" target overrides -test.timeout, which is reserved by the process supervisor",
-			}
+	if overridesTimeout(m.Args) {
+		return &Error{
+			Code: CodeMutantInvalid,
+			Message: "the mutant " + display(m.ID) +
+				" target overrides -test.timeout, which is reserved by the process supervisor",
 		}
 	}
 	return nil
 }
 
-// selectBinaries resolves [MutantRun.Binaries] against the binaries this run
-// was given.
+// selectSubset resolves a subset of binary indices against the binaries a call
+// was given, and leaves both refusals to the caller.
+//
+// The resolution is one function and the sentences are three, for the reason
+// [overridesTimeout] is one: a mutant run, a probe pass and a control run all
+// narrow the same slice by the same rule, while what an empty or out-of-range
+// subset *means* is different for each — a mutant no binary covers, a pass that
+// would license skipping every execution, a control that would report the
+// original program passing having started nothing. Each keeps its own code and
+// its own sentence; none keeps its own copy of the loop.
 //
 // The nil case returns the slice itself rather than a copy: the caller owns it,
 // nothing here writes to it, and copying every binary list once per mutant would
 // be a per-mutant allocation bought with nothing.
-func selectBinaries(m MutantRun, bins []TestBinary) ([]TestBinary, error) {
-	if m.Binaries == nil {
+func selectSubset(
+	subset []int, bins []TestBinary, refuseEmpty func() error, refuseIndex func(index int) error,
+) ([]TestBinary, error) {
+	if subset == nil {
 		return bins, nil
 	}
-	if len(m.Binaries) == 0 {
-		return nil, &Error{
-			Code: CodeMutantInvalid,
-			Message: "the mutant " + display(m.ID) +
-				" was given an empty set of test binaries to be measured against; a mutant no binary covers is not executed at all, and running none of them would report it as survived having started nothing",
-		}
+	if len(subset) == 0 {
+		return nil, refuseEmpty()
 	}
-	selected := make([]TestBinary, 0, len(m.Binaries))
-	for _, index := range m.Binaries {
+	selected := make([]TestBinary, 0, len(subset))
+	for _, index := range subset {
 		if index < 0 || index >= len(bins) {
-			return nil, &Error{
-				Code: CodeMutantInvalid,
-				Message: "the mutant " + display(m.ID) + " names test binary " + strconv.Itoa(index) +
-					" of " + strconv.Itoa(len(bins)) + "; the caller's binaries and this run's have drifted apart",
-			}
+			return nil, refuseIndex(index)
 		}
 		selected = append(selected, bins[index])
 	}
 	return selected, nil
+}
+
+// selectBinaries resolves [MutantRun.Binaries] against the binaries this run
+// was given.
+func selectBinaries(m MutantRun, bins []TestBinary) ([]TestBinary, error) {
+	return selectSubset(m.Binaries, bins,
+		func() error {
+			return &Error{
+				Code: CodeMutantInvalid,
+				Message: "the mutant " + display(m.ID) +
+					" was given an empty set of test binaries to be measured against; a mutant no binary covers is not executed at all, and running none of them would report it as survived having started nothing",
+			}
+		},
+		func(index int) error {
+			return &Error{
+				Code: CodeMutantInvalid,
+				Message: "the mutant " + display(m.ID) + " names test binary " + strconv.Itoa(index) +
+					" of " + strconv.Itoa(len(bins)) + "; the caller's binaries and this run's have drifted apart",
+			}
+		})
 }
 
 // workerScratch resolves a worker's temporary directory, makes sure it exists,

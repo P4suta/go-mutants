@@ -15,7 +15,6 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/runner"
-	"github.com/P4suta/go-mutants/internal/testflag"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -372,45 +371,34 @@ func probeSubject(selected []TestBinary) string {
 // and a target that turned half of it off would leave a probe process able to
 // outlive the budget the caller was promised.
 func validateProbeArgs(p ProbeRun) error {
-	for _, arg := range p.Args {
-		if testflag.Match(arg, "test.timeout") {
-			return &Error{
-				Code:    CodeProbeInvalid,
-				Message: "the probe target overrides -test.timeout, which is reserved by the process supervisor",
-			}
+	if overridesTimeout(p.Args) {
+		return &Error{
+			Code:    CodeProbeInvalid,
+			Message: "the probe target overrides -test.timeout, which is reserved by the process supervisor",
 		}
 	}
 	return nil
 }
 
 // selectProbeBinaries resolves [ProbeRun.Binaries] against the binaries this
-// pass was given, as [selectBinaries] does for a mutant.
-//
-// The nil case returns the slice itself rather than a copy, for the reason
-// given there: the caller owns it and nothing here writes to it.
+// pass was given, as [selectBinaries] does for a mutant. Both go through
+// [selectSubset], which is where the nil and empty cases are argued.
 func selectProbeBinaries(p ProbeRun, bins []TestBinary) ([]TestBinary, error) {
-	if p.Binaries == nil {
-		return bins, nil
-	}
-	if len(p.Binaries) == 0 {
-		return nil, &Error{
-			Code: CodeProbeInvalid,
-			Message: "the probe pass was given an empty set of test binaries; a pass that started none of " +
-				"them would report no infected mutants having measured nothing",
-		}
-	}
-	selected := make([]TestBinary, 0, len(p.Binaries))
-	for _, index := range p.Binaries {
-		if index < 0 || index >= len(bins) {
-			return nil, &Error{
+	return selectSubset(p.Binaries, bins,
+		func() error {
+			return &Error{
+				Code: CodeProbeInvalid,
+				Message: "the probe pass was given an empty set of test binaries; a pass that started none of " +
+					"them would report no infected mutants having measured nothing",
+			}
+		},
+		func(index int) error {
+			return &Error{
 				Code: CodeProbeInvalid,
 				Message: "the probe pass names test binary " + strconv.Itoa(index) + " of " +
 					strconv.Itoa(len(bins)) + "; the caller's binaries and this pass's have drifted apart",
 			}
-		}
-		selected = append(selected, bins[index])
-	}
-	return selected, nil
+		})
 }
 
 // probeInterrupted builds the failure of a pass a cancelled context ended. The

@@ -63,8 +63,8 @@ func TestSecondPrepareIsErrWorkspacePrepared(t *testing.T) {
 	}
 }
 
-// TestClosedSessionErrorsAreSentinels covers the three calls a session refuses
-// once it is closed. All three carry one sentinel, because a consumer that has
+// TestClosedSessionErrorsAreSentinels covers the four calls a session refuses
+// once it is closed. All four carry one sentinel, because a consumer that has
 // lost its session has one thing to do about it whichever call noticed.
 func TestClosedSessionErrorsAreSentinels(t *testing.T) {
 	t.Parallel()
@@ -72,6 +72,7 @@ func TestClosedSessionErrorsAreSentinels(t *testing.T) {
 	closed := &Session{closed: true}
 	_, execErr := closed.Exec(t.Context(), ExecRequest{Mutant: "deadbeef"})
 	_, probeErr := closed.Probe(t.Context(), ProbeRequest{})
+	_, controlErr := closed.Control(t.Context(), ControlRequest{})
 	_, changesErr := closed.Changes()
 
 	cases := []struct {
@@ -81,6 +82,7 @@ func TestClosedSessionErrorsAreSentinels(t *testing.T) {
 	}{
 		{"Exec", execErr, "gomutants: session exec: session is closed"},
 		{"Probe", probeErr, "gomutants: session probe: session is closed"},
+		{"Control", controlErr, "gomutants: session control: session is closed"},
 		{"Changes", changesErr, "gomutants: changes: session is closed"},
 	}
 	for _, c := range cases {
@@ -90,6 +92,52 @@ func TestClosedSessionErrorsAreSentinels(t *testing.T) {
 		if got := errorText(c.err); got != c.message {
 			t.Errorf("%s message = %q, want %q", c.call, got, c.message)
 		}
+	}
+}
+
+// TestControlRefusalsNameTheControlCall drives [Session.Control] itself for the
+// one thing a table over helper functions cannot establish: that the call
+// passes its own name down.
+//
+// [sessionTargetArgs] and [selectTestPackages] both take the call as an
+// argument, so a test that calls them with "control" proves only that they were
+// told. What a consumer acts on is `Call` on the error *Session.Control
+// returned*, and a Control that had been wired to say "exec" would pass every
+// other test in this repository — the refusal is the same type, the same
+// sentinel and, but for one word, the same sentence.
+//
+// It is in the unit tier because it needs no toolchain: a hand-built session
+// with a scratch directory reaches both refusals before anything is compiled or
+// started.
+func TestControlRefusalsNameTheControlCall(t *testing.T) {
+	t.Parallel()
+
+	session := &Session{scratch: t.TempDir()}
+
+	_, flagErr := session.Control(t.Context(), ControlRequest{Args: []string{"-test.timeout=1s"}})
+	var reserved *ReservedError
+	if !errors.As(flagErr, &reserved) {
+		t.Fatalf("Control with a reserved flag = %v, want a *ReservedError", flagErr)
+	}
+	if reserved.Call != "control" {
+		t.Errorf("Call = %q, want %q", reserved.Call, "control")
+	}
+	if got, want := errorText(flagErr),
+		"gomutants: session control: -test.timeout is reserved by the session's process supervisor"; got != want {
+		t.Errorf("message = %q, want %q", got, want)
+	}
+
+	_, packageErr := session.Control(t.Context(), ControlRequest{Package: "example.com/nowhere"})
+	var missing *PackageNotPreparedError
+	if !errors.As(packageErr, &missing) {
+		t.Fatalf("Control naming an unprepared package = %v, want a *PackageNotPreparedError", packageErr)
+	}
+	if missing.Call != "control" || missing.Package != "example.com/nowhere" {
+		t.Errorf("err = %+v, want the control call and the request's own spelling", missing)
+	}
+	if got, want := errorText(packageErr),
+		`gomutants: session control package "example.com/nowhere" has no prepared test binary`; got != want {
+		t.Errorf("message = %q, want %q", got, want)
 	}
 }
 
@@ -286,6 +334,25 @@ func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 		}
 		if got := err.Error(); got != c.message {
 			t.Errorf("message = %q, want %q", got, c.message)
+		}
+	}
+
+	// The same three flags refused for the session's third call, which is why
+	// the call names itself: a consumer composing arguments for a mutant run and
+	// handing them to the control beside it has to be told which one said no.
+	for _, c := range flags {
+		_, err := sessionTargetArgs([]string{c.argument}, scratch, "control")
+		var reserved *ReservedError
+		if !errors.As(err, &reserved) {
+			t.Fatalf("sessionTargetArgs(%q) for a control = %v, want a *ReservedError", c.argument, err)
+		}
+		if reserved.Flag != c.flag || reserved.Call != "control" {
+			t.Errorf("sessionTargetArgs(%q) = %+v, want the flag %q refused for control",
+				c.argument, reserved, c.flag)
+		}
+		want := strings.Replace(c.message, "session exec:", "session control:", 1)
+		if got := err.Error(); got != want {
+			t.Errorf("message = %q, want %q", got, want)
 		}
 	}
 

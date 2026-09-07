@@ -548,13 +548,23 @@ command, and an unlabelled command is a recording that does not validate.
 | `coverage-run` | one profiling run of a test binary |
 | `mutant-run` | one test binary run with one mutant active |
 | `probe-run` | one test binary run against the probe tree |
+| `control-run` | one test binary of the mutant tree run with nothing activated, which is the original program |
 | `validate-build` | one compile of the instrumented tree during validation or its bisection |
 | `workspace-exec` | a command an embedder asked the workspace to run |
 | `verify` | re-checking the frozen tree before a session claims to measure it |
 
 `subject` is the mutant id for `mutant-run`, the import path for `go-test-c`,
-`coverage-run` and `covdata-textfmt`, the pattern for `scope-list`, and absent
-where the kind says everything there is to say.
+`coverage-run`, `covdata-textfmt` and `control-run`, the pattern for
+`scope-list`, and absent where the kind says everything there is to say.
+
+A `control-run` is a `mutant-run` with the activation variable left out, and
+that is the whole difference: same executable, same `dir`, same `timeout_ms`,
+same arguments, and an `env_names` that is the mutant run's minus
+`GO_MUTANTS_ACTIVE`. The generated runtime takes every original branch when
+nothing is activated, so these commands run the program the user wrote — which
+is what makes a control comparable with the execution beside it, and why the
+kind is the only thing that tells the two apart. `Session.Control` is what
+records them; see docs/library.md.
 
 A `probe-run` is the one kind whose subject is a fact about the *pass* rather
 than about the child: a probe pass is one measurement over the binaries it
@@ -792,7 +802,7 @@ closed, because the recording is one of the things that goes into it.
 
 | Field | Meaning |
 | --- | --- |
-| `kind` | `warning`, `trace-unavailable`, `diagnostics`, `diagnostics-unavailable`, `trace-gc`, `coverage-unavailable`, or `prepare-failed` |
+| `kind` | `warning`, `trace-unavailable`, `diagnostics`, `diagnostics-unavailable`, `trace-gc`, `coverage-unavailable`, `prepare-failed`, or `control` |
 | `code` | the `GOMnnnn` code the run also reported to its console, where there is one |
 | `detail` | the detail line that accompanies it |
 
@@ -803,6 +813,17 @@ streams reads go-mutants' `note` and goatest's `progress` as one kind of line.
 
 `coverage-unavailable` carries the whole reason rather than its first line,
 which is the difference between a note and the console warning beside it.
+
+`control` is the one note that is not something the run could not do. It
+summarises one `Session.Control` — what the original program came to, in which
+package, over which binaries, and which `exec` events those were — and it is a
+note because this contract's event `type` enum is closed and holds no payload
+for a control. The `control-run` executions are the account of what ran; the
+note exists so that one call has one event, and `ControlResult.TraceSeq` names
+it. Its `detail` is a sentence for a reader and never a field to branch on: a
+consumer wanting the facts reads the `exec` events, or the `ControlResult` it
+was handed. `code` carries the `GOMnnnn` of a control that could not be made
+and is absent for every control that ran.
 
 `diagnostics` and `diagnostics-unavailable` are reserved and nothing emits them
 today, for the same reason nothing emits the `diagnostics` artifact kind: `run`

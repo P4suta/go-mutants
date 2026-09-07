@@ -99,6 +99,19 @@ const (
 	// the part of it that still parses is exactly what a smaller, wrong answer
 	// looks like.
 	CodeProbeLog Code = "GOM7517"
+	// CodeControlInvalid reports a [ControlRun] that cannot be made: no
+	// timeout, no test binary, a target overriding the harness timeout, or a
+	// binary subset this run does not have. Every one of them would otherwise
+	// end as exit 0 having started nothing, which is the same answer as "the
+	// original program passes here" — and that answer is what licenses a
+	// consumer to attribute a mutant's failing suite to the mutant.
+	CodeControlInvalid Code = "GOM7518"
+	// CodeControlStart reports a control run's test binary that could not be
+	// started or supervised. Like [CodeMutantStart] it is never a statement
+	// about the tests, and the underlying GOM72xx cause stays reachable through
+	// [Error.Err]; unlike it, the control yields no exit status at all rather
+	// than an errored mutant.
+	CodeControlStart Code = "GOM7519"
 	// CodeInterrupted reports a schedule stopped by a cancelled context, which
 	// in practice means Ctrl-C or SIGTERM. The results measured so far are
 	// returned alongside it, with everything that never ran marked
@@ -142,6 +155,8 @@ var codes = []Code{
 	CodeProbeInvalid,
 	CodeProbeStart,
 	CodeProbeLog,
+	CodeControlInvalid,
+	CodeControlStart,
 	CodeInterrupted,
 	CodeCoverageDir,
 	CodeCoverageFailed,

@@ -489,7 +489,7 @@ func (sink *hostileSink) Close() error { return errors.New("the consumer's sink 
 // registered with them so that TestMain releases it: preparing a session is the
 // expensive thing this file does, and two tests ask the same question of it.
 var hostileFixture = sync.OnceValue(func() *preparedFixture {
-	return prepareFixtureWith("probeable",
+	return prepareFixtureWith("probeable", nil,
 		gomutants.OpenOptions{Trace: &hostileSink{}},
 		gomutants.PrepareOptions{
 			Probe:              true,

@@ -764,6 +764,127 @@ type ProbeResult struct {
 	TraceSeq int64
 }
 
+// ControlRequest selects one test or fuzz target to run against a prepared
+// session's binaries with no mutant activated. Its fields mean exactly what
+// [ExecRequest]'s do, minus the mutant: a control activates none.
+type ControlRequest struct {
+	// Package is an import path or one module-relative package directory.
+	// Empty runs the selected target in every compiled test package, in order,
+	// exactly as an [ExecRequest] with no package does — which is the control a
+	// caller wants beside an execution it did not narrow either.
+	Package string
+	// Args are passed verbatim to each selected test binary. -test.timeout is
+	// reserved, as it is for [ExecRequest], and for the same reason.
+	//
+	// They are meant to be the *same* arguments the execution they are a
+	// control for was given. A control of a different target is a control of
+	// nothing.
+	Args []string
+	// Env overlays the environment frozen by Open for this run. GO_MUTANTS_ and
+	// the temporary-directory variables stay reserved; there is nothing for a
+	// caller to supply in their place, because a control is defined by their
+	// absence.
+	Env []string
+	// Timeout overrides PrepareOptions.MutantTimeout when positive. A negative
+	// duration is invalid.
+	Timeout time.Duration
+	// OutputLimit caps the retained combined output of each test binary this
+	// run starts, exactly as [ExecRequest.OutputLimit] does and with the same
+	// defaults.
+	OutputLimit int
+}
+
+// ControlResult is one run of the original program through the session's
+// prepared test binaries.
+//
+// It carries no [Outcome], deliberately. A control is not a mutant and has
+// nothing to survive or be killed by: what it reports is what the program the
+// user wrote did — a status, or a timeout — and what that means beside a mutant
+// execution is the caller's judgement to make.
+type ControlResult struct {
+	// Package is the import path of the test binary that decided the run: the
+	// one whose tests failed, or the one that hung. It is empty when every
+	// binary passed, which is the rule [MutantResult.KilledBy] follows —
+	// a name here is a name a consumer reports, and one invented for a run
+	// nothing decided would name nothing.
+	Package string
+	// ExitCode is the status of the binary this run stopped at — the deciding
+	// binary's; when nothing decided, the last binary that ran — and it is
+	// **negative** for a tree the supervisor killed.
+	//
+	// The timeout case is the one worth reading twice. internal/runner reports
+	// no exit status at all for a tree it killed rather than inventing one, and
+	// that is carried up unchanged, exactly as [CommandResult.ExitCode] carries
+	// it for a workspace command with the same field set. A zero here would be
+	// a status the child never returned, and a caller that forgot to look at
+	// TimedOut would read it as the original program passing.
+	ExitCode int
+	// TimedOut reports a binary the supervisor had to kill at the effective
+	// timeout.
+	TimedOut bool
+	// Duration is the wall-clock time the child processes took, summed over
+	// every binary this run started — which is not the binary Output describes.
+	// It is zero when the call returns an error, along with everything else the
+	// run did not establish.
+	Duration time.Duration
+	// Output is the bounded combined output of one test binary, capped at the
+	// effective [ControlRequest.OutputLimit]: the deciding binary's; when
+	// nothing decided, the last binary that ran. A consumer that wants one
+	// package's output asks for that package.
+	//
+	// Unlike [MutantResult.Output] it is there even when everything passed, and
+	// the asymmetry is deliberate. A survivor's output is thousands of lines of
+	// nothing having gone wrong multiplied by every mutant in a run, which is
+	// the memory that cap exists to bound; a control is one run per execution at
+	// most, and its output is the very thing a consumer shows beside a mutant's
+	// failure to say what the program does when nothing is switched on.
+	Output []byte
+	// Truncated reports that Output lost bytes to the limit, in which case it
+	// begins with [OutputTruncatedPrefix]; TotalBytes is everything *that*
+	// binary wrote, kept or not.
+	//
+	// TotalBytes is one binary's total and never the run's, which is the one
+	// place these fields and Duration disagree on purpose: Duration sums over
+	// the binaries the run started, and this describes the single binary Output
+	// came from.
+	Truncated  bool
+	TotalBytes int64
+	// Binaries are the test binaries this run started, in launch order and by
+	// import path, exactly as [MutantResult.Binaries] names them. They stop
+	// where the run stopped: a control that failed in the second of three
+	// binaries names two.
+	Binaries []string
+	// ExecSeqs are the `exec` events those starts were recorded at, in the same
+	// order and one per element of Binaries.
+	//
+	// It is a field rather than something to be read out of the summarising
+	// note's prose. `mutant-exec` and `probe-exec` carry an `exec_seqs` of their
+	// own and a `note` has no such field, so without this the only way down from
+	// a control to the commands underneath it would be to parse a sentence
+	// written for a person — which is exactly the coupling every other join in
+	// this API exists to remove.
+	//
+	// It is empty when nothing was recorded, never when a run started
+	// something, and it is kept beside Binaries when a run that had already
+	// started something then failed.
+	ExecSeqs []int64
+	// TraceSeq is the `seq` of the `note` event this run was summarised at.
+	//
+	// A control has no event type of its own — `gomutants-trace-v1` closes the
+	// `type` enum, and there is no payload for one — so it is recorded as its
+	// per-binary `exec` events, of kind `control-run`, plus one note of kind
+	// `control` that names what they came to. The note is what this points at,
+	// so that one call has one event a consumer can join its own recording to,
+	// and ExecSeqs is the way down from it to those executions.
+	//
+	// It is zero only when nothing was recorded, which with the ring default
+	// means the call failed before it reached an execution — a package with no
+	// prepared binary, a refused flag, a closed session. A run that *did* reach
+	// one and then failed carries this sequence, Binaries and ExecSeqs beside
+	// the error and nothing else, exactly as [ProbeResult.TraceSeq] does.
+	TraceSeq int64
+}
+
 // Artifact is one bounded standard fuzz-corpus file captured before a target's
 // private execution scratch is removed.
 type Artifact struct {

@@ -155,26 +155,39 @@ const targetDeathPoll = 50 * time.Millisecond
 // whenever SIGTERM was actually ignored.
 const cleanupBound = runner.TerminationGrace + runner.IODrainGrace + 20*time.Second
 
-// hostEnvWithoutSessionBlock is this process's environment with
-// [sessionBlockEnv] taken out of it.
+// fixtureGateEnv are the variables the injected fixture reads to switch a
+// deliberately badly-behaved target on: [sessionBlockEnv] for the minute-long
+// sleeper, [controlFailEnv] for the test that is red on the original program.
+//
+// They are listed in one place so that adding a gate to [killableExtraTests]
+// and forgetting to strip it is a change to this slice rather than a failure
+// three tests away. A gate is only a gate while nothing else can set it.
+var fixtureGateEnv = []string{sessionBlockEnv, controlFailEnv}
+
+// hostEnvWithoutFixtureGates is this process's environment with every
+// [fixtureGateEnv] variable taken out of it.
 //
 // gomutants.Open freezes an environment — the one it is handed, or os.Environ()
 // when it is handed none — and every command and target the workspace goes on to
-// run inherits that frozen copy. So a developer who exported SESSION_BLOCK once,
-// or a runner that inherited it from some other tool, would have the injected
-// TestSessionBlocks sleep for a minute in every execution that did not ask
-// for it: the baseline `go test ./...`, the verification inside Prepare, and the
-// ungated half of TestSessionBlocksOnlyWhenAsked, which would then fail for a
-// reason nothing in its output would mention.
+// run inherits that frozen copy. So a developer who exported one of these once,
+// or a runner that inherited it from some other tool, would have the gated
+// target run in every execution that did not ask for it: the baseline
+// `go test ./...`, the verification inside Prepare, and every whole-package
+// target. SESSION_BLOCK costs a minute each time and turns the ungated half of
+// TestSessionBlocksOnlyWhenAsked into the gated one; CONTROL_FAIL is worse,
+// because it turns the fixture's suite *red* — the baseline fails, Prepare's
+// verification fails, and nothing in the output would mention why.
 //
 // Removing the entry rather than appending an empty one, because "the last
 // duplicate wins" is a rule about os/exec that this file should not have to
 // rely on. The comparison folds case because the Windows environment does: a
 // `session_block` set in a shell there is the same variable os.Getenv finds.
-func hostEnvWithoutSessionBlock() []string {
+func hostEnvWithoutFixtureGates() []string {
 	return slices.DeleteFunc(os.Environ(), func(entry string) bool {
 		name, _, _ := strings.Cut(entry, "=")
-		return strings.EqualFold(name, sessionBlockEnv)
+		return slices.ContainsFunc(fixtureGateEnv, func(gate string) bool {
+			return strings.EqualFold(name, gate)
+		})
 	})
 }
 
@@ -325,6 +338,24 @@ func TestSessionBlocks(t *testing.T) {
 	}
 	time.Sleep(60 * time.Second)
 }
+
+// TestControlFails is red on the *original* program when the environment asks
+// it to be, which is the one thing a control run has to be able to report and
+// the one thing this fixture otherwise has no target for.
+//
+// The module is called killable because everything in it passes; without this
+// there is nothing here whose failure belongs to the repository rather than to
+// a mutant, and "a control reports a failing suite" would be a claim nothing
+// exercises. The gate is what the sleeper's is for — the baseline, the
+// verification inside Prepare and every whole-package target would otherwise be
+// red — and it reads a value rather than a presence, so an inherited empty
+// variable cannot turn it on.
+func TestControlFails(t *testing.T) {
+	if os.Getenv("CONTROL_FAIL") != "yes" {
+		return
+	}
+	t.Fatal("CONTROL_FAIL asked this test to fail on the original program")
+}
 `
 
 // killableRoot copies fixtures/killable into a directory of the test's own and
@@ -342,10 +373,11 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 	root := killableRoot(t)
 
 	parent := t.TempDir()
-	// Without sessionBlockEnv, for the reason spelled out on
-	// hostEnvWithoutSessionBlock: an inherited one would be paid a minute at a
-	// time by the baseline below and by the verification inside Prepare.
-	env := append(hostEnvWithoutSessionBlock(),
+	// Without the fixture's gate variables, for the reason spelled out on
+	// hostEnvWithoutFixtureGates: an inherited SESSION_BLOCK would be paid a
+	// minute at a time by the baseline below and by the verification inside
+	// Prepare, and an inherited CONTROL_FAIL would make both of them red.
+	env := append(hostEnvWithoutFixtureGates(),
 		"GO_MUTANTS_ACTIVE=must-be-scrubbed",
 		"FROZEN_AT_OPEN=before",
 	)
@@ -597,7 +629,10 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 // the consumers that were matching it, but nothing has to.
 func TestWorkspaceExecReportsTruncation(t *testing.T) {
 	root := killableRoot(t)
-	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
+		TempDirectory: t.TempDir(),
+		Env:           hostEnvWithoutFixtureGates(),
+	})
 	if err != nil {
 		t.Fatalf("opening workspace: %v", err)
 	}
@@ -645,7 +680,10 @@ func TestWorkspaceExecReportsTruncation(t *testing.T) {
 func TestSessionExecHonoursOutputLimit(t *testing.T) {
 	root := killableRoot(t)
 	parent := t.TempDir()
-	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: parent})
+	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
+		TempDirectory: parent,
+		Env:           hostEnvWithoutFixtureGates(),
+	})
 	if err != nil {
 		t.Fatalf("opening workspace: %v", err)
 	}
@@ -751,13 +789,13 @@ func TestSessionBlocksOnlyWhenAsked(t *testing.T) {
 	// developer or a runner with SESSION_BLOCK already exported would turn the
 	// ungated half of this test into the gated one — and it would read as the
 	// engine failing to kill a target rather than as an inherited variable.
-	// Setting it here is what makes hostEnvWithoutSessionBlock's removal a
+	// Setting it here is what makes hostEnvWithoutFixtureGates' removal a
 	// claim this test can fail rather than a precaution nobody exercises.
 	t.Setenv(sessionBlockEnv, "yes")
 
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
 		TempDirectory: t.TempDir(),
-		Env:           hostEnvWithoutSessionBlock(),
+		Env:           hostEnvWithoutFixtureGates(),
 	})
 	if err != nil {
 		t.Fatalf("opening workspace: %v", err)
@@ -1090,15 +1128,21 @@ func prepareProbeable(probe bool) *preparedFixture {
 // test that triggered it; a failure is carried in the value and reported by
 // whichever test asks for it first.
 func prepareFixture(name string, options gomutants.PrepareOptions) *preparedFixture {
-	return prepareFixtureWith(name, gomutants.OpenOptions{}, options)
+	return prepareFixtureWith(name, nil, gomutants.OpenOptions{}, options)
 }
 
 // prepareFixtureWith is [prepareFixture] for a caller that also has something
 // to say about how the workspace is opened. TempDirectory is not among those
 // things: the parent is this helper's, because it is what the value carries and
 // what releasing one removes.
+//
+// inject is source written into the copy before the workspace is opened, keyed
+// by module-relative path. It is how a shared session gets the targets a test
+// needs without those targets living in `fixtures/`, which is a checked-in tree
+// a CI gate requires to stay clean — and without any test being able to add a
+// file to a session that is already prepared.
 func prepareFixtureWith(
-	name string, open gomutants.OpenOptions, options gomutants.PrepareOptions,
+	name string, inject map[string]string, open gomutants.OpenOptions, options gomutants.PrepareOptions,
 ) *preparedFixture {
 	prepared := &preparedFixture{}
 	preparedMu.Lock()
@@ -1116,6 +1160,12 @@ func prepareFixtureWith(
 	if err = copyFixtureTree(name, root); err != nil {
 		prepared.err = err
 		return prepared
+	}
+	for path, source := range inject {
+		if err = os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(source), 0o644); err != nil {
+			prepared.err = err
+			return prepared
+		}
 	}
 	open.TempDirectory = parent
 	workspace, err := gomutants.Open(context.Background(), root, open)

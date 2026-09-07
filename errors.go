@@ -38,9 +38,9 @@ var (
 	// workspace may be prepared exactly once, including when the preparation
 	// failed after it began: the tree it froze is no longer the tree it froze.
 	ErrWorkspacePrepared = errors.New("workspace has already been prepared")
-	// ErrSessionClosed is returned by [Session.Exec], [Session.Probe] and
-	// [Session.Changes] after [Session.Close] — or after the parent workspace's,
-	// which closes the session too.
+	// ErrSessionClosed is returned by [Session.Exec], [Session.Probe],
+	// [Session.Control] and [Session.Changes] after [Session.Close] — or after
+	// the parent workspace's, which closes the session too.
 	ErrSessionClosed = errors.New("session is closed")
 	// ErrInvalidMutantID reports an [ExecRequest.Mutant] that is not a mutant
 	// identity at all: too short, too long, or not lowercase hexadecimal.
@@ -404,10 +404,10 @@ func invocationArgv(invocation *runner.Invocation) []string {
 	return slices.Clone(invocation.Argv)
 }
 
-// An ExecutionError is the measurement itself failing inside [Session.Exec] or
-// [Session.Probe]: a test binary that would not start or could not be
-// supervised, a generated runtime that refused the activation it was handed, an
-// infection log that is there and cannot be read.
+// An ExecutionError is the measurement itself failing inside [Session.Exec],
+// [Session.Probe] or [Session.Control]: a test binary that would not start or
+// could not be supervised, a generated runtime that refused the activation it
+// was handed, an infection log that is there and cannot be read.
 //
 // It is never a statement about the tests. A mutant that survived, was killed,
 // or timed out is a result and comes back as one; this is the execution phase
@@ -421,18 +421,18 @@ func invocationArgv(invocation *runner.Invocation) []string {
 // fuzz target are plain errors today: they happen before or after the
 // measurement, carry no diagnostic code, and a consumer reads their message.
 type ExecutionError struct {
-	// Call is "exec" or "probe": which of the session's two measurements
+	// Call is "exec", "probe" or "control": which of the session's three runs
 	// failed.
 	Call string
 	// Package is the import path of the test binary the failure was about,
 	// whenever the failure named one — the binary that would not start, the one
 	// whose runtime refused the activation, the one a cancellation cut off.
 	//
-	// It falls back to [ExecRequest.Package] or [ProbeRequest.Package] as the
-	// request gave it for the failures that are about the pass rather than about
-	// one binary, and is empty when neither says anything: the request's field
-	// is a *selector*, which may be a module-relative directory and is empty for
-	// the ordinary request that measures every prepared binary.
+	// It falls back to the request's own Package as it was given for the
+	// failures that are about the pass rather than about one binary, and is
+	// empty when neither says anything: the request's field is a *selector*,
+	// which may be a module-relative directory and is empty for the ordinary
+	// request that measures every prepared binary.
 	Package string
 	// Code is the stable diagnostic code, for example "GOM7513".
 	Code string
@@ -494,7 +494,7 @@ func executionError(call, selector string, err error) error {
 // the session was prepared, or a typo in one. The remedy is to prepare again or
 // to fix the name, and neither is "file a bug".
 type PackageNotPreparedError struct {
-	// Call is "exec" or "probe".
+	// Call is "exec", "probe" or "control".
 	Call string
 	// Package is the import path or module-relative directory that was asked
 	// for, verbatim.
@@ -514,9 +514,10 @@ func (e *PackageNotPreparedError) Error() string {
 // request can say "drop this flag" rather than "the engine said no". Exactly
 // one of Flag and Variable is set.
 type ReservedError struct {
-	// Call is "exec" or "probe" for a flag, and empty for a variable — the
-	// environment overlay is applied by workspace commands and session targets
-	// alike, and the refusal is the same sentence for all of them.
+	// Call is "exec", "probe" or "control" for a flag, and empty for a
+	// variable — the environment overlay is applied by workspace commands and
+	// session targets alike, and the refusal is the same sentence for all of
+	// them.
 	Call string
 	// Flag is the reserved test flag, with its leading dash.
 	Flag string

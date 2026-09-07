@@ -134,6 +134,12 @@ const (
 	ExecKindMutantRun = "mutant-run"
 	// ExecKindProbeRun is one test binary run against the probe tree.
 	ExecKindProbeRun = "probe-run"
+	// ExecKindControlRun is one test binary of the *mutant* tree run with
+	// nothing activated, which is the original program: the generated runtime
+	// takes every original branch when the activation variable is unset, so a
+	// control and the mutant run beside it are the same executable started the
+	// same way and are told apart by this label alone.
+	ExecKindControlRun = "control-run"
 	// ExecKindValidateBuild is one compile of the instrumented tree during
 	// validation or its bisection.
 	ExecKindValidateBuild = "validate-build"
@@ -163,6 +169,7 @@ func ExecKinds() []string {
 		ExecKindCoverageRun,
 		ExecKindMutantRun,
 		ExecKindProbeRun,
+		ExecKindControlRun,
 		ExecKindValidateBuild,
 		ExecKindWorkspaceExec,
 		ExecKindVerify,
@@ -278,6 +285,13 @@ const (
 	NoteCoverageUnavailable = "coverage-unavailable"
 	// NotePrepareFailed is the preparation stage a session died in.
 	NotePrepareFailed = "prepare-failed"
+	// NoteControl summarises one Session.Control: the original program run
+	// through the prepared binaries. It is the one note that is not a failure,
+	// and it is a note because this contract's `type` enum is closed and holds
+	// no payload for a control — the per-binary `exec` events of kind
+	// [ExecKindControlRun] are the account, and this is the line the result's
+	// TraceSeq points at so that one call has one event to name.
+	NoteControl = "control"
 )
 
 // durationMS renders a duration the way every duration in this contract is
