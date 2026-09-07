@@ -64,6 +64,12 @@ type ProbeRun struct {
 	// this pass, because a log two passes appended to cannot be told apart.
 	LogPath string
 
+	// RecordTestLog asks each binary of the pass to write down what it
+	// consulted, exactly as [MutantRun.RecordTestLog] does. It is unrelated to
+	// LogPath: that is go-mutants' own infection log, written by the probe
+	// runtime, and this is the testing package's action log.
+	RecordTestLog bool
+
 	// Digest and Mutants are the catalogue the indices are dense in — its
 	// [mutation.Catalog.Digest] and [mutation.Catalog.Len] — and are what
 	// [instrument.ReadInfectionLog] checks the log's header against. They are
@@ -138,6 +144,11 @@ type ProbeAttempt struct {
 	// that one.
 	Binaries []string
 	ExecSeqs []int64
+	// TestLogs are what each binary of the pass recorded about what it
+	// consulted, one per element of Binaries and in the same order. It is
+	// [Attempt.TestLogs] exactly, and nil unless [ProbeRun.RecordTestLog] asked
+	// for it.
+	TestLogs []TestLog
 	// Err is set when the pass could not be made at all, and always carries a
 	// [Code] from this package. It is never set alongside facts.
 	Err error
@@ -204,8 +215,9 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 	env := probeEnvFrom(opts.Env, scratch, p.LogPath)
 	subject := probeSubject(selected)
+	logs := planTestLog(p.RecordTestLog, scratch, p.Args)
 	attempt := ProbeAttempt{Outcome: ProbeMeasured}
-	for _, bin := range selected {
+	for i, bin := range selected {
 		// Asked before each binary, as [RunOne] asks, so a cancelled run stops
 		// rather than starting the rest of the queue to have each refused.
 		// Nothing is running at this point — whatever came before has been
@@ -214,7 +226,9 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 			return attempt.failed(probeInterrupted(ctx, "", nil))
 		}
 
-		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env, p.Timeout, p.Args, p.OutputLimit)
+		logPath := logs.path(i)
+		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env,
+			p.Timeout, p.Args, logPath, p.OutputLimit)
 		attempt.Duration += result.Duration
 		attempt.ExitCode = result.ExitCode
 		attempt.Output = slices.Clone(result.Output)
@@ -223,6 +237,13 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
+		}
+		// Read as soon as the binary is gone, as [RunOne] reads it, so that a
+		// pass which then proves nothing still says what its binaries touched.
+		var record TestLog
+		if logs.record {
+			record = logs.read(bin, logPath, result)
+			attempt.TestLogs = append(attempt.TestLogs, record)
 		}
 
 		// The order of these cases is [RunOne]'s, and the third is the one that
@@ -264,6 +285,13 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 			// broken test.
 			attempt.Outcome = ProbeUnavailable
 			return attempt
+
+		case testLogUnsupported(logPath, result, record):
+			// Ahead of the failing-suite branch below, for the reason [RunOne]
+			// puts it ahead of the kill: exit 2 from a refused flag is a binary
+			// that ran no test at all, and reading it as a red suite would
+			// blame the probe tree for a flag nobody asked it about.
+			return attempt.failed(testLogUnsupportedError("probe pass", bin, spec, result))
 
 		case result.ExitCode != 0:
 			attempt.Outcome = ProbeTestFailed
@@ -365,16 +393,24 @@ func probeSubject(selected []TestBinary) string {
 	return ""
 }
 
-// validateProbeArgs protects the timeout owned by the pass, exactly as
-// [validateArgs] protects [RunOne]'s and for the same reason: the outer
+// validateProbeArgs protects the two flags the pass owns, exactly as
+// [validateArgs] protects [RunOne]'s and for the same reasons: the outer
 // process-tree supervisor and the in-process deadline are a paired boundary,
 // and a target that turned half of it off would leave a probe process able to
-// outlive the budget the caller was promised.
+// outlive the budget the caller was promised; and a second -test.testlogfile
+// would decide which of the two logs the pass then reads back as its own.
 func validateProbeArgs(p ProbeRun) error {
-	if overridesTimeout(p.Args) {
+	switch {
+	case overridesTimeout(p.Args):
 		return &Error{
 			Code:    CodeProbeInvalid,
 			Message: "the probe target overrides -test.timeout, which is reserved by the process supervisor",
+		}
+	case p.RecordTestLog && suppliesTestLog(p.Args):
+		return &Error{
+			Code: CodeProbeInvalid,
+			Message: "the probe target supplies " + testLogFlagName +
+				", which this pass reserved by asking for the test log to be recorded",
 		}
 	}
 	return nil
@@ -437,6 +473,10 @@ func probeErrored(err error) ProbeAttempt {
 // run" is the first question a failed pass raises and the one thing nothing
 // downstream could reconstruct — the recording holds the output of every one of
 // them, and this is what points at it.
+//
+// The test logs stay for the same reason the binaries do: they are an account
+// of what ran and not a measurement of anything, so a pass that failed keeps
+// them without keeping a verdict.
 func (a ProbeAttempt) failed(err error) ProbeAttempt {
-	return ProbeAttempt{Binaries: a.Binaries, ExecSeqs: a.ExecSeqs, Err: err}
+	return ProbeAttempt{Binaries: a.Binaries, ExecSeqs: a.ExecSeqs, TestLogs: a.TestLogs, Err: err}
 }

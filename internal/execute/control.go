@@ -53,6 +53,13 @@ type ControlRun struct {
 	// starts, exactly as [MutantRun.OutputLimit] does and with the same
 	// defaults.
 	OutputLimit int
+
+	// RecordTestLog asks each binary the control starts to write down what it
+	// consulted, exactly as [MutantRun.RecordTestLog] does — and a caller
+	// comparing a mutant run against its control asks both or neither, because
+	// the inputs the original program read are what say whether the two are
+	// still about the same thing.
+	RecordTestLog bool
 }
 
 // A ControlAttempt is one pass over the test binaries with nothing activated.
@@ -116,6 +123,12 @@ type ControlAttempt struct {
 	Binaries []string
 	ExecSeqs []int64
 
+	// TestLogs are what each binary this run started recorded about what it
+	// consulted, one per element of Binaries and in the same order. It is
+	// [Attempt.TestLogs] exactly, and nil unless [ControlRun.RecordTestLog]
+	// asked for it.
+	TestLogs []TestLog
+
 	// Err is set when the control could not be made at all, and always carries
 	// a [Code] from this package. It is never set alongside facts: a run that
 	// failed reports no status, because a status it did not observe is exactly
@@ -174,12 +187,13 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 	}
 
 	env := controlEnvFrom(opts.Env, scratch)
+	logs := planTestLog(c.RecordTestLog, scratch, c.Args)
 	attempt := ControlAttempt{}
 	// The capture of whichever binary the run ends at, kept by reference until
 	// then. Cloning every binary's would copy up to a whole output budget per
 	// package to keep one, and every copy but the last would be discarded.
 	var last runner.Result
-	for _, bin := range selected {
+	for i, bin := range selected {
 		// Asked before each binary, as [RunOne] and [RunProbe] ask, so a
 		// cancelled run stops rather than starting the rest of the queue to
 		// have each one refused. Nothing is running at this point — whatever
@@ -188,8 +202,9 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 			return attempt.failed(controlInterrupted(ctx, "", nil))
 		}
 
+		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindControlRun, bin.ImportPath,
-			bin, env, c.Timeout, c.Args, c.OutputLimit)
+			bin, env, c.Timeout, c.Args, logPath, c.OutputLimit)
 		last = result
 		attempt.Duration += result.Duration
 		// Carried up as internal/runner reported it, [runner.ExitCodeUnavailable]
@@ -199,6 +214,13 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
+		}
+		// Read as soon as the binary is gone, as [RunOne] reads it, so that a
+		// control that then failed still says what its binaries touched.
+		var record TestLog
+		if logs.record {
+			record = logs.read(bin, logPath, result)
+			attempt.TestLogs = append(attempt.TestLogs, record)
 		}
 
 		// The order of these cases is [RunOne]'s, and the third is the one that
@@ -240,6 +262,13 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 		case result.ExitCode == runner.ExitCodeUnavailable:
 			// This one *was* running when the signal arrived, so it is named.
 			return attempt.failed(controlInterrupted(ctx, bin.ImportPath, runner.CommandOf(spec, result)))
+
+		case testLogUnsupported(logPath, result, record):
+			// Ahead of the non-zero branch below, for the reason [RunOne] puts
+			// it ahead of the kill: a control that reported exit 2 here would
+			// say the original program is red, and a consumer reads that as
+			// licence to attribute nothing to any mutant.
+			return attempt.failed(testLogUnsupportedError("control run", bin, spec, result))
 
 		case result.ExitCode != 0:
 			attempt.Package = bin.ImportPath
@@ -310,13 +339,20 @@ func ControlRecord(c ControlRun, attempt ControlAttempt) trace.NoteRecord {
 	}
 }
 
-// validateControlArgs protects the timeout owned by the control run, exactly as
-// [validateArgs] protects [RunOne]'s and through the same rule.
+// validateControlArgs protects the two flags the control run owns, exactly as
+// [validateArgs] protects [RunOne]'s and through the same two rules.
 func validateControlArgs(c ControlRun) error {
-	if overridesTimeout(c.Args) {
+	switch {
+	case overridesTimeout(c.Args):
 		return &Error{
 			Code:    CodeControlInvalid,
 			Message: "the control target overrides -test.timeout, which is reserved by the process supervisor",
+		}
+	case c.RecordTestLog && suppliesTestLog(c.Args):
+		return &Error{
+			Code: CodeControlInvalid,
+			Message: "the control target supplies " + testLogFlagName +
+				", which this run reserved by asking for the test log to be recorded",
 		}
 	}
 	return nil
@@ -370,9 +406,10 @@ func controlErrored(err error) ControlAttempt {
 // The two halves are deliberately different, as [ProbeAttempt.failed]'s are.
 // The status and the capture go, because a control that could not be completed
 // observed nothing and a partial answer is exactly what a wrong one looks like;
-// the binaries and their executions stay, because "which binaries had already
-// run" is the first question a failed control raises and the one thing nothing
-// downstream could reconstruct.
+// the binaries, their executions and their test logs stay, because "which
+// binaries had already run, and what did they touch" is the first question a
+// failed control raises and the one thing nothing downstream could
+// reconstruct.
 func (a ControlAttempt) failed(err error) ControlAttempt {
-	return ControlAttempt{Binaries: a.Binaries, ExecSeqs: a.ExecSeqs, Err: err}
+	return ControlAttempt{Binaries: a.Binaries, ExecSeqs: a.ExecSeqs, TestLogs: a.TestLogs, Err: err}
 }

@@ -100,6 +100,27 @@ var (
 	_ []string      = gomutants.ControlResult{}.Binaries
 	_ []int64       = gomutants.ControlResult{}.ExecSeqs
 	_ int64         = gomutants.ControlResult{}.TraceSeq
+
+	// What a target consulted. A consumer keeping evidence about a (mutant,
+	// target) pair reads the log to decide whether that evidence is still about
+	// today's repository, so every name here is one it stores and looks up
+	// again — and the sentinel is what tells it that a binary refused the flag
+	// rather than that a suite went red.
+	_ bool                     = gomutants.ExecRequest{}.RecordTestLog
+	_ bool                     = gomutants.ProbeRequest{}.RecordTestLog
+	_ bool                     = gomutants.ControlRequest{}.RecordTestLog
+	_ []gomutants.TestLog      = gomutants.MutantResult{}.TestLogs
+	_ []gomutants.TestLog      = gomutants.ProbeResult{}.TestLogs
+	_ []gomutants.TestLog      = gomutants.ControlResult{}.TestLogs
+	_ string                   = gomutants.TestLog{}.Package
+	_ string                   = gomutants.TestLog{}.Dir
+	_ []gomutants.TestLogEntry = gomutants.TestLog{}.Entries
+	_ bool                     = gomutants.TestLog{}.Complete
+	_ string                   = gomutants.TestLog{}.Err
+	_ gomutants.TestLogOp      = gomutants.TestLogEntry{}.Op
+	_ string                   = gomutants.TestLogEntry{}.Name
+	_ error                    = gomutants.ErrTestLogUnsupported
+
 	_ func(*gomutants.Session) ([]gomutants.Change, error) = (*gomutants.Session).Changes
 	_ func(*gomutants.Session) error = (*gomutants.Session).Close
 
@@ -169,6 +190,7 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 		gomutants.ErrMutantRejected,
 		gomutants.ErrProbeNotPrepared,
 		gomutants.ErrProbeInconsistent,
+		gomutants.ErrTestLogUnsupported,
 	} {
 		if !errors.Is(fmt.Errorf("wrapped: %w", sentinel), sentinel) {
 			t.Errorf("%v does not survive wrapping", sentinel)
@@ -287,8 +309,11 @@ func TestPublicDataTypes(t *testing.T) {
 	_ = gomutants.ProbeResult{}
 	_ = gomutants.Artifact{}
 	_ = gomutants.Change{}
+	_ = gomutants.TestLog{}
+	_ = gomutants.TestLogEntry{}
 	_ = gomutants.ErrProbeNotPrepared
 	_ = gomutants.ErrProbeInconsistent
+	_ = gomutants.ErrTestLogUnsupported
 
 	// The two fields a consumer keys on. PreparedDigest is what evidence about a
 	// prepared session is stored under, and EndLine is what a line range is
@@ -391,6 +416,17 @@ func TestPublicDataTypes(t *testing.T) {
 		gomutants.ChangeAdded,
 		gomutants.ChangeRemoved,
 		gomutants.ChangeModified,
+	}
+
+	// The action-log vocabulary. It is open — a later Go release may report a
+	// kind of access this build has never heard of, and the engine carries it
+	// through verbatim — so a consumer with a closed schema pins today's four
+	// here rather than assuming them.
+	_ = []gomutants.TestLogOp{
+		gomutants.TestLogGetenv,
+		gomutants.TestLogOpen,
+		gomutants.TestLogStat,
+		gomutants.TestLogChdir,
 	}
 }
 `

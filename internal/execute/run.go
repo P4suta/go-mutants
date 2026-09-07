@@ -102,6 +102,13 @@ type MutantRun struct {
 	// console wants a screenful, a consumer archiving the evidence of a kill
 	// wants all of it — and the run is the smallest thing that knows which.
 	OutputLimit int
+
+	// RecordTestLog asks each binary this run starts to write down what it
+	// consulted — see [TestLog] and [Attempt.TestLogs].
+	//
+	// It is off by default, and it is a request rather than a promise: a fuzz
+	// target and a run with no scratch directory record nothing and say why.
+	RecordTestLog bool
 }
 
 // An Attempt is one pass over the test binaries with one mutant active.
@@ -153,6 +160,15 @@ type Attempt struct {
 	// an empty list means there is no recording, never that an attempt started
 	// nothing.
 	ExecSeqs []int64
+	// TestLogs are what each binary this attempt started recorded about the
+	// environment variables and files it consulted, in the same order as
+	// Binaries and one per element of it.
+	//
+	// It is nil unless [MutantRun.RecordTestLog] asked for it, which is the
+	// difference between "nothing was recorded" and "nothing was touched": an
+	// empty slice beside a run that recorded would be the second sentence, and
+	// it is the one a consumer acts on.
+	TestLogs []TestLog
 	// OutputTail is the last [OutputTailLines] lines the deciding binary
 	// printed: the failing one for a kill, the timed-out one for a timeout, the
 	// failing command for an error. It is empty for a survivor, whose output is
@@ -239,9 +255,10 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 	}
 
 	env := mutantEnvFrom(opts.Env, m.ID, scratch)
+	logs := planTestLog(m.RecordTestLog, scratch, m.Args)
 
 	attempt := Attempt{Outcome: mutation.OutcomeSurvived}
-	for _, bin := range selected {
+	for i, bin := range selected {
 		// Asked before each binary rather than only after one answers, so a
 		// cancelled run stops instead of starting the rest of the queue just to
 		// have internal/runner refuse each one in turn.
@@ -250,11 +267,21 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			return attempt
 		}
 
-		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env, m.Timeout, m.Args, m.OutputLimit)
+		logPath := logs.path(i)
+		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env,
+			m.Timeout, m.Args, logPath, m.OutputLimit)
 		attempt.Duration += result.Duration
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
+		}
+		// Read as soon as the binary is gone and before anything is decided
+		// about it, so that a killed or failing target still reports what it had
+		// managed to write.
+		var record TestLog
+		if logs.record {
+			record = logs.read(bin, logPath, result)
+			attempt.TestLogs = append(attempt.TestLogs, record)
 		}
 
 		// The order of these cases is the contract, and the third is the one
@@ -346,6 +373,16 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			}
 			return attempt
 
+		case testLogUnsupported(logPath, result, record):
+			// A binary that refused the flag exited 2 having run no test, and
+			// exit 2 is non-zero — so this case sits ahead of the kill below
+			// deliberately. A missing feature is not a detection, and reporting
+			// one would be a score built on binaries that never started a test.
+			attempt.Outcome = mutation.OutcomeErrored
+			attempt.keep(result)
+			attempt.Err = testLogUnsupportedError("mutant run", bin, spec, result)
+			return attempt
+
 		case result.ExitCode != 0:
 			attempt.Outcome = mutation.OutcomeKilled
 			attempt.KilledBy = bin.ImportPath
@@ -400,6 +437,12 @@ func (a *Attempt) keep(result runner.Result) {
 // The deadline is rendered as a duration string rather than a number of
 // seconds, because `-test.timeout` takes Go's own duration syntax and a
 // sub-second budget written as a number would truncate to `0`.
+//
+// testLogPath is where this binary writes what it consulted, and is empty for a
+// call that records nothing. It goes ahead of the caller's arguments, which is
+// where cmd/go puts its own: the standard flag package keeps the last value it
+// sees, so a flag placed after a target's arguments would be the one the engine
+// silently overrode rather than the one it supplied.
 func startTarget(
 	ctx context.Context,
 	opts Options,
@@ -409,10 +452,14 @@ func startTarget(
 	env []string,
 	timeout time.Duration,
 	args []string,
+	testLogPath string,
 	outputLimit int,
 ) (runner.Spec, runner.Result) {
-	argv := make([]string, 0, len(args)+2)
+	argv := make([]string, 0, len(args)+3)
 	argv = append(argv, bin.BinPath, "-test.timeout="+(InProcessTimeoutFactor*timeout).String())
+	if testLogPath != "" {
+		argv = append(argv, testLogFlagName+"="+testLogPath)
+	}
 	argv = append(argv, args...)
 	spec := runner.Spec{
 		Argv:        argv,
@@ -444,13 +491,21 @@ func overridesTimeout(args []string) bool {
 	})
 }
 
-// validateArgs protects the timeout owned by RunOne.
+// validateArgs protects the two flags RunOne owns: the timeout always, and the
+// test log while the run asked for one.
 func validateArgs(m MutantRun) error {
-	if overridesTimeout(m.Args) {
+	switch {
+	case overridesTimeout(m.Args):
 		return &Error{
 			Code: CodeMutantInvalid,
 			Message: "the mutant " + display(m.ID) +
 				" target overrides -test.timeout, which is reserved by the process supervisor",
+		}
+	case m.RecordTestLog && suppliesTestLog(m.Args):
+		return &Error{
+			Code: CodeMutantInvalid,
+			Message: "the mutant " + display(m.ID) + " target supplies " + testLogFlagName +
+				", which this run reserved by asking for the test log to be recorded",
 		}
 	}
 	return nil

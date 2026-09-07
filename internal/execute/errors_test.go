@@ -167,6 +167,21 @@ func TestCodesAreReachable(t *testing.T) {
 		mutants(mutantTimeout, "a"), testBins("example.com/a"), execute.Hooks{})
 	record(err)
 
+	// GOM7521: a test binary that refuses -test.testlogfile, which the flag
+	// package answers with exit 2 — a status this package would otherwise read
+	// as a kill.
+	refusing := &fake{respond: func(context.Context, call) runner.Result {
+		return runner.Result{
+			ExitCode: 2,
+			Output:   []byte("flag provided but not defined: -test.testlogfile\n"),
+		}
+	}}
+	refusingOptions := options(refusing, 1)
+	refusingOptions.ScratchDir = t.TempDir()
+	record(execute.RunOne(t.Context(), refusingOptions,
+		execute.MutantRun{ID: "abc", Timeout: mutantTimeout, RecordTestLog: true},
+		testBins("example.com/a")).Err)
+
 	// GOM7530: a coverage directory inside the snapshot, which the drift gate
 	// would otherwise report as a test writing into the tree.
 	covering, _ := coverOptions(t, &fake{respond: func(context.Context, call) runner.Result { return passed() }})

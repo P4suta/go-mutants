@@ -215,12 +215,14 @@ silent merge.
 | `Env []string` | `nil` | `KEY=VALUE` overlay for this call |
 | `Timeout time.Duration` | `0` → `PrepareOptions.MutantTimeout` | overrides the session default when positive. Negative is invalid |
 | `OutputLimit int` | zero or negative → 1 MiB | cap on the retained combined output of each test binary the call starts, exactly as `Command.OutputLimit`. A positive value below 256 is raised to 256 |
+| `RecordTestLog bool` | `false` | record which environment variables and files each binary consulted; see [Recording what a target touched](#recording-what-a-target-touched) |
 
 Targets are named with standard test-binary flags — `-test.run=^TestX$`,
 `-test.fuzz=^FuzzX$`. There is no second test DSL. `-test.timeout` is reserved
 (see *Paired timeouts*), and so are `-test.fuzzcachedir` and
 `-test.fuzzworker`: the session owns the first and the Go fuzz coordinator owns
-the second.
+the second. `-test.testlogfile` is reserved *while* `RecordTestLog` asks for a
+log and passes through verbatim otherwise.
 
 ## Results and their invariants
 
@@ -302,6 +304,9 @@ is the code's stated intent, not by those three.
   import path, stopping where the execution stopped; `KilledBy` is one of them.
   `TraceSeq` is the `mutant-exec` event that explains the result — see
   [Tracing a session](#tracing-a-session).
+- `TestLogs` is one record per element of `Binaries`, in the same order, and
+  `nil` unless `ExecRequest.RecordTestLog` asked for one — see
+  [Recording what a target touched](#recording-what-a-target-touched).
 
 ### `ProbeResult`
 
@@ -343,6 +348,10 @@ is the code's stated intent, not by those three.
 - `Binaries` are the probe tree's test binaries the pass started, named exactly
   as `MutantResult.Binaries` are, and `TraceSeq` is the `probe-exec` event that
   explains the pass — see [Tracing a session](#tracing-a-session).
+- `TestLogs` is `MutantResult.TestLogs` exactly, over the probe tree's binaries,
+  and it is kept beside the error of a pass that reached an execution and then
+  failed — what the binaries touched is an account of what ran and never a
+  measurement, so it survives where `Infected` cannot.
 
 The consumer's rule has two clauses and dropping either is unsound:
 
@@ -378,6 +387,9 @@ The consumer's rule has two clauses and dropping either is unsound:
   starts were recorded at, one per binary and in the same order. `TraceSeq` is
   the `note` event that summarises the run — see
   [Tracing a session](#tracing-a-session).
+- `TestLogs` is `MutantResult.TestLogs` exactly, and it is kept beside the error
+  of a run that reached an execution and then failed, as `Binaries` and
+  `ExecSeqs` are.
 - There is no `Outcome`. A control is not a mutant and has nothing to survive or
   be killed by; what a status means beside an execution is the caller's
   judgement.
@@ -512,6 +524,128 @@ its own, the way down to those executions is `ControlResult.ExecSeqs` — a fiel
 so that nobody has to parse the note's `detail`, which is a sentence written for
 a person.
 
+## Recording what a target touched
+
+```go
+request.RecordTestLog = true          // Exec, Probe and Control alike
+result.TestLogs                       // one per binary started, in launch order
+```
+
+A Go test binary can be told to write down what it consults, and the go command
+uses exactly that to decide whether a cached test result is still valid.
+`RecordTestLog` hands the same file over: which environment variables a target
+read, which files it opened or stat-ed, and where it changed directory to.
+
+**The engine resolves nothing and interprets nothing.** A `Name` is the bytes
+the testing package wrote — relative paths stay relative, a name that no longer
+exists on disk is reported as it was written, and what any of it means is the
+consumer's question. `TestLog.Dir` is the directory that binary ran in, which is
+what a relative name is relative to until a `chdir` entry says otherwise.
+
+### The format
+
+The flag is `-test.testlogfile=<path>`, documented in the testing package as
+"for use only by cmd/go", and the file it writes is:
+
+```text
+# test log
+getenv EXPECT_CLEAN
+open /tmp/x
+stat /tmp/y
+chdir /tmp
+```
+
+The header is written when the log is opened, before any test code runs, and
+one line follows per action: an operation, a space, and the name. `TestLogOp` is
+`getenv`, `open`, `stat` or `chdir` — the four package `os` reports — and the
+vocabulary is **open**: an operation a later Go release writes and this build
+has never heard of is carried through verbatim, because a dropped operation
+reads as an input nothing consulted.
+
+| Field | Meaning |
+|---|---|
+| `Package string` | the import path of the binary, one of the result's `Binaries` at the same position |
+| `Dir string` | the directory that binary ran in, inside the session's snapshot or the private copy a fuzz target gets |
+| `Entries []TestLogEntry` | the actions, in order, verbatim. Empty is a target that consulted nothing, which is a measurement |
+| `Complete bool` | the log ends at a line boundary **and** the binary exited on its own |
+| `Err string` | why there is no log, in one line, and empty when there is one |
+
+**Read `Complete` before acting on `Entries`,** and note that it is two claims
+and not one. The testing package writes the log through a 4096-byte buffer and
+flushes it whenever that fills, as well as from the deferred call at the end of
+`M.Run` — so a *chatty* target the supervisor killed leaves a log that ends in a
+newline and is nonetheless a fraction of what it touched, with nothing in the
+bytes saying so. A binary the engine timed out or cancelled therefore reports
+`false` whatever the last byte is; a quiet one leaves the empty file it created
+and carries `Err` instead. Reading a partial log as the whole truth is how a
+consumer keys a cache on half a target's inputs and then believes it.
+
+The go command additionally trusts a log only from a test that **exited 0**.
+That rule is deliberately not applied here — an execution's whole subject is
+often a binary that did not — so a caller that wants it applies it to the
+result's own exit status.
+
+Two more shapes leave a log short and neither shows in the bytes. A `TestMain`
+calling `m.Run` more than once flushes only the **first** run's entries, the
+testing package guarding its own teardown with a `sync.Once`; and a test calling
+`os.Exit` skips that teardown altogether. go-mutants does not pass the go
+command's companion `-test.paniconexit0`, which would turn the second into a
+panic, because it would change what the binary does and this API measures the
+program the user wrote.
+
+`Err` is a string beside the measurement rather than an error, because a run
+that could not record what a target touched is not a run that failed: the
+outcome, the output and the timings are all still there.
+
+### The one failure, and why it is not a kill
+
+A binary that does not define the flag it was handed is refused by the standard
+flag package: it prints `flag provided but not defined: -test.testlogfile` and
+exits **2**. **No standard Go test binary does this** — the flag is the testing
+package's own, and the session runs binaries it compiled itself — so it is not a
+condition to plan for. The branch exists because exit 2 is a *non-zero status*,
+and a non-zero status is how the engine recognises a detection: without it a
+repository whose binaries somehow refused the flag would report every mutant as
+killed by a binary that never started a test.
+
+It is therefore reported as `ErrTestLogUnsupported`, wrapped in an
+`*ExecutionError` whose `Call` says which of the three runs asked, with
+`DiagnosticCode` `GOM7521`. The outcome is `errored` and never `killed`,
+`test-failed` or a red control. It fires only for a binary the engine really did
+hand the flag to: a target that exits 2 having printed that same line for its own
+reasons — a fuzz target, say, which is given no flag at all — is a kill.
+
+### Fuzz targets record nothing
+
+A `-test.fuzz` target is given no flag at all, and the record says so in `Err`.
+
+The reason is in the Go source rather than in a policy. `internal/fuzz` starts
+every worker with the coordinator's own arguments —
+`append([]string{"-test.fuzzworker"}, os.Args[1:]...)` — so a worker inherits
+`-test.testlogfile`; each worker's first call to `M.Run` reaches the
+`os.Create` in testing's `m.before()`, truncating the file the coordinator is
+writing, and several processes then append to one path at offsets of their own.
+The go command does not combine the two either: `-test.fuzz` is not a cacheable
+test argument, so it disables the test cache and the flag is never passed.
+
+### Where the log lives, and the join with a trace
+
+Each binary writes its own file in a `testlogs/` directory inside the call's
+private scratch, one file per binary, and the lot goes when that scratch does —
+kept only under `OpenOptions.KeepTemp`, like everything else in there. A shared
+path would be several processes appending to one log, and a log two binaries
+wrote cannot be attributed to either. The subdirectory is not tidiness: the
+scratch *is* the target's `TMPDIR`, so a test that lists its own temporary
+directory finds one entry go-mutants put there rather than one per binary, and
+what that entry is is written on it.
+
+In a recording the flag is simply part of the `exec` event's `argv`, ahead of
+the caller's own arguments where the go command puts it. **Nothing else
+changes**: no new event, no new field, no second flag — `-test.paniconexit0`,
+which the go command passes beside it, is deliberately not — and `env_names` is
+identical to the same target's run with recording off, because the log is named
+on the command line and never in the environment.
+
 ## Errors
 
 Every failure this API returns is one of four things, and a consumer does
@@ -535,6 +669,7 @@ were introduced, and none of them is a message you may parse.
 | `ErrMutantRejected` | `Session.Exec` | validation proved the mutant does not compile; there is no binary to run it in |
 | `ErrProbeNotPrepared` | `Session.Probe` | the session was prepared without `PrepareOptions.Probe` |
 | `ErrProbeInconsistent` | `Session.Probe` | the probe log named a mutant the catalogue cannot account for — an **engine bug**, never a caller's doing |
+| `ErrTestLogUnsupported` | `Session.Exec`, `Session.Probe`, `Session.Control` | a target refused `-test.testlogfile`, so `RecordTestLog` cannot be served. Never a kill |
 
 Match them with `errors.Is`. They survive wrapping, and the sentences they
 appear in are the ones the engine has always printed. `ErrProbeNotPrepared`
@@ -697,6 +832,13 @@ A session target's `Args` are refused the same way for `-test.fuzzcachedir`
 owns it) and `-test.timeout` (see below) — by `Exec`, `Probe` and `Control`
 alike, since a caller composing one request for a mutant run and its control has
 to be able to hand the same arguments to both.
+
+A fourth is refused *conditionally*, and it is the only one that is.
+`-test.testlogfile` belongs to the request exactly while `RecordTestLog` asks
+for a log, because two of them are not two logs: the standard flag package keeps
+the last value it sees, so one of the two would silently win and the other would
+report on a file nobody wrote. A request that did not ask is composing nothing,
+so the flag passes through verbatim.
 
 The engine adds its own `GOFLAGS` entries for the instrumented builds:
 `-overlay=<manifest>`, `-vet=off`, and `-count=1`. Instrumented sources live

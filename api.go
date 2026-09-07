@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/P4suta/go-mutants/internal/runner"
+	"github.com/P4suta/go-mutants/internal/testlog"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -559,6 +560,17 @@ type ExecRequest struct {
 	// this field there was no way to say either, and every execution silently
 	// took the default.
 	OutputLimit int
+	// RecordTestLog asks each binary this execution starts to write down which
+	// environment variables and files it consulted, and returns the answers in
+	// [MutantResult.TestLogs]. See [TestLog].
+	//
+	// It is off by default, because it is a file per binary per execution and
+	// a run executes thousands. While it is on, a caller-supplied
+	// `-test.testlogfile` in Args is refused with a [*ReservedError]: two of
+	// them are not two logs, since the standard flag package keeps the last
+	// value it sees. With it off the flag passes through verbatim, which is the
+	// method this field replaces.
+	RecordTestLog bool
 }
 
 // Outcome is the stable result vocabulary returned by [Session.Exec].
@@ -621,6 +633,15 @@ type MutantResult struct {
 	// means the call failed before it reached the execution — an unresolvable
 	// mutant, a package with no prepared binary, a refused flag.
 	TraceSeq int64
+	// TestLogs are what each binary this execution started recorded about the
+	// environment variables and files it consulted: one per element of
+	// Binaries, in the same order, and nil unless
+	// [ExecRequest.RecordTestLog] asked for it. See [TestLog].
+	//
+	// Nil rather than an empty slice for a request that did not ask, because an
+	// empty slice would be a measurement — "these binaries touched nothing" —
+	// and that is the sentence a consumer would act on.
+	TestLogs []TestLog
 }
 
 // ErrProbeNotPrepared is returned by [Session.Probe] on a session prepared
@@ -656,6 +677,12 @@ type ProbeRequest struct {
 	// bounded an execution and not a pass would be holding output it had
 	// already said it did not want.
 	OutputLimit int
+	// RecordTestLog asks each binary of this pass to write down what it
+	// consulted, exactly as [ExecRequest.RecordTestLog] does, and returns the
+	// answers in [ProbeResult.TestLogs]. The binaries are the probe tree's, so
+	// [TestLog.Dir] names a directory in that tree rather than in the mutant
+	// one.
+	RecordTestLog bool
 }
 
 // ProbeOutcome is how one [Session.Probe] pass ended.
@@ -762,6 +789,13 @@ type ProbeResult struct {
 	// and the captured output stay at their zero values, because the pass
 	// established none of them.
 	TraceSeq int64
+	// TestLogs are what each binary of this pass recorded about what it
+	// consulted, one per element of Binaries and in the same order, and nil
+	// unless [ProbeRequest.RecordTestLog] asked for it. Like Binaries and
+	// TraceSeq, it is kept beside the error of a pass that reached an execution
+	// and then failed: what the binaries touched is an account of what ran and
+	// never a measurement, so it survives where the infection set cannot.
+	TestLogs []TestLog
 }
 
 // ControlRequest selects one test or fuzz target to run against a prepared
@@ -792,6 +826,14 @@ type ControlRequest struct {
 	// run starts, exactly as [ExecRequest.OutputLimit] does and with the same
 	// defaults.
 	OutputLimit int
+	// RecordTestLog asks each binary this run starts to write down what it
+	// consulted, exactly as [ExecRequest.RecordTestLog] does, and returns the
+	// answers in [ControlResult.TestLogs].
+	//
+	// A caller comparing an execution against the control beside it asks both
+	// or neither: what the *original* program read is what says whether the
+	// pair is still evidence about the repository in hand.
+	RecordTestLog bool
 }
 
 // ControlResult is one run of the original program through the session's
@@ -883,7 +925,135 @@ type ControlResult struct {
 	// one and then failed carries this sequence, Binaries and ExecSeqs beside
 	// the error and nothing else, exactly as [ProbeResult.TraceSeq] does.
 	TraceSeq int64
+	// TestLogs are what each binary this run started recorded about what it
+	// consulted, one per element of Binaries and in the same order, and nil
+	// unless [ControlRequest.RecordTestLog] asked for it. It is kept beside the
+	// error of a run that reached an execution and then failed, exactly as
+	// Binaries and ExecSeqs are.
+	TestLogs []TestLog
 }
+
+// A TestLogOp is one kind of access a target reported: an environment variable
+// it read, a file it opened or stat-ed, or a directory it moved into.
+//
+// The vocabulary is package os's rather than go-mutants', and it is open the
+// way the engine treats it: an operation a later Go release reports and this
+// build has never heard of is carried through verbatim rather than dropped. A
+// dropped operation reads as an input nothing consulted, which is the one
+// answer a consumer must never be given by accident.
+type TestLogOp string
+
+// The operations the testing package writes today.
+const (
+	// TestLogGetenv is an environment variable the target read.
+	TestLogGetenv TestLogOp = "getenv"
+	// TestLogOpen is a file the target opened.
+	TestLogOpen TestLogOp = "open"
+	// TestLogStat is a file the target asked about without opening.
+	TestLogStat TestLogOp = "stat"
+	// TestLogChdir is a directory the target moved into. Every relative Name
+	// after it is relative to that directory rather than to [TestLog.Dir].
+	TestLogChdir TestLogOp = "chdir"
+)
+
+// A TestLogEntry is one thing a target consulted.
+//
+// Name is what the testing package wrote, byte for byte. The engine resolves
+// nothing: a relative path stays relative, a name that no longer exists on
+// disk is reported as it was written, and what any of it means is the
+// consumer's question. Resolving here would be the engine guessing at a
+// working directory the log itself may have changed.
+type TestLogEntry struct {
+	Op   TestLogOp
+	Name string
+}
+
+// A TestLog is what one test binary recorded about the environment variables
+// and files it consulted, when a request asked for it.
+//
+// It is the standard `-test.testlogfile` the go command uses to decide whether
+// a cached test result is still valid, handed over rather than interpreted. A
+// consumer keeping evidence about a (mutant, target) pair reads it for the same
+// reason: the inputs a target consulted are what say whether yesterday's
+// verdict is still about today's repository.
+type TestLog struct {
+	// Package is the import path of the test binary this log is about — one of
+	// [MutantResult.Binaries], [ProbeResult.Binaries] or
+	// [ControlResult.Binaries], at the same position.
+	Package string
+	// Dir is the directory that binary ran in: the package's own directory
+	// inside the session's snapshot, or inside the private copy a fuzz target
+	// runs in. Every relative Name in Entries is relative to it until a
+	// [TestLogChdir] entry says otherwise.
+	//
+	// It is a path in a tree the session removes when it closes, unless
+	// [OpenOptions.KeepTemp] asked for it. It is here because a relative name
+	// means nothing without it, not because the directory is somewhere to go
+	// and look afterwards.
+	Dir string
+	// Entries are the accesses the binary reported, in the order it reported
+	// them. It is empty for a target that consulted nothing, which is a
+	// measurement and not a failure — Err is where a failure to measure is.
+	Entries []TestLogEntry
+	// Complete reports that the log ends at a line boundary *and* that the
+	// binary exited on its own. It is the field to read before acting on
+	// Entries.
+	//
+	// Both halves are needed, and the bytes alone are the trap. The testing
+	// package writes the log through a 4096-byte buffer and flushes it whenever
+	// it fills, as well as from the deferred call at the end of `M.Run` — so a
+	// chatty target the supervisor killed leaves a log that ends in a newline
+	// and is nonetheless a fraction of what it touched. A binary the engine
+	// timed out or cancelled therefore reports false whatever the last byte is.
+	// A quiet one leaves the empty file it created and carries Err instead.
+	// Reading a partial log as the whole truth is how a consumer computes a
+	// cache key from half a target's inputs and then believes it.
+	//
+	// The go command additionally trusts a log only from a test that exited 0.
+	// That rule is deliberately not applied here — an execution's whole subject
+	// is often a binary that did not — so a caller that wants it applies it to
+	// the result's own exit status.
+	//
+	// Two more shapes leave a log short and neither shows in the bytes. A
+	// `TestMain` calling `m.Run` more than once flushes only the *first* run's
+	// entries, the testing package guarding its own teardown with a sync.Once;
+	// and a test calling os.Exit skips that teardown altogether. go-mutants
+	// does not pass the go command's companion `-test.paniconexit0`, which
+	// would turn the second into a panic, because it would change what the
+	// binary does and this API measures the program the user wrote.
+	Complete bool
+	// Err is why there is no log to read, in one line, and empty when there is
+	// one: a binary that wrote none, a file that could not be read, a target
+	// this engine records nothing for. It is a string rather than an error
+	// because it is one fact about one binary carried inside a result — a run
+	// that could not record what a target touched is not a run that failed, and
+	// the measurement it did make stands beside it.
+	//
+	// A fuzz target is the case a consumer will meet. The Go fuzz coordinator
+	// starts its workers with the coordinator's own arguments, so every worker
+	// inherits the flag and recreates the file the coordinator is writing;
+	// go-mutants therefore passes no flag for a `-test.fuzz` target and says so
+	// here. The go command does not combine the two either.
+	Err string
+}
+
+// ErrTestLogUnsupported reports a binary that refused `-test.testlogfile`: the
+// standard flag package printed "flag provided but not defined" and exited 2.
+//
+// **No standard Go test binary does this.** The flag is part of the testing
+// package and the session runs binaries it compiled itself, so this is not a
+// condition a caller is expected to meet. The branch exists because exit 2 is
+// a *non-zero status*, and a non-zero status is how the engine recognises a
+// detection: without it, a repository whose binaries somehow refused the flag
+// would report every mutant as killed by a binary that never started a test,
+// and the score would be a fiction with nothing in the output saying so.
+//
+// It arrives wrapped in an [*ExecutionError] whose `Call` names which of the
+// session's three runs asked, and it is never reported as a kill, a failing
+// probe or a red control. What would have to change is the request — drop
+// `RecordTestLog` — and that is why it is a sentinel rather than only a
+// diagnostic code.
+var ErrTestLogUnsupported = testlog.ErrUnsupported
 
 // Artifact is one bounded standard fuzz-corpus file captured before a target's
 // private execution scratch is removed.
