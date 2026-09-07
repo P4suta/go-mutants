@@ -192,6 +192,21 @@ type Options struct {
 	// means no bound.
 	Timeout time.Duration
 
+	// MemoryLimit bounds the resident memory of each [CollectCoverage]
+	// profiling run, in bytes, as [runner.Spec.MemoryLimit] takes it: zero
+	// means no bound.
+	//
+	// It bounds those runs and nothing else, and the omission is the point. A
+	// coverage pass starts the very test binaries the mutants are measured
+	// against, so it is measured under the budget they will be — a profile
+	// taken with more of the machine than a mutant will get is a profile of a
+	// different program. A `go list` or a `go test -c` is not that: what a
+	// compiler needs is the compiler's business and has nothing to do with what
+	// the tests were measured to need, and bounding a build with a number
+	// derived from a test run would refuse to compile a large package on a
+	// project whose tests happen to be small.
+	MemoryLimit int64
+
 	// Trace is where this phase's executions and attempts are recorded. It is
 	// the run's own recorder, handed down rather than reached for through a
 	// global, and a nil one is the disabled trace: every recorder method is

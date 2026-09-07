@@ -195,6 +195,18 @@ func (r *PlainRenderer) line(event engine.Event) (string, bool) {
 			FormatDuration(e.Average), FormatDuration(e.Slowest),
 			FormatDuration(e.Timeout), e.TimeoutSource), true
 
+	case engine.MemoryDerived:
+		// `-v` and above. The timeout is on the baseline line every run prints
+		// because every run has one; a memory bound may be absent, and a line
+		// saying so on every ordinary run would be a line about nothing. A user
+		// who asked for the run's own account gets both halves of the budget,
+		// and a user who did not is told about the missing half by the warning
+		// that accompanies it.
+		if r.Quiet || r.Verbosity < VerbosityDetail {
+			return "", false
+		}
+		return r.paint(styleDetail, memoryDerivedLine(e)), true
+
 	case engine.Discovered:
 		if r.Quiet {
 			return "", false

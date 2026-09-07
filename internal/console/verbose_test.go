@@ -226,6 +226,11 @@ func verboseStream(t *testing.T) []engine.Event {
 			Timeout:       10 * time.Second,
 			TimeoutSource: engine.TimeoutDerived,
 		},
+		engine.MemoryDerived{
+			Limit:  1 << 30,
+			Source: engine.MemorySourceDerived,
+			Peak:   200 << 20,
+		},
 		engine.PhaseCompleted{Phase: engine.PhaseBaseline, Duration: 2340 * time.Millisecond},
 		engine.PhaseChanged{Phase: engine.PhaseMutate, Detail: "discovering candidates, validating them, then executing the mutants"},
 		engine.Discovered{Candidates: 4, Skips: 12},
@@ -736,5 +741,73 @@ func TestUnquoteArgvRefusesALineItCannotRead(t *testing.T) {
 		if got, err := UnquoteArgv(line); err == nil {
 			t.Errorf("UnquoteArgv(%q) = %q, want an error", line, got)
 		}
+	}
+}
+
+// TestAMemoryKillSaysWhatItCostAndWhatItWasAllowed pins the one thing a
+// `killed` line cannot otherwise explain.
+//
+// The outcome vocabulary is frozen, so a mutant stopped by the bound reads
+// exactly like one an assertion caught — the same word, the same suite named —
+// and a reader looking at a test that does not fail on that line would have
+// nowhere to go. Both numbers are printed because either alone is unactionable:
+// one says what the mutant did, and the other says what it was measured
+// against, and only the pair tells a person whether to fix the mutant or the
+// bound.
+func TestAMemoryKillSaysWhatItCostAndWhatItWasAllowed(t *testing.T) {
+	base := verboseKilled()
+	base.MemoryExceeded = true
+	base.PeakRSS = 3435973836
+	base.MemoryLimit = 1 << 30
+
+	got := renderAt(t, 1, []engine.Event{engine.MutantFinished{Result: base}})
+	for _, want := range []string{" killed by " + verbosePackage, "(memory: 3.2 GiB > 1.0 GiB bound)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the result line does not carry %q:\n%s", want, got)
+		}
+	}
+
+	// And an ordinary kill says nothing about memory, because there is nothing
+	// to explain: the suite failed, which is what the word already means.
+	plain := renderAt(t, 1, []engine.Event{engine.MutantFinished{Result: verboseKilled()}})
+	if strings.Contains(plain, "memory") {
+		t.Errorf("an ordinary kill mentions memory:\n%s", plain)
+	}
+}
+
+// TestTheMemoryBoundIsPrintedOnlyForARunThatAskedForItsOwnAccount pins where
+// the budget's second half goes.
+//
+// Every run has a timeout and prints it on the baseline line; not every run has
+// a memory bound, so a line about it at level zero would be a line about
+// nothing on most runs and a second thing to keep byte-identical on the rest.
+// At `-v` it is part of the account, and the unbounded case is a sentence
+// rather than a zero — "0 B" would read as a bound of nothing rather than as
+// the absence of one.
+func TestTheMemoryBoundIsPrintedOnlyForARunThatAskedForItsOwnAccount(t *testing.T) {
+	derived := engine.MemoryDerived{
+		Limit:  1 << 30,
+		Source: engine.MemorySourceDerived,
+		Peak:   200 << 20,
+	}
+
+	if got := renderAt(t, 0, []engine.Event{derived}); strings.Contains(got, "memory") {
+		t.Errorf("level zero printed the memory bound:\n%s", got)
+	}
+	got := renderAt(t, 1, []engine.Event{derived})
+	for _, want := range []string{"memory:", "baseline peak 200.0 MiB", "bound 1.0 GiB", "(derived)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the memory line does not carry %q:\n%s", want, got)
+		}
+	}
+
+	unbounded := renderAt(t, 1, []engine.Event{
+		engine.MemoryDerived{Source: engine.MemorySourceUnavailable},
+	})
+	if !strings.Contains(unbounded, "no per-mutant bound") {
+		t.Errorf("an unbounded run does not say so:\n%s", unbounded)
+	}
+	if strings.Contains(unbounded, "0 B") {
+		t.Errorf("an unbounded run printed a bound of zero rather than the absence of one:\n%s", unbounded)
 	}
 }

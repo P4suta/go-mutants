@@ -1186,6 +1186,17 @@ compared on every run, `--strict` or not, and at this size it does not fail
 until the ninth unexpected survivor — so `--strict` is the thing that actually
 fails this job, on the first.
 
+The one mutant the timeout catches is `negate-loop-condition` on
+`internal/coverage/textfmt.go`'s `for scanner.Scan()`, and it is caught by the
+*timeout* rather than by the memory bound because it spins rather than
+allocating: it calls `Scan()` on an exhausted scanner forever and holds nothing.
+A mutant of that shape whose body appends is a different animal — it takes the
+machine long before any usable deadline expires — and that is what the memory
+bound is for; see
+[ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md). At this scope
+the derived bound is 1 GiB, its floor: the baseline peaks at about 126 MiB and
+four times that is under it.
+
 Two things live outside the file. `--strict` is passed by the task rather than
 written into `policy.strict`, because the gate belongs to the caller: a developer
 who wants to *look* at a survivor runs `go-mutants run` and gets a report

@@ -156,6 +156,15 @@ type Command struct {
 	// Env overlays the environment frozen by Open. Each element has KEY=VALUE
 	// form. Activation and temporary-directory variables are reserved.
 	Env []string
+	// MemoryLimit bounds the resident memory of the whole process tree, in
+	// bytes. Zero is unbounded, and a negative value is invalid.
+	//
+	// Unlike a session's runs, a workspace command has no derived bound and
+	// gets none by default. There is nothing to derive it from: a command is
+	// whatever the consumer chose to run — a build, a vet, a baseline — and
+	// go-mutants has measured none of them. A consumer that wants one names it.
+	MemoryLimit int64
+
 	// Timeout bounds the whole process tree. Zero uses a ten-minute safety
 	// default. A negative duration is invalid.
 	Timeout time.Duration
@@ -190,6 +199,20 @@ type CommandResult struct {
 	// reporting how much a command produced never has to ask which case it is
 	// in.
 	TotalBytes int64
+	// PeakRSS is the highest resident memory any binary this call started was
+	// observed to hold, in bytes, and MemoryExceeded reports that one of them
+	// passed the effective MemoryLimit and had its tree killed for it.
+	//
+	// PeakRSS is the maximum over the binaries rather than the deciding
+	// binary's alone, because what a call cost the machine is the worst moment
+	// it put the machine through. It is zero where the platform could not
+	// measure, which is a different statement from a peak of zero and is why a
+	// consumer comparing it against a budget checks it is positive first.
+	//
+	// MemoryExceeded and TimedOut are never both set: they are different kills
+	// and the supervisor reports exactly one.
+	PeakRSS        int64
+	MemoryExceeded bool
 	// TraceSeq is the `seq` of the `exec` event this command was recorded at,
 	// and is how a consumer joins its own recording to the workspace's: the
 	// event carries the argument vector, the directory, the environment names,
@@ -643,6 +666,22 @@ type ExecRequest struct {
 	// Timeout overrides PrepareOptions.MutantTimeout when positive. A negative
 	// duration is invalid.
 	Timeout time.Duration
+	// MemoryLimit bounds the resident memory of each test binary's whole
+	// process tree, in bytes. Zero uses the session's own bound, derived from
+	// what the verification run of the unmutated tests cost; a negative value
+	// is invalid.
+	//
+	// It is [Timeout]'s twin and exists for the same reason: a target that
+	// hangs is stopped by the deadline, and a target that allocates without
+	// bound takes the machine before any deadline expires. The bound is
+	// enforced by the same supervisor that enforces the deadline, over the same
+	// process tree, and a tree stopped by it reports MemoryExceeded rather than
+	// TimedOut.
+	//
+	// Not every platform can enforce one — macOS reports what a process cost
+	// once it is gone and cannot watch one while it runs — and there the field
+	// is accepted and has no effect. PeakRSS is still reported everywhere.
+	MemoryLimit int64
 	// OutputLimit caps the retained combined output of each test binary this
 	// execution starts, as [Command.OutputLimit] does: the engine's 1 MiB
 	// default when it is not positive, and a floor of 256 bytes so that the
@@ -710,7 +749,21 @@ type MutantResult struct {
 	// empty.
 	Truncated  bool
 	TotalBytes int64
-	Artifacts  []Artifact
+	// PeakRSS is the highest resident memory any binary this call started was
+	// observed to hold, in bytes, and MemoryExceeded reports that one of them
+	// passed the effective MemoryLimit and had its tree killed for it.
+	//
+	// PeakRSS is the maximum over the binaries rather than the deciding
+	// binary's alone, because what a call cost the machine is the worst moment
+	// it put the machine through. It is zero where the platform could not
+	// measure, which is a different statement from a peak of zero and is why a
+	// consumer comparing it against a budget checks it is positive first.
+	//
+	// MemoryExceeded and TimedOut are never both set: they are different kills
+	// and the supervisor reports exactly one.
+	PeakRSS        int64
+	MemoryExceeded bool
+	Artifacts      []Artifact
 	// Binaries are the test binaries this execution started, in launch order,
 	// by the import path of the package each was built from — never the file
 	// that was executed, which is a name in a directory the session deletes.
@@ -765,6 +818,12 @@ type ProbeRequest struct {
 	// Timeout overrides PrepareOptions.MutantTimeout when positive. A negative
 	// duration is invalid.
 	Timeout time.Duration
+	// MemoryLimit bounds each test binary's process tree, exactly as
+	// [ExecRequest.MemoryLimit] does and with the same meaning for zero. A pass
+	// is only evidence about an execution if the same tests ran the same way,
+	// so a pass measured with more of the machine than the executions it
+	// licenses skipping would not be one.
+	MemoryLimit int64
 	// OutputLimit caps the retained combined output of each test binary this
 	// pass starts, exactly as [ExecRequest.OutputLimit] does and with the same
 	// defaults. A probe pass runs the same tests the same way, so a caller that
@@ -862,6 +921,20 @@ type ProbeResult struct {
 	// binary wrote, kept or not.
 	Truncated  bool
 	TotalBytes int64
+	// PeakRSS is the highest resident memory any binary this call started was
+	// observed to hold, in bytes, and MemoryExceeded reports that one of them
+	// passed the effective MemoryLimit and had its tree killed for it.
+	//
+	// PeakRSS is the maximum over the binaries rather than the deciding
+	// binary's alone, because what a call cost the machine is the worst moment
+	// it put the machine through. It is zero where the platform could not
+	// measure, which is a different statement from a peak of zero and is why a
+	// consumer comparing it against a budget checks it is positive first.
+	//
+	// MemoryExceeded and TimedOut are never both set: they are different kills
+	// and the supervisor reports exactly one.
+	PeakRSS        int64
+	MemoryExceeded bool
 	// Binaries are the probe tree's test binaries this pass started, in launch
 	// order and by import path, exactly as [MutantResult.Binaries] names them.
 	Binaries []string
@@ -916,6 +989,12 @@ type ControlRequest struct {
 	// Timeout overrides PrepareOptions.MutantTimeout when positive. A negative
 	// duration is invalid.
 	Timeout time.Duration
+	// MemoryLimit bounds each test binary's process tree, exactly as
+	// [ExecRequest.MemoryLimit] does and with the same meaning for zero. A
+	// control is what an execution is compared against, so it is measured under
+	// the execution's budget: a control given more of the machine than the
+	// mutant beside it is a control of a different program.
+	MemoryLimit int64
 	// OutputLimit caps the retained combined output of each test binary this
 	// run starts, exactly as [ExecRequest.OutputLimit] does and with the same
 	// defaults.
@@ -985,6 +1064,20 @@ type ControlResult struct {
 	// came from.
 	Truncated  bool
 	TotalBytes int64
+	// PeakRSS is the highest resident memory any binary this call started was
+	// observed to hold, in bytes, and MemoryExceeded reports that one of them
+	// passed the effective MemoryLimit and had its tree killed for it.
+	//
+	// PeakRSS is the maximum over the binaries rather than the deciding
+	// binary's alone, because what a call cost the machine is the worst moment
+	// it put the machine through. It is zero where the platform could not
+	// measure, which is a different statement from a peak of zero and is why a
+	// consumer comparing it against a budget checks it is positive first.
+	//
+	// MemoryExceeded and TimedOut are never both set: they are different kills
+	// and the supervisor reports exactly one.
+	PeakRSS        int64
+	MemoryExceeded bool
 	// Binaries are the test binaries this run started, in launch order and by
 	// import path, exactly as [MutantResult.Binaries] names them. They stop
 	// where the run stopped: a control that failed in the second of three

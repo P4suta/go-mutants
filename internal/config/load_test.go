@@ -238,6 +238,24 @@ func TestParseRejects(t *testing.T) {
 			message: "cannot be waited for",
 		},
 		{
+			name:    "memory is not a size",
+			source:  "version = 1\n\n[test]\nmemory = \"plenty\"\n",
+			code:    CodeInvalidSize,
+			key:     "test.memory",
+			line:    4,
+			column:  10,
+			message: "is not a size",
+		},
+		{
+			name:    "memory is not positive",
+			source:  "version = 1\n\n[test]\nmemory = \"0\"\n",
+			code:    CodeNonPositiveMemory,
+			key:     "test.memory",
+			line:    4,
+			column:  10,
+			message: "leaves no room for a test binary",
+		},
+		{
 			name:    "baseline runs below the range",
 			source:  "version = 1\n\n[test]\nbaseline_runs = 0\n",
 			code:    CodeBaselineRunsOutOfRange,
@@ -462,6 +480,13 @@ func TestParseDescribesTypeMismatchesFromTheSchema(t *testing.T) {
 		{
 			"a number where a duration belongs",
 			"version = 1\n[test]\ntimeout = 5\n", "test.timeout", "must be a string, not an integer",
+		},
+		{
+			// A size is a string too, for the reason a duration is: `2GiB` is
+			// not a number, and a bare integer would be a byte count nobody
+			// meant to write in bytes.
+			"a number where a size belongs",
+			"version = 1\n[test]\nmemory = 5\n", "test.memory", "must be a string, not an integer",
 		},
 		{"a string inside the ledger", "version = 1\n[[mutation.expect]]\nid = 5\n", "mutation.expect.id", "must be a string, not an integer"},
 		// A key the schema does not define, reached by dotting through one it
@@ -717,6 +742,7 @@ func TestParseAccepts(t *testing.T) {
 		"[test]\n" +
 		"command = [\"go\", \"test\", \"-run\", \"\"]\n" +
 		"timeout = \"1m30s\"\n" +
+		"memory = \"2GiB\"\n" +
 		"baseline_runs = 1\n\n" +
 		"[execution]\njobs = 32\n\n" +
 		"[cache]\nmode = \"off\"\ndirectory = \"team/cache\"\n\n" +
@@ -740,6 +766,7 @@ func TestParseAccepts(t *testing.T) {
 		Expect:          Explicit([]Expectation{{ID: hexID("a"), Reason: "equivalent"}}),
 		TestCommand:     Explicit([]string{"go", "test", "-run", ""}),
 		Timeout:         Explicit(90 * time.Second),
+		Memory:          Explicit(int64(2) << 30),
 		BaselineRuns:    Explicit(1),
 		Jobs:            Explicit(32),
 		CacheMode:       Explicit(CacheOff),

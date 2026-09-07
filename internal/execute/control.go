@@ -31,6 +31,14 @@ type ControlRun struct {
 	// that never ends is worse than one reported wrongly.
 	Timeout time.Duration
 
+	// MemoryLimit bounds the resident memory of each test binary's whole
+	// process tree, exactly as [MutantRun.MemoryLimit] does and with the same
+	// meaning for zero. A control is what a mutant's execution is compared
+	// against, so it is measured under the mutant's budget: a control given
+	// more of the machine than the execution beside it is a control of a
+	// different program.
+	MemoryLimit int64
+
 	// Binaries narrows the run to a subset of the test binaries, as indices
 	// into the `bins` slice, exactly as [MutantRun.Binaries] does. Nil means
 	// every binary, in the order they were given.
@@ -114,6 +122,17 @@ type ControlAttempt struct {
 	Output      []byte
 	OutputBytes int64
 	Truncated   bool
+
+	// PeakRSS is the highest resident memory any binary of this run was
+	// observed to hold, in bytes, and MemoryExceeded reports that one of them
+	// passed [ControlRun.MemoryLimit] and had its tree killed for it. They are
+	// [Attempt.PeakRSS] and [Attempt.MemoryExceeded] exactly, and MemoryExceeded
+	// stands beside TimedOut rather than inside it for the reason
+	// [runner.Result] keeps them apart: they are different kills, and a consumer
+	// that conflated them would report the user's program as slow when it is
+	// large.
+	PeakRSS        int64
+	MemoryExceeded bool
 
 	// Binaries are the test binaries this run started, in launch order, by
 	// import path, and ExecSeqs the `exec` events they were recorded at. They
@@ -204,9 +223,10 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindControlRun, bin.ImportPath,
-			bin, env, c.Timeout, c.Args, logPath, c.OutputLimit)
+			bin, env, c.Timeout, c.MemoryLimit, c.Args, logPath, c.OutputLimit)
 		last = result
 		attempt.Duration += result.Duration
+		attempt.PeakRSS = max(attempt.PeakRSS, result.PeakRSS)
 		// Carried up as internal/runner reported it, [runner.ExitCodeUnavailable]
 		// included: see [ControlAttempt.ExitCode]. A failure drops it again,
 		// because a run that could not be made observed no status at all.
@@ -255,6 +275,18 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 			// user's program hanging, and reporting it twice would cost the
 			// budget twice to say the same thing.
 			attempt.TimedOut = true
+			attempt.Package = bin.ImportPath
+			attempt.keep(result)
+			return attempt
+
+		case result.MemoryExceeded:
+			// The answer too, and the same shape as the timeout above: the
+			// original program needed more of the machine than the budget the
+			// mutants are measured under, which a consumer reads as "the bound
+			// is wrong" rather than as anything about a mutant. Ahead of the
+			// unavailable-status branch, because a killed tree carries no
+			// status.
+			attempt.MemoryExceeded = true
 			attempt.Package = bin.ImportPath
 			attempt.keep(result)
 			return attempt

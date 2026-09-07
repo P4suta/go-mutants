@@ -171,6 +171,11 @@ type Options struct {
 	// when `test.timeout` is set.
 	Timeout       time.Duration
 	TimeoutSource TimeoutSource
+	// Memory is the per-mutant memory bound in bytes and MemorySource says
+	// where it came from. A zero Memory with an empty source is a run that
+	// predates the bound or bounded nothing, and writes neither key.
+	Memory       int64
+	MemorySource MemorySource
 
 	// CoverageMode is how coverage narrowed the run. The zero value is
 	// [CoverageOff], which is what a run with a custom test command or a failed
@@ -307,6 +312,8 @@ func Build(opts Options) (*Report, error) {
 			Baseline:        baselineOf(opts.Baseline),
 			TimeoutMS:       milliseconds(opts.Timeout),
 			TimeoutSource:   timeoutSource(opts),
+			MemoryBytes:     max(opts.Memory, 0),
+			MemorySource:    memorySource(opts),
 			Toolchain:       toolchainOf(opts.Toolchain),
 			ResolvedCommand: resolvedCommand(opts.ResolvedCommand),
 		},
@@ -1210,6 +1217,21 @@ func timeoutSource(opts Options) TimeoutSource {
 		return TimeoutExplicit
 	}
 	return TimeoutDerived
+}
+
+// memorySource resolves what the document says about where the memory bound
+// came from, and writes nothing at all for a run that had none.
+//
+// The empty string is deliberate and is not [MemoryUnavailable]. A run that
+// bounded nothing *and* knew why says so; a caller that said nothing about
+// memory at all — every caller that predates the bound, and every test fixture
+// that does not care — leaves both keys out, which is what makes the pair
+// additive.
+func memorySource(opts Options) MemorySource {
+	if opts.MemorySource.Valid() {
+		return opts.MemorySource
+	}
+	return ""
 }
 
 // duplicate builds the error for one mutant claimed twice.

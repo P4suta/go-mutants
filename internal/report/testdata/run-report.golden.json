@@ -51,6 +51,8 @@
     },
     "timeout_ms": 10000,
     "timeout_source": "derived",
+    "memory_bytes": 1073741824,
+    "memory_source": "derived",
     "toolchain": {
       "go_bin": "/usr/local/go/bin/go",
       "version": "go version go1.26.0 linux/amd64"
@@ -142,7 +144,8 @@
           "binaries": [
             "example.com/m/internal/alpha",
             "example.com/m/internal/beta"
-          ]
+          ],
+          "peak_rss_bytes": 41943040
         }
       ],
       "output_tail": null,

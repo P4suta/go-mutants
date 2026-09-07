@@ -124,6 +124,24 @@ var (
 	_ []int64       = gomutants.ControlResult{}.ExecSeqs
 	_ int64         = gomutants.ControlResult{}.TraceSeq
 
+	// The memory half of the paired budget. Every request that starts a test
+	// binary can bound one, every result says what it cost and whether the
+	// bound stopped it, and a workspace command — which has no derived bound —
+	// can bound itself. A consumer that renders "killed by memory" reads
+	// MemoryExceeded rather than parsing a message.
+	_ int64 = gomutants.Command{}.MemoryLimit
+	_ int64 = gomutants.CommandResult{}.PeakRSS
+	_ bool  = gomutants.CommandResult{}.MemoryExceeded
+	_ int64 = gomutants.ExecRequest{}.MemoryLimit
+	_ int64 = gomutants.MutantResult{}.PeakRSS
+	_ bool  = gomutants.MutantResult{}.MemoryExceeded
+	_ int64 = gomutants.ProbeRequest{}.MemoryLimit
+	_ int64 = gomutants.ProbeResult{}.PeakRSS
+	_ bool  = gomutants.ProbeResult{}.MemoryExceeded
+	_ int64 = gomutants.ControlRequest{}.MemoryLimit
+	_ int64 = gomutants.ControlResult{}.PeakRSS
+	_ bool  = gomutants.ControlResult{}.MemoryExceeded
+
 	// What a target consulted. A consumer keeping evidence about a (mutant,
 	// target) pair reads the log to decide whether that evidence is still about
 	// today's repository, so every name here is one it stores and looks up

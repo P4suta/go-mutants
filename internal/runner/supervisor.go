@@ -4,6 +4,7 @@
 package runner
 
 import (
+	"os"
 	"os/exec"
 	"sync/atomic"
 	"time"
@@ -59,10 +60,39 @@ type supervisor interface {
 	// once the child has been reaped, which lets a platform escalate from a
 	// polite signal to a fatal one only when the polite one was ignored.
 	//
+	// grace is how long the tree is given to shut down of its own accord before
+	// the fatal signal, and a grace of zero or less means none at all. The
+	// caller chooses because the caller knows what the grace would buy: a
+	// timed-out test binary's deferred cleanup and flushed output is the
+	// evidence for why it timed out, and is worth two seconds; a tree over its
+	// memory bound has already had its peak measured and is spending those two
+	// seconds allocating. Windows has no polite phase to skip —
+	// TerminateJobObject is immediate by construction — so the argument is
+	// ignored there.
+	//
 	// It is best effort by contract: a process that is already gone, a handle
 	// the kernel has invalidated, and a pid the caller no longer owns are all
 	// ordinary outcomes, not failures to report.
-	terminate(exited <-chan struct{})
+	terminate(exited <-chan struct{}, grace time.Duration)
+
+	// residentMemory reports how much memory the whole tree is holding right
+	// now, in bytes, while it is still running. It is what [memoryWatchdog]
+	// samples, and it belongs to the supervisor because the tree does: a
+	// process group id on POSIX, a job handle on Windows, and nothing this
+	// package could reconstruct from a pid alone.
+	//
+	// The false return means this platform has no live reading at all, not that
+	// the tree is empty — an empty tree is zero and true. It is a statement
+	// about the machine rather than about the moment, so a sampler that sees it
+	// stops rather than retrying.
+	residentMemory() (int64, bool)
+
+	// peakMemory reports the highest the tree reached, in bytes. It is called
+	// once, after the child has been reaped and before release, and it is given
+	// the exit status because one platform keeps the answer there and the other
+	// keeps it in the supervisor — a caller that had to know which would be a
+	// caller with a platform branch in it.
+	peakMemory(ps *os.ProcessState) (int64, bool)
 
 	// release frees the supervisor's operating-system resources. It runs on
 	// every path out of [Run], including the failure paths.

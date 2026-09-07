@@ -31,7 +31,7 @@ func TerminatedCount() int64 { return supervisionTerminated.Load() }
 // is the whole claim CREATE_SUSPENDED makes and the one thing no observation
 // of a finished Run can confirm.
 func StartSuspendedForTest(cmd *exec.Cmd, between func()) error {
-	sup, err := newSupervisor()
+	sup, err := newSupervisor(0)
 	if err != nil {
 		return err
 	}

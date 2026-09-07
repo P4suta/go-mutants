@@ -76,6 +76,8 @@ var mergedFields = map[string]string{
 	"Test.Baseline.SlowestMS":          sameAsTheWholeRun,
 	"Test.TimeoutMS":                   sameAsTheWholeRun,
 	"Test.TimeoutSource":               sameAsTheWholeRun,
+	"Test.MemoryBytes":                 sameAsTheWholeRun,
+	"Test.MemorySource":                sameAsTheWholeRun,
 	"Coverage.Mode":                    sameAsTheWholeRun,
 	"Coverage.Binaries":                sameAsTheWholeRun,
 	"Coverage.MutantsUncovered":        sameAsTheWholeRun,

@@ -1,0 +1,171 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+package runner
+
+import (
+	"sync/atomic"
+	"time"
+)
+
+// MemorySampleInterval is how often a bounded run looks at what its process
+// tree is using.
+//
+// A bound enforced by sampling is only ever as tight as its interval: a tree is
+// killed at the bound plus about one tick of its own growth, not at the bound.
+// A hundred milliseconds is the number that keeps that overshoot small for the
+// process this exists to stop. Measured against this package's own hog helper —
+// which adds 8 MiB every 25 ms, so about 32 MiB per tick — a bound in the
+// hundreds of megabytes is reached at 1.07 to 1.23 times its value. A runaway
+// mutant grows faster than that and overshoots further, which is the honest
+// statement: the sampler bounds the damage, it does not bound it exactly.
+//
+// The cost is one `/proc` directory read plus one small file read per process
+// on the machine, ten times a second per *bounded* mutant, or one job query on
+// Windows. An unbounded run starts no sampler and pays none of it.
+//
+// It is deliberately not derived from the limit. A sampler whose interval
+// depended on the budget would be a second policy nobody asked for, and the
+// only thing it could buy is precision about a number that is itself four times
+// a measurement.
+const MemorySampleInterval = 100 * time.Millisecond
+
+// MemoryBoundSupported reports whether this platform can enforce
+// [Spec.MemoryLimit].
+//
+// Measurement and enforcement are separate capabilities and only one of them is
+// universal. [Result.PeakRSS] comes from what the operating system reports about
+// a process that has already exited, which every supported platform can do;
+// enforcing a bound needs the tree's resident size *while it runs*, which Linux
+// answers from /proc and Windows from the job object, and which macOS exposes
+// only through libproc — a cgo dependency this repository does not have and will
+// not take for a budget.
+//
+// A caller that derives a bound is expected to ask, and to say so once rather
+// than to hand out a limit that would be quietly ignored. See the engine's
+// memory derivation.
+func MemoryBoundSupported() bool { return memorySamplingSupported }
+
+// memoryWatchdog samples a running tree's resident memory, remembers the
+// highest it saw, and reports the moment the tree passes its limit.
+//
+// It exists because rlimits cannot do this job. RLIMIT_AS bounds address space,
+// and the Go runtime reserves hundreds of gigabytes of it on a 64-bit machine
+// before allocating anything, so any RLIMIT_AS small enough to be a budget kills
+// every Go binary at start-up. RLIMIT_DATA is Linux-only and covers the brk
+// segment rather than the mappings a Go heap actually lives in. And neither of
+// them reaches the child's own children, which is precisely where a `go test`
+// binary keeps the memory this package is responsible for.
+type memoryWatchdog struct {
+	// peak is the highest sample taken, in bytes. It is read after the tree has
+	// been reaped, from the goroutine that started the sampler, so it is atomic
+	// rather than guarded: there is exactly one writer and one reader and no
+	// invariant spanning them.
+	peak atomic.Int64
+
+	// exceeded is closed the first and only time a sample passes the limit.
+	// Closing rather than sending is what lets [Run]'s select read it beside
+	// the timeout and the cancellation, all three of which mean the same thing
+	// to the supervisor.
+	exceeded chan struct{}
+
+	// done stops the sampler, and stopped is closed once it has gone. Waiting
+	// for the second is what makes [memoryWatchdog.stop] a happens-before edge
+	// for the peak.
+	done    chan struct{}
+	stopped chan struct{}
+}
+
+// watchMemory starts sampling sup's tree every [MemorySampleInterval].
+//
+// The first sample is taken one interval in rather than immediately: a child
+// that has just been resumed has not yet mapped its heap, and a bound measured
+// against a process that is still becoming one would be measuring the
+// toolchain's start-up rather than the program's appetite.
+func watchMemory(sup supervisor, limit int64) *memoryWatchdog {
+	w := &memoryWatchdog{
+		exceeded: make(chan struct{}),
+		done:     make(chan struct{}),
+		stopped:  make(chan struct{}),
+	}
+	go w.sample(sup, limit)
+	return w
+}
+
+// sample is the watchdog's loop.
+//
+// A platform that cannot answer ends the loop rather than spinning on it. That
+// is fail-open, and it is the right way round here for the same reason a
+// missing measurement leaves the bound unset: a budget that cannot be measured
+// must not become a kill, because the mutant it would kill is indistinguishable
+// from the suite that is merely large. Windows keeps a second line of defence
+// in any case — the job object carries the limit itself, and the kernel enforces
+// it whether or not anybody is looking.
+func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
+	defer close(w.stopped)
+
+	ticker := time.NewTicker(MemorySampleInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-w.done:
+			return
+		case <-ticker.C:
+		}
+
+		used, ok := sup.residentMemory()
+		if !ok {
+			return
+		}
+		w.record(used)
+		if used > limit {
+			close(w.exceeded)
+			return
+		}
+	}
+}
+
+// record keeps the highest sample seen. A sample that is not a new high is
+// dropped without a write, which is what keeps a run that never grows from
+// paying for the counter ten times a second.
+func (w *memoryWatchdog) record(used int64) {
+	for {
+		seen := w.peak.Load()
+		if used <= seen {
+			return
+		}
+		if w.peak.CompareAndSwap(seen, used) {
+			return
+		}
+	}
+}
+
+// stop ends the sampler and waits for it, so that the peak it observed is
+// established before the caller reads it. A nil watchdog is an unbounded run,
+// which started no sampler and has nothing to wait for.
+func (w *memoryWatchdog) stop() {
+	if w == nil {
+		return
+	}
+	close(w.done)
+	<-w.stopped
+}
+
+// observedPeak is the highest sample the watchdog took, and is zero for a run
+// that was never bounded or never grew enough to be sampled.
+func (w *memoryWatchdog) observedPeak() int64 {
+	if w == nil {
+		return 0
+	}
+	return w.peak.Load()
+}
+
+// exceededC is the channel a bound trips on, and is nil — which blocks forever
+// in a select, exactly as a nil timer channel does — when there is no bound.
+func (w *memoryWatchdog) exceededC() <-chan struct{} {
+	if w == nil {
+		return nil
+	}
+	return w.exceeded
+}

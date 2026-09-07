@@ -147,10 +147,35 @@ func (r *PlainRenderer) attribution(m engine.MutantResult) string {
 			b.WriteString(" hung in " + m.KilledBy)
 		}
 	}
+	if m.MemoryExceeded {
+		// Why a kill names a suite that reported no failure. Both numbers are
+		// there because either alone is unactionable: the peak says what the
+		// mutant did, and the bound says what it was measured against, and the
+		// person deciding whether the bound is too tight needs to see them
+		// beside each other.
+		b.WriteString(" (memory: " + FormatBytes(m.PeakRSS) + " > " + FormatBytes(m.MemoryLimit) + " bound)")
+	}
 	if m.Attempts > 1 && attempted(m.Outcome) {
 		b.WriteString(" (" + strconv.Itoa(m.Attempts) + " attempts)")
 	}
 	return b.String()
+}
+
+// memoryDerivedLine is the run's memory budget in one sentence.
+//
+// The unbounded case is a sentence rather than a number because there is no
+// number to print, and "memory bound: 0 B" would read as a bound of nothing
+// rather than as the absence of one. What it does not say is *why* — that is
+// the warning's job, and saying it twice would be two places to reword it.
+func memoryDerivedLine(e engine.MemoryDerived) string {
+	if e.Limit <= 0 {
+		return "memory: no per-mutant bound (" + e.Source.String() + ")"
+	}
+	if e.Peak <= 0 {
+		return "memory: bound " + FormatBytes(e.Limit) + " (" + e.Source.String() + ")"
+	}
+	return "memory: baseline peak " + FormatBytes(e.Peak) +
+		", bound " + FormatBytes(e.Limit) + " (" + e.Source.String() + ")"
 }
 
 // attempted reports whether an outcome is one a pass over the test binaries

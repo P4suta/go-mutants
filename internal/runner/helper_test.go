@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -217,6 +218,54 @@ func runHelper(args []string) int {
 		}
 		return runTreeHelper(rest[0], rest[1], rest[2])
 
+	case "hog":
+		// hog TOTAL-BYTES STEP-BYTES STEP-DELAY-MS — the process a memory
+		// bound is about. It grows its resident set in visible steps and then
+		// exits, so a test can assert both what the peak was and that a bound
+		// stopped it before it got there.
+		if len(rest) != 3 {
+			return helperMisuse
+		}
+		return runHogHelper(rest[0], rest[1], rest[2])
+
+	case "hogtree":
+		// hogtree SENTINEL-PATH SENTINEL-DELAY-MS TOTAL-BYTES STEP-BYTES
+		// STEP-DELAY-MS — "tree" and "hog" at once. It spawns the sentinel
+		// grandchild, announces it, and only then grows: a bound that killed
+		// the process it measured rather than the tree around it would leave
+		// the grandchild alive to write.
+		if len(rest) != 5 {
+			return helperMisuse
+		}
+		if _, code := spawnGrandchild("sentinel", rest[0], rest[1]); code != 0 {
+			return code
+		}
+		return runHogHelper(rest[2], rest[3], rest[4])
+
+	case "deafhog":
+		// deafhog TOTAL-BYTES STEP-BYTES STEP-DELAY-MS — "deaf" and "hog" at
+		// once: it makes itself deaf to SIGTERM, says so, and then grows. It is
+		// the process a polite kill cannot stop, which is exactly the process a
+		// memory bound must not be polite to.
+		if len(rest) != 3 {
+			return helperMisuse
+		}
+		signal.Ignore(syscall.SIGTERM)
+		// Announced only once the disposition is installed, so a test can tell
+		// "it ignored SIGTERM" apart from "SIGTERM arrived before it was ready".
+		_, _ = fmt.Fprint(os.Stdout, helperDeafMarker)
+		return runHogHelper(rest[0], rest[1], rest[2])
+
+	case "hogchild":
+		// hogchild TOTAL-BYTES STEP-BYTES STEP-DELAY-MS OWN-SLEEP-MS — the
+		// inverse: the *grandchild* grows and this process only sleeps. A bound
+		// measured against the direct child alone never trips on it, which is
+		// what makes it a test of the tree rather than of one process.
+		if len(rest) != 4 {
+			return helperMisuse
+		}
+		return runHogChildHelper(rest[0], rest[1], rest[2], rest[3])
+
 	default:
 		fmt.Fprintf(os.Stderr, "helper: unknown verb %q\n", verb)
 		return helperMisuse
@@ -225,22 +274,99 @@ func runHelper(args []string) int {
 
 // runTreeHelper spawns the grandchild and then sleeps.
 func runTreeHelper(sentinelPath, sentinelDelay, ownSleep string) int {
-	exe, err := os.Executable()
-	if err != nil {
+	if _, code := spawnGrandchild("sentinel", sentinelPath, sentinelDelay); code != 0 {
+		return code
+	}
+	d, ok := helperDuration([]string{ownSleep})
+	if !ok {
 		return helperMisuse
 	}
-	grandchild := exec.Command(exe, helperFlag, "sentinel", sentinelPath, sentinelDelay)
+	time.Sleep(d)
+	return 0
+}
+
+// spawnGrandchild re-executes this binary as another helper, announces the pid
+// on stdout so a test can prove the spawn happened in this very run, and leaves
+// it running.
+//
+// It is one function rather than one per verb because every test that is about
+// a *tree* depends on the same two details: the grandchild inherits our streams
+// — sharing the capture pipe is part of what makes an unkilled descendant hold
+// the run open — and it is announced before anything else happens, so absence of
+// its effect later can be read as "it was killed" rather than "it never
+// started".
+func spawnGrandchild(verb string, args ...string) (*exec.Cmd, int) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, helperMisuse
+	}
+	grandchild := exec.Command(exe, append([]string{helperFlag, verb}, args...)...)
 	grandchild.Env = os.Environ()
-	// The grandchild inherits our streams on purpose: sharing the capture pipe
-	// is part of what makes an unkilled descendant hold the run open.
 	grandchild.Stdout = os.Stdout
 	grandchild.Stderr = os.Stderr
 	if err := grandchild.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "helper: spawning grandchild: %v\n", err)
-		return helperMisuse
+		return nil, helperMisuse
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "grandchild %d\n", grandchild.Process.Pid)
+	return grandchild, 0
+}
 
+// runHogHelper grows this process's resident set to total bytes in steps of
+// step, pausing delay between them, and then exits.
+//
+// Every page of every step is written to, because an untouched allocation is
+// not resident: on every platform go-mutants supports, `make([]byte, n)` is
+// address space until something stores into it, and a bound measured against
+// resident memory would never see it. One byte per page is enough to fault the
+// whole page in and is cheap enough that the pause between steps, rather than
+// the work, is what paces the growth.
+//
+// The pause is what makes the process observable. A sampler cannot see a peak
+// that existed between two of its ticks, so a helper that allocated as fast as
+// the machine allows would be testing the scheduler; one that climbs in steps
+// wider than a sampling interval is a process a bound can be shown to catch.
+//
+// It exits rather than holding, so a run that was *not* bounded ends by itself
+// and the assertion that a bound tripped fails loudly instead of hanging.
+func runHogHelper(total, step, stepDelay string) int {
+	wanted, err := strconv.Atoi(total)
+	if err != nil || wanted <= 0 {
+		return helperMisuse
+	}
+	chunk, err := strconv.Atoi(step)
+	if err != nil || chunk <= 0 {
+		return helperMisuse
+	}
+	pause, ok := helperDuration([]string{stepDelay})
+	if !ok {
+		return helperMisuse
+	}
+
+	const pageSize = 4096
+	held := make([][]byte, 0, wanted/chunk+1)
+	for grown := 0; grown < wanted; grown += chunk {
+		block := make([]byte, min(chunk, wanted-grown))
+		for i := 0; i < len(block); i += pageSize {
+			block[i] = 1
+		}
+		held = append(held, block)
+		// Announced per step, so a test reading the captured output of a
+		// process a bound killed can see how far it had got.
+		_, _ = fmt.Fprintf(os.Stdout, "hogged %d\n", grown+len(block))
+		time.Sleep(pause)
+	}
+	// Nothing below reads held, and without this the whole loop is dead to the
+	// compiler and the collector both.
+	runtime.KeepAlive(held)
+	return 0
+}
+
+// runHogChildHelper spawns a grandchild that grows, and then sleeps through it.
+func runHogChildHelper(total, step, stepDelay, ownSleep string) int {
+	if _, code := spawnGrandchild("hog", total, step, stepDelay); code != 0 {
+		return code
+	}
 	d, ok := helperDuration([]string{ownSleep})
 	if !ok {
 		return helperMisuse

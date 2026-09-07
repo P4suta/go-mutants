@@ -124,6 +124,21 @@ type Options struct {
 	// against: an entry whose measurement could not have happened under this
 	// bound is not adopted. See [Entry.UsableUnder].
 	Timeout time.Duration
+	// MemoryLimit is the per-mutant memory bound this run will apply, in bytes,
+	// and zero is a run that bounds nothing.
+	//
+	// It is the timeout's twin in every respect that matters here: not part of
+	// the key, for the reason [Context.ConfiguredTimeout] gives — a derived
+	// bound follows the baseline peak and would give every machine a cache of
+	// its own — and judged against on every lookup, because a memory kill is
+	// stored as an ordinary kill and nothing else would ask whether it would
+	// still have been one. See [Entry.UsableWithin].
+	//
+	// It is the bound the run *enforces* rather than the one it reports. A
+	// platform that cannot enforce one passes zero here whatever the
+	// configuration says, because an entry is only evidence about the bound the
+	// measurement was actually made under.
+	MemoryLimit int64
 }
 
 // A Cache is one run's view of the outcome store: the directory its context
@@ -137,6 +152,7 @@ type Cache struct {
 	key     string
 	context string
 	timeout time.Duration
+	memory  int64
 }
 
 // Open resolves the cache directory for one run, proves the workspace
@@ -181,7 +197,10 @@ func Open(opts Options) (*Cache, error) {
 			Err:     mkErr,
 		}
 	}
-	return &Cache{root: root, dir: dir, key: key, context: context, timeout: opts.Timeout}, nil
+	return &Cache{
+		root: root, dir: dir, key: key, context: context,
+		timeout: opts.Timeout, memory: opts.MemoryLimit,
+	}, nil
 }
 
 // Root returns the cache root this handle was opened under.
@@ -240,6 +259,20 @@ type Entry struct {
 	Attempts int `json:"attempts"`
 	// OutputTail is the tail of the test output, truncated to [MaxOutputTail].
 	OutputTail string `json:"output_tail,omitempty"`
+	// MemoryBytes is the per-mutant memory bound the measurement was made
+	// under, and MemoryExceeded says the bound is what settled it.
+	//
+	// They are [TimeoutMS]'s twins and [Entry.UsableWithin] compares against
+	// them, for the same reason and with the directions mirrored. They are
+	// optional: an entry written before the bound existed, or by a run that
+	// bounded nothing, carries a zero MemoryBytes and is judged exactly as it
+	// was before — which is what keeps a cache filled by an older build usable
+	// rather than thrown away.
+	//
+	// MemoryExceeded is only ever set on a killed entry, because a bound
+	// settles a mutant as killed and as nothing else.
+	MemoryBytes    int64 `json:"memory_bytes,omitempty"`
+	MemoryExceeded bool  `json:"memory_exceeded,omitempty"`
 }
 
 // Duration renders the stored measurement.
@@ -283,6 +316,50 @@ func (e Entry) UsableUnder(timeout time.Duration) bool {
 		return bound <= e.TimeoutMS
 	}
 	return e.DurationMS <= bound
+}
+
+// UsableWithin reports whether this run's per-mutant memory bound could have
+// produced the stored outcome.
+//
+// It is [Entry.UsableUnder]'s twin, and it exists for a sharper reason than
+// symmetry. A mutant the bound stops is settled as *killed* — the vocabulary is
+// frozen and a bound is not a new verdict — so it is stored like any other
+// kill, while the bound itself is deliberately out of the key and moves from
+// run to run: a derived bound follows the baseline peak, and an explicit one is
+// whatever the caller passed today. Without this rule, run 1 at 256 MiB caches
+// `killed` and run 2 at 8 GiB adopts it having never asked whether the mutant
+// would have finished with thirty times the memory. It would have: it would
+// have survived.
+//
+// Three rules, and the middle one is the one to read twice:
+//
+//   - An entry killed *by* the bound is evidence about that bound and any
+//     tighter one — a tree over 256 MiB is over 128 MiB too — and about no
+//     larger one, where it might have finished. A run with no bound at all is
+//     the largest bound there is, so it refuses too.
+//   - An entry that reached a verdict *inside* a bound is evidence about that
+//     bound and any larger one. Under a smaller one it might have been killed
+//     for its memory before reaching that verdict, which is a different answer.
+//     A plain kill is the exception: a tighter bound could only have killed it
+//     sooner, and a kill is a kill either way.
+//   - An entry with no recorded bound was measured unbounded, or by a build
+//     before this field existed. Nothing here can be said about it, so nothing
+//     is: it is judged by [Entry.UsableUnder] alone, exactly as it always was.
+//
+// A refusal here is an ordinary miss and not a diagnosis, as it is for the
+// clock: the entry is perfectly good, it is simply not evidence about the run
+// being made now.
+func (e Entry) UsableWithin(limit int64) bool {
+	switch {
+	case e.MemoryExceeded:
+		return limit > 0 && limit <= e.MemoryBytes
+	case e.MemoryBytes <= 0:
+		return true
+	case e.Outcome == mutation.OutcomeKilled:
+		return true
+	default:
+		return limit <= 0 || limit >= e.MemoryBytes
+	}
 }
 
 // Cacheable reports whether an outcome may be stored and later adopted.
@@ -362,7 +439,7 @@ func (c *Cache) Lookup(id string) (Entry, bool, error) {
 	}
 	// An ordinary miss and not a diagnosis: the entry is perfectly good, it is
 	// just not evidence about a run with this bound. See [Entry.UsableUnder].
-	if !entry.UsableUnder(c.timeout) {
+	if !entry.UsableUnder(c.timeout) || !entry.UsableWithin(c.memory) {
 		return Entry{}, false, nil
 	}
 	return entry, true, nil
@@ -394,8 +471,10 @@ func (e Entry) check(key, context, id string) error {
 		return errors.New("it holds the outcome of another mutant")
 	case !Cacheable(e.Outcome):
 		return errors.New("it holds " + e.Outcome.String() + ", which is not a reusable outcome")
-	case e.DurationMS < 0 || e.Attempts < 1 || e.TimeoutMS <= 0:
+	case e.DurationMS < 0 || e.Attempts < 1 || e.TimeoutMS <= 0 || e.MemoryBytes < 0:
 		return errors.New("its measurement is not one that could have happened")
+	case e.MemoryExceeded && (e.MemoryBytes <= 0 || e.Outcome != mutation.OutcomeKilled):
+		return errors.New("it says a memory bound settled it and records no bound, or an outcome a bound cannot produce")
 	}
 	return nil
 }
@@ -426,6 +505,7 @@ func (c *Cache) Put(id string, entry Entry) error {
 	entry.Context = c.context
 	entry.ID = id
 	entry.TimeoutMS = milliseconds(c.timeout)
+	entry.MemoryBytes = c.memory
 	entry.OutputTail = truncateTail(entry.OutputTail)
 	if !Cacheable(entry.Outcome) {
 		return &Error{

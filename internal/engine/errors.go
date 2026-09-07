@@ -216,6 +216,19 @@ const (
 	// It is distinct from [CodeBaselineTimedOut], which is go-mutants' own cap on
 	// one command. This one is the caller's budget for the whole run.
 	CodeDeadlineExceeded Code = "GOM4046"
+	// CodeMemoryBoundUnavailable reports a run in which no mutant is bounded in
+	// memory, and says which of the two reasons applies: nothing measured what
+	// the baseline runs cost, or this platform cannot watch a process tree while
+	// it runs and therefore cannot enforce a bound at all.
+	//
+	// It is a warning rather than an error because the run is still a run: every
+	// mutant is still bounded in time, which is what go-mutants did before the
+	// memory bound existed. It is said once, and it is said at all because the
+	// difference matters to somebody deciding whether to trust the run on a CI
+	// machine — a mutant that allocates without bound is stopped on a bounded
+	// run and takes the runner down on an unbounded one, and that is not
+	// something to discover from a job that vanished.
+	CodeMemoryBoundUnavailable Code = "GOM4047"
 )
 
 // String returns the code as it is printed.
@@ -246,6 +259,7 @@ var codes = []Code{
 	CodeOrphanNotRemoved,
 	CodeTemporaryNotKept,
 	CodeDeadlineExceeded,
+	CodeMemoryBoundUnavailable,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

@@ -146,7 +146,10 @@ below.
 | `test.resolved_command` | The argv that was really started: `command` with `go_bin` in place of a bare `go` |
 | `coverage.build_fallback` | The coverage-instrumented build failed and the run compiled plain test binaries instead |
 | `coverage.unavailable_reason` | The whole failure that made it do so: the coded message and the compiler's diagnostics under it |
+| `test.memory_bytes`, `test.memory_source` | The per-mutant memory bound and where it came from: `explicit`, `derived`, or `unavailable` for a run with no bound at all. Written together, and absent from a document an older build wrote |
 | `mutants[].executions[]` | One row per pass over the test binaries; see [`mutants[]`](#mutants) |
+| `mutants[].executions[].memory_exceeded` | Whether the run's memory bound stopped that pass; see [`mutants[]`](#mutants) |
+| `mutants[].executions[].peak_rss_bytes` | What that pass cost the machine; see [`mutants[]`](#mutants) |
 
 `timing.stages[].result` is `succeeded`, `failed`, or `skipped` — the trace's
 own vocabulary, so a reader holding both documents is not reconciling two
@@ -282,6 +285,19 @@ test binaries, in attempt order.
 | `killed_by` | The binary that detected the mutant on this pass; absent when it detected nothing |
 | `duration_ms` | The wall-clock time this pass took, summed over the binaries it ran |
 | `binaries[]` | The test binaries it started, in launch order, stopping where the pass stopped |
+| `memory_exceeded` | This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline; absent when it was not. Optional. The bound itself is `test.memory_bytes` |
+| `peak_rss_bytes` | The highest the pass's whole process tree was observed to hold: resident memory on Unix, committed charge on Windows, which are close but not the same quantity and are deliberately not converted into one another. Written for every pass and not only the bounded ones; absent where the platform could not measure one. Optional |
+
+`memory_exceeded` is why a row can say `killed` and name a binary whose tests
+did not fail. A mutant that turns a terminating loop into one that allocates
+forever is not caught by any timeout short enough to be useful — it takes the
+machine first — so go-mutants bounds a mutant's memory the way it bounds its
+time, at `max(1GiB, largest baseline peak × 4)` unless `test.memory` says
+otherwise. The outcome vocabulary does not grow for it: the original program was
+measured under the budget the bound was derived from, so a tree needing several
+times what the whole suite needed has been changed observably, and that is what
+`killed` already means. See
+[ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md).
 
 There are exactly `attempts` rows for a mutant this run executed, and the list
 is `[]` — present and empty — for a `cached`, `uncovered` or `not-run` mutant:

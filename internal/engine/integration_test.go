@@ -393,6 +393,7 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		"engine.BaselineProgress",
 		"engine.BaselineProgress",
 		"engine.BaselineCompleted",
+		"engine.MemoryDerived",  // the budget's other half, from the same runs
 		"engine.PhaseCompleted", // baseline
 		"engine.PhaseChanged",   // mutate
 		"engine.Discovered",
@@ -430,7 +431,7 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 		entered, left int
 	}{
 		{PhaseDiscover, 1, 2},
-		{PhaseBaseline, 3, 7},
+		{PhaseBaseline, 3, 8},
 	} {
 		if got := events[span.entered].(PhaseChanged); got.Phase != span.phase || got.Detail == "" {
 			t.Errorf("event %d = %+v, want a described %s", span.entered, got, span.phase)
@@ -459,15 +460,22 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	if !slices.Equal(completed.Runs, outcome.BaselineRuns) {
 		t.Errorf("BaselineCompleted.Runs = %v, want %v", completed.Runs, outcome.BaselineRuns)
 	}
+	// The budget's other half, published from the same runs and immediately
+	// after: the bound this run will apply, where it came from, and the peak it
+	// was derived from.
+	if derived := events[7].(MemoryDerived); derived.Limit != outcome.Memory || derived.Source != outcome.MemorySource {
+		t.Errorf("MemoryDerived = %+v, want the outcome's bound %d (%s)",
+			derived, outcome.Memory, outcome.MemorySource)
+	}
 	// The instrumented baseline is the sole `1 of 1`, and it is what proves the
 	// rewrite preserved meaning: the suite passed with every guard in the tree
 	// and nothing activated.
-	if instrumented := events[11].(BaselineProgress); instrumented.Run != 1 || instrumented.Of != 1 {
+	if instrumented := events[12].(BaselineProgress); instrumented.Run != 1 || instrumented.Of != 1 {
 		t.Errorf("the instrumented baseline reported %+v, want run 1 of 1", instrumented)
 	}
 	// Coverage is on by default — the test command is the built-in one — and
 	// this fixture's every function is exercised, so nothing is skipped.
-	if mapped := events[12].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != simpleMutants || mapped.Uncovered != 0 {
+	if mapped := events[13].(CoverageMapped); mapped.Binaries != 1 || mapped.Covered != simpleMutants || mapped.Uncovered != 0 {
 		t.Errorf("CoverageMapped = %+v, want 1 binary covering all %d mutants", mapped, simpleMutants)
 	}
 	if mode := outcome.Report.Coverage.Mode; mode != report.CoveragePackage {

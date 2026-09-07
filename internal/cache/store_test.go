@@ -517,3 +517,155 @@ func write(t *testing.T, path, content string) {
 		t.Fatalf("writing %s: %v", path, err)
 	}
 }
+
+// TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleMemoryBound is the memory
+// twin of [TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleBound], and it is
+// the reason keeping the bound out of the key costs nothing.
+//
+// Without it the cache is unsound in a way the clock's rule was written to
+// prevent. A memory kill is settled as `killed`, so it is stored like any other
+// kill; the bound is deliberately not in the key, and it *moves* — a derived
+// bound follows the baseline peak, and an explicit one is whatever the caller
+// passed today. So run 1 at 256 MiB caches `killed` and run 2 at 8 GiB adopts
+// it, having never asked whether the mutant would have finished with thirty
+// times the memory. It would not: it would have survived.
+//
+// The rule is the timeout's, reflected. An entry killed *by* the bound is not
+// evidence about a larger one; an entry that reached a verdict inside a bound
+// is not evidence about a smaller one, because a smaller one might have killed
+// it first. A plain kill is the exception and is evidence about any bound: a
+// tighter bound could only have killed it sooner, and a kill is a kill.
+func TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleMemoryBound(t *testing.T) {
+	t.Parallel()
+
+	const (
+		gib = 1 << 30
+		mib = 1 << 20
+	)
+	cases := []struct {
+		name    string
+		entry   cache.Entry
+		measure int64
+		bound   int64
+		want    bool
+	}{
+		{
+			name:    "a memory kill under the same bound",
+			entry:   cache.Entry{Outcome: mutation.OutcomeKilled, DurationMS: 200, Attempts: 1, MemoryExceeded: true},
+			measure: 256 * mib, bound: 256 * mib, want: true,
+		},
+		{
+			name:    "a memory kill under a tighter bound would still have been one",
+			entry:   cache.Entry{Outcome: mutation.OutcomeKilled, DurationMS: 200, Attempts: 1, MemoryExceeded: true},
+			measure: 256 * mib, bound: 128 * mib, want: true,
+		},
+		{
+			name:    "a memory kill might have finished under a larger bound",
+			entry:   cache.Entry{Outcome: mutation.OutcomeKilled, DurationMS: 200, Attempts: 1, MemoryExceeded: true},
+			measure: 256 * mib, bound: 8 * gib, want: false,
+		},
+		{
+			name:    "a memory kill says nothing about a run with no bound at all",
+			entry:   cache.Entry{Outcome: mutation.OutcomeKilled, DurationMS: 200, Attempts: 1, MemoryExceeded: true},
+			measure: 256 * mib, bound: 0, want: false,
+		},
+		{
+			name:    "a survivor under a larger bound survives again",
+			entry:   cache.Entry{Outcome: mutation.OutcomeSurvived, DurationMS: 200, Attempts: 1},
+			measure: 256 * mib, bound: 8 * gib, want: true,
+		},
+		{
+			name:    "a survivor might have been killed by a smaller bound",
+			entry:   cache.Entry{Outcome: mutation.OutcomeSurvived, DurationMS: 200, Attempts: 1},
+			measure: 8 * gib, bound: 256 * mib, want: false,
+		},
+		{
+			name:    "a confirmed timeout might have been killed by a smaller bound",
+			entry:   cache.Entry{Outcome: mutation.OutcomeTimedOut, DurationMS: 200, Attempts: 2},
+			measure: 8 * gib, bound: 256 * mib, want: false,
+		},
+		{
+			name:    "an ordinary kill is evidence about any bound",
+			entry:   cache.Entry{Outcome: mutation.OutcomeKilled, DurationMS: 200, Attempts: 1},
+			measure: 8 * gib, bound: 256 * mib, want: true,
+		},
+		{
+			name:    "an entry measured with no bound is judged as it always was",
+			entry:   cache.Entry{Outcome: mutation.OutcomeSurvived, DurationMS: 200, Attempts: 1},
+			measure: 0, bound: 256 * mib, want: true,
+		},
+		{
+			name:    "and so is a run with no bound reading one",
+			entry:   cache.Entry{Outcome: mutation.OutcomeSurvived, DurationMS: 200, Attempts: 1},
+			measure: 0, bound: 0, want: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			writer := openBounded(t, root, baseContext(), c.measure)
+			if err := writer.Put(mutantIDs[0], c.entry); err != nil {
+				t.Fatalf("Put: %v", err)
+			}
+			reader := openBounded(t, root, baseContext(), c.bound)
+			got, found, err := reader.Lookup(mutantIDs[0])
+			if err != nil {
+				t.Fatalf("a bound mismatch was reported as a problem: %v", err)
+			}
+			if found != c.want {
+				t.Errorf("an entry measured under %d bytes was adopted under %d = %t, want %t",
+					c.measure, c.bound, found, c.want)
+			}
+			if found && got.MemoryBytes != c.measure {
+				t.Errorf("the entry records a memory bound of %d, want %d", got.MemoryBytes, c.measure)
+			}
+		})
+	}
+}
+
+// openBounded is [open] with a memory bound of the caller's choosing and a
+// timeout that is never the thing under test.
+func openBounded(t *testing.T, root string, ctx cache.Context, memory int64) *cache.Cache {
+	t.Helper()
+	store, err := cache.Open(cache.Options{
+		Root: root, Context: ctx, Timeout: testTimeout, MemoryLimit: memory,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	return store
+}
+
+// TestTheMemoryBoundIsRecordedOnTheEntryAndNotInTheKey pins both halves of the
+// arrangement at once.
+//
+// In the key, the bound would give every machine whose baseline measured
+// slightly differently a cache of its own — the whole reason the timeout is not
+// in the key either. Off the entry, there would be nothing to judge a lookup
+// against, which is the unsoundness above. So it is on the entry and not in the
+// key, exactly as `test.timeout` is.
+func TestTheMemoryBoundIsRecordedOnTheEntryAndNotInTheKey(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	const small, large = 256 << 20, 8 << 30
+
+	writer := openBounded(t, root, baseContext(), small)
+	if err := writer.Put(mutantIDs[0], killedEntry()); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	reader := openBounded(t, root, baseContext(), large)
+	if writer.Key() != reader.Key() {
+		t.Errorf("two runs differing only in their memory bound have different keys:\n%s\n%s",
+			writer.Key(), reader.Key())
+	}
+	got, found, err := reader.Lookup(mutantIDs[0])
+	if err != nil || !found {
+		t.Fatalf("Lookup = %v, %t, %v; an ordinary kill is evidence about any bound", got, found, err)
+	}
+	if got.MemoryBytes != small {
+		t.Errorf("the entry records %d, want the %d it was measured under", got.MemoryBytes, small)
+	}
+}

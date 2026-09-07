@@ -44,7 +44,9 @@
       "slowest_ms": 900
     },
     "timeout_ms": 10000,
-    "timeout_source": "derived"
+    "timeout_source": "derived",
+    "memory_bytes": 1073741824,
+    "memory_source": "derived"
   },
   "coverage": {
     "mode": "package",

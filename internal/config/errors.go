@@ -74,6 +74,14 @@ const (
 	// CodeEmptyCommandName reports a test command whose first element, the
 	// program to run, is empty.
 	CodeEmptyCommandName Code = "GOM3024"
+	// CodeInvalidSize reports a memory bound that is not a byte size: a
+	// spelling the units do not cover, a value that is not a number, or one
+	// larger than any machine has.
+	CodeInvalidSize Code = "GOM3025"
+	// CodeNonPositiveMemory reports a memory bound of zero or less. Zero is
+	// spelled by omitting the key, which is what asks for the derived bound;
+	// writing it is asking for a bound no process can fit in.
+	CodeNonPositiveMemory Code = "GOM3026"
 
 	// CodeJobsOutOfRange reports a worker count outside its range.
 	CodeJobsOutOfRange Code = "GOM3030"
@@ -121,6 +129,8 @@ var codes = []Code{
 	CodeNonPositiveTimeout,
 	CodeBaselineRunsOutOfRange,
 	CodeEmptyCommandName,
+	CodeInvalidSize,
+	CodeNonPositiveMemory,
 	CodeJobsOutOfRange,
 	CodeUnknownCacheMode,
 	CodeInvalidCacheDirectory,
@@ -239,6 +249,7 @@ var flagNames = map[string]string{
 	"mutation.profile":   "--profile",
 	"test.command":       "-- <test argv>",
 	"test.timeout":       "--timeout",
+	"test.memory":        "--memory",
 	"execution.jobs":     "--jobs",
 	"cache.mode":         "--cache",
 	"policy.strict":      "--strict",

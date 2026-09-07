@@ -45,6 +45,8 @@ type Overlay struct {
 	TestCommand Set[[]string]
 	// Timeout is `test.timeout`, overridden by --timeout.
 	Timeout Set[time.Duration]
+	// Memory is `test.memory` in bytes, overridden by --memory.
+	Memory Set[int64]
 	// BaselineRuns is `test.baseline_runs`.
 	BaselineRuns Set[int]
 
@@ -92,6 +94,7 @@ func (o Overlay) setsAnything() bool {
 		o.Expect.IsSet() ||
 		o.TestCommand.IsSet() ||
 		o.Timeout.IsSet() ||
+		o.Memory.IsSet() ||
 		o.BaselineRuns.IsSet() ||
 		o.Jobs.IsSet() ||
 		o.CacheMode.IsSet() ||
@@ -166,6 +169,9 @@ func apply(c *Config, o Overlay) {
 	}
 	if v, ok := o.Timeout.Get(); ok {
 		c.Test.Timeout = v
+	}
+	if v, ok := o.Memory.Get(); ok {
+		c.Test.Memory = v
 	}
 	if v, ok := o.BaselineRuns.Get(); ok {
 		c.Test.BaselineRuns = v
@@ -253,6 +259,9 @@ func (c Config) overlay() Overlay {
 	}
 	if c.Test.Timeout != 0 {
 		o.Timeout = Explicit(c.Test.Timeout)
+	}
+	if c.Test.Memory != 0 {
+		o.Memory = Explicit(c.Test.Memory)
 	}
 	if c.Cache.Directory != "" {
 		o.CacheDirectory = Explicit(c.Cache.Directory)

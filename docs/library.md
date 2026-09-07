@@ -1051,6 +1051,45 @@ the supplied budget. The refusal is a `*ReservedError` from `Exec`, `Probe` and
 started — and reads `gomutants: session exec: -test.timeout is reserved by the
 session's process supervisor`, with the call naming itself.
 
+### Paired budgets
+
+The timeout has a twin, and it is enforced by the same supervisor over the same
+process tree:
+
+- **`MemoryLimit`** bounds the resident memory of everything the call starts,
+  in bytes. The request's when positive, otherwise the session's own — derived
+  from what the verification run of the unmutated tests cost, as
+  `max(1 GiB, verified peak × 4)`, and the floor alone for a session opened with
+  `SkipVerify`. Zero means "use the session's".
+- A tree that passes it is killed as a timed-out one is, with one difference:
+  `MemoryExceeded` is set, `TimedOut` stays false, the exit code is the negative
+  one internal/runner reports for any tree it killed — and there is no polite
+  phase. A timed-out tree gets two seconds after SIGTERM to flush the output
+  that explains *why* it timed out; a tree over its memory bound has already had
+  its peak measured and would spend those two seconds allocating, so it is
+  killed outright. The two flags are never both set, so a consumer branches on
+  one of them and never on a message.
+- **`PeakRSS`** comes back from every call, bounded or not, and is the maximum
+  over the binaries the call started. It is zero where the platform could not
+  measure one, which is why a consumer comparing it against a budget checks that
+  it is positive first.
+
+It exists because a deadline does not bound a program that allocates. A mutant
+that turns a terminating loop into a non-terminating one that appends can take a
+seven-gigabyte machine down in twelve seconds, which is well inside any timeout
+long enough to run the tests — see
+[ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md).
+
+Not every platform can enforce it. Sampling a live process tree needs `/proc` on
+Linux or the job object on Windows; macOS exposes it only through cgo, which
+this module does not take. There `MemoryLimit` is accepted and has no effect,
+and `PeakRSS` is still reported.
+
+`Command` is the exception that proves the rule: a workspace command carries a
+`MemoryLimit` and gets no default one, because go-mutants has measured neither
+the consumer's build nor its vet nor its baseline and has nothing to derive a
+budget from.
+
 ### The outcome vocabulary is not the report's
 
 `Outcome` is **snake_case**: `not_run`, `killed`, `survived`, `timed_out`,

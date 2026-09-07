@@ -80,6 +80,16 @@ const (
 var (
 	normalizedDuration = json.Number(strconv.Itoa(NormalizedDurationMS))
 	normalizedWorker   = json.Number(strconv.Itoa(NormalizedWorker))
+	// normalizedPeak stands in for a measured peak resident size. It is
+	// unexported because nothing outside this package has to name it: unlike a
+	// duration, which several suites assert around, a peak is a number every
+	// golden replaces and no test reasons about.
+	normalizedPeak = json.Number("0")
+	// normalizedMemorySource stands in for where a run's memory bound came
+	// from. It is a valid source rather than a marker, because the normalised
+	// document is validated against the published schema and the field is an
+	// enum there.
+	normalizedMemorySource any = "derived"
 )
 
 // MustMarshal marshals a report and checks it against the published schema.
@@ -147,7 +157,8 @@ func EncodeJSON(t testing.TB, doc map[string]any) []byte {
 // directive, the toolchain's own version line, the host's GOOS and GOARCH, the
 // wall clock at both ends, every measured duration — the run's, each mutant's,
 // each of its attempts', and every phase and stage of the timeline — the
-// scheduler slot each attempt ran in, every absolute path (the located
+// scheduler slot each attempt ran in, the peak resident memory each attempt
+// reached, every absolute path (the located
 // toolchain, in `test.command` and in `test.resolved_command` and in
 // `test.toolchain.go_bin`, the snapshot root, the report directory), and the
 // elapsed times `go test` writes into the output a report carries. A golden
@@ -174,6 +185,20 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 	setString(doc, NormalizedOS, "workspace", "platform", "os")
 	setString(doc, NormalizedArch, "workspace", "platform", "arch")
 	setNumber(doc, "test", "timeout_ms")
+	// The memory budget, which is a fact about the machine in both halves. The
+	// number is derived from what the baseline cost, so it is the floor on a
+	// small machine and four times a measurement on a large one; the source is
+	// `derived` where a bound can be enforced and `unavailable` where it cannot,
+	// which is the platform and nothing else. Both are replaced for the reason
+	// `workspace.platform.os` is, and *whether* a bound was enforced is asserted
+	// by tests that say so rather than by a golden that would have to be three
+	// files.
+	//
+	// The number is forced rather than replaced, as the per-execution peak is:
+	// its absence is itself the platform fact, so leaving a run that recorded no
+	// bound saying nothing would make one platform's golden a different shape.
+	forceValue(doc, normalizedPeak, "test", "memory_bytes")
+	setValue(doc, normalizedMemorySource, "test", "memory_source")
 	setNumber(doc, "test", "baseline", "slowest_ms")
 	setNumberSlice(doc, "test", "baseline", "durations_ms")
 	setString(doc, NormalizedToolchainVersion, "test", "toolchain", "version")
@@ -188,6 +213,21 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 		for _, execution := range array(mutant, "executions") {
 			setNumber(execution, "duration_ms")
 			setValue(execution, normalizedWorker, "worker")
+			// What the pass cost the machine, which is a fact about the machine
+			// in the plainest sense there is: the same suite is a different
+			// number of bytes under `-cover`, under `-race`, on a different
+			// allocator and on a different page size.
+			//
+			// The key is *added* where it is missing rather than only replaced
+			// where it is present, and that is the opposite of every other rule
+			// here. Every platform go-mutants supports measures a peak for a
+			// process that started, so an execution row without one is a
+			// machine whose `ru_maxrss` came back zero — a container, a kernel
+			// nobody tested — and normalising the key away would turn that into
+			// a golden that quietly passes there and fails the day somebody
+			// looks. Written in, it fails as a diff against the recorded
+			// golden, which names the row.
+			forceValue(execution, normalizedPeak, "peak_rss_bytes")
 		}
 	}
 	// The timeline, which is every measured duration there is left. The phase
@@ -369,6 +409,19 @@ func setValue(doc map[string]any, value any, keys ...string) {
 		if _, present := node[key]; present {
 			node[key] = value
 		}
+	}
+}
+
+// forceValue writes a value whether or not the key is already there.
+//
+// It is [setValue]'s counterpart for the one field whose *absence* is itself a
+// fact about the machine: see the peak in [NormalizeRunReport]. Everywhere else
+// a missing key means "this document does not carry that", and adding one would
+// be inventing a fact; there it means "this machine could not measure what
+// every supported machine measures", and hiding it is what would be invented.
+func forceValue(doc map[string]any, value any, keys ...string) {
+	if node, key, ok := parentOf(doc, keys); ok {
+		node[key] = value
 	}
 }
 

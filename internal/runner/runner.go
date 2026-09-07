@@ -59,6 +59,24 @@ type Spec struct {
 	// engine.
 	Timeout time.Duration
 
+	// MemoryLimit bounds the resident memory of the child's whole process tree,
+	// in bytes. Zero — and anything negative — means no bound, exactly as a zero
+	// Timeout means no deadline.
+	//
+	// It is the timeout's twin and is enforced the same way. While the child
+	// runs, the tree's resident size is sampled every [MemorySampleInterval],
+	// and the first sample above the limit kills the whole tree and sets
+	// [Result.MemoryExceeded]; nothing is retried here, because whether a
+	// runaway allocation is a detection or a suite that is simply large is a
+	// policy question that belongs to the engine — which is also where the
+	// number comes from, derived from what the unmutated tests were measured to
+	// need.
+	//
+	// A bound is not enforceable on every platform go-mutants runs on; see
+	// [MemoryBoundSupported]. Where it is not, this field is accepted and has no
+	// effect, and [Result.PeakRSS] is still reported.
+	MemoryLimit int64
+
 	// OutputLimit caps the retained combined output in bytes. Zero or negative
 	// selects [DefaultOutputLimit]; anything positive below [MinOutputLimit]
 	// is raised to it so the truncation notice still fits inside the budget.
@@ -187,6 +205,32 @@ type Result struct {
 	// asking its own context.
 	TimedOut bool
 
+	// MemoryExceeded reports that [Spec.MemoryLimit] was passed and the tree was
+	// killed for it. It stands beside TimedOut rather than inside it: the two
+	// are different facts about a run, they are never both true, and a caller
+	// that conflated them would report a mutant that ate the machine as one that
+	// merely took too long.
+	//
+	// A tree killed for its memory reports ExitCode [ExitCodeUnavailable] and a
+	// nil Err, exactly as a timed-out one does, and the retained output is left
+	// as the child wrote it — this package adds no synthetic line saying what
+	// happened, because what a caller renders is the caller's to word.
+	MemoryExceeded bool
+
+	// PeakRSS is the highest resident memory the child's process tree was
+	// observed to hold, in bytes, and is zero when this platform could not say.
+	// It is reported for every process this package runs, bounded or not, and a
+	// tree killed by [Spec.MemoryLimit] still reports how far it got.
+	//
+	// What "the tree" covers is not the same on both platforms, and the
+	// difference is stated rather than smoothed over. On Windows it is exact:
+	// the job object accounts for every process in it, in committed bytes. On
+	// POSIX it is the larger of two approximations — the kernel's high-water
+	// mark for the child and every descendant it waited for, and, when the run
+	// was bounded and therefore sampled, the largest sum the sampler saw across
+	// the process group.
+	PeakRSS int64
+
 	// Duration is the wall-clock time [Run] took, from entry until the child
 	// had been reaped — supervision set-up and any time spent killing the tree
 	// included. It is deliberately the outer measurement rather than the
@@ -253,7 +297,7 @@ type Result struct {
 
 // OK reports whether the process ran to completion with a zero exit status.
 func (r Result) OK() bool {
-	return r.Err == nil && !r.TimedOut && r.ExitCode == 0
+	return r.Err == nil && !r.TimedOut && !r.MemoryExceeded && r.ExitCode == 0
 }
 
 // Run starts the process described by spec, supervises its whole process tree,
@@ -297,6 +341,12 @@ func record(spec Spec, result Result) Result {
 		// spent killing the tree included, which is the number a reader
 		// comparing two runs wants.
 		DurationMS: milliseconds(result.Duration),
+		// What the command cost the machine, beside what it cost the clock. It
+		// is recorded for every command rather than only for the bounded ones,
+		// because the question a reader brings to a recording — which of these
+		// thousands of processes was the expensive one — is asked after the run
+		// and cannot be asked of a run that only measured what it bounded.
+		PeakRSSBytes: result.PeakRSS,
 		// The retained capture, which is what the recorder sizes and digests
 		// and what a directory sink preserves: the tail this package kept,
 		// truncation notice included, and not the total the child produced.
@@ -400,8 +450,10 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	}
 
 	// Supervision is established before anything is running, so a machine that
-	// cannot supervise never gets as far as spawning a child.
-	sup, err := newSupervisor()
+	// cannot supervise never gets as far as spawning a child. The memory bound
+	// travels in with it because one platform enforces it in the kernel, on the
+	// same object, and it has to be in force before the first process joins.
+	sup, err := newSupervisor(spec.MemoryLimit)
 	if err != nil {
 		return Result{ExitCode: ExitCodeUnavailable, Duration: time.Since(started), Err: err}
 	}
@@ -471,31 +523,79 @@ func runProcess(ctx context.Context, spec Spec) Result {
 		timeoutC = timer.C
 	}
 
-	var timedOut, killed bool
+	// A run with no bound starts no sampler at all, so the unbounded path — the
+	// baseline, the compiles, every command a caller never budgeted — costs
+	// nothing for a feature it did not ask for. A nil watchdog answers every
+	// question below with the zero value.
+	var watchdog *memoryWatchdog
+	if spec.MemoryLimit > 0 {
+		watchdog = watchMemory(sup, spec.MemoryLimit)
+	}
+
+	var timedOut, memoryExceeded, killed bool
 	select {
 	case <-exited:
 	case <-timeoutC:
 		timedOut, killed = true, true
-		sup.terminate(exited)
+		sup.terminate(exited, TerminationGrace)
+		<-exited
+	case <-watchdog.exceededC():
+		// No grace, and this is the one kill that gets none. The grace exists
+		// so a test binary can flush the output that explains why it timed out;
+		// a tree over its memory bound has already had the only evidence a
+		// memory kill rests on — its peak — recorded, and would spend the grace
+		// allocating more of what it is being killed for. See
+		// [supervisor.terminate].
+		memoryExceeded, killed = true, true
+		sup.terminate(exited, 0)
 		<-exited
 	case <-ctx.Done():
 		killed = true
-		sup.terminate(exited)
+		sup.terminate(exited, TerminationGrace)
 		<-exited
 	}
 	// close(exited) happens before every read above, so waitErr and
 	// cmd.ProcessState are safe to read from here on.
 
+	// The sampler is stopped before its peak is read, and waited for, so that
+	// the number reported is the last one it took rather than whichever one it
+	// happened to have finished. There is exactly one call — every path out of
+	// the select arrives here — so nothing has to make it idempotent.
+	watchdog.stop()
+
 	result := captured(Result{
-		ExitCode: ExitCodeUnavailable,
-		TimedOut: timedOut,
-		Duration: time.Since(started),
+		ExitCode:       ExitCodeUnavailable,
+		TimedOut:       timedOut,
+		MemoryExceeded: memoryExceeded,
+		PeakRSS:        peakOf(sup, cmd.ProcessState, watchdog),
+		Duration:       time.Since(started),
 	})
 	if !killed {
 		result.ExitCode = exitCodeOf(cmd.ProcessState)
 		result.Err = waitFailure(waitErr)
 	}
 	return result
+}
+
+// peakOf combines the two things that know how big the tree got.
+//
+// They are combined rather than chosen between because each sees something the
+// other cannot. The platform's own accounting covers a child that grew and
+// exited between two ticks of the sampler, which no sampler could have caught;
+// the sampler covers a grandchild that outlived its parent, which POSIX's wait4
+// accounting never attributes to anybody. The larger of the two is the honest
+// answer to "how much of the machine did this take", and neither is a number
+// go-mutants invented.
+//
+// It is called after the sampler has been stopped and waited for, and before
+// the supervisor is released — which on Windows is where the accounting lives,
+// and which happens in a defer at the end of [runProcess].
+func peakOf(sup supervisor, ps *os.ProcessState, watchdog *memoryWatchdog) int64 {
+	peak := watchdog.observedPeak()
+	if accounted, ok := sup.peakMemory(ps); ok {
+		peak = max(peak, accounted)
+	}
+	return peak
 }
 
 // waitFailure decides which Wait errors are real.

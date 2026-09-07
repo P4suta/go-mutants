@@ -34,6 +34,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/tagged",
           "outcome": "killed",
+          "peak_rss_bytes": 0,
           "worker": 0
         }
       ],
@@ -103,6 +104,8 @@
       "test",
       "./..."
     ],
+    "memory_bytes": 0,
+    "memory_source": "derived",
     "resolved_command": [
       "/normalized/path",
       "test",
@@ -170,6 +173,12 @@
       {
         "duration_ms": 0,
         "name": "timeout",
+        "phase": "baseline",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "memory",
         "phase": "baseline",
         "result": "succeeded"
       },

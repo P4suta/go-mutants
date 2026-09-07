@@ -528,3 +528,69 @@ func TestSchemaAcceptsADisplayIDOfTheConfiguredLength(t *testing.T) {
 		}
 	}
 }
+
+// TestSchemaAcceptsTheMemoryFactsAndRejectsNonsense pins the two fields a
+// bounded run adds, on both records that carry them.
+//
+// They are additive and optional, so the first thing checked is that a
+// recording without them still validates — which is what makes a recording an
+// older build wrote readable by this one. What is rejected is a negative size,
+// which is not a quantity of memory, and `memory_exceeded` on an `exec` record,
+// which does not have it: whether a *command* was stopped by a bound is a fact
+// the attempt above it states, and inventing a second place to say it is how
+// two places come to disagree.
+func TestSchemaAcceptsTheMemoryFactsAndRejectsNonsense(t *testing.T) {
+	t.Parallel()
+
+	var exec, mutant map[string]any
+	for _, document := range scriptedDocuments(t) {
+		switch document["type"] {
+		case trace.TypeExec:
+			exec = document
+		case trace.TypeMutantExec:
+			mutant = document
+		}
+	}
+	if exec == nil || mutant == nil {
+		t.Fatal("the scripted recording holds no exec or no mutant-exec event")
+	}
+
+	for _, c := range []struct {
+		name     string
+		document map[string]any
+		payload  string
+	}{
+		{"exec", exec, "exec"},
+		{"mutant-exec", mutant, "mutant"},
+	} {
+		payload, _ := c.document[c.payload].(map[string]any)
+
+		delete(payload, "peak_rss_bytes")
+		if err := validates(t, c.document); err != nil {
+			t.Errorf("a %s record with no peak_rss_bytes was rejected: %v", c.name, err)
+		}
+		for _, size := range []float64{0, 1, 1 << 30} {
+			payload["peak_rss_bytes"] = size
+			if err := validates(t, c.document); err != nil {
+				t.Errorf("a %s peak_rss_bytes of %v was rejected: %v", c.name, size, err)
+			}
+		}
+		payload["peak_rss_bytes"] = -1.0
+		if err := validates(t, c.document); err == nil {
+			t.Errorf("a %s peak_rss_bytes of -1 was accepted; that is not a quantity of memory", c.name)
+		}
+		payload["peak_rss_bytes"] = 268435456.0
+	}
+
+	mutantPayload, _ := mutant["mutant"].(map[string]any)
+	mutantPayload["memory_exceeded"] = true
+	if err := validates(t, mutant); err != nil {
+		t.Errorf("a mutant-exec record with memory_exceeded was rejected: %v", err)
+	}
+
+	execPayload, _ := exec["exec"].(map[string]any)
+	execPayload["memory_exceeded"] = true
+	if err := validates(t, exec); err == nil {
+		t.Error("an exec record with memory_exceeded was accepted; only the attempt above it says that")
+	}
+}

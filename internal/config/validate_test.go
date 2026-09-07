@@ -31,6 +31,7 @@ func TestOverlayValidateNamesFlags(t *testing.T) {
 		{"profile", Overlay{Profile: Explicit(mutation.Tier(9))}, CodeUnknownProfile, "--profile"},
 		{"cache mode", Overlay{CacheMode: Explicit(CacheMode("maybe"))}, CodeUnknownCacheMode, "--cache"},
 		{"timeout", Overlay{Timeout: Explicit(-time.Second)}, CodeNonPositiveTimeout, "--timeout"},
+		{"memory", Overlay{Memory: Explicit(int64(-1))}, CodeNonPositiveMemory, "--memory"},
 		{"include", Overlay{Include: Explicit([]string{"bad/"})}, CodeInvalidGlob, "--include"},
 		{"exclude", Overlay{Exclude: Explicit([]string{""})}, CodeInvalidGlob, "--exclude"},
 		{"operator", Overlay{Operators: Explicit([]string{"nonsense"})}, CodeUnknownOperator, "--operator"},
@@ -75,6 +76,7 @@ func TestOverlayValidateAcceptsTheEdges(t *testing.T) {
 		Expect:          Explicit([]Expectation{}),
 		TestCommand:     Explicit([]string{"go", ""}),
 		Timeout:         Explicit(time.Nanosecond),
+		Memory:          Explicit(int64(1)),
 		BaselineRuns:    Explicit(MaxBaselineRuns),
 		Jobs:            Explicit(MaxJobs),
 		CacheMode:       Explicit(CacheOff),
@@ -198,6 +200,7 @@ func TestConfigValidateChecksValues(t *testing.T) {
 		}, CodeEmptyExpectationReason, "mutation.expect[0].reason"},
 		{"command", func(c *Config) { c.Test.Command = nil }, CodeEmptyTestCommand, "test.command"},
 		{"timeout", func(c *Config) { c.Test.Timeout = -1 }, CodeNonPositiveTimeout, "test.timeout"},
+		{"memory", func(c *Config) { c.Test.Memory = -1 }, CodeNonPositiveMemory, "test.memory"},
 		{"baseline runs", func(c *Config) { c.Test.BaselineRuns = 42 }, CodeBaselineRunsOutOfRange, "test.baseline_runs"},
 		{"jobs", func(c *Config) { c.Execution.Jobs = 0 }, CodeJobsOutOfRange, "execution.jobs"},
 		{"cache mode", func(c *Config) { c.Cache.Mode = "" }, CodeUnknownCacheMode, "cache.mode"},
@@ -231,14 +234,15 @@ func TestConfigValidateChecksValues(t *testing.T) {
 	}
 }
 
-// The two settings whose zero value means "unset" must not be validated as if
+// The settings whose zero value means "unset" must not be validated as if
 // somebody had asked for a zero.
 func TestZeroMeansUnsetForDerivedSettings(t *testing.T) {
 	resolved := Defaults()
 	resolved.Test.Timeout = 0
+	resolved.Test.Memory = 0
 	resolved.Cache.Directory = ""
 	if err := resolved.Validate(); err != nil {
-		t.Errorf("a derived timeout or a default cache directory was rejected: %v", err)
+		t.Errorf("a derived budget or a default cache directory was rejected: %v", err)
 	}
 }
 

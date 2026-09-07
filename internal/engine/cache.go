@@ -10,6 +10,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -154,9 +155,15 @@ func (s *session) openCache(opts Options, catalogDigest string, out *RunOutcome)
 	return cache.Open(cache.Options{
 		Root:      cacheRoot(opts),
 		Directory: opts.Config.Cache.Directory,
-		// The bound this run will apply, which every lookup is judged against.
-		// It is deliberately not in the key; see [cache.Context].
+		// The bounds this run will apply, which every lookup is judged against.
+		// Neither is in the key; see [cache.Context].
 		Timeout: out.Timeout,
+		// The bound this run *enforces* rather than the one it reports. A
+		// platform that cannot sample a live tree records an explicit bound in
+		// the report and applies none, and an entry written there was measured
+		// unbounded whatever the configuration said — so passing the configured
+		// number would file measurements under a budget nothing held them to.
+		MemoryLimit: enforcedMemory(out.Memory),
 		Context: cache.Context{
 			ToolVersion: or(opts.ToolVersion, unknownValue),
 			ToolDigest:  digest,
@@ -174,6 +181,35 @@ func (s *session) openCache(opts Options, catalogDigest string, out *RunOutcome)
 			Env:               cache.CurrentEnv(),
 		},
 	})
+}
+
+// memoryExceeded reports whether the memory bound settled this mutant.
+//
+// It is read off the attempts rather than kept beside them, exactly as the peak
+// is: a mutant retried serially has two, and either of them reaching the bound
+// is what the entry has to record.
+func memoryExceeded(result execute.MutantResult) bool {
+	for _, attempt := range result.Attempts {
+		if attempt.MemoryExceeded {
+			return true
+		}
+	}
+	return false
+}
+
+// enforcedMemory is the bound the run actually holds its children to, which is
+// not always the bound it reports.
+//
+// A platform that cannot sample a live process tree records an explicit
+// `test.memory` — a user who wrote one should see it in the report rather than
+// wonder where it went — and enforces nothing. The cache is the one consumer
+// that must be told the difference: an entry says what budget the measurement
+// was made under, and a measurement nothing bounded was made under none.
+func enforcedMemory(limit int64) int64 {
+	if !runner.MemoryBoundSupported() {
+		return 0
+	}
+	return limit
 }
 
 // cacheRoot is the directory the outcome cache lives under.
@@ -273,6 +309,12 @@ func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st
 			KilledBy:   result.KilledBy,
 			Attempts:   len(result.Attempts),
 			OutputTail: result.OutputTail,
+			// Whether the memory bound is what settled it. The entry carries
+			// the bound itself — [cache.Cache.Put] stamps the run's — and this
+			// is the half only the measurement knows: a kill by the bound is
+			// evidence about that bound and any tighter one, and about no
+			// larger one. See [cache.Entry.UsableWithin].
+			MemoryExceeded: memoryExceeded(result),
 		})
 		if err != nil {
 			record.Result = trace.CacheResultFailed

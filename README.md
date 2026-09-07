@@ -279,6 +279,7 @@ go-mutants trace summary
 | `--keep-temp[=MODE]` | leave the run's snapshot and scratch directory on disk: `always` (the bare flag) or `on-failure`; `GO_MUTANTS_KEEP_TEMP` asks for the same |
 | `--no-diagnostics` | do not write the bundle a failed run leaves behind; `GO_MUTANTS_DIAGNOSTICS=0` asks for the same |
 | `--jobs N`, `--timeout D` | how many mutants at once, and how long each may take |
+| `--memory SIZE` | how much memory each may hold, e.g. `2GiB`; unset derives `max(1GiB, largest baseline peak x 4)` |
 | `--strict`, `--no-strict` | whether an unexpected survivor exits 1 |
 | `--json`, `--explain`, `--quiet` | the document, the detail underneath it, or less of it |
 | `-v`, `-vv` | more of it: `-v` adds phase durations, what killed each mutant and which suites cover a survivor; `-vv` adds one line per recorded event. Implies `--no-tui`, and refused with `--quiet` or `--json` |

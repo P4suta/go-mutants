@@ -131,6 +131,7 @@ type runOptions struct {
 	keepTemp  string
 	jobs      int
 	timeout   time.Duration
+	memory    string
 	verbose   int
 	strict    bool
 	noStrict  bool
@@ -297,6 +298,12 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 		"mutants to execute concurrently (default: execution.jobs, or min(CPUs, 8))")
 	flags.DurationVar(&o.timeout, "timeout", 0,
 		"per-mutant timeout; unset derives max(10s, slowest baseline x 5)")
+	// A string rather than a typed flag, because pflag has a duration type and
+	// no byte-size one. The value goes through config.ParseMemory, so `2GB` is
+	// refused with the same sentence here and in the file, and the diagnostic
+	// names the flag the user typed.
+	flags.StringVar(&o.memory, "memory", "",
+		"per-mutant memory bound, e.g. 2GiB; unset derives max(1GiB, largest baseline peak x 4)")
 	flags.BoolVar(&o.strict, "strict", false,
 		"exit 1 when any mutant survives unexpectedly (default: policy.strict)")
 	flags.BoolVar(&o.noStrict, "no-strict", false,
@@ -657,6 +664,18 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 			return config.Overlay{}, err
 		}
 		overlay.CacheMode = config.Explicit(mode)
+	}
+	// `--memory` is parsed here for the reason `--profile` and `--cache` are,
+	// with one more of its own: pflag has no byte-size type, so the flag is a
+	// string and something has to read it. That something is the very function
+	// the file goes through, so a bound written either way means the same
+	// number and a bad one is refused with the same sentence.
+	if flags.Changed("memory") {
+		size, err := config.ParseMemory(o.memory)
+		if err != nil {
+			return config.Overlay{}, err
+		}
+		overlay.Memory = config.Explicit(size)
 	}
 	// `--report` is the third of the same kind: the overlay carries a list of
 	// formats and the command line carries one comma-separated word. `none` is

@@ -58,6 +58,35 @@ const (
 	// TimeoutFactor multiplies the slowest baseline run.
 	TimeoutFactor = 5
 
+	// MinDerivedMemory is the floor under a derived per-mutant memory bound.
+	//
+	// It is what a suite that never measured above the noise gets, and a
+	// gibibyte is that number because of what the floor has to survive rather
+	// than what a small suite needs. Four times a peak of forty megabytes is a
+	// hundred and sixty, and a bound that tight would be tripped by any of the
+	// ordinary things a Go test binary does more of on somebody else's machine:
+	// a `-cover` build's counters, the race detector's shadow memory, a
+	// property test's corpus, a table that grew. None of those is a runaway,
+	// and every one of them would come back as a mutant killed for something
+	// its own suite did.
+	//
+	// A gibibyte is meanwhile nowhere near a machine. The incident this bound
+	// exists for reached eleven gigabytes in twelve seconds and was still
+	// climbing when the runner died; anything in that shape crosses a gibibyte
+	// in the first second and is stopped there.
+	MinDerivedMemory = 1 << 30
+
+	// MemoryFactor multiplies the largest peak the baseline runs reached.
+	//
+	// Four rather than the timeout's five, and the asymmetry is the difference
+	// between the two quantities. Wall-clock time is shared: a suite measured
+	// alone and then run against N mutants at once is genuinely slower, and the
+	// timeout's factor has to cover the machine as well as the mutant. Resident
+	// memory is not — a test binary run beside fifteen others allocates what it
+	// allocates — so the factor is covering variance in the program rather than
+	// contention for the machine, and a smaller one catches a runaway sooner.
+	MemoryFactor = 4
+
 	// scratchPrefix names the per-run scratch directory. It sits beside the
 	// snapshot rather than inside it, so that a test writing to the temporary
 	// directory neither shows up as workspace drift nor is deleted out from
@@ -318,6 +347,14 @@ type RunOutcome struct {
 	// from.
 	Timeout       time.Duration
 	TimeoutSource TimeoutSource
+	// PeakBaseline is the largest resident memory any baseline run was observed
+	// to reach, in bytes, and is zero where the platform could not measure one.
+	PeakBaseline int64
+	// Memory is the per-mutant memory bound in bytes, and MemorySource says
+	// where it came from. Both are the bound this run *applied*: a zero Memory
+	// beside [MemorySourceUnavailable] is a run in which nothing was bounded.
+	Memory       int64
+	MemorySource MemorySource
 
 	// Report is the published run report, or nil when the run stopped before
 	// there was anything to publish. It is the document on disk, so a caller
@@ -920,6 +957,11 @@ func (s *session) baseline(
 	argv := resolveProgram(command, toolchain)
 	out.ResolvedTestCommand = slices.Clone(argv)
 	durations := make([]time.Duration, 0, runs)
+	// The baseline runs unbounded, which is the one thing the memory bound
+	// cannot be applied to: it is the measurement the bound is derived from,
+	// and a measurement taken under the budget it produces would be a budget
+	// derived from itself.
+	var peak int64
 	for i := 1; i <= runs; i++ {
 		spec := runner.Spec{
 			Argv:    argv,
@@ -941,6 +983,10 @@ func (s *session) baseline(
 			return runErr
 		}
 		durations = append(durations, result.Duration)
+		// The largest of the runs rather than the mean, for the reason the
+		// timeout takes the slowest: a budget sized on an average is a budget
+		// half the observations already exceed.
+		peak = max(peak, result.PeakRSS)
 		s.emit(BaselineProgress{Run: i, Of: runs, Duration: result.Duration})
 	}
 	out.BaselineRuns = durations
@@ -962,7 +1008,55 @@ func (s *session) baseline(
 		Timeout:       timeout,
 		TimeoutSource: source,
 	}.clone())
+
+	// The memory bound is derived from the same runs and published beside the
+	// timeout, so that a reader sees one budget with two halves rather than two
+	// unrelated numbers. It is a stage of its own for the same reason the
+	// timeout is: it can decide there is no bound, and that decision is part of
+	// the account of the run.
+	endMemory := s.stage("memory", "")
+	out.PeakBaseline = peak
+	out.Memory, out.MemorySource = enforceableMemory(deriveMemory(cfg.Test.Memory, peak))
+	endMemory(nil)
+	s.emit(MemoryDerived{Limit: out.Memory, Source: out.MemorySource, Peak: peak})
+	// Said once, and said for two different situations: a run with no bound at
+	// all, and a run whose bound this machine records but cannot hold anybody
+	// to. Both are things a user reading a green CI job should know, because a
+	// runaway mutant is stopped on a bounded run and takes the machine on an
+	// unbounded one.
+	if out.MemorySource == MemorySourceUnavailable || !runner.MemoryBoundSupported() {
+		s.warn(CodeMemoryBoundUnavailable, unenforcedMemoryReason(out.Memory, out.MemorySource, peak))
+	}
 	return nil
+}
+
+// unenforcedMemoryReason says which of three situations left a run's mutants
+// unbounded, in the user's terms rather than the mechanism's.
+//
+// An explicit bound is the one that is not simply absent: the user wrote a
+// number, the report records it, and this machine will not hold anybody to it.
+// Saying "no mutant is bounded" there would contradict the report they are
+// about to read. The other two are told apart by the peak, because that is what
+// distinguishes them: a platform that cannot sample a live tree can still
+// account for a finished one, so a run there has a peak and no bound, and a run
+// with no peak at all had nothing to measure in the first place.
+func unenforcedMemoryReason(limit int64, source MemorySource, peak int64) string {
+	if source == MemorySourceExplicit && limit > 0 {
+		// The number is deliberately not repeated here. It is in the report the
+		// user is about to read and on the `-v` line beside the timeout, and
+		// this package cannot render bytes for a person without importing the
+		// renderer that imports it.
+		return "the memory bound in test.memory is recorded but not enforced: this platform can report " +
+			"what a process cost once it is gone but cannot watch one while it runs, so a runaway mutant " +
+			"is stopped by its timeout alone"
+	}
+	if peak > 0 {
+		return "no mutant is bounded in memory: this platform can report what a process cost but cannot " +
+			"watch one while it runs, so a runaway mutant is stopped by its timeout alone; " +
+			"set test.memory to have the bound recorded, though it will not be enforced here"
+	}
+	return "no mutant is bounded in memory: nothing measured what the baseline runs cost, so there is " +
+		"nothing to derive a bound from; set test.memory to bound them explicitly"
 }
 
 // mutate is everything between a proven baseline and a report: discovery, the
@@ -1073,7 +1167,7 @@ func (s *session) mutate(
 	}
 
 	endSelection := s.stage("selection", "")
-	runs, err := s.selection(opts, catalog, validated.AcceptedIDs, out.Timeout, st)
+	runs, err := s.selection(opts, catalog, validated.AcceptedIDs, out.Timeout, out.Memory, st)
 	endSelection(err)
 	if err != nil {
 		return err
@@ -1086,7 +1180,12 @@ func (s *session) mutate(
 		ScratchDir:   filepath.Join(scratch, workerDirName),
 		Jobs:         cfg.Execution.Jobs,
 		Timeout:      BaselineCap,
-		Trace:        s.trace,
+		// The coverage profiling runs start the same binaries the mutants are
+		// measured against, so they are measured under the same budget; the
+		// toolchain commands this bounds nothing for are documented on the
+		// field itself.
+		MemoryLimit: out.Memory,
+		Trace:       s.trace,
 	}
 	// One reading of the test command decides both of the run's optimisations,
 	// because both rest on the same fact: go-mutants can state in full what a
@@ -1143,7 +1242,7 @@ func (s *session) mutate(
 	endLookup(nil)
 
 	endExecute := s.stage("execute", countNoun(len(runs), "mutant"))
-	results, err := execute.Schedule(ctx, execOpts, runs, bins, s.hooks(st))
+	results, err := execute.Schedule(ctx, execOpts, runs, bins, s.hooks(st, out.Memory))
 	endExecute(err)
 	// As with validation: whatever was measured is kept, because an interrupted
 	// run's report is exactly the record of what it got to.
@@ -1220,6 +1319,10 @@ func executionsOf(result execute.MutantResult) []report.Execution {
 			KilledBy:   attempt.KilledBy,
 			DurationMS: attempt.Duration.Milliseconds(),
 			Binaries:   slices.Clone(attempt.Binaries),
+			// What the pass cost the machine, and — for the one outcome that
+			// needs it — why a kill names a binary that reported no failure.
+			MemoryExceeded: attempt.MemoryExceeded,
+			PeakRSSBytes:   attempt.PeakRSS,
 		})
 	}
 	return executions
@@ -1397,6 +1500,7 @@ func (s *session) selection(
 	catalog *mutation.Catalog,
 	acceptedIDs []string,
 	timeout time.Duration,
+	memoryLimit int64,
 	st *state,
 ) ([]execute.MutantRun, error) {
 	accepted := make(map[string]bool, len(acceptedIDs))
@@ -1426,7 +1530,7 @@ func (s *session) selection(
 
 	runs := make([]execute.MutantRun, 0, len(ids))
 	for _, id := range ids {
-		run := execute.MutantRun{ID: id, Timeout: timeout, Package: st.packages[id]}
+		run := execute.MutantRun{ID: id, Timeout: timeout, MemoryLimit: memoryLimit, Package: st.packages[id]}
 		// The short form the console and the report already print, carried so
 		// that the account of an attempt reads in the same identities. It is
 		// looked up rather than derived: how much of an id is short enough to
@@ -1532,7 +1636,7 @@ func foldLines(diagnostic string) string {
 // but send: a channel send is safe from any goroutine, and the warning slice
 // [session.warn] appends to is not. The blocking send is what applies
 // back-pressure to the workers, which is the documented contract on both sides.
-func (s *session) hooks(st *state) execute.Hooks {
+func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 	return execute.Hooks{
 		Started: func(id string, worker int) {
 			shown := st.display[id]
@@ -1552,6 +1656,16 @@ func (s *session) hooks(st *state) execute.Hooks {
 			shown.KilledBy = result.KilledBy
 			shown.Attempts = len(result.Attempts)
 			shown.CoveringTestPackages = st.coverage.covering[result.ID]
+			// The worst moment across every pass, and whether any of them was
+			// stopped for it. Both are read off the attempts rather than kept
+			// beside them, so a mutant retried serially reports the peak of the
+			// two passes and not of whichever one happened to be last.
+			shown.MemoryLimit = memoryLimit
+			shown.PeakRSS, shown.MemoryExceeded = 0, false
+			for _, attempt := range result.Attempts {
+				shown.PeakRSS = max(shown.PeakRSS, attempt.PeakRSS)
+				shown.MemoryExceeded = shown.MemoryExceeded || attempt.MemoryExceeded
+			}
 			s.emit(MutantFinished{Result: shown.clone()})
 		},
 	}
@@ -1638,6 +1752,8 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		Baseline:         out.BaselineRuns,
 		Timeout:          out.Timeout,
 		TimeoutSource:    reportTimeoutSource(out.TimeoutSource),
+		Memory:           out.Memory,
+		MemorySource:     reportMemorySource(out.MemorySource),
 		CoverageMode:     reportCoverageMode(st.coverage.Mode()),
 		CoverageBinaries: st.coverage.binaries,
 		// The same event the GOM7602 warning above reports, in the two forms a
@@ -2031,6 +2147,21 @@ func reportWarnings(warnings []Warning) []report.Warning {
 		out = append(out, report.Warning{Code: warning.Code, Message: warning.Message})
 	}
 	return out
+}
+
+// reportMemorySource maps this package's spelling onto the document's, for the
+// reason [reportTimeoutSource] exists: an event stream is not a published
+// format, and one enum serving both would make a rename of a console label a
+// breaking change to somebody's jq expression.
+func reportMemorySource(source MemorySource) report.MemorySource {
+	switch source {
+	case MemorySourceExplicit:
+		return report.MemoryExplicit
+	case MemorySourceDerived:
+		return report.MemoryDerived
+	default:
+		return report.MemoryUnavailable
+	}
 }
 
 // reportTimeoutSource maps this package's spelling onto the document's. The two
@@ -2461,6 +2592,60 @@ func deriveTimeout(explicit, slowest time.Duration) (time.Duration, TimeoutSourc
 		return explicit, TimeoutExplicit, nil
 	}
 	return max(MinDerivedTimeout, TimeoutFactor*slowest), TimeoutDerived, nil
+}
+
+// deriveMemory resolves the per-mutant memory bound from what the baseline runs
+// were measured to cost.
+//
+// It is [deriveTimeout] with two differences, and both are about the same
+// thing: a memory measurement can be absent in a way a duration never is.
+//
+// The first is that a peak of zero — the platform could not say — is answered
+// with no bound rather than with the floor. A floor is a *derivation*, and there
+// is nothing here to derive from: applying one anyway would be go-mutants
+// inventing a budget and then enforcing it, on the one platform where nothing
+// measured what the suite actually needs.
+//
+// The second is that there is no refusal. deriveTimeout rejects an explicit
+// timeout at or below the slowest baseline run, because such a budget is one the
+// unmutated tests have already been seen to exhaust and every mutant would time
+// out. The same argument does not carry: an explicit memory bound below the
+// baseline peak is a bound the user chose knowing their own machine — a CI
+// container with a hard cgroup limit is exactly the case — and refusing it would
+// leave them with no way to say the true thing about where the run has to fit.
+// A bound that is genuinely too small announces itself immediately, as every
+// mutant killed for its memory, which is louder than a run that would not start.
+func deriveMemory(explicit, peak int64) (int64, MemorySource) {
+	if explicit > 0 {
+		return explicit, MemorySourceExplicit
+	}
+	if peak <= 0 {
+		return 0, MemorySourceUnavailable
+	}
+	return max(int64(MinDerivedMemory), MemoryFactor*peak), MemorySourceDerived
+}
+
+// enforceableMemory drops a bound this platform cannot keep.
+//
+// It is separate from [deriveMemory] so that the arithmetic stays testable
+// everywhere and only the one line that depends on the machine is guarded by
+// it. A *derived* bound that cannot be enforced is reported as absent rather
+// than as derived, because the two say different things to the user reading the
+// warning: one is "your suite is small", and the other is "nothing here will
+// stop a runaway mutant", and a number go-mutants worked out for itself and
+// then did not apply is a promise the run never made.
+//
+// An *explicit* bound survives, and the asymmetry is the point. The user wrote
+// that number down; it belongs in the report of what they asked for, whether or
+// not this machine can hold anybody to it, and the warning beside it says which.
+// What must not follow it is the cache — see the engine's enforcedMemory — which
+// records the budget a measurement was actually made under and not the one that
+// was written.
+func enforceableMemory(limit int64, source MemorySource) (int64, MemorySource) {
+	if limit > 0 && source == MemorySourceDerived && !runner.MemoryBoundSupported() {
+		return 0, MemorySourceUnavailable
+	}
+	return limit, source
 }
 
 // RunIDPattern is the shape of a run identifier, as a regular expression

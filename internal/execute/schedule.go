@@ -320,6 +320,11 @@ func AttemptRecord(m MutantRun, attempt Attempt, number int) trace.MutantRecord 
 		Outcome:    attempt.Outcome.String(),
 		KilledBy:   attempt.KilledBy,
 		DurationMS: attempt.Duration.Milliseconds(),
+		// What the attempt cost the machine, and — when a bound is what ended
+		// it — the fact that says why an outcome of `killed` names no failing
+		// assertion.
+		MemoryExceeded: attempt.MemoryExceeded,
+		PeakRSSBytes:   attempt.PeakRSS,
 		// The deciding binary's tail. A sink writing to disk keeps it, and the
 		// bounded ring drops it, so the recording of a long run stays bounded
 		// while the one on disk stays readable.

@@ -762,6 +762,19 @@ func TestSchemaRejects(t *testing.T) {
 			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["duration_ms"] = -1.0 },
 		},
 		{
+			// A quantity of memory, so a negative one is not a small budget: it
+			// is a number nothing could have measured, and every comparison a
+			// consumer makes against it comes out the wrong way round.
+			name:    "an execution that reached a negative peak",
+			pointer: "/mutants/1/executions/0/peak_rss_bytes",
+			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["peak_rss_bytes"] = -1.0 },
+		},
+		{
+			name:    "an execution whose memory_exceeded is not a boolean",
+			pointer: "/mutants/1/executions/0/memory_exceeded",
+			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["memory_exceeded"] = "yes" },
+		},
+		{
 			// `additionalProperties: false` inside the new rows too: a typo'd
 			// key is a bug, and the moment it is cheap to catch is before the
 			// file is written.

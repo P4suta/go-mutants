@@ -91,6 +91,11 @@ func validateOverlay(o Overlay, report reporter) error {
 			"a timeout of %s cannot be waited for: omit the key to derive max(10s, slowest baseline × 5)",
 			timeout))
 	}
+	if memory, ok := o.Memory.Get(); ok && memory <= 0 {
+		problems = append(problems, report.errorf(CodeNonPositiveMemory, "test.memory",
+			"a memory bound of %s leaves no room for a test binary: omit the key to derive "+
+				"max(1GiB, largest baseline peak × 4)", formatSize(memory)))
+	}
 	if runs, ok := o.BaselineRuns.Get(); ok && (runs < MinBaselineRuns || runs > MaxBaselineRuns) {
 		problems = append(problems, report.errorf(CodeBaselineRunsOutOfRange, "test.baseline_runs",
 			"%d baseline runs is outside %d..%d", runs, MinBaselineRuns, MaxBaselineRuns))
@@ -394,6 +399,35 @@ func ParseReportFormats(value string) ([]ReportFormat, error) {
 		return nil, err
 	}
 	return formats, nil
+}
+
+// ParseMemory resolves the value of `--memory`.
+//
+// It is the flag's door into the rule the file goes through, so that `2GB` is
+// refused in both places with the same sentence and a bound written either way
+// means exactly the same number. It exists — unlike [ParseTimeout], which the
+// command line does not need — because pflag has a duration type and no
+// byte-size one, so `--memory` is a string the command line has to resolve
+// itself before it can build an overlay.
+func ParseMemory(value string) (int64, error) {
+	size, err := parseSize(value)
+	if err != nil {
+		return 0, &Error{
+			Code:    CodeInvalidSize,
+			Key:     flagNames["test.memory"],
+			Message: err.Error(),
+		}
+	}
+	if size <= 0 {
+		return 0, &Error{
+			Code: CodeNonPositiveMemory,
+			Key:  flagNames["test.memory"],
+			Message: fmt.Sprintf(
+				"a memory bound of %s leaves no room for a test binary: omit the flag to derive max(1GiB, largest baseline peak × 4)",
+				formatSize(size)),
+		}
+	}
+	return size, nil
 }
 
 // ParseTimeout resolves the value of `--timeout`.

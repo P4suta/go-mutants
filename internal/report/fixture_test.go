@@ -152,9 +152,13 @@ var fixtureCandidates = []candidate{
 		outcome: mutation.OutcomeSurvived, attempts: 1, duration: 95 * time.Millisecond,
 		// A survivor is measured against every binary, in launch order, because
 		// nothing stopped the pass early.
+		// The peak is on an ordinary row, because it is written for every
+		// execution and not only for the ones a bound stopped: the question it
+		// answers — which mutants cost the machine most — is asked of a run in
+		// which nothing went wrong.
 		executions: []report.Execution{{
 			Attempt: 1, Worker: 0, Outcome: report.OutcomeSurvived, DurationMS: 95,
-			Binaries: []string{alphaPackage, betaPackage},
+			Binaries: []string{alphaPackage, betaPackage}, PeakRSSBytes: 41_943_040,
 		}},
 	},
 	{
@@ -400,6 +404,8 @@ func fixtureOptions(t *testing.T) report.Options {
 		Baseline:        []time.Duration{1200 * time.Millisecond, 1500 * time.Millisecond, 1350 * time.Millisecond},
 		Timeout:         10 * time.Second,
 		TimeoutSource:   report.TimeoutDerived,
+		Memory:          1 << 30,
+		MemorySource:    report.MemoryDerived,
 		// Two of the eight executable mutants were adopted from the cache; the
 		// other six were looked up, not found, and measured. Three of those six
 		// outcomes were worth storing — two survivors and the confirmed timeout
@@ -546,6 +552,8 @@ func coverageOptions(t *testing.T) report.Options {
 		Baseline:         []time.Duration{900 * time.Millisecond},
 		Timeout:          10 * time.Second,
 		TimeoutSource:    report.TimeoutDerived,
+		Memory:           1 << 30,
+		MemorySource:     report.MemoryDerived,
 		CoverageMode:     report.CoveragePackage,
 		CoverageBinaries: coverageBinaries,
 	}
