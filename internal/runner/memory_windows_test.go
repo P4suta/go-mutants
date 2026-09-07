@@ -43,8 +43,17 @@ func TestTheJobObjectCarriesTheMemoryLimitAndKeepsKillOnClose(t *testing.T) {
 		t.Fatalf("querying the job object: %v", err)
 	}
 
-	if got := int64(info.JobMemoryLimit); got != limit {
-		t.Errorf("JobMemoryLimit = %d, want %d", got, limit)
+	// The job carries the *kernel's* line, which sits above the sampler's; see
+	// [kernelJobMemoryLimit] for why they may not be the same number.
+	want, set := kernelJobMemoryLimit(limit)
+	if !set {
+		t.Fatalf("kernelJobMemoryLimit(%d) declined to set a line at all", limit)
+	}
+	if got := info.JobMemoryLimit; got != want {
+		t.Errorf("JobMemoryLimit = %d, want %d, the line above the sampler's %d", got, want, limit)
+	}
+	if uint64(want) <= uint64(limit) {
+		t.Errorf("the kernel's line %d is not above the sampler's %d", want, limit)
 	}
 	flags := info.BasicLimitInformation.LimitFlags
 	if flags&windows.JOB_OBJECT_LIMIT_JOB_MEMORY == 0 {
@@ -109,6 +118,8 @@ func TestTheKernelsMemoryLineSitsAboveTheSamplers(t *testing.T) {
 	}{
 		{"an ordinary bound", 1 << 30, uintptr(1<<30 + 1<<28), true},
 		{"a small bound", 4096, 5120, true},
+		{"a bound so small the quarter rounds away", 1, 2, true},
+		{"and one just above it", 3, 4, true},
 		{"no bound at all", 0, 0, false},
 		{"a negative bound", -1, 0, false},
 	} {

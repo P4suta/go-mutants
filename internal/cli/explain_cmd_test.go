@@ -99,10 +99,10 @@ func explainReport() *report.Report {
 				Executions: []report.Execution{
 					{Attempt: 1, Worker: 3, Outcome: report.OutcomeTimedOut, DurationMS: 20000,
 						KilledBy: "example.com/killable", Binaries: []string{"example.com/killable"},
-						PeakRSSBytes: 314572800},
+						PeakMemoryBytes: 314572800},
 					{Attempt: 2, Worker: 0, Outcome: report.OutcomeKilled, DurationMS: 520,
 						KilledBy: "example.com/killable", Binaries: []string{"example.com/killable"},
-						PeakRSSBytes: 419430400},
+						PeakMemoryBytes: 419430400},
 				},
 				OutputTail:           &tail,
 				CoveringTestPackages: []string{"example.com/killable"},
@@ -116,7 +116,7 @@ func explainReport() *report.Report {
 				Outcome: report.OutcomeSurvived, DurationMS: 310, Attempts: 1,
 				Executions: []report.Execution{
 					{Attempt: 1, Worker: 1, Outcome: report.OutcomeSurvived, DurationMS: 310,
-						Binaries: []string{"example.com/killable"}, PeakRSSBytes: 209715200},
+						Binaries: []string{"example.com/killable"}, PeakMemoryBytes: 209715200},
 				},
 				CoveringTestPackages: []string{"example.com/killable"},
 			},
@@ -1181,10 +1181,14 @@ func TestExplainSaysWhichBudgetSettledAMemoryKill(t *testing.T) {
 	doc := explainReport()
 	// The second pass, which is the one that settled it, is turned into a
 	// memory kill: the outcome does not change, and everything about how it
-	// reads does.
+	// reads does. The mutant's own fields carry the same facts — a document
+	// records them at both levels so that a cached mutant, which has no rows at
+	// all, reads the same way; see [TestExplainSaysWhichBudgetSettledACachedMemoryKill].
 	rows := doc.Mutants[0].Executions
 	rows[1].MemoryExceeded = true
-	rows[1].PeakRSSBytes = 3435973836
+	rows[1].PeakMemoryBytes = 3435973836
+	doc.Mutants[0].MemoryExceeded = true
+	doc.Mutants[0].PeakMemoryBytes = 3435973836
 	inExplainWorkspace(t, doc)
 
 	out := explained(t, killedID[:8])
@@ -1210,5 +1214,43 @@ func TestExplainShowsWhatEachPassCostWithoutABoundInSight(t *testing.T) {
 	}
 	if strings.Contains(out, "memory:") {
 		t.Errorf("a pass no bound stopped mentions the bound:\n%s", out)
+	}
+}
+
+// TestExplainSaysWhichBudgetSettledACachedMemoryKill is the case the mutant's
+// own memory fields exist for.
+//
+// A cached mutant carries an attempt count and no execution rows, because this
+// run started no process for it. An account that read the rows would therefore
+// say "killed by <pkg>" and stop — the same sentence a passing suite gets, on a
+// run where nothing can be looked at — which is precisely the state `explain`
+// exists to resolve. The facts are on the mutant as well as on the rows, and
+// this is the reader that needs them there.
+func TestExplainSaysWhichBudgetSettledACachedMemoryKill(t *testing.T) {
+	doc := explainReport()
+	var cached *report.Mutant
+	for i := range doc.Mutants {
+		if doc.Mutants[i].Cached {
+			cached = &doc.Mutants[i]
+			break
+		}
+	}
+	if cached == nil {
+		t.Fatal("the explain fixture has no cached mutant")
+	}
+	if len(cached.Executions) != 0 {
+		t.Fatalf("the cached mutant carries %d rows, so this proves nothing", len(cached.Executions))
+	}
+	cached.Outcome = report.OutcomeKilled
+	cached.MemoryExceeded = true
+	cached.PeakMemoryBytes = 3435973836
+	inExplainWorkspace(t, doc)
+
+	out := explained(t, cached.ID[:8])
+	if !strings.Contains(out, "(memory: 3.2 GiB > 1.0 GiB)") {
+		t.Errorf("the account of a cached memory kill does not say which budget settled it:\n%s", out)
+	}
+	if !strings.Contains(out, "reused from the outcome cache") {
+		t.Errorf("the account does not say the outcome was adopted:\n%s", out)
 	}
 }

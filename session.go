@@ -479,7 +479,7 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 						TotalBytes: verified.TotalBytes,
 					}
 				}
-				verifiedPeak = verified.PeakRSS
+				verifiedPeak = verified.PeakMemory
 				if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "verification"); driftErr != nil {
 					return driftErr
 				}
@@ -1517,7 +1517,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		TotalBytes: attempt.OutputBytes,
 		// Carried up unchanged from internal/execute, which took the maximum
 		// over the binaries the call started.
-		PeakRSS:        attempt.PeakRSS,
+		PeakMemory:     attempt.PeakMemory,
 		MemoryExceeded: attempt.MemoryExceeded,
 		Artifacts:      artifacts,
 		Binaries:       attempt.Binaries,
@@ -1713,7 +1713,7 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 		TotalBytes: attempt.OutputBytes,
 		// Carried up unchanged from internal/execute, which took the maximum
 		// over the binaries the call started.
-		PeakRSS:        attempt.PeakRSS,
+		PeakMemory:     attempt.PeakMemory,
 		MemoryExceeded: attempt.MemoryExceeded,
 		Binaries:       attempt.Binaries,
 		ExecSeqs:       attempt.ExecSeqs,
@@ -1924,7 +1924,7 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		TotalBytes: attempt.OutputBytes,
 		// Carried up unchanged from internal/execute, which took the maximum
 		// over the binaries the call started.
-		PeakRSS:        attempt.PeakRSS,
+		PeakMemory:     attempt.PeakMemory,
 		MemoryExceeded: attempt.MemoryExceeded,
 		Binaries:       attempt.Binaries,
 		TraceSeq:       traceSeq,

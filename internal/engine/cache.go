@@ -197,6 +197,19 @@ func memoryExceeded(result execute.MutantResult) bool {
 	return false
 }
 
+// peakMemory is the highest any attempt at this mutant was observed to hold.
+//
+// It is the maximum over the attempts for the reason [memoryExceeded] folds
+// them: a mutant retried serially has two, and what it cost is the worst moment
+// either of them put the machine through.
+func peakMemory(result execute.MutantResult) int64 {
+	var peak int64
+	for _, attempt := range result.Attempts {
+		peak = max(peak, attempt.PeakMemory)
+	}
+	return peak
+}
+
 // enforcedMemory is the bound the run actually holds its children to, which is
 // not always the bound it reports.
 //
@@ -246,6 +259,12 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 		OutputTail:           entry.OutputTail,
 		CoveringTestPackages: st.coverage.covering[id],
 		Cached:               true,
+		// The two facts an adopted outcome would otherwise lose. A cached
+		// mutant carries no execution rows — this run started no process for it
+		// — so without these the document says a bound settled it nowhere, and
+		// `explain` on a warm run reports a kill it cannot explain.
+		MemoryExceeded: entry.MemoryExceeded,
+		PeakMemory:     entry.PeakMemory,
 	}
 	st.cache.hits++
 
@@ -260,6 +279,13 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 	shown.KilledBy = entry.KilledBy
 	shown.Attempts = entry.Attempts
 	shown.CoveringTestPackages = st.coverage.covering[id]
+	// Second-hand as well, and the bound with them: a renderer showing the peak
+	// against this run's bound would be comparing one run's measurement with
+	// another run's budget. The entry's own bound is the one it was measured
+	// under.
+	shown.MemoryExceeded = entry.MemoryExceeded
+	shown.PeakMemory = entry.PeakMemory
+	shown.MemoryLimit = entry.MemoryBytes
 	s.emit(CacheHit{ID: id, DisplayID: shown.DisplayID, Outcome: entry.Outcome})
 	s.emit(MutantFinished{Result: shown.clone()})
 }
@@ -309,12 +335,14 @@ func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st
 			KilledBy:   result.KilledBy,
 			Attempts:   len(result.Attempts),
 			OutputTail: result.OutputTail,
-			// Whether the memory bound is what settled it. The entry carries
-			// the bound itself — [cache.Cache.Put] stamps the run's — and this
-			// is the half only the measurement knows: a kill by the bound is
-			// evidence about that bound and any tighter one, and about no
-			// larger one. See [cache.Entry.UsableWithin].
+			// Whether the memory bound is what settled it, and what it reached.
+			// The entry carries the bound itself — [cache.Cache.Put] stamps the
+			// run's — and these are the halves only the measurement knows: a
+			// kill by the bound is evidence about that bound and any tighter
+			// one and about no larger one (see [cache.Entry.UsableWithin]), and
+			// the peak is what makes a cached kill legible a week later.
 			MemoryExceeded: memoryExceeded(result),
+			PeakMemory:     peakMemory(result),
 		})
 		if err != nil {
 			record.Result = trace.CacheResultFailed

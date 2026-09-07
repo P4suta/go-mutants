@@ -768,7 +768,7 @@ the outcome cache.
   Linux-only, and neither reaches the child's own children.
 
   A mutant the bound stops is **`killed`**, with `memory_exceeded` and
-  `peak_rss_bytes` beside the outcome on its execution row, in its `mutant-exec`
+  `peak_memory_bytes` beside the outcome on its execution row, in its `mutant-exec`
   record and in the console's `-v` line. It is not retried the way a timeout is:
   a timeout may be the machine being busy, and a bound four times what the whole
   unmutated suite needed is not. The baseline itself runs unbounded, because it

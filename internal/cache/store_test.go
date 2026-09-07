@@ -669,3 +669,57 @@ func TestTheMemoryBoundIsRecordedOnTheEntryAndNotInTheKey(t *testing.T) {
 		t.Errorf("the entry records %d, want the %d it was measured under", got.MemoryBytes, small)
 	}
 }
+
+// TestAStoredMemoryKillKeepsWhatItCost is what makes a cached memory kill
+// legible a week later.
+//
+// Without the peak the entry says a bound settled the mutant and not what it
+// reached, so `explain` on a cached run can say "killed by memory" and nothing
+// a person could act on — no number to compare against the bound, no way to
+// tell a mutant that wanted a gigabyte from one that wanted a hundred. The
+// duration is stored for exactly the same reason and nobody would think of
+// leaving it out.
+func TestAStoredMemoryKillKeepsWhatItCost(t *testing.T) {
+	t.Parallel()
+
+	const bound = 256 << 20
+	root := t.TempDir()
+	writer := openBounded(t, root, baseContext(), bound)
+
+	entry := killedEntry()
+	entry.MemoryExceeded = true
+	entry.PeakMemory = 300 << 20
+	if err := writer.Put(mutantIDs[0], entry); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	reader := openBounded(t, root, baseContext(), bound)
+	got, found, err := reader.Lookup(mutantIDs[0])
+	if err != nil || !found {
+		t.Fatalf("Lookup = %v, %t, %v", got, found, err)
+	}
+	if !got.MemoryExceeded {
+		t.Error("the adopted entry does not say the bound settled it")
+	}
+	if got.PeakMemory != entry.PeakMemory {
+		t.Errorf("PeakMemory = %d, want the %d the measuring run recorded", got.PeakMemory, entry.PeakMemory)
+	}
+	if got.MemoryBytes != bound {
+		t.Errorf("MemoryBytes = %d, want the %d it was measured under", got.MemoryBytes, bound)
+	}
+}
+
+// TestAnEntryCannotClaimAPeakItCouldNotHaveReached refuses the two shapes a
+// hand-edited or half-written entry can take.
+func TestAnEntryCannotClaimAPeakItCouldNotHaveReached(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writer := openBounded(t, root, baseContext(), 256<<20)
+
+	negative := killedEntry()
+	negative.PeakMemory = -1
+	if err := writer.Put(mutantIDs[0], negative); err == nil {
+		t.Error("an entry claiming a negative peak was stored")
+	}
+}

@@ -206,11 +206,11 @@ type Attempt struct {
 	// empty.
 	OutputBytes int64
 	Truncated   bool
-	// PeakRSS is the highest resident memory any binary of this attempt was
+	// PeakMemory is the highest memory any binary of this attempt was
 	// observed to hold, in bytes, and MemoryExceeded reports that one of them
 	// passed [MutantRun.MemoryLimit] and had its tree killed for it.
 	//
-	// PeakRSS is the maximum over the binaries the attempt started rather than
+	// PeakMemory is the maximum over the binaries the attempt started rather than
 	// the deciding binary's alone — unlike Output, which is one binary's — and
 	// that is what the number is for: an attempt's cost is the worst moment it
 	// put the machine through, and a caller comparing it against a budget is
@@ -218,7 +218,7 @@ type Attempt struct {
 	//
 	// MemoryExceeded never accompanies [mutation.OutcomeTimedOut]: the two are
 	// different kills, and internal/runner reports exactly one of them.
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 	// Err carries a [Code] from this package, with the underlying cause
 	// reachable through it. It is set whenever Outcome is
@@ -304,7 +304,7 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env,
 			m.Timeout, m.MemoryLimit, m.Args, logPath, m.OutputLimit)
 		attempt.Duration += result.Duration
-		attempt.PeakRSS = max(attempt.PeakRSS, result.PeakRSS)
+		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)

@@ -158,7 +158,7 @@ var fixtureCandidates = []candidate{
 		// which nothing went wrong.
 		executions: []report.Execution{{
 			Attempt: 1, Worker: 0, Outcome: report.OutcomeSurvived, DurationMS: 95,
-			Binaries: []string{alphaPackage, betaPackage}, PeakRSSBytes: 41_943_040,
+			Binaries: []string{alphaPackage, betaPackage}, PeakMemoryBytes: 41_943_040,
 		}},
 	},
 	{

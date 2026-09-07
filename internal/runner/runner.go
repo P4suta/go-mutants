@@ -74,7 +74,7 @@ type Spec struct {
 	//
 	// A bound is not enforceable on every platform go-mutants runs on; see
 	// [MemoryBoundSupported]. Where it is not, this field is accepted and has no
-	// effect, and [Result.PeakRSS] is still reported.
+	// effect, and [Result.PeakMemory] is still reported.
 	MemoryLimit int64
 
 	// OutputLimit caps the retained combined output in bytes. Zero or negative
@@ -217,19 +217,26 @@ type Result struct {
 	// happened, because what a caller renders is the caller's to word.
 	MemoryExceeded bool
 
-	// PeakRSS is the highest resident memory the child's process tree was
-	// observed to hold, in bytes, and is zero when this platform could not say.
-	// It is reported for every process this package runs, bounded or not, and a
-	// tree killed by [Spec.MemoryLimit] still reports how far it got.
+	// PeakMemory is the highest memory the child's process tree was observed to
+	// hold, in bytes, and is zero when this platform could not say. It is
+	// reported for every process this package runs, bounded or not, and a tree
+	// killed by [Spec.MemoryLimit] still reports how far it got.
 	//
-	// What "the tree" covers is not the same on both platforms, and the
-	// difference is stated rather than smoothed over. On Windows it is exact:
-	// the job object accounts for every process in it, in committed bytes. On
-	// POSIX it is the larger of two approximations — the kernel's high-water
-	// mark for the child and every descendant it waited for, and, when the run
-	// was bounded and therefore sampled, the largest sum the sampler saw across
-	// the process group.
-	PeakRSS int64
+	// It is deliberately not called RSS, because it is not the same quantity on
+	// both platforms and no conversion between them would be anything but a
+	// number this package invented. On Unix it is the **resident set**: pages
+	// actually in memory, from the kernel's own high-water mark. On Windows it
+	// is the job's **committed charge**: what the processes in it have claimed,
+	// which for a Go program runs a little above its resident set and never
+	// below.
+	//
+	// What "the tree" covers differs too, and is stated rather than smoothed
+	// over. On Windows it is exact: the job object accounts for every process
+	// in it. On POSIX it is the larger of two approximations — the kernel's
+	// high-water mark for the child and every descendant it waited for, and,
+	// when the run was bounded and therefore sampled, the largest sum the
+	// sampler saw across the process group.
+	PeakMemory int64
 
 	// Duration is the wall-clock time [Run] took, from entry until the child
 	// had been reaped — supervision set-up and any time spent killing the tree
@@ -346,7 +353,7 @@ func record(spec Spec, result Result) Result {
 		// because the question a reader brings to a recording — which of these
 		// thousands of processes was the expensive one — is asked after the run
 		// and cannot be asked of a run that only measured what it bounded.
-		PeakRSSBytes: result.PeakRSS,
+		PeakMemoryBytes: result.PeakMemory,
 		// The retained capture, which is what the recorder sizes and digests
 		// and what a directory sink preserves: the tail this package kept,
 		// truncation notice included, and not the total the child produced.
@@ -567,7 +574,7 @@ func runProcess(ctx context.Context, spec Spec) Result {
 		ExitCode:       ExitCodeUnavailable,
 		TimedOut:       timedOut,
 		MemoryExceeded: memoryExceeded,
-		PeakRSS:        peakOf(sup, cmd.ProcessState, watchdog),
+		PeakMemory:     peakOf(sup, cmd.ProcessState, watchdog),
 		Duration:       time.Since(started),
 	})
 	if !killed {

@@ -459,7 +459,7 @@ type MutantResult struct {
 	// apart. For a survivor that *was* covered it is the actionable half of the
 	// finding: these are the suites that ran the line and did not notice.
 	CoveringTestPackages []string
-	// PeakRSS is the highest resident memory any binary this mutant was
+	// PeakMemory is the highest memory any binary this mutant was
 	// measured against was observed to hold, MemoryExceeded says the run's
 	// memory bound is what stopped it, and MemoryLimit is the bound it was
 	// measured under.
@@ -473,10 +473,10 @@ type MutantResult struct {
 	// executed — a cached outcome, an uncovered one — because a bound is a fact
 	// about a measurement and neither of those is one: a cached outcome was
 	// measured by another run under whatever budget that run had, and an
-	// uncovered mutant was settled by a coverage profile. PeakRSS is zero in
+	// uncovered mutant was settled by a coverage profile. PeakMemory is zero in
 	// those two cases too, and on a platform that could not measure.
 	// MemoryExceeded is only ever set alongside [mutation.OutcomeKilled].
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 	MemoryLimit    int64
 }

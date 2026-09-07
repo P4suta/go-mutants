@@ -13,14 +13,20 @@ import (
 
 // memorySamplingSupported: the job object accounts for the whole tree at any
 // moment, so a bound is both measured and enforced here — twice over, in fact.
-// See [jobSupervisor.residentMemory].
+// See [jobSupervisor.usedMemory].
 const memorySamplingSupported = true
+
+// memorySamplingAvailable has nothing to probe. A job object that cannot be
+// created is already fatal to the run that asked for it — see [newSupervisor],
+// which is fail-closed — so a machine that reaches a bounded run at all can
+// account for one.
+func memorySamplingAvailable() bool { return true }
 
 // jobMemoryInfo reads the job's extended limit information, which is where
 // Windows keeps both what the job is allowed and what it has used.
 //
 // One query answers every question this package asks about a job's memory: the
-// peak for [Result.PeakRSS], the same peak as the sample a bound is checked
+// peak for [Result.PeakMemory], the same peak as the sample a bound is checked
 // against, and the limit itself for the test that proves the kernel was told.
 func jobMemoryInfo(job windows.Handle) (windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION, error) {
 	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
@@ -98,7 +104,12 @@ func kernelJobMemoryLimit(limit int64) (uintptr, bool) {
 	if limit <= 0 || uint64(limit) >= ceiling {
 		return 0, false
 	}
-	headroom := uint64(limit) + uint64(limit)/kernelMemoryHeadroomDivisor
+	// max(_, 1) because integer division collapses for a small enough bound:
+	// a limit of one byte would otherwise put the kernel's line at one byte
+	// too, which is the exact equality this whole function exists to avoid.
+	// The bounds that reach here in practice are hundreds of megabytes, so the
+	// clamp costs nothing and closes the case the unit test found.
+	headroom := uint64(limit) + max(uint64(limit)/kernelMemoryHeadroomDivisor, 1)
 	if headroom > ceiling || headroom < uint64(limit) {
 		return uintptr(ceiling), true
 	}

@@ -1215,20 +1215,22 @@ func verdictSentence(m report.Mutant, memoryBound int64) string {
 // that field existed carries none, and the clause then names the peak alone
 // rather than inventing a number to compare it with.
 func memoryClause(m report.Mutant, memoryBound int64) string {
-	peak, exceeded := int64(0), false
-	for _, execution := range m.Executions {
-		if execution.MemoryExceeded {
-			exceeded = true
-			peak = max(peak, execution.PeakRSSBytes)
-		}
-	}
-	if !exceeded {
+	// The mutant's own fields rather than its rows, because a *cached* mutant
+	// has none: this run started no process for it, and reading the rows would
+	// make a warm run's account of a memory kill silently thinner than a cold
+	// run's. The document carries the same two facts at both levels for exactly
+	// this reader.
+	if !m.MemoryExceeded {
 		return ""
 	}
-	if memoryBound > 0 {
+	peak := m.PeakMemoryBytes
+	if peak > 0 && memoryBound > 0 {
 		return " (memory: " + console.FormatBytes(peak) + " > " + console.FormatBytes(memoryBound) + ")"
 	}
-	return " (memory: " + console.FormatBytes(peak) + ")"
+	if peak > 0 {
+		return " (memory: " + console.FormatBytes(peak) + ")"
+	}
+	return " (memory bound reached)"
 }
 
 // coverage is which test binaries reach the mutant, or the two other things
@@ -1292,10 +1294,10 @@ func (e *explainer) executions(m *report.Mutant, rec *recording) {
 // a run in which nothing went wrong, and a run that recorded only what it
 // bounded could not answer it.
 func peakClause(execution report.Execution) string {
-	if execution.PeakRSSBytes <= 0 {
+	if execution.PeakMemoryBytes <= 0 {
 		return ""
 	}
-	return "  peak " + console.FormatBytes(execution.PeakRSSBytes)
+	return "  peak " + console.FormatBytes(execution.PeakMemoryBytes)
 }
 
 // notExecuted says why a mutant has no rows under its attempt count. There are

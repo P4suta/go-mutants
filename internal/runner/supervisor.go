@@ -75,7 +75,7 @@ type supervisor interface {
 	// ordinary outcomes, not failures to report.
 	terminate(exited <-chan struct{}, grace time.Duration)
 
-	// residentMemory reports how much memory the whole tree is holding right
+	// usedMemory reports how much memory the whole tree is holding right
 	// now, in bytes, while it is still running. It is what [memoryWatchdog]
 	// samples, and it belongs to the supervisor because the tree does: a
 	// process group id on POSIX, a job handle on Windows, and nothing this
@@ -85,7 +85,7 @@ type supervisor interface {
 	// the tree is empty — an empty tree is zero and true. It is a statement
 	// about the machine rather than about the moment, so a sampler that sees it
 	// stops rather than retrying.
-	residentMemory() (int64, bool)
+	usedMemory() (int64, bool)
 
 	// peakMemory reports the highest the tree reached, in bytes. It is called
 	// once, after the child has been reaped and before release, and it is given

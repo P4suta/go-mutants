@@ -986,7 +986,7 @@ func (s *session) baseline(
 		// The largest of the runs rather than the mean, for the reason the
 		// timeout takes the slowest: a budget sized on an average is a budget
 		// half the observations already exceed.
-		peak = max(peak, result.PeakRSS)
+		peak = max(peak, result.PeakMemory)
 		s.emit(BaselineProgress{Run: i, Of: runs, Duration: result.Duration})
 	}
 	out.BaselineRuns = durations
@@ -1019,44 +1019,45 @@ func (s *session) baseline(
 	out.Memory, out.MemorySource = enforceableMemory(deriveMemory(cfg.Test.Memory, peak))
 	endMemory(nil)
 	s.emit(MemoryDerived{Limit: out.Memory, Source: out.MemorySource, Peak: peak})
-	// Said once, and said for two different situations: a run with no bound at
-	// all, and a run whose bound this machine records but cannot hold anybody
-	// to. Both are things a user reading a green CI job should know, because a
-	// runaway mutant is stopped on a bounded run and takes the machine on an
-	// unbounded one.
-	if out.MemorySource == MemorySourceUnavailable || !runner.MemoryBoundSupported() {
-		s.warn(CodeMemoryBoundUnavailable, unenforcedMemoryReason(out.Memory, out.MemorySource, peak))
+	// Said once, and only for the one case a user can act on; see
+	// [unenforcedMemoryReason].
+	if reason, warn := unenforcedMemoryReason(out.Memory, out.MemorySource, runner.MemoryBoundSupported()); warn {
+		s.warn(CodeMemoryBoundUnavailable, reason)
 	}
 	return nil
 }
 
-// unenforcedMemoryReason says which of three situations left a run's mutants
-// unbounded, in the user's terms rather than the mechanism's.
+// unenforcedMemoryReason is the one memory situation worth a warning, and
+// whether this run is in it.
 //
-// An explicit bound is the one that is not simply absent: the user wrote a
-// number, the report records it, and this machine will not hold anybody to it.
-// Saying "no mutant is bounded" there would contradict the report they are
-// about to read. The other two are told apart by the peak, because that is what
-// distinguishes them: a platform that cannot sample a live tree can still
-// account for a finished one, so a run there has a peak and no bound, and a run
-// with no peak at all had nothing to measure in the first place.
-func unenforcedMemoryReason(limit int64, source MemorySource, peak int64) string {
-	if source == MemorySourceExplicit && limit > 0 {
-		// The number is deliberately not repeated here. It is in the report the
-		// user is about to read and on the `-v` line beside the timeout, and
-		// this package cannot render bytes for a person without importing the
-		// renderer that imports it.
-		return "the memory bound in test.memory is recorded but not enforced: this platform can report " +
-			"what a process cost once it is gone but cannot watch one while it runs, so a runaway mutant " +
-			"is stopped by its timeout alone"
+// A warning is something a user can act on, and exactly one of the three ways a
+// run can end up unbounded is: they wrote a `test.memory`, they believe it is
+// holding, and this platform will not hold anybody to it. One line, once, and
+// they can decide whether they mind.
+//
+// The other two are silent on purpose. A *derived* bound that cannot be
+// enforced was never asked for, and a run without one is exactly the run
+// go-mutants made before the bound existed — so warning about it would put a
+// line on every clean macOS run forever, which is how a warning stops being
+// read and takes the ones that matter with it. A run that measured no peak at
+// all is the same story with a different cause. Both say what happened where a
+// fact belongs rather than where an action belongs: [MemorySourceUnavailable]
+// in the event and in the report, and one word on the `-v` line.
+//
+// The number is deliberately not repeated in the sentence. It is in the report
+// the user is about to read and on the `-v` line beside the timeout, and this
+// package cannot render bytes for a person without importing the renderer that
+// imports it.
+// The platform question is a parameter rather than a call, so that the rule
+// itself is the same three lines on every machine and the table that pins it
+// does not have to be three tables.
+func unenforcedMemoryReason(limit int64, source MemorySource, enforced bool) (string, bool) {
+	if source != MemorySourceExplicit || limit <= 0 || enforced {
+		return "", false
 	}
-	if peak > 0 {
-		return "no mutant is bounded in memory: this platform can report what a process cost but cannot " +
-			"watch one while it runs, so a runaway mutant is stopped by its timeout alone; " +
-			"set test.memory to have the bound recorded, though it will not be enforced here"
-	}
-	return "no mutant is bounded in memory: nothing measured what the baseline runs cost, so there is " +
-		"nothing to derive a bound from; set test.memory to bound them explicitly"
+	return "the memory bound in test.memory is recorded but not enforced: this platform can report " +
+		"what a process cost once it is gone but cannot watch one while it runs, so a runaway mutant " +
+		"is stopped by its timeout alone", true
 }
 
 // mutate is everything between a proven baseline and a report: discovery, the
@@ -1321,8 +1322,8 @@ func executionsOf(result execute.MutantResult) []report.Execution {
 			Binaries:   slices.Clone(attempt.Binaries),
 			// What the pass cost the machine, and — for the one outcome that
 			// needs it — why a kill names a binary that reported no failure.
-			MemoryExceeded: attempt.MemoryExceeded,
-			PeakRSSBytes:   attempt.PeakRSS,
+			MemoryExceeded:  attempt.MemoryExceeded,
+			PeakMemoryBytes: attempt.PeakMemory,
 		})
 	}
 	return executions
@@ -1661,9 +1662,9 @@ func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 			// beside them, so a mutant retried serially reports the peak of the
 			// two passes and not of whichever one happened to be last.
 			shown.MemoryLimit = memoryLimit
-			shown.PeakRSS, shown.MemoryExceeded = 0, false
+			shown.PeakMemory, shown.MemoryExceeded = 0, false
 			for _, attempt := range result.Attempts {
-				shown.PeakRSS = max(shown.PeakRSS, attempt.PeakRSS)
+				shown.PeakMemory = max(shown.PeakMemory, attempt.PeakMemory)
 				shown.MemoryExceeded = shown.MemoryExceeded || attempt.MemoryExceeded
 			}
 			s.emit(MutantFinished{Result: shown.clone()})

@@ -35,7 +35,7 @@ type groupSupervisor struct {
 // The memory limit is accepted and ignored. POSIX has no kernel bound that
 // fits — see [memoryWatchdog] for why the rlimits are not it — so the whole of
 // enforcement on this platform is the sampler reading
-// [groupSupervisor.residentMemory].
+// [groupSupervisor.usedMemory].
 func newSupervisor(int64) (supervisor, error) { return &groupSupervisor{}, nil }
 
 // configure asks the kernel to put the child in a new process group of its
@@ -97,10 +97,10 @@ func (s *groupSupervisor) terminate(exited <-chan struct{}, grace time.Duration)
 	_ = syscall.Kill(-s.pgid, syscall.SIGKILL)
 }
 
-// residentMemory sums what every process in the group is holding. It is the
+// usedMemory sums what every process in the group is holding. It is the
 // same set the kill above reaches, and it has the same hole: see
 // [groupResidentMemory].
-func (s *groupSupervisor) residentMemory() (int64, bool) {
+func (s *groupSupervisor) usedMemory() (int64, bool) {
 	return groupResidentMemory(s.pgid)
 }
 

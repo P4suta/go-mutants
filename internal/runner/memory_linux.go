@@ -5,13 +5,43 @@ package runner
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-// memorySamplingSupported: Linux answers from /proc, so a bound is enforceable
-// here.
+// memorySamplingSupported: Linux answers from /proc, so the mechanism exists
+// here — whether this particular machine will answer is [memorySamplingAvailable].
 const memorySamplingSupported = true
+
+// procRoot is where this package looks for the process table.
+//
+// It is a variable so the fail-closed path has a seam: "what happens when /proc
+// is not readable" is a question about a container or a hardened kernel, and
+// neither is something a test can arrange by asking politely.
+var procRoot = "/proc"
+
+// procfsReadable caches the one question worth asking of the machine rather
+// than of the build: can this process read the process table at all.
+//
+// It is asked once because the answer cannot change under a running process —
+// /proc is either mounted and permitted or it is not — and because it is asked
+// before every bounded mutant, which for a run of thousands would otherwise be
+// thousands of file reads for one fixed fact.
+var procfsReadable = sync.OnceValue(procfsProbe)
+
+// procfsProbe is the read itself: our own stat entry, which is the smallest
+// thing that proves both halves — the filesystem is mounted, and this process
+// is permitted to read a process's stat file. A ReadDir of the root would prove
+// only the first.
+func procfsProbe() bool {
+	_, err := os.ReadFile(filepath.Join(procRoot, "self", "stat"))
+	return err == nil
+}
+
+// memorySamplingAvailable reports whether this machine's procfs can be read.
+func memorySamplingAvailable() bool { return procfsReadable() }
 
 // maxRSSUnit converts ru_maxrss into bytes. Linux reports it in kibibytes,
 // which getrusage(2) documents and which every other platform disagrees with,
@@ -49,7 +79,7 @@ func groupResidentMemory(pgid int) (int64, bool) {
 	if pgid <= 0 {
 		return 0, false
 	}
-	entries, err := os.ReadDir("/proc")
+	entries, err := os.ReadDir(procRoot)
 	if err != nil {
 		return 0, false
 	}
@@ -82,7 +112,7 @@ func groupResidentMemory(pgid int) (int64, bool) {
 // read that name as the numbers this function returns, which is a way to be
 // told a lie by any test binary that wanted to tell one.
 func processStat(pid int) (pgrp int, rssPages int64, ok bool) {
-	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	data, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "stat"))
 	if err != nil {
 		return 0, 0, false
 	}

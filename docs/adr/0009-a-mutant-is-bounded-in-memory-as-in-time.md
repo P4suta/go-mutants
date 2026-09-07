@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 ## Status
 
 Accepted, 2026-09-07. Implemented by `internal/runner`'s `Spec.MemoryLimit`,
-`Result.PeakRSS` and `Result.MemoryExceeded`, and by `internal/engine`'s
+`Result.PeakMemory` and `Result.MemoryExceeded`, and by `internal/engine`'s
 `MinDerivedMemory`, `MemoryFactor` and `MemoryDerived` (#59).
 [ADR 0002](0002-every-subprocess-is-recorded-at-the-runner.md) records why the
 process layer is the one choke point every command passes through, which is what
@@ -56,7 +56,7 @@ and come back with a verdict about it.
 baseline, enforced at the process layer, over the whole tree.**
 
 1. **The runner measures every process and bounds the ones it is asked to.**
-   `runner.Result.PeakRSS` is reported for every child go-mutants starts, from
+   `runner.Result.PeakMemory` is reported for every child go-mutants starts, from
    `wait4`'s `ru_maxrss` on POSIX and from the job object's `PeakJobMemoryUsed`
    on Windows. The two are not the same quantity — resident pages against
    committed charge — and neither is converted into the other, because a
@@ -100,7 +100,7 @@ baseline, enforced at the process layer, over the whole tree.**
    under the budget the bound was derived from, so a tree that needs four times
    what the whole unmutated suite needed has been changed observably, which is
    what a kill means. What tells this kill apart from an assertion's travels
-   *beside* the outcome — `memory_exceeded` and `peak_rss_bytes` on the
+   *beside* the outcome — `memory_exceeded` and `peak_memory_bytes` on the
    execution row, on the `mutant-exec` record, and in the console's `-v` line —
    rather than inside it.
 
@@ -145,7 +145,7 @@ baseline, enforced at the process layer, over the whole tree.**
   busy host reads a few hundred small files a second. Windows costs one
   `QueryInformationJobObject` per tick instead, which is O(1). An unbounded run
   starts no sampler and pays none of it.
-- `peak_rss_bytes` is a machine fact and is normalised out of every golden
+- `peak_memory_bytes` is a machine fact and is normalised out of every golden
   report, alongside the durations and the worker numbers. A golden that kept it
   would fail on the next machine, which is the same rule ADR 0004's rendering
   tests already live under.

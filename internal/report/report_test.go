@@ -766,13 +766,47 @@ func TestSchemaRejects(t *testing.T) {
 			// is a number nothing could have measured, and every comparison a
 			// consumer makes against it comes out the wrong way round.
 			name:    "an execution that reached a negative peak",
-			pointer: "/mutants/1/executions/0/peak_rss_bytes",
-			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["peak_rss_bytes"] = -1.0 },
+			pointer: "/mutants/1/executions/0/peak_memory_bytes",
+			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["peak_memory_bytes"] = -1.0 },
 		},
 		{
 			name:    "an execution whose memory_exceeded is not a boolean",
 			pointer: "/mutants/1/executions/0/memory_exceeded",
 			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["memory_exceeded"] = "yes" },
+		},
+		{
+			// The cross-field rule the whole vocabulary rests on: a bound
+			// settles a mutant as killed and as nothing else, so a survivor
+			// claiming one describes a pass that both was and was not stopped.
+			name: "an execution that survived and says a bound stopped it",
+			// The rejection lands on the outcome rather than on the flag,
+			// because the flag is what the schema branches on and the outcome is
+			// what it then requires.
+			pointer: "/mutants/1/executions/0/outcome",
+			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["memory_exceeded"] = true },
+		},
+		{
+			name:    "a mutant that survived and says a bound stopped it",
+			pointer: "/mutants/1/outcome",
+			mutate:  func(doc map[string]any) { mutant(doc, 1)["memory_exceeded"] = true },
+		},
+		{
+			name:    "a run whose memory bound came from nowhere",
+			pointer: "/test/memory_source",
+			mutate:  func(doc map[string]any) { delete(testFacts(doc), "memory_source") },
+		},
+		{
+			name:    "a run whose memory bound has no number",
+			pointer: "/test/memory_bytes",
+			mutate:  func(doc map[string]any) { delete(testFacts(doc), "memory_bytes") },
+		},
+		{
+			name: "a run with no bound that reports one anyway",
+			// The whole `test` object, because "these two keys may not both be
+			// here" is a statement about the object rather than about either of
+			// them.
+			pointer: "/test",
+			mutate:  func(doc map[string]any) { testFacts(doc)["memory_source"] = "unavailable" },
 		},
 		{
 			// `additionalProperties: false` inside the new rows too: a typo'd
@@ -831,6 +865,12 @@ func workspace(doc map[string]any) map[string]any {
 // mutant returns one row of the decoded mutants array.
 func mutant(doc map[string]any, i int) map[string]any {
 	return doc["mutants"].([]any)[i].(map[string]any)
+}
+
+// testFacts returns the decoded document's `test` object, which is where the
+// run's own budgets live.
+func testFacts(doc map[string]any) map[string]any {
+	return doc["test"].(map[string]any)
 }
 
 // execution returns one execution of one decoded mutant.

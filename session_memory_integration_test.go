@@ -90,7 +90,7 @@ func TestEveryCallReportsWhatItCostAndACallOverItsBoundSaysSo(t *testing.T) {
 		t.Errorf("the original program was stopped by a %d byte bound; output: %s",
 			runawayRequestBound, control.Output)
 	}
-	if runner.MemoryBoundSupported() && control.PeakRSS <= 0 {
+	if runner.MemoryBoundSupported() && control.PeakMemory <= 0 {
 		t.Error("Control reports no peak, and it started a process")
 	}
 
@@ -105,7 +105,7 @@ func TestEveryCallReportsWhatItCostAndACallOverItsBoundSaysSo(t *testing.T) {
 	if probe.MemoryExceeded {
 		t.Errorf("a probe pass over the original program was stopped by a %d byte bound", runawayRequestBound)
 	}
-	if runner.MemoryBoundSupported() && probe.PeakRSS <= 0 {
+	if runner.MemoryBoundSupported() && probe.PeakMemory <= 0 {
 		t.Error("Probe reports no peak, and it started a process")
 	}
 
@@ -129,7 +129,7 @@ func TestEveryCallReportsWhatItCostAndACallOverItsBoundSaysSo(t *testing.T) {
 		t.Errorf("Outcome = %s, want %s: a bound settles a mutant with the vocabulary that already exists",
 			result.Outcome, gomutants.OutcomeKilled)
 	}
-	if result.PeakRSS <= 0 {
+	if result.PeakMemory <= 0 {
 		t.Error("a mutant killed for its memory reports no peak")
 	}
 	if result.KilledBy == "" {

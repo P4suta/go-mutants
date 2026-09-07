@@ -148,8 +148,9 @@ below.
 | `coverage.unavailable_reason` | The whole failure that made it do so: the coded message and the compiler's diagnostics under it |
 | `test.memory_bytes`, `test.memory_source` | The per-mutant memory bound and where it came from: `explicit`, `derived`, or `unavailable` for a run with no bound at all. Written together, and absent from a document an older build wrote |
 | `mutants[].executions[]` | One row per pass over the test binaries; see [`mutants[]`](#mutants) |
+| `mutants[].memory_exceeded`, `mutants[].peak_memory_bytes` | Whether the memory bound settled the mutant and what it cost; see [`mutants[]`](#mutants) |
 | `mutants[].executions[].memory_exceeded` | Whether the run's memory bound stopped that pass; see [`mutants[]`](#mutants) |
-| `mutants[].executions[].peak_rss_bytes` | What that pass cost the machine; see [`mutants[]`](#mutants) |
+| `mutants[].executions[].peak_memory_bytes` | What that pass cost the machine; see [`mutants[]`](#mutants) |
 
 `timing.stages[].result` is `succeeded`, `failed`, or `skipped` — the trace's
 own vocabulary, so a reader holding both documents is not reconciling two
@@ -286,7 +287,16 @@ test binaries, in attempt order.
 | `duration_ms` | The wall-clock time this pass took, summed over the binaries it ran |
 | `binaries[]` | The test binaries it started, in launch order, stopping where the pass stopped |
 | `memory_exceeded` | This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline; absent when it was not. Optional. The bound itself is `test.memory_bytes` |
-| `peak_rss_bytes` | The highest the pass's whole process tree was observed to hold: resident memory on Unix, committed charge on Windows, which are close but not the same quantity and are deliberately not converted into one another. Written for every pass and not only the bounded ones; absent where the platform could not measure one. Optional |
+| `peak_memory_bytes` | The highest the pass was observed to hold, as the **maximum over every binary it started** rather than the deciding binary's: resident memory on Unix, committed charge on Windows, which are close but not the same quantity and are deliberately not converted into one another. Written for every pass and not only the bounded ones; absent where the platform could not measure one. Optional |
+
+The same two facts are on the **mutant** as well as on its rows, and the
+repetition is for one reader: a `cached` mutant has an attempt count and no rows,
+because this run started no process for it, so a consumer looking only at the
+rows would see a kill it could not explain. For a mutant this run executed
+`mutants[].peak_memory_bytes` is the maximum over its rows and
+`mutants[].memory_exceeded` is true when any of them tripped the bound; for a
+cached one they are what the run that measured it recorded. Both are dropped by
+`report merge`, which describes no machine and reports no bound.
 
 `memory_exceeded` is why a row can say `killed` and name a binary whose tests
 did not fail. A mutant that turns a terminating loop into one that allocates

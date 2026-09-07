@@ -27,3 +27,7 @@ const maxRSSUnit = 1
 
 // groupResidentMemory cannot answer here; see [memorySamplingSupported].
 func groupResidentMemory(int) (int64, bool) { return 0, false }
+
+// memorySamplingAvailable has nothing to probe: the mechanism is absent at
+// compile time, so there is no runtime question to ask.
+func memorySamplingAvailable() bool { return false }

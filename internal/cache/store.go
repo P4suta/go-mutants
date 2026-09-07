@@ -273,6 +273,17 @@ type Entry struct {
 	// settles a mutant as killed and as nothing else.
 	MemoryBytes    int64 `json:"memory_bytes,omitempty"`
 	MemoryExceeded bool  `json:"memory_exceeded,omitempty"`
+	// PeakMemory is the highest the measurement was observed to hold, in bytes,
+	// and is optional for the reason DurationMS is not: a run on a platform
+	// that could not measure one has none to store.
+	//
+	// It is stored for the reason the duration is. Without it a cached memory
+	// kill says a bound settled the mutant and not what it reached, so `explain`
+	// on a warm run can report "killed by memory" with no number to compare
+	// against the bound — no way to tell a mutant that wanted a gigabyte from
+	// one that wanted a hundred megabytes, which is the first thing anybody
+	// asks. A cached outcome should read like a measured one.
+	PeakMemory int64 `json:"peak_memory_bytes,omitempty"`
 }
 
 // Duration renders the stored measurement.
@@ -471,7 +482,7 @@ func (e Entry) check(key, context, id string) error {
 		return errors.New("it holds the outcome of another mutant")
 	case !Cacheable(e.Outcome):
 		return errors.New("it holds " + e.Outcome.String() + ", which is not a reusable outcome")
-	case e.DurationMS < 0 || e.Attempts < 1 || e.TimeoutMS <= 0 || e.MemoryBytes < 0:
+	case e.DurationMS < 0 || e.Attempts < 1 || e.TimeoutMS <= 0 || e.MemoryBytes < 0 || e.PeakMemory < 0:
 		return errors.New("its measurement is not one that could have happened")
 	case e.MemoryExceeded && (e.MemoryBytes <= 0 || e.Outcome != mutation.OutcomeKilled):
 		return errors.New("it says a memory bound settled it and records no bound, or an outcome a bound cannot produce")

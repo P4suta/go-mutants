@@ -565,21 +565,21 @@ func TestSchemaAcceptsTheMemoryFactsAndRejectsNonsense(t *testing.T) {
 	} {
 		payload, _ := c.document[c.payload].(map[string]any)
 
-		delete(payload, "peak_rss_bytes")
+		delete(payload, "peak_memory_bytes")
 		if err := validates(t, c.document); err != nil {
-			t.Errorf("a %s record with no peak_rss_bytes was rejected: %v", c.name, err)
+			t.Errorf("a %s record with no peak_memory_bytes was rejected: %v", c.name, err)
 		}
 		for _, size := range []float64{0, 1, 1 << 30} {
-			payload["peak_rss_bytes"] = size
+			payload["peak_memory_bytes"] = size
 			if err := validates(t, c.document); err != nil {
-				t.Errorf("a %s peak_rss_bytes of %v was rejected: %v", c.name, size, err)
+				t.Errorf("a %s peak_memory_bytes of %v was rejected: %v", c.name, size, err)
 			}
 		}
-		payload["peak_rss_bytes"] = -1.0
+		payload["peak_memory_bytes"] = -1.0
 		if err := validates(t, c.document); err == nil {
-			t.Errorf("a %s peak_rss_bytes of -1 was accepted; that is not a quantity of memory", c.name)
+			t.Errorf("a %s peak_memory_bytes of -1 was accepted; that is not a quantity of memory", c.name)
 		}
-		payload["peak_rss_bytes"] = 268435456.0
+		payload["peak_memory_bytes"] = 268435456.0
 	}
 
 	mutantPayload, _ := mutant["mutant"].(map[string]any)

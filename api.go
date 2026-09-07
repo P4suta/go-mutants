@@ -199,11 +199,19 @@ type CommandResult struct {
 	// reporting how much a command produced never has to ask which case it is
 	// in.
 	TotalBytes int64
-	// PeakRSS is the highest resident memory any binary this call started was
-	// observed to hold, in bytes, and MemoryExceeded reports that one of them
-	// passed the effective MemoryLimit and had its tree killed for it.
+	// PeakMemory is the highest memory any binary this call started was observed
+	// to hold, in bytes, and MemoryExceeded reports that one of them passed the
+	// effective MemoryLimit and had its tree killed for it.
 	//
-	// PeakRSS is the maximum over the binaries rather than the deciding
+	// It is not the same quantity on every platform, and the difference is
+	// stated rather than smoothed over: on Unix it is the resident set — pages
+	// actually in memory — and on Windows it is the job's committed charge,
+	// which is what the process has claimed. The two are close for a Go program
+	// and never equal, and neither is converted into the other, because a
+	// conversion between things the kernels measure differently would be a
+	// number go-mutants invented.
+	//
+	// PeakMemory is the maximum over the binaries rather than the deciding
 	// binary's alone, because what a call cost the machine is the worst moment
 	// it put the machine through. It is zero where the platform could not
 	// measure, which is a different statement from a peak of zero and is why a
@@ -211,7 +219,7 @@ type CommandResult struct {
 	//
 	// MemoryExceeded and TimedOut are never both set: they are different kills
 	// and the supervisor reports exactly one.
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 	// TraceSeq is the `seq` of the `exec` event this command was recorded at,
 	// and is how a consumer joins its own recording to the workspace's: the
@@ -680,7 +688,7 @@ type ExecRequest struct {
 	//
 	// Not every platform can enforce one — macOS reports what a process cost
 	// once it is gone and cannot watch one while it runs — and there the field
-	// is accepted and has no effect. PeakRSS is still reported everywhere.
+	// is accepted and has no effect. PeakMemory is still reported everywhere.
 	MemoryLimit int64
 	// OutputLimit caps the retained combined output of each test binary this
 	// execution starts, as [Command.OutputLimit] does: the engine's 1 MiB
@@ -749,11 +757,19 @@ type MutantResult struct {
 	// empty.
 	Truncated  bool
 	TotalBytes int64
-	// PeakRSS is the highest resident memory any binary this call started was
-	// observed to hold, in bytes, and MemoryExceeded reports that one of them
-	// passed the effective MemoryLimit and had its tree killed for it.
+	// PeakMemory is the highest memory any binary this call started was observed
+	// to hold, in bytes, and MemoryExceeded reports that one of them passed the
+	// effective MemoryLimit and had its tree killed for it.
 	//
-	// PeakRSS is the maximum over the binaries rather than the deciding
+	// It is not the same quantity on every platform, and the difference is
+	// stated rather than smoothed over: on Unix it is the resident set — pages
+	// actually in memory — and on Windows it is the job's committed charge,
+	// which is what the process has claimed. The two are close for a Go program
+	// and never equal, and neither is converted into the other, because a
+	// conversion between things the kernels measure differently would be a
+	// number go-mutants invented.
+	//
+	// PeakMemory is the maximum over the binaries rather than the deciding
 	// binary's alone, because what a call cost the machine is the worst moment
 	// it put the machine through. It is zero where the platform could not
 	// measure, which is a different statement from a peak of zero and is why a
@@ -761,7 +777,7 @@ type MutantResult struct {
 	//
 	// MemoryExceeded and TimedOut are never both set: they are different kills
 	// and the supervisor reports exactly one.
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 	Artifacts      []Artifact
 	// Binaries are the test binaries this execution started, in launch order,
@@ -921,11 +937,19 @@ type ProbeResult struct {
 	// binary wrote, kept or not.
 	Truncated  bool
 	TotalBytes int64
-	// PeakRSS is the highest resident memory any binary this call started was
-	// observed to hold, in bytes, and MemoryExceeded reports that one of them
-	// passed the effective MemoryLimit and had its tree killed for it.
+	// PeakMemory is the highest memory any binary this call started was observed
+	// to hold, in bytes, and MemoryExceeded reports that one of them passed the
+	// effective MemoryLimit and had its tree killed for it.
 	//
-	// PeakRSS is the maximum over the binaries rather than the deciding
+	// It is not the same quantity on every platform, and the difference is
+	// stated rather than smoothed over: on Unix it is the resident set — pages
+	// actually in memory — and on Windows it is the job's committed charge,
+	// which is what the process has claimed. The two are close for a Go program
+	// and never equal, and neither is converted into the other, because a
+	// conversion between things the kernels measure differently would be a
+	// number go-mutants invented.
+	//
+	// PeakMemory is the maximum over the binaries rather than the deciding
 	// binary's alone, because what a call cost the machine is the worst moment
 	// it put the machine through. It is zero where the platform could not
 	// measure, which is a different statement from a peak of zero and is why a
@@ -933,7 +957,7 @@ type ProbeResult struct {
 	//
 	// MemoryExceeded and TimedOut are never both set: they are different kills
 	// and the supervisor reports exactly one.
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 	// Binaries are the probe tree's test binaries this pass started, in launch
 	// order and by import path, exactly as [MutantResult.Binaries] names them.
@@ -1064,11 +1088,19 @@ type ControlResult struct {
 	// came from.
 	Truncated  bool
 	TotalBytes int64
-	// PeakRSS is the highest resident memory any binary this call started was
-	// observed to hold, in bytes, and MemoryExceeded reports that one of them
-	// passed the effective MemoryLimit and had its tree killed for it.
+	// PeakMemory is the highest memory any binary this call started was observed
+	// to hold, in bytes, and MemoryExceeded reports that one of them passed the
+	// effective MemoryLimit and had its tree killed for it.
 	//
-	// PeakRSS is the maximum over the binaries rather than the deciding
+	// It is not the same quantity on every platform, and the difference is
+	// stated rather than smoothed over: on Unix it is the resident set — pages
+	// actually in memory — and on Windows it is the job's committed charge,
+	// which is what the process has claimed. The two are close for a Go program
+	// and never equal, and neither is converted into the other, because a
+	// conversion between things the kernels measure differently would be a
+	// number go-mutants invented.
+	//
+	// PeakMemory is the maximum over the binaries rather than the deciding
 	// binary's alone, because what a call cost the machine is the worst moment
 	// it put the machine through. It is zero where the platform could not
 	// measure, which is a different statement from a peak of zero and is why a
@@ -1076,7 +1108,7 @@ type ControlResult struct {
 	//
 	// MemoryExceeded and TimedOut are never both set: they are different kills
 	// and the supervisor reports exactly one.
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 	// Binaries are the test binaries this run started, in launch order and by
 	// import path, exactly as [MutantResult.Binaries] names them. They stop

@@ -757,7 +757,7 @@ func TestUnquoteArgvRefusesALineItCannotRead(t *testing.T) {
 func TestAMemoryKillSaysWhatItCostAndWhatItWasAllowed(t *testing.T) {
 	base := verboseKilled()
 	base.MemoryExceeded = true
-	base.PeakRSS = 3435973836
+	base.PeakMemory = 3435973836
 	base.MemoryLimit = 1 << 30
 
 	got := renderAt(t, 1, []engine.Event{engine.MutantFinished{Result: base}})
@@ -801,13 +801,29 @@ func TestTheMemoryBoundIsPrintedOnlyForARunThatAskedForItsOwnAccount(t *testing.
 		}
 	}
 
-	unbounded := renderAt(t, 1, []engine.Event{
+	// The two ways a run ends up with no bound read differently, because the
+	// action they suggest is different: one is a platform that will not enforce
+	// what it can measure, and the other is a run that measured nothing.
+	// Neither is a warning any more — see the engine's unenforcedMemoryReason —
+	// so this line is where a user finds out.
+	unenforced := renderAt(t, 1, []engine.Event{
+		engine.MemoryDerived{Source: engine.MemorySourceUnavailable, Peak: 200 << 20},
+	})
+	for _, want := range []string{"baseline peak 200.0 MiB", "no per-mutant bound", "not enforced on this platform"} {
+		if !strings.Contains(unenforced, want) {
+			t.Errorf("a run on a platform that enforces nothing does not say %q:\n%s", want, unenforced)
+		}
+	}
+
+	unmeasured := renderAt(t, 1, []engine.Event{
 		engine.MemoryDerived{Source: engine.MemorySourceUnavailable},
 	})
-	if !strings.Contains(unbounded, "no per-mutant bound") {
-		t.Errorf("an unbounded run does not say so:\n%s", unbounded)
+	if !strings.Contains(unmeasured, "nothing measured what the baseline runs cost") {
+		t.Errorf("a run that measured no peak does not say so:\n%s", unmeasured)
 	}
-	if strings.Contains(unbounded, "0 B") {
-		t.Errorf("an unbounded run printed a bound of zero rather than the absence of one:\n%s", unbounded)
+	for _, unwanted := range []string{"0 B", "not enforced on this platform"} {
+		if strings.Contains(unmeasured, unwanted) {
+			t.Errorf("a run that measured nothing printed %q:\n%s", unwanted, unmeasured)
+		}
 	}
 }

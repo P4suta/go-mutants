@@ -37,10 +37,10 @@ func (s *scriptedSupervisor) release()                                 {}
 
 func (s *scriptedSupervisor) peakMemory(*os.ProcessState) (int64, bool) { return 0, false }
 
-// residentMemory hands back the next scripted sample, and repeats the last one
+// usedMemory hands back the next scripted sample, and repeats the last one
 // once the script runs out so a watchdog that was expected not to trip has
 // something to keep reading.
-func (s *scriptedSupervisor) residentMemory() (int64, bool) {
+func (s *scriptedSupervisor) usedMemory() (int64, bool) {
 	if s.unmeasurable {
 		return 0, false
 	}

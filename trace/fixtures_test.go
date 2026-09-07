@@ -111,8 +111,8 @@ func fixtureExecRecord() trace.ExecRecord {
 		ExitCode:  1,
 		// A peak beside the exit status: every command a run starts is measured,
 		// so the scripted recording carries one too.
-		PeakRSSBytes: 268435456,
-		Output:       []byte(fixtureOutputTail + "\n"),
+		PeakMemoryBytes: 268435456,
+		Output:          []byte(fixtureOutputTail + "\n"),
 	}
 }
 
@@ -157,9 +157,9 @@ func fixtureMutantRecord() trace.MutantRecord {
 		// where memory_exceeded is what made the kill, is exercised by the
 		// schema tests rather than frozen into the golden: a recording is not
 		// evidence, and one row cannot be both shapes.
-		PeakRSSBytes: 268435456,
-		ExecSeqs:     []int64{fixtureExecSeq},
-		OutputTail:   fixtureOutputTail,
+		PeakMemoryBytes: 268435456,
+		ExecSeqs:        []int64{fixtureExecSeq},
+		OutputTail:      fixtureOutputTail,
 	}
 }
 

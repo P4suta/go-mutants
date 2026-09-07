@@ -60,11 +60,11 @@ func helperFootprint(t *testing.T) int64 {
 	if result.Err != nil {
 		t.Fatalf("measuring the helper's footprint: Err = %v, want nil", result.Err)
 	}
-	if result.PeakRSS <= 0 {
-		t.Fatalf("PeakRSS = %d for a child that ran to completion, want the peak this platform measured",
-			result.PeakRSS)
+	if result.PeakMemory <= 0 {
+		t.Fatalf("PeakMemory = %d for a child that ran to completion, want the peak this platform measured",
+			result.PeakMemory)
 	}
-	return result.PeakRSS
+	return result.PeakMemory
 }
 
 // hogArgs renders the three arguments every growing helper verb takes.
@@ -110,12 +110,12 @@ func TestRunReportsThePeakResidentMemoryOfTheChild(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Fatalf("ExitCode = %d, want 0; output: %s", result.ExitCode, result.Output)
 	}
-	if result.PeakRSS < grown {
-		t.Errorf("PeakRSS = %d, want at least the %d bytes the child made resident", result.PeakRSS, grown)
+	if result.PeakMemory < grown {
+		t.Errorf("PeakMemory = %d, want at least the %d bytes the child made resident", result.PeakMemory, grown)
 	}
-	if ceiling := footprint + 16*int64(grown); result.PeakRSS > ceiling {
-		t.Errorf("PeakRSS = %d, want below %d: a child that made %d bytes resident cannot cost that much",
-			result.PeakRSS, ceiling, grown)
+	if ceiling := footprint + 16*int64(grown); result.PeakMemory > ceiling {
+		t.Errorf("PeakMemory = %d, want below %d: a child that made %d bytes resident cannot cost that much",
+			result.PeakMemory, ceiling, grown)
 	}
 	if result.MemoryExceeded {
 		t.Error("MemoryExceeded = true for a run with no MemoryLimit")
@@ -141,8 +141,8 @@ func TestRunWithoutAMemoryLimitNeverReportsExceeded(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Errorf("ExitCode = %d, want 0: nothing should have stopped it", result.ExitCode)
 	}
-	if result.PeakRSS <= 0 {
-		t.Error("PeakRSS = 0: an unbounded run is still a measured one")
+	if result.PeakMemory <= 0 {
+		t.Error("PeakMemory = 0: an unbounded run is still a measured one")
 	}
 }
 
@@ -190,9 +190,9 @@ func TestRunKillsATreeThatExceedsItsMemoryLimit(t *testing.T) {
 	if result.OK() {
 		t.Error("OK() = true for a run the bound stopped")
 	}
-	if result.PeakRSS < footprint {
-		t.Errorf("PeakRSS = %d, want at least the footprint %d: a killed process still reports what it reached",
-			result.PeakRSS, footprint)
+	if result.PeakMemory < footprint {
+		t.Errorf("PeakMemory = %d, want at least the footprint %d: a killed process still reports what it reached",
+			result.PeakMemory, footprint)
 	}
 	if elapsed >= timeout {
 		t.Errorf("Run took %v, which is the whole %v timeout: the bound did not stop it early", elapsed, timeout)
@@ -251,11 +251,11 @@ func TestTheMemoryBoundSeesTheWholeTreeAndNotOnlyTheChild(t *testing.T) {
 	}
 }
 
-// TestRunRecordsPeakRSSInTheExecEvent pins the recording half. What a command
+// TestRunRecordsPeakMemoryInTheExecEvent pins the recording half. What a command
 // cost is a fact about the execution, so it belongs on the `exec` record beside
 // the duration and the exit code, and it is recorded for every command rather
 // than only for the bounded ones.
-func TestRunRecordsPeakRSSInTheExecEvent(t *testing.T) {
+func TestRunRecordsPeakMemoryInTheExecEvent(t *testing.T) {
 	t.Parallel()
 
 	recorder, sink := newRecording(t)
@@ -271,11 +271,11 @@ func TestRunRecordsPeakRSSInTheExecEvent(t *testing.T) {
 	}
 
 	rec := onlyExec(t, sink).Exec
-	if rec.PeakRSSBytes != result.PeakRSS {
-		t.Errorf("peak_rss_bytes = %d, want the result's PeakRSS %d", rec.PeakRSSBytes, result.PeakRSS)
+	if rec.PeakMemoryBytes != result.PeakMemory {
+		t.Errorf("peak_memory_bytes = %d, want the result's PeakMemory %d", rec.PeakMemoryBytes, result.PeakMemory)
 	}
-	if rec.PeakRSSBytes < grown {
-		t.Errorf("peak_rss_bytes = %d, want at least the %d bytes the child made resident", rec.PeakRSSBytes, grown)
+	if rec.PeakMemoryBytes < grown {
+		t.Errorf("peak_memory_bytes = %d, want at least the %d bytes the child made resident", rec.PeakMemoryBytes, grown)
 	}
 }
 
@@ -326,8 +326,8 @@ func TestAMemoryKillDoesNotWaitForATreeToShutDownPolitely(t *testing.T) {
 	// is well under the headroom; the grace it must not have waited for is
 	// twenty ticks of it. Twice the bound is the line between those two
 	// answers, with room for the machine to be slow.
-	if ceiling := 2 * limit; result.PeakRSS > ceiling {
-		t.Errorf("PeakRSS = %d against a %d bound, over the %d ceiling: the kill waited out the termination grace "+
-			"while the process kept allocating", result.PeakRSS, limit, ceiling)
+	if ceiling := 2 * limit; result.PeakMemory > ceiling {
+		t.Errorf("PeakMemory = %d against a %d bound, over the %d ceiling: the kill waited out the termination grace "+
+			"while the process kept allocating", result.PeakMemory, limit, ceiling)
 	}
 }

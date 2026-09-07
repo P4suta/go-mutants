@@ -123,15 +123,15 @@ type ControlAttempt struct {
 	OutputBytes int64
 	Truncated   bool
 
-	// PeakRSS is the highest resident memory any binary of this run was
+	// PeakMemory is the highest memory any binary of this run was
 	// observed to hold, in bytes, and MemoryExceeded reports that one of them
 	// passed [ControlRun.MemoryLimit] and had its tree killed for it. They are
-	// [Attempt.PeakRSS] and [Attempt.MemoryExceeded] exactly, and MemoryExceeded
+	// [Attempt.PeakMemory] and [Attempt.MemoryExceeded] exactly, and MemoryExceeded
 	// stands beside TimedOut rather than inside it for the reason
 	// [runner.Result] keeps them apart: they are different kills, and a consumer
 	// that conflated them would report the user's program as slow when it is
 	// large.
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 
 	// Binaries are the test binaries this run started, in launch order, by
@@ -226,7 +226,7 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 			bin, env, c.Timeout, c.MemoryLimit, c.Args, logPath, c.OutputLimit)
 		last = result
 		attempt.Duration += result.Duration
-		attempt.PeakRSS = max(attempt.PeakRSS, result.PeakRSS)
+		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		// Carried up as internal/runner reported it, [runner.ExitCodeUnavailable]
 		// included: see [ControlAttempt.ExitCode]. A failure drops it again,
 		// because a run that could not be made observed no status at all.

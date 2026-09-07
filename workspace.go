@@ -800,7 +800,7 @@ func (w *Workspace) runCommand(
 			Truncated:  run.Truncated,
 			TotalBytes: run.OutputBytes,
 			// What the command cost the machine, beside what it cost the clock.
-			PeakRSS:        run.PeakRSS,
+			PeakMemory:     run.PeakMemory,
 			MemoryExceeded: run.MemoryExceeded,
 			TraceSeq:       run.TraceSeq,
 		},

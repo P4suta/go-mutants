@@ -92,7 +92,7 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 		t.Errorf("the bounded mutant is %s, want the negated loop condition", killed.Rule)
 	case killed.KilledBy == "":
 		t.Error("the bounded mutant names no suite, and a kill is always by something")
-	case killed.PeakRSS <= 0:
+	case killed.PeakMemory <= 0:
 		t.Error("the bounded mutant reports no peak, and a process killed for its memory reached some")
 	case killed.MemoryLimit != runawayMemoryBound:
 		t.Errorf("the bounded mutant was measured under %d, want the run's %d", killed.MemoryLimit, runawayMemoryBound)
@@ -134,8 +134,8 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 			if execution.Outcome != report.OutcomeKilled {
 				t.Errorf("the execution row is %s, want killed", execution.Outcome)
 			}
-			if execution.PeakRSSBytes <= 0 {
-				t.Errorf("the execution row reports peak_rss_bytes %d, want what it reached", execution.PeakRSSBytes)
+			if execution.PeakMemoryBytes <= 0 {
+				t.Errorf("the execution row reports peak_memory_bytes %d, want what it reached", execution.PeakMemoryBytes)
 			}
 		}
 	}
@@ -150,8 +150,8 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 	for _, e := range sink.Events() {
 		if e.Type == trace.TypeMutantExec && e.Mutant != nil && e.Mutant.MemoryExceeded {
 			recorded++
-			if e.Mutant.PeakRSSBytes <= 0 {
-				t.Errorf("the mutant-exec record reports peak_rss_bytes %d", e.Mutant.PeakRSSBytes)
+			if e.Mutant.PeakMemoryBytes <= 0 {
+				t.Errorf("the mutant-exec record reports peak_memory_bytes %d", e.Mutant.PeakMemoryBytes)
 			}
 		}
 	}
@@ -189,7 +189,7 @@ func TestAnOrdinaryRunReportsAPeakForEveryExecutionAndBoundsNone(t *testing.T) {
 			if execution.MemoryExceeded {
 				t.Errorf("mutant %s was stopped by a bound in a run whose suite fits in it", m.ID[:8])
 			}
-			if execution.PeakRSSBytes > 0 {
+			if execution.PeakMemoryBytes > 0 {
 				measured++
 			}
 		}
@@ -228,7 +228,7 @@ func TestTheBaselineItselfIsNeverBounded(t *testing.T) {
 		}
 		switch e.Exec.Kind {
 		case trace.ExecKindBaselineTest, trace.ExecKindBaselineBuild:
-			if e.Exec.PeakRSSBytes <= 0 {
+			if e.Exec.PeakMemoryBytes <= 0 {
 				t.Errorf("the %s command reports no peak, and the bound is derived from one", e.Exec.Kind)
 			}
 		}
@@ -304,11 +304,19 @@ func TestAMemoryKillIsNotReusedByARunWithADifferentBound(t *testing.T) {
 	}
 	killed := bounded[0]
 
-	// The same workspace under a bound thirty times larger. Every other mutant
-	// is adopted — the key did not move — and the one the bound killed is
-	// measured again, because thirty times the memory might have let it finish.
+	// The same workspace under a larger bound. Every other mutant is adopted —
+	// the key did not move — and the one the bound killed is measured again,
+	// because twice the memory might have let it finish.
+	//
+	// Twice, and not the thirty times that would make the point more loudly.
+	// This test *runs* the runaway mutant under whatever number is written
+	// here, so a generous bound is a licence to allocate that much on the
+	// machine running the suite — which is the incident this whole feature is
+	// about, reproduced by its own regression test. The rule the cache applies
+	// is `>`, so any larger bound is a miss and 512 MiB proves it as well as
+	// eight gibibytes would.
 	loose := cacheOptions(t, root, cacheRoot)
-	loose.Config.Test.Memory = 8 << 30
+	loose.Config.Test.Memory = 2 * runawayMemoryBound
 	warm := runCached(t, loose)
 
 	adopted := cachedRows(warm)
@@ -354,4 +362,65 @@ func memoryKilledIDs(t *testing.T, r *report.Report) []string {
 		}
 	}
 	return out
+}
+
+// TestACachedMemoryKillReadsLikeAMeasuredOne is the round trip C6 exists for.
+//
+// A memory kill is stored as an ordinary kill, so a warm run adopts it — and
+// everything that made it legible lives on the execution rows, which a cached
+// mutant does not have. Without the entry carrying the peak and the report
+// carrying both facts at mutant level, the second run says "killed" and nothing
+// else about a mutant no test failed on, which is the state `explain` exists to
+// resolve.
+func TestACachedMemoryKillReadsLikeAMeasuredOne(t *testing.T) {
+	t.Parallel()
+
+	if !runner.MemoryBoundSupported() {
+		t.Skip("this platform enforces no bound, so no memory kill is measured to be cached")
+	}
+
+	root := testkit.Copy(t, "runaway")
+	cacheRoot := t.TempDir()
+
+	cold := cacheOptions(t, root, cacheRoot)
+	cold.Config.Test.Memory = runawayMemoryBound
+	first := runCached(t, cold)
+	killed := memoryKilledIDs(t, first)
+	if len(killed) != 1 {
+		t.Fatalf("the first run killed %d mutants by the bound, want one", len(killed))
+	}
+	measured := mutantByID2(t, first, killed[0])
+	if measured.PeakMemoryBytes <= 0 {
+		t.Fatalf("the measured mutant reports no peak, so there is nothing for the cache to keep")
+	}
+
+	// The same bound, so the entry is evidence about this run too.
+	warm := cacheOptions(t, root, cacheRoot)
+	warm.Config.Test.Memory = runawayMemoryBound
+	second := runCached(t, warm)
+	adopted := mutantByID2(t, second, killed[0])
+
+	switch {
+	case !adopted.Cached:
+		t.Fatal("the second run measured the mutant again, so nothing was adopted")
+	case len(adopted.Executions) != 0:
+		t.Errorf("a cached mutant carries %d execution rows", len(adopted.Executions))
+	case !adopted.MemoryExceeded:
+		t.Error("the adopted mutant does not say the bound settled it")
+	case adopted.PeakMemoryBytes != measured.PeakMemoryBytes:
+		t.Errorf("the adopted peak is %d, want the %d the measuring run recorded",
+			adopted.PeakMemoryBytes, measured.PeakMemoryBytes)
+	}
+}
+
+// mutantByID2 finds one mutant in a report, failing the test when it is absent.
+func mutantByID2(t *testing.T, r *report.Report, id string) report.Mutant {
+	t.Helper()
+	for _, m := range r.Mutants {
+		if m.ID == id {
+			return m
+		}
+	}
+	t.Fatalf("mutant %s is not in the report", id[:8])
+	return report.Mutant{}
 }

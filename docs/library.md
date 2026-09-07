@@ -1069,10 +1069,13 @@ process tree:
   its peak measured and would spend those two seconds allocating, so it is
   killed outright. The two flags are never both set, so a consumer branches on
   one of them and never on a message.
-- **`PeakRSS`** comes back from every call, bounded or not, and is the maximum
-  over the binaries the call started. It is zero where the platform could not
-  measure one, which is why a consumer comparing it against a budget checks that
-  it is positive first.
+- **`PeakMemory`** comes back from every call, bounded or not, and is the
+  maximum over the binaries the call started rather than the deciding binary's:
+  a call's cost is the worst moment it put the machine through. It is not the
+  same quantity on every platform and is not converted into one — the resident
+  set on Unix, the job's committed charge on Windows — and it is zero where the
+  platform could not measure one, which is why a consumer comparing it against
+  a budget checks that it is positive first.
 
 It exists because a deadline does not bound a program that allocates. A mutant
 that turns a terminating loop into a non-terminating one that appends can take a
@@ -1083,7 +1086,7 @@ long enough to run the tests — see
 Not every platform can enforce it. Sampling a live process tree needs `/proc` on
 Linux or the job object on Windows; macOS exposes it only through cgo, which
 this module does not take. There `MemoryLimit` is accepted and has no effect,
-and `PeakRSS` is still reported.
+and `PeakMemory` is still reported.
 
 `Command` is the exception that proves the rule: a workspace command carries a
 `MemoryLimit` and gets no default one, because go-mutants has measured neither

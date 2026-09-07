@@ -34,17 +34,26 @@ const MemorySampleInterval = 100 * time.Millisecond
 // [Spec.MemoryLimit].
 //
 // Measurement and enforcement are separate capabilities and only one of them is
-// universal. [Result.PeakRSS] comes from what the operating system reports about
+// universal. [Result.PeakMemory] comes from what the operating system reports about
 // a process that has already exited, which every supported platform can do;
 // enforcing a bound needs the tree's resident size *while it runs*, which Linux
 // answers from /proc and Windows from the job object, and which macOS exposes
 // only through libproc — a cgo dependency this repository does not have and will
 // not take for a budget.
 //
+// It is a probe rather than a build tag on the one platform where the tag is
+// not the whole answer: Linux enforces a bound by reading /proc, and a
+// container or a hardened kernel can leave that unreadable. Assuming the tag
+// there would be worse than failing: nothing breaks — the sampler reads no
+// number and stops — but the run would have derived a bound, put it in the
+// report, and enforced it nowhere, which is exactly the silent hole this whole
+// feature exists to close. The answer is asked for once and cached; it cannot
+// change under a running process.
+//
 // A caller that derives a bound is expected to ask, and to say so once rather
 // than to hand out a limit that would be quietly ignored. See the engine's
 // memory derivation.
-func MemoryBoundSupported() bool { return memorySamplingSupported }
+func MemoryBoundSupported() bool { return memorySamplingSupported && memorySamplingAvailable() }
 
 // memoryWatchdog samples a running tree's resident memory, remembers the
 // highest it saw, and reports the moment the tree passes its limit.
@@ -114,7 +123,7 @@ func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
 		case <-ticker.C:
 		}
 
-		used, ok := sup.residentMemory()
+		used, ok := sup.usedMemory()
 		if !ok {
 			return
 		}

@@ -153,6 +153,8 @@ var droppedFields = map[string]string{
 	"Coverage.UnavailableReason": "whether the instrumented binaries compiled is one machine's answer",
 	"Coverage.BuildFallback":     "the same event as the reason above, and the same one machine",
 	"Mutants[].Executions":       "a worker number and a duration describe the machine the mutant ran on",
+	"Mutants[].PeakMemoryBytes":  "what a mutant cost is what it cost on the machine that ran it, and a merge describes no machine",
+	"Mutants[].MemoryExceeded":   "the bound that settled it was that shard's, and a merged document reports no bound",
 }
 
 // TestEveryFieldOfAReportIsMergedOrDropped walks the document's own type and

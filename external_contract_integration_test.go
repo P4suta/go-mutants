@@ -130,16 +130,16 @@ var (
 	// can bound itself. A consumer that renders "killed by memory" reads
 	// MemoryExceeded rather than parsing a message.
 	_ int64 = gomutants.Command{}.MemoryLimit
-	_ int64 = gomutants.CommandResult{}.PeakRSS
+	_ int64 = gomutants.CommandResult{}.PeakMemory
 	_ bool  = gomutants.CommandResult{}.MemoryExceeded
 	_ int64 = gomutants.ExecRequest{}.MemoryLimit
-	_ int64 = gomutants.MutantResult{}.PeakRSS
+	_ int64 = gomutants.MutantResult{}.PeakMemory
 	_ bool  = gomutants.MutantResult{}.MemoryExceeded
 	_ int64 = gomutants.ProbeRequest{}.MemoryLimit
-	_ int64 = gomutants.ProbeResult{}.PeakRSS
+	_ int64 = gomutants.ProbeResult{}.PeakMemory
 	_ bool  = gomutants.ProbeResult{}.MemoryExceeded
 	_ int64 = gomutants.ControlRequest{}.MemoryLimit
-	_ int64 = gomutants.ControlResult{}.PeakRSS
+	_ int64 = gomutants.ControlResult{}.PeakMemory
 	_ bool  = gomutants.ControlResult{}.MemoryExceeded
 
 	// What a target consulted. A consumer keeping evidence about a (mutant,

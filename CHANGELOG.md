@@ -45,24 +45,28 @@ Entries say *why* a change was made, not only what changed.
   from, so a tree needing four times what the whole unmutated suite needed has
   been changed observably, which is what a kill already means. What tells this
   kill apart from an assertion's travels beside it: `memory_exceeded` and
-  `peak_rss_bytes` on `mutants[].executions[]` and on the `mutant-exec` record,
+  `peak_memory_bytes` on `mutants[].executions[]` and on the `mutant-exec` record,
   the bound itself as `test.memory_bytes` and `test.memory_source` beside
-  `test.timeout_ms` — all additive and optional — a `-v` console line reading
+  `test.timeout_ms`, and the same two facts on `mutants[]` so that a *cached*
+  memory kill — which has an attempt count and no execution rows — reads like a
+  measured one; all additive and optional. A `-v` console line reading
   `killed by <pkg> (memory: 3.2 GiB > 1.0 GiB bound)`, and the same sentence in
   `go-mutants explain`, whose per-attempt lines also carry what each pass cost.
-  `peak_rss_bytes` on the `exec` record says what *every* command cost, bounded
+  `peak_memory_bytes` on the `exec` record says what *every* command cost, bounded
   or not, because "which of these thousands of processes was the expensive one"
   is a question asked after the run.
 
   Because a memory kill is stored as an ordinary kill, the outcome cache needed
-  the rule the timeout already has. The bound stays out of the cache *key* — a
-  derived bound follows the baseline peak, so keying on it would give every
-  machine a cache of its own — and is recorded on the entry instead: an entry
-  killed *by* the bound is evidence about that bound and any tighter one, and an
-  entry that reached a verdict inside a bound is not evidence about a smaller
-  one, which might have killed it first. Without it, a run at 256 MiB would
-  cache `killed` and a run at 8 GiB would adopt it, having never asked whether
-  the mutant would have survived with thirty times the memory.
+  the rule the timeout already has, and the peak with it — an entry that
+  remembered a bound had settled a mutant but not what it reached would let a
+  warm run report a kill nobody could act on. The bound stays out of the cache
+  *key* — a derived bound follows the baseline peak, so keying on it would give
+  every machine a cache of its own — and is recorded on the entry instead: an
+  entry killed *by* the bound is evidence about that bound and any tighter one,
+  and an entry that reached a verdict inside a bound is not evidence about a
+  smaller one, which might have killed it first. Without it, a run at 256 MiB
+  would cache `killed` and a run at 8 GiB would adopt it, having never asked
+  whether the mutant would have survived with thirty times the memory.
 
   A memory kill is also the one kill that skips the two-second SIGTERM grace. The
   grace exists so a timed-out test binary can flush the output that explains why
@@ -84,8 +88,13 @@ Entries say *why* a change was made, not only what changed.
   report what a process cost once it is gone but cannot watch one while it runs
   without a cgo dependency this module does not take, so a run there measures
   the peak, records an explicit `test.memory` because that is what the user
-  asked for, enforces neither it nor a derived bound, and says so once as
-  `GOM4047`. The reasoning is
+  asked for, enforces neither it nor a derived bound, and says so on the `-v`
+  line. `GOM4047` is raised only for the case a user can act on — an explicit
+  bound this machine will not hold anybody to — because warning about a
+  platform's own limits on every clean run is how a warning stops being read.
+  Linux probes `/proc` once rather than trusting its build tag, so a container
+  that hides the process table reports itself unable to enforce a bound instead
+  of deriving one and enforcing it nowhere. The reasoning is
   [ADR 0009](docs/adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md); the
   `runaway/` fixture is the mutant, reproduced and stopped.
 - **`Workspace.Module` answers what the frozen module holds, so a consumer does

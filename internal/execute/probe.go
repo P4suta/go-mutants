@@ -147,14 +147,14 @@ type ProbeAttempt struct {
 	Output      []byte
 	OutputBytes int64
 	Truncated   bool
-	// PeakRSS is the highest resident memory any binary of this pass was
+	// PeakMemory is the highest memory any binary of this pass was
 	// observed to hold, in bytes, and MemoryExceeded reports that one of them
 	// passed [ProbeRun.MemoryLimit] and had its tree killed for it. They are
-	// [Attempt.PeakRSS] and [Attempt.MemoryExceeded] exactly.
+	// [Attempt.PeakMemory] and [Attempt.MemoryExceeded] exactly.
 	//
 	// MemoryExceeded is only ever set beside [ProbeTimedOut], which is the
 	// outcome both of the supervisor's kills report.
-	PeakRSS        int64
+	PeakMemory     int64
 	MemoryExceeded bool
 	// Binaries are the test binaries this pass started, in launch order, by
 	// import path, and ExecSeqs the `exec` events they were recorded at. They
@@ -250,7 +250,7 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env,
 			p.Timeout, p.MemoryLimit, p.Args, logPath, p.OutputLimit)
 		attempt.Duration += result.Duration
-		attempt.PeakRSS = max(attempt.PeakRSS, result.PeakRSS)
+		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.ExitCode = result.ExitCode
 		attempt.Output = slices.Clone(result.Output)
 		attempt.OutputBytes = result.OutputBytes

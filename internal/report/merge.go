@@ -186,7 +186,12 @@ func MergeShards(opts MergeOptions) (*Report, error) {
 		// The per-attempt rows stay in the shard document that measured them.
 		// They name a worker and a duration on one machine, and a merged
 		// document describes no machine: see the note on the run facts above.
+		// What a mutant cost goes with them, and so does the bound that settled
+		// it — a merged document reports no bound, so it may not report that
+		// one was reached.
 		row.Executions = nil
+		row.PeakMemoryBytes = 0
+		row.MemoryExceeded = false
 		mutants = append(mutants, row)
 	}
 

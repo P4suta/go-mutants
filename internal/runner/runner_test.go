@@ -1521,7 +1521,7 @@ func TestRunWithAFailingSinkStillReturnsTheChildResult(t *testing.T) {
 	// The whole Result is compared, rather than the fields somebody thought to
 	// list, so that a field added to Result later cannot quietly fall outside
 	// the invariant. Exactly three are exempt and every one by construction:
-	// Duration and PeakRSS are measurements two runs of the same command are
+	// Duration and PeakMemory are measurements two runs of the same command are
 	// never expected to agree on to the nanosecond or to the page, and TraceSeq
 	// is the one field recording is meant to change.
 	if !reflect.DeepEqual(comparableResult(got), comparableResult(untraced)) {
@@ -1536,7 +1536,7 @@ func TestRunWithAFailingSinkStillReturnsTheChildResult(t *testing.T) {
 // added later, is compared as it stands.
 func comparableResult(result runner.Result) runner.Result {
 	result.Duration = 0
-	result.PeakRSS = 0
+	result.PeakMemory = 0
 	result.TraceSeq = 0
 	return result
 }

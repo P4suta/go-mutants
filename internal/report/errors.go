@@ -132,6 +132,11 @@ const (
 	// count beside it. See [checkExecutions].
 	CodeInvalidExecutions Code = "GOM5121"
 
+	// CodeInvalidMemory reports a run whose memory bound and its source
+	// contradict each other: a number with no source, a source with no number,
+	// or `unavailable` beside a bound. See [checkMemory].
+	CodeInvalidMemory Code = "GOM5122"
+
 	// CodeCacheUnavailable reports an operating system that will not say where
 	// its cache directory is, so there is nowhere to keep run history.
 	CodeCacheUnavailable Code = "GOM5130"
@@ -308,6 +313,7 @@ var codes = []Code{
 	CodeHistoryNotRemoved,
 	CodeEncodeFailed,
 	CodeInvalidExecutions,
+	CodeInvalidMemory,
 	CodeCacheUnavailable,
 	CodeHistoryDirectory,
 	CodeHistoryWrite,

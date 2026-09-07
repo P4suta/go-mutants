@@ -156,29 +156,51 @@ func TestAnExplicitBoundIsRecordedEvenWhereItCannotBeEnforced(t *testing.T) {
 	}
 }
 
-// TestTheUnenforcedWarningSaysWhichOfTheThreeThingsHappened pins that the one
-// warning covers three different situations and says which.
-func TestTheUnenforcedWarningSaysWhichOfTheThreeThingsHappened(t *testing.T) {
+// TestOnlyAnExplicitBoundNobodyWillHoldIsWorthAWarning is the rule GOM4047
+// exists under, and the second half of it is what the first version got wrong.
+//
+// A warning is a thing a user can act on. An explicit `test.memory` this
+// machine will not enforce is exactly that: they wrote a number, they believe
+// it is holding, and it is not — one line, once, and they can decide whether
+// they mind. A *derived* bound that cannot be enforced is not: nothing was
+// asked for, nothing is different from every run before the bound existed, and
+// go-mutants would be warning every clean macOS run about its own arithmetic
+// forever. That is how a warning stops being read.
+//
+// So the derived case is silent and says what happened where a fact belongs:
+// [MemorySourceUnavailable] in the event and in the report, and one word on the
+// `-v` line.
+func TestOnlyAnExplicitBoundNobodyWillHoldIsWorthAWarning(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
-		name   string
-		limit  int64
-		source MemorySource
-		peak   int64
-		want   string
+		name     string
+		limit    int64
+		source   MemorySource
+		enforced bool
+		want     string
 	}{
-		{"an explicit bound nothing will hold", 2 << 30, MemorySourceExplicit, 1 << 20, "recorded but not enforced"},
-		{"a platform that cannot watch a tree", 0, MemorySourceUnavailable, 1 << 20, "cannot watch one while it runs"},
-		{"nothing measured at all", 0, MemorySourceUnavailable, 0, "nothing measured what the baseline runs cost"},
+		{"an explicit bound nothing will hold", 2 << 30, MemorySourceExplicit, false, "recorded but not enforced"},
+		{"a derived bound nothing will hold", 0, MemorySourceUnavailable, false, ""},
+		{"a run that measured no peak at all", 0, MemorySourceUnavailable, false, ""},
+		{"an explicit bound that is being enforced", 2 << 30, MemorySourceExplicit, true, ""},
+		{"a derived bound that is being enforced", 2 << 30, MemorySourceDerived, true, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := unenforcedMemoryReason(c.limit, c.source, c.peak)
+			got, warn := unenforcedMemoryReason(c.limit, c.source, c.enforced)
+			if c.want == "" {
+				if warn {
+					t.Errorf("a warning was published for %s: %q", c.name, got)
+				}
+				return
+			}
+			if !warn {
+				t.Fatalf("no warning was published for %s", c.name)
+			}
 			if !strings.Contains(got, c.want) {
 				t.Errorf("the warning reads %q, want it to say %q", got, c.want)
 			}
-			if !strings.HasPrefix(got, "no mutant is bounded in memory") &&
-				!strings.HasPrefix(got, "the memory bound in test.memory") {
+			if !strings.HasPrefix(got, "the memory bound in test.memory") {
 				t.Errorf("the warning opens with %q, which does not say what happened", got)
 			}
 		})

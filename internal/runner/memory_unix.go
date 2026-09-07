@@ -19,3 +19,6 @@ const maxRSSUnit = 1 << 10
 
 // groupResidentMemory cannot answer here; see [memorySamplingSupported].
 func groupResidentMemory(int) (int64, bool) { return 0, false }
+
+// memorySamplingAvailable has nothing to probe; see [memorySamplingSupported].
+func memorySamplingAvailable() bool { return false }

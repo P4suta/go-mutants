@@ -90,6 +90,12 @@ var (
 	// document is validated against the published schema and the field is an
 	// enum there.
 	normalizedMemorySource any = "derived"
+	// normalizedBound stands in for the run's memory bound. It is one rather
+	// than zero because the document's own rule is that a bound which came from
+	// somewhere is a bound with a number in it, and a normalised document is
+	// validated against that rule like any other. One byte is as obviously a
+	// placeholder as zero would have been.
+	normalizedBound = json.Number("1")
 )
 
 // MustMarshal marshals a report and checks it against the published schema.
@@ -197,13 +203,18 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 	// The number is forced rather than replaced, as the per-execution peak is:
 	// its absence is itself the platform fact, so leaving a run that recorded no
 	// bound saying nothing would make one platform's golden a different shape.
-	forceValue(doc, normalizedPeak, "test", "memory_bytes")
+	forceValue(doc, normalizedBound, "test", "memory_bytes")
 	setValue(doc, normalizedMemorySource, "test", "memory_source")
 	setNumber(doc, "test", "baseline", "slowest_ms")
 	setNumberSlice(doc, "test", "baseline", "durations_ms")
 	setString(doc, NormalizedToolchainVersion, "test", "toolchain", "version")
 	for _, mutant := range array(doc, "mutants") {
 		setNumber(mutant, "duration_ms")
+		// The mutant's own copy of what it cost, which a cached mutant carries
+		// instead of rows. It is forced for the reason the per-row one is: the
+		// key's *absence* is the platform fact, so leaving it out on one
+		// platform would make that platform's golden a different shape.
+		forceValue(mutant, normalizedPeak, "peak_memory_bytes")
 		// One row per attempt: how long the pass took, and which of the
 		// scheduler's slots made it. The worker is a fact about the run in the
 		// strongest sense — it is which goroutine won the race to the queue, so
@@ -227,7 +238,7 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 			// a golden that quietly passes there and fails the day somebody
 			// looks. Written in, it fails as a diff against the recorded
 			// golden, which names the row.
-			forceValue(execution, normalizedPeak, "peak_rss_bytes")
+			forceValue(execution, normalizedPeak, "peak_memory_bytes")
 		}
 	}
 	// The timeline, which is every measured duration there is left. The phase
