@@ -148,10 +148,11 @@ func HelperEnabled(variable string) bool {
 // the same stderr. A private directory is the only quiet answer, and it has the
 // second virtue of keeping helper counters out of the parent's own profile.
 //
-// All of which is true of a coverage run and of nothing else, so a run without
-// one makes no directory at all: `go test` exports GOCOVERDIR only under -cover,
-// an uninstrumented binary has no exit hook to redirect, and a directory nothing
-// writes to is a directory nothing misses.
+// All of which is true of an instrumented binary and of nothing else, so a run
+// without coverage makes no directory at all: an uninstrumented binary has no
+// exit hook to redirect, and a directory nothing writes to is a directory
+// nothing misses. [testing.CoverMode] is what that question is put to; see
+// [runSuite] for why it is not GOCOVERDIR.
 func Helper(m *testing.M, variable string, program func(args []string) int) int {
 	if HelperEnabled(variable) {
 		if err := isolateCoverageOutput(); err != nil {
@@ -170,21 +171,46 @@ func Helper(m *testing.M, variable string, program func(args []string) int) int 
 // removed on the way out and a TestMain ends in os.Exit, which runs no deferred
 // function — so the removal has to happen before the status is returned.
 //
-// GOCOVERDIR is the whole test for "is there coverage to keep apart", and it is
-// exact rather than a heuristic: `go test -cover` exports it to the test binary
-// (alongside -test.gocoverdir) and a plain `go test` does not, so a process
-// without it is a process whose helper children are not instrumented either —
-// no exit hook fires, nothing is written, and the only shared directory a helper
-// could have collided in does not exist.
+// [testing.CoverMode] is the whole test for "is there coverage to keep apart",
+// and it is the compiled-in fact rather than a signal about it: it is "set",
+// "count" or "atomic" in a binary built with -cover and empty in one that was
+// not, whichever way that binary is later told where its data goes.
 //
-// Making one anyway is what leaked. The removal is a deferred function, and a
-// deferred function is exactly what a process does not run when it is killed:
+// GOCOVERDIR used to be the test, and it is wrong for exactly the run this
+// project cares most about. A *test* binary emits through testing's
+// coverTearDown, which reads `-test.gocoverdir` and not the variable — see
+// internal/execute's coverDirFlag — so go-mutants passes the flag, and since
+// every environment that package composes strips an inherited GOCOVERDIR there
+// is no variable to read at all. Every mutant's test binary was therefore an
+// instrumented process that answered "no coverage here", published no root, and
+// left each of its helper children printing `warning: GOCOVERDIR not set, no
+// coverage data emitted` onto the stderr internal/gocmd asserts the exact bytes
+// of. Measured over that package: 103 of its 104 mutants were reported killed,
+// 90 of those kills carry the warning in their output, and with the root
+// published the same run kills 91 and reports the twelve survivors that were
+// being hidden.
+//
+// Making a root when there is nothing to keep apart is the other failure, and
+// it is the one that leaked. The removal is a deferred function, and a deferred
+// function is exactly what a process does not run when it is killed:
 // `go test -timeout`, a Ctrl-C, and above all a mutation run, which kills the
 // mutants that hang and runs thousands of test binaries to do it. One machine's
 // /tmp held 11,842 of these directories, none of which any coverage tool had
 // ever read. A directory that is never created cannot be left behind.
+//
+// What a killed *instrumented* binary leaves behind is worth stating, because
+// keying on the cover mode is what creates the case. The root is made under
+// os.TempDir(), and under a mutation run that is not the machine's:
+// internal/execute's workerScratch resolves the run's per-worker directory and
+// its baseEnvFrom points TMP, TMPDIR and TEMP at it, so a mutant binary's root
+// is carved inside the worker's scratch and goes when internal/engine's release
+// removes the run's own temporary tree — which is where kills are common. Under
+// a developer's plain `go test -cover`, or CI's coverage job, TMPDIR is the
+// machine's and a process killed there does leave its root: the residual the
+// change that stopped the leak accepted, now with the one shape that reaches it
+// named.
 func runSuite(m *testing.M) int {
-	if os.Getenv(CoverDirEnv) == "" {
+	if !suitePublishesCoverRoot(testing.CoverMode()) {
 		return m.Run()
 	}
 
@@ -205,6 +231,15 @@ func runSuite(m *testing.M) int {
 	}
 	return m.Run()
 }
+
+// suitePublishesCoverRoot reports whether a suite running under this cover mode
+// has coverage output of its own to keep its helpers' output apart from.
+//
+// The mode is passed in rather than read, because the answer for a mode this
+// binary was not built with is exactly what a test in the unit tier has to be
+// able to ask: a suite compiled without -cover can otherwise only observe one
+// of the two branches, and it is the other one that was broken.
+func suitePublishesCoverRoot(mode string) bool { return mode != "" }
 
 // HelperCoverRoot is the directory helper processes carve their coverage
 // directories out of, or the empty string in a process that is not running
@@ -231,8 +266,13 @@ func HelperCoverRoot() string { return os.Getenv(HelperCoverRootEnv) }
 // their scripted `go` and as the test binary a scripted compile produced. The
 // variable is gone by the time the helper looks; the instrumentation is not,
 // and the exit hook writes all the same. So the root, which [runSuite]
-// publishes only in a suite that is itself a coverage run and which no policy
+// publishes only in a suite that is itself instrumented and which no policy
 // strips, is what says "this binary is instrumented".
+//
+// It is deliberately not asked a second time here. A helper is the binary of
+// the suite that published the root, re-executed, so its cover mode is that
+// suite's — and a check the unit tier could never take the interesting branch
+// of would leave the redirection provable only under `go test -cover`.
 //
 // Without a root the two remaining shapes are not the same thing. No GOCOVERDIR
 // either is an ordinary `go test`: nothing is instrumented, nothing writes
@@ -243,10 +283,10 @@ func HelperCoverRoot() string { return os.Getenv(HelperCoverRootEnv) }
 // writing covmeta into the directory `go test` is collecting.
 func isolateCoverageOutput() error {
 	root := HelperCoverRoot()
-	if root == "" {
-		if os.Getenv(CoverDirEnv) == "" {
-			return nil
-		}
+	switch helperCoverAction(root, os.Getenv(CoverDirEnv)) {
+	case coverNothing:
+		return nil
+	case coverRefuse:
 		return fmt.Errorf("%s is unset, so this helper has nowhere private to write coverage output",
 			HelperCoverRootEnv)
 	}
@@ -257,4 +297,48 @@ func isolateCoverageOutput() error {
 		return err
 	}
 	return os.Setenv(CoverDirEnv, dir)
+}
+
+// A coverAction is what a helper process does about its coverage output.
+type coverAction int
+
+const (
+	// coverNothing leaves the process exactly as it arrived: there is no root,
+	// so there is no directory to point anywhere and nothing to point at it.
+	coverNothing coverAction = iota
+	// coverCarve takes a directory of this process's own out of the root and
+	// sends the coverage runtime's exit hook to it.
+	coverCarve
+	// coverRefuse is [HelperMisuse]: a helper holding the parent's own profile
+	// directory and no root to write somewhere else instead.
+	coverRefuse
+)
+
+// String names the action, so that a failure says which of the three a helper
+// took rather than which integer it is.
+func (a coverAction) String() string {
+	switch a {
+	case coverCarve:
+		return "carve a private coverage directory"
+	case coverRefuse:
+		return "refuse, with the misuse status"
+	default:
+		return "leave the coverage output alone"
+	}
+}
+
+// helperCoverAction is [isolateCoverageOutput]'s decision, as a value.
+//
+// It is separated from the doing so that all four combinations can be asked in
+// one table — the two arguments are process-wide state otherwise, and a test
+// that set them would be a test that could not run beside another one.
+func helperCoverAction(root, coverDir string) coverAction {
+	switch {
+	case root != "":
+		return coverCarve
+	case coverDir != "":
+		return coverRefuse
+	default:
+		return coverNothing
+	}
 }

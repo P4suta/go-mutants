@@ -46,6 +46,23 @@ const (
 	argvTargetExitEnv = "TESTKIT_ARGV_TARGET_EXIT"
 )
 
+// The switch, the name and the payload of the child
+// TestHelperUnderTheGocoverdirFlagKeepsItsChildrenQuiet drives.
+//
+// They live here rather than beside that test because the process they describe
+// is here: the integration-tagged parent compiles *this* package's test binary,
+// so the test it selects with `-test.run` has to be one the unit tier contains.
+//
+// The payload is written to standard error with no trailing newline, because
+// stderr is the stream the coverage runtime's exit hook writes its warning to
+// and exact bytes are the only assertion that can tell "the child spoke" apart
+// from "the child spoke and the runtime added a line".
+const (
+	gocoverdirProbeEnv  = "TESTKIT_GOCOVERDIR_FLAG_PROBE"
+	gocoverdirProbeTest = "TestHelperUnderTheGocoverdirFlagProcess"
+	gocoverdirProbeText = "exactly these bytes on standard error"
+)
+
 // TestMain is the [Helper] shape this package both offers and uses, with the
 // guard that no test in it files evidence in the developer's own kept root.
 //
@@ -110,6 +127,12 @@ func selfHelperProgram(args []string) int {
 		// on the exact bytes.
 		_, _ = fmt.Fprint(os.Stdout, rest[0])
 		return 0
+	case "printerr":
+		// printerr TEXT — the same on standard error, which is where the
+		// coverage runtime's exit hook writes and therefore the stream a test
+		// about that hook has to read.
+		_, _ = fmt.Fprint(os.Stderr, rest[0])
+		return 0
 	case "env":
 		// env NAME — prints the value the child sees, empty when unset.
 		_, _ = fmt.Fprint(os.Stdout, os.Getenv(rest[0]))
@@ -168,6 +191,35 @@ func TestHelperCoverRootTargetProcess(t *testing.T) {
 		t.Fatalf("%s = %q, which is not a status", argvTargetExitEnv, status)
 	}
 	os.Exit(code)
+}
+
+// TestHelperUnderTheGocoverdirFlagProcess is not a test either: it is the child
+// TestHelperUnderTheGocoverdirFlagKeepsItsChildrenQuiet re-executes, in a
+// process built with `go test -c -cover` and told where its coverage data goes
+// with `-test.gocoverdir` rather than with GOCOVERDIR.
+//
+// It reports the root its own TestMain published, which is the only way the
+// parent can see a directory that is gone by the time this process has exited,
+// and then starts a helper whose entire output is [gocoverdirProbeText]. That
+// helper is the subject. It is this binary again, so it is instrumented too,
+// and it leaves through os.Exit without reaching the testing package's coverage
+// teardown — so its exit hook fires, and what the hook does depends on whether
+// this suite gave it somewhere private to write.
+func TestHelperUnderTheGocoverdirFlagProcess(t *testing.T) {
+	if !HelperEnabled(gocoverdirProbeEnv) {
+		return
+	}
+	_, _ = fmt.Fprintln(os.Stdout, coverRootMarker+HelperCoverRoot())
+
+	env := withEntries(Compose(t, t.TempDir()), selfHelperEnv+"=1")
+	result := Exec(t, t.TempDir(), env, TestBinary(), "printerr", gocoverdirProbeText)
+
+	RequireExit(t, result, 0, "the helper program")
+	if got := string(result.Output); got != gocoverdirProbeText {
+		t.Errorf("the helper's whole output is %q, want exactly %q: an instrumented helper with "+
+			"nowhere private to write warns on the stream its caller is asserting the bytes of",
+			got, gocoverdirProbeText)
+	}
 }
 
 // TestHelperArgvReexecutesOnlyTheNamedTest pins the argv, and then proves the
@@ -370,32 +422,156 @@ func TestHelperCoverageRedirectionTurnsOnTheRoot(t *testing.T) {
 	})
 }
 
-// TestHelperLeavesNoCoverageDirectoryBehind is the other half of that rule: the
-// private directory exists for a coverage run and for nothing else.
+// TestTheCoverModeDecidesTheRootAndTheRootDecidesTheHelper is the whole
+// decision as a table, in the one tier that can ask it about a cover mode this
+// binary was not built with.
+//
+// The two halves are asked separately because they are answered separately, and
+// getting that wrong is what this table exists to keep from happening again:
+//
+//   - Whether a suite makes a private root at all is [testing.CoverMode], which
+//     is the compiled-in fact "this binary is instrumented". It is not
+//     GOCOVERDIR, which `go test -cover` happens to export and which a binary
+//     run with `-test.gocoverdir` — every mutant's test binary — does not have.
+//   - What a helper does about its own coverage output is the root and the
+//     variable, exactly as #62 left it. The mode does not enter, and the rows
+//     that vary it while holding the rest still say so: a helper is the binary
+//     of the suite that published the root, re-executed, so asking again would
+//     only re-derive what publishing the root already claimed — and it would
+//     make the redirection unaskable in the tier that has no coverage.
+func TestTheCoverModeDecidesTheRootAndTheRootDecidesTheHelper(t *testing.T) {
+	t.Parallel()
+
+	const (
+		root    = "/tmp/go-mutants-helper-cover-1"
+		profile = "/tmp/the-parents-own-profile"
+	)
+	for _, test := range []struct {
+		name     string
+		mode     string
+		root     string
+		coverDir string
+		publish  bool
+		action   coverAction
+	}{{
+		// Nothing is instrumented, no exit hook fires, and a directory nothing
+		// writes to is a directory every killed process leaves behind.
+		name:   "a plain `go test`",
+		action: coverNothing,
+	}, {
+		// The developer's `go test -cover`, which exports the variable as well.
+		name:     "`go test -cover`",
+		mode:     "set",
+		root:     root,
+		coverDir: profile,
+		publish:  true,
+		action:   coverCarve,
+	}, {
+		// A mutant's test binary, and the shape this table was written for: the
+		// directory arrives as a flag, so there is no variable to read.
+		name:    "a `-cover` binary run with -test.gocoverdir",
+		mode:    "atomic",
+		root:    root,
+		publish: true,
+		action:  coverCarve,
+	}, {
+		// A coverage run whose root went missing on the way in — a TestMain that
+		// ran m.Run itself, an environment policy that stripped it. Carrying on
+		// means writing covmeta into the directory `go test` is collecting.
+		name:     "a coverage run with nowhere private to write",
+		mode:     "count",
+		coverDir: profile,
+		publish:  true,
+		action:   coverRefuse,
+	}, {
+		// An uninstrumented process that inherited a root: the root is the
+		// parent's claim and this honours it, because the mode is not what it
+		// answers. Nothing is written either way, and the directory is inside a
+		// root its owner removes whole.
+		name:   "a root inherited by a process with no coverage of its own",
+		root:   root,
+		action: coverCarve,
+	}, {
+		// The refusal does not ask about the mode either, and deliberately: a
+		// helper handed the parent's profile directory is a misconfiguration
+		// whichever binary it is, and a check that meant one thing in the unit
+		// tier and another under -cover is a check nobody can rely on.
+		name:     "a GOCOVERDIR handed to a process with no root",
+		coverDir: profile,
+		action:   coverRefuse,
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := suitePublishesCoverRoot(test.mode); got != test.publish {
+				t.Errorf("suitePublishesCoverRoot(%q) = %v, want %v", test.mode, got, test.publish)
+			}
+			if got := helperCoverAction(test.root, test.coverDir); got != test.action {
+				t.Errorf("helperCoverAction(%q, %q) = %v, want %v",
+					test.root, test.coverDir, got, test.action)
+			}
+		})
+	}
+}
+
+// TestHelperMakesACoverageDirectoryOnlyForAnInstrumentedRun is the other half
+// of that rule: the private directory exists for an instrumented run and for
+// nothing else.
 //
 // Nothing ever collects what a helper writes into it. [runSuite] removes the
 // root with the counters still inside, deliberately — that is how helper
 // counters are kept out of the parent's own profile — so the directory's whole
-// job is to be somewhere other than the GOCOVERDIR `go test -cover` exports.
-// Outside a coverage run there is no such directory to stay away from: nothing
-// is instrumented, no exit hook fires, and the mkdir buys nothing at all.
+// job is to be somewhere other than the directory the parent's own coverage is
+// collected in. A binary that is not instrumented has no such directory to stay
+// away from: no exit hook fires, and the mkdir buys nothing at all.
 //
 // What it costs is a directory per test binary process that only a deferred
 // function removes, and a mutation run is thousands of test binary processes
 // with a budget that kills the slow ones. Eleven thousand eight hundred and
 // forty-two of them were counted in one machine's /tmp after a run, which is
-// why the third case here leaves the way a killed process does.
-func TestHelperLeavesNoCoverageDirectoryBehind(t *testing.T) {
+// why the last case here leaves the way a killed process does.
+//
+// Every expectation is derived from [testing.CoverMode] rather than written
+// down, and that is the correction this test carries. The child is this binary
+// re-executed, so it is instrumented exactly when this suite is — and it used
+// to be GOCOVERDIR that decided, which is a variable `go test -cover` exports,
+// a plain `go test` does not, and a mutant's test binary run with
+// `-test.gocoverdir` never sees although it is as instrumented as either. A
+// test that asserted one branch would be asserting which command the developer
+// happened to type.
+func TestHelperMakesACoverageDirectoryOnlyForAnInstrumentedRun(t *testing.T) {
 	t.Parallel()
 
 	argv := HelperArgv("TestHelperCoverRootTargetProcess")
 	// Both variables are cleared rather than assumed absent, because a plain
 	// `go test` has neither and this suite is sometimes the one under -cover:
-	// GOCOVERDIR is what makes a run a coverage run, and the root is what this
-	// suite would otherwise pass down to a child of its own.
+	// the root is what this suite would otherwise pass down to a child of its
+	// own, and GOCOVERDIR is what this test is about not being decided by.
 	plainRun := []string{CoverDirEnv + "=", HelperCoverRootEnv + "="}
+	instrumented := testing.CoverMode() != ""
 
-	t.Run("a run with no coverage makes none", func(t *testing.T) {
+	// requireRoot asserts what the child published, whichever tier this is.
+	requireRoot := func(t *testing.T, result Result, scratch string) {
+		t.Helper()
+		root := publishedCoverRoot(t, result)
+		switch {
+		case !instrumented:
+			if root != "" {
+				t.Errorf("a suite with no coverage to keep apart published %s = %q; a directory "+
+					"nothing writes to is a directory every killed process leaves behind",
+					HelperCoverRootEnv, root)
+			}
+		case root == "":
+			t.Errorf("a coverage-instrumented suite published no %s, so its helpers have nowhere "+
+				"private to write: every one of them writes covmeta into the parent's directory, or "+
+				"says on stderr that it wrote nowhere", HelperCoverRootEnv)
+		case !SamePath(filepath.Dir(root), scratch):
+			t.Errorf("the coverage root is %q, want one carved out of the temporary directory the "+
+				"child was given, %s", root, scratch)
+		}
+	}
+
+	t.Run("a run that ends normally leaves nothing behind", func(t *testing.T) {
 		t.Parallel()
 
 		scratch := t.TempDir()
@@ -403,14 +579,11 @@ func TestHelperLeavesNoCoverageDirectoryBehind(t *testing.T) {
 		result := Exec(t, t.TempDir(), env, argv...)
 
 		RequireExit(t, result, 0, "the re-executed test")
-		if root := publishedCoverRoot(t, result); root != "" {
-			t.Errorf("a suite with no coverage to keep apart published %s = %q; a directory nothing "+
-				"writes to is a directory every killed process leaves behind", HelperCoverRootEnv, root)
-		}
-		requireNoCoverageDirectoriesIn(t, scratch)
+		requireRoot(t, result, scratch)
+		requireCoverageDirectoriesIn(t, scratch, 0)
 	})
 
-	t.Run("a coverage run makes one and removes it", func(t *testing.T) {
+	t.Run("a GOCOVERDIR does not make a run a coverage run", func(t *testing.T) {
 		t.Parallel()
 
 		scratch := t.TempDir()
@@ -421,20 +594,17 @@ func TestHelperLeavesNoCoverageDirectoryBehind(t *testing.T) {
 		result := Exec(t, t.TempDir(), env, argv...)
 
 		RequireExit(t, result, 0, "the re-executed test")
-		root := publishedCoverRoot(t, result)
-		if root == "" {
-			t.Fatalf("a suite whose %s is set published no %s, so its helpers have nowhere private "+
-				"to write and every one of them writes covmeta into the parent's directory",
-				CoverDirEnv, HelperCoverRootEnv)
-		}
-		if !SamePath(filepath.Dir(root), scratch) {
-			t.Errorf("the coverage root is %q, want one carved out of the temporary directory the "+
-				"child was given, %s", root, scratch)
-		}
-		requireNoCoverageDirectoriesIn(t, scratch)
+		requireRoot(t, result, scratch)
+		requireCoverageDirectoriesIn(t, scratch, 0)
 	})
 
-	t.Run("a run that is killed leaves none", func(t *testing.T) {
+	// The residual, stated rather than hoped for. A killed process runs no
+	// deferred function, so an instrumented one leaves its root exactly where
+	// os.TempDir() put it — which is why that directory matters: under a
+	// mutation run internal/execute points TMPDIR at the worker's scratch and
+	// the run takes the whole thing away afterwards, and under a developer's own
+	// `go test -cover` it is the machine's, where a Ctrl-C really does leave one.
+	t.Run("a run that is killed leaves only what it was carrying", func(t *testing.T) {
 		t.Parallel()
 
 		scratch := t.TempDir()
@@ -446,7 +616,11 @@ func TestHelperLeavesNoCoverageDirectoryBehind(t *testing.T) {
 			t.Fatalf("the child exited %d, want the 9 it was told to leave with:\n%s",
 				result.ExitCode, result.Output)
 		}
-		requireNoCoverageDirectoriesIn(t, scratch)
+		want := 0
+		if instrumented {
+			want = 1
+		}
+		requireCoverageDirectoriesIn(t, scratch, want)
 	})
 }
 
@@ -464,18 +638,23 @@ func publishedCoverRoot(t *testing.T, r Result) string {
 	return ""
 }
 
-// requireNoCoverageDirectoriesIn fails the step for every private coverage
-// directory left in the temporary directory a child was given.
-func requireNoCoverageDirectoriesIn(t *testing.T, dir string) {
+// requireCoverageDirectoriesIn fails the step unless exactly want private
+// coverage directories are left in the temporary directory a child was given.
+//
+// A count rather than an absence, because one of the two answers is now a
+// number: a killed instrumented process leaves the root it was carrying, and a
+// test that could only say "none" would have to skip the case rather than state
+// it.
+func requireCoverageDirectoriesIn(t *testing.T, dir string, want int) {
 	t.Helper()
 
 	left, err := filepath.Glob(filepath.Join(dir, helperCoverPrefix+"*"))
 	if err != nil {
 		t.Fatalf("scanning %s for coverage directories: %v", dir, err)
 	}
-	if len(left) > 0 {
+	if len(left) != want {
 		t.Errorf("the child left %d coverage directory(ies) behind in the temporary directory it was "+
-			"given: %q", len(left), left)
+			"given, want %d: %q", len(left), want, left)
 	}
 }
 
