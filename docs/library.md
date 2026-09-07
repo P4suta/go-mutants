@@ -1687,7 +1687,8 @@ any depth (`assets/deep/x.txt`).
 - **Every other failure is an `*ExecutionError` with `Call: "module"`**, whether
   it was `go list` exiting non-zero, a child that would not start, a cancelled
   context or a go.mod that could not be read. The message begins
-  `gomutants: module:` and a space, the cause is wrapped so `errors.Is` still reaches it,
+  `gomutants: module:` and a space, the cause is wrapped so `errors.Is` still
+  reaches it,
   and `Output` carries the toolchain's own words. The only refusals that are not
   this type are the two a consumer *branches* on rather than reports:
   `ErrInvalidQuery`, and the lifecycle sentinels `ErrPrepareFailed` and
