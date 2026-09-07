@@ -201,7 +201,7 @@ var repositoryExpectations = []Expectation{
 	// build and are the reason the rows say "on a 64-bit build" rather than
 	// "unkillable".
 	{
-		ID: "3293a81a48613c6b4ec80c0ec2327aa8b8494f35c4db89c61cde9968a858994e",
+		ID: "da6962bfd6364a6dc88c69bf087dbfe0b3c656a06792a122f081f69a7585703e",
 		Reason: "Equivalent on every platform: `v > int64(maxInt)` and " +
 			"`v >= int64(maxInt)` select different branches only at exactly " +
 			"int64(maxInt), where the guard returns maxInt and falling " +
@@ -209,21 +209,21 @@ var repositoryExpectations = []Expectation{
 			"both spellings narrow every int64 to the same int.",
 	},
 	{
-		ID: "271f4a89a0bc3384ae00bb92d1a73092af73b8560ec782d178262d867452f318",
+		ID: "5fb5f529dd138bc5a91fa7542bc406dbfdf12b0ff8ad63536a41c029d745b9e6",
 		Reason: "Unreachable on a 64-bit build, which is every platform this " +
 			"gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is " +
 			"math.MaxInt64 and no int64 is greater than it. Killing it means " +
 			"running this package's suite on a 32-bit GOARCH.",
 	},
 	{
-		ID: "dd85e0fa4c21d862861434da948c0b83e3cfabd62b13786d4d1b6c1ca8613af4",
+		ID: "7df627f07c3e78285bf6602785c6e0f5d8f117af4018505748e9e23d42e2618d",
 		Reason: "Equivalent on every platform: the same argument as the `>` " +
 			"row above, at the other end -- `<` and `<=` disagree only at " +
 			"exactly int64(minInt), where the guard returns minInt and " +
 			"falling through returns int(v), which is minInt.",
 	},
 	{
-		ID: "0465760a7c7529075e78c437ba8017e0d96ab3156b1dc7b484ee89256c7ba60c",
+		ID: "0609825e5d771c579eb7e2335afa6d224c3005ea2eb50eb82ff5e09fec76dcdd",
 		Reason: "Unreachable on a 64-bit build: minInt is -maxInt - 1, so " +
 			"int64(minInt) is math.MinInt64 and no int64 is less than it -- " +
 			"the mirror of the maxInt row above, and reachable on the same " +
@@ -252,13 +252,13 @@ var repositoryExpectations = []Expectation{
 			"4096 is positive for any document at all.",
 	},
 	{
-		ID: "d11cd96e2e32d017b3cae4e67860e6f8493cfe9673f273569093438fbaa96af3",
+		ID: "c3d40ed1a36996a03b454620a03da2ec1cf9cbe070a8e58599e3db30e4fc71c6",
 		Reason: "Equivalent: the second argument of make is a capacity hint, " +
 			"the runtime clamps a negative one to zero, and a map holds the " +
 			"same entries whatever it was sized for.",
 	},
 	{
-		ID: "dbcc1509c1b52aaa5dd0fc0fd510fe8cc8bc0da6a4622f9f834a04724e53d8df",
+		ID: "5ac5c99ed973fed0246e266c52f28ae1658ce86971424d583595849871a76af1",
 		Reason: "Equivalent: OutcomeNotRun is the zero value of " +
 			"mutation.Outcome, being first in its iota block, so `return " +
 			"mutation.OutcomeNotRun` and `return 0` are the same constant " +
@@ -266,14 +266,14 @@ var repositoryExpectations = []Expectation{
 			"above.",
 	},
 	{
-		ID: "8ef3d6c08a2818791871838426584c25f9fb9fba77d3a7e6b58b9741798524ce",
+		ID: "4bf4f630bb41121facb1dc4f0cc6b30b4a19f699d17defaaca13dc59e6653813",
 		Reason: "Equivalent: the guard reports 0 for a negative duration and " +
 			"d.Milliseconds() otherwise, and a zero duration is 0 " +
 			"milliseconds through either branch, so `<` and `<=` render " +
 			"every duration the same.",
 	},
 	{
-		ID: "bc426cca8594b9fb5439cd5377f8b9493338929b92c3fa552c0502d9c345b4ea",
+		ID: "252f817d8fb60f606b7c0c92a3674ade07fff7c7a7e0de9c08dd0872c2e352eb",
 		Reason: "Equivalent: `<=` and `<` disagree only for an id of exactly " +
 			"DisplayIDLength characters, where returning `id` and returning " +
 			"`id[:DisplayIDLength]` return the same string.",
@@ -315,7 +315,7 @@ var repositoryExpectations = []Expectation{
 			"row above.",
 	},
 	{
-		ID: "472e63ef0cfbb0883b8c7ab8d1635250ea9d1ad32d70cbfb4ece7d64f4975879",
+		ID: "e1b62d0b86c672b24228a09bbf179c7604acc67aeec244fce260f3c182716b9f",
 		Reason: "Equivalent: a rejected mutant's disposition carries no " +
 			"outcome, and StateOf answers `unfulfilled` through the " +
 			"Rejected case and through the default alike, because the zero " +
@@ -336,41 +336,41 @@ var repositoryExpectations = []Expectation{
 			"back in is not observable.",
 	},
 	{
-		ID: "8758961d36bded228b06381610fa842e0e9c8306b124a9c1a3504201e4efe780",
+		ID: "c4740390a45d54b1d38fa58c53c0428f0ea155276dd2a16064fe8a8a100974e5",
 		Reason: "Unreachable: partition has already translated every result's " +
 			"outcome through OutcomeOf, which refuses anything outside the " +
 			"six, and mutation.Tally records all six -- so the count this " +
 			"forwards cannot fail.",
 	},
 	{
-		ID: "02fbcaa1f6e017947cf92e3bc2f9e0ddea475316a91db067f2c04ba999d1cb10",
+		ID: "999cd4aaba4b5576d06ebdf8e2653913747069fdf735bc0cb88f1fbe7dfae8bd",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
 	{
-		ID: "9b448714742c3a4fd12fb698f8e80db007bc47aadfb4defcbb476f5fe39cb676",
+		ID: "1e020d3ff3ff61130316dcb84a767c777f56238373e596c0cc2b85a9b941a1f4",
 		Reason: "Unreachable: the same argument one level in -- tallyOf reads " +
 			"the outcomes partition has already accepted, so " +
 			"mutation.TallyOf cannot refuse one.",
 	},
 	{
-		ID: "aa9612a66d1514294af35ca7f14c8b199092ed0b7254765f8f8ad36149b5bd34",
+		ID: "46377b3b20a3d917d144c3d08c7d82a298112add1d68716790668110095e8fea",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "c37a80bed018a8c82423a37f2e467e8dda1099ae9643ea956a50da403e53f830",
+		ID: "b64199f55d4fab06639b68d71bc06fa0d2452976e0db479b11ba7cdfd4a488c9",
 		Reason: "Unreachable: Outcome.Mutation answers with one of the six core " +
 			"outcomes or with an error the line above returns, and " +
 			"mutation.Tally.Record has a case for all six.",
 	},
 	{
-		ID: "97f987289f3b2266c230e8f854f70b03e98b8d3c9e626c07429b0aee2d69f47a",
+		ID: "c9397f88ba8e506557c65396f13f7dd19a3ca8778188db8b74b2150eb0cb3117",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "35dcf30682f594959766ce6caf4678c0883ed1e18988ce39118ac6e89a7f0ca9",
+		ID: "b4ed4c56cfeb5cc16f4c388aa005499a8551897c4f262b418f4182455b7a535f",
 		Reason: "Unreachable: the counts disagree only when a row was not " +
 			"consumed by the catalogue walk, and a row is consumed exactly " +
 			"when its id is catalogued -- so the loop above always finds " +

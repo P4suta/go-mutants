@@ -502,6 +502,31 @@ func TestBuildRefusesTestFactsOutsideTestMode(t *testing.T) {
 	}
 }
 
+// TestATestNarrowedRunThatProfiledNoTests is the boundary the negative-count
+// guard sits on: zero tests is a measurement, not an error — a run all of whose
+// binaries were dirty profiles no test on its own and still says so with
+// `tests: 0`, exactly as a zero binary count is stated rather than refused.
+func TestATestNarrowedRunThatProfiledNoTests(t *testing.T) {
+	t.Parallel()
+
+	opts := testCoverageOptions(t)
+	opts.CoverageTests = 0
+
+	r, err := report.Build(opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if r.Coverage.Tests == nil {
+		t.Fatal("a test-narrowed run states no test count")
+	}
+	if *r.Coverage.Tests != 0 {
+		t.Errorf("coverage.tests = %d, want 0", *r.Coverage.Tests)
+	}
+	if r.Coverage.Mode != report.CoverageTest {
+		t.Errorf("coverage.mode = %q, want %q", r.Coverage.Mode, report.CoverageTest)
+	}
+}
+
 // TestBuildRefusesANegativeTestCount is [TestBuildRefusesACoverageBinaryCountThatIsNotOne]
 // for the count a test-narrowed run adds.
 func TestBuildRefusesANegativeTestCount(t *testing.T) {
