@@ -20,11 +20,16 @@ package cli
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/P4suta/go-mutants/internal/console"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // explainAfterARun runs killable with a recording and returns the report it
@@ -36,11 +41,11 @@ import (
 // directory it keeps is under the TMPDIR [inKillableFixture] redirected into
 // the test's own temporary directory, so the keep is undone by the test's
 // cleanup rather than left on the developer's disk.
-func explainAfterARun(t *testing.T, args ...string) *report.Report {
+func explainAfterARun(t *testing.T, args ...string) (string, *report.Report) {
 	t.Helper()
-	inKillableFixture(t)
+	root := inKillableFixture(t)
 	rep, _ := runReport(t, append([]string{"--trace"}, args...)...)
-	return rep
+	return root, rep
 }
 
 // explainOutput drives `explain` in process and fails unless it exited 0.
@@ -69,13 +74,15 @@ func mutantWith(t *testing.T, rep *report.Report, outcome report.Outcome, uncove
 
 // reproduceCommand lifts the pasteable line out of an account.
 //
-// It is found by its shape — the one line that starts with `cd ` — rather than
-// by counting lines from the heading, so a section that gains a note above or
-// below it does not silently start returning the wrong string.
+// It is found by its shape — the one line that changes directory and activates
+// a mutant — rather than by counting lines from the heading, so a section that
+// gains a note above or below it, or the rebuild line a library session's
+// account also carries, does not silently make this return the wrong string.
 func reproduceCommand(t *testing.T, account string) string {
 	t.Helper()
 	for _, line := range strings.Split(account, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "cd ") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "cd ") && strings.Contains(trimmed, "GO_MUTANTS_ACTIVE=") {
 			return trimmed
 		}
 	}
@@ -83,46 +90,75 @@ func reproduceCommand(t *testing.T, account string) string {
 	return ""
 }
 
+// killingCommand is the child process the account's reproduce line describes,
+// read out of the recording rather than out of the line.
+//
+// This is the structured half of the test and the reason it has two halves at
+// all. What has to be executed is a program and its arguments, which the
+// recording holds as data; what the account prints is one *line*, quoted for a
+// shell. Splitting that line on spaces to get the program back was the bug this
+// test was meant to catch and instead reproduced: a path with a space in it —
+// or a Windows path, which is quoted because of its separators — comes back as
+// two words with a stray quote on the front.
+func killingCommand(t *testing.T, root string, rep *report.Report, id string) (dir string, argv []string) {
+	t.Helper()
+	stream := filepath.Join(traceDirectoryOf(root, rep), trace.FileName)
+	events, err := trace.Read(stream)
+	if err != nil {
+		t.Fatalf("reading the recording the account read: %v", err)
+	}
+
+	// The last command of the mutant's last pass, which is the one whose output
+	// is the evidence and the one the account prints. See explain's lastExecSeq.
+	var seq int64
+	for _, event := range events {
+		if event.Type == trace.TypeMutantExec && event.Mutant.ID == id && len(event.Mutant.ExecSeqs) > 0 {
+			seq = event.Mutant.ExecSeqs[len(event.Mutant.ExecSeqs)-1]
+		}
+	}
+	for _, event := range events {
+		if event.Seq == seq && event.Type == trace.TypeExec {
+			return event.Exec.Dir, event.Exec.Argv
+		}
+	}
+	t.Fatalf("the recording holds no command for %s", id)
+	return "", nil
+}
+
 // TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand is the
 // command's central promise, checked by keeping it.
 //
-// The line is parsed rather than handed to a shell, and that is not
-// squeamishness about `sh`: this repository's tests run on Windows too, and a
-// test that could only pass on a POSIX machine would be a test of the
-// reproduction on half the platforms it is printed on. What is parsed is
-// exactly the three parts the line is composed of — the directory, the
-// activation, and the argument vector — so a change to any of them fails here.
+// It is two claims and they are checked separately, because they are about two
+// different things and conflating them is what made an earlier version of this
+// test wrong on Windows. The *command* is a program, a directory and an
+// argument vector, which the recording holds as data; the *line* is that
+// command rendered for a POSIX shell. Splitting the line on spaces to recover
+// the program was a third thing — a shell parser — written by accident, and it
+// failed on the first path that needed quoting.
 //
-// A non-zero exit is the assertion, and it is the whole assertion: a Go test
-// binary exits non-zero when a test fails, that failure is what "killed" means,
-// and a zero would mean the mutant the report calls killed is not caught by the
-// command the account says caught it.
+// So: the command comes out of the recording and is run directly, on every
+// platform, and a non-zero exit is the whole assertion — a Go test binary exits
+// non-zero when a test fails, that failure is what "killed" means, and a zero
+// would mean the mutant the report calls killed is not caught by the command
+// the account says caught it. Then the printed line is checked against that
+// same command: on a POSIX machine by running the line itself through `sh`,
+// which is the only proof that a line meant to be pasted can be, and elsewhere
+// by decoding it with the reader that lives beside the quoter.
 func TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand(t *testing.T) {
-	rep := explainAfterARun(t, "--keep-temp")
+	root, rep := explainAfterARun(t, "--keep-temp")
 	killed := mutantWith(t, rep, report.OutcomeKilled, false)
 
 	account := explainOutput(t, killed.DisplayID[:8])
 	if !strings.Contains(account, "killed by ") {
 		t.Errorf("the account does not name the binary that caught it:\n%s", account)
 	}
-	command := reproduceCommand(t, account)
+	dir, argv := killingCommand(t, root, rep, killed.ID)
+	activation := "GO_MUTANTS_ACTIVE=" + killed.ID
 
-	dir, rest, ok := strings.Cut(strings.TrimPrefix(command, "cd "), " && ")
-	if !ok {
-		t.Fatalf("the reproduction is not `cd <dir> && <command>`: %q", command)
-	}
-	fields := strings.Fields(rest)
-	if len(fields) < 2 {
-		t.Fatalf("the reproduction has no command after the activation: %q", command)
-	}
-	activation, argv := fields[0], fields[1:]
-	if activation != "GO_MUTANTS_ACTIVE="+killed.ID {
-		t.Fatalf("the reproduction activates %q, want the mutant's own identity %q", activation, killed.ID)
-	}
+	// The command, run as a command.
 	if _, err := os.Stat(argv[0]); err != nil {
-		t.Fatalf("the reproduction names a binary that is not there: %v", err)
+		t.Fatalf("the kept run's test binary is not there: %v", err)
 	}
-
 	child := exec.Command(argv[0], argv[1:]...)
 	child.Dir = dir
 	child.Env = append(os.Environ(), activation)
@@ -132,6 +168,70 @@ func TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand(t *testing.
 	}
 	if !strings.Contains(string(output), "FAIL") {
 		t.Errorf("the reproduction did not fail as a Go test:\n%s", output)
+	}
+
+	// The line, as a rendering of that command.
+	command := reproduceCommand(t, account)
+	want := "cd " + console.QuoteArgv([]string{dir}) + " && " + activation + " " + console.QuoteArgv(argv)
+	if command != want {
+		t.Fatalf("the printed reproduction is not the recorded command\n got: %s\nwant: %s", command, want)
+	}
+
+	// The line, as a line. It is decoded on every platform, because a decoder
+	// that had drifted from the quoter would otherwise only be caught on the
+	// one platform that cannot also run the line — which is the platform whose
+	// failures are hardest to reproduce. Where there is a shell to paste into,
+	// the paste itself is the stronger proof and is made as well.
+	checkPrintedReproduction(t, command, dir, activation, argv)
+	if runtime.GOOS != "windows" {
+		runPrintedReproduction(t, command)
+	}
+}
+
+// checkPrintedReproduction decodes the printed line and compares it with the
+// command it was rendered from.
+//
+// It is what a platform whose shell cannot run the line gets instead of running
+// it, and what every other platform gets as well. The decoder is
+// [console.UnquoteArgv], which lives beside the quoter and is held to it by a
+// round-trip test, so this is a comparison against the quoting rules rather
+// than against a second guess at them.
+func checkPrintedReproduction(t *testing.T, command, dir, activation string, argv []string) {
+	t.Helper()
+	fields, err := console.UnquoteArgv(command)
+	if err != nil {
+		t.Fatalf("the printed reproduction does not decode: %v\n%s", err, command)
+	}
+	// `cd <dir> && <activation> <argv...>`: the operator is a word of its own,
+	// because the line is joined with spaces.
+	if len(fields) < 4 || fields[0] != "cd" || fields[2] != "&&" || fields[3] != activation {
+		t.Fatalf("the printed reproduction is not `cd <dir> && %s <argv...>`: %q", activation, fields)
+	}
+	if fields[1] != dir {
+		t.Errorf("the reproduction changes to %q, want the recorded directory %q", fields[1], dir)
+	}
+	if got := fields[4:]; !slices.Equal(got, argv) {
+		t.Errorf("the reproduction runs %q, want the recorded command %q", got, argv)
+	}
+}
+
+// runPrintedReproduction runs the printed line through a POSIX shell, which is
+// the only proof that a line meant to be pasted can be.
+//
+// Nothing is parsed here: the shell does the quoting, the `cd`, the environment
+// assignment and the exec, exactly as the reader who selected the line would.
+func runPrintedReproduction(t *testing.T, command string) {
+	t.Helper()
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no POSIX shell to paste the reproduction into: %v", err)
+	}
+	output, err := exec.Command(shell, "-c", command).CombinedOutput()
+	if err == nil {
+		t.Errorf("the pasted reproduction passed, so it did not reproduce the kill:\n%s", output)
+	}
+	if !strings.Contains(string(output), "FAIL") {
+		t.Errorf("the pasted reproduction did not fail as a Go test:\n%s\n%s", command, output)
 	}
 }
 
@@ -143,7 +243,7 @@ func TestExplainAfterATracedRunOfKillableReproducesTheKillingCommand(t *testing.
 // list packages that cover it, and its reproduce block has to say that this run
 // started no process for it rather than blame a recording that is right there.
 func TestExplainASurvivorAfterARun(t *testing.T) {
-	rep := explainAfterARun(t)
+	_, rep := explainAfterARun(t)
 	survivor := mutantWith(t, rep, report.OutcomeSurvived, true)
 
 	account := explainOutput(t, survivor.DisplayID[:8])
@@ -167,7 +267,7 @@ func TestExplainASurvivorAfterARun(t *testing.T) {
 // TestExplainAPositionAfterARun is the target that is a place rather than an
 // identity: the question asked from the source instead of from the report.
 func TestExplainAPositionAfterARun(t *testing.T) {
-	rep := explainAfterARun(t)
+	_, rep := explainAfterARun(t)
 	killed := mutantWith(t, rep, report.OutcomeKilled, false)
 	target := killed.Path + ":" + strconv.Itoa(killed.Line)
 

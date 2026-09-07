@@ -696,3 +696,45 @@ func TestQuoteArgvQuotesOnlyWhatAShellWouldBreak(t *testing.T) {
 		t.Errorf("QuoteArgv = %q, want %q", got, want)
 	}
 }
+
+// TestQuoteArgvRoundTrips is the property that makes a printed command line
+// something a program may read back.
+//
+// `go-mutants explain` prints an argument vector as one POSIX-quoted line, and
+// on a platform whose shell cannot run that line the only way to check the line
+// is to decode it. A decoder that disagreed with the quoter would fail exactly
+// where the quoting matters — a path with a space in it, a Windows separator —
+// so the two are held to each other here rather than to a literal.
+func TestQuoteArgvRoundTrips(t *testing.T) {
+	for _, argv := range [][]string{
+		{"/usr/bin/go", "test", "./..."},
+		{"/tmp/with a space/clamp.test", "-test.timeout=40s"},
+		{`D:\a\_temp\bin\88723483.test`, "-test.timeout=1m0s"},
+		{"it's", "a", "quote"},
+		{`say "hi"`, "and $HOME", "and `tick`"},
+		{`back\slash`, `trailing\`},
+		{"", "after an empty argument"},
+		{"two\nlines", "\ttabbed"},
+		{"~", "*", "?", "[a-z]", "#comment", "a|b", "a;b", "a&b", "(a)", "{a}", "<a>"},
+	} {
+		line := QuoteArgv(argv)
+		got, err := UnquoteArgv(line)
+		if err != nil {
+			t.Errorf("UnquoteArgv(QuoteArgv(%q)) = %v; the line was %q", argv, err, line)
+			continue
+		}
+		if !slices.Equal(got, argv) {
+			t.Errorf("QuoteArgv(%q) = %q, which decodes to %q", argv, line, got)
+		}
+	}
+}
+
+// TestUnquoteArgvRefusesALineItCannotRead keeps the decoder from inventing an
+// argument vector out of a line nothing quoted.
+func TestUnquoteArgvRefusesALineItCannotRead(t *testing.T) {
+	for _, line := range []string{`'unterminated`, `trailing\`} {
+		if got, err := UnquoteArgv(line); err == nil {
+			t.Errorf("UnquoteArgv(%q) = %q, want an error", line, got)
+		}
+	}
+}
