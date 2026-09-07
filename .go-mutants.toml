@@ -441,7 +441,7 @@ reason = "Unreachable on a 64-bit build: minInt is -maxInt - 1, so int64(minInt)
 # dogfood gate covers the toolchain wrapper".
 
 [[mutation.expect]]
-id = "f061531c5e36ea50fd6669448677bfcfad074c21a7c5c3a444c7812741bb89cf"
+id = "79dfe6684299febc066964f5ab3c6752751da3f855030841483911d3c133387a"
 reason = "Unreachable: parseVersion has four failure returns and every one of them is a *Error carrying CodeVersionUnparsable, so errors.As above always matches and this forwarding return is reached only by an error kind parseVersion does not produce."
 
 [test]

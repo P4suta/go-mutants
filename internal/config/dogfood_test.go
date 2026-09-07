@@ -232,7 +232,7 @@ var repositoryExpectations = []Expectation{
 	// The one row internal/gocmd brought with it: a narrowing that cannot
 	// fail, so the forwarding return underneath it cannot be reached.
 	{
-		ID: "f061531c5e36ea50fd6669448677bfcfad074c21a7c5c3a444c7812741bb89cf",
+		ID: "79dfe6684299febc066964f5ab3c6752751da3f855030841483911d3c133387a",
 		Reason: "Unreachable: parseVersion has four failure returns and every " +
 			"one of them is a *Error carrying CodeVersionUnparsable, so " +
 			"errors.As above always matches and this forwarding return is " +
