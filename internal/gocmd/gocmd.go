@@ -231,6 +231,10 @@ func resolve(explicit string) (string, error) {
 	return absolute(path)
 }
 
+// absolutePath is [filepath.Abs], as a variable so a test can make it fail
+// on every platform; see [absolute].
+var absolutePath = filepath.Abs
+
 // absolute anchors a resolved path to the current working directory.
 //
 // [filepath.Abs] fails only when the working directory cannot be read, which is
@@ -238,8 +242,14 @@ func resolve(explicit string) (string, error) {
 // misconfiguration. It is still reported rather than papered over: returning
 // the relative path anyway would hand back exactly the [Toolchain.GoBin] this
 // function exists to rule out.
+//
+// The resolution goes through [absolutePath] so that the failure can be
+// staged: filepath.Abs fails only when the working directory cannot be named,
+// which Linux arranges by unlinking it and macOS does not — getcwd there still
+// answers from the path it was given — so a test that took the directory away
+// proved the branch on one platform and nothing on the other.
 func absolute(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := absolutePath(path)
 	if err != nil {
 		return "", &Error{
 			Code:    CodeToolchainNotFound,

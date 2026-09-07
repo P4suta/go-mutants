@@ -3,6 +3,8 @@
 
 package gocmd
 
+import "testing"
+
 // This file is compiled only under `go test`. Version parsing is the part of
 // this package worth testing exhaustively and the part no caller should be
 // able to reach: [Locate] is the only supported way to obtain a [Version],
@@ -23,3 +25,12 @@ func SameEnvKeyOn(goos, a, b string) bool { return sameEnvKeyOn(goos, a, b) }
 // explicit path has to resolve for exec.LookPath to hand it back at all, and
 // resolving it needs the very directory that would have to be gone.
 func Absolute(path string) (string, error) { return absolute(path) }
+
+// FailAbsolutePath makes every resolution against the working directory fail
+// with err for the length of the test.
+func FailAbsolutePath(t *testing.T, err error) {
+	t.Helper()
+	original := absolutePath
+	absolutePath = func(string) (string, error) { return "", err }
+	t.Cleanup(func() { absolutePath = original })
+}

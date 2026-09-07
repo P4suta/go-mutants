@@ -350,48 +350,36 @@ func TestLocateQuotesTheConfiguredPathWithoutEscapingIt(t *testing.T) {
 	}
 }
 
-// TestAbsoluteReportsAWorkingDirectoryThatIsGone covers the failure
-// [gocmd.Toolchain.GoBin]'s absolutising has left, and the reason it is
-// reported rather than papered over: handing the relative path back would
-// return exactly the GoBin that absolutising exists to rule out, and it would
-// be looked for inside the snapshot every later phase runs in.
+// TestAbsoluteReportsAWorkingDirectoryThatIsGone pins the one way anchoring a
+// relative go executable can fail: the working directory cannot be named. The
+// failure is staged rather than arranged, because arranging it is a
+// per-platform trick — Linux answers getcwd with ENOENT for an unlinked
+// directory, macOS answers from the path it was given, Windows refuses the
+// unlink — and the branch is the same on all three.
 //
 // It is driven through the unexported function because [gocmd.Locate] cannot be
-// steered here from the outside. filepath.Abs consults the working directory
-// only for a relative path, and a relative explicit path reaches this code only
-// after exec.LookPath has resolved it — which needs the very directory that
-// would have to be gone.
+// steered here from the outside: a relative explicit path reaches this code
+// only after exec.LookPath has resolved it.
 func TestAbsoluteReportsAWorkingDirectoryThatIsGone(t *testing.T) {
-	// No t.Parallel: t.Chdir is process-wide, and this test takes the working
-	// directory away for the length of it.
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows refuses to remove a directory that is a process's working directory")
-	}
-
-	gone := filepath.Join(t.TempDir(), "gone")
-	if err := os.Mkdir(gone, 0o750); err != nil {
-		t.Fatalf("creating the directory to stand in: %v", err)
-	}
-	t.Chdir(gone)
-	// Unlinked, so getcwd(2) has no name to answer with. t.Chdir restores the
-	// old directory through the descriptor it kept, which needs no name.
-	if err := os.Remove(gone); err != nil {
-		t.Fatalf("removing the working directory: %v", err)
-	}
+	// No t.Parallel: the seam is process-wide.
+	gone := errors.New("getwd: no such file or directory")
+	gocmd.FailAbsolutePath(t, gone)
 
 	path, err := gocmd.Absolute("go")
 	if err == nil {
 		t.Fatalf("Absolute(\"go\") = %q, want an error: there is no directory to resolve it against", path)
 	}
 	if path != "" {
-		t.Errorf("Absolute returned %q beside its error, want the empty string: a relative path here "+
-			"is the GoBin this function exists to rule out", path)
+		t.Errorf("Absolute(\"go\") = %q beside an error, want an empty path", path)
 	}
-	if code := gocmd.CodeOf(err); code != gocmd.CodeToolchainNotFound {
-		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeToolchainNotFound)
+	if got := gocmd.CodeOf(err); got != gocmd.CodeToolchainNotFound {
+		t.Errorf("CodeOf(err) = %q, want %q", got, gocmd.CodeToolchainNotFound)
 	}
-	if want := `"go"`; !strings.Contains(err.Error(), want) {
-		t.Errorf("Error() = %q, want it to name the path it could not resolve, %s", err, want)
+	if !errors.Is(err, gone) {
+		t.Errorf("err = %v does not wrap the resolution failure", err)
+	}
+	if !strings.Contains(err.Error(), `"go"`) {
+		t.Errorf("err = %v does not quote the path it could not resolve", err)
 	}
 }
 
