@@ -173,9 +173,16 @@ const (
 
 // gitCommand runs one git command in dir, failing the test if it does not
 // succeed.
+//
+// It passes no setting that turns signing off. The repository these tests
+// create has no configuration file to carry signing, so it is off already, and
+// asking git to switch it off is precisely what a signing-policy wrapper — the
+// kind a developer of this repository has installed — refuses; see
+// [testkit.GitInit] for the rule and internal/testkit's gate for what enforces
+// it.
 func gitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	argv := append([]string{"-C", dir, "-c", "commit.gpgsign=false"}, args...)
+	argv := append([]string{"-C", dir}, args...)
 	out, err := exec.Command("git", argv...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
