@@ -404,14 +404,15 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 1296 mutants at 100.00%, 52-58 seconds
-# at --jobs 4 against a warm test-owned build cache and 1m48s against a cold
-# one. Cold is what CI measures, because the dogfood job points
-# GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never
-# restores it. .go-mutants.toml records that measurement in full under
-# [policy], next to the scope it is a measurement of, including the run it is
-# paired with and the derived memory bound that made this scope faster than the
-# smaller one before it.
+# The budget this job is sized against: 1402 mutants at 100.00%, 1m28s-1m38s at
+# --jobs 4 against a warm test-owned build cache and 3m45s-4m01s against a cold
+# one, on the shared machine that measured the last widening. Cold is what CI
+# measures, because the dogfood job points GO_MUTANTS_TEST_GOCACHE at the
+# runner's temporary directory and never restores it. .go-mutants.toml records
+# that measurement in full under [policy], next to the scope it is a
+# measurement of, including the run it is paired with, the derived memory bound
+# that made this scope faster than the smaller one before it, and why the cold
+# figure moved further than the catalogue did.
 #
 # What the gate cost before is history, and every figure is labelled with the
 # scope that produced it, because a duration without its scope reads as a
@@ -446,13 +447,22 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 #                                        36 in the same step, because
 #                                        `test.memory` and the size vocabulary
 #                                        that reads it are mutated too.
+#   10 packages, 1402        1m28-1m38s  internal/gocmd joined, and the row
+#                                        above was rerun beside it and measured
+#                                        1m07-1m33s: the 52-58s is a different
+#                                        machine, and only the pair is a
+#                                        comparison.
 #
 # Every row is a warm cache. The middle two were measured back to back on one
 # idle machine; the fifth was measured on the same machine with other work on
 # it, which is why it is a range and why it is not three times the row above it
-# in any strict sense; the last two were measured on a different machine, which
-# also reran the fifth and got 24-28s, so the pairs to compare are the fifth
-# with the sixth and the sixth with the last. Only the ratios travel.
+# in any strict sense; the sixth and seventh were measured on a different
+# machine, which also reran the fifth and got 24-28s; and the eighth was
+# measured on a third, shared one, which also reran the seventh and got
+# 1m07-1m33s. So the pairs to compare are the fifth with the sixth, the sixth
+# with the seventh, and the seventh with the last -- each against the rerun
+# written beside it rather than against the number in the row above. Only the
+# ratios travel.
 #
 # A good part of the difference between the fourth and fifth rows is one mutant
 # rather than the other two hundred and thirty-four, and almost all of the
@@ -463,15 +473,27 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # to wait out the per-mutant timeout, twice, because a timeout is measured again
 # before it is believed.
 #
-# The last row is that cost being paid down rather than tolerated. Two of those
-# five did not spin, they allocated -- lineStarts, negated or with its stride
-# turned into a subtraction, appends instead of advancing -- and a mutant is now
-# bounded in memory as well as in time, so those two are killed at about 1.1 GiB
-# after a second and a half rather than waiting twice. Sixty seconds of waiting
-# where there were a hundred, and a scope 36 mutants larger that finishes 25
-# seconds sooner. The timeout is itself max(10s, slowest baseline x 5) and the
-# bound is max(1GiB, largest baseline peak x 4); both grow with the machine, and
-# .go-mutants.toml says so where the numbers live.
+# The seventh row is that cost being paid down rather than tolerated. Two of
+# those five did not spin, they allocated -- lineStarts, negated or with its
+# stride turned into a subtraction, appends instead of advancing -- and a mutant
+# is now bounded in memory as well as in time, so those two are killed at about
+# 1.1 GiB after a second and a half rather than waiting twice. Sixty seconds of
+# waiting where there were a hundred, and a scope 36 mutants larger that
+# finishes 25 seconds sooner. The timeout is itself max(10s, slowest baseline
+# x 5) and the bound is max(1GiB, largest baseline peak x 4); both grow with the
+# machine, and .go-mutants.toml says so where the numbers live.
+#
+# The last row is the same arithmetic reaching a different answer, and it is the
+# one worth reading before the next widening. 106 more mutants cost about
+# nothing warm -- the pair beside it overlaps -- and the three that never return
+# still cost sixty seconds, because a warm baseline leaves the timeout at its
+# 10s floor. Cold, they cost far more: the first of the three baseline runs is
+# the one doing the compiling, so `slowest baseline x 5` is set by a build, and
+# a tenth package took that run from 4.0s to 5.5s and the timeout from 20.1s to
+# 27.7s. Three mutants pay that twice each. A widening's cold cost is therefore
+# mostly a question about the *baseline*, not about the catalogue, which is why
+# internal/gocmd's own would-be fourth spinner was turned into a kill rather
+# than accepted -- see .go-mutants.toml under [mutation].
 #
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
@@ -479,7 +501,7 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # task is the caller that insists. That flag is the whole difference between
 # the two runs, and it is the only thing that fails this job on one survivor --
 # policy.minimum_score = 99 is compared either way and, at this size, does not
-# fail until thirteen.
+# fail until fourteen.
 # --profile balanced is redundant with the file and stated anyway, so that a
 # change to the file's profile shows up as a conflict to resolve rather than as
 # a silently different gate.

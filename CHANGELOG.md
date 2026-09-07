@@ -14,6 +14,117 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The dogfood gate covers the toolchain wrapper.** This repository's own
+  `.go-mutants.toml` now includes `internal/gocmd/*.go`, so the gate is ten
+  whole packages rather than nine, and the tenth is the one every other phase
+  depends on: locating `go`, probing it with `go version` and parsing what it
+  printed, merging a flag into a child's `GOFLAGS` without discarding what was
+  there, handing back an argument vector, and the three typed failures all of
+  that can end in. 1402 mutants — 461 in `internal/config`, 450 in
+  `internal/mutation`, 146 in `internal/coverage`, 106 in `internal/gocmd`, 89
+  in `internal/schemas`, 68 in `internal/glob`, 48 in `internal/interval`, 16 in
+  `internal/operatorselect`, 11 in `internal/drift`, 7 in `internal/testflag` —
+  1371 detected, 31 declared, **100.00%**, identical on every one of seven runs.
+  CI's `dogfood` job keeps its 25-minute budget.
+
+  It is the first package in this scope that starts processes, and its unit tier
+  stays toolchain-free all the same: `internal/testkit/mutantkit`'s scripted `go`
+  answers from a table, so every probe below is a real child process and none of
+  them is the machine's toolchain. The ratchet that keeps it that way —
+  `internal/testkit`'s `TestEveryToolchainDrivingTestIsIntegrationTagged` and its
+  allowlist — is untouched, and `internal/gocmd` is still absent from it.
+
+  The first measurement over the package reported 104 mutants, 91 killed and 12
+  unexpected survivors. Eleven are now dead, killed by seven named tests and one
+  production seam; one is declared, with its argument. Nothing was excluded and
+  no budget was cut.
+
+  The theme is narrower than the last widening's and is worth naming for the
+  same reason: **the failures a first run actually hits were the least
+  asserted.** The probe has three ways to go wrong and only two had tests. A `go`
+  that hangs and a `go` that exits non-zero were covered; a `go` the operating
+  system refuses to start — an executable file that is not a program, which is a
+  shape a real `PATH` holds — was not, so `LocateContext` could return a nil
+  error and a zero `Toolchain`, and a run would carry on with an empty `GoBin`.
+  `Options.Timeout` was asserted only through the hang, so nothing pinned that
+  zero selects `DefaultProbeTimeout`: `timeout <= 0` could become `timeout < 0`
+  and every probe that did not name a deadline would run unbounded. And
+  `Toolchain.String`, the rendering every log line and diagnostic quotes a
+  toolchain with, was asserted only in the integration tier, so in the unit tier
+  it could return `""`.
+
+  The two renderers for a string are the sharpest of them, because the whole
+  point of having two is a distinction neither was asserting. `quote` escapes
+  what another program printed, and could return `""` while every "printed *X*,
+  which does not…" message still passed its `strings.Contains` check — the
+  message named nothing and said so grammatically. Its boundary was untested
+  too: a line of exactly the 200-byte limit fits, and `>` becoming `>=` would
+  relay 200 bytes and an ellipsis where 200 bytes were asked for. `quotePath`
+  deliberately does *not* escape, because a Windows path with doubled
+  backslashes cannot be pasted back into the file it came from — and it could
+  return `""` with the suite still green, because the wrapped `exec.LookPath`
+  failure names the path as well. That is a test passing for the wrong reason,
+  and the new one asserts the path inside plain double quotes with a path that
+  holds backslashes on every platform, so the two renderings are different
+  strings and the assertion is on which one this package chose.
+
+  Two more are boundaries a table could not stand on. Every `devel` row in the
+  version parser's table carries a build date, so `len(fields) < 5` could become
+  `<= 5` and the shortest devel line a toolchain can print — `devel`, a
+  pseudo-version, a target, nothing between — would have been rejected. And
+  `absolute`, which is what makes `Toolchain.GoBin` absolute and therefore what
+  stops a relative `go` being re-resolved inside the snapshot every later phase
+  runs in, reports the one failure it can have rather than papering over it, and
+  nothing asserted that. It is now driven through the unexported function with
+  the process's working directory unlinked, which is the only way to make
+  `filepath.Abs` fail and is exactly why `Locate` cannot be steered into it from
+  outside.
+
+  The last one changed production code, and deliberately. `sameEnvKey` folded
+  case behind `runtime.GOOS == "windows"`, so the rule that keeps a
+  `-mod=readonly` alive when a child's environment holds `Goflags` and `GOFLAGS`
+  was a line only a Windows runner executed — both of its mutants were reported
+  `survived (uncovered)` on Linux. Rather than declare them away, the platform
+  became a value: `sameEnvKeyOn(goos, a, b)` decides by the name handed in, and
+  both spellings are now asserted on every platform the suite runs on. That is a
+  claim getting stronger rather than a score getting rounder.
+
+  The one declared row is `LocateContext`'s narrowing of the parser's error.
+  `parseVersion` has four failure returns and every one is a `*Error` carrying
+  `CodeVersionUnparsable`, so `errors.As` always matches and the forwarding
+  `return Toolchain{}, err` underneath it is unreachable. It stays because
+  narrowing an error and dropping what did not match is how a future failure
+  mode gets swallowed in silence, and the two codes this package distinguishes
+  are not interchangeable. Same shape as `internal/mutation`'s `Build` guard,
+  and the row says so.
+
+  What this widening did *not* add is a sixth mutant that never returns, and
+  that is the part worth reading before the next one. Negating `timeout <= 0`
+  swaps a probe's configured deadline for the thirty-second default, and the
+  hanging-probe test scripted a `go` that slept for two minutes — so nothing but
+  the per-mutant timeout could end that mutant, twice. The sleep bought nothing
+  the test's own assertion did not already buy, since it fails a probe still
+  running at five times its deadline; shortened to three seconds, still fifteen
+  times that deadline and well under the default, the mutant comes back with a
+  parse error and dies in about three seconds. A mutant that never returns is
+  sometimes a fact about the code and sometimes a fact about a constant in a
+  test.
+
+  The wall clock, measured as a pair rather than remembered, on one shared
+  machine minutes apart: warm, 1296 mutants in 1m07s–1m33s and 1402 in
+  1m28s–1m38s, with the back-to-back pair reading 1m32.8s and then 1m28.3s;
+  cold, 2m05s and 3m45s. Warm, the two are the same run with 106 more mutants in
+  it. Cold is where the widening shows, and the cause is the derived timeout
+  rather than the catalogue: cold, the first of the three baseline runs is the
+  one doing the compiling, `max(10s, slowest baseline × 5)` is therefore set by
+  a build, and a tenth package took that run from 4.0s to 5.5s and the timeout
+  from 20.1s to 27.7s — which the three mutants that never return each pay
+  twice. Two further warm runs measured 2m40s and 2m48s on a machine that had
+  picked up other work, with the timeout at 18.1s and 20.3s and the tally
+  identical. `go-mutants run -v` reads `memory: baseline peak 147.4 MiB, bound
+  1.0 GiB (derived)` on this scope, where the nine-package one read 125.2 MiB: a
+  suite that starts processes moved the number the bound is derived from and
+  moved the bound not at all, which is what a floor is for.
 - **The dogfood gate reads its own configuration.** This repository's own
   `.go-mutants.toml` now includes `internal/config/*.go`, so the gate is nine
   whole packages rather than eight, and the ninth is the reader of the file that

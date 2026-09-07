@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,21 @@ const probeTimeout = 2 * time.Second
 // probe whose context expired before its process began is a probe that did not
 // answer either.
 const hangTimeout = 200 * time.Millisecond
+
+// hangSleep is how long the scripted probe sleeps for the hanging case, and it
+// is bounded at both ends rather than simply being large.
+//
+// The lower bound is the assertion the hanging test makes: a probe still
+// running at five times its deadline has already failed that test, so anything
+// past that adds nothing to the claim. The upper bound is
+// [gocmd.DefaultProbeTimeout], and that one was learned from the mutation gate.
+// A sleep longer than the default turns the mutant that widens the deadline —
+// negating `timeout <= 0`, so that a configured 200ms becomes the 30-second
+// default — into a mutant nothing can catch but the per-mutant timeout, waited
+// out twice, where a sleep shorter than the default makes it a test failure in
+// three seconds: the probe comes back with a parse error instead of the
+// deadline this test is about.
+const hangSleep = 3 * time.Second
 
 // fakeEnv is the environment a scripted toolchain runs with: the harness's
 // hermetic policy plus the two variables that make the child answer as `go`.
@@ -144,13 +160,15 @@ func TestLocateReportsAProbeThatExitsNonZero(t *testing.T) {
 // this branch of [gocmd.LocateContext] had no test of any kind.
 //
 // The assertion is on the verdict rather than on the clock: the fake sleeps far
-// longer than the deadline it is given, so a call that returned at all can only
-// have killed it.
+// longer than the deadline it is given — fifteen times it, and three times the
+// bound asserted below — so a call that returned inside that bound can only
+// have killed it. See [hangSleep] for why "far longer" stops well short of
+// forever.
 func TestLocateReportsAProbeThatHangs(t *testing.T) {
 	t.Parallel()
 
 	f := mutantkit.FakeGo(t)
-	f.On("version").Sleep(2 * time.Minute)
+	f.On("version").Sleep(hangSleep)
 
 	started := time.Now()
 	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
@@ -184,6 +202,217 @@ func TestLocateReportsAProbeThatHangs(t *testing.T) {
 	}
 	if argv := []string{f.Bin(), "version"}; !slices.Equal(failure.Command().Argv, argv) {
 		t.Errorf("Argv = %q, want %q", failure.Command().Argv, argv)
+	}
+}
+
+// TestLocateReportsAProbeThatCannotBeStarted is the third way the probe fails,
+// and the one that is not about the toolchain answering badly: it never became
+// a process at all.
+//
+// The stand-in here is not the scripted `go` but a file that is executable and
+// is not a program, which is a shape a PATH really does hold — a text file
+// somebody chmod'd, an archive extracted for the wrong platform. [exec.LookPath]
+// accepts it, because the executable bit is all it can check, and the failure
+// arrives from the operating system at Start.
+//
+// What the error has to carry is therefore the same as for the other two: the
+// code, the command a reader can run by hand, and the operating system's own
+// cause underneath, because "could not run `/opt/go/bin/go version`" without
+// "exec format error" under it names the symptom and hides the diagnosis.
+func TestLocateReportsAProbeThatCannotBeStarted(t *testing.T) {
+	t.Parallel()
+
+	name := "not-a-program"
+	if runtime.GOOS == "windows" {
+		// LookPath resolves by extension there, so the stand-in needs one it
+		// recognises before the operating system can refuse to start it.
+		name += ".exe"
+	}
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte("this file is executable and is not a program\n"), 0o755); err != nil {
+		t.Fatalf("writing the stand-in: %v", err)
+	}
+
+	tc, err := gocmd.LocateContext(t.Context(), gocmd.Options{
+		Explicit: path,
+		Timeout:  probeTimeout,
+	})
+	if err == nil {
+		t.Fatalf("LocateContext(%q) = %+v, want an error: that file is not a program", path, tc)
+	}
+	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
+		t.Fatalf("CodeOf(err) = %q (err %v), want %q: the path exists, so this is a probe that "+
+			"failed rather than a toolchain that was not found", code, err, gocmd.CodeVersionProbeFailed)
+	}
+	if want := "could not run `" + path + " version`"; !strings.Contains(err.Error(), want) {
+		t.Errorf("Error() = %q, want it to say %q", err, want)
+	}
+	// The process layer's own verdict has to survive being wrapped: a start
+	// failure is go-mutants failing to do its job, and a caller that has to
+	// tell that apart from a toolchain answering badly reads it from here.
+	if code := runner.CodeOf(err); code != runner.CodeProcessStartFailed {
+		t.Errorf("runner.CodeOf(err) = %q (err %v), want %q", code, err, runner.CodeProcessStartFailed)
+	}
+	var failure *gocmd.Error
+	if !errors.As(err, &failure) || failure.Command() == nil {
+		t.Fatalf("err = %v, want a *gocmd.Error naming the probe that could not start", err)
+	}
+	if argv := []string{path, "version"}; !slices.Equal(failure.Command().Argv, argv) {
+		t.Errorf("Argv = %q, want %q", failure.Command().Argv, argv)
+	}
+}
+
+// TestLocateBoundsTheProbeWithTheDeadlineItWasGiven is the other half of
+// [gocmd.DefaultProbeTimeout]: not that a hang is caught, but that the number
+// caught it with is the one the caller asked for.
+//
+// The two rows are the whole of [gocmd.Options.Timeout]'s contract, and the
+// zero row is the one that cannot be seen from the outside. A probe given no
+// deadline and a probe given the default behave identically against a toolchain
+// that answers — the difference only shows against one that does not, which is
+// half a minute of waiting to assert. The recording is where it shows for
+// nothing: internal/runner writes the deadline it was handed into the exec
+// event, so what the option resolved to is a fact the trace already holds.
+func TestLocateBoundsTheProbeWithTheDeadlineItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{"zero asks for the default", 0, gocmd.DefaultProbeTimeout},
+		{"a configured deadline is used as it stands", probeTimeout, probeTimeout},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := mutantkit.FakeGo(t)
+			f.Version("1.99.0")
+
+			sink := trace.NewMemorySink(0)
+			recorder := trace.New(sink, time.Now, trace.StartRecord{Kind: trace.StartKindRun, ToolVersion: "test"})
+
+			if _, err := gocmd.LocateContext(t.Context(), gocmd.Options{
+				Explicit: f.Bin(),
+				Env:      fakeEnv(t, f),
+				Timeout:  c.timeout,
+				Trace:    recorder,
+			}); err != nil {
+				t.Fatalf("LocateContext = %v, want the scripted toolchain", err)
+			}
+
+			events := execEvents(sink)
+			if len(events) != 1 {
+				t.Fatalf("the recording holds %d exec events, want exactly one for the version probe", len(events))
+			}
+			if got := events[0].Exec.TimeoutMS; got != c.want.Milliseconds() {
+				t.Errorf("timeout_ms = %d, want %d: Options.Timeout = %s must resolve to %s",
+					got, c.want.Milliseconds(), c.timeout, c.want)
+			}
+		})
+	}
+}
+
+// TestLocateQuotesTheConfiguredPathWithoutEscapingIt is why this package has
+// two renderers for a string instead of one.
+//
+// What another program printed is escaped, because the point there is to show
+// exactly which bytes came back. A path is not: the reader's next move is to
+// paste it back into the configuration file it came from or into a shell, and a
+// Windows path rendered with doubled backslashes is wrong for both. The
+// distinction is invisible on a message whose path holds nothing to escape, so
+// this one holds backslashes on every platform — separators on Windows, and an
+// ordinary, legal character in a POSIX filename everywhere else.
+func TestLocateQuotesTheConfiguredPathWithoutEscapingIt(t *testing.T) {
+	t.Parallel()
+
+	name := "not-a-go-toolchain"
+	if runtime.GOOS != "windows" {
+		name = `not\a\go\toolchain`
+	}
+	missing := filepath.Join(t.TempDir(), name)
+
+	tc, err := gocmd.Locate(gocmd.Options{Explicit: missing})
+	if err == nil {
+		t.Fatalf("Locate(%q) = %+v, want an error", missing, tc)
+	}
+	quoted := `"` + missing + `"`
+	if strconv.Quote(missing) == quoted {
+		t.Fatalf("the path %q holds nothing to escape, so this test cannot tell the two renderings "+
+			"apart and would pass on either", missing)
+	}
+	// The lookup failure underneath renders the very same path with %q, and the
+	// rendered error carries both — so this assertion is on which of the two
+	// this package chose rather than on the path merely appearing somewhere.
+	if !strings.Contains(err.Error(), quoted) {
+		t.Errorf("Error() = %q, want it to name the configured path as %s, unescaped", err, quoted)
+	}
+}
+
+// TestAbsoluteReportsAWorkingDirectoryThatIsGone covers the failure
+// [gocmd.Toolchain.GoBin]'s absolutising has left, and the reason it is
+// reported rather than papered over: handing the relative path back would
+// return exactly the GoBin that absolutising exists to rule out, and it would
+// be looked for inside the snapshot every later phase runs in.
+//
+// It is driven through the unexported function because [gocmd.Locate] cannot be
+// steered here from the outside. filepath.Abs consults the working directory
+// only for a relative path, and a relative explicit path reaches this code only
+// after exec.LookPath has resolved it — which needs the very directory that
+// would have to be gone.
+func TestAbsoluteReportsAWorkingDirectoryThatIsGone(t *testing.T) {
+	// No t.Parallel: t.Chdir is process-wide, and this test takes the working
+	// directory away for the length of it.
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows refuses to remove a directory that is a process's working directory")
+	}
+
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := os.Mkdir(gone, 0o750); err != nil {
+		t.Fatalf("creating the directory to stand in: %v", err)
+	}
+	t.Chdir(gone)
+	// Unlinked, so getcwd(2) has no name to answer with. t.Chdir restores the
+	// old directory through the descriptor it kept, which needs no name.
+	if err := os.Remove(gone); err != nil {
+		t.Fatalf("removing the working directory: %v", err)
+	}
+
+	path, err := gocmd.Absolute("go")
+	if err == nil {
+		t.Fatalf("Absolute(\"go\") = %q, want an error: there is no directory to resolve it against", path)
+	}
+	if path != "" {
+		t.Errorf("Absolute returned %q beside its error, want the empty string: a relative path here "+
+			"is the GoBin this function exists to rule out", path)
+	}
+	if code := gocmd.CodeOf(err); code != gocmd.CodeToolchainNotFound {
+		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeToolchainNotFound)
+	}
+	if want := `"go"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("Error() = %q, want it to name the path it could not resolve, %s", err, want)
+	}
+}
+
+// TestToolchainStringNamesThePathAndTheVersion pins the one rendering every log
+// line and diagnostic in this repository quotes a toolchain with. Both halves
+// have to be in it: the version alone does not say which of two installations
+// answered, and the path alone does not say what it is.
+func TestToolchainStringNamesThePathAndTheVersion(t *testing.T) {
+	t.Parallel()
+
+	tc := gocmd.Toolchain{
+		GoBin: "/opt/go/bin/go",
+		Version: gocmd.Version{
+			Raw:     "go version go1.99.0 linux/amd64",
+			Release: "go1.99.0",
+			GOOS:    "linux",
+			GOARCH:  "amd64",
+		},
+	}
+	if got, want := tc.String(), "/opt/go/bin/go (go version go1.99.0 linux/amd64)"; got != want {
+		t.Errorf("String() = %q, want %q", got, want)
 	}
 }
 

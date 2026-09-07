@@ -148,6 +148,41 @@ func TestAppendGoflagsMatchesTheVariableTheWayTheSystemDoes(t *testing.T) {
 	}
 }
 
+// TestSameEnvKeyIsDecidedByThePlatformItIsGiven is the other half of the
+// Windows rule, and the half no Windows runner has to be present for.
+//
+// The test above can only assert what the platform it is running on does, so on
+// a Linux or macOS job the case-folding branch is a line nothing executes —
+// which makes "a variable answers to any spelling of its name" a claim that
+// goes unchecked on every platform but one. Handing the platform in as a value
+// asserts both spellings everywhere, including the pair that matters most: two
+// entries that are one variable to the child, which the merge rule has to
+// collapse rather than append past.
+func TestSameEnvKeyIsDecidedByThePlatformItIsGiven(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		goos string
+		a, b string
+		want bool
+	}{
+		{"windows folds the case of a name", "windows", "GOFLAGS", "Goflags", true},
+		{"windows still tells two names apart", "windows", "GOFLAGS", "GOPATH", false},
+		{"windows matches an identical spelling", "windows", "GOFLAGS", "GOFLAGS", true},
+		{"elsewhere the spelling is the name", "linux", "GOFLAGS", "Goflags", false},
+		{"elsewhere an identical spelling still matches", "linux", "GOFLAGS", "GOFLAGS", true},
+		{"darwin is not windows either", "darwin", "GOFLAGS", "goflags", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := gocmd.SameEnvKeyOn(c.goos, c.a, c.b); got != c.want {
+				t.Errorf("SameEnvKeyOn(%q, %q, %q) = %v, want %v", c.goos, c.a, c.b, got, c.want)
+			}
+		})
+	}
+}
+
 // TestVetOffIsTheFlagTheGoCommandDefines guards the spelling itself.
 //
 // Both call sites take it from here, so a typo would disable nothing and would

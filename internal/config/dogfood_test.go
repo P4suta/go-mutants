@@ -229,6 +229,15 @@ var repositoryExpectations = []Expectation{
 			"the mirror of the maxInt row above, and reachable on the same " +
 			"32-bit GOARCH.",
 	},
+	// The one row internal/gocmd brought with it: a narrowing that cannot
+	// fail, so the forwarding return underneath it cannot be reached.
+	{
+		ID: "f061531c5e36ea50fd6669448677bfcfad074c21a7c5c3a444c7812741bb89cf",
+		Reason: "Unreachable: parseVersion has four failure returns and every " +
+			"one of them is a *Error carrying CodeVersionUnparsable, so " +
+			"errors.As above always matches and this forwarding return is " +
+			"reached only by an error kind parseVersion does not produce.",
+	},
 }
 
 // The example everyone reads has to be an example that works. A documented
@@ -257,14 +266,16 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Nine whole packages. Scoped test binaries bought the first two
+			// Ten whole packages. Scoped test binaries bought the first two
 			// — the gate used to be two files, because every mutant ran every
 			// test binary in the module — internal/mutation's own tests
 			// bought the third, by killing the survivors that kept it out,
 			// the next three were measured before they were included and
-			// had no survivor to kill, and the last three were bought the
-			// same way the third was. The ninth is this package: the file
-			// this test reads is now inside the scope that reads it.
+			// had no survivor to kill, and the three after those were bought
+			// the same way the third was. The ninth is this package: the file
+			// this test reads is inside the scope that reads it. The tenth is
+			// the toolchain wrapper, and it is the first one in this list
+			// that starts processes rather than deciding over values.
 			//
 			// The order is the file's order, and it is asserted rather than
 			// sorted for the same reason the expectation ids are: a list
@@ -279,6 +290,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/coverage/*.go",
 				"internal/schemas/*.go",
 				"internal/config/*.go",
+				"internal/gocmd/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -292,8 +304,8 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		},
 		Test: Test{
 			// The command is the run's scope as well as its measurement: these
-			// nine patterns are the only packages a test binary is built for,
-			// and they have to be the nine Include names above. A package that
+			// ten patterns are the only packages a test binary is built for,
+			// and they have to be the ten Include names above. A package that
 			// is mutated but not named here gets no binary, so every mutant in
 			// it is reported `survived (uncovered)` — which is why both lists
 			// are pinned here rather than one of them.
@@ -302,6 +314,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/mutation/...", "./internal/glob/...", "./internal/interval/...",
 				"./internal/testflag/...", "./internal/operatorselect/...", "./internal/drift/...",
 				"./internal/coverage/...", "./internal/schemas/...", "./internal/config/...",
+				"./internal/gocmd/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
