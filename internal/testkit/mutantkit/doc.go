@@ -45,6 +45,11 @@
 //   - [MustMarshal], [DecodeJSON], [EncodeJSON], [NormalizeRunReport]: a report
 //     as bytes that validate, as a tree a test can edit, and as a document whose
 //     varying fields have been replaced so that two runs can be compared.
+//   - [Trace], [TraceSink]: the recorder a test hands to an engine option, and
+//     the sink under it, both writing into the directory
+//     [github.com/P4suta/go-mutants/internal/testkit.KeptDir] names — so a test
+//     that fails leaves `trace.jsonl` beside its account, in the encoding
+//     `go-mutants trace validate` reads.
 //   - [FakeGo], [Main]: a `go` command the test writes the answers for.
 //
 // # The scripted `go`

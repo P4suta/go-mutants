@@ -418,6 +418,15 @@ the next run's sweep leaves it alone, and the run prints where they are. It is
 off by default because a kept snapshot is a whole copy of your module and
 nothing will ever remove it.
 
+**Diagnosing.** The three together are one command —
+`go-mutants run --trace -vv --keep-temp=on-failure` — and the order to read what
+they leave is `diagnostics/<run-id>/error.txt` for what failed,
+`go-mutants trace summary` for where the time went and which command was last,
+`go-mutants explain <id>` for one mutant's whole story and the line to paste, and
+the kept snapshot for what the tree looked like.
+[`docs/development.md`](docs/development.md#9-diagnosing-a-failing-run) walks
+through it, and covers diagnosing a failing *test* of go-mutants itself as well.
+
 With no arguments, help is printed. The v1 command tree is `run`, `list`,
 `doctor`, `init`, `explain`, `report list|latest|validate|clean|merge`,
 `cache status|gc|clean`, and `trace list|summary|diff|validate|clean`, and all
@@ -586,6 +595,7 @@ results, and not-run mutants are excluded from the score denominator.
 - [Run trace v1](docs/trace-v1.md)
 - [Stryker report ecosystem compatibility](docs/stryker-compatibility.md)
 - [Architecture decision records](docs/adr/README.md)
+- [Development guide](docs/development.md)
 - [Release checklist](docs/release-checklist.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)

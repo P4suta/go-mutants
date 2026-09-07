@@ -261,7 +261,8 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 	flags.StringVar(&o.report, "report", "",
 		"project report `FORMATS` to write into report.directory: none, json, html, or json,html (default: report.formats, or json,html)")
 	flags.StringVar(&o.trace, "trace", "",
-		"record this run's diagnostic account into `DIR`; a bare --trace records under report.directory/trace, and the value takes an equals sign")
+		"record this run's diagnostic account into `DIR`; a bare --trace records under report.directory/trace, "+
+			"the value takes an equals sign, and GO_MUTANTS_TRACE=1|true|DIR asks for the same")
 	// The value is optional, which pflag expresses with NoOptDefVal — the same
 	// arrangement `--changed` has above, with the same consequence: `--trace DIR`
 	// with a space is not the same thing as `--trace=DIR`, and [passthrough]

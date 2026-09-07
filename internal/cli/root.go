@@ -3,11 +3,21 @@
 
 // Package cli is the go-mutants command tree.
 //
-// It owns four things nothing else may: the version string, the exit code
-// mapping, the rendering of errors to standard error, and the choice of
-// renderer. cmd/go-mutants is a two-line main precisely so that all four stay
-// unit-testable, and so that a future entry point — a `go tool` invocation, an
-// in-process test harness — gets exactly the same behaviour.
+// It owns five things nothing else may: the version string, the exit code
+// mapping, the rendering of errors to standard error, the choice of renderer,
+// and the reading of the environment for an option — GO_MUTANTS_TRACE,
+// GO_MUTANTS_KEEP_TEMP and GO_MUTANTS_DIAGNOSTICS become flags in [Execute]
+// and nowhere else, so there is one description of what each option means and
+// one place its precedence is decided. cmd/go-mutants is a two-line main
+// precisely so that all five stay unit-testable, and so that a future entry
+// point — a `go tool` invocation, an in-process test harness — gets exactly the
+// same behaviour.
+//
+// It is also where a run's diagnostics are decided: which directory a recording
+// goes in, what a failed run leaves behind when it could not say so itself, and
+// how much of the recorded account is rendered as it happens. Those three are
+// one subject rather than three features — see docs/development.md for the
+// walkthrough and docs/adr/ for why each is where it is.
 package cli
 
 import (
