@@ -161,14 +161,23 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Three whole packages. Scoped test binaries bought the first two
+			// Six whole packages. Scoped test binaries bought the first two
 			// — the gate used to be two files, because every mutant ran every
-			// test binary in the module — and internal/mutation's own tests
-			// bought the third, by killing the survivors that kept it out.
+			// test binary in the module — internal/mutation's own tests
+			// bought the third, by killing the survivors that kept it out,
+			// and the last three were measured before they were included and
+			// had no survivor to kill.
+			//
+			// The order is the file's order, and it is asserted rather than
+			// sorted for the same reason the expectation ids are: a list
+			// somebody reorders is a list somebody edited.
 			Include: []string{
 				"internal/mutation/*.go",
 				"internal/glob/*.go",
 				"internal/interval/*.go",
+				"internal/testflag/*.go",
+				"internal/operatorselect/*.go",
+				"internal/drift/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -182,10 +191,15 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		},
 		Test: Test{
 			// The command is the run's scope as well as its measurement: these
-			// three patterns are the only packages a test binary is built for.
+			// six patterns are the only packages a test binary is built for,
+			// and they have to be the six Include names above. A package that
+			// is mutated but not named here gets no binary, so every mutant in
+			// it is reported `survived (uncovered)` — which is why both lists
+			// are pinned here rather than one of them.
 			Command: []string{
 				"go", "test",
 				"./internal/mutation/...", "./internal/glob/...", "./internal/interval/...",
+				"./internal/testflag/...", "./internal/operatorselect/...", "./internal/drift/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than

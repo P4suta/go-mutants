@@ -1894,10 +1894,12 @@ Entries say *why* a change was made, not only what changed.
   7m08s to 121 mutants in 48-50 seconds on the same machine — seven times the
   scope in a ninth of the time — and could grow from two files to two whole
   packages because of it. What bounded it after that was missing tests rather
-  than the clock, and those tests are in this release too, so the gate is now
+  than the clock, and those tests are in this release too, so the gate grew to
   three whole packages and 560 mutants in about 1m20s — see *The dogfood gate
-  covers every pure-core package* below. `.go-mutants.toml` records each
-  measurement where somebody widening the scope again will read it.
+  covers every pure-core package* below — and then to six packages and 600, in
+  the entry at the top of this section. `.go-mutants.toml` records each
+  measurement next to the scope that produced it, where somebody widening the
+  scope again will read it.
 
   Scoping also decides which test binaries get a *vote*, which is a correctness
   property and not only a speed one: a suite the baseline never measured can

@@ -404,17 +404,35 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 600 mutants, 100.00%, and a wall clock
-# written down in .go-mutants.toml under [policy] rather than here, next to the
-# scope it belongs to. It was 566 mutants before internal/testflag,
-# internal/operatorselect and internal/drift joined the floor -- thirty-four
-# more mutants for about a second of warm wall clock and for nothing at all
-# cold -- 121 mutants in 48-50 seconds before internal/mutation's suites grew
-# the tests that let the scope take that whole package, and 16 mutants in 7m08s
-# before a `test.command` naming package patterns began to scope the *test
-# binaries* rather than only the baseline -- so a mutant runs the suites that
-# cover it instead of every suite in the module, internal/discover's
-# toolchain-driving one included.
+# The budget this job is sized against: 600 mutants at 100.00%, about 10
+# seconds at --jobs 4 against a warm test-owned build cache and about 38
+# against a cold one. Cold is what CI measures, because the dogfood job points
+# GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never
+# restores it. .go-mutants.toml records that measurement in full under
+# [policy], next to the scope it is a measurement of.
+#
+# What the gate cost before is history, and every figure is labelled with the
+# scope that produced it, because a duration without its scope reads as a
+# contradiction of the one above rather than as its ancestor:
+#
+#   2 files, 16 mutants          7m08s   every mutant ran every test binary in
+#                                        the module, internal/discover's
+#                                        toolchain-driving one included.
+#   1 file + 2 packages, 121     48-50s  a `test.command` naming package
+#                                        patterns began to scope the *test
+#                                        binaries* and not only the baseline,
+#                                        so a mutant runs the suites that
+#                                        cover it.
+#   3 packages, 566              ~9s     internal/mutation's own suites grew
+#                                        the tests that let the scope take
+#                                        that whole package.
+#   6 packages, 600              ~10s    internal/testflag,
+#                                        internal/operatorselect and
+#                                        internal/drift joined the floor with
+#                                        no survivor to kill.
+#
+# The last two rows are one machine and one warm cache, measured back to back;
+# the first two are the machines that measured them. Only the ratios travel.
 #
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
