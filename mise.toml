@@ -347,16 +347,28 @@ run = "go run ./internal/devtools/testcache clean"
 # records a bug.
 #
 # internal/testkit/golden_test.go::TestGoldenPackagesAreNamedByTheUpdateTask
-# parses this line and fails when a package holding a `testdata/*.golden*` file
-# is missing from it, so the list cannot go stale in silence.
+# parses these lines and fails when a package holding a `testdata/*.golden*`
+# file is missing from them, so the list cannot go stale in silence.
 #
-# The packages come *before* `-update`, which is not a style choice. cmd/go
-# knows its own test flags and nothing else; on an unrecognised one it stops
-# parsing and hands the rest of the command line to the test binary, so
+# It is two commands rather than one because internal/engine's goldens are run
+# reports of real runs, so the test that records them is
+# `//go:build integration`-tagged. A `go test ./internal/engine -update` without
+# the tag compiles a package with no golden test in it, passes, and rewrites
+# nothing — the task would name the package and regenerate none of it. The
+# second command is checked by
+# TestGoldenUpdateTaskHandlesTaggedPackages, which requires every
+# integration-only golden package to be reached with the tag.
+#
+# The packages come *before* `-update` in both, which is not a style choice.
+# cmd/go knows its own test flags and nothing else; on an unrecognised one it
+# stops parsing and hands the rest of the command line to the test binary, so
 # `go test -update ./internal/report` runs the package in the working directory
 # with two arguments it ignores — silently, and with every golden left alone.
 description = "Rewrite the committed golden files, to be read before committing"
-run = "go test ./internal/console ./internal/instrument ./internal/report ./trace -update"
+run = [
+  "go test ./internal/console ./internal/instrument ./internal/report ./trace -update",
+  "go test -tags integration ./internal/engine -update",
+]
 
 [tasks.fmt]
 # `gofmt -l` exits 0 even when it lists files, so the offenders have to be

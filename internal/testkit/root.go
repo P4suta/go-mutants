@@ -43,13 +43,18 @@ func Root(t testing.TB) string {
 }
 
 // Fixture returns the absolute path of one corpus module, failing the test
-// unless it is a module.
+// unless it is one.
 //
-// The `go.mod` check is the whole point. A fixture is a workspace rather than a
-// package — the engine snapshots a directory, builds it and runs its tests — so
-// a name that resolves to a directory without a go.mod is a typo or a deleted
-// fixture, and it is worth saying so here rather than three phases into a run
-// that cannot work.
+// The check is the whole point. A fixture is a tree a `go` command can be
+// pointed at rather than a package — the engine snapshots a directory, builds
+// it and runs its tests — so a name that resolves to a directory holding
+// neither a `go.mod` nor a `go.work` is a typo or a deleted fixture, and it is
+// worth saying so here rather than three phases into a run that cannot work.
+//
+// A `go.work` counts because one fixture is a workspace on purpose. `workspace/`
+// is the tree a run has to refuse at its root and has to measure one module of
+// when pointed inside it, and neither claim can be made about a directory this
+// package will not hand out.
 func Fixture(t testing.TB, name string) string {
 	t.Helper()
 	path, err := fixturePath(Root(t), name)
@@ -63,9 +68,9 @@ func Fixture(t testing.TB, name string) string {
 
 // FixtureNames lists the corpus, sorted.
 //
-// Only directories holding a go.mod are returned, so a test that iterates the
-// corpus iterates modules: `fixtures/README.md` documents the corpus and is not
-// part of it.
+// Only directories a `go` command could be pointed at are returned, so a test
+// that iterates the corpus iterates fixtures: `fixtures/README.md` documents the
+// corpus and is not part of it.
 func FixtureNames(t testing.TB) []string {
 	t.Helper()
 	dir := filepath.Join(Root(t), FixturesDir)
@@ -75,16 +80,24 @@ func FixtureNames(t testing.TB) []string {
 	}
 	names := make([]string, 0, len(found))
 	for _, entry := range found {
-		if !entry.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(dir, entry.Name(), "go.mod")); err != nil {
+		if !entry.IsDir() || !isFixtureRoot(filepath.Join(dir, entry.Name())) {
 			continue
 		}
 		names = append(names, entry.Name())
 	}
 	slices.Sort(names)
 	return names
+}
+
+// isFixtureRoot reports whether a directory is a tree the engine could be
+// pointed at: a module, or the workspace fixture's root.
+func isFixtureRoot(dir string) bool {
+	for _, name := range []string{"go.mod", "go.work"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // moduleRoot walks up from start to the directory whose go.mod names
@@ -141,7 +154,7 @@ func modulePathOf(gomod string) (string, error) {
 	return "", nil
 }
 
-// fixturePath resolves one corpus name, refusing anything that is not a module
+// fixturePath resolves one corpus name, refusing anything that is not a fixture
 // directly inside the corpus.
 //
 // Refusing a name with a separator in it is what keeps the corpus from being a
@@ -159,8 +172,9 @@ func fixturePath(root, name string) (string, error) {
 		return "", fmt.Errorf("fixture %q is not a name directly inside %s/", name, FixturesDir)
 	}
 	path := filepath.Join(root, FixturesDir, name)
-	if _, err := os.Stat(filepath.Join(path, "go.mod")); err != nil {
-		return "", fmt.Errorf("fixture %q is not a module: %w", name, err)
+	if !isFixtureRoot(path) {
+		return "", fmt.Errorf("fixture %q is not a tree a `go` command can be pointed at: "+
+			"%s holds neither a go.mod nor a go.work", name, path)
 	}
 	return path, nil
 }

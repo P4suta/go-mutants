@@ -293,6 +293,17 @@ type discovered struct {
 // hold a path into a directory that is about to disappear. Everything the
 // listing needs is read out before the cleanup runs.
 func discoverCatalog(ctx context.Context, root string, cfg config.Config, stderr io.Writer) (discovered, error) {
+	// A workspace is refused before the copy, for the reason
+	// [discover.CheckWorkspace] gives and with one addition that belongs to this
+	// command. Discovery would refuse the tree a moment later with the same code
+	// and the same sentence, but by then the path in the message is the
+	// *snapshot's* — a `go-mutants-snap-…` directory in the temporary area that
+	// the deferred cleanup below has removed by the time anybody reads about it,
+	// so the one actionable thing the message carries names nothing. Asked here,
+	// it names the `go.work` in the user's own tree.
+	if workspaceErr := discover.CheckWorkspace(root); workspaceErr != nil {
+		return discovered{}, workspaceErr
+	}
 	rules, err := selectRules(cfg)
 	if err != nil {
 		return discovered{}, err

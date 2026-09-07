@@ -1,0 +1,356 @@
+{
+  "cache": {
+    "hits": 0,
+    "misses": 2,
+    "mode": "on",
+    "writes": 2
+  },
+  "coverage": {
+    "binaries": 1,
+    "mode": "package",
+    "mutants_uncovered": 2
+  },
+  "document_type": "go-mutants/run-report",
+  "duration_ms": 0,
+  "expectations": [],
+  "finished_at": "2000-01-01T00:00:00Z",
+  "mutants": [
+    {
+      "attempts": 1,
+      "cached": false,
+      "column": 9,
+      "covering_test_packages": [
+        "fixture.example/untested/lib"
+      ],
+      "display_id": "5cd3a2b498e3373b47d1",
+      "duration_ms": 0,
+      "end_byte": 573,
+      "executions": [
+        {
+          "attempt": 1,
+          "binaries": [
+            "fixture.example/untested/lib"
+          ],
+          "duration_ms": 0,
+          "killed_by": "fixture.example/untested/lib",
+          "outcome": "killed",
+          "worker": 0
+        }
+      ],
+      "family": "return-replacement",
+      "id": "5cd3a2b498e3373b47d1e42c575f36e8642e769f6262ae511c4671346b382696",
+      "killed_by": "fixture.example/untested/lib",
+      "line": 15,
+      "not_run_reason": null,
+      "original": "n * 2",
+      "outcome": "killed",
+      "output_tail": "--- FAIL: TestDouble (0.00s)\n    lib_test.go:12: Double(3) = 0, want 6\nFAIL\ncoverage: 53.8% of statements in fixture.example/untested/...",
+      "package": "fixture.example/untested/lib",
+      "path": "lib/lib.go",
+      "replacement": "0",
+      "rule": "return-zero-numeric",
+      "rule_version": 1,
+      "start_byte": 568,
+      "uncovered": false
+    },
+    {
+      "attempts": 1,
+      "cached": false,
+      "column": 11,
+      "covering_test_packages": [
+        "fixture.example/untested/lib"
+      ],
+      "display_id": "572610dcb36e5122b629",
+      "duration_ms": 0,
+      "end_byte": 571,
+      "executions": [
+        {
+          "attempt": 1,
+          "binaries": [
+            "fixture.example/untested/lib"
+          ],
+          "duration_ms": 0,
+          "killed_by": "fixture.example/untested/lib",
+          "outcome": "killed",
+          "worker": 0
+        }
+      ],
+      "family": "integer-arithmetic",
+      "id": "572610dcb36e5122b6297a80edc06c2b0b3f7e33373b76980a25ea7ff7a57b8d",
+      "killed_by": "fixture.example/untested/lib",
+      "line": 15,
+      "not_run_reason": null,
+      "original": "*",
+      "outcome": "killed",
+      "output_tail": "--- FAIL: TestDouble (0.00s)\n    lib_test.go:12: Double(3) = 1, want 6\nFAIL\ncoverage: 61.5% of statements in fixture.example/untested/...",
+      "package": "fixture.example/untested/lib",
+      "path": "lib/lib.go",
+      "replacement": "/",
+      "rule": "mul-to-div",
+      "rule_version": 1,
+      "start_byte": 570,
+      "uncovered": false
+    },
+    {
+      "attempts": 0,
+      "cached": false,
+      "column": 9,
+      "covering_test_packages": [],
+      "display_id": "ff28e78bcfcac4eeeb01",
+      "duration_ms": 0,
+      "end_byte": 1079,
+      "executions": [],
+      "family": "return-replacement",
+      "id": "ff28e78bcfcac4eeeb01f878d99ff6af9e515c3e5a7721cbb4e3c944d8562096",
+      "killed_by": null,
+      "line": 24,
+      "not_run_reason": null,
+      "original": "n / 2",
+      "outcome": "survived",
+      "output_tail": null,
+      "package": "fixture.example/untested/orphan",
+      "path": "orphan/orphan.go",
+      "replacement": "0",
+      "rule": "return-zero-numeric",
+      "rule_version": 1,
+      "start_byte": 1074,
+      "uncovered": true
+    },
+    {
+      "attempts": 0,
+      "cached": false,
+      "column": 11,
+      "covering_test_packages": [],
+      "display_id": "b4699df8dfb0e08dda20",
+      "duration_ms": 0,
+      "end_byte": 1077,
+      "executions": [],
+      "family": "integer-arithmetic",
+      "id": "b4699df8dfb0e08dda20677156a75df8cbd9adf3b5e7085d27f2dd9437c58a76",
+      "killed_by": null,
+      "line": 24,
+      "not_run_reason": null,
+      "original": "/",
+      "outcome": "survived",
+      "output_tail": null,
+      "package": "fixture.example/untested/orphan",
+      "path": "orphan/orphan.go",
+      "replacement": "*",
+      "rule": "div-to-mul",
+      "rule_version": 1,
+      "start_byte": 1076,
+      "uncovered": true
+    }
+  ],
+  "rejected": [],
+  "run_id": "00000000T000000Z-0000",
+  "schema_version": 1,
+  "selection": {
+    "candidates": 4,
+    "changed_ref": null,
+    "exclude": [],
+    "include": [
+      "**/*.go"
+    ],
+    "mode": "all",
+    "operators": [],
+    "profile": "balanced",
+    "rejected": 0,
+    "selected": 4
+  },
+  "shard": null,
+  "skips": [],
+  "started_at": "2000-01-01T00:00:00Z",
+  "status": "completed",
+  "summary": {
+    "errored": 0,
+    "inconclusive": 0,
+    "killed": 2,
+    "not_run": 0,
+    "policy": {
+      "failure": null,
+      "minimum_score": 0,
+      "require_mutants": true,
+      "strict": false
+    },
+    "score_percent": 50,
+    "survived": 2,
+    "timed_out": 0,
+    "total": 4
+  },
+  "test": {
+    "baseline": {
+      "durations_ms": [
+        0
+      ],
+      "runs": 1,
+      "slowest_ms": 0
+    },
+    "command": [
+      "go",
+      "test",
+      "./..."
+    ],
+    "resolved_command": [
+      "/normalized/path",
+      "test",
+      "./..."
+    ],
+    "timeout_ms": 0,
+    "timeout_source": "derived",
+    "toolchain": {
+      "go_bin": "/normalized/path",
+      "version": "go version go0.0.0 normalized/normalized"
+    }
+  },
+  "timing": {
+    "phases": [
+      {
+        "duration_ms": 0,
+        "name": "discover"
+      },
+      {
+        "duration_ms": 0,
+        "name": "baseline"
+      },
+      {
+        "duration_ms": 0,
+        "name": "mutate"
+      }
+    ],
+    "stages": [
+      {
+        "duration_ms": 0,
+        "name": "toolchain",
+        "phase": "discover",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "sweep",
+        "phase": "discover",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "snapshot",
+        "phase": "discover",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "scope",
+        "phase": "discover",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "build",
+        "phase": "baseline",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "test",
+        "phase": "baseline",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "timeout",
+        "phase": "baseline",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "discover",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "catalog",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "validate",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "instrumented-baseline",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "drift",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "selection",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "build-binaries",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "coverage-profile",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "coverage-narrow",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "cache-lookup",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "execute",
+        "phase": "mutate",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "cache-store",
+        "phase": "mutate",
+        "result": "succeeded"
+      }
+    ]
+  },
+  "tool_version": "0.0.0-normalized",
+  "validation": {
+    "builds": 1
+  },
+  "warnings": [],
+  "workspace": {
+    "go_version": "0.0",
+    "module_path": "fixture.example/untested",
+    "platform": {
+      "arch": "amd64",
+      "os": "linux"
+    },
+    "snapshot": {
+      "files": 4,
+      "stable_dir": true
+    },
+    "workspace_digest": "fca4d7b8e17a840b88553220af11f4fe2346f6629c87ba492d18be42c2a6b7b2"
+  }
+}

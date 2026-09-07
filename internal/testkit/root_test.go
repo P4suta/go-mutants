@@ -93,6 +93,12 @@ func TestFixtureRefusesANameThatLeavesTheCorpus(t *testing.T) {
 // TestFixtureNamesListsEveryModuleInTheCorpus proves the listing is the corpus
 // rather than a directory listing: `README.md` lives beside the fixtures and is
 // not one, and a test that iterates the corpus must not be handed it.
+//
+// "A fixture" is a tree a `go` command can be pointed at, which is a module in
+// every case but one: `workspace/` carries a `go.work` and its two modules one
+// level down, because what it is for is the run that has to refuse a workspace
+// root. It is named here so that a listing that quietly went back to requiring
+// a `go.mod` would take the two tests that drive it with it.
 func TestFixtureNamesListsEveryModuleInTheCorpus(t *testing.T) {
 	t.Parallel()
 
@@ -100,7 +106,7 @@ func TestFixtureNamesListsEveryModuleInTheCorpus(t *testing.T) {
 	if !slices.IsSorted(names) {
 		t.Errorf("FixtureNames is not sorted: %q", names)
 	}
-	for _, want := range []string{"killable", "simple"} {
+	for _, want := range []string{"killable", "simple", "workspace"} {
 		if !slices.Contains(names, want) {
 			t.Errorf("FixtureNames = %q, which does not include %q", names, want)
 		}
@@ -109,8 +115,12 @@ func TestFixtureNamesListsEveryModuleInTheCorpus(t *testing.T) {
 		t.Errorf("FixtureNames = %q, which includes a file that is not a module", names)
 	}
 	for _, name := range names {
-		if _, err := os.Stat(filepath.Join(Fixture(t, name), "go.mod")); err != nil {
-			t.Errorf("FixtureNames returned %q, which is not a module: %v", name, err)
+		dir := Fixture(t, name)
+		_, moduleErr := os.Stat(filepath.Join(dir, "go.mod"))
+		_, workspaceErr := os.Stat(filepath.Join(dir, "go.work"))
+		if moduleErr != nil && workspaceErr != nil {
+			t.Errorf("FixtureNames returned %q, which is neither a module nor a workspace: %v; %v",
+				name, moduleErr, workspaceErr)
 		}
 	}
 }

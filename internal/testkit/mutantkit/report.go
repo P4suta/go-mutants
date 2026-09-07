@@ -203,10 +203,64 @@ func NormalizeRunReport(t testing.TB, data []byte) []byte {
 		}
 	}
 
+	// The paths of the *programs* a run started, replaced by name and before the
+	// walk below. They are the one kind of absolute path a walk cannot finish:
+	// an installation directory may hold a space — `C:\Program Files\Go\bin\go.exe`
+	// is where a Windows toolchain lives by default — and [absolutePath] ends a
+	// path at whitespace, because a path found in the middle of a sentence
+	// otherwise swallows the words after it. Replaced whole here, they are gone
+	// before the walk can half-rewrite them.
+	//
+	// Only a value that already looks absolute is touched, which is what keeps
+	// `go` and `./...` in `test.command` as the user wrote them: a bare program
+	// name and a package pattern are not paths, and a report that turned either
+	// into one would stop saying what was run.
+	setPath(doc, "test", "toolchain", "go_bin")
+	setPathSlice(doc, "test", "command")
+	setPathSlice(doc, "test", "resolved_command")
+
 	// The free text is rewritten last and by a walk rather than by name; see
 	// [rewriteText] for what it does and why it is not a list of fields.
 	rewriteText(doc)
 	return EncodeJSON(t, doc)
+}
+
+// windowsPath matches a path that begins with a drive letter, which is the
+// spelling [absolutePath] can start and cannot finish.
+var windowsPath = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+
+// looksAbsolute reports whether a string is a path rather than a program name,
+// a package pattern or a word.
+func looksAbsolute(value string) bool {
+	return strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\\`) || windowsPath.MatchString(value)
+}
+
+// setPath replaces one string with [NormalizedPath] when it is a path.
+func setPath(doc map[string]any, keys ...string) {
+	node, key, ok := parentOf(doc, keys)
+	if !ok {
+		return
+	}
+	if value, isString := node[key].(string); isString && looksAbsolute(value) {
+		node[key] = NormalizedPath
+	}
+}
+
+// setPathSlice is [setPath] for every element of an argv.
+func setPathSlice(doc map[string]any, keys ...string) {
+	node, key, ok := parentOf(doc, keys)
+	if !ok {
+		return
+	}
+	values, ok := node[key].([]any)
+	if !ok {
+		return
+	}
+	for i, element := range values {
+		if value, isString := element.(string); isString && looksAbsolute(value) {
+			values[i] = NormalizedPath
+		}
+	}
 }
 
 // goTestElapsed matches the elapsed time `go test` prints beside a test's own
@@ -233,6 +287,18 @@ var goTestPackageElapsed = regexp.MustCompile(`(?m)^((?:ok|FAIL)[ \t]+\S+[ \t]+)
 // Both have a slash with an ordinary character in front of it; an absolute path
 // has one at the start of the string or after a space, a quote, an equals sign
 // or an opening bracket.
+//
+// It ends a path at whitespace, and that is a known limit rather than an
+// oversight. This runs over free text — a warning, a command's argv, the tail
+// of a failing test's output — where most of what follows a path is a sentence,
+// and a rule that ran past a space would rewrite the sentence too. The cost is
+// a path that legitimately holds one: `C:\Program Files\Go\bin\go.exe` comes
+// out as `/normalized/path Files\Go\bin\go.exe`, which still names the machine
+// it was recorded on. The fields that can carry such a path — an installation
+// directory rather than something inside a temporary tree — are therefore
+// replaced by name in [NormalizeRunReport] before this walk runs, and a new
+// field holding a program's path belongs on that list.
+// TestNormalizeRunReportReplacesAToolchainPathHoldingASpace is the test of it.
 var absolutePath = regexp.MustCompile(`(^|[\s"'=(\[])((?:[A-Za-z]:)?[\\/][^\s"'\[\]()]+)`)
 
 // rewriteText normalises every string of a decoded document, in place.

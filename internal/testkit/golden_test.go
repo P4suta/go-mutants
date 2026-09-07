@@ -4,6 +4,7 @@
 package testkit
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -247,9 +248,9 @@ func goldenPackages(root string) ([]string, error) {
 // updateTaskPackages reads the package patterns out of mise.toml's
 // golden-update task, sorted.
 //
-// The parse is the four lines it needs rather than a TOML library, for the
-// reason every other read in this package is: the harness's import list holds
-// nothing from this module, and outside the standard library only
+// The parse is the handful of lines it needs rather than a TOML library, for
+// the reason every other read in this package is: the harness's import list
+// holds nothing from this module, and outside the standard library only
 // github.com/google/go-cmp, so the tests of the pure packages can use it without
 // pulling a dependency in behind them.
 func updateTaskPackages(path string) ([]string, error) {
@@ -257,31 +258,314 @@ func updateTaskPackages(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var run string
-	inTask := false
-	for line := range strings.Lines(string(data)) {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			inTask = trimmed == "[tasks.golden-update]"
+	commands, err := updateTaskCommands(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	var packages []string
+	for _, command := range commands {
+		packages = append(packages, commandPackages(command)...)
+	}
+	slices.Sort(packages)
+	return packages, nil
+}
+
+// updateTaskCommands reads the golden-update task's `run` value as the list of
+// shell commands it holds, in the order mise would run them.
+//
+// Both TOML spellings are read, and the array one is not a stylistic
+// alternative. `-update` is one flag in one test binary, so the packages have to
+// be named explicitly — and a package whose golden test carries
+// `//go:build integration` is not even compiled by a `go test` without the tag,
+// so a single command cannot regenerate every golden in this repository. It
+// takes two, and a parser that knew only about `run = "…"` would read the first
+// and silently report the second's packages as missing from the task.
+func updateTaskCommands(toml string) ([]string, error) {
+	inTask, inArray := false, false
+	var commands []string
+	// closeArray ends the array, refusing one that named no command at all.
+	// An empty `run = []` parses perfectly and regenerates nothing, and the
+	// ledger above would then report every golden package as missing from a
+	// task that is not broken so much as empty — which is a diff to read rather
+	// than a sentence to act on.
+	closeArray := func() ([]string, error) {
+		if len(commands) == 0 {
+			return nil, errors.New("[tasks.golden-update]'s run array holds no command")
+		}
+		return commands, nil
+	}
+	for line := range strings.Lines(toml) {
+		found, outside := splitTOMLLine(strings.TrimSpace(line))
+		if inArray {
+			commands = append(commands, found...)
+			// The bracket is looked for in the text *outside* the strings, so a
+			// command holding a `]` of its own does not end the array early and
+			// a `"…"]` with no comma before the bracket does end it.
+			if strings.Contains(outside, "]") {
+				return closeArray()
+			}
+			continue
+		}
+		if strings.HasPrefix(outside, "[") && !strings.HasPrefix(outside, "[tasks.golden-update]") &&
+			len(found) == 0 {
+			inTask = false
+			continue
+		}
+		if strings.HasPrefix(outside, "[tasks.golden-update]") {
+			inTask = true
 			continue
 		}
 		if !inTask {
 			continue
 		}
-		if rest, ok := strings.CutPrefix(trimmed, "run ="); ok {
-			run = strings.Trim(strings.TrimSpace(rest), `"`)
-			break
+		rest, ok := strings.CutPrefix(outside, "run =")
+		if !ok {
+			continue
+		}
+		value := strings.TrimSpace(rest)
+		if strings.HasPrefix(value, "[") {
+			commands = append(commands, found...)
+			if strings.Contains(value, "]") {
+				return closeArray()
+			}
+			inArray = true
+			continue
+		}
+		if len(found) != 0 {
+			return found[:1], nil
+		}
+		return nil, errors.New("[tasks.golden-update] has a run value this parser cannot read: " + value)
+	}
+	if inArray {
+		return nil, errors.New("[tasks.golden-update]'s run array is never closed")
+	}
+	return nil, errors.New("has no [tasks.golden-update] with a run value")
+}
+
+// splitTOMLLine separates one line into the double-quoted strings it holds and
+// the text outside them, with a `#` comment dropped.
+//
+// The split is what makes the two structural questions above answerable without
+// a TOML parser: a `[` or a `]` or a `#` matters only outside a string, and every
+// one of them is a character a shell command in this task may legitimately
+// contain. Matching them against the raw line is how a comment naming a package
+// pattern gets counted as one, and how a command holding a bracket ends the
+// array.
+//
+// It is deliberately not a TOML implementation. Basic strings with an escaped
+// quote are handled because they cost one branch; single-quoted literal strings,
+// multi-line strings and inline tables are not, because nothing in this task
+// needs them and a half-guessed grammar is worse than a refusal.
+func splitTOMLLine(line string) (found []string, outside string) {
+	var out strings.Builder
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '#':
+			return found, out.String()
+		case '"':
+			var value strings.Builder
+			i++
+			for ; i < len(line) && line[i] != '"'; i++ {
+				if line[i] == '\\' && i+1 < len(line) {
+					i++
+				}
+				value.WriteByte(line[i])
+			}
+			found = append(found, value.String())
+		default:
+			out.WriteByte(line[i])
 		}
 	}
-	if run == "" {
-		return nil, fmt.Errorf("%s has no [tasks.golden-update] with a run string", path)
-	}
+	return found, out.String()
+}
+
+// commandPackages lists the Go package patterns one command names.
+func commandPackages(command string) []string {
 	var packages []string
-	for _, field := range strings.Fields(run) {
+	for _, field := range strings.Fields(command) {
 		if strings.HasPrefix(field, "./") {
 			packages = append(packages, field)
 		}
 	}
-	slices.Sort(packages)
-	return packages, nil
+	return packages
+}
+
+// TestGoldenUpdateTaskHandlesTaggedPackages is the other half of the ledger
+// above: the task has to *reach* the goldens it names.
+//
+// `internal/engine`'s golden test is `//go:build integration`-tagged, because
+// what it records is a real run of a real fixture through a real toolchain.
+// A `go test ./internal/engine -update` without the tag compiles a package with
+// no golden test in it at all, passes, and rewrites nothing — so the task would
+// name the package, [TestGoldenPackagesAreNamedByTheUpdateTask] would be
+// satisfied, and the golden it was supposed to regenerate would quietly stop
+// being regenerated. That is the failure this test exists to make impossible,
+// and it is checked in both directions: the parser is shown the two TOML
+// spellings, and the real task is required to pass `-tags integration` to every
+// package whose tests are all in the integration tier.
+func TestGoldenUpdateTaskHandlesTaggedPackages(t *testing.T) {
+	t.Parallel()
+
+	t.Run("both spellings of run", func(t *testing.T) {
+		t.Parallel()
+
+		for _, test := range []struct {
+			name string
+			toml string
+			want []string
+			// wantErr is the phrase a refusal has to carry. A row with one
+			// expects no commands at all.
+			wantErr string
+		}{{
+			name: "one command",
+			toml: "[tasks.golden-update]\ndescription = \"x\"\nrun = \"go test ./a ./b -update\"\n\n[tasks.other]\n",
+			want: []string{"go test ./a ./b -update"},
+		}, {
+			name: "an array of commands",
+			toml: "[tasks.golden-update]\nrun = [\n  \"go test ./a -update\",\n" +
+				"  \"go test -tags integration ./b -update\",\n]\n\n[tasks.other]\nrun = \"nope\"\n",
+			want: []string{"go test ./a -update", "go test -tags integration ./b -update"},
+		}, {
+			name: "an array on one line",
+			toml: "[tasks.golden-update]\nrun = [\"go test ./a -update\", \"go test ./b -update\"]\n",
+			want: []string{"go test ./a -update", "go test ./b -update"},
+		}, {
+			// The bracket closing the array on the last command's own line,
+			// with no comma in front of it. TOML allows it and a parser that
+			// looked for a line *starting* with `]` reads to the end of the
+			// file and reports an array that is never closed.
+			name: "the array closed after the last command",
+			toml: "[tasks.golden-update]\nrun = [\n  \"go test ./a -update\",\n" +
+				"  \"go test ./b -update\"]\n",
+			want: []string{"go test ./a -update", "go test ./b -update"},
+		}, {
+			// A comment on an array line, holding something that looks exactly
+			// like a package pattern. It is not one, and a scan of the raw line
+			// would name `./ignored` in the task's package list — which
+			// TestGoldenPackagesAreNamedByTheUpdateTask compares for equality,
+			// so the comment alone would fail the ledger.
+			name: "a comment naming a pattern",
+			toml: "[tasks.golden-update]\nrun = [\n  \"go test ./a -update\", # not ./ignored\n" +
+				"  \"go test ./b -update\",\n] # nor ./elsewhere\n",
+			want: []string{"go test ./a -update", "go test ./b -update"},
+		}, {
+			// An array that names nothing. It parses, it regenerates nothing,
+			// and an empty answer would be reported by the ledger as every
+			// golden package missing from a task that is merely empty.
+			name:    "an empty array",
+			toml:    "[tasks.golden-update]\nrun = []\n",
+			wantErr: "holds no command",
+		}} {
+			t.Run(test.name, func(t *testing.T) {
+				t.Parallel()
+
+				got, err := updateTaskCommands(test.toml)
+				if test.wantErr != "" {
+					if err == nil {
+						t.Fatalf("updateTaskCommands = %q, want a refusal naming %q", got, test.wantErr)
+					}
+					if !strings.Contains(err.Error(), test.wantErr) {
+						t.Errorf("the refusal does not say %q: %v", test.wantErr, err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("reading the task: %v", err)
+				}
+				if !slices.Equal(got, test.want) {
+					t.Errorf("commands = %q, want %q", got, test.want)
+				}
+				// And the packages come out of every command, not only the first.
+				path := filepath.Join(t.TempDir(), "mise.toml")
+				WriteFile(t, path, []byte(test.toml))
+				packages, err := updateTaskPackages(path)
+				if err != nil {
+					t.Fatalf("reading the packages: %v", err)
+				}
+				if want := []string{"./a", "./b"}; !slices.Equal(packages, want) {
+					t.Errorf("packages = %q, want %q", packages, want)
+				}
+			})
+		}
+	})
+
+	t.Run("the real task reaches its tagged goldens", func(t *testing.T) {
+		t.Parallel()
+
+		root := Root(t)
+		commands, err := updateTaskCommands(string(ReadFile(t, filepath.Join(root, "mise.toml"))))
+		if err != nil {
+			t.Fatalf("reading the golden-update task: %v", err)
+		}
+		tagged := map[string]bool{}
+		for _, command := range commands {
+			carries := strings.Contains(command, "-tags "+integrationTag) ||
+				strings.Contains(command, "-tags="+integrationTag)
+			for _, pkg := range commandPackages(command) {
+				tagged[pkg] = tagged[pkg] || carries
+			}
+		}
+
+		found, err := goldenPackages(root)
+		if err != nil {
+			t.Fatalf("scanning %s for golden files: %v", root, err)
+		}
+		for _, pkg := range found {
+			dir := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(pkg, "./")))
+			behind, files, err := goldensRecordedBehindTheTag(dir)
+			if err != nil {
+				t.Fatalf("reading the test files of %s: %v", pkg, err)
+			}
+			if behind && !tagged[pkg] {
+				t.Errorf("%s records goldens from %s, which carries `//go:build %s`, "+
+					"but the golden-update task runs that package without the tag: "+
+					"the command compiles a package those files are not part of, passes, "+
+					"and rewrites nothing",
+					pkg, strings.Join(files, ", "), integrationTag)
+			}
+		}
+	})
+}
+
+// goldenCall is how a test records or compares a golden file: [Golden],
+// [CompareGolden], and nothing else — [GoldenPath] and [Update] hand back a
+// path and a flag and rewrite no file on their own.
+//
+// It is matched as text rather than resolved, for the reason every other scan
+// in this package is: `go/types` would need the whole module loaded, with a
+// toolchain, in the tier this test belongs to.
+const goldenCall = "Golden("
+
+// goldensRecordedBehindTheTag reports whether any test file in a directory both
+// records a golden and is kept out of the unit tier by the integration tag, and
+// names the files that do.
+//
+// The question is deliberately about the *recording files* rather than about the
+// package. "Every test file in this package is tagged" was the first thing this
+// asked, and it was true of no golden package in the repository — internal/engine
+// has eleven tagged test files and thirteen untagged ones — so the check passed
+// whatever the task said, including with the tag removed from the command
+// altogether. What makes a `-update` run rewrite nothing is narrower and exact:
+// the file holding the [Golden] call is not compiled, whatever else in the
+// package is.
+func goldensRecordedBehindTheTag(dir string) (bool, []string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, nil, err
+	}
+	var behind []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		source, readErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if readErr != nil {
+			return false, nil, readErr
+		}
+		text := string(source)
+		if strings.Contains(text, goldenCall) && hasIntegrationTag(text) {
+			behind = append(behind, entry.Name())
+		}
+	}
+	return len(behind) != 0, behind, nil
 }

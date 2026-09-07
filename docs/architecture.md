@@ -994,7 +994,49 @@ see any of it without breaking something.
 The `-update` flag for golden files is registered once, in `internal/testkit`,
 and is therefore the same flag in every test binary that links the harness.
 `mise run golden-update` names the packages holding goldens explicitly, and
-`TestGoldenPackagesAreNamedByTheUpdateTask` fails when that list goes stale.
+`TestGoldenPackagesAreNamedByTheUpdateTask` fails when that list goes stale. It
+is two commands rather than one because `internal/engine`'s goldens are run
+reports of real runs and the test that records them carries
+`//go:build integration`; a command without the tag would compile a package with
+no golden test in it, pass, and rewrite nothing, so
+`TestGoldenUpdateTaskHandlesTaggedPackages` requires every integration-only
+golden package to be named in a command that passes the tag.
+
+### The corpus
+
+`fixtures/` is the corpus: the small modules the suites run against, each its own
+module so that this repository's own `./...` never compiles one — a fixture that
+fails on purpose would otherwise fail this repository's test run. Module paths
+live under `fixture.example/`, which RFC 2606 reserves, so no fixture can collide
+with something publishable and no `go get` of one can reach the network; nothing
+has a `require`, so nothing needs `go.sum` or a module cache inside the snapshot,
+and the integration tier never touches the network. `fixtures/README.md` is the
+ledger: every fixture, what it is for, and the tests that drive it.
+
+Most fixtures are about the operators or about one phase. Five are about the
+edges of a workspace, and are what the instrumentation and the run have to get
+right around an ordinary module: `workspace/` is a `go.work` over two modules —
+measured one module at a time when pointed inside it, refused by `run` and by
+`list` at its root before anything is copied, so that the `go.work` the refusal
+names is the user's own rather than a snapshot's; `tagged/` puts one of its two
+candidates behind `//go:build special`, so `GOFLAGS` changes both the catalogue
+and the outcome cache's context; `untested/` is a package with tests beside one
+without; `selfwriting/`'s suite writes into the package directory it runs in,
+which is what the drift gate exists for; and `unnameable/` holds the site no
+guard form can express. A CRLF workspace is the one member with no directory:
+`.gitattributes` pins `* -text`, so a checked-in CRLF file would be CRLF on
+every platform and would change every mutant identity that covers it, and the
+module is synthesized by `testkit.NewModule(t).From("simple").CRLF()` instead.
+
+Two gates keep the corpus what it is. `internal/testkit`'s
+`TestCorpusConformance` reads the ledger and the directories and requires them to
+agree — module paths, a `go` directive no newer than the toolchain in use, no
+`require`/`replace`/`go.sum`, LF endings and SPDX headers everywhere, a ledger
+row for every fixture and a fixture for every row, a test naming each one, and
+nothing under `fixtures/` that is a report, a `.go-mutants*` state file or a
+compiled binary. Every CI job that runs a suite then ends with
+`git status --porcelain --ignored -- fixtures`, because the corpus is an input
+and a suite that wrote where it reads cannot be trusted to have noticed.
 
 ## Documented v1 limitations
 

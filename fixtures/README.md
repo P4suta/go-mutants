@@ -44,6 +44,11 @@ at.
 | `vetsuspect/` | `fixture.example/vetsuspect` | The toolchain's opinion of the rewrite. Two functions, ten mutants, all killed — and two of the ten are the point: a Form C guard renders each alternative from the pristine bytes with one edit applied, so `or-to-and` writes `s == "." && s == ".."` into the snapshot and `and-to-or` writes `s != "." || s != ".."`. Both are legal Go and both are what vet's `bools` analyzer reports, and `go test` and `go test -c` run it by default. It is the only fixture whose subject is a command line rather than a program. |
 | `probeable/` | `fixture.example/probeable` | The probe session. Three mutants and no other mutable expression: two return-value ones a probe tree has a form for and one boolean literal it has none for, so both directions of the layer can be stated — a probed mutant whose absence from a measurement is a fact, and an unprobed one whose absence means nothing at all and which a consumer has to treat as infected by every test. Every probed function returns a value differing from its mutant's constant on every call, so a test that does not name it is a test that never reached it. Its `isolated/` package holds nothing to mutate and imports nothing that does, so its binary links no runtime and writes no log — the one absence a probe pass must read as the empty set rather than as a failure. |
 | `families/` | `fixture.example/families` | The whole operator catalogue. Twenty small functions in one package holding at least one live candidate for each of the 42 rules the frozen registry names — 76 mutants at profile `all`, 72 at `strong`, 59 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
+| `workspace/` | `fixture.example/workspace/app`, `fixture.example/workspace/lib` | A `go.work` joining two modules. Pointed at `app/` it is a scope test: the snapshot is that module alone, six mutants, all killed. Pointed at its own root it is a refusal — a workspace has no single module path, no single set of identities and no single baseline, so the run stops with GOM4102 before anything is copied. `app` deliberately imports nothing from `lib`; see below. |
+| `tagged/` | `fixture.example/tagged` | Build constraints as an input to the catalogue. Two boolean literals, one of them in a file under `//go:build special`, so a run under `GOFLAGS=-tags=special` catalogues two mutants where a run without it catalogues one — and the two runs key their cached outcomes differently, because GOFLAGS is in the cache context. |
+| `untested/` | `fixture.example/untested` | A package with tests beside one without. `lib/`'s two mutants are killed; `orphan/`'s two are settled as uncovered survivors without being executed, because no test binary reaches the line. It is also the specimen for the one test command that names real packages and still builds nothing: `go test ./orphan/...` is refused with GOM4022 rather than reported as a score of zero. |
+| `selfwriting/` | `fixture.example/selfwriting` | A passing test suite that writes a file into the package directory it runs in. Every mutant is measured against the snapshot the baseline was measured against, so a suite that edits that tree makes the score a mixture of two programs; the run stops at the drift gate with GOM4014, and `Prepare` refuses the same tree at its verification stage with a `*DriftError`. |
+| `unnameable/` | `fixture.example/unnameable` | A declaration whose type cannot be written down: `hidden.New` returns a `*counter` that is not exported, so a guard at the addition inside the call would have to declare a temporary of a type this file has no source form for. Discovery records it as an `unnameable-decl-type` skip with its coordinates and carries on, and the ordinary candidate on the next line is catalogued and killed. |
 
 The discovery fixture is the one module in the corpus with no test files, which
 is deliberate: `list` builds nothing and runs nothing, so a test here would add
@@ -185,9 +190,67 @@ detail: it is the only input at which `>` and `>=` disagree, so deleting it
 turns the fixture's first claim from "killed by the binary that covers it" into
 "survived".
 
-Later phases add fixtures for the cases the instrumentation has to get right:
-`go.work`, build tags, CRLF sources, a package with no tests, a test that
-writes into its own directory, and a declaration whose type cannot be named.
-The drift gate that would catch the writing test already exists and is unit
-tested against a hand-built snapshot; the fixture is what will prove it end to
-end.
+The five modules below are the cases the instrumentation and the run have to get
+right around the edges of an ordinary module, and each is driven by tests named
+here so that a fixture and its claim can be read together. The sixth case, CRLF
+sources, has no directory and has a section of its own:
+
+| Fixture | Driving tests |
+| --- | --- |
+| `workspace/` | `internal/engine`: `TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt`, `TestRunAtTheWorkspaceRootIsRefused` |
+| `tagged/` | `internal/engine`: `TestBuildTagsNarrowTheCatalogueThroughGOFLAGS`, `TestFixtureReportsMatchTheirGoldens` |
+| `untested/` | `internal/engine`: `TestAPackageWithoutTestsReportsItsMutantsAsUncoveredSurvivors`, `TestScopingTheTestCommandToTheUntestedPackageIsRefused`, `TestFixtureReportsMatchTheirGoldens` |
+| `selfwriting/` | `internal/engine`: `TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate`; root package: `TestPrepareRefusesDriftFromTheBaselineItself` |
+| `unnameable/` | `internal/engine`: `TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen` |
+| `simple/`, `killable/`, `untested/`, `tagged/` | `internal/engine`: `TestFixtureReportsMatchTheirGoldens`, against `internal/engine/testdata/<fixture>.report.golden.json` |
+
+The workspace fixture's one constraint is the one a reader will want to relax:
+**`app` imports nothing from `lib`.** A run pointed at `app/` snapshots `app/`
+alone — the workspace file is one directory above the root it was given and is
+not copied — so the snapshot is resolved as the single module it contains. An
+import of the sibling would therefore not be a scope test at all: it would be a
+`go build` failure inside the snapshot, and the fixture would stop being able to
+say anything about what a run inside a workspace measures. What makes the
+absence of `lib` observable instead is its *fate*: all three of its mutants
+survive on purpose — `neq-to-eq` on the comparison, `return-true` and
+`return-false` on the expression it returns — so a run that reached across the
+workspace would report survivors and a lower score where the test requires
+every mutant killed.
+
+`untested/orphan` and `selfwriting/`'s witness file are load-bearing in the same
+way. Adding an `orphan_test.go` would leave the module compiling and the suite
+green while turning two uncovered survivors into two executed ones and making
+`go test ./orphan/...` an ordinary command; deleting the `os.WriteFile` from
+`selfwriting`'s test would leave a run that passes the gate it exists to fail.
+
+## Modules the corpus cannot hold
+
+Some of the trees the engine has to be proven against are trees this repository
+refuses to check in. They are synthesized by `internal/testkit`'s module builder
+instead, and they are listed here because they are corpus members in every sense
+but the filesystem's:
+
+| Module | Built by | Driving tests |
+| --- | --- | --- |
+| A CRLF copy of `simple/` | `testkit.NewModule(t).From("simple").CRLF()` | `internal/engine`: `TestCRLFSourcesAreInstrumentedByteForByteAndKilled`; `internal/instrument`: `TestInstrumentPreservesCRLF` |
+
+The CRLF tree cannot be a directory here because `.gitattributes` pins
+`* -text`: a CRLF file in the corpus would be CRLF on every platform, and line
+endings are part of a file's bytes, so it would change every mutant identity
+that covers it and make the corpus a worse test of the instrumenter rather than
+a better one. Synthesizing it keeps the claim — the rewriter preserves every
+byte it did not mutate — checkable without weakening the corpus.
+
+## The conformance gate
+
+`internal/testkit`'s `TestCorpusConformance` reads this document and the
+directories beside it and requires them to agree. Every fixture is a module or a
+workspace whose `go.mod` names it under `fixture.example/`, declares a `go`
+directive no newer than the toolchain in use, and carries no `require`,
+`replace` or `go.sum`; every file is LF-only and every Go file and `go.mod`
+opens with the SPDX pair; every fixture is a row of *The corpus* table above and
+every row of it has a directory under it; every fixture is named by a test
+somewhere in the repository; and nothing under `fixtures/` is a report, a
+`.go-mutants*` state file or a compiled binary. The conventions at the top of
+this page are the prose, and that test is the copy of them a new fixture cannot
+get past without reading.

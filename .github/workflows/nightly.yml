@@ -83,6 +83,22 @@ jobs:
         run: >-
           mise exec -- go test -run='^$' -fuzz='^${{ matrix.target }}$'
           -fuzztime=5m ${{ matrix.package }}
+      # The same gate as CI's platform-tests job, and for the same reason: the
+      # corpus is an input, and a suite that wrote where it reads cannot be
+      # trusted to have noticed. Nobody is watching a scheduled run, so a
+      # fixture a nightly suite edited would otherwise be found by whoever next
+      # ran `git status`. The reasoning behind `--ignored`, the condition and
+      # the printed listing is written out once, in ci.yml.
+      - name: The corpus is unchanged
+        if: success() || failure()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # A crasher is the entire point of the job. `go test -fuzz` writes the
       # failing input into the package's testdata/fuzz directory, which dies
       # with the runner unless it is collected here.
@@ -149,6 +165,22 @@ jobs:
           mise exec -- go test -count=5 -timeout=40m
           ./internal/instrument/... ./internal/interval/...
           ./internal/mutation/...
+      # The same gate as CI's platform-tests job, and for the same reason: the
+      # corpus is an input, and a suite that wrote where it reads cannot be
+      # trusted to have noticed. Nobody is watching a scheduled run, so a
+      # fixture a nightly suite edited would otherwise be found by whoever next
+      # ran `git status`. The reasoning behind `--ignored`, the condition and
+      # the printed listing is written out once, in ci.yml.
+      - name: The corpus is unchanged
+        if: success() || failure()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # rapid persists a shrunk failing case next to the suite that found it.
       # Same reasoning as the fuzz corpus above: collect it or lose it.
       - name: Collect the shrunk failing case
@@ -213,6 +245,22 @@ jobs:
           install: true
           cache: true
       - run: mise run test-integration-race
+      # The same gate as CI's platform-tests job, and for the same reason: the
+      # corpus is an input, and a suite that wrote where it reads cannot be
+      # trusted to have noticed. Nobody is watching a scheduled run, so a
+      # fixture a nightly suite edited would otherwise be found by whoever next
+      # ran `git status`. The reasoning behind `--ignored`, the condition and
+      # the printed listing is written out once, in ci.yml.
+      - name: The corpus is unchanged
+        if: success() || failure()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # As in CI: a report, never a gate.
       - name: Test build cache
         if: success() || failure()
@@ -259,6 +307,19 @@ jobs:
           install: true
           cache: true
       - run: mise run bench
+      # The same gate as CI's platform-tests job. `always()` because nobody is
+      # watching a scheduled run, so a fixture a nightly job edited would
+      # otherwise be found by whoever next ran `git status`.
+      - name: The corpus is unchanged
+        if: always()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       - name: Upload the benchmark output
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -2449,9 +2449,73 @@ Entries say *why* a change was made, not only what changed.
   `REUSE.toml` annotations for the files that cannot carry an inline SPDX
   header, plus `SECURITY.md`, `CONTRIBUTING.md`, `THIRD_PARTY_NOTICES.md`, and
   `RELEASE_NOTES.md`.
+- **Developer infrastructure: the corpus modules `fixtures/README.md` had been
+  promising, the CRLF workspace it cannot hold, and a gate that keeps the ledger
+  and the directories honest.** The document ended in a paragraph saying that
+  later phases would add fixtures for `go.work`, build tags, CRLF sources, a
+  package with no tests, a suite that writes into its own directory and a
+  declaration whose type cannot be named — six cases the run has to get right
+  that no amount of exercising `simple/` or `families/` reaches. They exist now,
+  each driven by named tests: `workspace/`, `tagged/`, `untested/`,
+  `selfwriting/` and `unnameable/`, plus a CRLF copy of `simple/` synthesized by
+  `testkit.NewModule(t).From("simple").CRLF()` — which cannot be a directory,
+  because `.gitattributes` pins `* -text` and a checked-in CRLF file would be
+  CRLF on every platform and would change every mutant identity that covers it.
+
+  `internal/testkit`'s `TestCorpusConformance` is the gate. Prose conventions
+  are what a new fixture is written without reading, and each rule it checks is
+  one somebody would otherwise break in silence: a missing `go.mod` makes a
+  fixture a package of this repository, a `require` makes the integration suite
+  depend on the network, a `go` directive above the toolchain in use turns every
+  command into a toolchain download that `GOTOOLCHAIN=local` refuses, a CRLF
+  ending changes the digests identities are made of, and a report directory or a
+  compiled binary under `fixtures/` is a run that was pointed at the corpus by
+  accident. It reads `fixtures/README.md` in both directions — a fixture with no
+  row is undocumented, a row with no directory is a fixture somebody deleted —
+  and requires every fixture to be named by some test, because a fixture nothing
+  drives costs a checkout and proves nothing. The rules are a function of a root
+  rather than of this repository, and are themselves tested against a corpus
+  built to break them one convention at a time: a gate whose only evidence is
+  that it passes on a conforming tree is a gate nobody has seen fail. The
+  `git status --porcelain --ignored -- fixtures` step that guarded CI's platform
+  tests now ends every job that runs a suite, the nightly ones included.
+- **Four run reports of real runs are pinned as goldens**, in
+  `internal/engine/testdata/`, for `simple/`, `killable/`, `untested/` and
+  `tagged/`. Every other assertion about a report is a field somebody decided to
+  write down; a golden is the whole document, so a field that appeared, one that
+  vanished, a number that moved and a string that changed shape all arrive as a
+  diff. They are recorded through `mutantkit.NormalizeRunReport`, generated on
+  Linux and compared on all three operating systems CI runs — which makes the
+  cross-platform comparison the normaliser's own test: a field that is a fact
+  about the host, the toolchain, the clock or the scheduler and that nobody
+  normalised fails the first time anybody looks.
+
+  `mise run golden-update` regenerates them, and it is two commands now rather
+  than one. The test that records them is `//go:build integration`-tagged, so a
+  `go test ./internal/engine -update` without the tag would compile a package
+  with no golden test in it, pass, and rewrite nothing — the task would name the
+  package and regenerate none of it. `TestGoldenUpdateTaskHandlesTaggedPackages`
+  requires every integration-only golden package to be reached with the tag, and
+  the parser behind `TestGoldenPackagesAreNamedByTheUpdateTask` learned the
+  array form of a mise `run` so that the second command is not invisible to it.
 
 ### Changed
 
+- **`run` and `list` pointed at the root of a `go.work` workspace are refused
+  before anything is copied, with GOM4102 and the user's own `go.work` named.**
+  Discovery has always refused a workspace — one module path, one set of
+  module-relative identities, one baseline, and a workspace has none of them —
+  but it is handed the snapshot, and it runs after the copy. `run` never
+  reached it: the scope resolution got there first with a different story,
+  because `go list ./...` in a workspace directory places no package, so the run
+  reported the *user's test command* as matching nothing. That is a true
+  sentence about the wrong subject, and it sends a reader to their
+  `test.command`. `list` did reach it, and named the `go.work` inside a
+  `go-mutants-snap-…` directory that its own cleanup had already removed — the
+  one actionable thing in the message pointed at nothing. Both now ask before
+  the copy, through `internal/discover.CheckWorkspace`: the same check
+  discovery makes, exported so that neither caller grows a second code for one
+  condition.
 - **The message `gomutants: exec: workspace is already prepared; execute test
   targets through its session` is gone, because the case that printed it is
   gone.** It was `Workspace.Exec`'s single refusal after any `Prepare`, and a

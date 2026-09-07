@@ -1035,6 +1035,55 @@ func TestWriteSnapshot(t *testing.T) {
 	}
 }
 
+// TestPrepareRefusesDriftFromTheBaselineItself is the same refusal as
+// [TestPrepareRefusesDriftFromAWorkspaceCommand] with the other author.
+//
+// There the caller ran a command that wrote into the frozen tree, and the
+// remedy was plainly theirs. Here nobody ran anything: preparation's own
+// verification pass runs the module's tests once against pristine files with
+// the instrumented builds in place, and the module's tests write a file into
+// the package directory they run in. That is an ordinary thing for a test suite
+// to do — a golden regenerated on the way past, a generator run as a test — and
+// it is exactly as fatal, because every mutant afterwards would be measured
+// against a tree the baseline never saw.
+//
+// The stage is the assertion that separates the two. A `*DriftError` naming
+// "commands" would send a consumer looking for a command it never ran; naming
+// "verification" says the suite did it, which is the only thing that leads
+// anywhere.
+func TestPrepareRefusesDriftFromTheBaselineItself(t *testing.T) {
+	root := copyFixture(t, "selfwriting")
+	workspace, err := gomutants.Open(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = workspace.Close() })
+
+	// The default PrepareOptions: `go test ./...` as the verification command,
+	// which is what makes this the *baseline's* drift rather than a caller's.
+	if _, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{}); err == nil {
+		t.Fatal("Prepare accepted a module whose own tests write into the snapshot")
+	}
+	var drift *gomutants.DriftError
+	if !errors.As(err, &drift) {
+		t.Fatalf("Prepare = %v, want a *DriftError", err)
+	}
+	if drift.Stage != "verification" {
+		t.Errorf("Stage = %q, want %q: nobody ran a command here, the suite did it",
+			drift.Stage, "verification")
+	}
+	if len(drift.Changes) != 1 {
+		t.Fatalf("Changes = %+v, want the one file the suite wrote", drift.Changes)
+	}
+	change := drift.Changes[0]
+	if change.Kind != gomutants.ChangeAdded || change.Path != "witness.txt" {
+		t.Errorf("Changes[0] = %+v, want witness.txt added", change)
+	}
+	if !strings.Contains(err.Error(), "changed the snapshot outside instrumentation") {
+		t.Errorf("the message does not say what kind of change it refused:\n%v", err)
+	}
+}
+
 // copyFixture copies one corpus module into a directory of the test's own.
 //
 // It is [testkit.Copy]: the fixtures are checked in and `git status --porcelain

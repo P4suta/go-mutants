@@ -39,6 +39,23 @@ jobs:
           install: true
           cache: true
       - run: mise run check
+      # The same gate as platform-tests', and for the same reason: the corpus is
+      # an input, and a job that wrote where it reads cannot be trusted to have
+      # noticed. `always()` rather than `success() || failure()` because this
+      # job's other steps are conditional, and a corpus edited by a step that
+      # then skipped the rest would otherwise go unreported. The reasoning
+      # behind `--ignored` and the printed listing is written out once, in the
+      # platform-tests job below.
+      - name: The corpus is unchanged
+        if: always()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # Dependabot writes commit bodies full of release-note links far past
       # committed's 100-column line limit, and its messages are rewritten at
       # squash-merge time anyway (the merge subject and body are supplied by
@@ -234,6 +251,21 @@ jobs:
           install: true
           cache: true
       - run: mise run test-race
+      # The same gate as platform-tests', and for the same reason: the corpus is
+      # an input, and a suite that wrote where it reads cannot be trusted to
+      # have noticed. The reasoning behind `--ignored`, the `success() ||
+      # failure()` condition and the printed listing is written out once, in
+      # ci.yml's platform-tests job.
+      - name: The corpus is unchanged
+        if: success() || failure()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # What the failed tests left behind, off the runner and into an artifact.
       # One directory per failed test, each with a KEPT.txt naming the test, the
       # fixture, the toolchain, the build cache, the test's other kept
@@ -312,6 +344,21 @@ jobs:
         id: coverage
         continue-on-error: true
         run: mise run cover-integration
+      # The same gate as platform-tests', and for the same reason: the corpus is
+      # an input, and a suite that wrote where it reads cannot be trusted to
+      # have noticed. The reasoning behind `--ignored`, the `success() ||
+      # failure()` condition and the printed listing is written out once, in
+      # ci.yml's platform-tests job.
+      - name: The corpus is unchanged
+        if: success() || failure()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # cover.out is what `go tool cover` and every editor reads; cover.html is
       # what a reviewer opens. Both, because regenerating the rendering needs
       # the profile *and* the checkout it was measured against.
@@ -418,6 +465,21 @@ jobs:
           install: true
           cache: true
       - run: mise run dogfood
+      # The same gate as platform-tests', and the one job that could break it
+      # without running a test suite at all: `mise run dogfood` is go-mutants
+      # pointed at this repository, and a run writes into the tree it is pointed
+      # at. `always()`, because a run that wrote into the corpus and then failed
+      # its own score gate is exactly the case worth naming.
+      - name: The corpus is unchanged
+        if: always()
+        shell: bash
+        run: |
+          changed="$(git status --porcelain --ignored -- fixtures)"
+          if [ -n "$changed" ]; then
+            echo "::error::the test suite wrote into fixtures/:"
+            echo "$changed"
+            exit 1
+          fi
       # As in platform-tests: a report, never a gate.
       - name: Test build cache
         if: success() || failure()

@@ -323,6 +323,74 @@ func TestInstrumentPreservesCRLFOutsideTheGuards(t *testing.T) {
 	}
 }
 
+// TestInstrumentPreservesCRLF is the claim above stated over every input this
+// package has, and stated as an equality rather than as a count.
+//
+// [TestInstrumentPreservesCRLFOutsideTheGuards] converts two fixtures and
+// compares each against its own converted golden, which is exact and is also
+// two fixtures. What a byte rewriter promises is stronger and is the same
+// sentence for every file it is given: the instrumented CRLF file is the
+// instrumented LF file with every line break converted, and nothing else moved.
+// So both are instrumented here and the two outputs are compared directly —
+// which needs no golden of its own, and therefore covers the fixtures nobody
+// wrote a CRLF golden for.
+//
+// It is the unit-level half of the corpus's CRLF module: `internal/engine`'s
+// TestCRLFSourcesAreInstrumentedByteForByteAndKilled runs a whole CRLF workspace
+// through a real toolchain and requires the same kills as its LF twin, and this
+// says which bytes that rests on.
+func TestInstrumentPreservesCRLF(t *testing.T) {
+	t.Parallel()
+
+	inputs, err := filepath.Glob(filepath.Join("testdata", "*.input"))
+	if err != nil {
+		t.Fatalf("listing the fixtures: %v", err)
+	}
+	if len(inputs) == 0 {
+		t.Fatal("no fixture inputs were found, so this proves nothing")
+	}
+
+	for _, input := range inputs {
+		name := strings.TrimSuffix(filepath.Base(input), ".input")
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			// Every fixture is catalogued the same way — every comparison and
+			// every boolean literal — rather than through the per-fixture edit
+			// tables the golden test uses. What is being compared is one file
+			// against the same file in other line endings, so any catalogue
+			// that is derived from the bytes in front of it is a fair one, and
+			// the shared derivation is what lets this cover every input rather
+			// than the four with a table.
+			lf := testkit.ReadFile(t, input)
+			crlf := toCRLF(lf)
+
+			// The candidates are derived from each version's own bytes: a span
+			// is a byte offset, and a carriage return before every line break
+			// moves every offset after the first one.
+			out := instrumentOne(t, sampleFile, lf)
+			converted := instrumentOne(t, sampleFile, crlf)
+
+			if bytes.Count(converted, []byte("\r\n")) != bytes.Count(converted, []byte("\n")) {
+				t.Errorf("the instrumented file lost a carriage return: not every line break is a CRLF\n%q", converted)
+			}
+			if want := toCRLF(out); !bytes.Equal(converted, want) {
+				t.Errorf("instrumenting the CRLF file gave something other than the CRLF form of the "+
+					"instrumented LF file\n--- got ---\n%q\n--- want ---\n%q", converted, want)
+			}
+		})
+	}
+}
+
+// instrumentOne instruments one file on its own and returns the bytes written.
+func instrumentOne(t *testing.T, name string, source []byte) []byte {
+	t.Helper()
+	root := t.TempDir()
+	testkit.WriteFile(t, filepath.Join(root, name), source)
+	instrumentSnapshot(t, root, catalogOf(t, candidatesIn(t, source)))
+	return testkit.ReadFile(t, filepath.Join(root, name))
+}
+
 // TestInstrumentLeavesUncatalogedFilesAlone proves the instrumenter edits
 // where the catalogue points and nowhere else. A file full of comparisons that
 // no mutant names must come back byte-identical, down to its line endings.
