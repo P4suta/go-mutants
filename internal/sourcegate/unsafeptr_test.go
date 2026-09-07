@@ -198,12 +198,45 @@ func Set(fn uintptr, info *[16]byte) {
 }
 `
 
+	// The pointer parked in a variable first, so the argument of the uintptr
+	// conversion is an identifier rather than a call: the same hazard, one
+	// statement apart.
+	const storedPointer = `package storedpointer
+
+import "unsafe"
+
+func Set(fn uintptr, info *[16]byte) {
+	p := unsafe.Pointer(info)
+	wrapper(fn, uintptr(p))
+}
+
+func wrapper(fn, addr uintptr) { _, _ = fn, addr }
+`
+	// Both halves through defined types whose underlying types are the
+	// dangerous pair. The names are somebody's own; the types are not.
+	const definedTypes = `package definedtypes
+
+import "unsafe"
+
+type address uintptr
+
+type raw unsafe.Pointer
+
+func Set(fn uintptr, info *[16]byte) {
+	wrapper(fn, address(raw(unsafe.Pointer(info))))
+}
+
+func wrapper(fn uintptr, addr address) { _, _ = fn, addr }
+`
+
 	m := testkit.NewModule(t).Module("fixture.example/ptr")
 	m.Source("aliasedunsafe/a.go", aliasedUnsafe)
 	m.Source("shadowedsyscall/s.go", shadowedSyscall)
 	m.Source("aliasedsyscall/a.go", aliasedSyscall)
 	m.Source("plainlyunsafe/p.go", plainlyUnsafe)
 	m.Source("plainlysafe/p_test.go", plainlySafeTest)
+	m.Source("storedpointer/s.go", storedPointer)
+	m.Source("definedtypes/d.go", definedTypes)
 
 	// The fixtures name syscall.SyscallN, which exists on Windows and nowhere
 	// else, so the module is type-checked for Windows whatever the host is —
@@ -215,13 +248,16 @@ func Set(fn uintptr, info *[16]byte) {
 	// wrong by however tall that header is today.
 	want := []string{
 		fmt.Sprintf("aliasedunsafe/a.go:%d", lineOf(testkit.SPDXHeader+aliasedUnsafe, "wrapper(fn,")),
+		fmt.Sprintf("definedtypes/d.go:%d", lineOf(testkit.SPDXHeader+definedTypes, "wrapper(fn,")),
 		fmt.Sprintf("plainlyunsafe/p.go:%d", lineOf(testkit.SPDXHeader+plainlyUnsafe, "func Set(")),
 		fmt.Sprintf("shadowedsyscall/s.go:%d", lineOf(testkit.SPDXHeader+shadowedSyscall, "syscall.SyscallN(fn,")),
+		fmt.Sprintf("storedpointer/s.go:%d", lineOf(testkit.SPDXHeader+storedPointer, "wrapper(fn,")),
 	}
 	if !slices.Equal(got, want) {
-		t.Errorf("the gate reported\n\t%v\nwant\n\t%v\nthe aliased `unsafe` import and the shadowed "+
-			"`syscall` local are offenders a name match would miss, and the aliased real `syscall` "+
-			"import is one it would invent", got, want)
+		t.Errorf("the gate reported\n\t%v\nwant\n\t%v\nthe aliased `unsafe` import, the shadowed "+
+			"`syscall` local, a pointer parked in a variable and a pair of defined types are offenders "+
+			"a syntactic match would miss, and the aliased real `syscall` import is one it would invent",
+			got, want)
 	}
 }
 
@@ -359,28 +395,33 @@ func unguardedInFile(info *types.Info, file *ast.File) []*ast.CallExpr {
 	return unguarded
 }
 
-// isPointerToUintptr reports whether call converts an unsafe.Pointer to a
-// uintptr.
+// isPointerToUintptr reports whether call converts a value whose underlying
+// type is unsafe.Pointer to a type whose underlying type is uintptr.
 //
-// Both halves are asked of the type checker rather than of the text. `u.Pointer`
-// under an import alias is the same type as `unsafe.Pointer` and has to be
-// reported; a method named Pointer on somebody's own type is not a conversion
-// at all and must not be.
+// Both halves are asked of the type checker rather than of the text, and of
+// the *underlying* types rather than the spelled ones. `u.Pointer` under an
+// import alias is the same type as `unsafe.Pointer`; a pointer parked in a
+// variable one statement earlier is still an unsafe.Pointer when it reaches
+// the conversion; `type address uintptr` is still a uintptr as far as a stack
+// copy is concerned. All of those have to be reported. A method named Pointer
+// on somebody's own type is not a conversion at all and must not be.
 func isPointerToUintptr(info *types.Info, call *ast.CallExpr) bool {
 	if !isConversionTo(info, call, types.Typ[types.Uintptr]) {
 		return false
 	}
-	inner, ok := call.Args[0].(*ast.CallExpr)
-	return ok && isConversionTo(info, inner, types.Typ[types.UnsafePointer])
+	tv, ok := info.Types[call.Args[0]]
+	return ok && tv.IsValue() && tv.Type != nil &&
+		types.Identical(tv.Type.Underlying(), types.Typ[types.UnsafePointer])
 }
 
-// isConversionTo reports whether call converts its one argument to want.
+// isConversionTo reports whether call converts its one argument to a type
+// whose underlying type is want.
 func isConversionTo(info *types.Info, call *ast.CallExpr, want types.Type) bool {
 	if len(call.Args) != 1 {
 		return false
 	}
 	tv, ok := info.Types[call.Fun]
-	return ok && tv.IsType() && types.Identical(tv.Type, want)
+	return ok && tv.IsType() && tv.Type != nil && types.Identical(tv.Type.Underlying(), want)
 }
 
 // isSafeCallee reports whether call goes to one of [safeCallees].
