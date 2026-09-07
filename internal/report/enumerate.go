@@ -188,7 +188,7 @@ func (h History) List() (Listing, error) {
 	listing := Listing{Root: root, Workspaces: []StoredWorkspace{}, Skipped: []Skipped{}}
 
 	base := filepath.Join(root, WorkspacesDirName)
-	entries, err := os.ReadDir(base)
+	entries, err := readDir(base)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return listing, nil
@@ -423,6 +423,16 @@ func NewestFirst(x, y StoredRun) int {
 	return strings.Compare(x.Path, y.Path)
 }
 
+// readDir is [os.ReadDir], as a variable for the reason [tempFile]'s two
+// creations are: the walks below have to handle a directory that cannot be
+// listed at all and a file that goes away between the listing and the stat —
+// another process's `report clean`, somebody's cache cleaner — and neither can
+// be staged from a test against a real directory. `os.ReadDir` on a file is an
+// error on Unix and an empty listing on Windows, so even the first of the two
+// has no portable spelling. Nothing but a test ever assigns to it. See
+// internal/report's storefailure_test.go.
+var readDir = os.ReadDir
+
 // A storedFile is one candidate document and its size.
 type storedFile struct {
 	path string
@@ -436,7 +446,7 @@ type storedFile struct {
 // `.json` files are returned, so that a temporary file from an interrupted
 // write is neither listed as a run nor deleted as one.
 func storedFiles(dir string) ([]storedFile, error) {
-	entries, err := os.ReadDir(dir)
+	entries, err := readDir(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, nil

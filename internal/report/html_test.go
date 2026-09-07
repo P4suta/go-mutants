@@ -361,3 +361,55 @@ func jsonEqual(x, y any) bool {
 	right, errRight := json.Marshal(y)
 	return errLeft == nil && errRight == nil && string(left) == string(right)
 }
+
+// TestHTMLRendersADocumentLargerThanTheViewer is about the one line of
+// arithmetic in [report.RenderHTML] that is not a string.
+//
+// The builder is pre-sized from the two things it is about to hold, and
+// strings.Builder.Grow panics on a negative number rather than ignoring it — so
+// a hint written with the wrong sign is a crash rather than a slow render, and
+// it is a crash that only happens once the report outgrows the quarter of a
+// megabyte of vendored JavaScript beside it. That is an ordinary size for a
+// real repository's `mutation.json` and an extraordinary one for a fixture,
+// which is why nothing else here would ever reach it.
+func TestHTMLRendersADocumentLargerThanTheViewer(t *testing.T) {
+	t.Parallel()
+
+	// One file whose source is comfortably longer than the bundle. It is a real
+	// projection rather than a slab of bytes, so what is rendered is a document
+	// the format accepts.
+	projection := &report.Projection{
+		SchemaVersion: "2",
+		Thresholds:    report.ProjectionThresholds{High: 80, Low: 60},
+		Files: map[string]*report.ProjectionFile{
+			"internal/large/large.go": {
+				Language: report.ProjectionLanguage,
+				Source:   strings.Repeat("// a line of a very long file\n", len(vendorassets.Bundle())/30+1),
+				Mutants:  []report.ProjectionMutant{},
+			},
+		},
+	}
+	document, err := projection.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if len(document) <= len(vendorassets.Bundle()) {
+		t.Fatalf("the fixture document is %d bytes and the viewer is %d: the case this test is for needs the document to be the larger",
+			len(document), len(vendorassets.Bundle()))
+	}
+	if err = report.ValidateProjection(document); err != nil {
+		t.Fatalf("the fixture document does not validate: %v", err)
+	}
+
+	page, err := report.RenderHTML(document)
+	if err != nil {
+		t.Fatalf("RenderHTML: %v", err)
+	}
+	if want := len(document) + len(vendorassets.Bundle()); len(page) < want {
+		t.Errorf("the page is %d bytes and holds a %d-byte document and a %d-byte viewer",
+			len(page), len(document), len(vendorassets.Bundle()))
+	}
+	if !strings.Contains(string(page), string(report.EscapeScriptData(document))) {
+		t.Error("the page does not hold the document it was rendered from")
+	}
+}

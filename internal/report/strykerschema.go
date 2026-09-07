@@ -51,6 +51,17 @@ var (
 	strykerSchemaErr  error
 )
 
+// strykerSchemaSource is where the bytes to compile come from.
+//
+// It is a variable for the reason [verifyViewer] is one, and nothing but a test
+// ever assigns to it: the refusal below has to be proved to be a refusal. A
+// vendored schema that does not compile is a broken build rather than a bad
+// document, and "gave up and wrote the document unchecked" is indistinguishable
+// from "aborted" until somebody tries it — which is the one outcome the house
+// rule at the top of this file forbids. See internal/report's
+// projection_test.go.
+var strykerSchemaSource = stryker.Schema
+
 // ValidateProjection reports whether doc satisfies the vendored
 // mutation-testing-report schema.
 //
@@ -94,7 +105,7 @@ func compiledStrykerSchema() (*jsonschema.Schema, error) {
 		// silently change what "definitions" and "additionalProperties" mean
 		// in somebody else's document. A vendored schema is honoured as
 		// written or it is not vendored at all.
-		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(stryker.Schema()))
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(strykerSchemaSource()))
 		if err != nil {
 			strykerSchemaErr = unusableStrykerSchema("is not JSON", err)
 			return

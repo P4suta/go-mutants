@@ -182,3 +182,58 @@ func TestUTF16PositionOnALongFile(t *testing.T) {
 		}
 	}
 }
+
+// TestUTF16OffsetAtClampsALineTheFileDoesNotHave is the other half of the
+// clamping rule, and it is about a crash rather than a coordinate.
+//
+// A rejected mutant carries the (line, column) discovery printed, and the file
+// it points into can have been edited or truncated since. The index is a slice
+// of line starts, so a line number one past the end is an index one past the
+// end — and the whole reason this is clamped rather than refused is that a
+// panic here would lose a run's results at the very last step, to produce a
+// coordinate that is merely imprecise.
+func TestUTF16OffsetAtClampsALineTheFileDoesNotHave(t *testing.T) {
+	t.Parallel()
+
+	src := []byte("package p\nvar x = 1\n")
+	// Three line starts: 0, 10, 20. The last line is the empty one after the
+	// final newline, so every line past the third clamps onto its start.
+	lastLineStart := len(src)
+	for _, line := range []int{3, 4, 99, 1 << 20} {
+		if got := report.UTF16OffsetAt(src, line, 1); got != lastLineStart {
+			t.Errorf("UTF16OffsetAt(line %d) = %d, want %d — the last line's start", line, got, lastLineStart)
+		}
+	}
+	// And the mirror image, which is what a zero or negative line number is.
+	for _, line := range []int{0, -1, -1 << 20} {
+		if got := report.UTF16OffsetAt(src, line, 1); got != 0 {
+			t.Errorf("UTF16OffsetAt(line %d) = %d, want 0 — the first line's start", line, got)
+		}
+	}
+	// A column past the end of the file clamps onto the end of it.
+	if got := report.UTF16OffsetAt(src, 1, 1<<20); got != len(src) {
+		t.Errorf("UTF16OffsetAt(column past the end) = %d, want %d", got, len(src))
+	}
+}
+
+// TestUTF16CountsTheLastBasicMultilingualPlaneRune pins the boundary the
+// surrogate rule turns on.
+//
+// U+FFFF is the highest rune that is one UTF-16 code unit, and U+10000 is the
+// lowest that is two. A rule written with the comparison one off would place
+// every mutant after a U+FFFF one column too far right — and U+FFFF is not a
+// character anybody types, which is exactly why nothing else would catch it.
+func TestUTF16CountsTheLastBasicMultilingualPlaneRune(t *testing.T) {
+	t.Parallel()
+
+	for s, want := range map[string]int{
+		"\uFFFE":     1,
+		"\uFFFF":     1,
+		"\U00010000": 2,
+		"\U0001F389": 2,
+	} {
+		if got := report.UTF16Units(s); got != want {
+			t.Errorf("UTF16Units(%+q) = %d, want %d", s, got, want)
+		}
+	}
+}

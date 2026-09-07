@@ -465,18 +465,18 @@ jobs:
   # 1m48s -- larger and faster than before the bound, because the two that
   # allocate no longer wait out two timeouts each.
   #
-  # The scope is now 1402 mutants, and the tenth package moved the cold figure
-  # by more than its share: on one shared machine the nine-package scope ran
-  # cold in 2m05s and the ten-package scope in 3m45s. That is the paragraph
-  # above being true again, with the cause named exactly. Cold, the first of the
-  # three baseline runs is the one doing the compiling, and the per-mutant
-  # timeout is max(10s, slowest baseline x 5) -- so a tenth package took that
-  # run from 4.0s to 5.5s and the timeout from 20.1s to 27.7s, which the three
-  # mutants that never return each pay twice. What to watch as the scope grows
-  # is still how many mutants hang, and now also how slow the baseline's first
-  # run is, because that is what sets what each hang costs. Twenty-five minutes
-  # has room for many more of both, and the memory bound is what keeps a runner
-  # from being the thing that runs out first.
+  # The scope is now 2497 mutants: internal/report joined, which is nearly as
+  # many again, and it brought a fourth mutant that never returns. Warm on a
+  # quiet machine that scope is 6m13s-6m30s; cold on this runner it is about
+  # 4m45s, with the timeout at its 10s floor. It was 9m31s cold on a shared
+  # machine before the engine sized the timeout on the runs after the first,
+  # and more than half of that was those four mutants waiting out, twice each,
+  # a timeout sized on the compiling first baseline run (38.7s where the runs
+  # after it asked for 10s). Twenty-five minutes has room for the measured cold
+  # run five times over; what to watch as the scope grows is how many mutants
+  # hang and how loud the runner is, since both move the derived timeout. The
+  # memory bound is what keeps a runner from being the thing that runs out
+  # first.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25
