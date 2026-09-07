@@ -413,6 +413,16 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # measurement of, including the run it is paired with, the derived memory bound
 # that made this scope faster than the smaller one before it, and why the cold
 # figure moved further than the catalogue did.
+# The budget this job is sized against: 2391 mutants at 100.00%. The wall clock
+# for that scope is owed a clean measurement and this comment says so rather
+# than quoting one: the two runs that established the tally took 8m40s and
+# 11m53s at --jobs 4 against a warm test-owned build cache, on a machine that
+# spent both of them compiling another project at a load average between 20 and
+# 65 on eight cores. Cold is what CI measures, because the dogfood job points
+# GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never
+# restores it, and no cold run of this scope has been taken at all yet.
+# .go-mutants.toml records all of that under [policy], next to the scope it is
+# a measurement of.
 #
 # What the gate cost before is history, and every figure is labelled with the
 # scope that produced it, because a duration without its scope reads as a
@@ -452,9 +462,22 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 #                                        1m07-1m33s: the 52-58s is a different
 #                                        machine, and only the pair is a
 #                                        comparison.
+#  10 packages, 2391          8m40s+  internal/report joined: what a run
+#                                        writes down, and the first package in
+#                                        the scope that writes files. Nearly
+#                                        twice the catalogue, and a fourth
+#                                        mutant that never returns. The figure
+#                                        is the only one there is and is not a
+#                                        budget: the machine that produced it
+#                                        was at a load average of 20 to 65 on
+#                                        eight cores throughout, so it is an
+#                                        upper bound wearing a measurement's
+#                                        clothes.
 #
-# Every row is a warm cache. The middle two were measured back to back on one
-# idle machine; the fifth was measured on the same machine with other work on
+# Every row is a warm cache. The last is the exception in a second way: every
+# other row was measured against a machine doing nothing else, which is what
+# makes them comparable with each other and not with it. The middle two were
+# measured back to back on one idle machine; the fifth was measured on the same machine with other work on
 # it, which is why it is a range and why it is not three times the row above it
 # in any strict sense; the sixth and seventh were measured on a different
 # machine, which also reran the fifth and got 24-28s; and the eighth was

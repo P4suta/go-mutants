@@ -14,6 +14,130 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The dogfood gate covers what a run writes down.** This repository's own
+  `.go-mutants.toml` now includes `internal/report/*.go`, so the gate is ten
+  whole packages rather than nine, and the tenth is the RunReport v1 document
+  every other output is derived from: the builder that assembles it and refuses
+  every way it could contradict itself, the history store under the operating
+  system's cache directory, the projection into the published
+  mutation-testing-report format, the self-contained HTML page rendered from it,
+  and the `report merge` that puts a split run back together. 2391 mutants —
+  1095 in `internal/report`, 461 in `internal/config`, 450 in
+  `internal/mutation`, 146 in `internal/coverage`, 89 in `internal/schemas`, 68
+  in `internal/glob`, 48 in `internal/interval`, 16 in
+  `internal/operatorselect`, 11 in `internal/drift`, 7 in `internal/testflag` —
+  2327 detected, 64 declared, **100.00%**, on every run.
+  The package arrived the only way this list is allowed to grow: the first
+  measurement over `internal/report` reported 321 unexpected survivors, 150 of
+  them mutants no binary reached at all. Two hundred and eighty-seven are now
+  dead, killed by eighty-eight named tests in six new files and by two existing
+  suites given the assertions they were missing. Nothing was excluded and no
+  budget was cut.
+
+  It is the largest package in the scope by a long way — nearly as large as the
+  other nine together — and it is the first one that is not pure. The nine
+  before it take values and return answers; this one writes files, two into the
+  user's own tree and a history into a directory it shares with every other
+  program on the machine. That is the whole difficulty, and it is why this
+  widening is two answers rather than one.
+
+  The first answer is the theme `internal/config` found, seven times larger:
+  **the sentence a user reads was never asserted.** Forty-seven of the survivors
+  were `return-empty-string`, and every one of them is a message somebody acts
+  on. `report merge` could name the shard whose clock it could not read as
+  "run " and nothing else, count the missing shards as "0th", say "1 of the 2
+  shards are missing", and locate a schema violation "at " with no pointer after
+  it. `Build` could refuse a mutant by a name it printed as the empty string,
+  offer "expected one of" followed by nothing, and count "1 executions". Every
+  enumerated value in the document — status, selection mode, coverage mode,
+  cache mode, outcome, expectation state, stage result — could render as `""`
+  from its own `String`, because the golden documents pin what the *encoder*
+  writes and never what the method returns. The projection could tell a reader
+  that a mutant was `Ignored` and say nothing at all about which of the three
+  quite different reasons applied.
+
+  The second answer is the one that had no precedent here, and it is why the
+  package took the longest: **the error paths are the filesystem's.** A hundred
+  and fifty-one survivors were untaken error branches — `nil-error-branch`,
+  `return-nil`, `return-err-to-nil` — and every write in this package is a
+  temporary file, a flush, a rename and a rollback whose messages are written
+  for somebody whose disk has just filled up. Most of those are now staged for
+  real, because a real `ENOTDIR` is worth more than an injected one: a directory
+  where a file has to go, a path under a file that is not a directory, a
+  symbolic link to itself, a `runs/` that cannot be listed, a store named by a
+  relative path so that `filepath.Rel` refuses to compare the two, and a
+  directory that refuses new names — that last one behind a probe that skips
+  where a platform or a user is not stopped by it, rather than naming Windows or
+  asking `os.Getuid`.
+
+  Three failures are left that no filesystem will produce on demand — a write, a
+  flush and a close that fail on a file the operating system has just created —
+  and the source grew seams for them rather than leaving them undeclared:
+  `createTemp` and `openMarker` in `history.go` behind a four-method `tempFile`
+  interface, `readDir` in `enumerate.go`, and `strykerSchemaSource` in
+  `strykerschema.go`. They are the same kind of seam as `verifyViewer`, which
+  has been in this package since the HTML report was written and carries the
+  same argument: a gate has to be proved to be a gate, and "reported the failure
+  with the file's name in it" and "wrote half a report and said nothing" are
+  indistinguishable from outside until somebody stages one. Each is a package
+  variable nothing but a test assigns to, and each says beside its declaration
+  what it is for. `GOM5204` — the vendored schema that does not compile — now
+  has its first test, and so does the fallback claim that creates the ownership
+  marker in place on a filesystem that will not hard-link.
+
+  What that bought, beyond the score: the run history store now has a test for
+  every refusal it can make, `report merge` for every sentence, and both walks
+  over the cache directory for the race they exist to tolerate — a file that
+  goes away between the listing and the stat, which must be a row that is not
+  there rather than a listing that failed. No behaviour changed to make a test
+  pass and no bug was found: the seams are the whole of what this package's
+  source grew, plus one rewrite of `file.WriteString(content)` as
+  `file.Write([]byte(content))` so that the marker's create and the report's
+  share one interface.
+
+  Thirty-four survivors are declared, and the group is the largest in the ledger
+  because the package is. They are in five kinds and the file argues each one:
+  an expression the rewrite leaves computing the same answer (a capacity hint, a
+  clamp that assigns what is already there, a comparison at a boundary where
+  both spellings agree, a constant that is its own type's zero); an error the
+  caller has already ruled out (an outcome outside the six is refused on the way
+  in, so nothing downstream of that refusal can meet one); a value `encoding/json`
+  has no way to refuse (a `Projection` is strings, ints and a map of them — the
+  run report is *not* in this group, because `score_percent` is a `*float64` and
+  a NaN is a document the encoder does refuse, which is how `Marshal`'s failure
+  is tested); the vendored schema's registration, which `jsonschema/v6` defers
+  entirely to `Compile`; and the path resolution the store's containment check
+  is built on, which is only ever asked about a root and a directory the
+  operating system has just resolved.
+
+  `policy.minimum_score` moved, for the first time since it went to 99, and the
+  arithmetic is why rather than the conclusion. One percent of 2327 scored
+  mutants is twenty-three survivors of slack — more than the twenty-one that was
+  judged too much at 544 and moved this number from 96, and the rule that kept it
+  at 99 through five widenings is the rule that moves it now. It goes to **99.5**,
+  which buys eleven survivors where 99 bought twelve before this widening: the
+  floor is a fixed number of survivors rather than a fixed percentage of a
+  growing catalogue. A fraction is new here and is the only spelling available,
+  because the next integer up is 100, which is `--strict` under another name —
+  and this floor is deliberately the looser of the two gates, the backstop for a
+  run that did not ask to be gated. `--strict` still fails the job on the first
+  unexpected survivor and is what actually keeps CI honest.
+
+  One thing is deliberately not in this entry: a wall clock. The two runs that
+  established the tally above took 8m40s and 11m53s at `--jobs 4` against a warm
+  build cache, and both were measured on a machine that spent the whole of them
+  compiling another project at a load average between 20 and 65 on eight cores —
+  so they are an upper bound rather than a budget, and `.go-mutants.toml`,
+  `mise.toml` and `docs/development.md` all say so where the previous scopes'
+  figures are recorded. The second run also reported 23 `inconclusive` mutants,
+  every one of them a mutant the first run killed in under a second: the
+  per-mutant timeout is `max(10s, slowest baseline × 5)`, which is the
+  ten-second floor here, and `internal/report`'s suite is about half a second
+  where the nine-package command was a fifth of that — twenty times the timeout
+  rather than eighty. Twenty is ample on a machine doing one thing. Whether this
+  scope wants an explicit `test.timeout` is a decision the clean measurement
+  should inform, and writing a number into that file to paper over a loaded
+  machine is the thing it exists not to do.
 - **The dogfood gate covers the toolchain wrapper.** This repository's own
   `.go-mutants.toml` now includes `internal/gocmd/*.go`, so the gate is ten
   whole packages rather than nine, and the tenth is the one every other phase

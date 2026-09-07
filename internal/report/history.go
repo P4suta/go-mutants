@@ -65,6 +65,34 @@ const (
 	tempPattern = "go-mutants-report-*.tmp"
 )
 
+// A tempFile is the part of an [os.File] the two file creations below use.
+//
+// It is an interface, and [createTemp] and [openMarker] are variables, for
+// exactly the reason [verifyViewer] is one: the failures underneath them have
+// to be proved to be reported. Every message in this file about a write, a
+// flush or a close is written for somebody whose disk has just filled up, and a
+// test cannot fill a disk — so "returned the failure, with the file's name in
+// it" and "wrote half a report and said nothing" are indistinguishable from
+// outside until one can be staged. The production path is [os.CreateTemp] and
+// an exclusive [os.OpenFile], and nothing but a test ever assigns to either
+// variable. See internal/report's storefailure_test.go.
+type tempFile interface {
+	Name() string
+	Write(p []byte) (int, error)
+	Sync() error
+	Close() error
+}
+
+var (
+	// createTemp is [os.CreateTemp]. See [tempFile].
+	createTemp = func(dir, pattern string) (tempFile, error) { return os.CreateTemp(dir, pattern) }
+	// openMarker is the exclusive create [createMarkerInPlace] performs. See
+	// [tempFile].
+	openMarker = func(path string) (tempFile, error) {
+		return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
+)
+
 // renameDelays are the waits between attempts at moving a temporary file into
 // place. Windows refuses a rename onto a file another process still has open —
 // a report someone is reading in an editor, an antivirus scanner that has not
@@ -423,7 +451,7 @@ func createMarker(path, content string) error {
 // with nothing in it, which would refuse the directory to every later run, so
 // the name is removed again when the contents never arrived.
 func createMarkerInPlace(path, content string) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := openMarker(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return errMarkerExists
@@ -434,7 +462,7 @@ func createMarkerInPlace(path, content string) error {
 			Err:     err,
 		}
 	}
-	if _, err = file.WriteString(content); err == nil {
+	if _, err = file.Write([]byte(content)); err == nil {
 		err = file.Sync()
 	}
 	if closeErr := file.Close(); err == nil {
@@ -503,7 +531,7 @@ func writeAtomic(path string, data []byte) error {
 // afterwards, and a crash just after that operation must not leave a correctly
 // named file full of nothing.
 func writeTemp(dir, what string, data []byte) (string, error) {
-	temp, err := os.CreateTemp(dir, tempPattern)
+	temp, err := createTemp(dir, tempPattern)
 	if err != nil {
 		return "", &Error{
 			Code:    CodeHistoryWrite,

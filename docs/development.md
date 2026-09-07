@@ -368,6 +368,11 @@ minutes at `--jobs 4` against a warm build cache, and three to four against a
 cold one — of which about a minute is three mutants that never return, waiting
 out a per-mutant timeout that is itself derived from the baseline and so moves
 with the machine.
+`.go-mutants.toml` records what `mise run dogfood` has been measured at, which
+for the current ten-package scope is two runs on a machine that was busy —
+8m40s and 11m53s at `--jobs 4` against a warm build cache — and a clean
+measurement it is still owed; the nine-package scope before it was 52–58 seconds
+warm and 1m48s cold on a quiet one.
 Anything far from those shapes is worth a `mise run test-cost` before it is
 worth a workaround.
 
@@ -1206,6 +1211,7 @@ the settings they justify. It covers ten whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
+| `internal/report` | 1095 | what a run writes down — the RunReport v1 document, the history store, the projection into the published format, the self-contained page, and the merge that puts a split run back together |
 | `internal/config` | 461 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
 | `internal/mutation` | 450 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
 | `internal/coverage` | 146 | the profile reader, and the mapping that decides which suites a mutant is measured against |
@@ -1268,6 +1274,74 @@ that deadline, and the mutant now comes back with a parse error and dies in
 about three seconds. Before widening a scope, look at what its slowest mutants
 are actually waiting for: sometimes it is the code, and sometimes it is a
 constant in a test.
+`internal/report` is the one that does not, and it is the largest. It writes
+files: two artefacts into the user's own tree and a run history into a directory
+it shares with every other program on the machine. So a survivor there can be a
+failure the operating system will not produce on demand rather than a value
+nobody asserted, and widening to it needed both halves of an answer to that. The
+failures the operating system *will* produce are staged for real — a directory
+where a file has to go, a path under a file that is not a directory, a symbolic
+link to itself, a store named by a relative path, a directory that refuses
+writes — and three that it will not, a write, a flush and a close that fail on a
+file it has just created, go through package-level seams named for them:
+`createTemp` and `openMarker` in `history.go`, `readDir` in `enumerate.go`, and
+`strykerSchemaSource` in `strykerschema.go`. They are the same kind of seam as
+`verifyViewer`, which has been there since the HTML report was written, and each
+carries the reason it exists where it is declared. They also buy the one thing a
+real failure cannot: a moment. The artefacts are published one file at a time
+and put back one file at a time, and the ownership claim reads a marker before
+it creates one — so "the write that puts the document back is the one that
+fails" and "a marker appeared between the read and the create" are staged by
+failing the *n*-th file creation, or by acting just before it. A test that uses
+any of this cannot be `t.Parallel`.
+
+Determinism survives that, and it is worth saying how. Every path those tests
+touch is under a `t.TempDir`; the failures are real errors from the real
+operating system, not sentinels; nothing asserts a wall clock or a directory
+iteration order; the one permission trick probes for its own enforcement and
+skips where a platform or a user is not stopped by it, rather than naming
+Windows or asking `os.Getuid`; and the tests that create symbolic links skip
+where a platform refuses to create one.
+
+The numbers the gate is sized against: 2391 mutants catalogued, 2327 detected —
+2323 killed and four caught by the per-mutant timeout — sixty-four declared
+expectations, **a score of 100.00%**, at `--jobs 4` against a warm test-owned
+build cache. `policy.minimum_score = 99.5` is compared on every run, `--strict`
+or not, and at this size it does not fail until the twelfth unexpected survivor
+— so `--strict` is the thing that actually fails this job, on the first.
+
+**The wall clock for this scope is owed a measurement, and this says so rather
+than quoting one.** The two runs that established the tally above took 8m40s and
+11m53s, and both were measured on a machine that spent the whole of them
+compiling somebody else's project: a load average between 20 and 65 on eight
+cores, against the four workers this gate asks for. The nine-package scope's
+52–58 seconds was measured on a quiet machine, and the two are not comparable —
+which is this file's own rule, that only the ratios travel and that a range means
+something only while it describes one machine doing one thing. What did travel
+is the tally: 2391 / 2323 / 4 / 64 on both.
+
+The second of those two runs also reported 23 `inconclusive` mutants, and that
+is worth knowing rather than smoothing over. An inconclusive result is a mutant
+that timed out once and did not time out again on the retry, and every one of
+them was a mutant the first run killed in under a second. The per-mutant timeout
+is `max(10s, slowest baseline × 5)`, which resolves to the 10-second floor here,
+and `internal/report`'s suite is the reason the floor is now closer than it was:
+about half a second where the nine-package command was a fifth of that, so a
+mutant of it has about twenty times the timeout rather than eighty. Twenty is
+ample on a machine doing one thing and is not ample on one doing twelve. The
+clean measurement, and a decision about whether this scope wants an explicit
+`test.timeout`, are both still to make.
+
+Six of those mutants never return, and they are worth knowing about because
+they, rather than the catalogue, are much of what sets this gate's wall clock.
+**Four spin**: `negate-loop-condition` on `internal/coverage/textfmt.go`'s `for
+scanner.Scan()`, the same operator on either loop of `internal/config`'s
+position walk, and the same operator again on the loop in
+`internal/report/html.go` that neutralises a double hyphen inside the HTML
+report's attribution comment, which never stops replacing what it has just
+written. A spinning mutant holds nothing, so only the clock can catch it, and a
+timeout is measured a second time before it is believed — two ten-second waits
+each, eighty seconds of worker time.
 
 **Two allocate**, and they are the reason a mutant is now bounded in memory as
 well as in time. `internal/config`'s `lineStarts`, with `i < 0` negated or its
@@ -1301,6 +1375,19 @@ carries `memory_exceeded` and `peak_memory_bytes` on the mutant and on each
 execution.
 
 With that in place the whole summary is stable: the same 1402 / 1368 / 3 / 31 on
+memory: baseline peak 158.1 MiB, bound 1.0 GiB (derived)
+```
+
+158.1 MiB × 4 is 632 MiB, so the 1 GiB floor still applies and the bound is
+about six times what the unmutated suite needs — far enough above anything
+legitimate that it catches runaways rather than honest tests. The peak moved
+with the tenth package, whose suite writes and reads whole documents; the bound
+did not, because the floor was always the larger of the two. `-v` also names
+the bound on each mutant it stops (`killed by … (memory: 1.1 GiB > 1.0 GiB
+bound)`), and the JSON report carries `memory_exceeded` and `peak_memory_bytes`
+on the mutant and on each execution.
+
+With that in place the whole summary is stable: the same 2391 / 2323 / 4 / 64 on
 every run, killed-versus-timed-out included. It was not before, and a widening
 that makes a gate's own tally a coin flip is a widening that is not finished.
 
@@ -1325,9 +1412,13 @@ is a widening; both are a smaller gate with a larger number on it.
 suites grew the tests that kill what the whole-package scope found.
 
 A `[[mutation.expect]]` row is for a survivor no honest test can reach — an
-equivalent mutant, where the rewritten program computes the same thing — and it
-carries a `reason` that argues the equivalence. A row whose reason is "no test
-covers this" is a missing test.
+equivalent mutant, where the rewritten program computes the same thing, or an
+unreachable one, where an earlier refusal means the branch has no input that
+gets to it — and it carries a `reason` that argues which. A row whose reason is
+"no test covers this" is a missing test, and so is one whose reason is "the
+operating system will not fail on demand": that is what a seam is for, and
+`internal/report` has four of them with the argument written where each is
+declared.
 
 The floor is re-checked with the scope, and it has to be: a percentage buys a
 different number of survivors at every size, so leaving `minimum_score` alone
@@ -1339,3 +1430,13 @@ widenings since, because one percent of 549, 583, 809, 1266 and 1371 is five,
 five, eight, twelve and thirteen — the largest of those, and still short of the
 twenty-one that moved it last time. Do the arithmetic, write the answer next to
 the number, and only then decide whether it moves.
+It went 96 → 99 when the catalogue went from 120 scored mutants to 544, where
+the old number would have bought twenty-one survivors of slack instead of four;
+it then stayed at 99 through five widenings, because one percent of 549, 583,
+809 and 1266 is five, five, eight and twelve — always short of the twenty-one
+that moved it the time before. One percent of 2327 is twenty-three, which is not
+short of it, so with the tenth package the same rule moved the number again, to
+99.5: eleven survivors of slack where 99 bought twelve before the widening. The
+floor is a fixed number of survivors rather than a fixed percentage of a growing
+catalogue. Do the arithmetic, write the answer next to the number, and only then
+decide whether it moves.

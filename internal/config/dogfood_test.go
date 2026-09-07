@@ -238,6 +238,226 @@ var repositoryExpectations = []Expectation{
 			"errors.As above always matches and this forwarding return is " +
 			"reached only by an error kind parseVersion does not produce.",
 	},
+	// internal/report's thirty-four, in the file's five groups: an expression
+	// the rewrite leaves computing the same answer, an error the caller has
+	// already ruled out, a value encoding/json cannot refuse, the vendored
+	// schema's registration and its diagnostic's fallback, and the path
+	// resolution the store's containment check is built on. The arguments are
+	// in .go-mutants.toml beside them.
+	{
+		ID: "b961736e4139ecbe97e50f2ded94f653b8e1fe72b7f624db5a725bcf733d540e",
+		Reason: "Equivalent: strings.Builder.Grow is a capacity hint and the " +
+			"page is the same bytes for every non-negative size, and the " +
+			"vendored viewer is 232 KiB, so len(bundle) + len(document) - " +
+			"4096 is positive for any document at all.",
+	},
+	{
+		ID: "d11cd96e2e32d017b3cae4e67860e6f8493cfe9673f273569093438fbaa96af3",
+		Reason: "Equivalent: the second argument of make is a capacity hint, " +
+			"the runtime clamps a negative one to zero, and a map holds the " +
+			"same entries whatever it was sized for.",
+	},
+	{
+		ID: "dbcc1509c1b52aaa5dd0fc0fd510fe8cc8bc0da6a4622f9f834a04724e53d8df",
+		Reason: "Equivalent: OutcomeNotRun is the zero value of " +
+			"mutation.Outcome, being first in its iota block, so `return " +
+			"mutation.OutcomeNotRun` and `return 0` are the same constant " +
+			"-- the same argument as the Disjoint and OutcomeNotRun rows " +
+			"above.",
+	},
+	{
+		ID: "8ef3d6c08a2818791871838426584c25f9fb9fba77d3a7e6b58b9741798524ce",
+		Reason: "Equivalent: the guard reports 0 for a negative duration and " +
+			"d.Milliseconds() otherwise, and a zero duration is 0 " +
+			"milliseconds through either branch, so `<` and `<=` render " +
+			"every duration the same.",
+	},
+	{
+		ID: "bc426cca8594b9fb5439cd5377f8b9493338929b92c3fa552c0502d9c345b4ea",
+		Reason: "Equivalent: `<=` and `<` disagree only for an id of exactly " +
+			"DisplayIDLength characters, where returning `id` and returning " +
+			"`id[:DisplayIDLength]` return the same string.",
+	},
+	{
+		ID: "6e8a1b109029e1c7a06bc6da1d2bf5ae4de4d519823e2e8d419dbec4b90a42f7",
+		Reason: "Equivalent: the walk keeps the lexicographically first " +
+			"instance location, and `at <= best` differs from `at < best` " +
+			"only in assigning best the value it already holds.",
+	},
+	{
+		ID: "9e6ce60f8296cab93089d0865d5fe1d022f1f91e032bb78dc54e536914bfc908",
+		Reason: "Equivalent: the guard clamps a negative offset to 0, and `<=` " +
+			"also assigns 0 to an offset that is already 0.",
+	},
+	{
+		ID: "e30afbd6a3a390a9c9795e794ca19ea1df445dd9668ae2464978dcb56157c280",
+		Reason: "Equivalent: the guard clamps an offset past the end of the " +
+			"file to the end, and `>=` also assigns len(src) to an offset " +
+			"that is already len(src).",
+	},
+	{
+		ID: "19e108a41d09d62ce7821d0580c02b5f226540c1679af432d2f7e1b3d1726050",
+		Reason: "Equivalent: sort.SearchInts is asked for the first line start " +
+			"greater than the offset, lineStarts[0] is 0, and an offset is " +
+			"never negative -- so the search never answers 0 and neither " +
+			"`<= 0` nor `< 0` is ever true.",
+	},
+	{
+		ID: "8c9d90d7b4df5f3b07adaf9331b6bebb233480743888afceaccd3e9327cfa21a",
+		Reason: "Equivalent: the guard clamps a line index below the first line " +
+			"to 0, and `<=` also assigns 0 to an index that is already 0.",
+	},
+	{
+		ID: "1449b2fcd7b848d1841d473598acb3db148bcf85d40386adffca970929cfc582",
+		Reason: "Equivalent: the guard clamps an offset past the end of the " +
+			"file to the end, and `>=` also assigns len(src) to an offset " +
+			"that is already len(src) -- the same argument as the position " +
+			"row above.",
+	},
+	{
+		ID: "472e63ef0cfbb0883b8c7ab8d1635250ea9d1ad32d70cbfb4ece7d64f4975879",
+		Reason: "Equivalent: a rejected mutant's disposition carries no " +
+			"outcome, and StateOf answers `unfulfilled` through the " +
+			"Rejected case and through the default alike, because the zero " +
+			"Outcome is not OutcomeSurvived. Nothing else reads the field.",
+	},
+	{
+		ID: "926d93171820882528895f954fa11206a0277bf20ede3b5beed639d7d333437b",
+		Reason: "Equivalent: the `existed` flag is read only by the rollback " +
+			"that puts a document back, and a caller handed this error " +
+			"returns before there is a rollback to run.",
+	},
+	{
+		ID: "e8db06e466a9891f3385d91579a4e8b3e3a0d0371fd517ac84d82c44c93edee7",
+		Reason: "Equivalent: both callers impose a total order of their own on " +
+			"what this returns -- readWorkspace sorts the runs by " +
+			"NewestFirst and the damaged rows by path, and RemoveRuns only " +
+			"counts them and their bytes -- so the order the files come " +
+			"back in is not observable.",
+	},
+	{
+		ID: "8758961d36bded228b06381610fa842e0e9c8306b124a9c1a3504201e4efe780",
+		Reason: "Unreachable: partition has already translated every result's " +
+			"outcome through OutcomeOf, which refuses anything outside the " +
+			"six, and mutation.Tally records all six -- so the count this " +
+			"forwards cannot fail.",
+	},
+	{
+		ID: "02fbcaa1f6e017947cf92e3bc2f9e0ddea475316a91db067f2c04ba999d1cb10",
+		Reason: "Unreachable: the same failure as the row above, on the line " +
+			"that would forward it.",
+	},
+	{
+		ID: "9b448714742c3a4fd12fb698f8e80db007bc47aadfb4defcbb476f5fe39cb676",
+		Reason: "Unreachable: the same argument one level in -- tallyOf reads " +
+			"the outcomes partition has already accepted, so " +
+			"mutation.TallyOf cannot refuse one.",
+	},
+	{
+		ID: "aa9612a66d1514294af35ca7f14c8b199092ed0b7254765f8f8ad36149b5bd34",
+		Reason: "Unreachable: the same failure as the row above, on the line " +
+			"that would report it.",
+	},
+	{
+		ID: "c37a80bed018a8c82423a37f2e467e8dda1099ae9643ea956a50da403e53f830",
+		Reason: "Unreachable: Outcome.Mutation answers with one of the six core " +
+			"outcomes or with an error the line above returns, and " +
+			"mutation.Tally.Record has a case for all six.",
+	},
+	{
+		ID: "97f987289f3b2266c230e8f854f70b03e98b8d3c9e626c07429b0aee2d69f47a",
+		Reason: "Unreachable: the same failure as the row above, on the line " +
+			"that would report it.",
+	},
+	{
+		ID: "35dcf30682f594959766ce6caf4678c0883ed1e18988ce39118ac6e89a7f0ca9",
+		Reason: "Unreachable: the counts disagree only when a row was not " +
+			"consumed by the catalogue walk, and a row is consumed exactly " +
+			"when its id is catalogued -- so the loop above always finds " +
+			"the row this line exists to report the absence of.",
+	},
+	{
+		ID: "7dd25029ee5d776af3373a66167256898409217c7d655bf0fbbad65a6a8aab1b",
+		Reason: "Unkillable: encoding/json fails only on a value it cannot " +
+			"represent -- a cycle, a channel or function field, a " +
+			"non-finite float -- and a Projection is strings, ints and a " +
+			"map of them, so no value of the type can make Encode fail.",
+	},
+	{
+		ID: "779e89c5aa67aa6ee881c10fc35d27ec70f693c193005ece49b215d40c95321a",
+		Reason: "Unkillable: the same failure as the row above, on the line " +
+			"that would report it.",
+	},
+	{
+		ID: "fb9d1e077634dc9befaec38521c6026643a2bb81dfb66404cbe2eb3ee232ee1e",
+		Reason: "Unkillable: the same encoding, reached through WriteArtifacts " +
+			"-- the document it publishes is the Projection the row above " +
+			"is about.",
+	},
+	{
+		ID: "4dad6256bc511e6795e5e344201ef55546b6d1bc41df6c38ff5f02ad9406c2db",
+		Reason: "Unkillable: the same failure as the row above, on the line " +
+			"that would forward it.",
+	},
+	{
+		ID: "1dedbb5f405697914b0966b973fb1f7c68b59541fea2158480b9aef3e4ddadcf",
+		Reason: "Unreachable: jsonschema/v6's AddResource stores the document " +
+			"and defers every check to Compile, so it fails only for a url " +
+			"it cannot parse or one already registered -- and this compiler " +
+			"is used once, for one constant url.",
+	},
+	{
+		ID: "588ad59e967ace2e5e9ba2e66cb2359e2cf36eaecc67065c9505397f64584739",
+		Reason: "Unreachable: pointerOf answers `the document root` for an " +
+			"empty instance location and a pointer beginning with a slash " +
+			"otherwise, so every leaf the walk reaches sets best to " +
+			"something -- and the walk always reaches at least the error it " +
+			"was given.",
+	},
+	{
+		ID: "3190c37f7f6fc15fd4d516a8beb3f098a6a4aaaff0930c9dc3026d81b859d7f8",
+		Reason: "Unkillable: filepath.Abs returns an error only when os.Getwd " +
+			"does, which needs this process's own working directory to have " +
+			"been deleted -- a state a test would be arranging for every " +
+			"other test in the same binary.",
+	},
+	{
+		ID: "ace7fb73f25d06b183db8d38fe3fdafb0cea0462c99c02b82b6ca9863d399164",
+		Reason: "Unkillable: the same failure as the row above, on the line " +
+			"that would forward it.",
+	},
+	{
+		ID: "8471bd3d5848c7aa2d0afe09b8e7ffd1621d7312c1bbe299ea97f184a0438797",
+		Reason: "Unreachable: the walk climbs to the parent only while the " +
+			"filesystem says a name is not there, and it stops at a path " +
+			"that is its own parent -- the volume root. Every path it is " +
+			"given is under a store root a file has just been read from, so " +
+			"it meets a name that resolves before it reaches one that has " +
+			"no parent.",
+	},
+	{
+		ID: "ec5aae2cd6b5938eab74dd4e90b24ceac892c9fdcf0ed2f0d17a05257ac87b8e",
+		Reason: "Unreachable: the same guard as the row above, spelled the " +
+			"other way.",
+	},
+	{
+		ID: "700cbc056f3fb82558d41158da5f717ce1041698df05826787554562ba3c2a3b",
+		Reason: "Unreachable: the branch the two rows above guard, which is the " +
+			"answer for a volume root that does not resolve.",
+	},
+	{
+		ID: "2380340d24fe192076857b8148ca285ed7c8a60f2ef97ca79ae09c272d76d540",
+		Reason: "Unreachable: filepath.EvalSymlinks walks a path from the left " +
+			"and reports the first name it cannot resolve, so a path it " +
+			"calls `not there` and a parent that fails for some other " +
+			"reason cannot both happen -- the parent shares the prefix and " +
+			"answers with the same failure.",
+	},
+	{
+		ID: "e136ee1f2165220ec767905f8c86ed8a73d44f043657f2ac293afc970793a275",
+		Reason: "Unreachable: the same failure as the row above, on the line " +
+			"that would forward it.",
+	},
 }
 
 // The example everyone reads has to be an example that works. A documented
@@ -276,6 +496,10 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 			// this test reads is inside the scope that reads it. The tenth is
 			// the toolchain wrapper, and it is the first one in this list
 			// that starts processes rather than deciding over values.
+			// had no survivor to kill, and the four after that were bought
+			// the same way the third was. The ninth is this package: the
+			// file this test reads is inside the scope that reads it. The
+			// tenth is internal/report, which is what a run writes down.
 			//
 			// The order is the file's order, and it is asserted rather than
 			// sorted for the same reason the expectation ids are: a list
@@ -291,6 +515,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/schemas/*.go",
 				"internal/config/*.go",
 				"internal/gocmd/*.go",
+				"internal/report/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -315,6 +540,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/testflag/...", "./internal/operatorselect/...", "./internal/drift/...",
 				"./internal/coverage/...", "./internal/schemas/...", "./internal/config/...",
 				"./internal/gocmd/...",
+				"./internal/report/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
@@ -333,7 +559,13 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// for why it is no longer pinned for correctness.
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		Policy:    mutation.Policy{Strict: false, MinimumScore: 99, RequireMutants: true},
+		// The floor moved with the tenth package, for the first time since it
+		// went to 99: one percent of 2327 scored mutants is twenty-three
+		// survivors of slack, which is more than the twenty-one that was
+		// judged too much at 544. 99.5 buys eleven, where 99 bought twelve
+		// before this widening, so the backstop is the same backstop at a
+		// larger size. The arithmetic is written out in the file.
+		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",
 			Formats:   []ReportFormat{FormatJSON, FormatHTML},
