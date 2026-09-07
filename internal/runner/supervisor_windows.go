@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -52,7 +53,12 @@ type jobSupervisor struct {
 // newSupervisor creates and configures the job object, before the child
 // exists. A machine that cannot create job objects is discovered while nothing
 // is running.
-func newSupervisor() (supervisor, error) {
+//
+// The memory limit, when there is one, is set on the job here — before the
+// child exists, so there is no window in which a process inside the job is
+// unbounded. It is a second line of defence under the sampler rather than a
+// replacement for it; see [limitJobMemory].
+func newSupervisor(memoryLimit int64) (supervisor, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, &Error{
@@ -86,6 +92,18 @@ func newSupervisor() (supervisor, error) {
 		return nil, &Error{
 			Code:    CodeSupervisionUnavailable,
 			Message: "could not set kill-on-close on the Windows job object that owns the child process tree",
+			Err:     err,
+		}
+	}
+
+	// Fail-closed, like every other supervision step: a bound the kernel would
+	// not accept is a bound this package cannot promise, and starting the child
+	// anyway would leave a caller believing in a budget nothing enforces.
+	if err := limitJobMemory(job, memoryLimit); err != nil {
+		_ = windows.CloseHandle(job)
+		return nil, &Error{
+			Code:    CodeSupervisionUnavailable,
+			Message: "could not set the memory limit on the Windows job object that owns the child process tree",
 			Err:     err,
 		}
 	}
@@ -195,13 +213,32 @@ func resume(process windows.Handle) error {
 	return nil
 }
 
-// terminate ends the whole job at once. There is no graceful phase: Windows
-// has no signal a console test binary is obliged to handle, and inventing one
-// out of CTRL_BREAK would deliver it to a group this package does not own.
-func (s *jobSupervisor) terminate(<-chan struct{}) {
+// terminate ends the whole job at once. There is no graceful phase to skip:
+// Windows has no signal a console test binary is obliged to handle, and
+// inventing one out of CTRL_BREAK would deliver it to a group this package does
+// not own. The grace is therefore accepted and ignored — this platform already
+// does what a zero grace asks for on the other.
+func (s *jobSupervisor) terminate(<-chan struct{}, time.Duration) {
 	supervisionTerminated.Add(1)
 	_ = windows.TerminateJobObject(s.job, terminatedJobExitCode)
 }
+
+// usedMemory reports what the whole job is holding, which on this platform
+// is exact: every process a process in the job creates joins the job, so the
+// set accounted for is the set that would be killed.
+//
+// The reading is the job's *peak* rather than its current commit, and that is
+// the right number for a bound. A budget is about the high-water mark — a
+// mutant that reached four gigabytes and then freed them still took the machine
+// for the moment it held them — and a peak cannot be missed between two ticks
+// of the sampler the way an instantaneous reading can.
+func (s *jobSupervisor) usedMemory() (int64, bool) { return jobPeakMemory(s.job) }
+
+// peakMemory reads the same accounting once more, after the tree is gone and
+// before the handle is closed. The exit status says nothing about memory on
+// this platform — Windows' syscall.Rusage carries four timestamps and no sizes
+// — so it is ignored here.
+func (s *jobSupervisor) peakMemory(*os.ProcessState) (int64, bool) { return jobPeakMemory(s.job) }
 
 // release closes the job handle, which — because of KILL_ON_JOB_CLOSE — also
 // kills anything still inside it. That is why a normal exit needs no separate

@@ -549,6 +549,7 @@ and its result are one line.
 | `exit_code` | the exit status |
 | `timed_out` | whether the timeout ended it |
 | `duration_ms` | how long it ran |
+| `peak_memory_bytes` | the highest memory the command's whole process tree was observed to hold — the resident set on Unix, the job's committed charge on Windows; absent where the platform could not measure one |
 | `output_bytes` | size of the whole captured output |
 | `output_sha256` | SHA-256 of the whole captured output |
 | `output_truncated` | whether the preserved file was cut at the 1 MiB cap |
@@ -628,6 +629,8 @@ own mutant record.
 | `outcome` | `killed`, `survived`, `timed_out`, `inconclusive`, `errored`, or `not_run` |
 | `killed_by` | the test binary that detected it, by import path; one of `binaries` |
 | `duration_ms` | how long the attempt took |
+| `memory_exceeded` | the attempt was stopped by its memory bound rather than by its deadline or by a test failing |
+| `peak_memory_bytes` | the highest memory the attempt was observed to hold: the maximum over **every** binary it started, not the deciding one's |
 | `exec_seqs` | the `exec` events of the binaries it ran, in order |
 | `output_tail` | the tail of the killing binary's output |
 | `error` | the error the attempt failed with, if it failed |
@@ -648,6 +651,24 @@ of `binaries`, and a reader may join the two directly.
 `exec_seqs` is the join into the commands underneath the attempt, and therefore
 into their preserved output: a reader with an attempt in hand has the argv, the
 exit status and the file for every binary it ran.
+
+`memory_exceeded` is why an `outcome` of `killed` can name a binary that
+reported no failure. A mutant whose process tree passes the run's memory bound
+is killed by the bound rather than by an assertion, and the vocabulary above is
+frozen — so the fact that tells the two apart is recorded beside the outcome
+rather than as another word in it. `peak_memory_bytes` is written for every
+attempt, bounded or not, because "which mutant cost the machine most" is a
+question asked after the run and a recording that had measured only what it
+bounded could not answer it. It is the maximum over every binary the attempt
+started rather than the deciding binary's — an attempt's cost is the worst
+moment it put the machine through, and the binary that settled it need not be
+the one that cost the most — and it is not the same quantity on both platforms:
+the resident set on Unix, committed charge on Windows, close for a Go program
+and never equal, and deliberately not converted into one another.
+
+Neither field appears on an `exec`'s side of the join except the peak: whether a
+*command* was stopped by a bound is a fact the attempt above it states, and a
+second place to say it is a second place for the two to disagree.
 
 The `outcome` vocabulary is the library's — `github.com/P4suta/go-mutants`'s
 `Outcome`, with underscores — and not the run report's, which spells the same

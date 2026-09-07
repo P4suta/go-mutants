@@ -109,7 +109,10 @@ func fixtureExecRecord() trace.ExecRecord {
 		EnvNames:  []string{"PATH=/usr/bin", "GO_MUTANTS_ACTIVE=" + fixtureMutantID, "PATH=/bin"},
 		TimeoutMS: 30000,
 		ExitCode:  1,
-		Output:    []byte(fixtureOutputTail + "\n"),
+		// A peak beside the exit status: every command a run starts is measured,
+		// so the scripted recording carries one too.
+		PeakMemoryBytes: 268435456,
+		Output:          []byte(fixtureOutputTail + "\n"),
 	}
 }
 
@@ -149,8 +152,14 @@ func fixtureMutantRecord() trace.MutantRecord {
 		Outcome:    trace.OutcomeKilled,
 		KilledBy:   fixturePackage,
 		DurationMS: 412,
-		ExecSeqs:   []int64{fixtureExecSeq},
-		OutputTail: fixtureOutputTail,
+		// The kill in this fixture is an ordinary one — a test failed — so the
+		// bound is absent and only the peak is recorded. The other spelling,
+		// where memory_exceeded is what made the kill, is exercised by the
+		// schema tests rather than frozen into the golden: a recording is not
+		// evidence, and one row cannot be both shapes.
+		PeakMemoryBytes: 268435456,
+		ExecSeqs:        []int64{fixtureExecSeq},
+		OutputTail:      fixtureOutputTail,
 	}
 }
 

@@ -88,6 +88,32 @@ const (
 // String returns the source as it is printed.
 func (s TimeoutSource) String() string { return string(s) }
 
+// A MemorySource says where the per-mutant memory bound came from, or that
+// there is none.
+//
+// It is [TimeoutSource]'s twin with one value the clock does not need. A
+// deadline can always be enforced; a memory bound cannot, because measuring a
+// tree while it runs is not something every supported platform offers, and a
+// run that has no bound has to be able to say so rather than report a number
+// nothing is enforcing.
+type MemorySource string
+
+// The memory sources.
+const (
+	// MemorySourceDerived is max(1 GiB, largest baseline peak × 4).
+	MemorySourceDerived MemorySource = "derived"
+	// MemorySourceExplicit is the configured `test.memory` or `--memory`.
+	MemorySourceExplicit MemorySource = "explicit"
+	// MemorySourceUnavailable is no bound: either nothing measured a peak to
+	// derive one from, or this platform cannot enforce one. Both are reported
+	// once, as a [Warning], because a user who thinks a runaway mutant will be
+	// stopped and is wrong should be told by the run rather than by the machine.
+	MemorySourceUnavailable MemorySource = "unavailable"
+)
+
+// String returns the source as it is printed.
+func (s MemorySource) String() string { return string(s) }
+
 // A CoverageMode says how coverage narrowed the run.
 //
 // It is this package's own spelling of the same two facts internal/report
@@ -259,6 +285,29 @@ type BaselineCompleted struct {
 	TimeoutSource TimeoutSource
 }
 
+// MemoryDerived reports the per-mutant memory bound and where it came from.
+//
+// It is a separate event rather than three more fields on [BaselineCompleted]
+// because a bound is not always there. The baseline's own line says what the
+// suite measured and what budget it bought; this says whether the machine will
+// hold anybody to it, which on one supported platform and on any platform whose
+// baseline nobody could measure is "no" — and a renderer that had to infer that
+// from a zero in a field would be inferring it.
+//
+// It follows [BaselineCompleted] and, like it, is published once.
+type MemoryDerived struct {
+	// Limit is the bound in bytes, and is zero when Source is
+	// [MemorySourceUnavailable] — the one case where there is no bound at all.
+	Limit int64
+	// Source says whether Limit was derived, configured, or is absent.
+	Source MemorySource
+	// Peak is the largest resident memory any baseline run was observed to
+	// reach, in bytes, and the number the derivation is built on. It is zero
+	// when nothing could measure one, which is one of the two reasons a run is
+	// unbounded.
+	Peak int64
+}
+
 // Discovered reports what one discovery pass found.
 //
 // The two numbers are deliberately not the same kind of thing, and the field
@@ -410,6 +459,26 @@ type MutantResult struct {
 	// apart. For a survivor that *was* covered it is the actionable half of the
 	// finding: these are the suites that ran the line and did not notice.
 	CoveringTestPackages []string
+	// PeakMemory is the highest memory any binary this mutant was
+	// measured against was observed to hold, MemoryExceeded says the run's
+	// memory bound is what stopped it, and MemoryLimit is the bound it was
+	// measured under.
+	//
+	// All three travel on the result rather than being looked up, which is the
+	// rule this whole type follows: a renderer that had to remember a number
+	// from an earlier event in order to describe this one would be a renderer
+	// that draws differently depending on what it happened to have seen.
+	//
+	// MemoryLimit is zero for an unbounded run and for a mutant nothing
+	// executed — a cached outcome, an uncovered one — because a bound is a fact
+	// about a measurement and neither of those is one: a cached outcome was
+	// measured by another run under whatever budget that run had, and an
+	// uncovered mutant was settled by a coverage profile. PeakMemory is zero in
+	// those two cases too, and on a platform that could not measure.
+	// MemoryExceeded is only ever set alongside [mutation.OutcomeKilled].
+	PeakMemory     int64
+	MemoryExceeded bool
+	MemoryLimit    int64
 }
 
 // clone returns a copy that shares no slice with the receiver, so that a
@@ -706,6 +775,7 @@ func (PhaseCompleted) event()    {}
 func (Traced) event()            {}
 func (BaselineProgress) event()  {}
 func (BaselineCompleted) event() {}
+func (MemoryDerived) event()     {}
 func (Discovered) event()        {}
 func (Validated) event()         {}
 func (SelectionNarrowed) event() {}

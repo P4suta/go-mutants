@@ -34,6 +34,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -47,6 +48,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below (0.00s)\n        simple_test.go:22: Clamp(-5, 0, 10) = -5, want 0\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 0, want 4\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        simple_test.go:22: Clamp(10, 0, 10) = 0, want 10\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 0, want 10\nFAIL\ncoverage: 65.4% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "!(v \u003c lo)",
       "rule": "negate-condition",
       "rule_version": 1,
@@ -71,6 +73,7 @@
           ],
           "duration_ms": 0,
           "outcome": "survived",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -84,6 +87,7 @@
       "output_tail": null,
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "\u003c=",
       "rule": "lt-to-le",
       "rule_version": 1,
@@ -108,6 +112,7 @@
           ],
           "duration_ms": 0,
           "outcome": "survived",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -121,6 +126,7 @@
       "output_tail": null,
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "0",
       "rule": "return-zero-numeric",
       "rule_version": 1,
@@ -146,6 +152,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -159,6 +166,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        simple_test.go:22: Clamp(0, 0, 10) = 10, want 0\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 10, want 4\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 40, want 10\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "!(v \u003e hi)",
       "rule": "negate-condition",
       "rule_version": 1,
@@ -183,6 +191,7 @@
           ],
           "duration_ms": 0,
           "outcome": "survived",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -196,6 +205,7 @@
       "output_tail": null,
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "\u003e=",
       "rule": "gt-to-ge",
       "rule_version": 1,
@@ -221,6 +231,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -234,6 +245,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/above (0.00s)\n        simple_test.go:22: Clamp(40, 0, 10) = 0, want 10\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "0",
       "rule": "return-zero-numeric",
       "rule_version": 1,
@@ -259,6 +271,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -272,6 +285,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/inside (0.00s)\n        simple_test.go:22: Clamp(4, 0, 10) = 0, want 4\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        simple_test.go:22: Clamp(10, 0, 10) = 0, want 10\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "0",
       "rule": "return-zero-numeric",
       "rule_version": 1,
@@ -297,6 +311,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -310,6 +325,7 @@
       "output_tail": "--- FAIL: TestSum (0.00s)\n    --- FAIL: TestSum/one (0.00s)\n        simple_test.go:42: Sum([7]) = 0, want 7\n    --- FAIL: TestSum/several (0.00s)\n        simple_test.go:42: Sum([1 2 3 4]) = 0, want 10\n    --- FAIL: TestSum/negatives (0.00s)\n        simple_test.go:42: Sum([5 -2 -1]) = 0, want 2\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "0",
       "rule": "return-zero-numeric",
       "rule_version": 1,
@@ -335,6 +351,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -348,6 +365,7 @@
       "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/below (0.00s)\n        simple_test.go:63: InRange(-1, 0, 10) = true, want false\n    --- FAIL: TestInRange/above (0.00s)\n        simple_test.go:63: InRange(11, 0, 10) = true, want false\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "true",
       "rule": "return-true",
       "rule_version": 1,
@@ -373,6 +391,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -386,6 +405,7 @@
       "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_low_bound (0.00s)\n        simple_test.go:63: InRange(0, 0, 10) = false, want true\n    --- FAIL: TestInRange/inside (0.00s)\n        simple_test.go:63: InRange(5, 0, 10) = false, want true\n    --- FAIL: TestInRange/at_the_high_bound (0.00s)\n        simple_test.go:63: InRange(10, 0, 10) = false, want true\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "false",
       "rule": "return-false",
       "rule_version": 1,
@@ -411,6 +431,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -424,6 +445,7 @@
       "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_low_bound (0.00s)\n        simple_test.go:63: InRange(0, 0, 10) = false, want true\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "\u003e",
       "rule": "ge-to-gt",
       "rule_version": 1,
@@ -449,6 +471,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -462,6 +485,7 @@
       "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/below (0.00s)\n        simple_test.go:63: InRange(-1, 0, 10) = true, want false\n    --- FAIL: TestInRange/above (0.00s)\n        simple_test.go:63: InRange(11, 0, 10) = true, want false\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "||",
       "rule": "and-to-or",
       "rule_version": 1,
@@ -487,6 +511,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/simple",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -500,6 +525,7 @@
       "output_tail": "--- FAIL: TestInRange (0.00s)\n    --- FAIL: TestInRange/at_the_high_bound (0.00s)\n        simple_test.go:63: InRange(10, 0, 10) = false, want true\nFAIL\ncoverage: 73.1% of statements in fixture.example/simple/...",
       "package": "fixture.example/simple",
       "path": "simple.go",
+      "peak_memory_bytes": 0,
       "replacement": "\u003c",
       "rule": "le-to-lt",
       "rule_version": 1,
@@ -556,6 +582,8 @@
       "test",
       "./..."
     ],
+    "memory_bytes": 1,
+    "memory_source": "derived",
     "resolved_command": [
       "/normalized/path",
       "test",
@@ -623,6 +651,12 @@
       {
         "duration_ms": 0,
         "name": "timeout",
+        "phase": "baseline",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "memory",
         "phase": "baseline",
         "result": "succeeded"
       },

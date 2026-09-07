@@ -745,6 +745,56 @@ the outcome cache.
   through a Windows Job Object with
   `KILL_ON_JOB_CLOSE` (fail-closed if ownership cannot be established) or a
   POSIX process group `TERM` then `KILL`.
+- **Memory bounds.** *Implemented.* Explicit `test.memory`, or
+  `max(1GiB, largest baseline peak × 4)` from the same runs the timeout is
+  derived from. It exists because a deadline does not bound a program that
+  allocates: `negate-loop-condition` turning a terminating loop into one that
+  appends forever reached eleven gigabytes in twelve seconds against this
+  repository's own `internal/config`, and took a CI runner down before its
+  ten-second timeout could expire — see
+  [ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md). While a
+  bounded child runs, `runner` samples the tree every 100 ms — the *proportional*
+  set size on Linux, so a page shared between a fuzz coordinator and its workers
+  is counted once rather than once each — and the first sample **strictly above**
+  the limit kills it, with `Result.MemoryExceeded` rather than
+  `Result.TimedOut` — and without the SIGTERM grace a timeout gets,
+  because the evidence a memory kill rests on is the peak and that is already
+  recorded, while two seconds of politeness for a tree that is already over
+  budget is hundreds of megabytes more of what the bound exists to prevent.
+  Windows also carries `JOB_OBJECT_LIMIT_JOB_MEMORY` on the job so the kernel
+  holds the line under the sampler, set a quarter *above* the sampler's line:
+  the flag caps the job's own accounting at its limit, so a kernel line equal to
+  the sampler's would make the sampler unable to ever read a number above it.
+  Rlimits are not used: RLIMIT_AS bounds address space, of which the Go runtime
+  reserves hundreds of gigabytes before allocating anything, RLIMIT_DATA is
+  Linux-only, and neither reaches the child's own children.
+
+  A derived bound is sound only for a run of the baseline's shape, so a **fuzz
+  target gets none**: `go test -fuzz` is a coordinator plus a worker process per
+  core, each mapping the same 100 MiB region the fuzzing engine communicates
+  through, and a bound derived from one process running the suite once would
+  kill it for being what it is. A limit the caller names still applies.
+
+  A mutant the bound stops is **`killed`**, with `memory_exceeded` and
+  `peak_memory_bytes` beside the outcome on its execution row, in its `mutant-exec`
+  record and in the console's `-v` line. It is not retried the way a timeout is:
+  a timeout may be the machine being busy, and a bound four times what the whole
+  unmutated suite needed is not. The baseline itself runs unbounded, because it
+  is the measurement the bound is derived from; every prepared test binary the
+  run starts afterwards — mutant, probe, control, coverage pass — is bounded, so
+  a measurement and what it is compared against had the same machine. Sampling a
+  live tree needs `/proc` or the job object, so macOS reports a peak, records an
+  explicit `test.memory` in the report because that is what the user asked for,
+  enforces neither it nor a derived one, and says so once as `GOM4047`.
+
+  The bound is not in the outcome cache key — a derived bound follows the
+  baseline peak, and keying on it would give every machine a cache of its own —
+  so it is recorded on the entry and judged on every lookup, exactly as the
+  timeout is. An entry killed *by* the bound is evidence about that bound and
+  any tighter one; an entry that reached a verdict inside a bound is not
+  evidence about a smaller one, which might have killed it first. Without that
+  rule a run at 256 MiB would cache `killed` and a run at 8 GiB would adopt it.
+  See `cache.Entry.UsableWithin`.
 - **Coverage-guided selection.** *Implemented.* The test binaries are built
   with `-cover -coverpkg=<module>/...` and each is then run once with nothing
   activated and `-test.gocoverdir` pointed at a directory of its own — the

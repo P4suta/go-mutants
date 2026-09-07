@@ -125,9 +125,19 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 			// different program from the one the mutants are measured in.
 			Env:     baseEnvFrom(opts.Env, scratch),
 			Timeout: opts.Timeout,
-			Trace:   opts.Trace,
-			Kind:    trace.ExecKindCoverageRun,
-			Subject: bin.ImportPath,
+			// The same bound the mutants will be measured under, because these
+			// are the same binaries. It is worth knowing what a bound that is
+			// too small for them does: this pass fails, internal/engine treats
+			// a failed coverage pass as it treats every other one — it gives up
+			// the narrowing, warns, and measures every mutant against every
+			// binary — so the run is slower and reaches exactly the same
+			// verdicts. A `-cover` binary is the largest thing a run starts, so
+			// it is also the first place a bound set below what this project
+			// actually needs shows up.
+			MemoryLimit: opts.MemoryLimit,
+			Trace:       opts.Trace,
+			Kind:        trace.ExecKindCoverageRun,
+			Subject:     bin.ImportPath,
 		}
 		result := opts.runProcess(ctx, spec)
 		if err := commandFailure(ctx, spec, result, CodeCoverageFailed,

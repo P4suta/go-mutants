@@ -308,6 +308,14 @@ func (m model) fold(event engine.Event) (tea.Model, tea.Cmd) {
 		// are some and the scrollback gets the text.
 		m.warnings++
 
+	case engine.MemoryDerived:
+		// Nothing to draw. The dashboard has one line for the baseline and it
+		// already carries the budget a reader watches a run against, which is
+		// the timeout; a bound that is checked ten times a second and reported
+		// only when it fires has nothing to show while nothing is firing. A run
+		// that has no bound at all publishes a [engine.Warning] beside this,
+		// which the dashboard does count.
+
 	case engine.ReportPublished:
 		// Nothing to draw: the paths are printed after the dashboard exits,
 		// where they can be selected and opened. That the report exists is

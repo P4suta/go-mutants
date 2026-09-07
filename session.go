@@ -30,6 +30,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/operatorselect"
+	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/snapshot"
 	"github.com/P4suta/go-mutants/internal/testflag"
 	"github.com/P4suta/go-mutants/internal/validate"
@@ -39,6 +40,19 @@ import (
 const (
 	defaultProfile       = "balanced"
 	defaultMutantTimeout = 10 * time.Second
+	// defaultMutantMemory is the floor under a session's per-mutant memory
+	// bound, and the whole of it for a session whose verification was skipped.
+	//
+	// It is engine.MinDerivedMemory's number and it is written again here for
+	// the reason defaultMutantTimeout is: a session has no baseline phase, so
+	// the two derive from different observations and neither should have to
+	// import the other's package to say what a small suite gets. A gibibyte is
+	// justified where the engine's constant is documented; the short of it is
+	// that anything tighter is tripped by a `-cover` build or a race-detecting
+	// one, and anything looser is not a bound.
+	defaultMutantMemory = 1 << 30
+	// mutantMemoryFactor multiplies the peak the verification run reached.
+	mutantMemoryFactor   = 4
 	defaultBuildTimeout  = 10 * time.Minute
 	sessionPrefix        = "session-"
 	execPrefix           = "exec-"
@@ -72,9 +86,13 @@ type Session struct {
 	binaries       []execute.TestBinary
 	executeOptions execute.Options
 	mutantTimeout  time.Duration
-	preparedFiles  map[string]fileState
-	overlayPath    string
-	closed         bool
+	// mutantMemory is the per-mutant memory bound a request that names none
+	// gets, in bytes, and is zero on a platform that cannot enforce one. See
+	// [defaultMutantMemory].
+	mutantMemory  int64
+	preparedFiles map[string]fileState
+	overlayPath   string
+	closed        bool
 
 	probeSnapshot *snapshot.Snapshot
 	probeBinaries []execute.TestBinary
@@ -421,6 +439,11 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 		return fail(err)
 	}
 
+	// What the unmutated tests cost, measured by the one run this session makes
+	// of them. It is the session's equivalent of the engine's baseline peak and
+	// it is zero for a session that skipped verification or ran on a platform
+	// that cannot measure, both of which leave the bound at its floor.
+	var verifiedPeak int64
 	if !resolved.SkipVerify {
 		// Under the tree's shared half, exactly as [Workspace.Exec] runs: this
 		// is a command against the restored tree like any other, and its drift
@@ -456,6 +479,7 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 						TotalBytes: verified.TotalBytes,
 					}
 				}
+				verifiedPeak = verified.PeakMemory
 				if driftErr := checkInitialDrift(w.snapshot, instrument.Result{}, "verification"); driftErr != nil {
 					return driftErr
 				}
@@ -571,6 +595,7 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 		binaries:       slices.Clone(mainBuild.binaries),
 		executeOptions: mainBuild.options,
 		mutantTimeout:  resolved.MutantTimeout,
+		mutantMemory:   sessionMemoryBound(verifiedPeak),
 		preparedFiles:  frozen.files,
 		overlayPath:    overlayPath,
 		probeSnapshot:  probeSnap,
@@ -582,6 +607,55 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 	}
 	w.publishSession(session)
 	return session, nil
+}
+
+// effectiveMemoryLimit resolves what one call is bounded by: what the caller
+// asked for, or the session's own — unless the call is a fuzz run, which
+// inherits nothing.
+//
+// A derived bound is `max(floor, what the unmutated tests cost × 4)`, and every
+// word of that is about a run of the *baseline's shape*: one process, running
+// the suite once. A fuzz run is not that shape. `go test -fuzz` starts a
+// coordinator plus one worker process per core, and each of them maps the same
+// 100 MiB shared-memory region the fuzzing engine communicates through
+// (`internal/fuzz`'s workerSharedMemSize) — so a four-core machine is half a
+// gibibyte of mappings before a single input has been tried, and an eight-core
+// one is past the whole derived bound. Holding that to a number derived from
+// something else kills a legitimate run for being what it is, which is what it
+// did.
+//
+// A limit the caller *named* still applies, verbatim and to fuzzing too: a
+// consumer who knows what their own fuzzing costs is entitled to cap it, and
+// this is only about go-mutants declining to guess. The timeout is unaffected
+// either way — wall-clock time is the same question whatever shape a run has.
+func effectiveMemoryLimit(requested, session int64, args []string) int64 {
+	if requested != 0 || hasFuzzTarget(args) {
+		return requested
+	}
+	return session
+}
+
+// sessionMemoryBound resolves the per-mutant memory bound a session applies
+// where a request names none.
+//
+// It is the engine's derivation with the engine's baseline replaced by the one
+// measurement a session has: what the verification run of the unmutated tests
+// cost. A session that skipped verification, or ran where nothing could measure,
+// gets the floor rather than no bound — which is the one place this differs
+// from the engine, and it differs because the two are answering different
+// questions. The engine has measured the suite and can say "I have nothing to
+// derive from"; a session with SkipVerify has been told not to measure, and
+// leaving it unbounded would mean a consumer that turned verification off also
+// silently turned the bound off.
+//
+// A platform that cannot enforce a bound gets zero either way, because a number
+// nothing enforces is worse than an honest absence: it would appear in a
+// consumer's own report as a budget that was never applied.
+func sessionMemoryBound(peak int64) int64 {
+	if !runner.MemoryBoundSupported() {
+		return 0
+	}
+	return max(int64(defaultMutantMemory), mutantMemoryFactor*peak)
 }
 
 // checkPristineSnapshot is the barrier between arbitrary commands and mutation
@@ -1313,6 +1387,7 @@ type sessionTarget struct {
 	indexes  []int
 	args     []string
 	timeout  time.Duration
+	memory   int64
 	scratch  string
 	// artifactRoot is the private copy of the snapshot a fuzz target runs in,
 	// and is empty for every other target. Only [Session.Exec] captures what a
@@ -1332,7 +1407,7 @@ type sessionTarget struct {
 // comes back belongs to the caller, which removes it unless the session is
 // keeping temporaries.
 func (s *Session) target(
-	call, pkg string, args, env []string, timeout time.Duration, recordTestLog bool,
+	call, pkg string, args, env []string, timeout time.Duration, memory int64, recordTestLog bool,
 ) (sessionTarget, error) {
 	indexes, err := selectTestPackages(s.root, s.binaries, pkg, call)
 	if err != nil {
@@ -1349,6 +1424,7 @@ func (s *Session) target(
 	if timeout == 0 {
 		timeout = s.mutantTimeout
 	}
+	memory = effectiveMemoryLimit(memory, s.mutantMemory, args)
 	scratch, err := os.MkdirTemp(s.scratch, execPrefix)
 	if err != nil {
 		return sessionTarget{}, fmt.Errorf("gomutants: session %s scratch: %w", call, err)
@@ -1373,6 +1449,7 @@ func (s *Session) target(
 		indexes:  indexes,
 		args:     targetArgs,
 		timeout:  timeout,
+		memory:   memory,
 		scratch:  scratch,
 	}
 	if hasFuzzTarget(args) {
@@ -1388,6 +1465,13 @@ func (s *Session) target(
 
 // Exec runs one mutant against a selected test or fuzz target without
 // rebuilding the prepared test binaries.
+//
+// A fuzz target — anything whose Args carry `-test.fuzz` — is bounded only by a
+// limit the caller names and by its timeout. A fuzz run has no baseline of its
+// own shape: it is a coordinator plus one worker process per core, each mapping
+// the same 100 MiB region the fuzzing engine communicates through, so a bound
+// derived from one process running the suite once would kill it for being what
+// it is. The same rule applies to [Session.Probe] and [Session.Control].
 func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, error) {
 	if s == nil {
 		return MutantResult{}, errors.New("gomutants: session exec: nil session")
@@ -1400,6 +1484,9 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 	if request.Timeout < 0 {
 		return MutantResult{}, errors.New("gomutants: session exec: timeout is negative")
 	}
+	if request.MemoryLimit < 0 {
+		return MutantResult{}, errors.New("gomutants: session exec: memory limit is negative")
+	}
 	mutant, err := s.catalog.ResolvePrefix(request.Mutant)
 	if err != nil {
 		return MutantResult{}, s.selectionError(request.Mutant, err)
@@ -1408,7 +1495,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		return MutantResult{}, rejectionError(request.Mutant, mutant.DisplayID, s.rejections[mutant.ID])
 	}
 	target, err := s.target("exec", request.Package, request.Args, request.Env,
-		request.Timeout, request.RecordTestLog)
+		request.Timeout, request.MemoryLimit, request.RecordTestLog)
 	if err != nil {
 		return MutantResult{}, err
 	}
@@ -1427,6 +1514,7 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		DisplayID:     mutant.DisplayID,
 		Package:       s.packageOf(mutant),
 		Timeout:       target.timeout,
+		MemoryLimit:   target.memory,
 		Binaries:      target.indexes,
 		Args:          target.args,
 		OutputLimit:   request.OutputLimit,
@@ -1458,10 +1546,14 @@ func (s *Session) Exec(ctx context.Context, request ExecRequest) (MutantResult, 
 		Output:     attempt.Output,
 		Truncated:  attempt.Truncated,
 		TotalBytes: attempt.OutputBytes,
-		Artifacts:  artifacts,
-		Binaries:   attempt.Binaries,
-		TraceSeq:   traceSeq,
-		TestLogs:   publicTestLogs(attempt.TestLogs),
+		// Carried up unchanged from internal/execute, which took the maximum
+		// over the binaries the call started.
+		PeakMemory:     attempt.PeakMemory,
+		MemoryExceeded: attempt.MemoryExceeded,
+		Artifacts:      artifacts,
+		Binaries:       attempt.Binaries,
+		TraceSeq:       traceSeq,
+		TestLogs:       publicTestLogs(attempt.TestLogs),
 	}
 	if artifactErr != nil {
 		return result, fmt.Errorf("gomutants: session exec artifacts: %w", artifactErr)
@@ -1585,8 +1677,11 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 	if request.Timeout < 0 {
 		return ControlResult{}, errors.New("gomutants: session control: timeout is negative")
 	}
+	if request.MemoryLimit < 0 {
+		return ControlResult{}, errors.New("gomutants: session control: memory limit is negative")
+	}
 	target, err := s.target("control", request.Package, request.Args, request.Env,
-		request.Timeout, request.RecordTestLog)
+		request.Timeout, request.MemoryLimit, request.RecordTestLog)
 	if err != nil {
 		return ControlResult{}, err
 	}
@@ -1599,6 +1694,7 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 
 	run := execute.ControlRun{
 		Timeout:       target.timeout,
+		MemoryLimit:   target.memory,
 		Binaries:      target.indexes,
 		Args:          target.args,
 		OutputLimit:   request.OutputLimit,
@@ -1646,10 +1742,14 @@ func (s *Session) Control(ctx context.Context, request ControlRequest) (ControlR
 		Output:     attempt.Output,
 		Truncated:  attempt.Truncated,
 		TotalBytes: attempt.OutputBytes,
-		Binaries:   attempt.Binaries,
-		ExecSeqs:   attempt.ExecSeqs,
-		TraceSeq:   traceSeq,
-		TestLogs:   publicTestLogs(attempt.TestLogs),
+		// Carried up unchanged from internal/execute, which took the maximum
+		// over the binaries the call started.
+		PeakMemory:     attempt.PeakMemory,
+		MemoryExceeded: attempt.MemoryExceeded,
+		Binaries:       attempt.Binaries,
+		ExecSeqs:       attempt.ExecSeqs,
+		TraceSeq:       traceSeq,
+		TestLogs:       publicTestLogs(attempt.TestLogs),
 	}
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("gomutants: session control: %w", err)
@@ -1737,6 +1837,9 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	if request.Timeout < 0 {
 		return ProbeResult{}, errors.New("gomutants: session probe: timeout is negative")
 	}
+	if request.MemoryLimit < 0 {
+		return ProbeResult{}, errors.New("gomutants: session probe: memory limit is negative")
+	}
 	binaryIndexes, err := selectTestPackages(s.probeSnapshot.Root, s.probeBinaries, request.Package, "probe")
 	if err != nil {
 		return ProbeResult{}, err
@@ -1753,6 +1856,7 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	if timeout == 0 {
 		timeout = s.mutantTimeout
 	}
+	memory := effectiveMemoryLimit(request.MemoryLimit, s.mutantMemory, request.Args)
 	scratch, err := os.MkdirTemp(s.scratch, probePrefix)
 	if err != nil {
 		return ProbeResult{}, fmt.Errorf("gomutants: session probe scratch: %w", err)
@@ -1778,6 +1882,7 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 	opts.Env = env
 	pass := execute.ProbeRun{
 		Timeout:       timeout,
+		MemoryLimit:   memory,
 		Binaries:      binaryIndexes,
 		Args:          targetArgs,
 		OutputLimit:   request.OutputLimit,
@@ -1845,9 +1950,13 @@ func (s *Session) Probe(ctx context.Context, request ProbeRequest) (ProbeResult,
 		Output:     attempt.Output,
 		Truncated:  attempt.Truncated,
 		TotalBytes: attempt.OutputBytes,
-		Binaries:   attempt.Binaries,
-		TraceSeq:   traceSeq,
-		TestLogs:   publicTestLogs(attempt.TestLogs),
+		// Carried up unchanged from internal/execute, which took the maximum
+		// over the binaries the call started.
+		PeakMemory:     attempt.PeakMemory,
+		MemoryExceeded: attempt.MemoryExceeded,
+		Binaries:       attempt.Binaries,
+		TraceSeq:       traceSeq,
+		TestLogs:       publicTestLogs(attempt.TestLogs),
 	}, nil
 }
 

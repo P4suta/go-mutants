@@ -324,6 +324,7 @@ var expectedTypes = map[string]string{
 	"test":               "a table",
 	"test.command":       "a list of strings",
 	"test.timeout":       "a string",
+	"test.memory":        "a string",
 	"test.baseline_runs": "an integer",
 
 	"execution":      "a table",
@@ -409,6 +410,7 @@ type documentExpect struct {
 type documentTest struct {
 	Command      *[]string `toml:"command"`
 	Timeout      *string   `toml:"timeout"`
+	Memory       *string   `toml:"memory"`
 	BaselineRuns *int64    `toml:"baseline_runs"`
 }
 
@@ -492,6 +494,15 @@ func (d *document) overlay(report reporter) (Overlay, []error) {
 					"%q is not a duration: write a Go duration such as \"90s\", \"2m\", or \"1m30s\"", *t.Timeout))
 			} else {
 				overlay.Timeout = Explicit(timeout)
+			}
+		}
+		if t.Memory != nil {
+			size, err := parseSize(*t.Memory)
+			if err != nil {
+				problems = append(problems, report.wrapf(CodeInvalidSize, "test.memory", err,
+					"%s", err.Error()))
+			} else {
+				overlay.Memory = Explicit(size)
 			}
 		}
 		if t.BaselineRuns != nil {

@@ -31,7 +31,7 @@ func TerminatedCount() int64 { return supervisionTerminated.Load() }
 // is the whole claim CREATE_SUSPENDED makes and the one thing no observation
 // of a finished Run can confirm.
 func StartSuspendedForTest(cmd *exec.Cmd, between func()) error {
-	sup, err := newSupervisor()
+	sup, err := newSupervisor(0)
 	if err != nil {
 		return err
 	}
@@ -55,3 +55,8 @@ func EffectiveOutputLimit(limit int) int { return effectiveOutputLimit(limit) }
 
 // TruncationNotice exposes the notice a capped capture is prefixed with.
 func TruncationNotice(total int64) string { return truncationNotice(total) }
+
+// KernelBoundsMemory reports whether this platform has a memory line of its own
+// under the sampler's, which is what decides whether a tree the sampler missed
+// can have been ended by the bound at all. See exceededAtExit.
+func KernelBoundsMemory() bool { return kernelBoundsMemory }

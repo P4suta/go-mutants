@@ -222,6 +222,7 @@ func TestOverlayIsEmpty(t *testing.T) {
 		"expect":           {Expect: Explicit([]Expectation(nil))},
 		"test_command":     {TestCommand: Explicit([]string(nil))},
 		"timeout":          {Timeout: Explicit(time.Duration(0))},
+		"memory":           {Memory: Explicit(int64(0))},
 		"baseline_runs":    {BaselineRuns: Explicit(0)},
 		"jobs":             {Jobs: Explicit(0)},
 		"cache_mode":       {CacheMode: Explicit(CacheAuto)},

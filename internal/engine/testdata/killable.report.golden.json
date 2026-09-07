@@ -34,6 +34,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -47,6 +48,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = 9, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 9, want 1\n    --- FAIL: TestClamp/just_inside_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(1, 0, 10) = 9, want 1\n    --- FAIL: TestClamp/inside (0.00s)\n        clamp_test.go:34: Clamp(5, 0, 10) = 9, want 5\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 10, want 9\n    --- FAIL: TestClamp/above_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(40, 0, 10) = 40, want 9\nFAIL\ncoverage: 52.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "!(v \u003c hi)",
       "rule": "negate-condition",
       "rule_version": 1,
@@ -72,6 +74,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -85,6 +88,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 10, want 9\nFAIL\ncoverage: 64.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "\u003c=",
       "rule": "lt-to-le",
       "rule_version": 1,
@@ -110,6 +114,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -123,6 +128,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = -5, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 0, want 1\n    --- FAIL: TestClamp/inside (0.00s)\n        clamp_test.go:34: Clamp(5, 0, 10) = 1, want 5\n    --- FAIL: TestClamp/just_inside_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(9, 0, 10) = 1, want 9\nFAIL\ncoverage: 64.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "!(v \u003e lo)",
       "rule": "negate-condition",
       "rule_version": 1,
@@ -148,6 +154,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -161,6 +168,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 0, want 1\nFAIL\ncoverage: 64.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "\u003e=",
       "rule": "gt-to-ge",
       "rule_version": 1,
@@ -186,6 +194,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -199,6 +208,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/just_inside_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(1, 0, 10) = 0, want 1\n    --- FAIL: TestClamp/inside (0.00s)\n        clamp_test.go:34: Clamp(5, 0, 10) = 0, want 5\n    --- FAIL: TestClamp/just_inside_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(9, 0, 10) = 0, want 9\nFAIL\ncoverage: 64.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "0",
       "rule": "return-zero-numeric",
       "rule_version": 1,
@@ -224,6 +234,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -237,6 +248,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = 0, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 0, want 1\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "0",
       "rule": "return-zero-numeric",
       "rule_version": 1,
@@ -262,6 +274,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -275,6 +288,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = -1, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = -1, want 1\nFAIL\ncoverage: 64.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "-",
       "rule": "add-to-sub",
       "rule_version": 1,
@@ -300,6 +314,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -313,6 +328,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 0, want 9\n    --- FAIL: TestClamp/above_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(40, 0, 10) = 0, want 9\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "0",
       "rule": "return-zero-numeric",
       "rule_version": 1,
@@ -338,6 +354,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -351,6 +368,7 @@
       "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 11, want 9\n    --- FAIL: TestClamp/above_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(40, 0, 10) = 11, want 9\nFAIL\ncoverage: 64.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "clamp.go",
+      "peak_memory_bytes": 0,
       "replacement": "+",
       "rule": "sub-to-add",
       "rule_version": 1,
@@ -376,6 +394,7 @@
           "duration_ms": 0,
           "killed_by": "fixture.example/killable",
           "outcome": "killed",
+          "peak_memory_bytes": 0,
           "worker": 0
         }
       ],
@@ -389,6 +408,7 @@
       "output_tail": "--- FAIL: TestIsReady (0.00s)\n    ready_test.go:15: IsReady() = false, want true\nFAIL\ncoverage: 64.0% of statements in fixture.example/killable/...",
       "package": "fixture.example/killable",
       "path": "ready.go",
+      "peak_memory_bytes": 0,
       "replacement": "false",
       "rule": "true-to-false",
       "rule_version": 1,
@@ -414,6 +434,7 @@
       "output_tail": null,
       "package": "fixture.example/killable",
       "path": "untested.go",
+      "peak_memory_bytes": 0,
       "replacement": "true",
       "rule": "return-true",
       "rule_version": 1,
@@ -439,6 +460,7 @@
       "output_tail": null,
       "package": "fixture.example/killable",
       "path": "untested.go",
+      "peak_memory_bytes": 0,
       "replacement": "false",
       "rule": "return-false",
       "rule_version": 1,
@@ -464,6 +486,7 @@
       "output_tail": null,
       "package": "fixture.example/killable",
       "path": "untested.go",
+      "peak_memory_bytes": 0,
       "replacement": "==",
       "rule": "neq-to-eq",
       "rule_version": 1,
@@ -520,6 +543,8 @@
       "test",
       "./..."
     ],
+    "memory_bytes": 1,
+    "memory_source": "derived",
     "resolved_command": [
       "/normalized/path",
       "test",
@@ -587,6 +612,12 @@
       {
         "duration_ms": 0,
         "name": "timeout",
+        "phase": "baseline",
+        "result": "succeeded"
+      },
+      {
+        "duration_ms": 0,
+        "name": "memory",
         "phase": "baseline",
         "result": "succeeded"
       },

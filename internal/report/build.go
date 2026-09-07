@@ -59,6 +59,13 @@ type MutantResult struct {
 	// OutputTail is the tail of the test output kept for a human. Empty becomes
 	// null.
 	OutputTail string
+	// MemoryExceeded says the memory bound settled this mutant and PeakMemory is
+	// what it was observed to hold. They are for the *cached* case, where there
+	// are no execution rows to read them off and the facts come from the cache
+	// entry; a mutant this run executed may leave them zero, and [Build] folds
+	// its rows instead.
+	MemoryExceeded bool
+	PeakMemory     int64
 	// Executions are the passes this run made over the test binaries for this
 	// mutant, in attempt order. Nil becomes the empty list, which is what a
 	// mutant nothing executed carries.
@@ -171,6 +178,11 @@ type Options struct {
 	// when `test.timeout` is set.
 	Timeout       time.Duration
 	TimeoutSource TimeoutSource
+	// Memory is the per-mutant memory bound in bytes and MemorySource says
+	// where it came from. A zero Memory with an empty source is a run that
+	// predates the bound or bounded nothing, and writes neither key.
+	Memory       int64
+	MemorySource MemorySource
 
 	// CoverageMode is how coverage narrowed the run. The zero value is
 	// [CoverageOff], which is what a run with a custom test command or a failed
@@ -242,6 +254,9 @@ func Build(opts Options) (*Report, error) {
 	if err := checkIdentity(opts); err != nil {
 		return nil, err
 	}
+	if err := checkMemory(opts); err != nil {
+		return nil, err
+	}
 	if opts.Catalog == nil {
 		return nil, &Error{
 			Code:    CodeNoCatalog,
@@ -307,6 +322,8 @@ func Build(opts Options) (*Report, error) {
 			Baseline:        baselineOf(opts.Baseline),
 			TimeoutMS:       milliseconds(opts.Timeout),
 			TimeoutSource:   timeoutSource(opts),
+			MemoryBytes:     max(opts.Memory, 0),
+			MemorySource:    memorySource(opts),
 			Toolchain:       toolchainOf(opts.Toolchain),
 			ResolvedCommand: resolvedCommand(opts.ResolvedCommand),
 		},
@@ -549,6 +566,8 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			CoveringTestPackages: stringList(result.CoveringTestPackages),
 			Uncovered:            result.Uncovered,
 			Cached:               result.Cached,
+			MemoryExceeded:       result.MemoryExceeded || anyExecutionExceeded(result.Executions),
+			PeakMemoryBytes:      max(result.PeakMemory, highestExecutionPeak(result.Executions)),
 		})
 	}
 	if err := checkAccountedFor(opts, len(mutants), len(rejected)); err != nil {
@@ -644,6 +663,18 @@ func checkExecutions(m mutation.Mutant, result MutantResult, outcome Outcome) er
 				Code: CodeInvalidExecutions,
 				Message: fmt.Sprintf("attempt %d of mutant %s is %s, which is a verdict about several passes rather than something one pass saw: expected one of %s",
 					i+1, m.DisplayID, execution.Outcome, joinObservations()),
+			}
+		}
+		// `memory_exceeded` is what tells a killed row apart from an
+		// assertion's, so beside any other outcome it describes a pass that
+		// both was and was not stopped by the supervisor. A survivor finished,
+		// a timeout was killed by the deadline instead, and an errored pass
+		// never got a verdict — none of them is a tree the bound ended.
+		if execution.MemoryExceeded && execution.Outcome != OutcomeKilled {
+			return &Error{
+				Code: CodeInvalidExecutions,
+				Message: fmt.Sprintf("attempt %d of mutant %s is %s and says a memory bound settled it: a tree the bound killed is %s",
+					i+1, m.DisplayID, execution.Outcome, OutcomeKilled),
 			}
 		}
 	}
@@ -1210,6 +1241,99 @@ func timeoutSource(opts Options) TimeoutSource {
 		return TimeoutExplicit
 	}
 	return TimeoutDerived
+}
+
+// memorySource resolves what the document says about where the memory bound
+// came from, and writes nothing at all for a run that had none.
+//
+// The empty string is deliberate and is not [MemoryUnavailable]. A run that
+// bounded nothing *and* knew why says so; a caller that said nothing about
+// memory at all — every caller that predates the bound, and every test fixture
+// that does not care — leaves both keys out, which is what makes the pair
+// additive.
+func memorySource(opts Options) MemorySource {
+	if opts.MemorySource.Valid() {
+		return opts.MemorySource
+	}
+	return ""
+}
+
+// checkMemory refuses a bound that contradicts where it says it came from.
+//
+// The two keys are one fact written twice, and every contradiction between them
+// is the kind a consumer reads straight past: `derived` with no number is a
+// bound nobody can check a `memory_exceeded` row against, `unavailable` with a
+// number is "there was no bound, and here it is", and a number with no source
+// is a budget of unknown provenance. Silence — neither field — is the one
+// combination that means something, and it means what every caller that
+// predates the bound says: nothing.
+func checkMemory(opts Options) error {
+	source, memory := opts.MemorySource, opts.Memory
+	switch {
+	case source == "" && memory == 0:
+		return nil
+	case source == "":
+		return &Error{
+			Code: CodeInvalidMemory,
+			Message: fmt.Sprintf("the run reports a memory bound of %d bytes and does not say where it came from: expected one of %s",
+				memory, joinMemorySources()),
+		}
+	case !source.Valid():
+		return &Error{
+			Code: CodeInvalidMemory,
+			Message: fmt.Sprintf("the memory bound came from %q, which is not a source: expected one of %s",
+				source, joinMemorySources()),
+		}
+	case source == MemoryUnavailable && memory != 0:
+		return &Error{
+			Code: CodeInvalidMemory,
+			Message: fmt.Sprintf("the run reports no memory bound and a bound of %d bytes: a run with none has no number to report",
+				memory),
+		}
+	case source != MemoryUnavailable && memory <= 0:
+		return &Error{
+			Code: CodeInvalidMemory,
+			Message: fmt.Sprintf("the run reports a %s memory bound of %d bytes: a bound nothing could fit in is not one",
+				source, memory),
+		}
+	}
+	return nil
+}
+
+// joinMemorySources lists the sources for a message, so that the list in an
+// error and the enum in the schema cannot drift apart.
+func joinMemorySources() string {
+	names := make([]string, 0, 3)
+	for _, source := range []MemorySource{MemoryExplicit, MemoryDerived, MemoryUnavailable} {
+		names = append(names, string(source))
+	}
+	return strings.Join(names, ", ")
+}
+
+// anyExecutionExceeded and highestExecutionPeak fold a mutant's rows into the
+// two facts the mutant itself carries.
+//
+// They are folded rather than required of the caller because the caller already
+// said it once per pass, and a second hand-maintained copy is a second thing to
+// get wrong. What the caller does supply directly is the *cached* case, where
+// there are no rows to fold and the facts come off the cache entry — so the two
+// sources are combined rather than chosen between, and a caller that supplied
+// both consistently gets the same answer either way.
+func anyExecutionExceeded(executions []Execution) bool {
+	for _, execution := range executions {
+		if execution.MemoryExceeded {
+			return true
+		}
+	}
+	return false
+}
+
+func highestExecutionPeak(executions []Execution) int64 {
+	var peak int64
+	for _, execution := range executions {
+		peak = max(peak, execution.PeakMemoryBytes)
+	}
+	return peak
 }
 
 // duplicate builds the error for one mutant claimed twice.

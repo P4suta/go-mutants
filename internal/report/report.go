@@ -130,6 +130,34 @@ func (s TimeoutSource) Valid() bool {
 	return s == TimeoutDerived || s == TimeoutExplicit
 }
 
+// A MemorySource says where the per-mutant memory bound came from, or that
+// there was none.
+//
+// It is [TimeoutSource] with one value the clock does not need. A deadline can
+// always be enforced; a memory bound cannot, because watching a process tree
+// while it runs is not something every supported platform offers, and a
+// document has to be able to say "no bound" rather than write a number nothing
+// applied.
+type MemorySource string
+
+// The v1 memory sources.
+const (
+	// MemoryDerived is max(1 GiB, largest baseline peak × 4).
+	MemoryDerived MemorySource = "derived"
+	// MemoryExplicit is the configured `test.memory` or `--memory`. It is
+	// recorded even where the platform cannot enforce it, because it is what
+	// the user asked for; the run says so in a warning.
+	MemoryExplicit MemorySource = "explicit"
+	// MemoryUnavailable is no bound at all: nothing measured a peak to derive
+	// one from, or this platform cannot enforce one and none was configured.
+	MemoryUnavailable MemorySource = "unavailable"
+)
+
+// Valid reports whether s is one of the defined sources.
+func (s MemorySource) Valid() bool {
+	return s == MemoryDerived || s == MemoryExplicit || s == MemoryUnavailable
+}
+
 // A CoverageMode says how coverage narrowed the run.
 type CoverageMode string
 
@@ -506,8 +534,8 @@ type ToolchainFacts struct {
 //
 // It is the same type on both sides of [Build]: the caller hands over the rows
 // the document will carry, because there is nothing to translate — an execution
-// is these six facts whether it is being reported or being written down. What
-// the document adds is the refusals; see [Options.Results].
+// is the same handful of facts whether it is being reported or being written
+// down. What the document adds is the refusals; see [Options.Results].
 //
 // An execution is not a verdict. A single [OutcomeTimedOut] row is not a
 // confirmed timeout, and no row is ever [OutcomeInconclusive], which is a
@@ -535,6 +563,37 @@ type Execution struct {
 	// the second of three binaries was measured against two, and naming all
 	// three would describe a measurement nobody made.
 	Binaries []string `json:"binaries"`
+	// MemoryExceeded reports that this pass was stopped by the run's per-mutant
+	// memory bound rather than by a test failing or by the deadline.
+	//
+	// It is why a row can say `killed` and name a binary that reported no
+	// failure. The outcome vocabulary is frozen and a bound is not a new kind of
+	// verdict — the original program was measured under the budget the bound was
+	// derived from, so a tree that needs several times what the whole suite
+	// needed has been changed observably, which is what a kill means — so the
+	// fact that tells this kill apart from an assertion's travels beside the
+	// outcome rather than inside it.
+	//
+	// It is optional and absent when false, so a document written before the
+	// bound existed is still a document this build reads.
+	MemoryExceeded bool `json:"memory_exceeded,omitzero"`
+	// PeakMemoryBytes is the highest memory any binary of this pass was
+	// observed to hold.
+	//
+	// It is the maximum over every binary the pass started rather than the
+	// deciding binary's: a pass's cost is the worst moment it put the machine
+	// through, and the binary that settled it need not be the one that cost the
+	// most. It is the resident set on Unix and the job's committed charge on
+	// Windows, which are close for a Go program and never equal, and neither is
+	// converted into the other.
+	//
+	// It is recorded for every pass and not only for the bounded ones, because
+	// the question it answers — which mutants cost the machine most — is asked
+	// after the run and cannot be asked of a run that measured only what it
+	// bounded. It is absent where the platform could not say, which is a
+	// different statement from a peak of zero and is why zero is omitted rather
+	// than written.
+	PeakMemoryBytes int64 `json:"peak_memory_bytes,omitzero"`
 }
 
 // Workspace names the tree the run read.
@@ -616,6 +675,18 @@ type Test struct {
 	Baseline      Baseline      `json:"baseline"`
 	TimeoutMS     int64         `json:"timeout_ms"`
 	TimeoutSource TimeoutSource `json:"timeout_source"`
+	// MemoryBytes is the per-mutant memory bound and MemorySource says where it
+	// came from. They are the timeout's twins and are written together: a
+	// document carrying one without the other would be a budget nobody could
+	// interpret.
+	//
+	// Both are optional, because a document written before the bound existed
+	// has neither, and MemoryBytes is absent for a run that bounded nothing —
+	// which is what [MemoryUnavailable] says in words. A run whose platform
+	// cannot enforce a bound still records an explicit one: it is what the user
+	// asked for, and the run's warnings say it was not held to.
+	MemoryBytes  int64        `json:"memory_bytes,omitzero"`
+	MemorySource MemorySource `json:"memory_source,omitzero"`
 	// Toolchain is the Go toolchain that ran that command; see
 	// [ToolchainFacts].
 	Toolchain *ToolchainFacts `json:"toolchain,omitempty"`
@@ -802,6 +873,23 @@ type Mutant struct {
 	// It is never true of an uncovered mutant, of a not-run one, or of an
 	// outcome the cache refuses to store; see internal/cache.
 	Cached bool `json:"cached"`
+	// MemoryExceeded says the run's per-mutant memory bound is what settled
+	// this mutant, and PeakMemoryBytes is the highest it was observed to hold.
+	//
+	// They restate what the execution rows already carry, and the restatement
+	// is the point: a *cached* mutant has an attempt count and no rows, because
+	// this run started no process for it — so a consumer reading the rows sees
+	// nothing, and `explain` on a warm run would report a kill it could not
+	// explain. For a mutant this run executed they are the maximum over its
+	// rows and whether any of them tripped the bound; for a cached one they are
+	// what the run that did measure it recorded.
+	//
+	// Both are optional, so a document written before the bound existed carries
+	// neither, and PeakMemoryBytes is absent — not zero — where the platform
+	// could not measure one. MemoryExceeded is only ever true beside an outcome
+	// of `killed`; the bound it was measured against is `test.memory_bytes`.
+	MemoryExceeded  bool  `json:"memory_exceeded,omitzero"`
+	PeakMemoryBytes int64 `json:"peak_memory_bytes,omitzero"`
 }
 
 // A Branch is the body span a mutant's condition gates, in the coordinates

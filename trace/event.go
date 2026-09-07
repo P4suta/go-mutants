@@ -162,6 +162,24 @@ type ExecRecord struct {
 
 	DurationMS int64 `json:"duration_ms,omitempty"`
 
+	// PeakMemoryBytes is the highest memory the command's whole process
+	// tree was observed to hold, and is absent when the platform could not say.
+	//
+	// It is what a command cost the machine beside what DurationMS says it cost
+	// the clock, and it is recorded for every command rather than only for the
+	// ones somebody bounded. The question a reader brings to a recording — which
+	// of these thousands of processes was the expensive one — is asked after the
+	// run, and a recording that had measured only what it bounded could not
+	// answer it.
+	//
+	// It is not the same quantity on every platform and is not converted into
+	// one: the resident set on Unix, the job's committed charge on Windows. What
+	// "the tree" covers is the platform's too, and internal/runner documents the
+	// difference: exact on Windows, and on POSIX the larger of the kernel's
+	// accounting for the child and the largest sum a bounded run's sampler saw
+	// across the process group.
+	PeakMemoryBytes int64 `json:"peak_memory_bytes,omitempty"`
+
 	// OutputBytes and OutputSHA256 cover the whole of [ExecRecord.Output] and
 	// are set by the recorder, so two runs are compared on what their commands
 	// produced.
@@ -235,6 +253,23 @@ type MutantRecord struct {
 	KilledBy string `json:"killed_by,omitempty"`
 
 	DurationMS int64 `json:"duration_ms,omitempty"`
+
+	// MemoryExceeded reports that the attempt was stopped by its memory bound
+	// rather than by its deadline or by a test failing, and PeakMemoryBytes is the
+	// highest the deciding binary's process tree was observed to hold.
+	//
+	// MemoryExceeded is why the outcome above says `killed` for a mutant that
+	// never failed a test: the vocabulary is frozen and a bound is not a new
+	// kind of verdict, so the fact that distinguishes this kill from an
+	// assertion's travels beside it rather than inside it.
+	//
+	// PeakMemoryBytes is recorded for every attempt, bounded or not, as the
+	// `exec` record's is — and it is the **maximum over every binary the
+	// attempt started**, not the deciding binary's. An attempt's cost is the
+	// worst moment it put the machine through, and the binary that settled it
+	// need not be the one that cost the most.
+	MemoryExceeded  bool  `json:"memory_exceeded,omitempty"`
+	PeakMemoryBytes int64 `json:"peak_memory_bytes,omitempty"`
 
 	// ExecSeqs are the `exec` events of the binaries this attempt ran, in
 	// order. They are how an attempt is joined to the commands underneath it,

@@ -760,6 +760,9 @@ func (w *Workspace) runCommand(
 	if command.Timeout < 0 {
 		return commandRun{}, errors.New("gomutants: exec: timeout is negative")
 	}
+	if command.MemoryLimit < 0 {
+		return commandRun{}, errors.New("gomutants: exec: memory limit is negative")
+	}
 	dir, err := moduleDirectory(w.snapshot.Root, command.Dir)
 	if err != nil {
 		return commandRun{}, fmt.Errorf("gomutants: exec directory: %w", err)
@@ -781,6 +784,7 @@ func (w *Workspace) runCommand(
 		Dir:            dir,
 		Env:            env,
 		Timeout:        timeout,
+		MemoryLimit:    command.MemoryLimit,
 		OutputLimit:    command.OutputLimit,
 		SeparateStdout: label.splitStdout,
 		Trace:          w.recorder,
@@ -795,7 +799,10 @@ func (w *Workspace) runCommand(
 			Output:     slices.Clone(run.Output),
 			Truncated:  run.Truncated,
 			TotalBytes: run.OutputBytes,
-			TraceSeq:   run.TraceSeq,
+			// What the command cost the machine, beside what it cost the clock.
+			PeakMemory:     run.PeakMemory,
+			MemoryExceeded: run.MemoryExceeded,
+			TraceSeq:       run.TraceSeq,
 		},
 		stdout: slices.Clone(run.Stdout),
 	}

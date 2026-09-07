@@ -310,6 +310,7 @@ func TestControlRefusesWhatExecRefuses(t *testing.T) {
 		env     []string
 		assert  func(t *testing.T, call string, err error)
 		timeout time.Duration
+		memory  int64
 	}{
 		{
 			name: "the reserved timeout flag",
@@ -387,14 +388,29 @@ func TestControlRefusesWhatExecRefuses(t *testing.T) {
 				}
 			},
 		},
+		{
+			// The budget's other half, refused in the same shape and by both
+			// calls. A negative bound is not a small one: it would be a budget
+			// every process is over, so a session that accepted it would kill
+			// every mutant it started and call each one detected.
+			name:   "a negative memory limit",
+			memory: -1,
+			assert: func(t *testing.T, call string, err error) {
+				t.Helper()
+				if want := "gomutants: session " + call + ": memory limit is negative"; err.Error() != want {
+					t.Errorf("err = %q, want %q", err, want)
+				}
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, execErr := prepared.session.Exec(t.Context(), gomutants.ExecRequest{
-				Mutant:  mutant.ID,
-				Package: test.pkg,
-				Args:    test.args,
-				Env:     test.env,
-				Timeout: test.timeout,
+				Mutant:      mutant.ID,
+				Package:     test.pkg,
+				Args:        test.args,
+				Env:         test.env,
+				Timeout:     test.timeout,
+				MemoryLimit: test.memory,
 			})
 			if execErr == nil {
 				t.Fatal("Exec accepted the request, so there is nothing for Control to agree with")
@@ -402,10 +418,11 @@ func TestControlRefusesWhatExecRefuses(t *testing.T) {
 			test.assert(t, "exec", execErr)
 
 			_, controlErr := prepared.session.Control(t.Context(), gomutants.ControlRequest{
-				Package: test.pkg,
-				Args:    test.args,
-				Env:     test.env,
-				Timeout: test.timeout,
+				Package:     test.pkg,
+				Args:        test.args,
+				Env:         test.env,
+				Timeout:     test.timeout,
+				MemoryLimit: test.memory,
 			})
 			if controlErr == nil {
 				t.Fatal("Control accepted a request Exec refused")

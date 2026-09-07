@@ -14,6 +14,115 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A mutant is bounded in memory the way it is bounded in time.** Widening the
+  dogfood gate to `internal/config` brought in two mutants that never return
+  *and allocate while not returning*: `negate-loop-condition` at
+  `internal/config/position.go:59` turns `for parser.NextExpression()` into a
+  loop that appends until the process dies, and the same rule on the `i < 0`
+  condition in `lineStarts` does it again. One of them reached roughly eleven
+  gigabytes in twelve seconds locally. On GitHub's ubuntu runner the `dogfood`
+  job did not fail — it *vanished*, with "The runner has received a shutdown
+  signal", immediately after
+  `KILLED dbb00722 internal/config/position.go:59:6 negate-loop-condition
+  (23.123s)`. The per-mutant timeout for that suite is ten seconds and it did
+  eventually fire; the machine was already gone.
+
+  Excluding the mutant, or budgeting the package out of the run, is a
+  regression this project does not take: a score computed over the mutants that
+  happened to be convenient is not a score. So the tool bounds what it had left
+  unbounded. `runner.Spec.MemoryLimit` bounds the resident memory of a child's
+  whole process tree; while the child runs the tree is sampled every 100 ms and
+  the first sample over the limit kills it exactly as the deadline does, with
+  `Result.MemoryExceeded` rather than `Result.TimedOut`. The bound is derived
+  from the same baseline runs the timeout is derived from —
+  `max(1GiB, largest baseline peak × 4)` — and `[test] memory = "2GiB"` or
+  `--memory 2GiB` replaces it exactly as `test.timeout` and `--timeout` replace
+  a derived timeout. The baseline itself runs unbounded, because it is the
+  measurement the bound is derived from.
+
+  A mutant the bound stops is **`killed`**, and the outcome vocabulary does not
+  grow for it. The original program was measured under the budget the bound came
+  from, so a tree needing four times what the whole unmutated suite needed has
+  been changed observably, which is what a kill already means. What tells this
+  kill apart from an assertion's travels beside it: `memory_exceeded` and
+  `peak_memory_bytes` on `mutants[].executions[]` and on the `mutant-exec` record,
+  the bound itself as `test.memory_bytes` and `test.memory_source` beside
+  `test.timeout_ms`, and the same two facts on `mutants[]` so that a *cached*
+  memory kill — which has an attempt count and no execution rows — reads like a
+  measured one; all additive and optional. A `-v` console line reading
+  `killed by <pkg> (memory: 3.2 GiB > 1.0 GiB bound)`, and the same sentence in
+  `go-mutants explain`, whose per-attempt lines also carry what each pass cost.
+  `peak_memory_bytes` on the `exec` record says what *every* command cost, bounded
+  or not, because "which of these thousands of processes was the expensive one"
+  is a question asked after the run.
+
+  Because a memory kill is stored as an ordinary kill, the outcome cache needed
+  the rule the timeout already has, and the peak with it — an entry that
+  remembered a bound had settled a mutant but not what it reached would let a
+  warm run report a kill nobody could act on. The bound stays out of the cache
+  *key* — a derived bound follows the baseline peak, so keying on it would give
+  every machine a cache of its own — and is recorded on the entry instead: an
+  entry killed *by* the bound is evidence about that bound and any tighter one,
+  and an entry that reached a verdict inside a bound is not evidence about a
+  smaller one, which might have killed it first. Without it, a run at 256 MiB
+  would cache `killed` and a run at 8 GiB would adopt it, having never asked
+  whether the mutant would have survived with thirty times the memory.
+
+  A memory kill is also the one kill that skips the two-second SIGTERM grace. The
+  grace exists so a timed-out test binary can flush the output that explains why
+  it timed out; a tree over its budget has already had its peak recorded and
+  would spend those two seconds allocating hundreds of megabytes more of exactly
+  what the bound is there to prevent.
+
+  Two shapes of run are treated as the exceptions they are. The baseline runs
+  unbounded, because it is what the bound is derived from. And a **fuzz run gets
+  no derived bound at all** — `go test -fuzz` is a coordinator plus one worker
+  process per core, each mapping the same 100 MiB region the fuzzing engine
+  communicates through, so a four-core machine is half a gibibyte of mappings
+  before an input has been tried and a bound derived from one process running
+  the suite once would kill it for being what it is. A limit the caller names
+  still applies, to fuzzing like anything else. For the same reason the Linux
+  sampler reads the proportional set size from `/proc/<pid>/smaps_rollup` rather
+  than `VmRSS`, which counts a shared page once per sharer and would have
+  reported that one region eight times on an eight-core box; kernels without
+  `smaps_rollup` fall back to `VmRSS`, which over-counts and so bounds more
+  tightly rather than less.
+
+  On Windows the bound is checked once more after the child has been reaped,
+  because a tree can cross the line and die inside one sampling tick: the job
+  object refuses its next commit and the Go runtime dies with "out of memory"
+  before anything sampled it, and reporting that as an ordinary failing test
+  means a mutant `killed` for a reason nobody can find. Such a result carries
+  `MemoryExceeded` beside the child's own exit code, and both mean what they
+  say. It is deliberately narrow — Windows only, non-zero exit only — because a
+  peak above the bound is a fact about what a run *cost* and not a cause of its
+  ending: measured on a loaded machine, ordinary `-cover` binaries of a
+  three-function fixture peaked at 607 MiB against a 256 MiB bound and finished
+  perfectly well.
+
+  Rlimits were rejected rather than overlooked: RLIMIT_AS bounds address space,
+  of which the Go runtime reserves hundreds of gigabytes before allocating
+  anything, RLIMIT_DATA is Linux-only and covers a segment a Go heap does not
+  live in, and neither reaches the child's own children — which is exactly where
+  a `go test` binary keeps the memory this tool is responsible for. Linux sums
+  the process group from `/proc`, Windows queries the job object and *also*
+  carries `JOB_OBJECT_LIMIT_JOB_MEMORY` so the kernel holds the line under the
+  sampler — set a quarter *above* the sampler's line, because the flag caps the
+  job's own accounting at its limit and a kernel line equal to the sampler's
+  would leave the sampler unable to ever read a number above it, silently
+  removing every user-visible half of the feature on one platform. macOS can
+  report what a process cost once it is gone but cannot watch one while it runs
+  without a cgo dependency this module does not take, so a run there measures
+  the peak, records an explicit `test.memory` because that is what the user
+  asked for, enforces neither it nor a derived bound, and says so on the `-v`
+  line. `GOM4047` is raised only for the case a user can act on — an explicit
+  bound this machine will not hold anybody to — because warning about a
+  platform's own limits on every clean run is how a warning stops being read.
+  Linux probes `/proc` once rather than trusting its build tag, so a container
+  that hides the process table reports itself unable to enforce a bound instead
+  of deriving one and enforcing it nowhere. The reasoning is
+  [ADR 0009](docs/adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md); the
+  `runaway/` fixture is the mutant, reproduced and stopped.
 - **`Workspace.Module` answers what the frozen module holds, so a consumer does
   not have to run `go list -json` itself and parse it.** The library had already
   frozen the tree, located the toolchain and settled the report and snapshot

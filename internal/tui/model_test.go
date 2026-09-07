@@ -465,11 +465,13 @@ func TestWarningsAreCountedRatherThanDrawn(t *testing.T) {
 // is worth: an event the dashboard has no drawing for changes nothing about the
 // frame.
 //
-// [engine.Traced], [engine.PhaseCompleted] and [engine.DirectoryKept] are the
-// three that arrive today, and all three belong to the plain renderer — a
-// dashboard that redrew on every recorded subprocess would repaint thousands of
-// times for facts nobody can read at that speed, and a kept directory's path is
-// a line to copy out of a scrollback rather than a number on a live frame.
+// [engine.Traced], [engine.PhaseCompleted], [engine.DirectoryKept] and
+// [engine.MemoryDerived] are the four that arrive today, and all four belong to
+// the plain renderer — a dashboard that redrew on every recorded subprocess
+// would repaint thousands of times for facts nobody can read at that speed, a
+// kept directory's path is a line to copy out of a scrollback rather than a
+// number on a live frame, and a bound that is checked ten times a second and
+// reported only when it fires has nothing to show while nothing is firing.
 //
 // Ignored here is not dropped, and the difference matters for exactly one of
 // them: [Renderer.keep] holds [engine.DirectoryKept] for [Renderer.Final], so a
@@ -495,6 +497,8 @@ func TestUnknownEventsAreIgnored(t *testing.T) {
 		engine.Traced{},
 		engine.DirectoryKept{Kind: engine.KeptSnapshot, Path: "/tmp/go-mutants-snap-1a2b/tree"},
 		engine.DirectoryKept{Kind: engine.KeptScratch, Path: "/tmp/go-mutants-tmp-3c4d"},
+		engine.MemoryDerived{Limit: 1 << 30, Source: engine.MemorySourceDerived, Peak: 200 << 20},
+		engine.MemoryDerived{Source: engine.MemorySourceUnavailable},
 	)
 	if got := h.model.View(); got != before {
 		t.Errorf("an ignored event redrew the dashboard:\n%s\nwant\n%s", got, before)

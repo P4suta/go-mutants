@@ -4,6 +4,7 @@ phase discover: done (1.25s)
 phase baseline: building the snapshot, then 3 timed runs of go test ./...
 baseline run 1/3: 152ms
 baseline ok: avg 152ms, slowest 152ms, timeout 10s (derived)
+memory: baseline peak 200.0 MiB, bound 1.0 GiB (derived)
 phase baseline: done (2.34s)
 phase mutate: discovering candidates, validating them, then executing the mutants
 discovered 4 candidates, 12 skips

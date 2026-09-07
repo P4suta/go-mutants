@@ -31,7 +31,12 @@ type groupSupervisor struct {
 
 // newSupervisor cannot fail here: the group is created by the kernel as part
 // of starting the child, so there is nothing to allocate up front.
-func newSupervisor() (supervisor, error) { return &groupSupervisor{}, nil }
+//
+// The memory limit is accepted and ignored. POSIX has no kernel bound that
+// fits — see [memoryWatchdog] for why the rlimits are not it — so the whole of
+// enforcement on this platform is the sampler reading
+// [groupSupervisor.usedMemory].
+func newSupervisor(int64) (supervisor, error) { return &groupSupervisor{}, nil }
 
 // configure asks the kernel to put the child in a new process group of its
 // own. Any descendant it later creates inherits that group, which is what
@@ -51,33 +56,63 @@ func (s *groupSupervisor) adopt(cmd *exec.Cmd) error {
 	return nil
 }
 
-// terminate signals the whole group, politely first.
+// terminate signals the whole group, politely first when there is a grace to
+// spend.
 //
 // SIGTERM gives a test binary the chance to run its deferred cleanup and flush
 // its output, which is worth having because that output is the evidence for
-// why the mutant timed out. SIGKILL follows after [TerminationGrace] if the
-// group is still there — a hung test is exactly the case that ignores SIGTERM,
-// so the escalation is not optional.
+// why the mutant timed out. SIGKILL follows after the grace if the group is
+// still there — a hung test is exactly the case that ignores SIGTERM, so the
+// escalation is not optional.
+//
+// A grace of zero skips the polite phase entirely and sends SIGKILL first. That
+// is the memory bound's path, and it is not an optimisation: this helper's own
+// measurements put a Go program appending to a slice at tens of megabytes per
+// tenth of a second, so two seconds of politeness for a tree that is already
+// over its budget is hundreds of megabytes more of exactly what the bound
+// exists to prevent — on a machine that has just been shown to be short of it.
+// Nothing is lost by skipping it, because the evidence a memory kill rests on
+// is the peak, and the peak was measured before the signal was sent.
 //
 // The kill goes to -pgid while the child is still un-reaped, so the pid the
 // group is named after cannot yet have been recycled by the kernel. That
 // ordering is the reason this package never sweeps the group after a normal
 // exit; see the package documentation.
-func (s *groupSupervisor) terminate(exited <-chan struct{}) {
+func (s *groupSupervisor) terminate(exited <-chan struct{}, grace time.Duration) {
 	supervisionTerminated.Add(1)
 	if s.pgid <= 0 {
 		return
 	}
-	_ = syscall.Kill(-s.pgid, syscall.SIGTERM)
+	if grace > 0 {
+		_ = syscall.Kill(-s.pgid, syscall.SIGTERM)
 
-	timer := time.NewTimer(TerminationGrace)
-	defer timer.Stop()
-	select {
-	case <-exited:
-		return
-	case <-timer.C:
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-exited:
+			return
+		case <-timer.C:
+		}
 	}
 	_ = syscall.Kill(-s.pgid, syscall.SIGKILL)
+}
+
+// usedMemory sums what every process in the group is holding. It is the
+// same set the kill above reaches, and it has the same hole: see
+// [groupResidentMemory].
+func (s *groupSupervisor) usedMemory() (int64, bool) {
+	return groupResidentMemory(s.pgid)
+}
+
+// peakMemory reads the high-water mark the kernel kept for the reaped child.
+//
+// It is deliberately not the sampler's number: ru_maxrss is recorded by the
+// kernel on every child, bounded or not, so an unbounded run — which starts no
+// sampler at all — is still measured. [Run] takes the larger of the two, so a
+// tree whose grandchild outlived its parent is reported at whatever the sampler
+// managed to see rather than at what wait4 could account for.
+func (s *groupSupervisor) peakMemory(ps *os.ProcessState) (int64, bool) {
+	return peakRSSOf(ps)
 }
 
 // release has nothing to free: a process group is a number, not a handle.

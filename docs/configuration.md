@@ -37,6 +37,7 @@ reason = "Equivalent: the branch is unreachable for all valid inputs."
 [test]
 command = ["go", "test", "./..."]
 timeout = "60s"
+memory = "2GiB"
 baseline_runs = 3
 
 [execution]
@@ -141,6 +142,26 @@ low = 60
   `[cache]` below), so set `mode = "on"` if you want it.
 - `timeout`: a duration string such as `"60s"` or `"2m"`. Omitted derives
   `max(10s, slowest baseline × 5)`.
+- `memory`: a byte size such as `"2GiB"` or `"512MiB"`, bounding the resident
+  memory of each mutant's whole process tree. Omitted derives
+  `max(1GiB, largest baseline peak × 4)`. The units are binary — `B`, `KiB`,
+  `MiB`, `GiB`, `TiB` — and the decimal spellings (`kB`, `MB`, `GB`) are refused
+  rather than reinterpreted, so a bound is never quietly 7% tighter than it
+  reads. A mutant whose tree passes the bound is reported as `killed`, with
+  `memory_exceeded` on its execution row saying what did the killing: it is the
+  budget that stops a mutant which turns a terminating loop into one that
+  allocates forever, which no timeout short enough to be useful can. It is not
+  enforced on macOS, where sampling a live process tree needs a cgo dependency
+  this tool does not take; a run there records the bound you wrote, says once —
+  as `GOM4047` — that it is not held to, and bounds its mutants in time alone.
+
+  A bound below what the project's own coverage-instrumented test binaries need
+  does not break the run: the coverage pass is the first thing to hit it, and a
+  coverage pass that fails is one go-mutants gives up rather than insists on. It
+  warns, measures every mutant against every test binary, and reaches exactly
+  the same verdicts more slowly. The `-cover` binaries are the largest processes
+  a run starts, so that is also where a bound set too low announces itself
+  first.
 - `baseline_runs`: positive integer, default 3. Every observation is retained
   in the report, not just the slowest.
 

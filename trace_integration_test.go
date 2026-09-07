@@ -553,7 +553,7 @@ func TestATraceSinkThatFailsChangesNoCatalogDigestOrResult(t *testing.T) {
 		killed[i] = steadyMutantResult(result)
 	}
 	if diff := cmp.Diff(killed[0], killed[1],
-		cmpopts.IgnoreFields(gomutants.MutantResult{}, "Duration", "TotalBytes", "TraceSeq")); diff != "" {
+		cmpopts.IgnoreFields(gomutants.MutantResult{}, resultMeasurements...)); diff != "" {
 		t.Errorf("the kill differs between a ring and a broken sink (-ring +sink):\n%s", diff)
 	}
 
@@ -568,7 +568,7 @@ func TestATraceSinkThatFailsChangesNoCatalogDigestOrResult(t *testing.T) {
 		passes[i] = steadyProbeResult(result)
 	}
 	if diff := cmp.Diff(passes[0], passes[1],
-		cmpopts.IgnoreFields(gomutants.ProbeResult{}, "Duration", "TotalBytes", "TraceSeq")); diff != "" {
+		cmpopts.IgnoreFields(gomutants.ProbeResult{}, resultMeasurements...)); diff != "" {
 		t.Errorf("the probe pass differs between a ring and a broken sink (-ring +sink):\n%s", diff)
 	}
 	if !slices.Equal(infected[0], infected[1]) {
@@ -1109,7 +1109,7 @@ func TestASuppliedSinkReceivesExactlyWhatTheRingWould(t *testing.T) {
 	ringed, ringedResult := recordedWorkspace(t, nil)
 
 	if diff := cmp.Diff(ringedResult, suppliedResult,
-		cmpopts.IgnoreFields(gomutants.CommandResult{}, "Duration", "TraceSeq")); diff != "" {
+		cmpopts.IgnoreFields(gomutants.CommandResult{}, "Duration", "PeakMemory", "TraceSeq")); diff != "" {
 		t.Errorf("the two workspaces returned different command results (-ring +sink):\n%s", diff)
 	}
 	if got := ringed.Recording(); got == nil {
@@ -1204,3 +1204,20 @@ func TestEveryLineOfAWorkspaceRecordingValidates(t *testing.T) {
 		}
 	}
 }
+
+// resultMeasurements are the fields two runs of the same work are never
+// expected to agree on, and which every comparison of two results therefore
+// ignores.
+//
+// Duration and PeakMemory are both measurements of the machine rather than
+// statements about the code: the same binary takes a different number of
+// nanoseconds and a different number of pages every time it runs, and on Linux
+// the peak moved between two runs of one fixture by 80 KiB — enough to fail a
+// comparison that had only thought of the clock. TotalBytes is the same kind of
+// thing for output whose length depends on how far a suite got, and TraceSeq is
+// the one field recording is meant to change.
+//
+// They are one list rather than three literals so that a field added to a
+// result later is added here once, and so that "which of these is a
+// measurement" is answered in a comment rather than three times over.
+var resultMeasurements = []string{"Duration", "PeakMemory", "TotalBytes", "TraceSeq"}

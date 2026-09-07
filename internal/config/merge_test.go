@@ -97,6 +97,15 @@ func precedenceCases() []precedenceCase {
 			fromFlag:    2 * time.Minute,
 		},
 		{
+			name:        "test.memory",
+			document:    "version = 1\n[test]\nmemory = \"512MiB\"\n",
+			flags:       Overlay{Memory: Explicit(int64(2) << 30)},
+			read:        func(c Config) any { return c.Test.Memory },
+			fromDefault: int64(0),
+			fromFile:    int64(512) << 20,
+			fromFlag:    int64(2) << 30,
+		},
+		{
 			name:        "test.baseline_runs",
 			document:    "version = 1\n[test]\nbaseline_runs = 5\n",
 			flags:       Overlay{BaselineRuns: Explicit(1)},
@@ -258,7 +267,7 @@ func TestPrecedenceCoversEveryOverridableSetting(t *testing.T) {
 	}
 	want := []string{
 		"mutation.include", "mutation.exclude", "mutation.operators", "mutation.profile", "mutation.expect",
-		"test.command", "test.timeout", "test.baseline_runs",
+		"test.command", "test.timeout", "test.memory", "test.baseline_runs",
 		"execution.jobs",
 		"cache.mode", "cache.directory",
 		"policy.strict", "policy.minimum_score", "policy.require_mutants",

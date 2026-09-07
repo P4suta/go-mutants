@@ -299,7 +299,7 @@ func TestMutantResultCarriesKilledByAttemptsAndCoveringPackages(t *testing.T) {
 	st := newState()
 	st.display[id] = MutantResult{ID: id, DisplayID: "aa"}
 	st.coverage.covering = map[string][]string{id: covering}
-	s.hooks(st).Finished(execute.MutantResult{
+	s.hooks(st, 0).Finished(execute.MutantResult{
 		ID:       id,
 		Final:    mutation.OutcomeKilled,
 		KilledBy: "example.com/m/a",

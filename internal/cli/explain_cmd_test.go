@@ -78,6 +78,8 @@ func explainReport() *report.Report {
 			},
 			TimeoutMS:     20000,
 			TimeoutSource: report.TimeoutExplicit,
+			MemoryBytes:   1 << 30,
+			MemorySource:  report.MemoryDerived,
 		},
 		Coverage: report.Coverage{
 			Mode:             report.CoveragePackage,
@@ -96,9 +98,11 @@ func explainReport() *report.Report {
 				KilledBy: &killedBy, Attempts: 2,
 				Executions: []report.Execution{
 					{Attempt: 1, Worker: 3, Outcome: report.OutcomeTimedOut, DurationMS: 20000,
-						KilledBy: "example.com/killable", Binaries: []string{"example.com/killable"}},
+						KilledBy: "example.com/killable", Binaries: []string{"example.com/killable"},
+						PeakMemoryBytes: 314572800},
 					{Attempt: 2, Worker: 0, Outcome: report.OutcomeKilled, DurationMS: 520,
-						KilledBy: "example.com/killable", Binaries: []string{"example.com/killable"}},
+						KilledBy: "example.com/killable", Binaries: []string{"example.com/killable"},
+						PeakMemoryBytes: 419430400},
 				},
 				OutputTail:           &tail,
 				CoveringTestPackages: []string{"example.com/killable"},
@@ -112,7 +116,7 @@ func explainReport() *report.Report {
 				Outcome: report.OutcomeSurvived, DurationMS: 310, Attempts: 1,
 				Executions: []report.Execution{
 					{Attempt: 1, Worker: 1, Outcome: report.OutcomeSurvived, DurationMS: 310,
-						Binaries: []string{"example.com/killable"}},
+						Binaries: []string{"example.com/killable"}, PeakMemoryBytes: 209715200},
 				},
 				CoveringTestPackages: []string{"example.com/killable"},
 			},
@@ -416,7 +420,7 @@ coverage
   covered by: example.com/killable
 
 executions
-  attempt 1  worker 1  survived  310ms
+  attempt 1  worker 1  survived  310ms  peak 200.0 MiB
     binaries: example.com/killable
   no recording, so the commands these passes started are not in this account
 
@@ -1161,4 +1165,92 @@ func TestExplainResolvesARunPrefix(t *testing.T) {
 			t.Errorf("the refusal carries no %s:\n%s", CodeNoStoredRun, stderr)
 		}
 	})
+}
+
+// TestExplainSaysWhichBudgetSettledAMemoryKill is the account of the one
+// outcome that reads wrong without it.
+//
+// A mutant the memory bound stopped is reported as `killed` and names the suite
+// that was running — and that suite's tests all pass. A reader who went and
+// looked would find nothing, which is exactly the state `explain` exists to
+// resolve, so the verdict says which budget settled it and against what. The
+// per-attempt lines carry the peak whether or not a bound was involved, because
+// "which of my mutants cost the machine most" is a question about a run in
+// which nothing went wrong.
+func TestExplainSaysWhichBudgetSettledAMemoryKill(t *testing.T) {
+	doc := explainReport()
+	// The second pass, which is the one that settled it, is turned into a
+	// memory kill: the outcome does not change, and everything about how it
+	// reads does. The mutant's own fields carry the same facts — a document
+	// records them at both levels so that a cached mutant, which has no rows at
+	// all, reads the same way; see [TestExplainSaysWhichBudgetSettledACachedMemoryKill].
+	rows := doc.Mutants[0].Executions
+	rows[1].MemoryExceeded = true
+	rows[1].PeakMemoryBytes = 3435973836
+	doc.Mutants[0].MemoryExceeded = true
+	doc.Mutants[0].PeakMemoryBytes = 3435973836
+	inExplainWorkspace(t, doc)
+
+	out := explained(t, killedID[:8])
+	for _, want := range []string{
+		"killed by example.com/killable (memory: 3.2 GiB > 1.0 GiB) after 2 attempts",
+		"attempt 2  worker 0  killed",
+		"peak 3.2 GiB",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the account of a memory kill does not carry %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestExplainShowsWhatEachPassCostWithoutABoundInSight is the other half: the
+// peak is an ordinary fact about an ordinary pass, not a footnote to a kill.
+func TestExplainShowsWhatEachPassCostWithoutABoundInSight(t *testing.T) {
+	inExplainWorkspace(t, explainReport())
+
+	out := explained(t, survivorID[:8])
+	if !strings.Contains(out, "peak 200.0 MiB") {
+		t.Errorf("the account of a survivor does not say what its pass cost:\n%s", out)
+	}
+	if strings.Contains(out, "memory:") {
+		t.Errorf("a pass no bound stopped mentions the bound:\n%s", out)
+	}
+}
+
+// TestExplainSaysWhichBudgetSettledACachedMemoryKill is the case the mutant's
+// own memory fields exist for.
+//
+// A cached mutant carries an attempt count and no execution rows, because this
+// run started no process for it. An account that read the rows would therefore
+// say "killed by <pkg>" and stop — the same sentence a passing suite gets, on a
+// run where nothing can be looked at — which is precisely the state `explain`
+// exists to resolve. The facts are on the mutant as well as on the rows, and
+// this is the reader that needs them there.
+func TestExplainSaysWhichBudgetSettledACachedMemoryKill(t *testing.T) {
+	doc := explainReport()
+	var cached *report.Mutant
+	for i := range doc.Mutants {
+		if doc.Mutants[i].Cached {
+			cached = &doc.Mutants[i]
+			break
+		}
+	}
+	if cached == nil {
+		t.Fatal("the explain fixture has no cached mutant")
+	}
+	if len(cached.Executions) != 0 {
+		t.Fatalf("the cached mutant carries %d rows, so this proves nothing", len(cached.Executions))
+	}
+	cached.Outcome = report.OutcomeKilled
+	cached.MemoryExceeded = true
+	cached.PeakMemoryBytes = 3435973836
+	inExplainWorkspace(t, doc)
+
+	out := explained(t, cached.ID[:8])
+	if !strings.Contains(out, "(memory: 3.2 GiB > 1.0 GiB)") {
+		t.Errorf("the account of a cached memory kill does not say which budget settled it:\n%s", out)
+	}
+	if !strings.Contains(out, "reused from the outcome cache") {
+		t.Errorf("the account does not say the outcome was adopted:\n%s", out)
+	}
 }

@@ -132,6 +132,14 @@
         "baseline": { "$ref": "#/$defs/baseline" },
         "timeout_ms": { "$ref": "#/$defs/milliseconds" },
         "timeout_source": { "enum": ["explicit", "derived"] },
+        "memory_bytes": {
+          "description": "The per-mutant memory bound this run applied, in bytes. Optional, and written together with memory_source: a document from before the bound existed has neither, and a run that bounded nothing writes no number, which is what a memory_source of `unavailable` says in words. A configured bound is recorded even on a platform that cannot enforce it, in which case the run's warnings say it was not held to.",
+          "$ref": "#/$defs/count"
+        },
+        "memory_source": {
+          "description": "Where memory_bytes came from: `explicit` for a configured `test.memory` or `--memory`, `derived` for max(1GiB, largest baseline peak x 4), and `unavailable` for a run with no bound at all. Optional, and written together with memory_bytes.",
+          "enum": ["explicit", "derived", "unavailable"]
+        },
         "toolchain": { "$ref": "#/$defs/toolchain" },
         "resolved_command": {
           "description": "The argv that was really started: `command` with the located toolchain's absolute path in place of a bare `go`, and identical to it for any other program. Optional, and absent from a merged document, which has one per shard.",
@@ -139,7 +147,31 @@
           "minItems": 1,
           "items": { "type": "string" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["memory_source"], "properties": { "memory_source": { "enum": ["explicit", "derived"] } } },
+          "then": {
+            "description": "A bound that came from somewhere is a bound with a number: `derived` or `explicit` with no memory_bytes beside it is a budget nobody could check a mutant's memory_exceeded against.",
+            "required": ["memory_bytes"],
+            "properties": { "memory_bytes": { "minimum": 1 } }
+          }
+        },
+        {
+          "if": { "required": ["memory_source"], "properties": { "memory_source": { "const": "unavailable" } } },
+          "then": {
+            "description": "A run with no bound has no number to report, so `unavailable` beside a memory_bytes would say there was none and here it is.",
+            "not": { "required": ["memory_bytes"] }
+          }
+        },
+        {
+          "if": { "required": ["memory_bytes"] },
+          "then": {
+            "description": "The two keys are one fact written twice and are written together: a number with nothing saying where it came from is a budget of unknown provenance.",
+            "required": ["memory_source"]
+          }
+        }
+      ]
     },
     "baseline": {
       "description": "Every unmutated observation, not just the summary: runs equals the length of durations_ms, and slowest_ms is the largest of them, or 0 when there are none.",
@@ -286,6 +318,14 @@
           "description": "How many times this mutant was executed. Zero for a mutant the run never reached, one for an outcome settled first time, and two for a confirmed timeout. A not_run mutant is usually zero, but a mutant that timed out once and was interrupted before the retry could repeat it reports the one attempt it did make.",
           "$ref": "#/$defs/count"
         },
+        "memory_exceeded": {
+          "description": "The run's per-mutant memory bound is what settled this mutant. It restates what an execution row says, and the restatement is why it is here: a cached mutant has an attempt count and no rows, so a consumer reading only the rows would see nothing. Optional, and only ever true beside an outcome of `killed`; the bound it was measured against is `test.memory_bytes`.",
+          "type": "boolean"
+        },
+        "peak_memory_bytes": {
+          "description": "The highest this mutant was observed to hold: the maximum over its execution rows for a mutant this run executed, and what the measuring run recorded for a cached one. Optional, and absent — rather than zero — where the platform could not measure one.",
+          "$ref": "#/$defs/count"
+        },
         "executions": {
           "description": "One row per pass this run made over the test binaries for this mutant, in attempt order, so there are exactly `attempts` of them for a mutant this run executed. It is present and empty for a cached, uncovered or not-run mutant — each of which was settled without a process being started, and the cached one keeps the attempt count of the run that did measure it. The whole key is optional: a document an older build wrote does not have it, and a merged document drops it, because a worker number and a duration describe one machine.",
           "type": "array",
@@ -305,7 +345,16 @@
           "description": "This outcome was adopted from the outcome cache rather than measured by this run, so duration_ms, attempts, killed_by and output_tail are the ones the run that measured it recorded. It is only ever true of killed, survived and timed-out — the cache stores no other outcome — never of an uncovered mutant, and never in a run whose cache.mode is off.",
           "type": "boolean"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["memory_exceeded"], "properties": { "memory_exceeded": { "const": true } } },
+          "then": {
+            "description": "A mutant the bound settled is killed, for the reason an execution row that says so is: the outcome vocabulary is frozen and a bound is not a new kind of verdict.",
+            "properties": { "outcome": { "const": "killed" } }
+          }
+        }
+      ]
     },
     "outcome": {
       "description": "timed-out is a confirmed timeout — it timed out, was retried serially, and timed out again — and counts as a detection. A single timeout that did not reproduce is inconclusive. An execution row is one observation rather than a verdict, so it is never inconclusive.",
@@ -326,8 +375,25 @@
         "outcome": { "$ref": "#/$defs/observation" },
         "killed_by": { "type": "string", "minLength": 1 },
         "duration_ms": { "$ref": "#/$defs/milliseconds" },
-        "binaries": { "type": "array", "items": { "type": "string", "minLength": 1 } }
-      }
+        "binaries": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "memory_exceeded": {
+          "description": "This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline. It is why a row can say `killed` and name a binary that reported no failure: the outcome vocabulary is frozen, so the fact that tells this kill apart from an assertion's travels beside the outcome. Both this and peak_memory_bytes are optional, and a document written before the bound existed carries neither.",
+          "type": "boolean"
+        },
+        "peak_memory_bytes": {
+          "description": "The highest the pass was observed to hold, as the maximum over every binary it started rather than the deciding binary's: a pass's cost is the worst moment it put the machine through. It is resident memory on Unix and committed charge on Windows; the two are close but not the same quantity, and neither is converted into the other, because a conversion between things the kernels measure differently would be a number go-mutants invented. Recorded for every pass and not only the bounded ones, and absent — rather than zero — where the platform could not measure one.",
+          "$ref": "#/$defs/count"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["memory_exceeded"], "properties": { "memory_exceeded": { "const": true } } },
+          "then": {
+            "description": "`memory_exceeded` is what tells a killed row apart from an assertion's, so beside any other outcome it would describe a pass that both was and was not stopped by the supervisor: a survivor finished, a timeout was killed by the deadline instead, and an errored pass never reached a verdict.",
+            "properties": { "outcome": { "const": "killed" } }
+          }
+        }
+      ]
     },
     "timing": {
       "description": "Where this run's wall-clock time went, phase by phase and stage by stage, in the order the spans closed — which for the engine's linear pipeline is the order they opened, so a consumer can draw a timeline without sorting it. It answers \"why was this slow\" for a reader who has the report and no recording, and it says the same thing the trace's phase-end and stage events say, in the same words. The phases do not add up to duration_ms: a run is more than its phases. The whole block is optional, and absent from a merged document, which is several runs on several machines.",

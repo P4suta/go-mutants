@@ -94,6 +94,7 @@ func TestRunOverlayCarriesOnlyChangedFlags(t *testing.T) {
 		"profile":   untyped.Profile.IsSet(),
 		"jobs":      untyped.Jobs.IsSet(),
 		"timeout":   untyped.Timeout.IsSet(),
+		"memory":    untyped.Memory.IsSet(),
 		"strict":    untyped.Strict.IsSet(),
 	} {
 		if set {
@@ -104,7 +105,7 @@ func TestRunOverlayCarriesOnlyChangedFlags(t *testing.T) {
 	typed := overlayFrom(t, []string{
 		"--include", "internal/**", "--exclude", "**/gen/**",
 		"--operator", "comparison", "--profile", "all",
-		"-j", "3", "--timeout", "45s", "--strict",
+		"-j", "3", "--timeout", "45s", "--memory", "2GiB", "--strict",
 	})
 	if got, _ := typed.Include.Get(); !strings.Contains(strings.Join(got, " "), "internal/**") {
 		t.Errorf("include = %v", got)
@@ -120,6 +121,9 @@ func TestRunOverlayCarriesOnlyChangedFlags(t *testing.T) {
 	}
 	if got, ok := typed.Jobs.Get(); !ok || got != 3 {
 		t.Errorf("jobs = %v/%t, want 3", got, ok)
+	}
+	if got, ok := typed.Memory.Get(); !ok || got != 2<<30 {
+		t.Errorf("memory = %v/%t, want 2 GiB in bytes", got, ok)
 	}
 	if got, ok := typed.Strict.Get(); !ok || !got {
 		t.Errorf("strict = %v/%t, want true", got, ok)
@@ -270,6 +274,7 @@ func overlayFrom(t *testing.T, args []string) config.Overlay {
 		o.profile, _ = flags.GetString("profile")
 		o.jobs, _ = flags.GetInt("jobs")
 		o.timeout, _ = flags.GetDuration("timeout")
+		o.memory, _ = flags.GetString("memory")
 		o.strict, _ = flags.GetBool("strict")
 		o.noStrict, _ = flags.GetBool("no-strict")
 		o.cache, _ = flags.GetString("cache")
@@ -588,5 +593,49 @@ func TestEmitGitHubReportsAFailureAndDoesNotReturnIt(t *testing.T) {
 	// The annotations still went out: they are the half a reviewer sees.
 	if !strings.Contains(out.String(), "::warning ") {
 		t.Errorf("the annotations were lost with the summary: %q", out.String())
+	}
+}
+
+// TestMemoryFlagIsRefusedWithTheSameSentenceTheFileGets pins that `--memory`
+// goes through internal/config rather than around it.
+//
+// A flag with its own parser is a second vocabulary: `2GB` accepted here and
+// refused in the file, or accepted in both and meaning two different numbers.
+// The refusal names the flag the user typed rather than the TOML key they never
+// wrote, which is the whole reason the parsing happens in the command and not
+// in the overlay machinery.
+func TestMemoryFlagIsRefusedWithTheSameSentenceTheFileGets(t *testing.T) {
+	for _, bad := range []string{"2GB", "plenty", "0"} {
+		cmd := newRunCommand()
+		var fail error
+		cmd.RunE = func(c *cobra.Command, _ []string) error {
+			o := &runOptions{}
+			o.memory, _ = c.Flags().GetString("memory")
+			_, fail = runOverlay(c, o)
+			return fail
+		}
+		cmd.SetArgs([]string{"--memory", bad})
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("--memory %q was accepted", bad)
+		} else if !strings.Contains(err.Error(), "--memory") {
+			t.Errorf("--memory %q was refused without naming the flag: %v", bad, err)
+		}
+	}
+}
+
+// TestRunHelpMentionsMemory keeps the bound discoverable. A budget nobody can
+// find is a budget nobody sets, and the one thing a user needs from `--help`
+// here is that the unit is binary and the default is derived.
+func TestRunHelpMentionsMemory(t *testing.T) {
+	code, stdout, stderr := execute(t, "run", "--help")
+	if code != 0 {
+		t.Fatalf("run --help exited %d: %s", code, stderr)
+	}
+	for _, needle := range []string{"--memory", "2GiB", "largest baseline peak"} {
+		if !strings.Contains(stdout, needle) {
+			t.Errorf("run --help does not mention %q:\n%s", needle, stdout)
+		}
 	}
 }

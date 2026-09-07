@@ -176,8 +176,10 @@ func stale(message string) error {
 //     laptop and on a CI runner. Writing it would make the generated file
 //     machine-dependent and `init --check` a gate that fails on the wrong
 //     hardware.
-//   - `test.timeout` is zero meaning "derive it from the baseline". No duration
-//     spells that, and the file has no way back to derivation once it is set.
+//   - `test.timeout` is zero meaning "derive it from the baseline", and
+//     `test.memory` is zero meaning the same about the baseline's peak memory.
+//     No duration and no size spells that, and the file has no way back to
+//     derivation once either is set.
 //   - `mutation.exclude`, `mutation.operators` and `[[mutation.expect]]` are
 //     empty by default, and an empty list is a decision — "constrain nothing" —
 //     that reads as an oversight when it is written out. They are shown as
@@ -233,6 +235,11 @@ baseline_runs = ` + strconv.Itoa(c.Test.BaselineRuns) + `
 # duration to fix it instead; there is no flag that puts derivation back, so
 # removing this line again is how a project returns to it.
 # timeout = "60s"
+# Left out, and therefore derived as max(1GiB, largest baseline peak × 4): a
+# mutant that allocates without bound is killed rather than left to take the
+# machine down. Write a byte size to fix it instead; the units are binary
+# (B, KiB, MiB, GiB, TiB) and the decimal spellings are refused.
+# memory = "2GiB"
 
 [execution]
 # Left out, and therefore min(CPU count, 8): a mutation run is a background

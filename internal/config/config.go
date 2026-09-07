@@ -170,6 +170,18 @@ type Test struct {
 	// the other way around. A project that wants derivation back removes
 	// `test.timeout` from its configuration.
 	Timeout time.Duration
+	// Memory is the per-mutant memory bound in bytes. Zero means "derive it",
+	// as max(1 GiB, largest baseline peak × 4).
+	//
+	// It is the timeout's twin, down to the direction of the flag: `--memory`
+	// can replace a derived bound with a fixed one and never the other way
+	// round, and a project that wants derivation back removes `test.memory`
+	// from its configuration.
+	//
+	// It is bytes rather than a string because a resolved configuration holds
+	// resolved values; the spelling a person writes — `"2GiB"` — is the file's
+	// and the flag's, and both are read by the same rule.
+	Memory int64
 	// BaselineRuns is how many times the unmutated tests are measured before
 	// any mutant runs. Every observation is kept in the report, not just the
 	// slowest.
@@ -279,7 +291,11 @@ func Defaults() Config {
 			// Zero means derive from the baseline, which is a better default
 			// than any fixed number: the right timeout depends on how slow
 			// this project's tests actually are.
-			Timeout:      0,
+			Timeout: 0,
+			// Zero means derive from the baseline, for the reason Timeout's
+			// does: the right bound depends on how much this project's tests
+			// actually need, and no fixed number is right for every project.
+			Memory:       0,
 			BaselineRuns: DefaultBaselineRuns,
 		},
 		Execution: Execution{Jobs: DefaultJobs()},

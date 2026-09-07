@@ -147,10 +147,47 @@ func (r *PlainRenderer) attribution(m engine.MutantResult) string {
 			b.WriteString(" hung in " + m.KilledBy)
 		}
 	}
+	if m.MemoryExceeded {
+		// Why a kill names a suite that reported no failure. Both numbers are
+		// there because either alone is unactionable: the peak says what the
+		// mutant did, and the bound says what it was measured against, and the
+		// person deciding whether the bound is too tight needs to see them
+		// beside each other.
+		b.WriteString(" (memory: " + FormatBytes(m.PeakMemory) + " > " + FormatBytes(m.MemoryLimit) + " bound)")
+	}
 	if m.Attempts > 1 && attempted(m.Outcome) {
 		b.WriteString(" (" + strconv.Itoa(m.Attempts) + " attempts)")
 	}
 	return b.String()
+}
+
+// memoryDerivedLine is the run's memory budget in one sentence.
+//
+// The unbounded case is a sentence rather than a number because there is no
+// number to print, and "memory bound: 0 B" would read as a bound of nothing
+// rather than as the absence of one. What it does not say is *why* — that is
+// the warning's job, and saying it twice would be two places to reword it.
+func memoryDerivedLine(e engine.MemoryDerived) string {
+	if e.Limit <= 0 {
+		// The one place the absence of a bound is stated, now that a derived
+		// bound nobody can enforce publishes no warning: warning about a
+		// platform's own limits on every clean run is how a warning stops being
+		// read, and the run's own account is where a fact like this belongs.
+		// The peak is still printed when there is one, because it is the number
+		// that says *why* there is no bound — a platform that measured a peak
+		// and enforces nothing is a different situation from one that measured
+		// nothing at all.
+		if e.Peak > 0 {
+			return "memory: baseline peak " + FormatBytes(e.Peak) +
+				", no per-mutant bound (not enforced on this platform)"
+		}
+		return "memory: no per-mutant bound (nothing measured what the baseline runs cost)"
+	}
+	if e.Peak <= 0 {
+		return "memory: bound " + FormatBytes(e.Limit) + " (" + e.Source.String() + ")"
+	}
+	return "memory: baseline peak " + FormatBytes(e.Peak) +
+		", bound " + FormatBytes(e.Limit) + " (" + e.Source.String() + ")"
 }
 
 // attempted reports whether an outcome is one a pass over the test binaries

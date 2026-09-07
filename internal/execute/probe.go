@@ -29,6 +29,13 @@ type ProbeRun struct {
 	// that never ends is worse than a mutant measured wrongly.
 	Timeout time.Duration
 
+	// MemoryLimit bounds the resident memory of each test binary's whole
+	// process tree, exactly as [MutantRun.MemoryLimit] does and with the same
+	// meaning for zero. A pass is only evidence about a mutant run if the same
+	// tests ran the same way, and a pass given more of the machine than the
+	// executions it licenses skipping is not that.
+	MemoryLimit int64
+
 	// Binaries narrows the pass to a subset of the test binaries, as indices
 	// into the `bins` slice, exactly as [MutantRun.Binaries] does. Nil means
 	// every binary.
@@ -97,8 +104,12 @@ const (
 	// or a bug in go-mutants — and in either case the run cannot be trusted to
 	// have reached the sites it would have reached.
 	ProbeTestFailed ProbeOutcome = "test-failed"
-	// ProbeTimedOut is a pass the supervisor had to kill. The sites it had not
-	// reached yet are indistinguishable from the ones it would never reach.
+	// ProbeTimedOut is a pass the supervisor had to kill, for its deadline or
+	// for its memory bound — [ProbeAttempt.MemoryExceeded] says which. The
+	// sites it had not reached yet are indistinguishable from the ones it would
+	// never reach, and that is true of both kills, which is why they share an
+	// outcome: this vocabulary says what a pass established, and neither
+	// established anything.
 	ProbeTimedOut ProbeOutcome = "timed-out"
 	// ProbeUnavailable is a pass whose runtime exited
 	// [instrument.ProbeUnavailableExit]: it could not open or write the log it
@@ -136,6 +147,15 @@ type ProbeAttempt struct {
 	Output      []byte
 	OutputBytes int64
 	Truncated   bool
+	// PeakMemory is the highest memory any binary of this pass was
+	// observed to hold, in bytes, and MemoryExceeded reports that one of them
+	// passed [ProbeRun.MemoryLimit] and had its tree killed for it. They are
+	// [Attempt.PeakMemory] and [Attempt.MemoryExceeded] exactly.
+	//
+	// MemoryExceeded is only ever set beside [ProbeTimedOut], which is the
+	// outcome both of the supervisor's kills report.
+	PeakMemory     int64
+	MemoryExceeded bool
 	// Binaries are the test binaries this pass started, in launch order, by
 	// import path, and ExecSeqs the `exec` events they were recorded at. They
 	// are [Attempt.Binaries] and [Attempt.ExecSeqs] exactly, and mean the same
@@ -228,8 +248,9 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindProbeRun, subject, bin, env,
-			p.Timeout, p.Args, logPath, p.OutputLimit)
+			p.Timeout, p.MemoryLimit, p.Args, logPath, p.OutputLimit)
 		attempt.Duration += result.Duration
+		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.ExitCode = result.ExitCode
 		attempt.Output = slices.Clone(result.Output)
 		attempt.OutputBytes = result.OutputBytes
@@ -272,6 +293,17 @@ func RunProbe(ctx context.Context, opts Options, p ProbeRun, bins []TestBinary) 
 
 		case result.TimedOut:
 			attempt.Outcome = ProbeTimedOut
+			return attempt
+
+		case result.MemoryExceeded:
+			// The probe tree activates nothing, so a pass that reached the
+			// bound says the bound is too small for this suite rather than that
+			// anything ran away. Either way it established nothing, which is
+			// what the outcome has to say — and it is said here rather than one
+			// branch further down, where a killed tree's missing exit status
+			// would be read as a cancellation.
+			attempt.Outcome = ProbeTimedOut
+			attempt.MemoryExceeded = true
 			return attempt
 
 		case result.ExitCode == runner.ExitCodeUnavailable:

@@ -61,6 +61,25 @@ type MutantRun struct {
 	// never ends is worse than a mutant reported wrongly.
 	Timeout time.Duration
 
+	// MemoryLimit bounds the resident memory of each test binary's whole
+	// process tree, in bytes, as [runner.Spec.MemoryLimit] takes it. Zero means
+	// no bound.
+	//
+	// It is Timeout's twin and it is optional where Timeout is required, which
+	// is the one place the pair is not symmetric. A mutant with no deadline is
+	// refused because a run that never ends is worse than a mutant reported
+	// wrongly; a mutant with no memory bound is accepted because there are
+	// platforms where no bound can be enforced at all — see
+	// [runner.MemoryBoundSupported] — and refusing every mutant on those would
+	// be refusing to run rather than running with one fewer guarantee.
+	//
+	// A tree that passes it is killed and reported as [mutation.OutcomeKilled],
+	// with [Attempt.MemoryExceeded] saying what did the killing. That is not a
+	// new verdict: the original program was measured under the budget the bound
+	// was derived from, so a tree that needs several times what the whole suite
+	// needed has been changed observably, which is what a kill means.
+	MemoryLimit int64
+
 	// Binaries narrows the measurement to a subset of the test binaries, as
 	// indices into the `bins` slice given to [RunOne] or [Schedule]. It is how
 	// coverage-guided selection reaches this package: internal/coverage decides
@@ -187,6 +206,20 @@ type Attempt struct {
 	// empty.
 	OutputBytes int64
 	Truncated   bool
+	// PeakMemory is the highest memory any binary of this attempt was
+	// observed to hold, in bytes, and MemoryExceeded reports that one of them
+	// passed [MutantRun.MemoryLimit] and had its tree killed for it.
+	//
+	// PeakMemory is the maximum over the binaries the attempt started rather than
+	// the deciding binary's alone — unlike Output, which is one binary's — and
+	// that is what the number is for: an attempt's cost is the worst moment it
+	// put the machine through, and a caller comparing it against a budget is
+	// asking about that moment. It is zero on a platform that could not measure.
+	//
+	// MemoryExceeded never accompanies [mutation.OutcomeTimedOut]: the two are
+	// different kills, and internal/runner reports exactly one of them.
+	PeakMemory     int64
+	MemoryExceeded bool
 	// Err carries a [Code] from this package, with the underlying cause
 	// reachable through it. It is set whenever Outcome is
 	// [mutation.OutcomeErrored], and on exactly one other outcome: a not-run
@@ -269,8 +302,9 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env,
-			m.Timeout, m.Args, logPath, m.OutputLimit)
+			m.Timeout, m.MemoryLimit, m.Args, logPath, m.OutputLimit)
 		attempt.Duration += result.Duration
+		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
 		if result.TraceSeq != 0 {
 			attempt.ExecSeqs = append(attempt.ExecSeqs, result.TraceSeq)
@@ -319,6 +353,25 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 			// allowed to call it a detection.
 			attempt.Outcome = mutation.OutcomeTimedOut
 			attempt.KilledBy = bin.ImportPath
+			attempt.keep(result)
+			return attempt
+
+		case result.MemoryExceeded:
+			// A verdict, and — unlike the timeout above — one that is settled
+			// here. A timeout is retried serially because the machine may simply
+			// have been busy; a memory bound is not a measurement of how loaded
+			// the machine is. It is a multiple of what the unmutated tests were
+			// measured to need, and a tree that reached it did so by allocating,
+			// which running it again on an idle machine would only do a second
+			// time.
+			//
+			// It sits ahead of the unavailable-status branch below because a
+			// killed tree carries no status: read there, this mutant would be
+			// reported as interrupted, which is the "not run" that quietly
+			// removes it from the score.
+			attempt.Outcome = mutation.OutcomeKilled
+			attempt.KilledBy = bin.ImportPath
+			attempt.MemoryExceeded = true
 			attempt.keep(result)
 			return attempt
 
@@ -451,6 +504,7 @@ func startTarget(
 	bin TestBinary,
 	env []string,
 	timeout time.Duration,
+	memoryLimit int64,
 	args []string,
 	testLogPath string,
 	outputLimit int,
@@ -466,6 +520,7 @@ func startTarget(
 		Dir:         bin.Dir,
 		Env:         env,
 		Timeout:     timeout,
+		MemoryLimit: memoryLimit,
 		OutputLimit: outputLimit,
 		Trace:       opts.Trace,
 		Kind:        kind,

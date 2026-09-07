@@ -1095,7 +1095,7 @@ func (e *explainer) mutantAccount(r *report.Report, source string, s subject, re
 	}
 
 	e.identity(s)
-	e.verdict(s)
+	e.verdict(r, s)
 	if s.rejected != nil {
 		// A mutant that does not compile has no coverage and no executions:
 		// nothing measured it, because there was nothing to measure. It does
@@ -1144,14 +1144,14 @@ func (e *explainer) identity(s subject) {
 
 // verdict is the outcome in one sentence, and the compiler's own words when
 // there is no outcome because there was no mutant.
-func (e *explainer) verdict(s subject) {
+func (e *explainer) verdict(r *report.Report, s subject) {
 	e.section("outcome")
 	if s.rejected != nil {
 		e.printf("  %s\n", "rejected: the instrumented snapshot would not compile with it spliced in")
 		e.printf("%s\n", e.paint(styleExplainDetail, indent(s.rejected.Diagnostic)))
 		return
 	}
-	e.printf("  %s\n", verdictSentence(*s.mutant))
+	e.printf("  %s\n", verdictSentence(*s.mutant, r.Test.MemoryBytes))
 	if s.mutant.Cached {
 		e.printf("  %s\n", e.paint(styleExplainDetail,
 			"reused from the outcome cache rather than measured by this run, so the duration, the attempts "+
@@ -1167,7 +1167,7 @@ func (e *explainer) verdict(s subject) {
 // *detected* by a test, and a timeout was detected by nothing — the binary is
 // the one the mutant hung, and "killed by" would send a reader looking for an
 // assertion that does not exist.
-func verdictSentence(m report.Mutant) string {
+func verdictSentence(m report.Mutant, memoryBound int64) string {
 	killedBy := ""
 	if m.KilledBy != nil {
 		killedBy = *m.KilledBy
@@ -1175,9 +1175,10 @@ func verdictSentence(m report.Mutant) string {
 	switch m.Outcome {
 	case report.OutcomeKilled:
 		if killedBy != "" {
-			return "killed by " + killedBy + " after " + countNoun(m.Attempts, "attempt")
+			return "killed by " + killedBy + memoryClause(m, memoryBound) +
+				" after " + countNoun(m.Attempts, "attempt")
 		}
-		return "killed after " + countNoun(m.Attempts, "attempt")
+		return "killed" + memoryClause(m, memoryBound) + " after " + countNoun(m.Attempts, "attempt")
 	case report.OutcomeTimedOut:
 		if killedBy != "" {
 			return "timed out, hung in " + killedBy + ", after " + countNoun(m.Attempts, "attempt")
@@ -1198,6 +1199,38 @@ func verdictSentence(m report.Mutant) string {
 	default:
 		return m.Outcome.String()
 	}
+}
+
+// memoryClause is what a kill by the memory bound adds to its verdict, and
+// nothing at all for every other kill.
+//
+// It is the one place `explain` has to say something the outcome does not. A
+// mutant the bound stopped is reported as `killed` and names the suite that was
+// running — and that suite's tests all pass, so a reader who goes and looks
+// finds nothing. Both numbers are printed because either alone is unactionable:
+// the peak says what the mutant did, the bound says what it was measured
+// against, and only the pair says whether to fix the mutant or the budget.
+//
+// The bound is the run's, from `test.memory_bytes`; a document written before
+// that field existed carries none, and the clause then names the peak alone
+// rather than inventing a number to compare it with.
+func memoryClause(m report.Mutant, memoryBound int64) string {
+	// The mutant's own fields rather than its rows, because a *cached* mutant
+	// has none: this run started no process for it, and reading the rows would
+	// make a warm run's account of a memory kill silently thinner than a cold
+	// run's. The document carries the same two facts at both levels for exactly
+	// this reader.
+	if !m.MemoryExceeded {
+		return ""
+	}
+	peak := m.PeakMemoryBytes
+	if peak > 0 && memoryBound > 0 {
+		return " (memory: " + console.FormatBytes(peak) + " > " + console.FormatBytes(memoryBound) + ")"
+	}
+	if peak > 0 {
+		return " (memory: " + console.FormatBytes(peak) + ")"
+	}
+	return " (memory bound reached)"
 }
 
 // coverage is which test binaries reach the mutant, or the two other things
@@ -1236,9 +1269,10 @@ func (e *explainer) executions(m *report.Mutant, rec *recording) {
 	}
 	recorded := rec.attempts(m.ID)
 	for _, execution := range m.Executions {
-		e.printf("  attempt %d  worker %d  %s  %s%s\n",
+		e.printf("  attempt %d  worker %d  %s  %s%s%s\n",
 			execution.Attempt, execution.Worker, execution.Outcome,
 			console.FormatDuration(milliseconds(execution.DurationMS)),
+			peakClause(execution),
 			attribution(execution.Outcome, execution.KilledBy))
 		if len(execution.Binaries) > 0 {
 			e.printf("    binaries: %s\n", strings.Join(execution.Binaries, ", "))
@@ -1249,6 +1283,21 @@ func (e *explainer) executions(m *report.Mutant, rec *recording) {
 		e.printf("  %s\n", e.paint(styleExplainDetail,
 			"no recording, so the commands these passes started are not in this account"))
 	}
+}
+
+// peakClause is what a pass cost the machine, and nothing where the platform
+// could not say.
+//
+// It sits beside the duration because the two are the same kind of fact — what
+// one pass spent — and it is printed for every pass rather than only the
+// bounded ones: "which of my mutants cost the machine most" is a question about
+// a run in which nothing went wrong, and a run that recorded only what it
+// bounded could not answer it.
+func peakClause(execution report.Execution) string {
+	if execution.PeakMemoryBytes <= 0 {
+		return ""
+	}
+	return "  peak " + console.FormatBytes(execution.PeakMemoryBytes)
 }
 
 // notExecuted says why a mutant has no rows under its attempt count. There are

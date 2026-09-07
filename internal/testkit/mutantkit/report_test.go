@@ -56,8 +56,14 @@ var varyingFields = map[string]string{
 	// machine and its version line changes with every Go release, so both are
 	// facts about the run — and `test.resolved_command` is the same path again,
 	// because it is `test.command` with that executable in place of `go`.
-	"/test/toolchain/go_bin":   mutantkit.NormalizedPath,
-	"/test/toolchain/version":  mutantkit.NormalizedToolchainVersion,
+	"/test/toolchain/go_bin":  mutantkit.NormalizedPath,
+	"/test/toolchain/version": mutantkit.NormalizedToolchainVersion,
+	// The memory budget, both halves. The number is derived from what the
+	// baseline cost and the source says whether this platform can enforce a
+	// bound at all, so the pair is as much a fact about the machine as
+	// `workspace.platform.os` is.
+	"/test/memory_bytes":       "1",
+	"/test/memory_source":      "derived",
 	"/test/resolved_command/0": mutantkit.NormalizedPath,
 	// One row per attempt of every mutant this run executed: how long the pass
 	// took, and which scheduler slot made it. The worker is here because it is
@@ -67,21 +73,44 @@ var varyingFields = map[string]string{
 	// that happens not to move is covered by nothing otherwise. The `binaries`
 	// beside them are deliberately absent: which binaries a pass started is
 	// what the run did, and it is the same every time.
-	"/mutants/1/executions/0/duration_ms": "0",
-	"/mutants/1/executions/0/worker":      "0",
-	"/mutants/3/executions/0/duration_ms": "0",
-	"/mutants/3/executions/0/worker":      "0",
-	"/mutants/3/executions/1/duration_ms": "0",
-	"/mutants/3/executions/1/worker":      "0",
-	"/mutants/4/executions/0/duration_ms": "0",
-	"/mutants/4/executions/0/worker":      "0",
-	"/mutants/5/executions/0/duration_ms": "0",
-	"/mutants/5/executions/0/worker":      "0",
-	"/mutants/7/duration_ms":              "0",
-	"/mutants/7/executions/0/duration_ms": "0",
-	"/mutants/7/executions/0/worker":      "0",
-	"/mutants/7/executions/1/duration_ms": "0",
-	"/mutants/7/executions/1/worker":      "0",
+	//
+	// The peak beside them is the third of the same kind, and the one rule that
+	// *adds* a key rather than only replacing one: every platform go-mutants
+	// supports measures a peak for a process that started, so a row without one
+	// is a machine that could not, and a golden that quietly tolerated the
+	// absence would pass there and fail the day somebody looked.
+	// The mutant's own copy of the peak, which a cached mutant carries instead
+	// of rows; every mutant gets one for the reason the rows do.
+	"/mutants/0/peak_memory_bytes":              "0",
+	"/mutants/1/peak_memory_bytes":              "0",
+	"/mutants/2/peak_memory_bytes":              "0",
+	"/mutants/3/peak_memory_bytes":              "0",
+	"/mutants/4/peak_memory_bytes":              "0",
+	"/mutants/5/peak_memory_bytes":              "0",
+	"/mutants/6/peak_memory_bytes":              "0",
+	"/mutants/7/peak_memory_bytes":              "0",
+	"/mutants/1/executions/0/duration_ms":       "0",
+	"/mutants/1/executions/0/worker":            "0",
+	"/mutants/1/executions/0/peak_memory_bytes": "0",
+	"/mutants/3/executions/0/duration_ms":       "0",
+	"/mutants/3/executions/0/worker":            "0",
+	"/mutants/3/executions/0/peak_memory_bytes": "0",
+	"/mutants/3/executions/1/duration_ms":       "0",
+	"/mutants/3/executions/1/worker":            "0",
+	"/mutants/3/executions/1/peak_memory_bytes": "0",
+	"/mutants/4/executions/0/duration_ms":       "0",
+	"/mutants/4/executions/0/worker":            "0",
+	"/mutants/4/executions/0/peak_memory_bytes": "0",
+	"/mutants/5/executions/0/duration_ms":       "0",
+	"/mutants/5/executions/0/worker":            "0",
+	"/mutants/5/executions/0/peak_memory_bytes": "0",
+	"/mutants/7/duration_ms":                    "0",
+	"/mutants/7/executions/0/duration_ms":       "0",
+	"/mutants/7/executions/0/worker":            "0",
+	"/mutants/7/executions/0/peak_memory_bytes": "0",
+	"/mutants/7/executions/1/duration_ms":       "0",
+	"/mutants/7/executions/1/worker":            "0",
+	"/mutants/7/executions/1/peak_memory_bytes": "0",
 	// The timeline. Every phase and every stage is a measured duration; their
 	// names are not, and stay.
 	"/timing/phases/0/duration_ms": "0",

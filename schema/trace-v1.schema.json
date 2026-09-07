@@ -214,6 +214,7 @@
   ],
   "$defs": {
     "milliseconds": { "type": "integer", "minimum": 0 },
+    "bytes": { "description": "A quantity of memory. It is the resident set on Unix and the job's committed charge on Windows; the two are close for a Go program and never equal, and neither is converted into the other.", "type": "integer", "minimum": 0 },
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "sequence": { "type": "integer", "minimum": 1 },
     "start": {
@@ -369,6 +370,7 @@
         "exit_code": { "type": "integer" },
         "timed_out": { "type": "boolean" },
         "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "peak_memory_bytes": { "$ref": "#/$defs/bytes" },
         "output_bytes": { "type": "integer", "minimum": 0 },
         "output_sha256": { "$ref": "#/$defs/digest" },
         "output_truncated": { "type": "boolean" },
@@ -433,6 +435,14 @@
           "minLength": 1
         },
         "duration_ms": { "$ref": "#/$defs/milliseconds" },
+        "memory_exceeded": {
+          "description": "The attempt was stopped by its memory bound rather than by its deadline or by a test failing. The outcome beside it still says `killed`: the vocabulary is frozen and a bound is not a new kind of verdict, so the fact that tells this kill apart from an assertion's travels here.",
+          "type": "boolean"
+        },
+        "peak_memory_bytes": {
+          "description": "The highest the attempt was observed to hold: the maximum over every binary it started, not the deciding binary's.",
+          "$ref": "#/$defs/bytes"
+        },
         "exec_seqs": {
           "description": "The exec events of the binaries this attempt ran, in order. They are how an attempt is joined to the commands underneath it, and therefore to their preserved output.",
           "type": "array",

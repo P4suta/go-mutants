@@ -498,3 +498,327 @@ func stageResultEnum(t *testing.T) []string {
 	}
 	return stage.Properties["result"].Enum
 }
+
+// TestAnExecutionCarriesWhatItCostAndWhetherABoundStoppedIt pins the two
+// additive fields a bounded run writes.
+//
+// They are tested at the document rather than through [report.Build] because
+// the claim is about the published contract: the schema accepts them where they
+// belong, this build reads them back, and the outcome beside them is still one
+// of the four an observation may be. A bound is a budget on evidence and not a
+// new kind of verdict, so `memory_exceeded` had to be a fact next to `killed`
+// rather than a fifth word in the enum, and that is exactly what a consumer
+// would break if somebody widened the vocabulary instead.
+func TestAnExecutionCarriesWhatItCostAndWhetherABoundStoppedIt(t *testing.T) {
+	t.Parallel()
+
+	data := mutantkit.MustMarshal(t, buildFixture(t))
+	doc := mutantkit.DecodeJSON(t, data)
+
+	rows, ok := mutant(doc, 1)["executions"].([]any)
+	if !ok || len(rows) == 0 {
+		t.Fatalf("mutants[1] carries no executions to work with: %v", mutant(doc, 1)["executions"])
+	}
+	row, _ := rows[0].(map[string]any)
+	if row["peak_memory_bytes"] == nil {
+		t.Error("an ordinary execution row carries no peak_memory_bytes, and every execution started a process")
+	}
+
+	// A kill by the bound, written where a real one would be written.
+	row["outcome"] = "killed"
+	row["killed_by"] = alphaPackage
+	row["memory_exceeded"] = true
+	bounded := mutantkit.EncodeJSON(t, doc)
+	if err := schemas.Validate(schemas.RunReportV1, bounded); err != nil {
+		t.Fatalf("a killed execution carrying memory_exceeded was rejected: %v", err)
+	}
+	parsed, err := report.Parse(bounded)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := parsed.Mutants[1].Executions[0]
+	if !got.MemoryExceeded {
+		t.Error("memory_exceeded did not survive the round trip")
+	}
+	if got.Outcome != report.OutcomeKilled {
+		t.Errorf("outcome = %s, want killed: a bound settles a mutant with the vocabulary that already exists", got.Outcome)
+	}
+	if got.PeakMemoryBytes <= 0 {
+		t.Errorf("peak_memory_bytes = %d, want what the execution reached", got.PeakMemoryBytes)
+	}
+}
+
+// TestAnExecutionWrittenBeforeTheBoundExistedStillValidates is the additive
+// half of the same claim, from the other side.
+//
+// The frozen document [TestAnOlderDocumentWithoutTheAdditiveFieldsStillValidates]
+// reads has no `executions` at all, so it cannot say anything about a row
+// written before these two fields were added to one. This does: a row with
+// neither key is a row this schema accepts and this build parses, which is what
+// "additive" has to mean for a consumer holding last month's reports.
+func TestAnExecutionWrittenBeforeTheBoundExistedStillValidates(t *testing.T) {
+	t.Parallel()
+
+	doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
+	stripped := 0
+	for i := range doc["mutants"].([]any) {
+		rows, _ := mutant(doc, i)["executions"].([]any)
+		for _, r := range rows {
+			row, _ := r.(map[string]any)
+			delete(row, "memory_exceeded")
+			delete(row, "peak_memory_bytes")
+			stripped++
+		}
+	}
+	if stripped == 0 {
+		t.Fatal("the fixture holds no execution rows, so nothing was stripped")
+	}
+
+	older := mutantkit.EncodeJSON(t, doc)
+	if err := schemas.Validate(schemas.RunReportV1, older); err != nil {
+		t.Fatalf("an execution row without the memory fields no longer validates: %v", err)
+	}
+	parsed, err := report.Parse(older)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	for _, m := range parsed.Mutants {
+		for _, execution := range m.Executions {
+			if execution.MemoryExceeded || execution.PeakMemoryBytes != 0 {
+				t.Errorf("a stripped row parsed as %+v, want both memory fields at their zero", execution)
+			}
+		}
+	}
+}
+
+// TestTheDocumentSaysWhatTheMemoryBoundWasAndWhereItCameFrom pins the run fact
+// the execution rows are meaningless without.
+//
+// `memory_exceeded` on a row says a bound stopped that pass; without the bound
+// itself, a reader looking at a report from somebody else's CI has no way to
+// tell a runaway mutant from a budget somebody set too tight. The pair is
+// written together and read together, exactly as `timeout_ms` and
+// `timeout_source` are.
+func TestTheDocumentSaysWhatTheMemoryBoundWasAndWhereItCameFrom(t *testing.T) {
+	t.Parallel()
+
+	data := mutantkit.MustMarshal(t, buildFixture(t))
+	doc := mutantkit.DecodeJSON(t, data)
+	test, _ := doc["test"].(map[string]any)
+	if test == nil {
+		t.Fatal("the document carries no test facts")
+	}
+	if got := test["memory_bytes"]; got == nil {
+		t.Error("the document says nothing about the memory bound the executions were measured under")
+	}
+	if got, want := test["memory_source"], "derived"; got != want {
+		t.Errorf("memory_source = %v, want %q", got, want)
+	}
+
+	// And a document that says nothing about memory is still a document: both
+	// keys are optional, so a report an older build wrote — or one from a run
+	// that bounded nothing and had no reason to say so — still validates.
+	delete(test, "memory_bytes")
+	delete(test, "memory_source")
+	silent := mutantkit.EncodeJSON(t, doc)
+	if err := schemas.Validate(schemas.RunReportV1, silent); err != nil {
+		t.Fatalf("a document with no memory facts no longer validates: %v", err)
+	}
+	parsed, err := report.Parse(silent)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if parsed.Test.MemoryBytes != 0 || parsed.Test.MemorySource != "" {
+		t.Errorf("a silent document parsed as %d (%q), want both at their zero",
+			parsed.Test.MemoryBytes, parsed.Test.MemorySource)
+	}
+}
+
+// TestAMutantSaysWhatItCostWithoutItsExecutionRows is what a cached memory kill
+// needs in order to read like a measured one.
+//
+// A cached mutant has an attempt count and no execution rows — this run started
+// no process for it — so a consumer reading `memory_exceeded` off the rows sees
+// nothing, and `explain` on a warm run reports a kill it cannot explain. The
+// same two facts therefore live on the mutant as well: the maximum over its
+// rows for a mutant this run executed, and what the entry recorded for one it
+// adopted.
+func TestAMutantSaysWhatItCostWithoutItsExecutionRows(t *testing.T) {
+	t.Parallel()
+
+	data := mutantkit.MustMarshal(t, buildFixture(t))
+	doc := mutantkit.DecodeJSON(t, data)
+
+	// The executed one carries the maximum over its rows.
+	executed := mutant(doc, 1)
+	if executed["peak_memory_bytes"] == nil {
+		t.Error("an executed mutant says nothing about what it cost")
+	}
+	rows, _ := executed["executions"].([]any)
+	var highest float64
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		if row["peak_memory_bytes"] == nil {
+			continue
+		}
+		value, err := row["peak_memory_bytes"].(json.Number).Float64()
+		if err != nil {
+			t.Fatalf("peak_memory_bytes is not a number: %v", err)
+		}
+		highest = max(highest, value)
+	}
+	got, err := executed["peak_memory_bytes"].(json.Number).Float64()
+	if err != nil {
+		t.Fatalf("peak_memory_bytes is not a number: %v", err)
+	}
+	if got != highest {
+		t.Errorf("the mutant reports %v, want the %v its rows do", got, highest)
+	}
+
+	// And both keys are optional, so a document that says nothing about memory
+	// at any level is still a document.
+	for i := range doc["mutants"].([]any) {
+		m := mutant(doc, i)
+		delete(m, "peak_memory_bytes")
+		delete(m, "memory_exceeded")
+	}
+	silent := mutantkit.EncodeJSON(t, doc)
+	if err := schemas.Validate(schemas.RunReportV1, silent); err != nil {
+		t.Fatalf("a document with no mutant-level memory facts no longer validates: %v", err)
+	}
+	if _, err := report.Parse(silent); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+}
+
+// TestACachedMemoryKillCarriesItsFactsWithNoRowsUnderIt is the case the
+// mutant-level fields exist for, stated as the shape a warm run produces.
+func TestACachedMemoryKillCarriesItsFactsWithNoRowsUnderIt(t *testing.T) {
+	t.Parallel()
+
+	opts := fixtureOptions(t)
+	for i := range opts.Results {
+		if !opts.Results[i].Cached {
+			continue
+		}
+		opts.Results[i].MemoryExceeded = true
+		opts.Results[i].PeakMemory = 3435973836
+		break
+	}
+	built, err := report.Build(opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	var cached *report.Mutant
+	for i := range built.Mutants {
+		if built.Mutants[i].Cached {
+			cached = &built.Mutants[i]
+			break
+		}
+	}
+	if cached == nil {
+		t.Fatal("the fixture has no cached mutant")
+	}
+	if len(cached.Executions) != 0 {
+		t.Fatalf("a cached mutant carries %d execution rows, so this proves nothing", len(cached.Executions))
+	}
+	if !cached.MemoryExceeded {
+		t.Error("a cached memory kill does not say the bound settled it")
+	}
+	if cached.PeakMemoryBytes != 3435973836 {
+		t.Errorf("PeakMemoryBytes = %d, want what the measuring run recorded", cached.PeakMemoryBytes)
+	}
+	if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, built)); err != nil {
+		t.Fatalf("the document does not satisfy its own schema: %v", err)
+	}
+}
+
+// TestBuildRefusesAMemoryBoundThatContradictsItsSource is the pair rule: the
+// number and where it came from are written together or not at all.
+//
+// A document saying `derived` with no bytes describes a bound nobody could
+// check a `memory_exceeded` row against; one saying `unavailable` with a number
+// beside it says there was no bound and here it is. Both are the kind of
+// contradiction a consumer reads straight past, which is why they are refused
+// where they are written rather than where they are read.
+func TestBuildRefusesAMemoryBoundThatContradictsItsSource(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name   string
+		memory int64
+		source report.MemorySource
+		ok     bool
+	}{
+		{"neither, as a caller that predates the bound writes", 0, "", true},
+		{"no bound, and it says so", 0, report.MemoryUnavailable, true},
+		{"a derived bound with its number", 1 << 30, report.MemoryDerived, true},
+		{"an explicit bound with its number", 2 << 30, report.MemoryExplicit, true},
+		{"derived, with no number to have derived", 0, report.MemoryDerived, false},
+		{"explicit, with no number the user wrote", 0, report.MemoryExplicit, false},
+		{"no bound, and a number beside it", 1 << 30, report.MemoryUnavailable, false},
+		{"a number with nothing saying where it came from", 1 << 30, "", false},
+		{"a negative bound", -1, report.MemoryExplicit, false},
+		{"a source that is not one", 1 << 30, report.MemorySource("plenty"), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			opts := fixtureOptions(t)
+			opts.Memory = c.memory
+			opts.MemorySource = c.source
+			_, err := report.Build(opts)
+			switch {
+			case c.ok && err != nil:
+				t.Errorf("Build refused %d (%q): %v", c.memory, c.source, err)
+			case !c.ok && err == nil:
+				t.Errorf("Build accepted %d (%q)", c.memory, c.source)
+			}
+		})
+	}
+}
+
+// TestBuildRefusesAMemoryKillThatIsNotAKill pins the one cross-field rule the
+// execution vocabulary rests on.
+//
+// `memory_exceeded` is what tells a `killed` row apart from an assertion's, so
+// it says nothing at all beside `survived`, `timed-out` or `errored` — those
+// are outcomes a tree the supervisor killed for its memory cannot have had. A
+// document that carried the combination would be describing a mutant that both
+// was and was not stopped.
+func TestBuildRefusesAMemoryKillThatIsNotAKill(t *testing.T) {
+	t.Parallel()
+
+	for _, outcome := range []report.Outcome{
+		report.OutcomeSurvived, report.OutcomeTimedOut, report.OutcomeErrored,
+	} {
+		t.Run(string(outcome), func(t *testing.T) {
+			opts := fixtureOptions(t)
+			// The rows are cloned before one is edited: [fixtureOptions] hands
+			// back slices backed by the package's own table, and a test that
+			// wrote through them would leave every later test in this file
+			// building a document with a memory kill in it.
+			marked := false
+			for i := range opts.Results {
+				rows := slices.Clone(opts.Results[i].Executions)
+				for j := range rows {
+					if rows[j].Outcome != outcome {
+						continue
+					}
+					rows[j].MemoryExceeded = true
+					opts.Results[i].Executions = rows
+					marked = true
+					break
+				}
+				if marked {
+					break
+				}
+			}
+			if !marked {
+				t.Skipf("the fixture holds no %s execution row", outcome)
+			}
+			if _, err := report.Build(opts); err == nil {
+				t.Errorf("Build accepted a %s row claiming a memory bound settled it", outcome)
+			}
+		})
+	}
+}
