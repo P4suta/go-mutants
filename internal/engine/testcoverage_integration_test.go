@@ -6,12 +6,14 @@
 package engine
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // narrowModule is a module with two binaries a default (test-narrowed) run has
@@ -264,6 +266,11 @@ func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
 		Source("shared_test.go", sharedSuite).
 		Root()
 	opts := optionsAt(t, root)
+	// A readable sink, so the two runs behind the confirmation can be checked:
+	// the narrowed run and the whole-binary run are both recorded, even though
+	// the report keeps only the authoritative one.
+	sink := trace.NewMemorySink(0)
+	opts.TraceSink = sink
 
 	outcome, _, err := collect(t, t.Context(), opts)
 	if err != nil {
@@ -289,5 +296,24 @@ func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
 	}
 	if want := []report.TestRef{{Package: sharedModule, Name: "TestEnable"}}; !equalRefs(mutant.CoveringTests, want) {
 		t.Errorf("covering tests = %v, want %v: coverage still knows the one test that reaches the line", mutant.CoveringTests, want)
+	}
+
+	// The trace records both runs behind the one reported attempt: the narrowed
+	// run, whose argv selects TestEnable, and the whole-binary confirmation,
+	// whose argv selects nothing. The report keeps only the second; the trace
+	// is where the fast-path survival that preceded the kill is visible.
+	var narrowed, whole int
+	for _, e := range sink.Events() {
+		if e.Type != trace.TypeExec || e.Exec == nil || e.Exec.Kind != trace.ExecKindMutantRun || e.Exec.Subject != mutant.ID {
+			continue
+		}
+		if slices.ContainsFunc(e.Exec.Argv, func(a string) bool { return strings.HasPrefix(a, "-test.run=") }) {
+			narrowed++
+		} else {
+			whole++
+		}
+	}
+	if narrowed != 1 || whole != 1 {
+		t.Errorf("recorded %d narrowed and %d whole-binary runs of the mutant, want one of each", narrowed, whole)
 	}
 }
