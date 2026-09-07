@@ -80,19 +80,34 @@ func preparedDigest(c Catalog) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// mutantFlags encodes the three booleans the prepared digest covers as three
+// mutantFlags encodes what the prepared digest says about one mutant as three
 // bytes: 'a' or '-' for [Mutant.Accepted], 'p' or '-' for [Mutant.Probed], and
-// 's' or '-' for selection.
+// a third that is the constant 's'.
 //
 // Fixed width rather than a variable list, so that the field is unambiguous
 // without a prefix of its own, and readable in a hexdump when somebody is
 // asking why two sessions hashed differently.
 //
-// The third byte is 's' for every mutant today, because there is no selection
-// to be outside of: a prepared session catalogues and validates every candidate
-// its patterns matched. The byte exists now so that the day a selection narrows
-// a session, the key changes with it rather than reporting a narrowed session
-// as interchangeable with the full one.
+// The third byte stays constant now that [PrepareOptions.Selection] exists, and
+// that is a decision rather than an omission. [Mutant.Selected] is advisory: it
+// changes nothing the engine does, and [Session.Exec] runs an unselected mutant
+// exactly as it runs a selected one. What a consumer keys on this digest is
+// *per-mutant evidence* — this mutant survived against this prepared tree —
+// which is a fact about the tree, the toolchain and the mutant, none of which a
+// selection touches. Hashing the flag would move every key the first time a
+// consumer narrowed a run, so the very consumer this feature was built for would
+// miss on every row it had stored and re-measure a module to write down answers
+// it already had.
+//
+// What makes that safe is a rule the caller owns, and it is one line: never
+// store "not run, out of selection" as evidence. A mutant the selection left out
+// was not measured, so there is nothing about it to record; recording an absence
+// as a result is the only way two sessions under one key could come to disagree.
+//
+// So the byte is a constant the v1 recipe reserved and did not need. It stays
+// rather than being removed because removing it is a different digest for every
+// session anybody has stored evidence against — see [Catalog.PreparedDigest] on
+// what changing the recipe costs.
 func mutantFlags(m Mutant) string {
 	flags := []byte{'-', '-', 's'}
 	if m.Accepted {

@@ -310,6 +310,38 @@ type PrepareOptions struct {
 	Packages []string
 	// ProbeCoverPackages are package patterns included in probe coverage.
 	ProbeCoverPackages []string
+	// Selection narrows what a caller intends to *execute*, by line range.
+	// Nil selects everything.
+	//
+	// It is applied after discovery and after validation, and it changes
+	// nothing about either: [Catalog.Digest], [Catalog.PreparedDigest], every
+	// [Mutant.ID], [Mutant.Accepted], [Mutant.Probed] and [Catalog.Rejections]
+	// are identical to the same preparation without it. All it does is set
+	// [Mutant.Selected], by intersecting each mutant's `[Line, EndLine]` span
+	// with the ranges given for its [Mutant.Path] — the rule `go-mutants run
+	// --changed` applies to a diff, shared with it rather than reimplemented.
+	//
+	// PreparedDigest staying put is deliberate and comes with a rule; see it
+	// and [Mutant.Selected] for the argument, and the rule itself is: never
+	// store "not run, out of selection" as evidence.
+	//
+	// Narrowing discovery instead would be faster and wrong. Mutant identities
+	// are minted from a file's own bytes and the catalogue is deduplicated
+	// across the module, so a discovery pass that skipped unselected files
+	// would produce a different catalogue — and a consumer could no longer
+	// compare a narrowed run against the run before it, which is the whole
+	// reason it narrowed.
+	//
+	// The narrowing is **advisory**. [Session.Exec] runs an unselected mutant
+	// exactly as it runs a selected one: this field says what the caller set out
+	// to measure, and the session refusing to measure anything else would turn a
+	// plan into a cage — a consumer that finds a survivor and wants its
+	// neighbours executed would have to prepare the module again.
+	//
+	// It is refused with [ErrInvalidSelection] when a path or a range is not one
+	// the engine can read; see [Selection] for the normalisation it goes
+	// through, and [Catalog.Selection] for the value that comes back.
+	Selection *Selection
 	// Jobs bounds concurrent test-binary builds. Zero uses the configured worker default.
 	Jobs int
 	// BuildTimeout bounds each validation and test-binary build. Zero uses ten
@@ -383,29 +415,51 @@ type Catalog struct {
 	//      order,
 	//   9. the decimal len(Mutants), then per mutant in catalogue order:
 	//      [Mutant.ID], [Mutant.Package], and three flag bytes — 'a' or '-' for
-	//      [Mutant.Accepted], 'p' or '-' for [Mutant.Probed], 's' or '-' for
-	//      selection, which is 's' for every mutant until a selection can
-	//      narrow a session,
+	//      [Mutant.Accepted], 'p' or '-' for [Mutant.Probed], and a third that
+	//      is the constant 's',
 	//  10. the decimal len(Rejections), then every [Rejection.ID] in order.
 	//
-	// Not hashed, and this list is exhaustive: [Mutant.Index],
-	// [Mutant.DisplayID], [Mutant.Path], [Mutant.Line], [Mutant.Column],
-	// [Mutant.EndLine], [Mutant.StartByte], [Mutant.EndByte], [Mutant.Family],
-	// [Mutant.Rule], [Mutant.RuleVersion], [Mutant.SourceDigest],
-	// [Mutant.Original], [Mutant.Replacement], [Mutant.Branch], and every field
-	// of a [Rejection] but its ID — [Rejection.DisplayID], [Rejection.Path],
-	// [Rejection.Line], [Rejection.Column], [Rejection.Rule] and
-	// [Rejection.Diagnostic].
+	// The third flag byte is a constant the v1 recipe reserved and did not need.
+	// It stays rather than being dropped, because dropping it is a different
+	// digest for every session anybody has already stored evidence against.
 	//
-	// Every one of them is a function of something that *is* hashed. An index is
-	// a position, a display identity is a prefix of an ID, and the rule, the
-	// span, the text on both sides and the source digest are the very inputs
-	// [Mutant.ID] is computed from — so a change to any of them is a change to
-	// the ID, and the ID is in the recipe. The coordinates and the compiler's
-	// words follow from the source that digest names, and a branch proof is a
-	// lemma about the same span. Hashing them again would add nothing and would
-	// move the key every time a line shifted above an untouched mutant, and a key
-	// that moves for a session that has not changed is a cache that never hits.
+	// Not hashed, and this list is exhaustive: Selection, [Mutant.Selected],
+	// [Mutant.Index], [Mutant.DisplayID], [Mutant.Path], [Mutant.Line],
+	// [Mutant.Column], [Mutant.EndLine], [Mutant.StartByte], [Mutant.EndByte],
+	// [Mutant.Family], [Mutant.Rule], [Mutant.RuleVersion],
+	// [Mutant.SourceDigest], [Mutant.Original], [Mutant.Replacement],
+	// [Mutant.Branch], and every field of a [Rejection] but its ID —
+	// [Rejection.DisplayID], [Rejection.Path], [Rejection.Line],
+	// [Rejection.Column], [Rejection.Rule] and [Rejection.Diagnostic].
+	//
+	// Most of them are left out because they are a function of something that
+	// *is* hashed. An index is a position, a display identity is a prefix of an
+	// ID, and the rule, the span, the text on both sides and the source digest
+	// are the very inputs [Mutant.ID] is computed from — so a change to any of
+	// them is a change to the ID, and the ID is in the recipe. The coordinates
+	// and the compiler's words follow from the source that digest names, and a
+	// branch proof is a lemma about the same span. Hashing them again would add
+	// nothing and would move the key every time a line shifted above an
+	// untouched mutant, and a key that moves for a session that has not changed
+	// is a cache that never hits.
+	//
+	// Selection and [Mutant.Selected] are left out for a different reason, and
+	// it is the one worth reading before keying anything on this value. A
+	// selection is advisory — it changes nothing the engine does, and
+	// [Session.Exec] runs an unselected mutant exactly as it runs a selected one
+	// — so it describes the caller's plan rather than the session. What is keyed
+	// on this digest is *per-mutant evidence*: this mutant survived against this
+	// prepared tree, which is a fact about the tree, the toolchain and the
+	// mutant and about none of the caller's intentions. Move the key with the
+	// selection and the first narrowed run misses on every row a consumer has
+	// ever stored, then re-measures a module's worth of mutants to write down
+	// answers it already had.
+	//
+	// The rule that makes that safe belongs to the caller and is one line:
+	// **never store "not run, out of selection" as evidence.** A mutant the
+	// selection left out was not measured, so there is nothing about it to
+	// record; recording an absence as a result is the only way two sessions
+	// under one key could come to disagree.
 	//
 	// The recipe is written out because this is a wire format: a consumer keying
 	// a store on it has to be able to recompute it, recognise a value from an
@@ -420,6 +474,19 @@ type Catalog struct {
 	Mutants        []Mutant
 	Rejections     []Rejection
 	TestPackages   []string
+	// Selection is the normalised copy of [PrepareOptions.Selection] this
+	// preparation actually applied — paths cleaned, ranges sorted and merged —
+	// or nil when none was given and every mutant is selected.
+	//
+	// It is the engine's answer rather than an echo of the request, which is
+	// what makes it worth reading: a caller that handed over "5-7, 1-3, 4" of
+	// "./pkg/../pkg/x.go" gets back "1-7" of "pkg/x.go", so two runs can be
+	// asked whether they selected the same lines without normalising them
+	// again, and a report can say which lines a score covers.
+	//
+	// It is a deep copy, like the rest of a [Catalog]: editing it cannot change
+	// what the session says it selected.
+	Selection *Selection
 }
 
 // Mutant is one canonical, deduplicated source edit.
@@ -436,10 +503,11 @@ type Mutant struct {
 	//
 	// It is here so that selecting mutants by line range is one rule rather than
 	// two. `go-mutants run --changed` intersects a diff's ranges with
-	// `[Line, EndLine]`, and a caller narrowing the same catalogue through this
-	// API has to reach the same mutants — including the multi-line ones, which
-	// are exactly the mutants a Line-only comparison silently drops when the
-	// diff touches their last line and not their first.
+	// `[Line, EndLine]`, [PrepareOptions.Selection] intersects a caller's ranges
+	// with the same span through the same code, and a caller applying the rule
+	// itself has to reach the same mutants — including the multi-line ones,
+	// which are exactly the mutants a Line-only comparison silently drops when
+	// the range touches their last line and not their first.
 	//
 	// The count is exact rather than an estimate: Original is precisely the
 	// bytes the mutant's span covers, so its newlines are exactly the line
@@ -496,6 +564,32 @@ type Mutant struct {
 	// in no report, in no schema, and in no `go-mutants list --json` document,
 	// because it describes a tree that exists for as long as the session does.
 	Probed bool
+	// Selected reports whether this mutant's `[Line, EndLine]` span met
+	// [PrepareOptions.Selection]. It is true for every mutant when no selection
+	// was given, so a consumer that never narrows reads it as "yes" and never
+	// has to ask whether it was narrowing.
+	//
+	// It is **advisory**, and it is the only thing a selection changes. The
+	// mutant is catalogued, validated, instrumented and — if a caller asks —
+	// executed exactly as any other: [Session.Exec] runs an unselected mutant
+	// without complaint, because a plan for a run is not a rule about what may
+	// be measured, and a consumer that finds a survivor and wants its
+	// neighbours executed must not have to prepare the module a second time.
+	//
+	// What it is *not* is a statement about the mutant. An unselected mutant is
+	// one the caller did not set out to measure this time; it is not
+	// uninteresting, not equivalent, and not out of scope. A consumer scoring a
+	// narrowed run says which lines the score covers — [Catalog.Selection] is
+	// that answer — rather than reporting it as the module's.
+	//
+	// It is **not** hashed into [Catalog.PreparedDigest], and that is a decision
+	// with a rule attached. Evidence keyed on that digest is a fact about the
+	// tree, the toolchain and the mutant, none of which a selection touches, so
+	// moving the key when a caller narrows a run would cost it every row it had
+	// stored. What a caller owes in return is one line: never store "not run,
+	// out of selection" as evidence. An unselected mutant was not measured, so
+	// there is nothing about it to record.
+	Selected bool
 }
 
 // BranchDecreasing is the one Direction go-mutants emits today: the mutated

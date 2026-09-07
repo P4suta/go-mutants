@@ -56,6 +56,15 @@ func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Wor
 	if len(c.TestPackages) == 0 {
 		t.Error("the catalogue names no test packages; a session with no binary can measure nothing")
 	}
+	// None of the three shared sessions is prepared with a selection, and the
+	// claim for that case is the one every consumer that never narrows depends
+	// on: the field is nil and every mutant is Selected, so a caller reading
+	// Selected without ever having asked for a narrowing reads "yes".
+	if c.Selection != nil {
+		t.Errorf("the catalogue carries Selection %+v for a preparation that asked for none;"+
+			" nil is what says every mutant is selected", c.Selection)
+	}
+
 	seenPackage := make(map[string]bool, len(c.TestPackages))
 	for _, pkg := range c.TestPackages {
 		if pkg == "" {
@@ -116,6 +125,10 @@ func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Wor
 		}
 		if !isDigest64(m.SourceDigest) {
 			t.Errorf("mutant %s has SourceDigest %q, want 64 lowercase hex characters", m.DisplayID, m.SourceDigest)
+		}
+		if !m.Selected {
+			t.Errorf("mutant %s is not Selected in a session prepared with no selection;"+
+				" a consumer that never narrows would skip it", m.DisplayID)
 		}
 		if m.Probed && !m.Accepted {
 			t.Errorf("mutant %s is Probed and not Accepted; a mutant that is never executed"+

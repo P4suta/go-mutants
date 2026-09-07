@@ -14,6 +14,62 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`PrepareOptions.Selection` narrows a prepared session by line range, so a
+  consumer that used to narrow by *file* stops over-selecting.** A tool that
+  runs mutation over "what changed" could only ask the library for the whole
+  catalogue and then drop the mutants whose `Path` the diff did not name — which
+  keeps every mutant in an edited file, two hundred of them for one edited line.
+  The line-level rule was already here and was not reachable: `go-mutants run
+  --changed` intersects a diff's ranges with each mutant's `[Line, EndLine]`
+  span, and `Mutant.EndLine` was exported for exactly this and left for the
+  caller to apply. It is now the engine's to apply, through the same function
+  `--changed` calls, so the two cannot come to disagree about a condition
+  spanning three lines.
+
+  A `Selection` is module-relative paths onto 1-based inclusive `LineRange`s.
+  It is applied **after** discovery and validation, so `Catalog.Digest`, every
+  mutant id, `Accepted`, `Probed` and `Rejections` are identical to the same
+  preparation without it — a narrowed run stays comparable with the full run
+  before it, and an id out of either can be handed straight back. Narrowing
+  discovery instead would be faster and wrong: identities are minted from a
+  file's own bytes and the catalogue is deduplicated across the module, so
+  skipping unselected files would move the identity of a mutant nobody touched.
+
+  The narrowing is **advisory**. `Session.Exec` runs an unselected mutant like
+  any other, because a selection is the plan for a run and not a rule about what
+  may be measured: a consumer that finds an interesting survivor and wants the
+  mutants beside it executed must not have to prepare the module again to do it.
+  `Catalog.Selection` hands back the normalised copy the engine applied — paths
+  cleaned, ranges sorted and merged — so two runs can be asked whether they
+  selected the same lines, and a score can say which lines it covers.
+
+  `Catalog.PreparedDigest` does **not** move, and the reasoning is worth having
+  in writing because the opposite looks right. The recipe had reserved a third
+  flag byte per mutant against the day a selection could narrow a session, and
+  the obvious thing to do with it was to hash `Selected`. That would have been
+  the most expensive kind of correct-looking: what a consumer keys on this
+  digest is *per-mutant evidence* — this mutant survived against this prepared
+  tree — which is a fact about the tree, the toolchain and the mutant, and about
+  none of the caller's intentions. Hashing an advisory flag would mean the very
+  first narrowed run of the consumer this feature was built for missing on every
+  row it had ever stored, then re-measuring a module to write down answers it
+  already had. So the byte stays the constant it was — dropping it would move
+  every stored key too — and both `Mutant.Selected` and `Catalog.Selection` are
+  named in the not-hashed ledger with this argument beside them. What a caller
+  owes in exchange is one line: never store "not run, out of selection" as
+  evidence, because an unselected mutant was not measured and there is nothing
+  about it to record. A test pins the digest as a literal and pins it as
+  unchanged by any narrowing.
+
+  A path or a range the engine will not narrow by is refused with the new
+  `ErrInvalidSelection`, before discovery starts, in a sentence naming the
+  entry: an empty, absolute, backslash-separated or escaping path, a `First`
+  below 1, a `Last` below its `First`. Each of those looks like a narrowing and
+  would select nothing, and a run that measured no mutants and reported a
+  perfect score is the failure this must not produce. A path the module simply
+  does not hold is not one of them — it selects nothing and is documented to,
+  because a selection built from a diff names deleted files, documents and
+  testdata beside source, and filtering them is not the caller's job.
 - **`ExecRequest.RecordTestLog`, `ProbeRequest.RecordTestLog` and
   `ControlRequest.RecordTestLog` record which environment variables and files a
   target consulted, and the three results carry the answers in `TestLogs`.** A

@@ -197,6 +197,7 @@ silent merge.
 | `DiscoveryPackages []string` | `nil` → `./...` | module-relative package patterns whose source is mutated |
 | `Packages []string` | `nil` → `./...` | module-relative package patterns whose test binaries are built |
 | `ProbeCoverPackages []string` | `nil` | package patterns included in probe coverage |
+| `Selection *Selection` | `nil` | module-relative paths onto 1-based inclusive line ranges. Narrows what the caller means to *execute*; `nil` selects everything. See [Selecting by line range](#selecting-by-line-range) |
 | `Jobs int` | `0` → `min(NumCPU, 8)`, at most 32 | concurrent validation and test-binary builds |
 | `BuildTimeout time.Duration` | `0` → 10 minutes | bounds each validation and test-binary build. Negative is invalid |
 | `MutantTimeout time.Duration` | `0` → 10 seconds | the default outer timeout `Session.Exec` and `Session.Probe` use. Negative is invalid |
@@ -250,6 +251,10 @@ is the code's stated intent, not by those three.
 - A mutant is `Accepted` **iff** it carries no rejection: rejected implies not
   accepted, and not accepted implies rejected. A mutant never disappears into a
   rejection nothing can look up.
+- `Selection` is nil, and every mutant is `Selected`, for a preparation that
+  asked for no narrowing. When one was asked for, it is the **normalised** copy
+  the engine applied — cleaned paths, sorted and merged ranges — and a deep one,
+  so editing it cannot change what the session says it selected.
 
 ### `Mutant`
 
@@ -271,6 +276,10 @@ is the code's stated intent, not by those three.
   characters.
 - `Probed` implies `Accepted`. A mutant validation rejected is never executed,
   so a probe status on it would describe a run that cannot happen.
+- `Selected` is true for every mutant when `PrepareOptions.Selection` is nil,
+  and otherwise exactly when `[Line, EndLine]` meets a range given for `Path`.
+  It is advisory: `Session.Exec` runs an unselected mutant like any other, and
+  `PreparedDigest` does not hash it.
 - `Branch` is nil when go-mutants proved nothing, which is not the same
   statement as "no branch".
 
@@ -670,6 +679,7 @@ were introduced, and none of them is a message you may parse.
 | `ErrProbeNotPrepared` | `Session.Probe` | the session was prepared without `PrepareOptions.Probe` |
 | `ErrProbeInconsistent` | `Session.Probe` | the probe log named a mutant the catalogue cannot account for — an **engine bug**, never a caller's doing |
 | `ErrTestLogUnsupported` | `Session.Exec`, `Session.Probe`, `Session.Control` | a target refused `-test.testlogfile`, so `RecordTestLog` cannot be served. Never a kill |
+| `ErrInvalidSelection` | `Workspace.Prepare` | `PrepareOptions.Selection` holds a path or a range the engine will not narrow by; the sentence names the entry |
 
 Match them with `errors.Is`. They survive wrapping, and the sentences they
 appear in are the ones the engine has always printed. `ErrProbeNotPrepared`
@@ -1125,18 +1135,22 @@ big-endian byte length followed by its bytes — the encoding the mutant ID uses
 8. the decimal `len(TestPackages)`, then every `TestPackages` element in order,
 9. the decimal `len(Mutants)`, then per mutant in catalogue order: `Mutant.ID`,
    `Mutant.Package`, and three flag bytes — `a` or `-` for `Mutant.Accepted`,
-   `p` or `-` for `Mutant.Probed`, `s` or `-` for selection, which is `s` for
-   every mutant until a selection can narrow a session,
+   `p` or `-` for `Mutant.Probed`, and a third that is the constant `s`,
 10. the decimal `len(Rejections)`, then every `Rejection.ID` in order.
 
-**Not** hashed, and the list is exhaustive: `Mutant.Index`, `Mutant.DisplayID`,
-`Mutant.Path`, `Mutant.Line`, `Mutant.Column`, `Mutant.EndLine`,
-`Mutant.StartByte`, `Mutant.EndByte`, `Mutant.Family`, `Mutant.Rule`,
-`Mutant.RuleVersion`, `Mutant.SourceDigest`, `Mutant.Original`,
-`Mutant.Replacement`, `Mutant.Branch`, and every field of a `Rejection` but its
-`ID` — `DisplayID`, `Path`, `Line`, `Column`, `Rule` and `Diagnostic`.
+The third flag byte is a constant the v1 recipe reserved and did not need. It
+stays rather than being dropped, because dropping it is a different digest for
+every session anybody has already stored evidence against.
 
-Every one of them is a function of something that *is* hashed. An index is a
+**Not** hashed, and the list is exhaustive: `Catalog.Selection`,
+`Mutant.Selected`, `Mutant.Index`, `Mutant.DisplayID`, `Mutant.Path`,
+`Mutant.Line`, `Mutant.Column`, `Mutant.EndLine`, `Mutant.StartByte`,
+`Mutant.EndByte`, `Mutant.Family`, `Mutant.Rule`, `Mutant.RuleVersion`,
+`Mutant.SourceDigest`, `Mutant.Original`, `Mutant.Replacement`,
+`Mutant.Branch`, and every field of a `Rejection` but its `ID` — `DisplayID`,
+`Path`, `Line`, `Column`, `Rule` and `Diagnostic`.
+
+Most of them are a function of something that *is* hashed. An index is a
 position; a display identity is a prefix of an ID; the rule, the span, the text
 on both sides and the source digest are the very inputs `Mutant.ID` is computed
 from, so a change to any of them is a change to the ID, and the ID is in the
@@ -1145,6 +1159,23 @@ digest names, and a branch proof is a lemma about the same span. Hashing them
 again would add nothing and would move the key every time a line shifted above
 an untouched mutant — and a key that moves for a session that has not changed is
 a cache that never hits.
+
+`Catalog.Selection` and `Mutant.Selected` are out for a different reason, and it
+is the one to read before keying anything on this value. A selection is
+**advisory** — it changes nothing the engine does, and `Session.Exec` runs an
+unselected mutant exactly as it runs a selected one — so it describes the
+caller's plan and not the session. What is keyed on this digest is *per-mutant
+evidence*: this mutant survived against this prepared tree, which is a fact
+about the tree, the toolchain and the mutant and about none of the caller's
+intentions. Move the key with the selection and the first narrowed run misses on
+every row a consumer has ever stored, then re-measures a module's worth of
+mutants to write down answers it already had.
+
+The rule that makes that safe belongs to the caller, and it is one line:
+**never store "not run, out of selection" as evidence.** A mutant the selection
+left out was not measured, so there is nothing about it to record; recording an
+absence as a result is the only way two sessions under one key could come to
+disagree.
 
 The order of the fields is part of the recipe and is not free to change: a
 different order is a different digest for every session anybody has already
@@ -1270,11 +1301,69 @@ honest `Auditable` false, which is what it returns.
 
 ## Selecting by line range
 
+A consumer that narrows a run to the code somebody touched can do it by *file*
+without help — drop every mutant whose `Path` the diff does not name — and that
+over-selects badly: a file with one edited line and two hundred mutants
+contributes all two hundred. The line-level rule has been the engine's since
+`--changed` existed, and `PrepareOptions.Selection` is it, exposed.
+
+```go
+session, err := workspace.Prepare(ctx, gomutants.PrepareOptions{
+	Selection: &gomutants.Selection{Lines: map[string][]gomutants.LineRange{
+		// Module-relative, '/'-separated. Ranges are 1-based and inclusive.
+		"internal/clamp/clamp.go": {{First: 41, Last: 48}, {First: 90, Last: 90}},
+	}},
+})
+```
+
+Every mutant then carries `Selected`, and `Catalog.Selection` is the
+**normalised** copy the engine applied.
+
+### What it changes, and what it does not
+
+It sets `Mutant.Selected` and nothing else. The selection is applied *after*
+discovery and *after* validation, so `Catalog.Digest`,
+`Catalog.PreparedDigest`, every `Mutant.ID`, `Accepted`, `Probed` and
+`Rejections` are identical to the same preparation without it. That is what
+lets a consumer compare a narrowed run against the full run before it, hand an
+id out of either straight back to `Session.Exec`, and merge two narrowings of
+one tree.
+
+Narrowing *discovery* instead would be faster and wrong, for the reason
+`--changed` does not do it either: a mutant id is minted from its file's own
+bytes and the catalogue is deduplicated across the module, so a discovery pass
+that skipped unselected files would produce a different catalogue — and a mutant
+in an untouched file would change identity because somebody edited a file
+elsewhere.
+
+`Catalog.PreparedDigest` does **not** move. Neither `Selected` nor `Selection`
+is hashed, so a narrowed session and the full one carry the same key — which is
+the point: what a consumer keys on that digest is per-mutant evidence, a fact
+about the tree and the mutant that a plan does not change, and moving the key
+the first time somebody narrowed a run would cost them every stored row. The one
+thing a caller owes in exchange is to **never store "not run, out of selection"
+as evidence**: an unselected mutant was not measured, so there is nothing about
+it to record. See [What `PreparedDigest`
+covers](#what-prepareddigest-covers).
+
+**The narrowing is advisory.** `Session.Exec` runs an unselected mutant exactly
+as it runs a selected one. A selection is the plan for a run, not a rule about
+what may be measured: a consumer that finds an interesting survivor and wants
+the mutants beside it executed must not have to prepare the module a second time
+to do it.
+
+The probe tree is unaffected. It is instrumented from the whole catalogue and
+`Session.Probe` answers about all of it, which is what a consumer wants — an
+infection fact is about a mutant and a test, not about this run's plan.
+
+### The rule
+
 `Mutant.EndLine` is the 1-based line the edit ends on: `Line` plus the number of
 newlines in `Original`. A mutant is inside a range `[first, last]` when
-`Line <= last && EndLine >= first`, and that is exactly the rule
-`go-mutants run --changed` applies to a diff, so a caller narrowing the same
-catalogue through this API reaches the same mutants:
+`Line <= last && EndLine >= first`. It is exactly the rule
+`go-mutants run --changed` applies to a diff — the same function, not a second
+implementation — so the library and the CLI select the same mutants, and a
+caller applying it by hand to a catalogue it already holds reaches them too:
 
 ```go
 func touches(m gomutants.Mutant, first, last int) bool {
@@ -1298,6 +1387,35 @@ Two details of the count:
   a score higher than the truth.
 - **A carriage return is not a line break.** A CRLF file's break is one `\n`
   preceded by a byte that is not one, so `"a\r\nb"` spans two lines, not three.
+
+### Normalisation, and what is refused
+
+`Prepare` canonicalises the selection before it applies it, and hands the result
+back as `Catalog.Selection`:
+
+- paths are `path.Clean`ed, so `./pkg/../pkg/x.go` and `pkg/x.go` become one
+  entry rather than two that select different sets;
+- ranges are sorted and overlapping or adjacent ones are merged, so `5-7, 1-3,
+  4` and `1-7` are the same value — which is what lets a consumer diff two runs'
+  selections and be comparing the lines rather than the order somebody appended
+  their hunks in;
+- a path named with no ranges at all is dropped, since it selects the same
+  mutants as a path nobody named: none.
+
+Four entries are **refused**, with `ErrInvalidSelection` and a sentence naming
+the entry: a path that is empty, absolute, backslash-separated, or escapes the
+module, and a `LineRange` whose `First` is below 1 or whose `Last` is below its
+`First`. Each is a request that looks like a narrowing and would select nothing,
+and the judgement is `--changed`'s: a selection nobody can satisfy measures no
+mutants, and a run that measured none and reported a perfect score is the one
+failure this feature must not produce. The refusal happens before discovery
+starts, so a mistake in the request does not cost a preparation to find.
+
+A path the engine *can* read and the module does not hold is **not** refused: it
+selects nothing, and is documented to. `Prepare` has read no source when the
+options are resolved, and a selection is usually built from a diff — which names
+deleted files, documents and testdata beside source — so refusing them would
+make every consumer filter the engine's own input on its behalf.
 
 ## Recipe: listing the module
 
