@@ -712,73 +712,13 @@ func TestACommandThatWaitedOutAFailedWindowIsRefused(t *testing.T) {
 	}
 }
 
-// TestACommandThatWritesDuringTheBinaryBuildFailsPrepare closes the last stretch
-// of a preparation nothing was checking.
-//
-// The window ends at `main_restoration` and the session is published after the
-// test binaries are built, and in between — the whole binary build, which is
-// the longest phase of a real preparation — a command may write into the tree.
-// Those bytes are what the binaries are compiled from, and they are also what
-// `scanFiles` records as the state the session was prepared in, so the drift
-// would be baked into `Session.Changes`'s own baseline and reported by nothing
-// at all.
-//
-// The lifecycle says every write into the frozen tree during a preparation
-// fails it. This is the check that makes the sentence true to the end of the
-// preparation rather than to the end of the window.
-func TestACommandThatWritesDuringTheBinaryBuildFailsPrepare(t *testing.T) {
-	root := copyFixture(t, "simple")
-	if err := os.WriteFile(filepath.Join(root, "write_test.go"), []byte(writeAfterPrepareTest), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = workspace.Close() })
-
-	held := holdPreparation(t, context.Background(), workspace,
-		gomutants.PrepareOptions{SkipVerify: true},
-		insidePhase(gomutants.PreparePhaseBinaryBuild, gomutants.PrepareEventStarted), nil)
-	held.awaitHeld(t)
-
-	// From this goroutine rather than from the callback: the binary build is
-	// outside the window, so the command runs — which is the whole point — and
-	// a callback that waited for one would be the preparation's own goroutine
-	// waiting on a call that a queued Close would deadlock.
-	written, execErr := workspace.Exec(t.Context(), gomutants.Command{
-		Argv: []string{"go", "test", "-run=^TestWriteAfterPrepare$", "."},
-		Env:  []string{"GOWORK=off", writeAfterPrepareEnv + "=yes"},
-	})
-	if execErr != nil || written.TimedOut || written.ExitCode != 0 {
-		t.Fatalf("the writing command = (%+v, %v)", written, execErr)
-	}
-
-	held.release()
-	prepared := held.await(t)
-	if prepared.session != nil {
-		_ = prepared.session.Close()
-	}
-	var drift *gomutants.DriftError
-	if !errors.As(prepared.err, &drift) {
-		t.Fatalf("Prepare after a command wrote into the tree during the binary build = %v,"+
-			" want a *DriftError", prepared.err)
-	}
-	if drift.Stage != "test binaries" {
-		t.Errorf("Stage = %q, want %q: the write landed after the window and before the session",
-			drift.Stage, "test binaries")
-	}
-	if !slices.ContainsFunc(drift.Changes, func(change gomutants.Change) bool {
-		return change.Kind == gomutants.ChangeAdded && change.Path == writeAfterPrepareArtifact
-	}) {
-		t.Errorf("Changes = %+v, want the %s the command wrote", drift.Changes, writeAfterPrepareArtifact)
-	}
-	if _, execErr := workspace.Exec(t.Context(), gomutants.Command{
-		Argv: []string{"go", "version"},
-	}); !errors.Is(execErr, gomutants.ErrPrepareFailed) {
-		t.Errorf("Exec after the refusal = %v, want ErrPrepareFailed", execErr)
-	}
-}
+// The stretch between the window and the published session used to have a
+// re-digest of its own — `Stage: "test binaries"` — because the binaries were
+// compiled from the tree and a command's bytes went into them. They are now
+// compiled from the frozen manifest through the overlay, so there is nothing
+// there for a digest to protect and the check is gone;
+// `TestAWriteDuringTheBinaryBuildIsNotCompiledIn` in
+// `workspace_frozen_build_integration_test.go` is what took its place.
 
 // TestCommandDriftDuringDiscoveryFailsPrepare is the hole the new rule opens,
 // closed.

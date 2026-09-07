@@ -114,9 +114,11 @@ manifest at the top of the window (see
 [Drift, and which stage names it](#drift-and-which-stage-names-it)).
 
 A command **runs after a successful `Prepare`** because the tree it runs against
-is the snapshot `Open` froze, byte for byte. `main_restoration` puts the
-pristine sources back and re-digests the tree before a single test binary is
-built, so a `Prepare` that returned a session has already proved it; the
+is the snapshot `Open` froze, byte for byte — or, if a command wrote there while
+the binaries were compiling, the snapshot plus that write, which
+`Session.Changes` names. `main_restoration` puts the pristine sources back and
+re-digests the tree before a single test binary is built, so a `Prepare` that
+returned a session has already proved the instrumentation was undone; the
 instrumented sources exist only in the overlay manifest the session owns, and
 nothing but `Session.Exec` and `Session.Probe` puts that manifest in a child's
 environment. So `go vet`, `go build` and a control of the consumer's own belong
@@ -204,7 +206,8 @@ round.
 | Moment | A command |
 |---|---|
 | before `Prepare` | runs, against the frozen tree |
-| while discovery, the probe copy, verification or a build runs | runs, against the frozen tree — those read the same bytes it does |
+| while discovery, the probe copy or verification runs | runs, against the frozen tree — those read the same bytes it does |
+| while the test binaries are compiled | runs, and may even write: the build reads the frozen copies through the overlay, never the tree |
 | while the instrumentation window is open | waits for the window, then runs against the restored tree |
 | already running when the window is about to open | finishes; the window waits for it |
 | queued behind a window that then **failed** | refused, carrying `ErrPrepareFailed` — it never runs, because the tree it would have woken into still holds instrumented sources |
@@ -224,9 +227,10 @@ leaves on the table.
 
 ### Drift, and which stage names it
 
-Nothing stops a command from writing into the frozen tree. A write made before
-or during a preparation fails it, and the question a `DriftError`'s `Stage`
-answers is *which* check found it; a write made after a preparation succeeded is
+Nothing stops a command from writing into the frozen tree. A write made before a
+preparation, or during the stretches of one that read the tree, fails it, and
+the question a `DriftError`'s `Stage` answers is *which* check found it; a write
+made while the test binaries compile, or after a preparation succeeded, is
 nobody's failure and is reported by `Session.Changes` instead.
 
 | Stage | Finds |
@@ -234,7 +238,6 @@ nobody's failure and is reported by `Session.Changes` instead.
 | `commands` | a change that is still in the tree when the integrity gate re-digests it at the top of the window |
 | `discovery` | a change a command made *and undid* while discovery was reading, so the gate sees nothing and the catalogue is built from bytes nobody has |
 | `source restoration`, `verification`, `probe instrumentation`, `probe source restoration` | a change around instrumentation, whoever made it |
-| `test binaries` | a change made after the window closed and before the session was published — while the binaries were being compiled |
 
 The `discovery` stage is the one the overlap introduced. Discovery reads the
 tree while a command may write it, so once the tree is held exclusively every
@@ -253,22 +256,52 @@ covers is a file no byte of which was read — a test file, a generated one, one
 an include or exclude pattern dropped — and none of those can move a mutant's
 identity, because no mutant was minted from one.
 
-The `test binaries` stage covers the other end, with one gap that is stated
-here rather than hidden. The window ends at `main_restoration`, but the binaries
-are compiled after it, from the tree — the overlay replaces the instrumented
-sources and nothing else — and `Session.Changes`'s own baseline is captured
-there too, so a write during the build would be compiled in *and* invisible.
-One re-digest before the session is published catches every write a command
-*leaves*: the tree at the end of the build has to be the frozen one. It cannot
-catch a write that is made and undone while the compiler is between one file
-and the next; the tree is held shared during the build, which is what a command
-holds too, so a transient edit there is compiled in and gone before the digest
-looks. The rule is the one at the top of this section — a command must not
-write the frozen tree — and the checks are the net under it, total inside the
-window and over what discovery read, and one transient write short of total
-after the build. Compiling from the frozen manifest through the overlay would
-close that gap and is the follow-up named in
-[ADR 0007](adr/0007-commands-overlap-preparation.md).
+The other end has no stage at all any more, and that is the point rather than an
+omission. The window ends at `main_restoration` and the test binaries are
+compiled after it, so there used to be a `test binaries` re-digest between the
+last build and the published session: the binaries were compiled from the tree —
+the overlay replaced the instrumented sources and nothing else — and
+`Session.Changes`'s own baseline was scanned off the tree afterwards, so a write
+during the build was compiled in *and* invisible. The digest caught every write
+a command **left**, and could not catch one made and undone while the compiler
+was between one file and the next.
+
+The build no longer reads a frozen file off the disk. At the top of the window,
+from a tree the integrity gate has just proved is the manifest, every file the
+snapshot froze is copied into a directory the preparation owns, and the overlay
+names all of them; the instrumented sources keep their own mapping and win where
+the two meet. The `go` command reads Go sources, `go.mod`, `go.sum`, assembly,
+the cgo inputs and `//go:embed` targets through `-overlay`, so what the compiler
+sees is the frozen program whatever the tree holds by then.
+`Session.Changes`'s baseline is the manifest for the same reason — it is what the
+binaries were built from — so a write a command leaves during the build is
+reported by `Session.Changes` and fails nothing, exactly as a write after a
+successful `Prepare` is.
+
+One thing the overlay cannot pin is a path the manifest does not name. `-overlay`
+replaces the files it names and the `go` command still lists the real directory,
+so a **new** file a command creates in a package directory while the binaries
+compile is seen by the compiler; `Session.Changes` reports it as an addition,
+and the rule at the top of this section — a command must not write the frozen
+tree — is what stands between a consumer and it.
+
+**What the copy costs.** One whole-tree copy per preparation, of exactly the
+snapshot's bytes, kept for as long as the session: a prepared workspace holds
+the module twice over, three times with a probe tree. The time is proportional
+to the tree and paid inside the instrumentation window, so it is time a command
+waits for — 679 files and 7.7 MiB of go-mutants' own repository in 50–90 ms, and
+under a millisecond for each of its fixture modules. It is recorded in a trace
+as the `freeze-build-inputs` stage with the file count and byte total, so a slow
+preparation says how much of itself went there. It is deliberately *not* a
+`PreparePhase`: that vocabulary is shared with goatest and closed, and a stage
+is what the trace format has for a step inside a phase.
+
+None of this is about **run** time. The prepared binaries still start in the
+directory of the package they were built from, so a test that opens `testdata/`
+reads the tree, and one that writes — a golden file it updates, a fuzz crasher
+the runtime files under `testdata/fuzz/` — writes into the tree. That is the
+same write this section is about, made by a target rather than by a command, and
+`Session.Changes` is where it shows up.
 
 ### The session's own lock
 
@@ -829,8 +862,7 @@ Reach all of these with `errors.As`.
   manifest. `Stage` names the check that found it: `commands` (the integrity
   gate at the top of the instrumentation window), `discovery` (what discovery
   read, compared against the manifest once the tree is held exclusively),
-  `source restoration`, `verification`, `test binaries` (after the binaries
-  were built and before the session is published), `probe instrumentation` or
+  `source restoration`, `verification`, `probe instrumentation` or
   `probe source restoration` — see
   [Drift, and which stage names it](#drift-and-which-stage-names-it).
   `Changes` carries the paths and both digests, so a consumer can say *which*

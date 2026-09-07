@@ -119,25 +119,36 @@ is refused by the probe snapshot's own digest comparison instead. Both refuse;
 the message differs.
 
 The window is not the end of the preparation, and the binaries are compiled
-after it, from the tree: the overlay replaces only the instrumented sources, and
-the compiler reads every other file where it lies. A command writing there would
-have its bytes compiled into the test binaries *and* recorded as the state the
-session was prepared in, so `Session.Changes` would compare the tree against the
-drift and report nothing. One re-digest between the last build and the published
-session — `Stage: "test binaries"` — catches a write that is still there when
-the build ends, which is every write a command *leaves*. It does not catch a
-write that is made and undone while the compiler is between one file and the
-next: a transient edit is compiled in and gone before the digest looks. The tree
-is held shared during the build, and shared is what a command holds too, so
-nothing in this design excludes it; holding the tree exclusively for the build
-would exclude commands from the longest phase of a preparation, which is the
-one thing this decision exists to stop. The rule a consumer is held to is
-therefore the one stated at the top: a command must not write the frozen tree.
-The checks are the net under that rule, and after the window the net has a gap
-exactly one transient write wide. Closing it soundly means compiling from the
-frozen manifest rather than from the tree — every source of the module mapped
-through the overlay, so the compiler never reads the tree at all — and that is
-the second residual below.
+after it. They are compiled from the **manifest**, not from the tree. At the top
+of the window — under the exclusive lock, from a tree the integrity gate has
+just proved is byte-identical to the manifest — every file the snapshot froze is
+copied into a directory the preparation owns, and the overlay names all of them;
+the instrumented sources keep their own mapping and win where the two meet. So
+the compiler reads no *frozen file* off the disk, and a command rewriting one
+while the binaries compile changes the tree and nothing the session is made of,
+whether it leaves the write or undoes it between two of the compiler's reads.
+What the go command still reads from the tree is the package directories
+themselves, which is the residual three paragraphs down.
+
+That is why there is no drift check between the last build and the published
+session. There used to be one — `Stage: "test binaries"` — and it was the net
+under a build that read the tree: it caught every write a command *left* and
+could not catch a write made and undone while the compiler was between one file
+and the next. With nothing of the tree reaching the compiler there is nothing
+for it to protect, so the stage is gone, and `Session.Changes`'s baseline is the
+manifest rather than a scan taken after the build. A write a command leaves
+during the build is therefore reported by `Session.Changes` and refused by
+nothing, exactly as a write after a successful `Prepare` is.
+
+The overlay pins the bytes of every path the manifest names, and one thing it
+cannot pin is a path the manifest does not name. `-overlay` replaces named files
+and the `go` command still lists the real directory, so a **new** file a command
+creates in a package directory while the binaries compile is seen by the
+compiler. `Session.Changes` reports it as an addition, and the rule a consumer
+is held to is the one stated at the top: a command must not write the frozen
+tree. The checks are the net under that rule, and after the window the net now
+has a gap exactly one *added* file wide rather than one transient write wide —
+narrower, and made of the case a consumer has no reason to produce.
 
 The check on what discovery read is total over what discovery read, which is a
 wider set than the catalogue and deliberately so: a file a transient edit
@@ -155,12 +166,22 @@ preparation would then never take the tree from a command. That is engine work
 in `internal/validate`, not API work, and it is the next thing this design is
 waiting for.
 
-The build reads the tree, and that is the second residual. `Stage: "test
-binaries"` catches a write a command leaves behind and not one it undoes before
-the build ends. Compiling the test binaries from the frozen manifest — every
-Go source, `go.mod` and `go.sum` mapped through the overlay to bytes the
-preparation owns — would make the build's inputs exactly the manifest, whatever
-a command does to the tree meanwhile, and would let the drift check after the
-build go, since there would be nothing left for it to catch. That is
-`internal/execute` work on the overlay `Prepare` already writes, and it is the
-follow-up to this decision.
+The second residual is closed. The build's inputs are exactly the manifest —
+every Go source of every package, the test files, `go.mod`, `go.sum` and every
+other file the snapshot froze, copied once per preparation and mapped through
+the overlay `Prepare` already writes — so what a command does to the tree while
+the binaries compile no longer reaches them, and the drift check after the build
+is gone with the hazard it was under. The file set is the manifest whole rather
+than a list of the extensions a build reads: a `//go:embed` can name any path in
+the module, so a list would have to parse every source to be sure, and every
+miss in it would be a file read off the disk with nothing saying so.
+
+The price is one whole-tree copy per preparation, of exactly the snapshot's
+bytes and kept for as long as the session, so a prepared workspace holds the
+module twice over — three times with a probe tree. The time is proportional to
+the tree and is paid inside the window, where a command waits for it: 679 files
+and 7.7 MiB of this repository in 50-90 ms, and under a millisecond for a
+fixture. It is recorded as the `freeze-build-inputs` trace stage rather than as
+a new `PreparePhase`, because that vocabulary is goatest's and closed. A
+preparation that gives up removes the copy, on the rule the probe tree already
+follows, unless `KeepTemp` asked for it.

@@ -464,7 +464,7 @@ func TestCreateRejectsMissingDestParent(t *testing.T) {
 
 // TestCreateDeepTree is the end-to-end long path case: on Windows the copied
 // paths run past MAX_PATH, and the run must survive. It does not prove that
-// extendedPath is what saved it — the standard library rewrites long absolute
+// ExtendedPath is what saved it — the standard library rewrites long absolute
 // paths of its own accord — so the helper's output is pinned separately in
 // longpath_windows_test.go.
 func TestCreateDeepTree(t *testing.T) {

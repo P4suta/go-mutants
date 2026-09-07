@@ -307,7 +307,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	// Stat, not Lstat: a user whose whole checkout lives behind a symlink has
 	// made that choice deliberately, and the rejection rule is about links
 	// discovered inside the tree, where nobody chose anything.
-	info, err := os.Stat(extendedPath(absSrc))
+	info, err := os.Stat(ExtendedPath(absSrc))
 	if err != nil {
 		return nil, &Error{Code: CodeSourceRoot, Path: absSrc, Message: "cannot read the source root", Err: err}
 	}
@@ -360,7 +360,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	// The tree is created explicitly rather than by the first MkdirAll below,
 	// so that a source tree with no subdirectories at all still produces a Root
 	// that exists.
-	if rootErr := os.Mkdir(extendedPath(s.Root), 0o700); rootErr != nil {
+	if rootErr := os.Mkdir(ExtendedPath(s.Root), 0o700); rootErr != nil {
 		return nil, s.abandon(&Error{Code: CodeDestination, Path: s.Root, Message: "cannot create the snapshot tree", Err: rootErr})
 	}
 
@@ -371,7 +371,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	// even though nothing in it hashes.
 	for _, d := range w.dirs {
 		perm := dirPerm(d.mode)
-		path := extendedPath(s.pathOf(d.rel))
+		path := ExtendedPath(s.pathOf(d.rel))
 		if mkdirErr := os.MkdirAll(path, perm); mkdirErr != nil {
 			return nil, s.abandon(&Error{Code: CodeCopy, Path: d.rel, Message: "cannot create the directory in the snapshot", Err: mkdirErr})
 		}
@@ -418,12 +418,12 @@ func stampDirectoryTimes(dirs []record, sourceRoot, root string) (string, error)
 }
 
 func stampOneDirectory(source, target string) error {
-	info, err := os.Stat(extendedPath(source))
+	info, err := os.Stat(ExtendedPath(source))
 	if err != nil {
 		return err
 	}
 	modified := info.ModTime()
-	return os.Chtimes(extendedPath(target), modified, modified)
+	return os.Chtimes(ExtendedPath(target), modified, modified)
 }
 
 type snapshotFileCopy func(string, string, fs.FileMode) (int64, string, error)
@@ -580,7 +580,7 @@ type walker struct {
 // path afterwards because per-directory name order and whole-path order are
 // not the same ordering ("a.go" sorts before "a/b" but is visited after it).
 func (w *walker) walk(relDir string) error {
-	entries, err := os.ReadDir(extendedPath(w.pathOf(relDir)))
+	entries, err := os.ReadDir(ExtendedPath(w.pathOf(relDir)))
 	if err != nil {
 		return &Error{Code: CodeWalk, Path: w.errPath(relDir), Message: "cannot read the directory", Err: err}
 	}
@@ -602,7 +602,7 @@ func (w *walker) walk(relDir string) error {
 		// on Windows reconstructs its mode from FILE_ID_BOTH_DIR_INFO, and the
 		// whole rejection policy hangs on that mode being exact. One extra
 		// syscall per entry buys the question away.
-		fi, err := os.Lstat(extendedPath(abs))
+		fi, err := os.Lstat(ExtendedPath(abs))
 		if err != nil {
 			return &Error{Code: CodeWalk, Path: w.errPath(rel), Message: "cannot stat the entry", Err: err}
 		}
@@ -719,7 +719,7 @@ func unsupportedName(name string) string {
 // this package. A CRLF file arrives in the snapshot as a CRLF file, because
 // the line ending is part of the source digest that names every mutant in it.
 func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
-	in, err := os.Open(extendedPath(src))
+	in, err := os.Open(ExtendedPath(src))
 	if err != nil {
 		return 0, "", err
 	}
@@ -747,7 +747,7 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	// safe direction is the one that happens on its own. Do not fold this back
 	// into the creation mode.
 	perm := copyPerm(mode)
-	out, err := os.OpenFile(extendedPath(dst), os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	out, err := os.OpenFile(ExtendedPath(dst), os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
 		return 0, "", err
 	}
@@ -781,7 +781,7 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	// build — the snapshot pays for being new rather than for being different.
 	// The digest is taken from the bytes, so nothing about the snapshot's
 	// identity depends on this; only how much work the toolchain repeats does.
-	if err := os.Chtimes(extendedPath(dst), modified, modified); err != nil {
+	if err := os.Chtimes(ExtendedPath(dst), modified, modified); err != nil {
 		return 0, "", err
 	}
 	return size, hex.EncodeToString(h.Sum(nil)), nil
@@ -790,7 +790,7 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 // hashFile reports the size and lowercase hex SHA-256 of a file already on
 // disk. It is the read-only half of copyFile, used by [Snapshot.Redigest].
 func hashFile(abs string) (int64, string, error) {
-	f, err := os.Open(extendedPath(abs))
+	f, err := os.Open(ExtendedPath(abs))
 	if err != nil {
 		return 0, "", err
 	}

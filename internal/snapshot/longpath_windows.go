@@ -16,8 +16,14 @@ import (
 // already close to the limit.
 const longPathThreshold = 240
 
-// extendedPath returns p in the `\\?\` extended-length form when it is long
+// ExtendedPath returns p in the `\\?\` extended-length form when it is long
 // enough to be worth it, and p unchanged otherwise.
+//
+// It is exported because the paths this policy is about are not all this
+// package's. A preparation copies the frozen tree a second time, into a
+// directory some thirty characters deeper than the snapshot's, and a Windows
+// user with a deep module has that much less room; the copy applies the same
+// rule by calling this rather than by growing a second one that drifts.
 //
 // The Go standard library already does something very similar internally, so
 // on a current toolchain a long path usually works without this. "Usually" is
@@ -37,7 +43,7 @@ const longPathThreshold = 240
 //
 // Relative and drive-relative paths ("C:file") have no extended-length form at
 // all and are returned unchanged; every path this package builds is absolute.
-func extendedPath(p string) string {
+func ExtendedPath(p string) string {
 	if len(p) < longPathThreshold {
 		return p
 	}
