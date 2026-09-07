@@ -42,21 +42,20 @@ func TestClosedWorkspaceErrorsAreSentinels(t *testing.T) {
 		t.Errorf("Prepare message = %q, want %q", got, want)
 	}
 
-	// A closed workspace that *was* prepared is the state Close leaves behind,
-	// and it is byte for byte the shape Exec's other guard reads as a failed
-	// preparation: Close sets closed and drops the session while prepared stays
-	// true. Only the order of the two checks decides which sentinel comes out,
-	// so the order is a contract and this is what pins it. A consumer whose
-	// workspace is gone must be told that it is gone; "the preparation failed"
-	// would send it to open another workspace for a preparation that succeeded.
-	preparedThenClosed := &Workspace{closed: true, prepared: true}
+	// A workspace whose preparation failed and was then closed carries both
+	// facts, and only the order of the two checks decides which sentinel comes
+	// out. So the order is a contract and this is what pins it. A consumer
+	// whose workspace is gone must be told that it is gone; "the preparation
+	// failed" would send it to open another workspace for a preparation this
+	// one could no longer make either way.
+	preparedThenClosed := &Workspace{closed: true, prepareStarted: true, prepareFailed: true}
 	_, closedErr := preparedThenClosed.Exec(t.Context(), Command{Argv: []string{"go", "version"}})
 	if !errors.Is(closedErr, ErrWorkspaceClosed) {
 		t.Errorf("Exec on a closed workspace that was prepared = %v, want ErrWorkspaceClosed", closedErr)
 	}
 	if errors.Is(closedErr, ErrPrepareFailed) {
 		t.Errorf("Exec on a closed workspace that was prepared = %v, which reads as a failed"+
-			" preparation: Close leaves this shape behind and closed has to win", closedErr)
+			" preparation: both are true of this workspace and closed has to win", closedErr)
 	}
 	if got, want := errorText(closedErr), "gomutants: exec: workspace is closed"; got != want {
 		t.Errorf("Exec message on a closed prepared workspace = %q, want %q", got, want)
@@ -70,7 +69,7 @@ func TestClosedWorkspaceErrorsAreSentinels(t *testing.T) {
 func TestSecondPrepareIsErrWorkspacePrepared(t *testing.T) {
 	t.Parallel()
 
-	prepared := &Workspace{prepared: true}
+	prepared := &Workspace{prepareStarted: true}
 	_, err := prepared.Prepare(t.Context(), PrepareOptions{})
 	if !errors.Is(err, ErrWorkspacePrepared) {
 		t.Errorf("second Prepare = %v, want ErrWorkspacePrepared", err)
@@ -89,15 +88,15 @@ func TestSecondPrepareIsErrWorkspacePrepared(t *testing.T) {
 // is gone, a prepared one may still be executed against, and one whose
 // preparation failed is spent — the caller has to open another.
 //
-// A preparation that began and failed is what a nil session under a prepared
-// workspace means. It is the state Prepare leaves behind when it stops
-// part-way, which may be with the instrumented sources still in the tree, so
-// the command that would run there is refused rather than allowed to compile a
-// program nobody wrote.
+// A preparation that began and failed records itself, rather than being
+// inferred from a session that is not there. It is the state Prepare leaves
+// behind when it stops part-way, which may be with the instrumented sources
+// still in the tree, so the command that would run there is refused rather than
+// allowed to compile a program nobody wrote.
 func TestExecAfterAFailedPrepareIsErrPrepareFailed(t *testing.T) {
 	t.Parallel()
 
-	failed := &Workspace{prepared: true, scratch: t.TempDir()}
+	failed := &Workspace{prepareStarted: true, prepareFailed: true, scratch: t.TempDir()}
 	_, err := failed.Exec(t.Context(), Command{Argv: []string{"go", "version"}})
 	if !errors.Is(err, ErrPrepareFailed) {
 		t.Errorf("Exec after a failed Prepare = %v, want ErrPrepareFailed", err)
@@ -119,10 +118,16 @@ func TestExecAfterAFailedPrepareIsErrPrepareFailed(t *testing.T) {
 // The command is deliberately malformed, so that the assertion is about the
 // lifecycle gate alone: reaching the argument check is proof that nothing above
 // it refused, without this unit test having to start a process.
+//
+// The session is here because it is what a successful preparation leaves, and
+// not because Exec reads it: what Exec asks is whether the workspace is closed
+// and whether a preparation failed, and a workspace holding a session answers
+// no to both. The value makes the state a real one rather than a shape the
+// engine never produces.
 func TestExecAfterASuccessfulPrepareIsNotRefused(t *testing.T) {
 	t.Parallel()
 
-	prepared := &Workspace{prepared: true, session: &Session{}, scratch: t.TempDir()}
+	prepared := &Workspace{prepareStarted: true, session: &Session{}, scratch: t.TempDir()}
 	_, err := prepared.Exec(t.Context(), Command{})
 	if errors.Is(err, ErrPrepareFailed) || errors.Is(err, ErrWorkspacePrepared) {
 		t.Errorf("Exec after a successful Prepare = %v, want the command itself to be judged", err)
@@ -314,11 +319,18 @@ func TestMutantSelectionErrors(t *testing.T) {
 	})
 }
 
-// TestDriftErrorRendersEveryKind pins both message shapes and all three kind
-// words. The words are the snapshot layer's, and they are asserted against it
-// rather than copied, because the two vocabularies are deliberately different:
-// a snapshot's file "changed" while a session's file is "modified", and the
-// message a user has been reading for a release is the snapshot's.
+// TestDriftErrorRendersEveryKind pins all three message shapes and all three
+// kind words. The words are the snapshot layer's, and they are asserted against
+// it rather than copied, because the two vocabularies are deliberately
+// different: a snapshot's file "changed" while a session's file is "modified",
+// and the message a user has been reading for a release is the snapshot's.
+//
+// Two of the shapes name a command as the suspect, because a command is not
+// instrumentation and "outside instrumentation" would send a reader looking in
+// the wrong place. The third is every check around instrumentation, including
+// the one after the test binaries are built — by then the pristine sources are
+// back in the tree, so a change there is outside instrumentation like any
+// other.
 func TestDriftErrorRendersEveryKind(t *testing.T) {
 	t.Parallel()
 
@@ -333,7 +345,15 @@ func TestDriftErrorRendersEveryKind(t *testing.T) {
 	if got, want := commands.Error(), "gomutants: prepare commands changed the frozen snapshot:\n"+body; got != want {
 		t.Errorf("commands drift = %q, want %q", got, want)
 	}
-	for _, stage := range []string{"source restoration", "verification", "probe instrumentation", "probe source restoration"} {
+	discovery := &DriftError{Stage: "discovery", Changes: changes}
+	if got, want := discovery.Error(),
+		"gomutants: prepare commands changed the snapshot during discovery:\n"+body; got != want {
+		t.Errorf("discovery drift = %q, want %q", got, want)
+	}
+	for _, stage := range []string{
+		"source restoration", "verification", "test binaries",
+		"probe instrumentation", "probe source restoration",
+	} {
 		staged := &DriftError{Stage: stage, Changes: changes}
 		want := "gomutants: prepare " + stage + " changed the snapshot outside instrumentation:\n" + body
 		if got := staged.Error(); got != want {
@@ -345,8 +365,10 @@ func TestDriftErrorRendersEveryKind(t *testing.T) {
 	// header alone is what a hand-built value has to print: a message ending in
 	// a newline reaches a log with a hole in it.
 	for stage, want := range map[string]string{
-		"commands":     "gomutants: prepare commands changed the frozen snapshot:",
-		"verification": "gomutants: prepare verification changed the snapshot outside instrumentation:",
+		"commands":      "gomutants: prepare commands changed the frozen snapshot:",
+		"discovery":     "gomutants: prepare commands changed the snapshot during discovery:",
+		"verification":  "gomutants: prepare verification changed the snapshot outside instrumentation:",
+		"test binaries": "gomutants: prepare test binaries changed the snapshot outside instrumentation:",
 	} {
 		if got := (&DriftError{Stage: stage}).Error(); got != want {
 			t.Errorf("empty %s drift = %q, want %q", stage, got, want)

@@ -68,24 +68,50 @@ is one line per state of the preparation:
 | State | `Workspace.Exec` |
 |---|---|
 | no `Prepare` yet | runs; a command that *changes* the tree is refused by `Prepare`'s integrity gate |
-| `Prepare` in flight | **waits**, until `Prepare` returns |
+| `Prepare` in flight, outside the instrumentation window | runs, beside the preparation |
+| `Prepare` in flight, inside the instrumentation window | **waits**, until the window closes |
 | `Prepare` succeeded | runs, beside the session |
 | `Prepare` failed | refused, carrying `ErrPrepareFailed` |
 | session closed, workspace open | runs — `Session.Close` releases the binaries and the probe tree, not the snapshot |
 | workspace closed | refused, carrying `ErrWorkspaceClosed`, whatever the preparation did |
 
-The last row wins over every other: `Workspace.Close` leaves a workspace that is
-prepared and holds no session, which is the same shape a *failed* preparation
-leaves, so `Exec` asks whether the workspace is closed first and a consumer
-whose workspace is gone is told that rather than sent to open another one for a
-preparation that succeeded.
+The last row wins over every other: a workspace can be closed *and* hold a
+preparation that failed, and a consumer whose workspace is gone has to be told
+that rather than sent to open another one, so `Exec` asks whether the workspace
+is closed first.
 
-The two middle rows are the ones worth stating outright.
+The three middle rows are the ones worth stating outright.
 
-A command **waits** while a preparation runs because preparation instruments the
-tree in place before it restores it, and a command compiled from that would be
-compiling a program nobody wrote. It is the lock that enforces it — see
-[Locking and concurrency](#locking-and-concurrency) — not a policy check.
+The **instrumentation window** is the stretch of a preparation from its
+integrity gate to the end of `main_restoration`: `main_validation` rewrites the
+sources of the frozen tree in place and `main_restoration` puts them back, and
+in between the files on disk are not the program anybody wrote. That is the only
+part of a preparation a command has to be kept out of. Everything else it does —
+discovery, the probe copy, verification, the two builds — reads the same frozen
+bytes a command reads, so commands and a preparation **overlap**, which for a
+real module is minutes of preparation a consumer can run its own `go vet`,
+`go build` or baseline in.
+
+The window is a lock rather than a policy check, and it is symmetric. A command
+issued while the window is open waits for it and then runs against the restored
+tree; a command already running when a preparation reaches its gate makes the
+*preparation* wait, so a long baseline delays the window and can never corrupt
+it.
+
+A `PrepareOptions.Trace` callback is the one place a command may not be started
+from, and the reason is worth stating in full because half of it is invisible.
+The callback runs on the preparation's own goroutine. Inside the window that
+goroutine holds the tree exclusively, so the command waits for a lock its own
+caller is holding. Outside the window the command *runs* — and that is the
+dangerous half, because it works until a `Workspace.Close` queues for the
+workspace: Go's `RWMutex` hands out no more read locks once a writer is waiting,
+so the command waits for the `Close`, the `Close` waits for the preparation, and
+the preparation waits for the callback.
+
+What the overlap costs is stated where it is paid: discovery now reads the tree
+while a command may write it, so the catalogue is compared against the frozen
+manifest at the top of the window (see
+[Drift, and which stage names it](#drift-and-which-stage-names-it)).
 
 A command **runs after a successful `Prepare`** because the tree it runs against
 is the snapshot `Open` froze, byte for byte. `main_restoration` puts the
@@ -130,30 +156,117 @@ the answer is to open another one.
 
 ## Locking and concurrency
 
-`Workspace.mu` is an `sync.RWMutex` and it is held for the whole of each call
-that takes it:
+A workspace keeps three locks, and they are three because they answer three
+different questions. Taken in this order, always:
 
-| Call | Hold | Consequence |
+| Lock | Guards | Held by |
 |---|---|---|
-| `Workspace.Exec` | shared, for the whole command | Exec calls run concurrently with each other, and wait while a `Prepare` runs |
-| `Workspace.Prepare` | **exclusive**, for the whole preparation | a `Prepare` in flight blocks every `Exec` and every `Close` until it returns |
-| `Workspace.Close` | exclusive to claim the close, released while the directories are removed, retaken to publish the result | a second `Close` waits on the first through a done channel and returns the same error |
+| `mu` (`RWMutex`) | the workspace's *lifetime*: its snapshot, scratch directory and toolchain | `Exec` and `Prepare` **shared**, for the whole of their calls; `Close` **exclusive** |
+| `tree` (`RWMutex`) | the snapshot's *bytes* | `Exec` shared, while its command runs; `Prepare` **exclusive**, for the instrumentation window alone |
+| `stateMu` (`Mutex`) | the four fields that say what has become of the workspace: closed, a preparation claimed, a preparation failed, the session | every call, briefly |
 
-So a `Prepare` that takes two minutes is two minutes during which no
-`Workspace.Exec` can start. A consumer that wants to overlap control work with
-the preparation itself runs it against a *second* workspace over the same root
-today; work that only has to run beside the *prepared* session needs no second
-workspace, because `Workspace.Exec` is allowed once `Prepare` has returned one.
+`mu` is what makes `Close` the one call that may take the tree away: it waits
+for every command and for a preparation that is still discovering, instrumenting
+or compiling, because a workspace that removed its snapshot underneath one of
+those would be a use-after-free with a friendlier name. `Close` then releases it
+while the directories are removed and retakes it to publish the result, so a
+second `Close` waits on the first through a done channel and returns the same
+error.
 
-`Session.mu` is a second `sync.RWMutex` with the same shape: `Catalog`, `Exec`,
-`Probe` and `Control` hold it shared, `Changes` and `Close` hold it exclusively.
-The three measuring calls are therefore safe to call concurrently with each
-other and with themselves — they share the session and nothing else, each
-getting its own scratch directory, its own environment and, for a probe, its own
-infection log — while `Changes` and `Close` wait for every call in flight, so
-neither can observe a target halfway through a write.
+`tree` is what makes commands and a preparation overlap. A preparation holds it
+exclusively only from its integrity gate to the end of `main_restoration`, so a
+`Prepare` that takes two minutes blocks commands for the fraction of it that
+actually rewrites the tree, and `Workspace.Exec` holds the shared half only
+while its child runs.
 
-The two locks are separate, and `Session.Changes` takes only the session's. A
+`stateMu` exists because the fields it guards are now read and written by calls
+holding no more than the shared half of `mu` — several of those running at once
+is the point — so `mu` is not what keeps them consistent. It is also what
+refuses a second `Prepare` **immediately**: the claim is taken before anything
+is read, rather than by an exclusive lock a second caller would have had to wait
+minutes to be refused by.
+
+A preparation that fails *inside* the window publishes that failure under
+`stateMu` before it unlocks `tree`, and a command re-asks whether it is still
+allowed to run once it holds `tree`. Both are needed and neither is decoration:
+the unlock that ends a failed window is the same unlock that wakes every command
+queued behind it, and the tree those commands would wake into still holds the
+instrumented sources. That ordering — `stateMu` taken while `tree` is held — is
+why the order is `mu`, then `tree`, then `stateMu`, and never the other way
+round.
+
+### What a command sees at each moment
+
+| Moment | A command |
+|---|---|
+| before `Prepare` | runs, against the frozen tree |
+| while discovery, the probe copy, verification or a build runs | runs, against the frozen tree — those read the same bytes it does |
+| while the instrumentation window is open | waits for the window, then runs against the restored tree |
+| already running when the window is about to open | finishes; the window waits for it |
+| queued behind a window that then **failed** | refused, carrying `ErrPrepareFailed` — it never runs, because the tree it would have woken into still holds instrumented sources |
+| after `Prepare` returned a session | runs, against the frozen tree |
+
+A consumer therefore needs **no second workspace** for control work beside a
+preparation. goatest opened one — a second snapshot, a second discovery pass and
+a second compile of everything — to run `go vet`, `go build` and a baseline
+while the first workspace was preparing; that is what this replaces.
+
+The ideal is smaller still: instrumentation writes into the tree because that is
+how validation compiles a mutated program today, and a validation that built
+through the overlay instead would need no exclusive window at all. That is
+engine work rather than API work, and it is named in
+[ADR 0007](adr/0007-commands-overlap-preparation.md) as the thing this design
+leaves on the table.
+
+### Drift, and which stage names it
+
+Nothing stops a command from writing into the frozen tree. A write made before
+or during a preparation fails it, and the question a `DriftError`'s `Stage`
+answers is *which* check found it; a write made after a preparation succeeded is
+nobody's failure and is reported by `Session.Changes` instead.
+
+| Stage | Finds |
+|---|---|
+| `commands` | a change that is still in the tree when the integrity gate re-digests it at the top of the window |
+| `discovery` | a change a command made *and undid* while discovery was reading, so the gate sees nothing and the catalogue is built from bytes nobody has |
+| `source restoration`, `verification`, `probe instrumentation`, `probe source restoration` | a change around instrumentation, whoever made it |
+| `test binaries` | a change made after the window closed and before the session was published — while the binaries were being compiled |
+
+The `discovery` stage is the one the overlap introduced. Discovery reads the
+tree while a command may write it, so once the tree is held exclusively every
+file discovery *read* — not only the ones that produced a mutant — is compared
+against the frozen manifest, along with the bytes captured for restoration. A
+mismatch fails the preparation and names the file, because a mutant identified
+by the digest of a file that is not there would poison every answer keyed on it,
+a cached one most of all.
+
+The check is total over what discovery read, and that is deliberately a wider
+set than the catalogue. A file a transient edit emptied of everything mutable
+yields no candidate at all, so a check built on the catalogue alone would never
+look at it; discovery records the digest of every file it opens
+(`discover.Result.SourceDigests`) precisely so this one can. What no digest
+covers is a file no byte of which was read — a test file, a generated one, one
+an include or exclude pattern dropped — and none of those can move a mutant's
+identity, because no mutant was minted from one.
+
+The `test binaries` stage closes the other end. The window ends at
+`main_restoration`, but the binaries are compiled after it, from whatever the
+tree holds — and `Session.Changes`'s own baseline is captured there too, so a
+write during the build would be compiled in *and* invisible. One re-digest
+before the session is published makes "a write during a preparation fails it"
+true to the end of the preparation.
+
+### The session's own lock
+
+`Session.mu` is a fourth `sync.RWMutex`, and the shape is the one `mu` used to
+have: `Catalog`, `Exec`, `Probe` and `Control` hold it shared, `Changes` and
+`Close` hold it exclusively. The three measuring calls are therefore safe to
+call concurrently with each other and with themselves — they share the session
+and nothing else, each getting its own scratch directory, its own environment
+and, for a probe, its own infection log — while `Changes` and `Close` wait for
+every call in flight, so neither can observe a target halfway through a write.
+
+The locks are separate, and `Session.Changes` takes only the session's. A
 `Workspace.Exec` command writing into the tree concurrently with a `Changes` is
 therefore **not** waited for and can be observed part-way through its write. A
 consumer that wants a settled answer sequences its own commands against the
@@ -699,11 +812,16 @@ Reach all of these with `errors.As`.
   red here is red on the user's own program, flaky, or depending on something
   the frozen snapshot does not carry. `Output` is what to show the user.
 - **`*DriftError{Stage, Changes}`** — the frozen tree stopped matching its
-  manifest. `Stage` is `commands` (the integrity gate before discovery) or one
-  of `source restoration`, `verification`, `probe instrumentation`,
-  `probe source restoration`. `Changes` carries the paths and both digests, so
-  a consumer can say *which* file moved. The remedy belongs to the caller:
-  something wrote into the workspace.
+  manifest. `Stage` names the check that found it: `commands` (the integrity
+  gate at the top of the instrumentation window), `discovery` (what discovery
+  read, compared against the manifest once the tree is held exclusively),
+  `source restoration`, `verification`, `test binaries` (after the binaries
+  were built and before the session is published), `probe instrumentation` or
+  `probe source restoration` — see
+  [Drift, and which stage names it](#drift-and-which-stage-names-it).
+  `Changes` carries the paths and both digests, so a consumer can say *which*
+  file moved. The remedy belongs to the caller: something wrote into the
+  workspace.
 - **`*BuildError{Phase, Package, Argv, ExitCode, TimedOut, Output, Code}`** — a
   preparation phase could not do its work: a package that would not load, a
   snapshot that would not compile, a test binary that would not build. This is

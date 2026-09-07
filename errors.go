@@ -177,10 +177,11 @@ func (e *MutantSelectionError) Unwrap() error { return e.cause }
 // its user *which* file moved, or decide whether the write was its own, cannot
 // get that out of a sentence without agreeing to parse one.
 type DriftError struct {
-	// Stage names the check that noticed: "commands" for the integrity gate
-	// before discovery, and "source restoration", "verification",
-	// "probe instrumentation" or "probe source restoration" for the checks
-	// around instrumentation.
+	// Stage names the check that noticed: "commands" for the integrity gate at
+	// the top of the instrumentation window, "discovery" for the comparison
+	// between what discovery read and the frozen manifest, and "source
+	// restoration", "verification", "probe instrumentation" or "probe source
+	// restoration" for the checks around instrumentation.
 	Stage string
 	// Changes are the drifting paths in path order, with the digests on both
 	// sides — [Change.BeforeSHA256] empty for a file that was added,
@@ -188,15 +189,18 @@ type DriftError struct {
 	Changes []Change
 }
 
-// Error renders the two sentences preparation has always printed for drift.
+// Error renders the three sentences preparation prints for drift.
 //
 // The kind words are the snapshot layer's — added, removed, *changed* — and not
 // [ChangeKind]'s, whose third spelling is "modified". The two vocabularies are
 // deliberately different and this message is the older of them.
 func (e *DriftError) Error() string {
 	header := "gomutants: prepare " + e.Stage + " changed the snapshot outside instrumentation:"
-	if e.Stage == driftStageCommands {
+	switch e.Stage {
+	case driftStageCommands:
 		header = "gomutants: prepare commands changed the frozen snapshot:"
+	case driftStageDiscovery:
+		header = "gomutants: prepare commands changed the snapshot during discovery:"
 	}
 	// The engine never builds one of these without a change in it — an empty
 	// drift is not a failure — but a header followed by a blank line is what a
@@ -212,10 +216,29 @@ func (e *DriftError) Error() string {
 	return header + "\n" + strings.Join(lines, "\n")
 }
 
-// driftStageCommands is the one stage with a sentence of its own: a command the
-// caller ran is not instrumentation, so "outside instrumentation" would name
-// the wrong suspect.
-const driftStageCommands = "commands"
+// The two stages with sentences of their own: a command is not instrumentation,
+// so "outside instrumentation" would name the wrong suspect for either of them.
+//
+// They are two rather than one because the writes they catch are different, and
+// so is what a reader has to do about them. The gate finds a change that is
+// still in the tree, whoever made it and whenever. Discovery's check finds a
+// change that has already been undone — a command that rewrote a source file
+// while the catalogue was being built and put it back before the gate ran — so
+// the tree is pristine and the catalogue is not, and a reader looking for the
+// file on disk would find nothing wrong with it.
+const (
+	driftStageCommands  = "commands"
+	driftStageDiscovery = "discovery"
+)
+
+// driftStageBinaries is the check between the instrumentation window and the
+// session: the tree the test binaries were compiled from has to be the frozen
+// one, and nothing else was looking at the longest phase of a preparation.
+//
+// It takes the ordinary sentence rather than one of its own. By then the
+// pristine sources are back in the tree, so a change to it is a change outside
+// instrumentation exactly as one during verification is.
+const driftStageBinaries = "test binaries"
 
 // driftWord is how the snapshot layer spells a change of this kind. It is
 // derived from [snapshot.DriftKind] rather than written out, so the day that

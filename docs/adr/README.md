@@ -23,9 +23,8 @@ the design rather than a snapshot of it.
 | [0004](0004-verbosity-renders-the-event-stream.md) | Verbosity is a rendering of the events the run already records rather than a second set of print statements: nothing prints what it did not record, and a run that asked for no verbosity pays nothing |
 | [0005](0005-the-test-harness-owns-its-temporaries.md) | The test harness owns a build cache and a kept-scratch root outside any temporary directory, says so with a marker file, and one tool collects them; keeping is opt-in locally and on in CI, and nothing sweeps a package directory |
 | [0006](0006-selection-is-advisory.md) | A selection narrows what a caller intends to execute and nothing else: it is applied after discovery, `Session.Exec` still runs an unselected mutant, and it takes no part in `Catalog.PreparedDigest` |
+| [0007](0007-commands-overlap-preparation.md) | A workspace command runs beside a preparation and waits only for its instrumentation window, so no consumer needs a second workspace for control work; the price is that every file discovery read is checked against the frozen manifest, and that a window which fails publishes the failure before it unlocks |
 | [0008](0008-the-unit-tier-scripts-the-toolchain.md) | The unit tier scripts the `go` command rather than needing one installed: the test binary re-executes as `go` and answers from a rule table, an unscripted call is refused, only nine environment values are logged, and a file that scripts a toolchain is not driving one |
-
-0007 is reserved for a decision in flight and is deliberately absent.
 
 The index is checked: `internal/testkit`'s `TestADRIndexListsEveryADRFile` fails
 when a record here links to nothing or a record exists that this table does not

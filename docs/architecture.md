@@ -502,13 +502,20 @@ reports a failing target as "no facts" per call, so a suite-wide gate would buy
 what the per-call rule already gives and cost a full test run to get it. The
 tree lives as long as the session and `Session.Close` removes it.
 
-Before that ordering begins, `Prepare` takes the workspace's exclusive lock and
-re-digests the frozen snapshot. `Workspace.Exec` uses the shared side of the
-same lock, so independent controls can run concurrently and both `Prepare` and
-`Close` wait for every one. Each call has its own temporary directory; any
-change a command leaves in the shared frozen tree *before* `Prepare` is a
-deterministic preparation failure, never an input silently accepted by
-discovery. That gate is a gate on the way in and runs once. Commands are also
+`Prepare` re-digests the frozen snapshot at the top of its *instrumentation
+window* — the stretch from that gate to the end of source restoration, and the
+only part of a preparation where the files on disk are not the program anybody
+wrote — and holds the tree exclusively for exactly that stretch.
+`Workspace.Exec` holds the shared side of the same lock while its child runs, so
+independent controls run concurrently with each other **and with a
+preparation**, waiting only for the window; a command already running when the
+window is about to open makes the preparation wait for it instead. Both hold the
+workspace's lifetime lock shared for their whole calls, so `Close` waits for
+every one. Each call has its own temporary directory; any change a command
+leaves in the shared frozen tree before that gate is a deterministic preparation
+failure, never an input silently accepted by discovery, and a change made *and
+undone* while discovery was reading is caught by comparing the catalogue's own
+source digests against the frozen manifest. Commands are also
 allowed after a preparation has succeeded — the tree they run against is then
 byte for byte the snapshot `Open` froze — and a change one of those leaves is
 nobody's failure: there is no later discovery for it to corrupt, the frozen

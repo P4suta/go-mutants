@@ -14,6 +14,50 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`Workspace.Exec` runs beside `Workspace.Prepare`, waiting only for the
+  stretch of a preparation that actually rewrites the tree.** A preparation used
+  to hold the workspace exclusively for its whole duration — minutes of
+  discovery, compile validation, verification and test binaries — so a consumer
+  that wanted to run its own `go vet`, `go build` or baseline while that
+  happened had to open a *second workspace* over the same root: a second
+  snapshot of the module, a second toolchain probe, a second discovery pass and
+  a second compile of everything, in order to run work about the tree the first
+  workspace had already frozen. goatest did exactly that, and does not need to
+  any more.
+
+  The lock was that wide for a reason that is true of only part of the call.
+  `main_validation` instruments the sources in place and `main_restoration` puts
+  them back; in between, the files on disk are a program nobody wrote. That
+  stretch — from the integrity gate to the end of restoration — is now the
+  *instrumentation window*, and it is the only thing a command waits for.
+  Everywhere else a preparation reads the same frozen bytes a command reads, so
+  the two overlap.
+
+  The rule is symmetric and stated as a lock rather than as a policy. A command
+  issued while the window is open waits for it and then runs against the
+  restored tree; a command already running when a preparation reaches its gate
+  makes the *preparation* wait, so a long baseline delays instrumentation and
+  can never corrupt it. `Workspace.Close` still waits for a preparation, because
+  a workspace that removed its snapshot underneath one would be a use-after-free
+  with a friendlier name. The one place a command may not be started from is a
+  `PrepareOptions.Trace` callback, which runs on the preparation's own
+  goroutine.
+
+  A window that **fails** is the case worth stating outright, because the
+  obvious implementation gets it wrong. Validation can break, a context can be
+  cancelled, a restoration can fail to write — and the unlock that gives up on
+  the window is the same unlock that wakes every command queued behind it, into
+  a tree that still holds the instrumented sources. So the failure is published
+  before the window is unlocked and every command re-asks whether it may still
+  run once it holds the tree: a command that waited out a failed window is
+  refused with `ErrPrepareFailed` and never runs at all.
+
+  `docs/library.md` has the three locks, what a command sees at each moment, and
+  which drift check names which write;
+  [ADR 0007](docs/adr/0007-commands-overlap-preparation.md) has the decision and
+  the residual — the window is exclusive only because validation compiles a
+  mutated program by writing it into the tree, and a validation that built
+  through the overlay instead would need no window at all.
 - **The dogfood gate reads its own coverage and validates its own documents.**
   This repository's own `.go-mutants.toml` now includes `internal/coverage/*.go`
   and `internal/schemas/*.go` as well, so the gate is eight whole packages rather
@@ -2823,6 +2867,58 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **A second concurrent `Workspace.Prepare` is refused straight away instead of
+  waiting for the first.** A workspace is prepared exactly once, and that used
+  to be enforced by the exclusive lock: the second caller queued behind the
+  first preparation's ten minutes in order to be told it was never going to be
+  allowed one. The claim is now taken under the workspace's state lock before
+  anything is read, so the second call returns `ErrWorkspacePrepared`
+  immediately. A `Prepare` refused for an *option* the engine does not accept
+  still hands the claim back, exactly as before: nothing has been read or
+  written, and a typo in a line number must not cost a caller a fresh snapshot.
+
+  One narrow case changes for the worse and is worth naming. A second `Prepare`
+  that arrives while the first is still checking its arguments is now refused,
+  where the exclusive lock would have made it wait for the refusal and then
+  serve it. The claim is held for the length of an argument check, so the window
+  is microseconds and only a genuinely concurrent pair can meet in it — and a
+  program with two goroutines racing to prepare one workspace is one whose
+  second caller was never going to be served anyway.
+- **The drift gate can now fire after discovery, with the same words, and a new
+  `DriftError.Stage` names the write it could not have seen.** The integrity
+  gate moved from before discovery to the top of the instrumentation window,
+  because a gate that re-digests the tree has to run with the tree held
+  exclusively — otherwise it can read a file a command is halfway through
+  writing. Its message is unchanged (`gomutants: prepare commands changed the
+  frozen snapshot:`) and so is `Stage: "commands"`; what changed is that a
+  preparation now reaches it after a discovery pass rather than before one, so a
+  tree a command had already changed costs a discovery pass before it is
+  refused, and a change that stops discovery itself is reported as a discovery
+  failure rather than as drift.
+
+  The new stage is `"discovery"`, and it exists because discovery now reads the
+  tree while a command may write it. A command that changed a source file *and
+  put it back* leaves the gate nothing to find, while the catalogue built in
+  between identifies its mutants by the digest of bytes that are nowhere on
+  disk — and every later answer about one of them, a cached one most of all,
+  would be about a program nobody has. So every file discovery *read* — not
+  only the ones that yielded a mutant, because a file a transient edit emptied
+  yields none at all — and the bytes captured for restoration are compared
+  against the frozen manifest under the exclusive lock; a mismatch fails the
+  preparation with `gomutants: prepare commands changed the snapshot during
+  discovery:` and names the files. `internal/discover.Result` carries the new
+  `SourceDigests` map that makes the check total over what was read.
+
+  A second new stage, `"test binaries"`, closes the other end of a preparation.
+  The window ends at `main_restoration` and the binaries are compiled after it,
+  from whatever the tree holds — and the state `Session.Changes` compares
+  against is captured there too, so a command writing during the build would
+  have its bytes compiled in *and* reported by nothing at all. One re-digest
+  before the session is published makes "a write into the frozen tree during a
+  preparation fails it" true to the end of the preparation. It takes the
+  sentence every other instrumentation-adjacent check takes:
+  `gomutants: prepare test binaries changed the snapshot outside
+  instrumentation:`.
 - **`run` and `list` pointed at the root of a `go.work` workspace are refused
   before anything is copied, with GOM4102 and the user's own `go.work` named.**
   Discovery has always refused a workspace — one module path, one set of

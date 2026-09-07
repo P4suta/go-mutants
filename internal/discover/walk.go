@@ -99,12 +99,18 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 			Message: strconv.Quote(rel) + " is larger than 4 GiB, which mutant spans cannot address",
 		}
 	}
+	digest := mutation.Digest(src)
+	// Recorded for every file whose bytes were read, and not only for the ones
+	// that go on to produce a candidate: [Result.SourceDigests] is what
+	// discovery saw, and a caller checking that the tree held still underneath
+	// this pass needs the files it found nothing in most of all.
+	d.digests[rel] = digest
 	scan := &fileScan{
 		discovery:    d,
 		rel:          rel,
 		pkgPath:      packagePath(pkg),
 		src:          src,
-		digest:       mutation.Digest(src),
+		digest:       digest,
 		tokFile:      tokFile,
 		info:         pkg.TypesInfo,
 		suppressions: collectSuppressions(file, pkg.TypesInfo),
