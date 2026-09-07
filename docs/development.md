@@ -371,9 +371,11 @@ with the machine.
 `.go-mutants.toml` records what `mise run dogfood` has been measured at, which
 for the current eleven-package scope is 6m13s–6m30s at `--jobs 4` against a warm
 build cache on a quiet machine, 8m42s–9m02s on the same machine under other
-work, and 9m31s cold — more than half of the cold figure being four mutants
-that never return waiting out a timeout sized on the compiling first baseline
-run, which the engine now sizes on the runs after it.
+work, and 9m31s cold before the engine sized the timeout on the runs after the
+first — more than half of that figure being four mutants that never return
+waiting out a timeout sized on the compiling first baseline run. After that
+change, GitHub's ubuntu runner ran the same scope cold in about 4m45s (a
+5m22s job), with the timeout at its 10 s floor.
 Anything far from those shapes is worth a `mise run test-cost` before it is
 worth a workaround.
 
@@ -1286,7 +1288,9 @@ killed once and timed out on the confirming run. Cold, 9m31s, of which more
 than half is those four mutants waiting out, twice each, a timeout sized on the
 compiling first baseline run: 38.7 s where the runs after it asked for 10 s.
 That is answered in the engine, which now sizes the budget on the runs after
-the first, and the cold figure on that engine is owed by the next widening. The
+the first; the first cold run on that engine — GitHub's ubuntu runner, this
+scope, `slowest 138ms` after the first run and the timeout at its floor — took
+about 4m45s in a 5m22s job. The
 tally was identical on every run but the loaded one's `inconclusive` column,
 which is the usual caveat: only the ratios travel, and `.go-mutants.toml`
 records the paired before-and-after that makes them a comparison. Whether this

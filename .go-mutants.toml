@@ -819,7 +819,10 @@ strict = false
 #     warm test-owned build cache   2497 mutants in 6m13s and 6m30s with the
 #                                   derived timeout at its 10s floor, 8m42s
 #                                   and 9m02s when other work moved it
-#     cold test-owned build cache   9m31s, with the timeout at 38.7s
+#     cold test-owned build cache   9m31s with the timeout at 38.7s, before the
+#                                   engine sized it on the runs after the
+#                                   first; about 4m45s on GitHub's ubuntu
+#                                   runner after, with the timeout at 10s
 #
 # The third pair is the one that needed explaining, because 425 more mutants did
 # not cost fifty seconds; four more mutants that never return did. A timeout is
@@ -937,9 +940,11 @@ strict = false
 # budget no mutant run ever needed, since their binaries are built once
 # beforehand. That is the mechanism the fifth pair named at 2m05s -> 3m45s,
 # now large enough to be most of the run, and it is answered where it lives
-# rather than here: the engine sizes the budget on the runs after the first,
-# and the cold figure on that engine is owed by the next widening rather than
-# guessed at by this one.
+# rather than here: the engine sizes the budget on the runs after the first.
+# The first cold run on that engine was CI's own -- GitHub's ubuntu runner,
+# this scope, `slowest 138ms` after the compiling first run and the timeout at
+# its 10s floor -- and took about 4m45s of a 5m22s job. The 9m31s above is the
+# figure the change was made to remove, and it is kept as that.
 #
 # Whether this scope wants an explicit `test.timeout` was the open question the
 # first two runs left, and the measurement answers it for now: on the floor

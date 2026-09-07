@@ -134,8 +134,10 @@ Entries say *why* a change was made, not only what changed.
   of which more than half is those four mutants waiting out, twice each, a
   timeout sized on the compiling first baseline run (38.7 s where the runs after
   it asked for 10 s); that mechanism is answered in the engine, which now sizes
-  the budget on the runs after the first, and the cold figure on that engine is
-  owed by the next widening. Whether this scope wants an explicit
+  the budget on the runs after the first, and the first cold run on that engine
+  — GitHub's ubuntu runner, this scope, `slowest 138ms` after the first run
+  and the timeout at its floor — took about 4m45s of a 5m22s job.
+  Whether this scope wants an explicit
   `test.timeout` was the open question the first two runs left, and the
   measurement answers it for now: on the floor the tally is exact, and the two
   inconclusive kills appeared only under outside load. `.go-mutants.toml`,
