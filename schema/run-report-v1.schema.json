@@ -185,13 +185,17 @@
       }
     },
     "coverage": {
-      "description": "How coverage narrowed the run. off: every selected mutant was executed against every test binary, which is what a custom test.command and a failed coverage pass both fall back to. package: each test binary was profiled once, and every mutant was executed only against the binaries whose profile reaches its lines. binaries and mutants_uncovered are present exactly in package mode — an off run states no number rather than a zero it never measured — and mutants_uncovered equals the number of entries in mutants[] with uncovered true.",
+      "description": "How coverage narrowed the run. off: every selected mutant was executed against every test binary, which is what a custom test.command and a failed coverage pass both fall back to. package: each test binary was profiled once, and every mutant was executed only against the binaries whose profile reaches its lines. test: every test of every test binary was profiled on its own, and every mutant was executed only against the tests whose profile reaches its lines, each binary started with those tests selected. binaries and mutants_uncovered are present exactly in package and test mode — an off run states no number rather than a zero it never measured — tests exactly in test mode, and mutants_uncovered equals the number of entries in mutants[] with uncovered true.",
       "type": "object",
       "additionalProperties": false,
       "required": ["mode"],
       "properties": {
-        "mode": { "enum": ["off", "package"] },
+        "mode": { "enum": ["off", "package", "test"] },
         "binaries": { "$ref": "#/$defs/count" },
+        "tests": {
+          "description": "How many tests the coverage pass profiled on their own, summed over the binaries.",
+          "$ref": "#/$defs/count"
+        },
         "mutants_uncovered": { "$ref": "#/$defs/count" },
         "unavailable_reason": {
           "description": "The whole failure that made this run give up coverage-instrumented test binaries — the coded message, and the compiler's own diagnostics under it. Absent from every run that did not fall back, which is nearly all of them, and from a merged document.",
@@ -203,18 +207,26 @@
           "type": "boolean"
         }
       },
-      "if": {
-        "type": "object",
-        "required": ["mode"],
-        "properties": { "mode": { "const": "package" } }
-      },
-      "then": { "required": ["binaries", "mutants_uncovered"] },
-      "else": {
-        "properties": {
-          "binaries": false,
-          "mutants_uncovered": false
+      "allOf": [
+        {
+          "if": { "required": ["mode"], "properties": { "mode": { "const": "package" } } },
+          "then": { "required": ["binaries", "mutants_uncovered"], "properties": { "tests": false } }
+        },
+        {
+          "if": { "required": ["mode"], "properties": { "mode": { "const": "test" } } },
+          "then": { "required": ["binaries", "tests", "mutants_uncovered"] }
+        },
+        {
+          "if": { "required": ["mode"], "properties": { "mode": { "const": "off" } } },
+          "then": {
+            "properties": {
+              "binaries": false,
+              "tests": false,
+              "mutants_uncovered": false
+            }
+          }
         }
-      }
+      ]
     },
     "cache": {
       "description": "What the outcome cache did. mode is what the run did rather than what was configured: cache.mode auto resolves to on or off before any mutant runs — off for a test command go-mutants cannot reason about, off again when the cache directory cannot be opened — and a warning says which. hits were adopted from the cache and never executed, misses were looked up, not found, and executed, and writes is how many of those misses produced an outcome worth storing, so writes never exceeds misses. hits equals the number of entries in mutants[] with cached true, and every count is zero when the mode is off — which is what makes a cache that was off and a cache that was empty different statements.",
@@ -333,9 +345,15 @@
         },
         "output_tail": { "type": ["string", "null"], "minLength": 1 },
         "covering_test_packages": {
-          "description": "The import paths of the test binaries whose coverage profile reaches this mutant's lines, sorted. Empty is legal and means two different things: with coverage.mode off nobody asked, and with mode package nothing covers it — in which case uncovered is true.",
+          "description": "The import paths of the test binaries whose coverage profile reaches this mutant's lines, sorted. Empty is legal and means two different things: with coverage.mode off nobody asked, and with mode package or test nothing covers it — in which case uncovered is true.",
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
+        },
+        "covering_tests": {
+          "description": "The tests whose own coverage profile reaches this mutant's lines, sorted by package and then by name. Written only by a run whose coverage.mode is test and only when there are any: an uncovered mutant has none to name, and every other mode never asked.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/test_ref" }
         },
         "uncovered": {
           "description": "The run established that no test binary reaches this mutant's lines and did not execute it. Such a mutant is always survived with attempts 0: no test runs the line, so no test could have caught the edit. False whenever coverage.mode is off.",
@@ -364,6 +382,16 @@
       "description": "What one pass over the test binaries saw. It is the mutant outcomes minus the two that are judgements about several passes rather than observations of one: inconclusive is what a timeout and a retry that disagree come to, and not-run is what a mutant nobody measured is — neither is a thing a pass can observe, and a row claiming either would be a verdict wearing an observation's clothes.",
       "enum": ["killed", "survived", "timed-out", "errored"]
     },
+    "test_ref": {
+      "description": "One test of one test binary: the import path of the package the binary was built from, and the top-level test name as -test.list prints it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "name"],
+      "properties": {
+        "package": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
     "execution": {
       "description": "One pass over the test binaries with one mutant active. attempt counts from one and matches the row's position; worker is the scheduler slot that made the pass, counting from zero, and the serial timeout retry is worker 0. binaries stops where the pass stopped: a mutant killed by the second of three binaries was measured against two, and naming all three would describe a measurement nobody made. killed_by is absent for a pass that detected nothing.",
       "type": "object",
@@ -376,6 +404,12 @@
         "killed_by": { "type": "string", "minLength": 1 },
         "duration_ms": { "$ref": "#/$defs/milliseconds" },
         "binaries": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "tests": {
+          "description": "The tests this pass was narrowed to, sorted by package and then by name: the binary in binaries was started with exactly these selected. Absent when every binary ran whole, which is every pass of a run whose coverage.mode is not test.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/test_ref" }
+        },
         "memory_exceeded": {
           "description": "This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline. It is why a row can say `killed` and name a binary that reported no failure: the outcome vocabulary is frozen, so the fact that tells this kill apart from an assertion's travels beside the outcome. Both this and peak_memory_bytes are optional, and a document written before the bound existed carries neither.",
           "type": "boolean"

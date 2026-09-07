@@ -56,7 +56,7 @@ document rather than second opinions.
 | `shard` | Which shard of a split run this is, or `null`; see below |
 | `merge` | Present only on a document `report merge` wrote; see below |
 | `test` | `command` argv, `baseline`, `timeout_ms`, `timeout_source`, and the optional `toolchain` and `resolved_command` |
-| `coverage` | `mode`, in `package` mode `binaries` and `mutants_uncovered`, and the optional `build_fallback` and `unavailable_reason` |
+| `coverage` | `mode`, in `package` and `test` mode `binaries` and `mutants_uncovered`, in `test` mode `tests`, and the optional `build_fallback` and `unavailable_reason` |
 | `cache` | `mode`, `hits`, `misses`, `writes`; see below |
 | `summary` | The counters, `score_percent`, and `policy` |
 | `mutants[]` | One entry per executed or not-run mutant; see below |
@@ -152,6 +152,9 @@ below.
 | `mutants[].memory_exceeded`, `mutants[].peak_memory_bytes` | Whether the memory bound settled the mutant and what it cost; see [`mutants[]`](#mutants) |
 | `mutants[].executions[].memory_exceeded` | Whether the run's memory bound stopped that pass; see [`mutants[]`](#mutants) |
 | `mutants[].executions[].peak_memory_bytes` | What that pass cost the machine; see [`mutants[]`](#mutants) |
+| `coverage.tests` | How many tests the coverage pass profiled on their own. Present exactly in `test` mode; see [`coverage`](#coverage) |
+| `mutants[].covering_tests[]` | The tests whose own coverage reaches the mutant, as `{package, name}`; written by a `test` run when there are any |
+| `mutants[].executions[].tests[]` | The tests that pass was narrowed to, as `{package, name}`; absent when every binary ran whole |
 
 `timing.stages[].result` is `succeeded`, `failed`, or `skipped` — the trace's
 own vocabulary, so a reader holding both documents is not reconciling two
@@ -192,22 +195,27 @@ having to learn a new top-level shape.
 
 | Field | Contents |
 | --- | --- |
-| `mode` | `off` or `package` |
-| `binaries` | How many test binaries were profiled. Present only in `package` mode |
-| `mutants_uncovered` | How many entries in `mutants[]` carry `uncovered: true`. Present only in `package` mode |
+| `mode` | `off`, `package` or `test` |
+| `binaries` | How many test binaries were profiled. Present only in `package` and `test` mode |
+| `tests` | How many tests were profiled on their own, summed over the binaries. Present only in `test` mode |
+| `mutants_uncovered` | How many entries in `mutants[]` carry `uncovered: true`. Present only in `package` and `test` mode |
 
 `off` means every selected mutant was measured against every test binary.
 `package` means each test binary was profiled once and every mutant was
-measured only against the binaries whose profile reaches its lines.
+measured only against the binaries whose profile reaches its lines. `test`
+means every test of every binary was profiled on its own and every mutant was
+measured only against the tests whose profile reaches its lines, each binary
+started with those tests selected; it is what `test.narrowing = "test"`, the
+default, produces, and `"package"` produces the mode of the same name.
 
-The two numbers are absent — not zero — outside `package` mode, and the schema
-refuses them there. An `off` run carrying `binaries: 0` would be stating a
+The numbers are absent — not zero — outside the modes that measure them, and
+the schema refuses them there. An `off` run carrying `binaries: 0` would be stating a
 measurement it never made, and a reader cannot tell a real zero from a default
 one. `mutants_uncovered` is derived from `mutants[]` when the document is built,
 so the summary and the rows underneath it cannot disagree.
 
-`mode` is `package` exactly when the effective `test.command` is one go-mutants
-reads as a scope — `go test` followed only by package patterns, the built-in
+`mode` is `package` or `test` exactly when the effective `test.command` is one
+go-mutants reads as a scope — `go test` followed only by package patterns, the built-in
 `go test ./...` included — **and** the coverage pass succeeded. Anything else
 turns it off with a `GOM7601` warning, because the mapping is from a test binary
 to the lines it reached and there is no honest way to attribute an opaque
@@ -258,9 +266,14 @@ Each entry carries the full 64-hex `id` and the 20-hex `display_id`, `path`,
 `package`, `family`, `rule`, `rule_version`, `line`, `column`, `start_byte`,
 `end_byte`, `original`, `replacement`, `outcome`, `not_run_reason`,
 `duration_ms`, `killed_by`, `attempts`, `output_tail`,
-`covering_test_packages`, `uncovered`, and `cached`. Two more keys are
+`covering_test_packages`, `uncovered`, and `cached`. Three more keys are
 optional: `branch`, which appears only on the mutants go-mutants could prove
-something extra about — see [`branch`](#branch) below — and `executions`.
+something extra about — see [`branch`](#branch) below — `executions`, and
+`covering_tests`, which a `test`-mode run writes for every mutant some test
+reaches: the tests whose own coverage reaches its lines, as `{package, name}`
+sorted by package and then name. `covering_test_packages` stays what it was in
+every mode, so a consumer that folds tests to binaries and one that never
+learned about tests read the same list.
 
 `cached` says the outcome was adopted from the outcome cache rather than
 measured by this run, so `duration_ms`, `attempts`, `killed_by` and
@@ -287,6 +300,7 @@ test binaries, in attempt order.
 | `killed_by` | The binary that detected the mutant on this pass; absent when it detected nothing |
 | `duration_ms` | The wall-clock time this pass took, summed over the binaries it ran |
 | `binaries[]` | The test binaries it started, in launch order, stopping where the pass stopped |
+| `tests[]` | The tests the pass was narrowed to, as `{package, name}`: the binary was started with exactly these selected. Absent when every binary ran whole, which is every pass outside `test` mode |
 | `memory_exceeded` | This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline; absent when it was not. Optional. The bound itself is `test.memory_bytes` |
 | `peak_memory_bytes` | The highest the pass was observed to hold, as the **maximum over every binary it started** rather than the deciding binary's: resident memory on Unix, committed charge on Windows, which are close but not the same quantity and are deliberately not converted into one another. Written for every pass and not only the bounded ones — every process is sampled, which on Linux is the only measurement that is the child's own; absent where nothing observed one, which includes a pass that ended before its first sample |
 

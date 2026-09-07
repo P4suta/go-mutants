@@ -82,6 +82,7 @@ path = [
   "internal/report/testdata/mutation-report.golden.json",
   "internal/report/testdata/run-report.golden.json",
   "internal/report/testdata/run-report-coverage.golden.json",
+  "internal/report/testdata/run-report-tests.golden.json",
   "internal/report/testdata/run-report-v1-before-timing.json",
   "trace/testdata/events.golden.jsonl",
   "trace/testdata/events-failure.golden.jsonl",
