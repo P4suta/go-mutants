@@ -1088,6 +1088,67 @@ type preparedFixture struct {
 	catalog   gomutants.Catalog
 	events    []gomutants.PrepareEvent
 	err       error
+
+	// keepTemp is what the workspace was opened with, which under the keep
+	// policy is true — see [prepareFixtureWith]. It is carried here because it
+	// changes what a per-call temporary directory does after the call returns,
+	// and [expectScratchAfterCall] is where that difference is stated.
+	keepTemp bool
+}
+
+// expectScratchAfterCall is what a shared session's per-call temporary
+// directories look like after one call, under either policy.
+//
+// The two answers are both correct and the difference is not a detail. A
+// session opened without KeepTemp removes each per-call scratch as the call
+// ends, so the right expectation is that the set is exactly what it was: a
+// session that leaked one per call would fill a machine over a run, and a count
+// could be satisfied by a leak and a removal cancelling out.
+//
+// Under the keep policy the shared sessions are opened *with* KeepTemp, because
+// that is the only way a kept package scratch holds the trees the sessions
+// actually ran in rather than the fixture copy alone — and KeepTemp keeps every
+// per-execution scratch by design, that being the directory the target's TMPDIR
+// pointed at and where anything it wrote went. So the expectation becomes
+// exactly one new directory: the one this call ran in, kept on purpose.
+//
+// Anything the call *removed* is wrong under both policies and is reported
+// separately, because a call tidying up somebody else's directory is a
+// different defect from one leaking its own.
+func expectScratchAfterCall(t *testing.T, prepared *preparedFixture, before, after []string) {
+	t.Helper()
+
+	added := make([]string, 0, len(after))
+	for _, path := range after {
+		if !slices.Contains(before, path) {
+			added = append(added, path)
+		}
+	}
+	var removed []string
+	for _, path := range before {
+		if !slices.Contains(after, path) {
+			removed = append(removed, path)
+		}
+	}
+
+	if len(removed) != 0 {
+		t.Errorf("the call removed %v, which was there before it: a per-call directory belongs to"+
+			" the call that made it", removed)
+	}
+	if !prepared.keepTemp {
+		if len(added) != 0 {
+			t.Errorf("the call left %v behind; before it there were %v", added, before)
+		}
+		return
+	}
+	if len(added) != 1 {
+		t.Errorf("a KeepTemp session kept %d per-call directories for one call, want exactly the"+
+			" one it ran in: %v", len(added), added)
+		return
+	}
+	if info, err := os.Stat(added[0]); err != nil || !info.IsDir() {
+		t.Errorf("%s was kept and is not a directory on disk: %v", added[0], err)
+	}
 }
 
 var (
@@ -1166,11 +1227,9 @@ func prepareFixtureWith(
 		prepared.err = err
 		return prepared
 	}
-	for path, source := range inject {
-		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(source), 0o644); err != nil {
-			prepared.err = err
-			return prepared
-		}
+	if err := writeInjected(root, inject); err != nil {
+		prepared.err = err
+		return prepared
 	}
 	open.TempDirectory = parent
 	// KeepTemp under the keep policy, and it is what makes a kept directory
@@ -1186,6 +1245,7 @@ func prepareFixtureWith(
 	// the package passes, `release(false)` removes the parent with the kept
 	// trees inside it.
 	open.KeepTemp = testkit.KeepPolicy() != testkit.KeepNever
+	prepared.keepTemp = open.KeepTemp
 	workspace, err := gomutants.Open(context.Background(), root, open)
 	if err != nil {
 		prepared.err = err
@@ -1204,6 +1264,54 @@ func prepareFixtureWith(
 	prepared.session = session
 	prepared.catalog = session.Catalog()
 	return prepared
+}
+
+// writeInjected writes the injected sources into a fixture copy.
+//
+// The directories above each file are created first, because an injected path
+// is module-relative and nothing says it is at the top of the module: a fixture
+// that needs a target in `nested/dir/` would otherwise fail with a "no such file
+// or directory" naming a path the caller wrote perfectly correctly, from inside
+// a sync.Once whose error surfaces in whichever test asked for the session
+// first.
+func writeInjected(root string, inject map[string]string) error {
+	for path, source := range inject {
+		target := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, []byte(source), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TestInjectedSourceReachesADirectoryThatDoesNotExistYet is the one claim
+// [writeInjected] makes that a caller cannot see for itself.
+//
+// Every injection in this package writes to the top of the module today, so a
+// writer that could not make a directory looked perfectly correct — until the
+// first fixture that needs a target in a package of its own, where the failure
+// arrives as a prepared session that could not be prepared, out of a sync.Once,
+// in whichever test happened to ask for it first.
+func TestInjectedSourceReachesADirectoryThatDoesNotExistYet(t *testing.T) {
+	t.Parallel()
+
+	root := testkit.Scratch(t)
+	sources := map[string]string{
+		"top_test.go":               "package top\n",
+		"nested/dir/nested_test.go": "package dir\n",
+	}
+	if err := writeInjected(root, sources); err != nil {
+		t.Fatalf("injecting %d source(s) into %s: %v", len(sources), root, err)
+	}
+	for path, want := range sources {
+		got := testkit.ReadFile(t, filepath.Join(root, filepath.FromSlash(path)))
+		if string(got) != want {
+			t.Errorf("%s holds %q, want %q", path, got, want)
+		}
+	}
 }
 
 func TestPrepareTraceReportsEveryPhaseInOrder(t *testing.T) {
