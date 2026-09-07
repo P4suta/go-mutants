@@ -97,12 +97,15 @@ func (s *groupSupervisor) terminate(exited <-chan struct{}, grace time.Duration)
 	_ = syscall.Kill(-s.pgid, syscall.SIGKILL)
 }
 
-// usedMemory sums what the child and every descendant of it are holding — a
-// superset of the group the kill above reaches, walked from the child so that
-// a sample is cheap enough to take the moment the child starts; see
-// [treeResidentMemory]. The group id is the child's pid, which is where the
-// walk begins.
-func (s *groupSupervisor) usedMemory() (int64, bool) {
+// usedMemory sums what the child's tree is holding. A quick sample walks
+// from the child, which is cheap enough to take the moment it starts; a
+// thorough one adds the group scan, so that a child the walk missed is still
+// counted; see [treeResidentMemory] and [treeAndGroupResidentMemory]. The
+// group id is the child's pid, which is where the walk begins.
+func (s *groupSupervisor) usedMemory(thorough bool) (int64, bool) {
+	if thorough {
+		return treeAndGroupResidentMemory(s.pgid)
+	}
 	return treeResidentMemory(s.pgid)
 }
 

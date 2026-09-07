@@ -99,6 +99,15 @@ const (
 // The children file needs CONFIG_PROC_CHILDREN, which every distribution
 // kernel sets; where the root's own file cannot be read the sample falls back
 // to [groupResidentMemory], the scan this code did before it could do better.
+//
+// The walk is not complete, and proc(5) says so: the children file is reliable
+// only for a process that is stopped or frozen, and a child that is alive can
+// be missing from it when a sibling exits during the read. That is acceptable
+// for the quick early samples, whose job is to have a number for a process
+// that will not live to the first steady tick; the steady samples that
+// enforce the bound take the union of this walk and the group scan
+// ([treeAndGroupResidentMemory]), so a child the file omitted is still counted
+// as long as it is in the group.
 func treeResidentMemory(pid int) (int64, bool) {
 	if pid <= 0 {
 		return 0, false
@@ -107,8 +116,58 @@ func treeResidentMemory(pid int) (int64, bool) {
 	if !ok {
 		return groupResidentMemory(pid)
 	}
+	total, _ := sumTree(pid, kids, map[int]bool{})
+	return total, true
+}
+
+// treeAndGroupResidentMemory is the steady-state sample: every process the
+// walk from the child reaches, plus every process in the child's group the
+// walk did not, each counted once. The group scan is what a kernel without
+// children files gets on its own, so a walk that cannot start costs nothing
+// extra here.
+func treeAndGroupResidentMemory(pid int) (int64, bool) {
+	if pid <= 0 {
+		return 0, false
+	}
+	seen := map[int]bool{}
+	var total int64
+	if kids, ok := processChildren(pid); ok {
+		total, seen = sumTree(pid, kids, seen)
+	}
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		if len(seen) == 0 {
+			return 0, false
+		}
+		return total, true
+	}
 	pageSize := int64(os.Getpagesize())
-	seen := map[int]bool{pid: true}
+	for _, entry := range entries {
+		other, err := strconv.Atoi(entry.Name())
+		if err != nil || other <= 0 || seen[other] {
+			continue
+		}
+		group, pages, ok := processStat(other)
+		if !ok || group != pid {
+			continue
+		}
+		seen[other] = true
+		if pss, ok := processProportionalSet(other); ok {
+			total += pss
+			continue
+		}
+		total += pages * pageSize
+	}
+	return total, true
+}
+
+// sumTree walks from pid through the children files, adding every process it
+// reaches to seen and summing what each holds. It is the walk both samples
+// share; the root is counted first so that the total is never empty for a
+// child that is alive and has no children yet.
+func sumTree(pid int, kids []int, seen map[int]bool) (int64, map[int]bool) {
+	pageSize := int64(os.Getpagesize())
+	seen[pid] = true
 	queue := append([]int{pid}, kids...)
 	var total int64
 	for len(queue) > 0 {
@@ -131,7 +190,7 @@ func treeResidentMemory(pid int) (int64, bool) {
 			total += pages * pageSize
 		}
 	}
-	return total, true
+	return total, seen
 }
 
 // processChildren reads the pids a process started, across all of its

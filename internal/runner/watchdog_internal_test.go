@@ -40,7 +40,7 @@ func (s *scriptedSupervisor) peakMemory(*os.ProcessState) (int64, bool) { return
 // usedMemory hands back the next scripted sample, and repeats the last one
 // once the script runs out so a watchdog that was expected not to trip has
 // something to keep reading.
-func (s *scriptedSupervisor) usedMemory() (int64, bool) {
+func (s *scriptedSupervisor) usedMemory(bool) (int64, bool) {
 	if s.unmeasurable {
 		return 0, false
 	}

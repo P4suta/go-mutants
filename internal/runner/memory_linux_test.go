@@ -296,3 +296,34 @@ func TestAKernelWithoutChildrenFilesFallsBackToTheGroupScan(t *testing.T) {
 			got, want)
 	}
 }
+
+// TestAChildTheChildrenFileOmittedIsStillCountedByTheThoroughSample is the
+// race proc(5) warns about, staged: the children file is reliable only for a
+// stopped process, and a live child can be missing from it when a sibling
+// exits during the read. The quick sample honestly reports what the walk
+// reached; the thorough one — the one a bound is enforced from — adds every
+// group member the walk missed.
+func TestAChildTheChildrenFileOmittedIsStillCountedByTheThoroughSample(t *testing.T) {
+	original := procRoot
+	t.Cleanup(func() { procRoot = original })
+
+	const mib = 1 << 20
+	procRoot = fakeProc(t, []fakeProcess{
+		// The root names only one of its two children.
+		{pid: 100, pgrp: 100, rssPages: 1, pssKB: 10 * 1024, children: []int{101}},
+		{pid: 101, pgrp: 100, rssPages: 1, pssKB: 20 * 1024, children: []int{}},
+		// Alive, in the group, and absent from the file.
+		{pid: 103, pgrp: 100, rssPages: 1, pssKB: 40 * 1024, children: []int{}},
+		{pid: 300, pgrp: 300, rssPages: 1, pssKB: 80 * 1024, children: []int{}},
+	})
+
+	quick, ok := treeResidentMemory(100)
+	if !ok || quick != 30*mib {
+		t.Errorf("treeResidentMemory = %d, %v; want %d: the walk reports what the file names", quick, ok, 30*mib)
+	}
+	thorough, ok := treeAndGroupResidentMemory(100)
+	if !ok || thorough != 70*mib {
+		t.Errorf("treeAndGroupResidentMemory = %d, %v; want %d: the group member the file omitted is counted once",
+			thorough, ok, 70*mib)
+	}
+}

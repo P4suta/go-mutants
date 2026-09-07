@@ -178,7 +178,10 @@ baseline, enforced at the process layer, over the whole tree.**
   paid for two or three processes rather than for the machine's hundreds. A
   bounded mutant on a busy host therefore reads a few hundred small files a
   second. Windows costs one `QueryInformationJobObject` per tick instead, which
-  is O(1). An unbounded run starts no sampler and pays none of it.
+  is O(1). Every run pays for its own sampler, bounded or not — the first
+  samples of a child's life walk only its own tree and cost microseconds, and
+  a child that is gone in ten milliseconds has paid for one or two of those;
+  only the steady ticks of a run that lives longer add the process-table scan.
 - The Linux sampler reads the **proportional set size** rather than `VmRSS`,
   because `VmRSS` counts a shared page once in every process that has it
   resident and a Go program's most interesting shared mapping — the fuzzing

@@ -471,8 +471,9 @@ func TestABurstThatOutrunsTheSamplerIsStillMeasured(t *testing.T) {
 // does nothing but wait long enough to be sampled, and requires the child's
 // peak to be a fraction of what the parent holds.
 func TestPeakMemoryBelongsToTheChildAndNotTheParent(t *testing.T) {
-	t.Parallel()
-
+	// Deliberately not parallel: the test holds a quarter of a gibibyte for
+	// its whole run, and the hog tests beside it hold up to an eighth each; a
+	// small runner should never see all of them at once.
 	const parentGrowth = 256 << 20
 	ballast := make([]byte, parentGrowth)
 	for i := 0; i < len(ballast); i += 4096 {

@@ -145,7 +145,7 @@ func watchMemory(sup supervisor, limit int64) *memoryWatchdog {
 		done:     make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
-	if !w.take(sup, limit) {
+	if !w.take(sup, limit, false) {
 		close(w.stopped)
 		return w
 	}
@@ -155,9 +155,11 @@ func watchMemory(sup supervisor, limit int64) *memoryWatchdog {
 
 // take is one sample; it reports whether the sampler should go on. A platform
 // that cannot answer ends it (see [memoryWatchdog.sample]), and so does the
-// sample that passes the limit.
-func (w *memoryWatchdog) take(sup supervisor, limit int64) bool {
-	used, ok := sup.usedMemory()
+// sample that passes the limit. A thorough sample may scan the whole process
+// table and is what the steady ticks take; the quick ones are for a child's
+// first milliseconds.
+func (w *memoryWatchdog) take(sup supervisor, limit int64, thorough bool) bool {
+	used, ok := sup.usedMemory(thorough)
 	if !ok {
 		return false
 	}
@@ -188,7 +190,7 @@ func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
 			return
 		case <-time.After(time.Until(started.Add(at))):
 		}
-		if !w.take(sup, limit) {
+		if !w.take(sup, limit, false) {
 			return
 		}
 	}
@@ -201,7 +203,7 @@ func (w *memoryWatchdog) sample(sup supervisor, limit int64) {
 			return
 		case <-ticker.C:
 		}
-		if !w.take(sup, limit) {
+		if !w.take(sup, limit, true) {
 			return
 		}
 	}

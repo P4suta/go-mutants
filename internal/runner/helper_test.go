@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
@@ -220,9 +221,13 @@ func runHelper(args []string) int {
 
 	case "hog":
 		// hog TOTAL-BYTES STEP-BYTES STEP-DELAY-MS — the process a memory
-		// bound is about. It grows its resident set in visible steps and then
-		// exits, so a test can assert both what the peak was and that a bound
-		// stopped it before it got there.
+		// bound is about. It grows its resident set in visible steps, holds
+		// the whole of it for two sampling intervals, and then exits, so a
+		// test can assert both what the peak was and that a bound stopped it
+		// before it got there. The hold is what lets a *sampled* measurement
+		// see the last steps: a process that exits the instant it finishes
+		// growing has its final allocations fall between the last sample and
+		// the reap, and on Linux the sample is the only measurement there is.
 		if len(rest) != 3 {
 			return helperMisuse
 		}
@@ -364,6 +369,13 @@ func runHogHelper(total, step, stepDelay string) int {
 		// process a bound killed can see how far it had got.
 		_, _ = fmt.Fprintf(os.Stdout, "hogged %d\n", grown+len(block))
 		time.Sleep(pause)
+	}
+	// Held at the peak long enough for a sampler that looks every
+	// [runner.MemorySampleInterval] to have looked at least once with all of
+	// it resident. A burst (pause zero) is the process no sampler can catch and
+	// does not wait.
+	if pause > 0 {
+		time.Sleep(2 * runner.MemorySampleInterval)
 	}
 	// Nothing below reads held, and without this the whole loop is dead to the
 	// compiler and the collector both.

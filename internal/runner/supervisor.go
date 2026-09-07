@@ -85,7 +85,11 @@ type supervisor interface {
 	// the tree is empty — an empty tree is zero and true. It is a statement
 	// about the machine rather than about the moment, so a sampler that sees it
 	// stops rather than retrying.
-	usedMemory() (int64, bool)
+	// The thorough form may cost a scan of the whole process table and is
+	// what the steady samples that enforce a bound take; the quick form is
+	// for the first milliseconds of a child's life, when a number matters
+	// more than completeness.
+	usedMemory(thorough bool) (int64, bool)
 
 	// peakMemory reports the highest the tree reached, in bytes. It is called
 	// once, after the child has been reaped and before release, and it is given

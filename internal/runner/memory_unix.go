@@ -29,5 +29,8 @@ const maxRSSUnit = 1 << 10
 // treeResidentMemory cannot answer here; see [memorySamplingSupported].
 func treeResidentMemory(int) (int64, bool) { return 0, false }
 
+// treeAndGroupResidentMemory cannot answer here either.
+func treeAndGroupResidentMemory(int) (int64, bool) { return 0, false }
+
 // memorySamplingAvailable has nothing to probe; see [memorySamplingSupported].
 func memorySamplingAvailable() bool { return false }
