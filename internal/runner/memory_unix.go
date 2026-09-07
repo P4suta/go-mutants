@@ -22,10 +22,6 @@ const kernelBoundsMemory = false
 // file; see the Linux file for the one platform known to inherit.
 const accountedPeakBelongsToTheChild = true
 
-// parentHighWater has no bearing here: the accounted peak is the child's own,
-// so [peakOf] never compares it against the parent.
-func parentHighWater() int64 { return 0 }
-
 // maxRSSUnit converts ru_maxrss into bytes. The BSDs and the illumos family
 // report kilobytes, as Linux does and unlike Darwin.
 const maxRSSUnit = 1 << 10

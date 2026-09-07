@@ -510,9 +510,6 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	cmd.WaitDelay = IODrainGrace
 	sup.configure(cmd)
 
-	// Read before the fork, so that the kernel's accounting for the child can
-	// be told from the parent's own; see [peakOf] and [parentHighWater].
-	parentPeak := parentHighWater()
 	if err := cmd.Start(); err != nil {
 		return Result{
 			ExitCode: ExitCodeUnavailable,
@@ -595,7 +592,7 @@ func runProcess(ctx context.Context, spec Spec) Result {
 		ExitCode:       ExitCodeUnavailable,
 		TimedOut:       timedOut,
 		MemoryExceeded: memoryExceeded,
-		PeakMemory:     peakOf(sup, cmd.ProcessState, watchdog, parentPeak),
+		PeakMemory:     peakOf(sup, cmd.ProcessState, watchdog),
 		Duration:       time.Since(started),
 	})
 	if !killed {
@@ -626,28 +623,25 @@ func runProcess(ctx context.Context, spec Spec) Result {
 //
 // Except on Linux, where the accounted number is max(the parent's high-water
 // mark when it forked, the child's own): see [accountedPeakBelongsToTheChild].
-// One half of it can still be recovered. The parent's mark was read just
-// before the fork (parentPeak), so an accounted number *above* it can only
-// have come from the child — the child outgrew everything the parent had ever
-// held — and is the child's exact peak, kernel-recorded, missing nothing
-// between two samples. An accounted number at or below the mark says nothing
-// about the child at all and is dropped; the sampler is then the only
-// witness, and a run nobody sampled reports no peak rather than the parent's.
-// The mark can grow between the read and the fork if another goroutine is
-// allocating, in which case a number just above the stale mark could still be
-// the parent's; that errs towards a larger peak and a looser bound, never
-// towards a kill.
+// It is not consulted there at all. Recovering the half that is the child's —
+// "an accounted number above the parent's mark can only be the child's" — was
+// tried and withdrawn: the mark has to be read before the fork, a parent with
+// other goroutines allocating (a test binary under the race detector, or the
+// engine itself running discovery beside a mutant) moves it by hundreds of
+// megabytes between the read and the fork, and the number that then clears
+// the stale mark is the parent's after all. So on Linux the sampler is the
+// only witness, and a run nobody sampled reports no peak rather than the
+// parent's.
 //
 // It is called after the sampler has been stopped and waited for, and before
 // the supervisor is released — which on Windows is where the accounting lives,
 // and which happens in a defer at the end of [runProcess].
-func peakOf(sup supervisor, ps *os.ProcessState, watchdog *memoryWatchdog, parentPeak int64) int64 {
+func peakOf(sup supervisor, ps *os.ProcessState, watchdog *memoryWatchdog) int64 {
 	peak := watchdog.observedPeak()
-	accounted, ok := sup.peakMemory(ps)
-	if !ok {
+	if !accountedPeakBelongsToTheChild {
 		return peak
 	}
-	if accountedPeakBelongsToTheChild || accounted > parentPeak {
+	if accounted, ok := sup.peakMemory(ps); ok {
 		peak = max(peak, accounted)
 	}
 	return peak

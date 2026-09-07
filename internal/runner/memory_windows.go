@@ -18,10 +18,6 @@ const kernelBoundsMemory = true
 // parent is not in it.
 const accountedPeakBelongsToTheChild = true
 
-// parentHighWater has no bearing here: the accounted peak is the child's own,
-// so [peakOf] never compares it against the parent.
-func parentHighWater() int64 { return 0 }
-
 // memorySamplingSupported: the job object accounts for the whole tree at any
 // moment, so a bound is both measured and enforced here — twice over, in fact.
 // See [jobSupervisor.usedMemory].
