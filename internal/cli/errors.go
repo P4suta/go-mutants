@@ -70,13 +70,20 @@ const (
 	// is a flag typed for this invocation losing to a file with no diagnostic,
 	// which is the opposite of the precedence the help text promises.
 	CodeInertProfile Code = "GOM1008"
-	// CodeMutantUnresolved reports a `run --mutant` prefix that is well formed
-	// and did not select exactly one mutant: nothing matched, or several did.
-	// It is separate from [CodeInvalidMutantPrefix], which is a prefix that
-	// could never match anything, because the remedies are different — one is
-	// fixed by retyping the value and the other by looking at what it matched —
-	// and separate from `list`'s reading of the same flag, where a prefix
-	// matching several mutants lists all of them and is not an error at all.
+	// CodeMutantUnresolved reports a `run --mutant` prefix, or an `explain`
+	// target, that is well formed and did not name exactly one mutant: nothing
+	// matched, or several did. It is separate from [CodeInvalidMutantPrefix],
+	// which is a prefix that could never match anything, because the remedies
+	// are different — one is fixed by retyping the value and the other by
+	// looking at what it matched — and separate from `list`'s reading of the
+	// same flag, where a prefix matching several mutants lists all of them and
+	// is not an error at all.
+	//
+	// The two commands ask the question of different things and reach the same
+	// answer: `run` asks it of a catalogue it has just discovered, and `explain`
+	// of the mutants and rejections one report carries. A second code would be
+	// two numbers for "that prefix is not one mutant", which is one condition
+	// with one remedy.
 	CodeMutantUnresolved Code = "GOM1009"
 	// CodeUnreadableReport reports a file named on the command line that could
 	// not be read at all: a path that does not exist, a directory, a file
@@ -171,10 +178,11 @@ const (
 	// for `report clean`, which deletes, guessing would be the worst possible
 	// answer.
 	CodeNotAModuleRoot Code = "GOM8201"
-	// CodeNoStoredRun reports `report latest` finding no run for this module.
-	// An empty *listing* is an answer and exits 0; a `latest` with nothing to
-	// print is not, because the command's whole output is one document and
-	// there is none.
+	// CodeNoStoredRun reports `report latest` — or `explain`, which reads the
+	// same run — finding no run for this module, or none under the id `explain
+	// --run` named. An empty *listing* is an answer and exits 0; a `latest` or
+	// an account with nothing to print is not, because each command's whole
+	// output is about one run and there is none.
 	CodeNoStoredRun Code = "GOM8202"
 )
 

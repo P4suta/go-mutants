@@ -140,7 +140,12 @@ file:// with the network unplugged.
 Every run also keeps a diagnostic account of itself, in memory by default and in
 reports/mutation/trace/ under --trace, which ` + "`go-mutants trace`" + ` reads. A trace is
 never evidence: it takes no part in a verdict, in a mutant identity, or in a
-cache key.`
+cache key.
+
+` + "`go-mutants explain`" + ` joins the two per mutant: what one mutant is, what happened
+to it, which suites cover it, every pass the run made over the test binaries
+with the commands underneath, and a command to paste that runs the mutant
+again.`
 
 // NewRootCommand builds the command tree.
 //
@@ -186,6 +191,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newListCommand())
 	root.AddCommand(newDoctorCommand())
 	root.AddCommand(newInitCommand())
+	root.AddCommand(newExplainCommand())
 	root.AddCommand(newReportCommand())
 	root.AddCommand(newCacheCommand())
 	root.AddCommand(newTraceCommand())

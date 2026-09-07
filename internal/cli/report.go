@@ -569,26 +569,33 @@ func readReport(path string) (*report.Report, error) {
 		return nil, err
 	}
 	if err = schemas.Validate(schemas.RunReportV1, data); err != nil {
-		return nil, notAReport(path, err)
+		return nil, notAReport(path, "merge", err)
 	}
 	r, err := report.Parse(data)
 	if err != nil {
-		return nil, notAReport(path, err)
+		return nil, notAReport(path, "merge", err)
 	}
 	return r, nil
 }
 
-// notAReport names the file a failure was about.
+// notAReport names the file a failure was about, and what the caller wanted to
+// do with it.
 //
 // The cause keeps its own code — this package does not re-code the failures of
 // the packages it drives — and gains one of its own in front, because `report
 // merge` is handed several files and "which one" is the first thing its user
 // needs to know. `report validate` is given exactly one and reports the failure
 // unwrapped, since the path is the command line the user has just typed.
-func notAReport(path string, cause error) error {
+//
+// The verb is the caller's because the refusals are not the same statement. A
+// document `report merge` will not touch may be a perfectly good report of the
+// wrong shard set, while one `explain` cannot read is not a report at all — and
+// telling somebody who typed `explain` that their file "cannot be merged" sends
+// them looking for a merge they never asked for.
+func notAReport(path, action string, cause error) error {
 	return &Error{
 		Code:    CodeInvalidReportDocument,
-		Message: strconv.Quote(path) + " is not a run report this build can merge",
+		Message: strconv.Quote(path) + " is not a run report this build can " + action,
 		Err:     cause,
 	}
 }

@@ -646,3 +646,53 @@ func TestFormatBytes(t *testing.T) {
 		}
 	}
 }
+
+// TestTraceLineIsTheSameLineTheConsoleDraws is the whole of what exporting it
+// promises: `go-mutants explain` quotes a recorded command afterwards, and what
+// it quotes is what `-vv` printed while the run was happening.
+//
+// The comparison is against the renderer's own output rather than against a
+// literal, because a literal would pass while the two drifted apart — which is
+// the one failure exporting the function was meant to make impossible.
+func TestTraceLineIsTheSameLineTheConsoleDraws(t *testing.T) {
+	event := trace.Event{
+		Seq: 7, Type: trace.TypeExec, Timestamp: "2026-08-19T10:11:12Z", ElapsedMS: 1200,
+		Exec: &trace.ExecRecord{
+			Kind: trace.ExecKindMutantRun, Subject: strings.Repeat("1f", 32),
+			Argv:       []string{"/tmp/w 1/clamp.test", "-test.timeout=40s"},
+			Dir:        "/tmp/w 1",
+			ExitCode:   1,
+			DurationMS: 520,
+		},
+	}
+	drawn, ok := traceLine(event)
+	if !ok {
+		t.Fatal("the renderer does not know an exec event")
+	}
+	if got := TraceLine(event); got != flattened(drawn) {
+		t.Errorf("TraceLine = %q, but `-vv` draws %q", got, flattened(drawn))
+	}
+}
+
+// TestTraceLineNamesAnEventItCannotRead keeps the exported form total: every
+// event costs exactly one line, including one whose envelope was lost, so a
+// caller never has to invent a spelling for a line with no type on it.
+func TestTraceLineNamesAnEventItCannotRead(t *testing.T) {
+	if got := TraceLine(trace.Event{}); got != "event" {
+		t.Errorf("TraceLine of an empty event = %q, want %q", got, "event")
+	}
+	if got := TraceLine(trace.Event{Type: trace.TypeExec}); got != trace.TypeExec {
+		t.Errorf("TraceLine of a payloadless exec = %q, want %q", got, trace.TypeExec)
+	}
+}
+
+// TestQuoteArgvQuotesOnlyWhatAShellWouldBreak is the property a pasted
+// reproduction rests on: the line is legible where it can be, and correct
+// where it cannot.
+func TestQuoteArgvQuotesOnlyWhatAShellWouldBreak(t *testing.T) {
+	got := QuoteArgv([]string{"/usr/lib/go/bin/go", "test", "-run", "Test A", "./..."})
+	const want = `/usr/lib/go/bin/go test -run 'Test A' ./...`
+	if got != want {
+		t.Errorf("QuoteArgv = %q, want %q", got, want)
+	}
+}

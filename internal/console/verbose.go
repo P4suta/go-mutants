@@ -554,6 +554,44 @@ func bracketed(items []string) string {
 	return "[" + strings.Join(items, " ") + "]"
 }
 
+// TraceLine renders one recorded event as the single line `run -vv` prints for
+// it, without the indentation that marks a recorded line on a console.
+//
+// It is exported for `go-mutants explain`, which reads a recording back and
+// quotes the commands one mutant's passes started. Two renderings of one event
+// would be two things to keep in step, and the difference would surface in the
+// worst possible place: a user comparing what `-vv` printed during the run with
+// what `explain` says about it afterwards.
+//
+// An event this package cannot read still costs exactly one line and names
+// itself, which is [traceLine]'s own rule; an event that lost its envelope
+// altogether is rendered as "event", so that no caller has to invent a spelling
+// for a line with no type on it.
+func TraceLine(e trace.Event) string {
+	line, _ := traceLine(e)
+	if line == "" {
+		return "event"
+	}
+	return flattened(line)
+}
+
+// QuoteArgv renders an argument vector as a POSIX shell would have to be given
+// it: single quotes, with an embedded quote closed, escaped and reopened.
+//
+// It is exported for the reason [TraceLine] is: `go-mutants explain` prints a
+// command to paste, and a second quoter would eventually disagree with this one
+// about a path with a space in it — which is exactly the command nobody would
+// notice was wrong until they ran it.
+//
+// POSIX is the whole of what it promises, and a caller printing a line for a
+// user to paste should say so. PowerShell and cmd.exe quote differently and
+// spell an environment assignment differently again, so on Windows the result
+// is a line to read — the program, its arguments, and where one ends and the
+// next begins — rather than one to paste. Quoting for every shell there is
+// would mean printing the same command three times, and choosing at run time
+// would mean guessing which shell the terminal on the other end of a pipe is.
+func QuoteArgv(argv []string) string { return quoteArgv(argv) }
+
 // quoteArgv renders an argument vector the way a shell would have to be given
 // it: joined with spaces, and quoted only where a bare word would not survive.
 //
