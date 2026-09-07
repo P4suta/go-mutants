@@ -930,6 +930,24 @@ type goDirectories struct {
 	modCache string
 }
 
+// ResolveToolchainDirectories forces the one-per-process `go env` probe [Env]
+// and [Compose] depend on, before something else takes the `go` it asks away.
+//
+// It exists for one caller and one hazard. A test that puts a stand-in `go` in
+// front of PATH — internal/testkit/mutantkit's scripted toolchain does exactly
+// that — hijacks every `go` this process starts afterwards, this probe
+// included. The probe is lazy, so whether it has already run depends on which
+// tests ran before it: a package where it had not would send its `go env GOENV
+// GOPATH GOMODCACHE` to the stand-in, which answers with whatever that test
+// scripted or refuses the call, and the policy would quietly fall back to
+// build.Default with a spurious call recorded against the stand-in. Both
+// symptoms are order-dependent, which is the worst shape a test failure has.
+//
+// Forcing it first makes the answer the machine's own on every ordering. It is
+// idempotent and cheap after the first call, which is why the caller may say it
+// unconditionally.
+func ResolveToolchainDirectories() { resolveGoDirectories() }
+
 // resolveGoDirectories answers once per process, and is forced from the top of
 // [Env] and [Compose] while HOME is still the machine's own.
 //

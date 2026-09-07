@@ -17,12 +17,20 @@
 # One path per line, relative to the module root, `/`-separated. `#` comments
 # and blank lines are ignored.
 
-# internal/gocmd is the package that locates and runs the `go` command. Its
-# subject is the toolchain: a version probe that answers garbage, one that exits
-# non-zero, one that hangs. Tagging it would leave the wrapper every other
-# package depends on with no unit-tier evidence at all, and the commands it runs
-# are `go version` and `go env` rather than a build.
-internal/gocmd/gocmd_test.go
+# internal/gocmd used to be the first entry here, and it is gone: its unit tier
+# scripts a toolchain instead of reaching for one. A version probe that answers
+# garbage, one that exits non-zero and one that hangs are all answered now by
+# internal/testkit/mutantkit's fake `go` — a real process reading its answers
+# from a table — so the wrapper every other package depends on keeps its
+# unit-tier evidence and needs no toolchain to produce it. The four claims that
+# are about a *real* `go` rather than about go-mutants' own code moved to
+# internal/gocmd/toolchain_integration_test.go, which is where they belong.
+#
+# A fake-driven file is exempt by construction: the scan skips any test file
+# that constructs a fake, because a file that supplies the toolchain is not
+# reaching for one. That exemption is also why a file may not do both — hence
+# the split above — and it is pinned by
+# TestAFileThatScriptsTheToolchainIsNotDrivingOne.
 
 # internal/discover loads the fixture modules with go/packages, which drives a
 # real toolchain by construction: the questions this package answers — the
