@@ -28,6 +28,13 @@ const (
 	CoverDirEnv = "GOCOVERDIR"
 )
 
+// helperCoverPrefix names every private coverage root this package creates.
+//
+// It is a constant rather than a literal at its one call site because a test has
+// to be able to ask what a run left behind, and a pattern typed a second time is
+// a pattern that stops matching the day the name changes.
+const helperCoverPrefix = "go-mutants-helper-cover-"
+
 // HelperMisuse is the status a helper exits with when it cannot set itself up.
 //
 // It is a status no test in this repository asks a helper to produce, so a
@@ -117,7 +124,7 @@ func HelperEnabled(variable string) bool {
 // When the variable is set this process *is* the helper: program runs with
 // os.Args[1:] and its return value is the process's status. Otherwise the suite
 // runs as usual, with the private coverage root created before it and removed
-// after it.
+// after it — but only when there is coverage to keep apart; see [runSuite].
 //
 // The program runs from TestMain rather than from a test function because of
 // what internal/runner's tests are about. They assert on a child's exact bytes
@@ -140,6 +147,11 @@ func HelperEnabled(variable string) bool {
 // hook then prints "warning: GOCOVERDIR not set, no coverage data emitted" to
 // the same stderr. A private directory is the only quiet answer, and it has the
 // second virtue of keeping helper counters out of the parent's own profile.
+//
+// All of which is true of a coverage run and of nothing else, so a run without
+// one makes no directory at all: `go test` exports GOCOVERDIR only under -cover,
+// an uninstrumented binary has no exit hook to redirect, and a directory nothing
+// writes to is a directory nothing misses.
 func Helper(m *testing.M, variable string, program func(args []string) int) int {
 	if HelperEnabled(variable) {
 		if err := isolateCoverageOutput(); err != nil {
@@ -151,13 +163,32 @@ func Helper(m *testing.M, variable string, program func(args []string) int) int 
 	return runSuite(m)
 }
 
-// runSuite runs the suite proper with the helper coverage root published.
+// runSuite runs the suite proper, with the helper coverage root published when
+// this run has coverage output to keep apart.
 //
 // It is a function rather than the body of [Helper] because the root has to be
 // removed on the way out and a TestMain ends in os.Exit, which runs no deferred
 // function — so the removal has to happen before the status is returned.
+//
+// GOCOVERDIR is the whole test for "is there coverage to keep apart", and it is
+// exact rather than a heuristic: `go test -cover` exports it to the test binary
+// (alongside -test.gocoverdir) and a plain `go test` does not, so a process
+// without it is a process whose helper children are not instrumented either —
+// no exit hook fires, nothing is written, and the only shared directory a helper
+// could have collided in does not exist.
+//
+// Making one anyway is what leaked. The removal is a deferred function, and a
+// deferred function is exactly what a process does not run when it is killed:
+// `go test -timeout`, a Ctrl-C, and above all a mutation run, which kills the
+// mutants that hang and runs thousands of test binaries to do it. One machine's
+// /tmp held 11,842 of these directories, none of which any coverage tool had
+// ever read. A directory that is never created cannot be left behind.
 func runSuite(m *testing.M) int {
-	root, err := os.MkdirTemp("", "go-mutants-helper-cover-")
+	if os.Getenv(CoverDirEnv) == "" {
+		return m.Run()
+	}
+
+	root, err := os.MkdirTemp("", helperCoverPrefix)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "creating the helper coverage root: %v\n", err)
 		return HelperMisuse
@@ -177,16 +208,34 @@ func runSuite(m *testing.M) int {
 
 // HelperCoverRoot is the directory helper processes carve their coverage
 // directories out of, or the empty string in a process that is not running
-// under [Helper].
+// under [Helper] and in one whose run has no coverage to keep apart.
 func HelperCoverRoot() string { return os.Getenv(HelperCoverRootEnv) }
 
 // isolateCoverageOutput points this helper's coverage output at a directory
-// nothing else writes to.
+// nothing else writes to, when there is coverage output to point anywhere.
 //
 // It runs in the helper rather than where the parent composes an environment,
 // so that it covers every helper process there is: the ones handed a composed
 // environment, the one that inherits, and any grandchild a helper spawns.
+//
+// Nothing collects what is written here. [runSuite] removes the root with the
+// counters still in it, which is the point: the directory exists to be somewhere
+// other than the parent's GOCOVERDIR, so that helper counters stay out of the
+// parent's profile and the concurrent covmeta renames stop colliding.
+//
+// The helper's own GOCOVERDIR decides first. Without one the process is not a
+// coverage run — nothing is instrumented, nothing writes counters — so there is
+// nothing to redirect, whether or not an ancestor's root is still in the
+// environment; creating a directory then would be creating the leak this exists
+// to have stopped, with no owner to remove it. With a GOCOVERDIR and no root the
+// answer is the opposite: that is a coverage run whose root went missing on the
+// way in — a TestMain that ran m.Run itself, an environment policy that stripped
+// the variable — and it is refused, because carrying on means writing covmeta
+// into the directory `go test` is collecting.
 func isolateCoverageOutput() error {
+	if os.Getenv(CoverDirEnv) == "" {
+		return nil
+	}
 	root := HelperCoverRoot()
 	if root == "" {
 		return fmt.Errorf("%s is unset, so this helper has nowhere private to write coverage output",

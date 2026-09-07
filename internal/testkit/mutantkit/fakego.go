@@ -789,13 +789,14 @@ func copyExecutable(from, to string) error {
 // process's. Otherwise the suite runs as usual.
 //
 // It goes through [testkit.Helper], which is the same shape and gives the fake
-// the same thing every helper process in this repository needs: a private
-// GOCOVERDIR. A fake is this very test binary re-executed, so under `go test
-// -cover` it is coverage-instrumented and its exit hook writes a meta-data file
-// named after the binary — identical for every fake — into the single directory
-// `go test` exports. The concurrent renames collide, and on Windows the loser
-// prints "coverage meta-data emit failed" onto the very stderr a test here
-// asserts the exact bytes of.
+// the same thing every helper process in this repository needs under `go test
+// -cover`: a private GOCOVERDIR. A fake is this very test binary re-executed, so
+// under -cover it is coverage-instrumented and its exit hook writes a meta-data
+// file named after the binary — identical for every fake — into the single
+// directory `go test` exports. The concurrent renames collide, and on Windows
+// the loser prints "coverage meta-data emit failed" onto the very stderr a test
+// here asserts the exact bytes of. A run without -cover has none of that and is
+// given no directory at all.
 //
 // A package whose TestMain already does something of its own still runs the
 // suite through here and asks [IsFakeGo] afterwards:
@@ -812,7 +813,10 @@ func copyExecutable(from, to string) error {
 // Calling m.Run directly and dispatching only on the fake path does not work,
 // and the way it fails is worth writing down: the coverage root is published by
 // the *suite* branch, so a suite that ran itself leaves every fake child with
-// nowhere private to write and each one refuses the call it was started for.
+// nowhere private to write. Under `go test -cover` each one then refuses the
+// call it was started for, rather than writing its meta-data file into the
+// directory `go test` is collecting; a run without -cover has nothing to keep
+// apart, so the mistake stays invisible until the day the job adds the flag.
 // The root package's TestMain is the shape above for exactly that reason.
 //
 // A package that also ran a [testkit.Helper] program of its own — none scripts
