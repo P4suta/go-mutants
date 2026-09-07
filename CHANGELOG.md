@@ -14,6 +14,27 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A mutant can be mapped to the tests that reach it, not only to the
+  binaries.** Coverage-guided selection has always answered "which test
+  binaries reach this line" and let a run skip the binaries that do not. On a
+  package whose one binary is its whole suite that answer never narrows
+  anything: every mutant of `internal/discover` still runs all of
+  `internal/discover`'s tests, which is why that package's ~1500 mutants have
+  never fitted in the dogfood gate. `internal/execute` can now ask a test
+  binary to name its tests (`-test.list`, recorded as the new `test-list`
+  command kind of trace v1) and profile each one on its own — `-test.run`
+  anchored to the name, one `-test.gocoverdir` per test — recording whether
+  the test passed alone, because a test that does not is order-dependent and
+  cannot be the sole witness of a mutant. `internal/coverage` then maps every
+  mutant to the `(import path, test name)` pairs whose profiles reach its
+  lines, by the same rule the binary-level mapping uses; folded back to
+  binaries the two mappings agree, which is a test. Nothing in a run uses it
+  yet: this is the pure half and the process half of test-level narrowing,
+  and the engine wiring, the configuration key, and the soundness controls
+  around it follow separately.
+  A `coverage-run` that profiles one test names it in the subject as
+  `<import path> <test name>`; the space is the separator, since an import
+  path holds none.
 - **The dogfood gate covers what a run writes down.** This repository's own
   `.go-mutants.toml` now includes `internal/report/*.go`, so the gate is eleven
   whole packages rather than ten, and the eleventh is the RunReport v1 document

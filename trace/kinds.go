@@ -130,7 +130,10 @@ const (
 	ExecKindGoList = "go-list"
 	// ExecKindGoTestC compiles one test binary: `go test -c`.
 	ExecKindGoTestC = "go-test-c"
-	// ExecKindCoverageRun is one profiling run of a test binary.
+	// ExecKindTestList asks one test binary to name its tests: `-test.list`.
+	ExecKindTestList = "test-list"
+	// ExecKindCoverageRun is one profiling run of a test binary, or of one
+	// test of it.
 	ExecKindCoverageRun = "coverage-run"
 	// ExecKindMutantRun is one test binary run with one mutant active.
 	ExecKindMutantRun = "mutant-run"
@@ -168,6 +171,7 @@ func ExecKinds() []string {
 		ExecKindCovdataTextfmt,
 		ExecKindGoList,
 		ExecKindGoTestC,
+		ExecKindTestList,
 		ExecKindCoverageRun,
 		ExecKindMutantRun,
 		ExecKindProbeRun,

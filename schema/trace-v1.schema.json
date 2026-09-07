@@ -340,6 +340,7 @@
             "covdata-textfmt",
             "go-list",
             "go-test-c",
+            "test-list",
             "coverage-run",
             "mutant-run",
             "probe-run",

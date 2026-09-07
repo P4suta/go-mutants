@@ -591,3 +591,111 @@ func TestCodeOfForeignError(t *testing.T) {
 		t.Errorf("Unwrap = %v, want the cause", wrapped.Unwrap())
 	}
 }
+
+// TestMapTestsNamesTheTestsThatReachEachMutant is the test-level twin of
+// [TestMap]: a profile per (binary, test) rather than per binary, and a
+// mutant maps to the tests whose blocks reach its lines, across binaries, in
+// a fixed order. Everything [coverage.Map] decides about lines, zero counts
+// and absent files holds here unchanged; what is new is only the key.
+func TestMapTestsNamesTheTestsThatReachEachMutant(t *testing.T) {
+	t.Parallel()
+
+	const module = "example.com/m"
+	mutants := []coverage.Mutant{
+		{ID: "a", Path: "core/a.go", StartLine: 10, EndLine: 10},
+		{ID: "b", Path: "core/a.go", StartLine: 20, EndLine: 22},
+		{ID: "c", Path: "user/u.go", StartLine: 5, EndLine: 5},
+		{ID: "d", Path: "core/b.go", StartLine: 1, EndLine: 1},
+	}
+	profiles := map[coverage.TestKey]coverage.Profile{
+		// TestOne in core reaches line 10 and not 20-22.
+		{ImportPath: module + "/core", Name: "TestOne"}: profile(
+			coverage.Block{File: module + "/core/a.go", StartLine: 9, EndLine: 11, NumStmt: 1, Count: 1},
+			coverage.Block{File: module + "/core/a.go", StartLine: 20, EndLine: 22, NumStmt: 1, Count: 0},
+		),
+		// TestTwo in core reaches 20-22 only.
+		{ImportPath: module + "/core", Name: "TestTwo"}: profile(
+			coverage.Block{File: module + "/core/a.go", StartLine: 21, EndLine: 21, NumStmt: 1, Count: 3},
+		),
+		// TestUser in user reaches core's line 10 through an import, and its
+		// own line 5.
+		{ImportPath: module + "/user", Name: "TestUser"}: profile(
+			coverage.Block{File: module + "/core/a.go", StartLine: 10, EndLine: 10, NumStmt: 1, Count: 1},
+			coverage.Block{File: module + "/user/u.go", StartLine: 5, EndLine: 6, NumStmt: 1, Count: 1},
+		),
+	}
+
+	got := coverage.MapTests(coverage.TestOptions{ModulePath: module, Mutants: mutants, Profiles: profiles})
+
+	want := map[string][]coverage.TestKey{
+		"a": {{ImportPath: module + "/core", Name: "TestOne"}, {ImportPath: module + "/user", Name: "TestUser"}},
+		"b": {{ImportPath: module + "/core", Name: "TestTwo"}},
+		"c": {{ImportPath: module + "/user", Name: "TestUser"}},
+	}
+	for id, tests := range want {
+		if !slices.Equal(got.Covering[id], tests) {
+			t.Errorf("Covering[%s] = %v, want %v", id, got.Covering[id], tests)
+		}
+		if !slices.Equal(got.CoveringOf(id), tests) {
+			t.Errorf("CoveringOf(%s) = %v, want %v, the same answer as the map", id, got.CoveringOf(id), tests)
+		}
+	}
+	if _, ok := got.Covering["d"]; ok {
+		t.Errorf("Covering[d] = %v, want absent: no test's profile holds core/b.go", got.Covering["d"])
+	}
+	if !slices.Equal(got.Uncovered, []string{"d"}) {
+		t.Errorf("Uncovered = %v, want [d]", got.Uncovered)
+	}
+	wantTests := []coverage.TestKey{
+		{ImportPath: module + "/core", Name: "TestOne"},
+		{ImportPath: module + "/core", Name: "TestTwo"},
+		{ImportPath: module + "/user", Name: "TestUser"},
+	}
+	if !slices.Equal(got.Tests, wantTests) {
+		t.Errorf("Tests = %v, want %v, sorted by import path then name", got.Tests, wantTests)
+	}
+	if got.Matched != 2 {
+		t.Errorf("Matched = %d, want 2: core/a.go and user/u.go are the files the profiles name; core/b.go is named by none, which is why d is uncovered",
+			got.Matched)
+	}
+}
+
+// TestMapTestsAgreesWithMapOnBinaries pins that folding the per-test answer
+// back to binaries gives exactly what [coverage.Map] gives for the union of
+// the tests' profiles — the two mappings are one rule with two keys.
+func TestMapTestsAgreesWithMapOnBinaries(t *testing.T) {
+	t.Parallel()
+
+	const module = "example.com/m"
+	mutants := []coverage.Mutant{
+		{ID: "a", Path: "p/a.go", StartLine: 3, EndLine: 3},
+		{ID: "b", Path: "p/a.go", StartLine: 8, EndLine: 8},
+		{ID: "c", Path: "p/a.go", StartLine: 30, EndLine: 30},
+	}
+	one := profile(coverage.Block{File: module + "/p/a.go", StartLine: 1, EndLine: 4, NumStmt: 1, Count: 1})
+	two := profile(coverage.Block{File: module + "/p/a.go", StartLine: 7, EndLine: 9, NumStmt: 1, Count: 2})
+	perTest := map[coverage.TestKey]coverage.Profile{
+		{ImportPath: module + "/p", Name: "TestOne"}: one,
+		{ImportPath: module + "/p", Name: "TestTwo"}: two,
+	}
+	union := profile(append(slices.Clone(one.Blocks), two.Blocks...)...)
+
+	byTest := coverage.MapTests(coverage.TestOptions{ModulePath: module, Mutants: mutants, Profiles: perTest})
+	byBinary := coverage.Map(coverage.Options{ModulePath: module, Mutants: mutants,
+		Profiles: map[string]coverage.Profile{module + "/p": union}})
+
+	for _, m := range mutants {
+		var folded []string
+		for _, key := range byTest.Covering[m.ID] {
+			if len(folded) == 0 || folded[len(folded)-1] != key.ImportPath {
+				folded = append(folded, key.ImportPath)
+			}
+		}
+		if !slices.Equal(folded, byBinary.Covering[m.ID]) {
+			t.Errorf("mutant %s: tests fold to binaries %v, Map says %v", m.ID, folded, byBinary.Covering[m.ID])
+		}
+	}
+	if !slices.Equal(byTest.Uncovered, byBinary.Uncovered) {
+		t.Errorf("Uncovered by tests = %v, by binaries = %v", byTest.Uncovered, byBinary.Uncovered)
+	}
+}

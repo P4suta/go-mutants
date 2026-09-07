@@ -570,7 +570,8 @@ command, and an unlabelled command is a recording that does not validate.
 | `covdata-textfmt` | converting a coverage directory into a profile |
 | `go-list` | listing the packages a test binary set covers |
 | `go-test-c` | compiling one test binary |
-| `coverage-run` | one profiling run of a test binary |
+| `test-list` | asking one test binary to name its tests |
+| `coverage-run` | one profiling run of a test binary, or of one test of it |
 | `mutant-run` | one test binary run with one mutant active |
 | `probe-run` | one test binary run against the probe tree |
 | `control-run` | one test binary of the mutant tree run with nothing activated, which is the original program |
@@ -579,8 +580,11 @@ command, and an unlabelled command is a recording that does not validate.
 | `verify` | re-checking the frozen tree before a session claims to measure it |
 
 `subject` is the mutant id for `mutant-run`, the import path for `go-test-c`,
-`coverage-run`, `covdata-textfmt` and `control-run`, the pattern for
-`scope-list`, and absent where the kind says everything there is to say.
+`test-list`, `coverage-run`, `covdata-textfmt` and `control-run`, the pattern
+for `scope-list`, and absent where the kind says everything there is to say. A
+`coverage-run` that profiles a single test rather than the whole binary names
+both, as the import path, one space, and the test's name: an import path holds
+no space, so the two halves are recoverable from the subject alone.
 
 A `control-run` is a `mutant-run` with the activation variable left out, and
 that is the whole difference: same executable, same `dir`, same `timeout_ms`,
