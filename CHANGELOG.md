@@ -3529,6 +3529,40 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- A child no longer inherits the parent's `GOCOVERDIR`. Every environment
+  `internal/execute` composes — for the `go` commands, for a mutant's test
+  binary, for a probe pass, for a control run and for the coverage profiling
+  pass — now drops the variable, exactly as it already drops `GO_MUTANTS_*` and
+  redirects the three temporary-directory names.
+
+  `GOCOVERDIR` names a directory a coverage-instrumented program *appends* its
+  meta-data and counter files to, and a parent that has one is not an exotic
+  case: `go test -cover` and `go test -coverprofile` both export it into the
+  test process. So every child go-mutants started underneath its own `cover`
+  and `cover-integration` jobs was handed the directory those jobs are
+  collecting, and anything reaching the coverage runtime's exit hook there wrote
+  into somebody else's profile. The profiling pass is where it reads worst,
+  because that pass is *about* coverage: it hands each binary a directory of its
+  own with `-test.gocoverdir` and reads back what is in it, and an inherited
+  `GOCOVERDIR` beside that flag is a second directory nobody chose. go-mutants
+  says where a child's coverage goes; an ambient setting does not get a vote.
+
+  It showed up as a red test rather than as a corrupt profile:
+  `go test -cover ./internal/execute` failed
+  `TestCoverDirFlagIsWhatTheToolchainReads` with *the profiling run set
+  `GOCOVERDIR="/tmp/go-build.../b001/gocoverdir"`, which a test binary does not
+  read* — the assertion was right and the code under test was wrong.
+
+  The harness moved with it. `testkit.Helper` gives each helper process a
+  private coverage directory, and it used to decide whether to by reading
+  `GOCOVERDIR`; a helper started through a scrubbed environment has none, is
+  instrumented all the same, and printed `warning: GOCOVERDIR not set, no
+  coverage data emitted` onto the stderr `internal/execute`'s scripted-`go`
+  tests assert the exact bytes of. `TESTKIT_HELPER_COVERDIR_ROOT` is now what
+  the redirection turns on: it is published only by a suite that is itself a
+  coverage run, and no environment policy strips it. A `GOCOVERDIR` with no root
+  is still refused with `testkit.HelperMisuse`, because that is the other
+  direction — a coverage run with nowhere private to write.
 - The test harness no longer leaves a coverage directory in the system
   temporary directory once per test binary process. Every suite that runs
   through `testkit.Helper` created a private `go-mutants-helper-cover-*` root

@@ -799,7 +799,10 @@ the outcome cache.
   with `-cover -coverpkg=<module>/...` and each is then run once with nothing
   activated and `-test.gocoverdir` pointed at a directory of its own — the
   flag, never the `GOCOVERDIR` environment variable, which a *test* binary does
-  not read. `go tool covdata textfmt` blocks are mapped to mutants by
+  not read — and an inherited `GOCOVERDIR` is stripped from every child
+  environment go-mutants composes, so a run started underneath somebody else's
+  coverage collection cannot append into it. `go tool covdata textfmt` blocks
+  are mapped to mutants by
   line-interval overlap only: columns describe the instrumented text while a
   mutant's span was measured against the user's own bytes, and only the lines
   agree. The over-approximation errs toward running a binary rather than

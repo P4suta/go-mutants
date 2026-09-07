@@ -42,6 +42,37 @@ func TestBaseEnvScrubsActivationAndKeepsTheRest(t *testing.T) {
 	}
 }
 
+// TestBaseEnvKeepsAParentsCoverageDirectoryOutOfTheChild is the exception to
+// "keeps the rest", and it is the only one.
+//
+// GOCOVERDIR names a directory a `-cover` build appends its own meta-data and
+// counter files to, so a child that inherits one writes into whatever profile
+// the parent is collecting. The parent that has one is not exotic:
+// `go test -cover` and `go test -coverprofile` both export it into the test
+// process, so every child this package starts while go-mutants' own coverage
+// jobs run inherits the directory those jobs are measuring — and the profiling
+// pass, which is *about* coverage, would take its own data from a directory it
+// never chose. go-mutants says where coverage goes with `-test.gocoverdir` and
+// nowhere else; an ambient one is somebody else's.
+func TestBaseEnvKeepsAParentsCoverageDirectoryOutOfTheChild(t *testing.T) {
+	t.Setenv("GOCOVERDIR", "/the/parents/coverage")
+
+	for _, c := range []struct {
+		name string
+		env  []string
+	}{
+		{"baseEnv", execute.BaseEnv("")},
+		{"mutantEnv", execute.MutantEnv("a-mutant", "")},
+		{"probeEnv", execute.ProbeEnv("", "/run/probe.log")},
+		{"controlEnv", execute.ControlEnv("")},
+	} {
+		if got := envValue(c.env, "GOCOVERDIR"); got != "" {
+			t.Errorf("%s passed GOCOVERDIR=%q to the child, which would write into the parent's profile",
+				c.name, got)
+		}
+	}
+}
+
 // TestBaseEnvRedirectsEveryTemporaryDirectoryName covers all three spellings.
 // TMPDIR is the POSIX one and TMP and TEMP the Windows ones, and a test helper
 // may read any of them — so leaving one pointing at the user's own temporary
