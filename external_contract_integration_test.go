@@ -161,6 +161,7 @@ func TestConsumerClassifiesEveryEngineFailure(t *testing.T) {
 	for _, sentinel := range []error{
 		gomutants.ErrWorkspaceClosed,
 		gomutants.ErrWorkspacePrepared,
+		gomutants.ErrPrepareFailed,
 		gomutants.ErrSessionClosed,
 		gomutants.ErrInvalidMutantID,
 		gomutants.ErrMutantNotFound,

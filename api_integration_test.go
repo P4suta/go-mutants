@@ -94,6 +94,25 @@ const sessionBlockEnv = "SESSION_BLOCK"
 // whole-package target — writes nothing.
 const sessionBlockPIDFileEnv = "SESSION_BLOCK_PIDFILE"
 
+// expectCleanEnv and writeSnapshotEnv are the injected fixture's other two
+// gates, both read by TestSessionEnvironment.
+//
+// They were literals until a test ran the fixture's *whole* suite through
+// Workspace.Exec, which is when it stopped mattering that only one call at a
+// time ever set them. Under `EXPECT_CLEAN=yes` inherited from the host the
+// target asserts things no ordinary run supplies and goes red; under
+// `WRITE_SNAPSHOT=yes` it writes a file into whatever tree it is running in,
+// which for a shared session is that session's prepared snapshot — so an
+// exported variable would not merely fail the test that noticed, it would move
+// the tree every later test in the package measures against. Both are named
+// here and stripped by [hostEnvWithoutFixtureGates] for the same reason the
+// other two are, and both are still supplied per call by the tests that want
+// them.
+const (
+	expectCleanEnv   = "EXPECT_CLEAN"
+	writeSnapshotEnv = "WRITE_SNAPSHOT"
+)
+
 // targetDeathBound is how long a killed target is given to actually be gone.
 //
 // A kill is asynchronous with respect to the wait that returned: internal/runner
@@ -159,14 +178,19 @@ const targetDeathPoll = 50 * time.Millisecond
 // whenever SIGTERM was actually ignored.
 const cleanupBound = runner.TerminationGrace + runner.IODrainGrace + 20*time.Second
 
-// fixtureGateEnv are the variables the injected fixture reads to switch a
-// deliberately badly-behaved target on: [sessionBlockEnv] for the minute-long
-// sleeper, [controlFailEnv] for the test that is red on the original program.
+// fixtureGateEnv are every variable [killableExtraTests] reads to switch a
+// target's non-default behaviour on: [sessionBlockEnv] for the minute-long
+// sleeper, [controlFailEnv] for the test that is red on the original program,
+// [expectCleanEnv] for the assertions only a control supplies the conditions
+// for, and [writeSnapshotEnv] for the target that writes into its own tree.
 //
 // They are listed in one place so that adding a gate to [killableExtraTests]
 // and forgetting to strip it is a change to this slice rather than a failure
-// three tests away. A gate is only a gate while nothing else can set it.
-var fixtureGateEnv = []string{sessionBlockEnv, controlFailEnv}
+// three tests away. A gate is only a gate while nothing else can set it — and
+// the fixture's whole suite is run through Workspace.Exec, so every one of them
+// is reachable by an ordinary `go test ./...` and not only by the call that
+// meant to set it.
+var fixtureGateEnv = []string{sessionBlockEnv, controlFailEnv, expectCleanEnv, writeSnapshotEnv}
 
 // hostEnvWithoutFixtureGates is this process's environment with every
 // [fixtureGateEnv] variable taken out of it.
@@ -401,7 +425,7 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 
 	baseline, err := workspace.Exec(t.Context(), gomutants.Command{
 		Argv: []string{"go", "test", "./..."},
-		Env:  []string{"EXPECT_CLEAN=yes"},
+		Env:  []string{expectCleanEnv + "=yes"},
 	})
 	if err != nil {
 		t.Fatalf("baseline infrastructure: %v", err)
@@ -573,7 +597,7 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 		Mutant:  untested.ID,
 		Package: ".",
 		Args:    []string{"-test.run=^TestSessionEnvironment$"},
-		Env:     []string{"WRITE_SNAPSHOT=yes"},
+		Env:     []string{writeSnapshotEnv + "=yes"},
 	})
 	if err != nil {
 		t.Fatalf("executing write target: %v", err)

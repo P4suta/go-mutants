@@ -29,6 +29,7 @@ Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Ca
                                                     Session.Control*
                                                     Session.Changes*
                                                     Session.Close
+                                                ──▶ Workspace.Exec*
                              ──────────────────────────────────────▶ Workspace.Close
 ```
 
@@ -38,7 +39,7 @@ Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Ca
   user's tree.
 - **`Workspace.Exec`** runs one shell-free command against the frozen snapshot:
   a build, a vet, a baseline `go test`, a `go list`. Calls may run concurrently
-  with one another.
+  with one another, and with a prepared session.
 - **`Workspace.Prepare`** discovers candidates, builds the catalogue,
   compile-validates every mutant, instruments the sources, verifies the
   instrumented program once, and compiles the selected packages' test binaries —
@@ -49,18 +50,83 @@ Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Ca
 - **`Session.Control`** reuses the same binaries to run the *original* program:
   an execution minus the activation. See
   [`Session.Control`](#sessioncontrol).
-- **`Session.Changes`** reports, in path order, anything a target wrote into
-  the prepared snapshot.
+- **`Session.Changes`** reports, in path order, anything written into the
+  prepared snapshot since it was prepared — by a `Session.Exec` or
+  `Session.Control` target, or by a `Workspace.Exec` command run beside the
+  session. A `Session.Probe` target's writes are **not** reported: a probe pass
+  runs in the probe tree, a second snapshot beside this one, which no call
+  scans.
 - **`Session.Close`** releases the binaries, the session scratch, and the probe
   tree. **`Workspace.Close`** closes the session first and then releases the
   scratch directory and the snapshot. Both are idempotent, and closing the
   workspace closes the session; closing the session does not close the
   workspace.
 
-After a `Prepare` — successful or not — `Workspace.Exec` is refused with
-`gomutants: exec: workspace is already prepared; execute test targets through
-its session`. The rule is a policy line rather than a lock consequence: the
-instrumented tree is not the program a baseline command was written for.
+`Workspace.Exec` and `Workspace.Prepare` share one tree, and the lifecycle rule
+is one line per state of the preparation:
+
+| State | `Workspace.Exec` |
+|---|---|
+| no `Prepare` yet | runs; a command that *changes* the tree is refused by `Prepare`'s integrity gate |
+| `Prepare` in flight | **waits**, until `Prepare` returns |
+| `Prepare` succeeded | runs, beside the session |
+| `Prepare` failed | refused, carrying `ErrPrepareFailed` |
+| session closed, workspace open | runs — `Session.Close` releases the binaries and the probe tree, not the snapshot |
+| workspace closed | refused, carrying `ErrWorkspaceClosed`, whatever the preparation did |
+
+The last row wins over every other: `Workspace.Close` leaves a workspace that is
+prepared and holds no session, which is the same shape a *failed* preparation
+leaves, so `Exec` asks whether the workspace is closed first and a consumer
+whose workspace is gone is told that rather than sent to open another one for a
+preparation that succeeded.
+
+The two middle rows are the ones worth stating outright.
+
+A command **waits** while a preparation runs because preparation instruments the
+tree in place before it restores it, and a command compiled from that would be
+compiling a program nobody wrote. It is the lock that enforces it — see
+[Locking and concurrency](#locking-and-concurrency) — not a policy check.
+
+A command **runs after a successful `Prepare`** because the tree it runs against
+is the snapshot `Open` froze, byte for byte. `main_restoration` puts the
+pristine sources back and re-digests the tree before a single test binary is
+built, so a `Prepare` that returned a session has already proved it; the
+instrumented sources exist only in the overlay manifest the session owns, and
+nothing but `Session.Exec` and `Session.Probe` puts that manifest in a child's
+environment. So `go vet`, `go build` and a control of the consumer's own belong
+beside a live session rather than in a second workspace opened for them.
+
+Nothing stops such a command from **writing** into the tree, and nothing
+invalidates the session when one does: the overlay still names the frozen
+sources, the binaries are already built, and executions go on answering. What a
+write changes is the tree every later target runs in, and `Session.Changes`
+reports it against the manifest preparation captured — the same call, and the
+same answer, as for a write a target made.
+
+What a write does **not** change is `Catalog.WorkspaceDigest` or
+`Catalog.PreparedDigest`. Both were frozen by `Prepare` and neither moves for
+anything a caller does afterwards, so the identity a consumer keys stored
+evidence on ([What `PreparedDigest` covers](#what-prepareddigest-covers)) still
+names a tree the measurements were not taken in. Evidence must therefore not be
+carried across a write the consumer itself made, and `Session.Changes` is the
+only thing that can say there was one. A consumer that writes there owns that.
+
+Fuzzing is the write most easily made by accident. `Session.Exec` and
+`Session.Control` run a fuzz target in a copy of the tree and reserve
+`-test.fuzzcachedir`, so neither the snapshot nor another call's corpus can be
+written; a `go test -fuzz=…` run through `Workspace.Exec` has neither, so the go
+command writes any crasher it finds into `testdata/fuzz/` **in the frozen tree**,
+where it becomes a seed for every later target and a change `Session.Changes`
+reports.
+
+A command is **refused after a failed `Prepare`** with `gomutants: exec:
+workspace preparation failed; its tree may hold instrumented sources`, carrying
+`ErrPrepareFailed`. A preparation that stopped part-way promises nothing about
+the tree. Every failed preparation is refused, including one that stopped before
+anything was instrumented: which failures left the tree alone is not a question
+a caller could answer, and the engine does not answer it either. The workspace
+is spent — `Prepare` refuses a second attempt with `ErrWorkspacePrepared` — so
+the answer is to open another one.
 
 ## Locking and concurrency
 
@@ -75,7 +141,9 @@ that takes it:
 
 So a `Prepare` that takes two minutes is two minutes during which no
 `Workspace.Exec` can start. A consumer that wants to overlap control work with
-preparation runs it against a *second* workspace over the same root today.
+the preparation itself runs it against a *second* workspace over the same root
+today; work that only has to run beside the *prepared* session needs no second
+workspace, because `Workspace.Exec` is allowed once `Prepare` has returned one.
 
 `Session.mu` is a second `sync.RWMutex` with the same shape: `Catalog`, `Exec`,
 `Probe` and `Control` hold it shared, `Changes` and `Close` hold it exclusively.
@@ -84,6 +152,13 @@ other and with themselves — they share the session and nothing else, each
 getting its own scratch directory, its own environment and, for a probe, its own
 infection log — while `Changes` and `Close` wait for every call in flight, so
 neither can observe a target halfway through a write.
+
+The two locks are separate, and `Session.Changes` takes only the session's. A
+`Workspace.Exec` command writing into the tree concurrently with a `Changes` is
+therefore **not** waited for and can be observed part-way through its write. A
+consumer that wants a settled answer sequences its own commands against the
+call; the engine cannot do it, because a workspace command is not the session's
+to wait for.
 
 ## Options and defaults
 
@@ -452,6 +527,7 @@ were introduced, and none of them is a message you may parse.
 |---|---|---|
 | `ErrWorkspaceClosed` | `Workspace.Exec`, `Workspace.Prepare` | the workspace is closed |
 | `ErrWorkspacePrepared` | a second `Workspace.Prepare` | a workspace may be prepared once, a failed preparation included |
+| `ErrPrepareFailed` | `Workspace.Exec` | a preparation began and failed, so the tree may hold instrumented sources; open another workspace |
 | `ErrSessionClosed` | `Session.Exec`, `Session.Probe`, `Session.Control`, `Session.Changes` | the session, or the workspace that owned it, is closed |
 | `ErrInvalidMutantID` | `Session.Exec` | `ExecRequest.Mutant` is not an identity: too short, too long, or not lowercase hex |
 | `ErrMutantNotFound` | `Session.Exec` | a well-formed prefix no catalogued mutant carries |
@@ -1125,8 +1201,10 @@ for decoder.More() {
 - **`-tags` is the consumer's own.** go-mutants does not invent build tags, and
   a package set listed under different tags is a different package set from the
   one whose tests will be built.
-- **Run it before `Prepare`.** `Workspace.Exec` is refused once the workspace
-  has been prepared.
+- **Run it before `Prepare`, or beside the session.** Both are allowed and the
+  answer is the same, because a successful preparation leaves the tree byte for
+  byte the one `Open` froze. Only a preparation *in flight* makes the call wait,
+  and only a *failed* one refuses it.
 - **Size `OutputLimit` for the whole document.** The default is 1 MiB, which a
   large module's `go list -json` exceeds; a truncated result is not a shorter
   document but an unparsable one, because the notice line and the tail are

@@ -38,6 +38,23 @@ var (
 	// workspace may be prepared exactly once, including when the preparation
 	// failed after it began: the tree it froze is no longer the tree it froze.
 	ErrWorkspacePrepared = errors.New("workspace has already been prepared")
+	// ErrPrepareFailed is returned by [Workspace.Exec] after a
+	// [Workspace.Prepare] that began and failed.
+	//
+	// It is a different condition from [ErrWorkspacePrepared] and has a
+	// different answer. A *successful* preparation leaves the tree byte for byte
+	// the snapshot [Open] froze — the instrumented sources live only in the
+	// overlay the session owns — so commands go on running beside the session. A
+	// failed one promises nothing about the tree: it may have stopped with
+	// instrumented sources still in it, and a command compiled from those would
+	// be measuring a program nobody wrote. The workspace is spent, and the
+	// answer is to open another one.
+	//
+	// Every failed preparation carries it, including the ones that stopped
+	// before anything was instrumented. Which failures left the tree alone is
+	// not a question a caller could answer, and the engine does not answer it
+	// either.
+	ErrPrepareFailed = errors.New("workspace preparation failed; its tree may hold instrumented sources")
 	// ErrSessionClosed is returned by [Session.Exec], [Session.Probe],
 	// [Session.Control] and [Session.Changes] after [Session.Close] — or after
 	// the parent workspace's, which closes the session too.

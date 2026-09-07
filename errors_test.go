@@ -41,6 +41,26 @@ func TestClosedWorkspaceErrorsAreSentinels(t *testing.T) {
 	if got, want := errorText(prepareErr), "gomutants: prepare: workspace is closed"; got != want {
 		t.Errorf("Prepare message = %q, want %q", got, want)
 	}
+
+	// A closed workspace that *was* prepared is the state Close leaves behind,
+	// and it is byte for byte the shape Exec's other guard reads as a failed
+	// preparation: Close sets closed and drops the session while prepared stays
+	// true. Only the order of the two checks decides which sentinel comes out,
+	// so the order is a contract and this is what pins it. A consumer whose
+	// workspace is gone must be told that it is gone; "the preparation failed"
+	// would send it to open another workspace for a preparation that succeeded.
+	preparedThenClosed := &Workspace{closed: true, prepared: true}
+	_, closedErr := preparedThenClosed.Exec(t.Context(), Command{Argv: []string{"go", "version"}})
+	if !errors.Is(closedErr, ErrWorkspaceClosed) {
+		t.Errorf("Exec on a closed workspace that was prepared = %v, want ErrWorkspaceClosed", closedErr)
+	}
+	if errors.Is(closedErr, ErrPrepareFailed) {
+		t.Errorf("Exec on a closed workspace that was prepared = %v, which reads as a failed"+
+			" preparation: Close leaves this shape behind and closed has to win", closedErr)
+	}
+	if got, want := errorText(closedErr), "gomutants: exec: workspace is closed"; got != want {
+		t.Errorf("Exec message on a closed prepared workspace = %q, want %q", got, want)
+	}
 }
 
 // TestSecondPrepareIsErrWorkspacePrepared pins the other lifecycle refusal. It
@@ -60,6 +80,55 @@ func TestSecondPrepareIsErrWorkspacePrepared(t *testing.T) {
 	}
 	if got, want := errorText(err), "gomutants: prepare: workspace has already been prepared"; got != want {
 		t.Errorf("second Prepare message = %q, want %q", got, want)
+	}
+}
+
+// TestExecAfterAFailedPrepareIsErrPrepareFailed pins the third lifecycle
+// refusal, and it is a third sentinel for the same reason the second is a
+// second: the three conditions have three different answers. A closed workspace
+// is gone, a prepared one may still be executed against, and one whose
+// preparation failed is spent — the caller has to open another.
+//
+// A preparation that began and failed is what a nil session under a prepared
+// workspace means. It is the state Prepare leaves behind when it stops
+// part-way, which may be with the instrumented sources still in the tree, so
+// the command that would run there is refused rather than allowed to compile a
+// program nobody wrote.
+func TestExecAfterAFailedPrepareIsErrPrepareFailed(t *testing.T) {
+	t.Parallel()
+
+	failed := &Workspace{prepared: true, scratch: t.TempDir()}
+	_, err := failed.Exec(t.Context(), Command{Argv: []string{"go", "version"}})
+	if !errors.Is(err, ErrPrepareFailed) {
+		t.Errorf("Exec after a failed Prepare = %v, want ErrPrepareFailed", err)
+	}
+	if errors.Is(err, ErrWorkspaceClosed) || errors.Is(err, ErrWorkspacePrepared) {
+		t.Errorf("Exec after a failed Prepare = %v, which also reads as another lifecycle refusal", err)
+	}
+	want := "gomutants: exec: workspace preparation failed; its tree may hold instrumented sources"
+	if got := errorText(err); got != want {
+		t.Errorf("Exec after a failed Prepare message = %q, want %q", got, want)
+	}
+}
+
+// TestExecAfterASuccessfulPrepareIsNotRefused is the other side of the same
+// state, and the one the lifecycle changed: a workspace holding a session was
+// prepared successfully, its tree is the snapshot Open froze, and a command
+// against it is ordinary work rather than a refusal.
+//
+// The command is deliberately malformed, so that the assertion is about the
+// lifecycle gate alone: reaching the argument check is proof that nothing above
+// it refused, without this unit test having to start a process.
+func TestExecAfterASuccessfulPrepareIsNotRefused(t *testing.T) {
+	t.Parallel()
+
+	prepared := &Workspace{prepared: true, session: &Session{}, scratch: t.TempDir()}
+	_, err := prepared.Exec(t.Context(), Command{})
+	if errors.Is(err, ErrPrepareFailed) || errors.Is(err, ErrWorkspacePrepared) {
+		t.Errorf("Exec after a successful Prepare = %v, want the command itself to be judged", err)
+	}
+	if got, want := errorText(err), "gomutants: exec: command has no executable"; got != want {
+		t.Errorf("Exec after a successful Prepare = %q, want %q", got, want)
 	}
 }
 

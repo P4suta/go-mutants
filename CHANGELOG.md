@@ -14,6 +14,56 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`Workspace.Exec` may run beside a prepared session, so a consumer no longer
+  opens a second workspace for `go vet`, `go build` or a baseline of its own.**
+  The rule used to be one line — every command is refused once `Prepare` has
+  been called — and goatest paid for it with a whole second workspace over the
+  same root: a second snapshot of the module, a second toolchain probe and a
+  second frozen environment, kept alive for the length of a session, to run
+  commands against a tree byte-identical to one it already had.
+
+  It is byte-identical, and that is the fact that makes this safe. Preparation
+  instruments the sources *in place*, but `main_restoration` writes the pristine
+  ones back and re-digests the tree before the first test binary is compiled —
+  so a `Prepare` that returned a session has already proved the tree is the
+  snapshot `Open` froze. The instrumented sources survive only in the overlay
+  manifest the session owns, and nothing but `Session.Exec` and `Session.Probe`
+  puts that manifest in a child's environment. A command run afterwards
+  therefore compiles the program the user wrote, which is exactly what a vet or
+  a baseline is asking for.
+
+  The other two states are unchanged and now stated outright. A command *waits*
+  while a preparation is in flight — `Workspace.Exec` takes the shared half of
+  the lock `Prepare` holds exclusively, so it cannot observe the tree mid
+  instrumentation — and a command after a preparation that *failed* is refused
+  with the new `ErrPrepareFailed`, because a preparation that stopped part-way
+  promises nothing about the tree and may have left instrumented sources in it.
+  Every failed preparation is refused, including one that stopped before
+  anything was instrumented: which failures left the tree alone is not a
+  question a caller could answer, and the engine does not answer it either. That
+  workspace is spent — a second `Prepare` still refuses with
+  `ErrWorkspacePrepared` — and the answer is to open another one. A closed
+  workspace is still `ErrWorkspaceClosed`, and it is asked first: `Close` leaves
+  the same prepared-with-no-session shape a failed preparation does, and a
+  consumer whose workspace is gone must be told that rather than sent to open
+  another one for a preparation that succeeded. Closing the *session* changes
+  nothing — it releases the binaries and the probe tree, not the snapshot — so
+  commands go on running.
+
+  A command run after `Prepare` may write into the tree, and doing so does not
+  invalidate the session: the overlay still names the frozen sources, the
+  binaries are already built, and executions go on answering. What it changes is
+  the tree every later target runs in, and `Session.Changes` reports it against
+  the manifest preparation captured — the same call, and the same answer, as for
+  a write a `Session.Exec` or `Session.Control` target made. What it does *not*
+  change is `Catalog.WorkspaceDigest` or `Catalog.PreparedDigest`: both were
+  frozen by `Prepare`, so evidence keyed on them must not be carried across a
+  write the consumer made, and `Changes` is the only thing that can say there
+  was one. The easiest such write to make by accident is fuzzing: the session's
+  calls run a fuzz target in a copy of the tree and reserve
+  `-test.fuzzcachedir`, while a `go test -fuzz=…` through `Workspace.Exec` has
+  neither and writes its crashers into `testdata/fuzz/` in the frozen tree. A
+  consumer that writes there owns the consequences.
 - **`Session.Control` runs the original program through the binaries the
   session already built, so a consumer no longer needs a second workspace to
   get a control.** A mutant's suite going red is evidence about the mutant only
@@ -2275,6 +2325,21 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **The message `gomutants: exec: workspace is already prepared; execute test
+  targets through its session` is gone, because the case that printed it is
+  gone.** It was `Workspace.Exec`'s single refusal after any `Prepare`, and a
+  successful preparation no longer refuses anything. What remains of the rule —
+  a preparation that failed — is a *different* condition with a different
+  answer, so it says so in its own words: `gomutants: exec: workspace
+  preparation failed; its tree may hold instrumented sources`, carrying
+  `ErrPrepareFailed`.
+
+  No message changed. This project freezes the sentences it prints, and that
+  promise is about a case keeping its words, not about a case being kept: a
+  consumer matching the old text was matching a refusal it will now not receive,
+  and rewording it in place would have been worse — the same sentence for a
+  narrower rule. Consumers classify these with `errors.Is` rather than by text;
+  the sentinel is what the new case is for.
 - **A run whose context ran out of time is a failure, not an interruption.**
   It used to be both, depending on which command happened to be in flight: the
   engine read any expired context as `GOM4030 the run was interrupted`, while

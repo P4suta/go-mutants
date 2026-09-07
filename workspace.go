@@ -58,8 +58,16 @@ type Workspace struct {
 	closed    bool
 	closeDone chan struct{}
 	closeErr  error
-	prepared  bool
-	session   *Session
+
+	// prepared and session are the workspace's preparation state, and it takes
+	// both to say what it is. Prepare sets prepared before its first phase and
+	// publishes session only once every phase has succeeded, all under the write
+	// lock, so the three states a reader can see are "never prepared"
+	// (!prepared), "prepared successfully" (session != nil) and "a preparation
+	// began and failed" (prepared, session == nil). [Workspace.Exec] answers
+	// differently to each.
+	prepared bool
+	session  *Session
 
 	// scratchOwner holds the scratch directory's lock and marker for as long as
 	// the workspace is open. The snapshot carries its own.
@@ -382,25 +390,83 @@ func (w *Workspace) ToolchainVersion() string {
 	return w.toolchain.Version.Raw
 }
 
-// Exec runs command against the frozen snapshot. It is available before
-// Prepare; after instrumentation begins, commands belong to Session targets.
+// Exec runs command against the frozen snapshot: a build, a vet, a `go list`, a
+// baseline of the caller's own.
+//
+// Its relationship with Prepare is three rules, one per state of the
+// preparation.
+//
+//   - While a Prepare is *in flight* a command waits. Preparation instruments
+//     the tree in place before it puts the sources back, and a command that
+//     observed that would be compiling a program nobody wrote — so Exec takes
+//     the shared half of the lock Prepare holds exclusively, and blocks.
+//   - After a Prepare that *succeeded* a command runs. A returned session is
+//     the proof that main_restoration put the pristine sources back and that
+//     the tree re-digested as the snapshot Open froze; the instrumented
+//     sources live only in the overlay manifest the session owns, which
+//     nothing but Session.Exec and Session.Probe put in a child's environment.
+//     So a consumer may run `go vet`, `go build` or a control of its own
+//     beside a live session rather than opening a second workspace for them.
+//   - After a Prepare that *failed* a command is refused with
+//     [ErrPrepareFailed]. A preparation that stopped part-way promises nothing
+//     about the tree, which may still hold instrumented sources.
+//
+// A closed workspace is [ErrWorkspaceClosed] whatever its preparation did, and
+// a closed *session* changes nothing: it releases the binaries and the probe
+// tree, not the snapshot, so commands go on running against the same tree.
+//
+// Nothing stops a command run after a successful Prepare from writing into the
+// tree, and nothing invalidates the session when one does: the overlay names
+// the frozen sources, the binaries are already built, and executions go on
+// answering. What such a write changes is the tree every later target runs in,
+// and [Session.Changes] reports it against the manifest preparation captured —
+// the same call, and the same answer, as for a write a target made. What it
+// does *not* change is [Catalog.WorkspaceDigest] and
+// [Catalog.PreparedDigest]: both were frozen by Prepare and neither moves for
+// anything a caller does afterwards. So evidence keyed on them — which is what
+// those digests are for — must not be carried across a write a consumer made,
+// and [Session.Changes] is the only thing that can tell it there was one. A
+// consumer that writes into the tree owns that.
+//
+// Fuzzing is the write most easily made by accident. [Session.Exec] and
+// [Session.Control] run a fuzz target in a copy of the tree and reserve
+// `-test.fuzzcachedir` so that neither the snapshot nor another call's corpus
+// can be written; a `go test -fuzz=…` run through this call has neither, so the
+// go command writes any crasher it finds into `testdata/fuzz/` *in the frozen
+// tree*, where it becomes a seed for every later target and a change
+// [Session.Changes] reports.
+//
+// Before Prepare the rule is stricter, because the tree is about to become the
+// source of a mutation catalogue: a command that changed it is refused by
+// Prepare's integrity gate.
 //
 // Exec is safe to call concurrently. Every call receives a private temporary
 // directory, so commands cannot observe one another through TMP, TEMP or
-// TMPDIR. They deliberately share the frozen working tree: a command that
-// changes it is refused by Prepare's integrity gate rather than allowed to
-// become the source of a mutation session.
+// TMPDIR. They deliberately share the frozen working tree.
 func (w *Workspace) Exec(ctx context.Context, command Command) (CommandResult, error) {
 	if w == nil {
 		return CommandResult{}, errors.New("gomutants: exec: nil workspace")
 	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
+	// Closed is asked first, and the order is a contract rather than a habit:
+	// Close leaves prepared true and drops the session, which is byte for byte
+	// the shape the next check reads as a preparation that failed. A consumer
+	// whose workspace is gone has to be told that it is gone — "the preparation
+	// failed" would send it to open another workspace for a preparation that
+	// succeeded — so closed wins, and TestClosedWorkspaceErrorsAreSentinels
+	// pins it.
 	if w.closed {
 		return CommandResult{}, fmt.Errorf("gomutants: exec: %w", ErrWorkspaceClosed)
 	}
-	if w.prepared {
-		return CommandResult{}, errors.New("gomutants: exec: workspace is already prepared; execute test targets through its session")
+	// An *open* workspace that is prepared and holds no session is a
+	// preparation that began and did not finish. It is the one state the two
+	// fields tell apart: Prepare sets prepared before its first phase and
+	// publishes the session only when every phase has succeeded, and it holds
+	// the write lock for all of it, so a reader holding the read half sees one
+	// or the other and never a half-built session.
+	if w.prepared && w.session == nil {
+		return CommandResult{}, fmt.Errorf("gomutants: exec: %w", ErrPrepareFailed)
 	}
 	scratch, err := os.MkdirTemp(w.scratch, workspaceExecPrefix)
 	if err != nil {

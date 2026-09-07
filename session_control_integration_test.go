@@ -111,7 +111,7 @@ func TestControlRunsTheOriginalProgram(t *testing.T) {
 	// FROZEN_AT_OPEN is the target's own second condition and is supplied as an
 	// overlay rather than frozen at Open, because this file's session is shared
 	// and one test may not decide what the whole of it inherits.
-	env := []string{"EXPECT_CLEAN=yes", "FROZEN_AT_OPEN=before"}
+	env := []string{expectCleanEnv + "=yes", "FROZEN_AT_OPEN=before"}
 
 	control, err := prepared.session.Control(t.Context(), gomutants.ControlRequest{
 		Package: killableModule,
