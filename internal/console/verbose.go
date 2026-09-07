@@ -4,6 +4,7 @@
 package console
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -552,6 +553,103 @@ func bracketed(items []string) string {
 		return ""
 	}
 	return "[" + strings.Join(items, " ") + "]"
+}
+
+// TraceLine renders one recorded event as the single line `run -vv` prints for
+// it, without the indentation that marks a recorded line on a console.
+//
+// It is exported for `go-mutants explain`, which reads a recording back and
+// quotes the commands one mutant's passes started. Two renderings of one event
+// would be two things to keep in step, and the difference would surface in the
+// worst possible place: a user comparing what `-vv` printed during the run with
+// what `explain` says about it afterwards.
+//
+// An event this package cannot read still costs exactly one line and names
+// itself, which is [traceLine]'s own rule; an event that lost its envelope
+// altogether is rendered as "event", so that no caller has to invent a spelling
+// for a line with no type on it.
+func TraceLine(e trace.Event) string {
+	line, _ := traceLine(e)
+	if line == "" {
+		return "event"
+	}
+	return flattened(line)
+}
+
+// QuoteArgv renders an argument vector as a POSIX shell would have to be given
+// it: single quotes, with an embedded quote closed, escaped and reopened.
+//
+// It is exported for the reason [TraceLine] is: `go-mutants explain` prints a
+// command to paste, and a second quoter would eventually disagree with this one
+// about a path with a space in it — which is exactly the command nobody would
+// notice was wrong until they ran it.
+//
+// POSIX is the whole of what it promises, and a caller printing a line for a
+// user to paste should say so. PowerShell and cmd.exe quote differently and
+// spell an environment assignment differently again, so on Windows the result
+// is a line to read — the program, its arguments, and where one ends and the
+// next begins — rather than one to paste. Quoting for every shell there is
+// would mean printing the same command three times, and choosing at run time
+// would mean guessing which shell the terminal on the other end of a pipe is.
+func QuoteArgv(argv []string) string { return quoteArgv(argv) }
+
+// UnquoteArgv reads back a line [QuoteArgv] wrote.
+//
+// It exists for the platform whose shell cannot run that line. A reproduction
+// printed for a POSIX shell still has to be *checked* on Windows, and the only
+// way to check a line is to decode it — so the quoter and the reader are kept
+// beside each other and held to each other by a round trip, rather than a test
+// growing a second, subtly different parser of its own.
+//
+// It is deliberately not a shell. What it accepts is exactly what [QuoteArgv]
+// produces: bare words, single-quoted runs, and a backslash escaping the byte
+// after it — which is the three pieces the `'\”` idiom is made of. Words are
+// separated by spaces and tabs, and adjacent pieces belong to one word, so
+// `'a'\”b'` decodes to the single argument `a'b`. Double quotes, `$`, and
+// every other metacharacter are ordinary bytes here, because a quoted line
+// never asks a shell to interpret them and this is not the place to start.
+//
+// An unterminated quote and a trailing backslash are errors rather than
+// guesses: a line that did not come from [QuoteArgv] should be reported as one,
+// not turned into a plausible argument vector.
+func UnquoteArgv(line string) ([]string, error) {
+	var argv []string
+	var word strings.Builder
+	started, quoted := false, false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quoted && c == '\'':
+			quoted = false
+		case quoted:
+			word.WriteByte(c)
+		case c == '\'':
+			quoted, started = true, true
+		case c == '\\':
+			i++
+			if i == len(line) {
+				return nil, fmt.Errorf("go-mutants: %q ends in a backslash", line)
+			}
+			word.WriteByte(line[i])
+			started = true
+		case c == ' ' || c == '\t':
+			if started {
+				argv = append(argv, word.String())
+				word.Reset()
+				started = false
+			}
+		default:
+			word.WriteByte(c)
+			started = true
+		}
+	}
+	if quoted {
+		return nil, fmt.Errorf("go-mutants: %q has an unterminated quote", line)
+	}
+	if started {
+		argv = append(argv, word.String())
+	}
+	return argv, nil
 }
 
 // quoteArgv renders an argument vector the way a shell would have to be given

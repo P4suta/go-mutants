@@ -44,7 +44,9 @@ as a JSON document, and `go-mutants init` writes a fully commented
 `go-mutants report` reads those documents back: `list` and `latest` show the
 run history, `clean` deletes it, `merge` combines the reports of a sharded run
 into the whole run's report, and `validate` checks any report against the
-schema this build embeds. `go-mutants cache` works with the outcomes a run has
+schema this build embeds. `go-mutants explain` reads a report and the trace
+beside it together and answers "why did *this* mutant get that verdict, and how
+do I run it again". `go-mutants cache` works with the outcomes a run has
 proven: `status` says where they are and what is stored, `gc --days N` removes
 what was written more than N days ago, and `clean` removes them all.
 
@@ -256,6 +258,8 @@ go-mutants run --trace
 go-mutants list --operator comparison --json
 go-mutants doctor --json
 go-mutants init --check
+go-mutants explain bf513c0d
+go-mutants explain untested.go:14
 go-mutants report latest
 go-mutants report merge shard-*.json --output mutation.json
 go-mutants report validate mutation.json
@@ -308,6 +312,36 @@ guessing. A file discovery never opened — generated, cgo, or removed by
 printed as the bare path.
 `run --explain` keeps the count per file: the run report carries the aggregate,
 and a document other tools diff should not grow forty positions per file.
+
+### Why did this mutant survive?
+
+`go-mutants explain <ID_PREFIX>` answers that for one mutant, from the last run
+or from a report you name. It prints what the mutant is, what happened to it —
+killed by which suite, after how many passes, or survived, or timed out, or
+refused by the compiler with its own words — which test binaries reach it or
+which line none of them does, every pass the run made over them, the stages
+those passes happened inside, and a command to paste that switches the mutant on
+and runs the binary that measured it:
+
+```console
+$ go-mutants explain 4fcc205c
+…
+reproduce
+  cd /tmp/…/tree && GO_MUTANTS_ACTIVE=4fcc205c… /tmp/…/bin/x.test -test.timeout=55s
+  the run kept its temporaries: the binary and directory above are still there
+```
+
+The paths are elided above; the tool prints them in full, on one line however
+wide, because an argument vector is meant to be selected and pasted. The vector
+comes out of the recording rather than being composed, so what you paste is what
+ran — which means the binary has to still exist, and the line under it says
+whether it does: run with `--trace --keep-temp` when you
+intend to reproduce one. The quoting is a POSIX shell's, so on Windows it is a
+line to read rather than to paste. A run with no recording is not an error; the
+sections that would have come out of one say there is none, and the account says
+how to get one. `go-mutants explain <path>:<line>` asks the question from the
+other end and lists every mutant at that place with what became of it, and every
+site discovery passed over with the reason.
 
 `-v` answers "where did the time go, and why did this mutant get that
 outcome" without a trace file. It adds a `phase <name>: done (<duration>)` line
@@ -385,7 +419,7 @@ off by default because a kept snapshot is a whole copy of your module and
 nothing will ever remove it.
 
 With no arguments, help is printed. The v1 command tree is `run`, `list`,
-`doctor`, `init`, `report list|latest|validate|clean|merge`,
+`doctor`, `init`, `explain`, `report list|latest|validate|clean|merge`,
 `cache status|gc|clean`, and `trace list|summary|diff|validate|clean`, and all
 of it is built.
 

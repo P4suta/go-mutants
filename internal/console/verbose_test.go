@@ -646,3 +646,95 @@ func TestFormatBytes(t *testing.T) {
 		}
 	}
 }
+
+// TestTraceLineIsTheSameLineTheConsoleDraws is the whole of what exporting it
+// promises: `go-mutants explain` quotes a recorded command afterwards, and what
+// it quotes is what `-vv` printed while the run was happening.
+//
+// The comparison is against the renderer's own output rather than against a
+// literal, because a literal would pass while the two drifted apart — which is
+// the one failure exporting the function was meant to make impossible.
+func TestTraceLineIsTheSameLineTheConsoleDraws(t *testing.T) {
+	event := trace.Event{
+		Seq: 7, Type: trace.TypeExec, Timestamp: "2026-08-19T10:11:12Z", ElapsedMS: 1200,
+		Exec: &trace.ExecRecord{
+			Kind: trace.ExecKindMutantRun, Subject: strings.Repeat("1f", 32),
+			Argv:       []string{"/tmp/w 1/clamp.test", "-test.timeout=40s"},
+			Dir:        "/tmp/w 1",
+			ExitCode:   1,
+			DurationMS: 520,
+		},
+	}
+	drawn, ok := traceLine(event)
+	if !ok {
+		t.Fatal("the renderer does not know an exec event")
+	}
+	if got := TraceLine(event); got != flattened(drawn) {
+		t.Errorf("TraceLine = %q, but `-vv` draws %q", got, flattened(drawn))
+	}
+}
+
+// TestTraceLineNamesAnEventItCannotRead keeps the exported form total: every
+// event costs exactly one line, including one whose envelope was lost, so a
+// caller never has to invent a spelling for a line with no type on it.
+func TestTraceLineNamesAnEventItCannotRead(t *testing.T) {
+	if got := TraceLine(trace.Event{}); got != "event" {
+		t.Errorf("TraceLine of an empty event = %q, want %q", got, "event")
+	}
+	if got := TraceLine(trace.Event{Type: trace.TypeExec}); got != trace.TypeExec {
+		t.Errorf("TraceLine of a payloadless exec = %q, want %q", got, trace.TypeExec)
+	}
+}
+
+// TestQuoteArgvQuotesOnlyWhatAShellWouldBreak is the property a pasted
+// reproduction rests on: the line is legible where it can be, and correct
+// where it cannot.
+func TestQuoteArgvQuotesOnlyWhatAShellWouldBreak(t *testing.T) {
+	got := QuoteArgv([]string{"/usr/lib/go/bin/go", "test", "-run", "Test A", "./..."})
+	const want = `/usr/lib/go/bin/go test -run 'Test A' ./...`
+	if got != want {
+		t.Errorf("QuoteArgv = %q, want %q", got, want)
+	}
+}
+
+// TestQuoteArgvRoundTrips is the property that makes a printed command line
+// something a program may read back.
+//
+// `go-mutants explain` prints an argument vector as one POSIX-quoted line, and
+// on a platform whose shell cannot run that line the only way to check the line
+// is to decode it. A decoder that disagreed with the quoter would fail exactly
+// where the quoting matters — a path with a space in it, a Windows separator —
+// so the two are held to each other here rather than to a literal.
+func TestQuoteArgvRoundTrips(t *testing.T) {
+	for _, argv := range [][]string{
+		{"/usr/bin/go", "test", "./..."},
+		{"/tmp/with a space/clamp.test", "-test.timeout=40s"},
+		{`D:\a\_temp\bin\88723483.test`, "-test.timeout=1m0s"},
+		{"it's", "a", "quote"},
+		{`say "hi"`, "and $HOME", "and `tick`"},
+		{`back\slash`, `trailing\`},
+		{"", "after an empty argument"},
+		{"two\nlines", "\ttabbed"},
+		{"~", "*", "?", "[a-z]", "#comment", "a|b", "a;b", "a&b", "(a)", "{a}", "<a>"},
+	} {
+		line := QuoteArgv(argv)
+		got, err := UnquoteArgv(line)
+		if err != nil {
+			t.Errorf("UnquoteArgv(QuoteArgv(%q)) = %v; the line was %q", argv, err, line)
+			continue
+		}
+		if !slices.Equal(got, argv) {
+			t.Errorf("QuoteArgv(%q) = %q, which decodes to %q", argv, line, got)
+		}
+	}
+}
+
+// TestUnquoteArgvRefusesALineItCannotRead keeps the decoder from inventing an
+// argument vector out of a line nothing quoted.
+func TestUnquoteArgvRefusesALineItCannotRead(t *testing.T) {
+	for _, line := range []string{`'unterminated`, `trailing\`} {
+		if got, err := UnquoteArgv(line); err == nil {
+			t.Errorf("UnquoteArgv(%q) = %q, want an error", line, got)
+		}
+	}
+}

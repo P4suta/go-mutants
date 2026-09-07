@@ -157,6 +157,30 @@ phases and stages with their durations, the commands tallied by kind, and the
 mutant outcomes; `trace diff` prints the deltas between two, which is how a run
 that got slower is investigated without reading either stream by eye.
 
+### `explain` reads it
+
+`go-mutants explain <mutant>` is the fourth reader, and the only one that reads
+a recording *per mutant* rather than in aggregate. It finds the recording the
+way this page files them — `report.directory/trace/<run-id>/`, then the
+diagnostics bundle of a run that failed, or `--trace DIR` for one you were sent
+— and joins it to the run report: the `mutant-exec` events of one mutant supply
+the passes, their `exec_seqs` the commands underneath, each `exec` its `argv`,
+`dir`, exit code and duration, and its `output_path` the file whose tail is
+quoted. The `stage` events open at those sequence numbers are the steps the
+mutant took part in, printed with the step's own duration and, beside it, the
+part of it that went on this mutant — the durations of its `mutant-exec` events
+inside the span. The step's total is the same figure on every mutant's account,
+so the share beside it is what distinguishes the mutant that took eleven seconds
+from the four hundred that took three milliseconds each. A step the recording
+stops in the middle of is reported as still open rather than given a duration
+nothing recorded.
+And the reproduce command is the `exec` event's own `argv` in its own `dir` with
+`GO_MUTANTS_ACTIVE` set — the recipe [docs/library.md](library.md#tracing-a-session)
+states, printed for you rather than assembled by hand. A run with no recording
+is not an error there: every section that would have come out of one says so
+instead of guessing, because a reproduction that does not reproduce is worse
+than none.
+
 ### Recording a library workspace
 
 `OpenOptions.Trace` is a `trace.Sink`, and a `Workspace` records into it

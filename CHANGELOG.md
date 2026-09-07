@@ -14,6 +14,67 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`go-mutants explain` answers "why did *this* mutant get that verdict, and
+  how do I run it again".** Every fact it prints was already written down and
+  nobody had joined it up. The run report said a mutant survived, which packages
+  cover it, how many passes it took and what the tests were; the trace said which
+  binaries ran, with which arguments, in which directory, for how long, and where
+  their output was preserved. Answering one question about one mutant meant
+  opening two documents and matching a sixty-four character identity across them
+  by eye — and the last step, "run it yourself", meant reconstructing an argument
+  vector from prose.
+
+  `explain <ID_PREFIX>` prints six titled blocks in one order, so that two
+  accounts of two mutants can be diffed: what the mutant is, what became of it
+  (killed by which suite after how many passes, survived, timed out and hung in
+  which binary, refused by the compiler with its own words), which binaries cover
+  it or which line none of them reaches, every pass the run made with the
+  commands underneath and the tail of each one's preserved output, the stages
+  those passes happened inside, and a command to paste. The reproduce line is the
+  recording's own `argv` in the recording's own `dir` with `GO_MUTANTS_ACTIVE`
+  set — never composed — because a reproduction that does not reproduce is worse
+  than none: somebody will paste it and believe what comes back. An integration
+  test runs the printed command and asserts that the killed mutant is caught by
+  it.
+
+  The source is the latest run of this module, or `--report FILE`, or `--run
+  RUN-ID`. The recording is the one filed beside the report, or the one inside a
+  failed run's diagnostics bundle, or `--trace DIR` for one you were sent. A run
+  that recorded nothing is not a failure: every section that would have come out
+  of a recording says there is none and the account says how to get one, rather
+  than guessing. `explain <path>:<line>` asks from the other end — a discovery
+  pass over the workspace, then every mutant at that place with what the report
+  says became of it and every site discovery declined with the reason — which is
+  "there should be a mutant here, where is it" made answerable.
+
+  Nothing is claimed that a document does not support. The line under the
+  reproduction says whether the run kept its temporaries — the recording records
+  an `artifact` for each one it kept — so a command whose `cd` is about to fail
+  says so instead of hedging. A `--trace DIR` whose `run-start` names a different
+  run is warned about above everything derived from it, because a run id is
+  content-derived and two runs really can collide. The timeline prints the
+  mutant's own share beside each step's total, since every mutant of a run sits
+  inside the same `mutate/execute`, and names a step the recording stops in the
+  middle of rather than dropping it. And the overlay manifest a library session
+  compiled through is printed on a `to rebuild the binary` line rather than on
+  the run line, where `GOFLAGS` would have been inert: a prebuilt test binary
+  never reads it.
+
+  `--run` resolves a prefix, listing the matches when one names two runs, the
+  way the mutant target does. A position may be spelled `path`, `path:line` or
+  `path:line:col` — the last is what the account itself prints — is cleaned and
+  relativised against the module root, and is refused, naming the path, when the
+  workspace has no such file; the discovery pass behind it is configured from
+  the report's own `selection`, so "not in this run" means the run excluded the
+  mutant rather than the reader's defaults did. The command it prints is quoted
+  for a POSIX shell, which on Windows makes it a line to read rather than one to
+  paste.
+
+  `--json` is refused rather than implemented, and the refusal says a v2 may add
+  one. The report and the recording are the machine-readable forms; a third
+  encoding of the same facts would be a third document to keep in step with them.
+  Nothing here measures anything, and no flag of it changes a verdict, a mutant
+  id, a score, or a cache key.
 - **`Workspace.Exec` may run beside a prepared session, so a consumer no longer
   opens a second workspace for `go vet`, `go build` or a baseline of its own.**
   The rule used to be one line — every command is refused once `Prepare` has
