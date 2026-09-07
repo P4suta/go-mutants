@@ -31,6 +31,10 @@ const kernelBoundsMemory = false
 // not.
 const accountedPeakBelongsToTheChild = true
 
+// parentHighWater has no bearing here: the accounted peak is the child's own,
+// so [peakOf] never compares it against the parent.
+func parentHighWater() int64 { return 0 }
+
 // maxRSSUnit converts ru_maxrss into bytes. Darwin reports it in bytes, which
 // is the one place it disagrees with Linux and the BSDs it descends from.
 const maxRSSUnit = 1

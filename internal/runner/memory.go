@@ -132,8 +132,16 @@ type memoryWatchdog struct {
 // samples are small numbers about a process that is still becoming one, and a
 // small true number is worth more than a missing one; the bound is checked
 // against them too, since a tree that has already passed its limit at 10 ms
-// has certainly passed it.
-var memoryWarmUp = []time.Duration{10 * time.Millisecond, 25 * time.Millisecond, 50 * time.Millisecond}
+// has certainly passed it. The schedule is dense in the first ten
+// milliseconds because the sample taken the instant a child is adopted can be
+// zero — a process that has exec'd and faulted nothing in yet has no
+// proportional set to speak of — and a Go test binary that runs one trivial
+// test on a fast machine is gone in three or four; nine quick walks of a tree
+// of one process cost less than one steady sample.
+var memoryWarmUp = []time.Duration{
+	1 * time.Millisecond, 2 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond, 7 * time.Millisecond,
+	10 * time.Millisecond, 15 * time.Millisecond, 25 * time.Millisecond, 50 * time.Millisecond,
+}
 
 // watchMemory takes one sample of sup's tree at once, then keeps sampling it:
 // on the [memoryWarmUp] schedule, then every [MemorySampleInterval]. A limit of

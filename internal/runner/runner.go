@@ -510,6 +510,9 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	cmd.WaitDelay = IODrainGrace
 	sup.configure(cmd)
 
+	// Read before the fork, so that the kernel's accounting for the child can
+	// be told from the parent's own; see [peakOf] and [parentHighWater].
+	parentPeak := parentHighWater()
 	if err := cmd.Start(); err != nil {
 		return Result{
 			ExitCode: ExitCodeUnavailable,
@@ -592,7 +595,7 @@ func runProcess(ctx context.Context, spec Spec) Result {
 		ExitCode:       ExitCodeUnavailable,
 		TimedOut:       timedOut,
 		MemoryExceeded: memoryExceeded,
-		PeakMemory:     peakOf(sup, cmd.ProcessState, watchdog),
+		PeakMemory:     peakOf(sup, cmd.ProcessState, watchdog, parentPeak),
 		Duration:       time.Since(started),
 	})
 	if !killed {
@@ -621,19 +624,30 @@ func runProcess(ctx context.Context, spec Spec) Result {
 // answer to "how much of the machine did this take", and neither is a number
 // go-mutants invented.
 //
-// Except on Linux, where the accounted number is not about the child at all:
-// see [accountedPeakBelongsToTheChild]. There the sampler is the only witness,
-// and a run nobody sampled reports no peak rather than the parent's.
+// Except on Linux, where the accounted number is max(the parent's high-water
+// mark when it forked, the child's own): see [accountedPeakBelongsToTheChild].
+// One half of it can still be recovered. The parent's mark was read just
+// before the fork (parentPeak), so an accounted number *above* it can only
+// have come from the child — the child outgrew everything the parent had ever
+// held — and is the child's exact peak, kernel-recorded, missing nothing
+// between two samples. An accounted number at or below the mark says nothing
+// about the child at all and is dropped; the sampler is then the only
+// witness, and a run nobody sampled reports no peak rather than the parent's.
+// The mark can grow between the read and the fork if another goroutine is
+// allocating, in which case a number just above the stale mark could still be
+// the parent's; that errs towards a larger peak and a looser bound, never
+// towards a kill.
 //
 // It is called after the sampler has been stopped and waited for, and before
 // the supervisor is released — which on Windows is where the accounting lives,
 // and which happens in a defer at the end of [runProcess].
-func peakOf(sup supervisor, ps *os.ProcessState, watchdog *memoryWatchdog) int64 {
+func peakOf(sup supervisor, ps *os.ProcessState, watchdog *memoryWatchdog, parentPeak int64) int64 {
 	peak := watchdog.observedPeak()
-	if !accountedPeakBelongsToTheChild {
+	accounted, ok := sup.peakMemory(ps)
+	if !ok {
 		return peak
 	}
-	if accounted, ok := sup.peakMemory(ps); ok {
+	if accountedPeakBelongsToTheChild || accounted > parentPeak {
 		peak = max(peak, accounted)
 	}
 	return peak

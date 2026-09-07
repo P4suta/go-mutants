@@ -64,6 +64,33 @@ const kernelBoundsMemory = false
 // but the burst-detection it cannot be trusted with either.
 const accountedPeakBelongsToTheChild = false
 
+// parentHighWater is this process's own resident high-water mark, in bytes —
+// the number a child started now will inherit into its ru_maxrss (see
+// [accountedPeakBelongsToTheChild]) — and zero if /proc will not say. It is
+// read from /proc/self/status, which is one small file, before every fork.
+func parentHighWater() int64 {
+	data, err := os.ReadFile(filepath.Join(procRoot, "self", "status"))
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		rest, found := strings.CutPrefix(line, "VmHWM:")
+		if !found {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) < 1 {
+			return 0
+		}
+		kib, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || kib < 0 {
+			return 0
+		}
+		return kib << 10
+	}
+	return 0
+}
+
 // maxRSSUnit converts ru_maxrss into bytes. Linux reports it in kibibytes,
 // which getrusage(2) documents and which every other platform disagrees with,
 // so the conversion is a per-platform constant rather than a shared assumption.

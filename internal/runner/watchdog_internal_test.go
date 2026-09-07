@@ -28,6 +28,9 @@ type scriptedSupervisor struct {
 	// unmeasurable makes the platform unable to answer at all, which is not the
 	// same as an empty tree and has to end the sampler rather than stall it.
 	unmeasurable bool
+	// accounted is what the platform's own accounting reports for the reaped
+	// child; zero means it reports nothing.
+	accounted int64
 }
 
 func (s *scriptedSupervisor) configure(*exec.Cmd)                      {}
@@ -35,7 +38,9 @@ func (s *scriptedSupervisor) adopt(*exec.Cmd) error                    { return 
 func (s *scriptedSupervisor) terminate(<-chan struct{}, time.Duration) {}
 func (s *scriptedSupervisor) release()                                 {}
 
-func (s *scriptedSupervisor) peakMemory(*os.ProcessState) (int64, bool) { return 0, false }
+func (s *scriptedSupervisor) peakMemory(*os.ProcessState) (int64, bool) {
+	return s.accounted, s.accounted > 0
+}
 
 // usedMemory hands back the next scripted sample, and repeats the last one
 // once the script runs out so a watchdog that was expected not to trip has
@@ -218,4 +223,44 @@ func TestTheFirstSampleIsTakenBeforeWatchMemoryReturns(t *testing.T) {
 			got, 7<<20)
 	}
 	w.stop()
+}
+
+// TestTheAccountedPeakIsTrustedOnlyWhenItBelongsToTheChildOrExceedsTheParent
+// pins how [peakOf] reads the kernel's number: everywhere but Linux it is the
+// child's and is taken; on Linux it is max(parent, child), so it is taken only
+// when it is above the parent's mark read before the fork — then it can only be
+// the child's — and dropped otherwise, leaving the sampler as the witness.
+func TestTheAccountedPeakIsTrustedOnlyWhenItBelongsToTheChildOrExceedsTheParent(t *testing.T) {
+	t.Parallel()
+
+	const parent = 100 << 20
+	for _, c := range []struct {
+		name      string
+		sampled   int64
+		accounted int64
+		want      int64
+	}{
+		{"accounted above the parent is the child's", 10 << 20, 300 << 20, 300 << 20},
+		{"accounted at the parent says nothing", 10 << 20, parent, 10 << 20},
+		{"accounted below the parent says nothing", 10 << 20, 50 << 20, 10 << 20},
+		{"no accounting leaves the sample", 10 << 20, 0, 10 << 20},
+		{"nothing at all is zero", 0, 50 << 20, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			sup := &scriptedSupervisor{accounted: c.accounted}
+			w := &memoryWatchdog{}
+			w.record(c.sampled)
+			want := c.want
+			if accountedPeakBelongsToTheChild && c.accounted > 0 {
+				// Everywhere but Linux the accounted number is the child's,
+				// whatever the parent held.
+				want = max(c.sampled, c.accounted)
+			}
+			if got := peakOf(sup, nil, w, parent); got != want {
+				t.Errorf("peakOf(sampled %d, accounted %d, parent %d) = %d, want %d",
+					c.sampled, c.accounted, parent, got, want)
+			}
+		})
+	}
 }
