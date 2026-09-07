@@ -32,6 +32,41 @@ func keptRootFor(t *testing.T, policy string) string {
 	return root
 }
 
+// requireDefaultKeptRootUntouched fails a test that filed anything in the
+// developer's own kept root.
+//
+// It is the package guard in [TestMain] narrowed to one test, and it exists
+// because that guard has to stand down in exactly the configuration this test
+// creates. `GO_MUTANTS_TEST_KEEP=1` with no `GO_MUTANTS_TEST_KEEP_DIR` is the
+// documented way to keep things locally, so the package guard cannot read "the
+// default root appeared" as a defect — every test in the package files there by
+// design under that setting. The tests that go out of their way to *unset* the
+// override are the exception: what they are asking is where the default is, and
+// asking must not create it. So they say so here, per test.
+//
+// A root that was already there is left alone and not checked: it is the
+// developer's, it may hold evidence they are reading, and nothing here can tell
+// what this test added to it.
+func requireDefaultKeptRootUntouched(t *testing.T) {
+	t.Helper()
+	if pinned.userCache == "" {
+		return
+	}
+	root := filepath.Join(pinned.userCache, harnessDirName, keptDirName)
+	if _, err := os.Lstat(root); err == nil {
+		return
+	}
+	t.Cleanup(func() {
+		if _, err := os.Lstat(root); err != nil {
+			return
+		}
+		t.Errorf("this test created %s, which is the developer's own kept root and the one CI does "+
+			"not upload. A test that clears %s to ask what the default is has to clear %s as well, or "+
+			"point it at a directory of its own: resolving a path must not file anything under it.",
+			root, KeepDirEnv, KeepEnv)
+	})
+}
+
 // keepTB is a [testing.TB] that records what the keep policy did to it and lets
 // a test decide whether it failed.
 //

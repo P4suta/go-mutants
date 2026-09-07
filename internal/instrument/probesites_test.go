@@ -211,7 +211,7 @@ func TestProbeGolden(t *testing.T) {
 			t.Parallel()
 
 			in := testkit.ReadFile(t, filepath.Join("testdata", c.input))
-			root := t.TempDir()
+			root := testkit.Scratch(t)
 			testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 			catalog := catalogOf(t, c.candidates(t, in))
@@ -252,7 +252,7 @@ func TestProbeTreePreservesLines(t *testing.T) {
 			t.Parallel()
 
 			in := testkit.ReadFile(t, filepath.Join("testdata", c.input))
-			root := t.TempDir()
+			root := testkit.Scratch(t)
 			testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 			catalog := catalogOf(t, c.candidates(t, in))
@@ -335,7 +335,7 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 			catalog := catalogOf(t, candidatesFor(t, c.candidates, in))
 
 			render := func(mode instrument.Mode) []byte {
-				root := t.TempDir()
+				root := testkit.Scratch(t)
 				testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 				if c.sibling != "" {
 					testkit.WriteFile(t, filepath.Join(root, c.sibling),
@@ -373,7 +373,7 @@ func TestProbeSkipsAMutantWithoutAReturnSite(t *testing.T) {
 	t.Parallel()
 
 	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 	catalog := catalogOf(t, candidatesFor(t, nil, in))
@@ -399,7 +399,7 @@ func TestProbeRefusesAnUnspellableResultType(t *testing.T) {
 	t.Parallel()
 
 	in := testkit.ReadFile(t, filepath.Join("testdata", "statement.input"))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 	catalog := catalogOf(t, probeStatementEdits(t, in))
@@ -432,7 +432,7 @@ func TestProbeIsDeterministic(t *testing.T) {
 			catalog := catalogOf(t, c.candidates(t, in))
 
 			run := func() (string, []byte, []byte) {
-				root := t.TempDir()
+				root := testkit.Scratch(t)
 				testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 				result := probeSnapshotWith(t, root, catalog, c.hints)
 				runtime := testkit.ReadFile(t, filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go"))
@@ -470,7 +470,7 @@ func TestProbeTreeCompiles(t *testing.T) {
 
 	toolchain := mutantkit.Toolchain(t)
 	env := testkit.Compose(t, testkit.Scratch(t))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 
 	var candidates []mutation.Candidate
@@ -507,7 +507,7 @@ func TestProbeCapturesEveryResultOfAReturn(t *testing.T) {
 
 	toolchain := mutantkit.Toolchain(t)
 	env := testkit.Compose(t, testkit.Scratch(t))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	const rel = "pkg/sample/sample.go"
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(divideSource))
@@ -540,7 +540,7 @@ func TestProbeCapturesEveryResultOfAReturn(t *testing.T) {
 		want: nil,
 	}} {
 		t.Run(c.name, func(t *testing.T) {
-			log := filepath.Join(t.TempDir(), "infection.log")
+			log := filepath.Join(testkit.Scratch(t), "infection.log")
 			suite := goCommand(t, toolchain, root, append(slices.Clip(env), instrument.ProbeEnv+"="+log),
 				"test", "-count=1", "-run", c.test, "./pkg/sample")
 			mutantkit.RequireExit(t, suite, 0, "running the probe tree's suite")

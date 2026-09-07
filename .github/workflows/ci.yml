@@ -301,7 +301,15 @@ jobs:
         with:
           install: true
           cache: true
+      # `id`, because the step below has to be able to ask how this one went.
+      # `continue-on-error` makes the *job* succeed whatever the suite did, so
+      # `failure()` is false here even when every test in the tier went red --
+      # and the kept scratch, which is exactly what somebody would want to read
+      # in that case, was never uploaded. `outcome` is the step's own result
+      # before `continue-on-error` is applied, which is the only place that fact
+      # survives.
       - name: Measure coverage
+        id: coverage
         continue-on-error: true
         run: mise run cover-integration
       # cover.out is what `go tool cover` and every editor reads; cover.html is
@@ -329,12 +337,15 @@ jobs:
       # source the failure dumped, and the recording of what the run actually
       # executed.
       #
-      # `if: failure()` because a green job keeps nothing, and
+      # `failure()` alone would never fire in this job: the step that runs the
+      # suite is `continue-on-error`, so a tier that went entirely red still
+      # leaves the job green. Its `outcome` is asked directly, and `failure()`
+      # is kept beside it for everything else that can go wrong here.
       # `if-no-files-found: ignore` because a job can go red before any test
       # does -- a build, a lint step -- and a warning about a missing artifact
       # on top of that failure explains nothing.
       - name: Upload what the failed tests kept
-        if: failure()
+        if: failure() || steps.coverage.outcome == 'failure'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: kept-scratch-coverage

@@ -1167,7 +1167,7 @@ func prepareFixtureWith(
 		return prepared
 	}
 	for path, source := range inject {
-		if err = os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(source), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte(source), 0o644); err != nil {
 			prepared.err = err
 			return prepared
 		}

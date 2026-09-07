@@ -51,7 +51,7 @@ func TestInstrumentedTreeCompiles(t *testing.T) {
 
 	toolchain := mutantkit.Toolchain(t)
 	env := testkit.Compose(t, testkit.Scratch(t))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 
 	var candidates []mutation.Candidate
@@ -121,7 +121,7 @@ func TestInstrumentedBinaryActivatesOneMutant(t *testing.T) {
 
 	toolchain := mutantkit.Toolchain(t)
 	env := testkit.Compose(t, testkit.Scratch(t))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("pkg/sample/sample.go")), []byte(runtimeSample))
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")), []byte(`// SPDX-FileCopyrightText: 2026 go-mutants contributors
@@ -219,7 +219,7 @@ func Total(values []int) int {
 	return sum
 }
 `
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	rel := "pkg/sample/sample.go"
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(src))
@@ -324,7 +324,7 @@ func Zero(v int) int {
 	return v * 0
 }
 `
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	rel := "pkg/zero/sample.go"
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(src))

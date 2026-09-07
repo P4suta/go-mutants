@@ -38,7 +38,7 @@ import (
 func TestProbeRuntimeGolden(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
 	catalog := catalogOf(t, threeAlternatives(t, []byte(runtimeSample)))
 	if catalog.Len() != 3 {
@@ -98,7 +98,7 @@ func TestProbeRuntimeGolden(t *testing.T) {
 func TestMutantRuntimeStillExportsOnlyM(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
 	catalog := catalogOf(t, threeAlternatives(t, []byte(runtimeSample)))
 
@@ -122,7 +122,7 @@ func TestMutantRuntimeStillExportsOnlyM(t *testing.T) {
 func TestProbeRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 	t.Parallel()
 
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	catalog := catalogOf(t, nil)
 	result := probeSnapshot(t, root, catalog)
 
@@ -156,9 +156,9 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 	t.Parallel()
 
 	fixture := newProbeFixture(t)
-	log := filepath.Join(t.TempDir(), "infection.log")
+	log := filepath.Join(testkit.Scratch(t), "infection.log")
 
-	stdout, stderr, code := runProbe(t, t.TempDir(), fixture.binary, instrument.ProbeEnv+"="+log)
+	stdout, stderr, code := runProbe(t, testkit.Scratch(t), fixture.binary, instrument.ProbeEnv+"="+log)
 	if code != 0 {
 		t.Fatalf("the probe binary exited %d\n--- stdout ---\n%s\n--- stderr ---\n%s", code, stdout, stderr)
 	}
@@ -214,7 +214,7 @@ func TestProbeRuntimeIsSilentWithoutTheProbeVariable(t *testing.T) {
 	fixture := newProbeFixture(t)
 	// Nothing is written here; the directory is watched precisely because a
 	// runtime that invented a path would have to put the file somewhere.
-	quiet := t.TempDir()
+	quiet := testkit.Scratch(t)
 
 	stdout, stderr, code := runProbe(t, quiet, fixture.binary)
 	if code != 0 {
@@ -244,9 +244,9 @@ func TestProbeRuntimeExitsWhenTheLogCannotBeOpened(t *testing.T) {
 	t.Parallel()
 
 	fixture := newProbeFixture(t)
-	log := filepath.Join(t.TempDir(), "no-such-directory", "infection.log")
+	log := filepath.Join(testkit.Scratch(t), "no-such-directory", "infection.log")
 
-	_, stderr, code := runProbe(t, t.TempDir(), fixture.binary, instrument.ProbeEnv+"="+log)
+	_, stderr, code := runProbe(t, testkit.Scratch(t), fixture.binary, instrument.ProbeEnv+"="+log)
 	if code != instrument.ProbeUnavailableExit {
 		t.Errorf("an unwritable log exited %d, want %d\n%s", code, instrument.ProbeUnavailableExit, stderr)
 	}
@@ -270,7 +270,7 @@ func TestInfectIsRaceFree(t *testing.T) {
 
 	toolchain := mutantkit.Toolchain(t)
 	env := testkit.Compose(t, testkit.Scratch(t))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	const rel = "pkg/sample/sample.go"
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(runtimeSample))
@@ -296,8 +296,8 @@ func TestInfectIsRaceFree(t *testing.T) {
 	}
 	mutantkit.RequireExit(t, build, 0, "building the probe test binary with -race")
 
-	log := filepath.Join(t.TempDir(), "infection.log")
-	stdout, stderr, code := runProbe(t, t.TempDir(), binary, instrument.ProbeEnv+"="+log)
+	log := filepath.Join(testkit.Scratch(t), "infection.log")
+	stdout, stderr, code := runProbe(t, testkit.Scratch(t), binary, instrument.ProbeEnv+"="+log)
 	if code != 0 {
 		t.Errorf("the race-instrumented probe test exited %d\n--- stdout ---\n%s\n--- stderr ---\n%s", code, stdout, stderr)
 	}
@@ -327,7 +327,7 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))
 	other := testkit.ReadFile(t, filepath.Join("testdata", "nested.input"))
 
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 	testkit.WriteFile(t, filepath.Join(root, "other.go"), other)
 
@@ -357,7 +357,7 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 
 	// The zero value of the new field is the mode every existing caller passes,
 	// and it has to keep producing exactly the package it always did.
-	mutantRoot := t.TempDir()
+	mutantRoot := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(mutantRoot, sampleFile), []byte(runtimeSample))
 	mutantResult := instrumentSnapshot(t, mutantRoot, catalogOf(t, threeAlternatives(t, []byte(runtimeSample))))
 	got := testkit.ReadFile(t, filepath.Join(mutantRoot, mutantResult.RuntimeDir, mutantResult.RuntimeDir+".go"))
@@ -390,7 +390,7 @@ func TestProbeAndMutantRuntimesShareTheDirectoryName(t *testing.T) {
 
 			var dirs []string
 			for _, probe := range []bool{false, true} {
-				root := t.TempDir()
+				root := testkit.Scratch(t)
 				testkit.WriteFile(t, filepath.Join(root, sampleFile), []byte(runtimeSample))
 				if c.collision {
 					testkit.WriteFile(t, filepath.Join(root, "gomutants_rt", "theirs.go"), []byte("package theirs\n"))
@@ -487,7 +487,7 @@ func newProbeFixture(t *testing.T) probeFixture {
 
 	toolchain := mutantkit.Toolchain(t)
 	env := testkit.Compose(t, testkit.Scratch(t))
-	root := t.TempDir()
+	root := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(root, "go.mod"), []byte(goModule))
 	const rel = "pkg/sample/sample.go"
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash(rel)), []byte(runtimeSample))

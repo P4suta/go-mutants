@@ -251,7 +251,7 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	})
 
 	t.Run("an unknown mutant refuses to run the tests", func(t *testing.T) {
-		binary := filepath.Join(t.TempDir(), "killable.test")
+		binary := filepath.Join(testkit.Scratch(t), "killable.test")
 		if runtime.GOOS == "windows" {
 			binary += ".exe"
 		}

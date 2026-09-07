@@ -301,6 +301,12 @@ func TestPathAgreesWithTestkit(t *testing.T) {
 // mode: two spellings would have the harness stamping a file the collector never
 // looks for, so every kept directory would be refused as somebody else's.
 func TestKeptRootAgreesWithTestkit(t *testing.T) {
+	// This is the one test that unsets the override to ask what the default is,
+	// which is the one thing that can file a directory in the developer's own
+	// kept root. The package guard in TestMain cannot catch it — see
+	// [requireDefaultKeptRootUntouched] — so it is checked here.
+	requireDefaultKeptRootUntouched(t)
+
 	t.Run("the default root", func(t *testing.T) {
 		// Cleared for the reason the build cache subtest above clears its own
 		// variable: CI names a root for the whole job, and this subtest is about
@@ -328,9 +334,21 @@ func TestKeptRootAgreesWithTestkit(t *testing.T) {
 	})
 
 	t.Run("the named root", func(t *testing.T) {
-		e := Env(t, KeepHome())
+		// Named *before* [Env] rather than after it, which is the opposite of
+		// the build cache subtest above — and the reason that one gives does not
+		// apply here. There the ordering buys a warm cache for the `go run` that
+		// builds the tool; nothing about this variable affects a compile. What
+		// the ordering costs is the thing this whole feature is about: Env takes
+		// a scratch, and under an active policy a scratch taken before the
+		// override is named is filed under whatever root was in force — the
+		// developer's own, when they are running with the policy on and no root
+		// of their own. The policy is cleared as well, because this subtest is
+		// about where a path resolves to and not about keeping anything.
+		t.Setenv(KeepEnv, "")
 		named := filepath.Join(t.TempDir(), "named-kept")
 		t.Setenv(KeepDirEnv, named)
+
+		e := Env(t, KeepHome())
 		want, err := KeepRoot()
 		if err != nil {
 			t.Fatalf("KeepRoot with %s set: %v", KeepDirEnv, err)
