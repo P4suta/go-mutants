@@ -255,10 +255,14 @@ func TestHelperIsolatesCoverageOutputPerProcess(t *testing.T) {
 	t.Parallel()
 
 	// A root of the test's own rather than the one this suite published, which
-	// it publishes only when it is itself running under -cover. The rule holds
-	// in either run, so the test should not need one of them.
+	// it publishes only when it is itself running under -cover, and a GOCOVERDIR
+	// of the test's own standing in for the one `go test -cover` exports, which
+	// is what makes the helper a coverage run at all. The rule holds in either
+	// run, so the test should not need either of them from the suite.
 	root := t.TempDir()
-	env := withEntries(Compose(t, t.TempDir()), selfHelperEnv+"=1", HelperCoverRootEnv+"="+root)
+	shared := t.TempDir()
+	env := withEntries(Compose(t, t.TempDir()), selfHelperEnv+"=1",
+		HelperCoverRootEnv+"="+root, CoverDirEnv+"="+shared)
 	var seen []string
 	for range 2 {
 		result := Exec(t, t.TempDir(), env, os.Args[0], "env", CoverDirEnv)
@@ -275,6 +279,9 @@ func TestHelperIsolatesCoverageOutputPerProcess(t *testing.T) {
 		}
 		if _, err := os.Stat(dir); err != nil {
 			t.Errorf("the helper's coverage directory was not created: %v", err)
+		}
+		if dir == shared || strings.HasPrefix(dir, shared+string(filepath.Separator)) {
+			t.Errorf("a helper's %s is %q, inside the directory the parent's own profile is collected in", CoverDirEnv, dir)
 		}
 	}
 	if seen[0] == seen[1] {
@@ -322,6 +329,28 @@ func TestHelperWithNoCoverageRootReadsItsOwnGOCOVERDIR(t *testing.T) {
 				CoverDirEnv, HelperCoverRootEnv, result.ExitCode, HelperMisuse, result.Output)
 		}
 		RequireOutput(t, result, "the refusal", HelperCoverRootEnv+" is unset")
+	})
+
+	// A root without a GOCOVERDIR is the inverse leftover: an ancestor's root
+	// still in the environment of a process that is not itself a coverage run.
+	// It writes nothing, so it must make nothing — a directory made here would
+	// have no owner at all, since only the suite that made the root removes it.
+	t.Run("a root without coverage makes nothing", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		env := withEntries(Compose(t, t.TempDir()), selfHelperEnv+"=1",
+			HelperCoverRootEnv+"="+root, CoverDirEnv+"=")
+		result := Exec(t, t.TempDir(), env, os.Args[0], "env", CoverDirEnv)
+
+		RequireExit(t, result, 0, "the helper program")
+		if got := string(result.Stdout); got != "" {
+			t.Errorf("a helper with a root but no coverage set %s = %q, so it made a directory nothing "+
+				"will ever read or remove", CoverDirEnv, got)
+		}
+		if entries := Entries(t, root); len(entries) != 0 {
+			t.Errorf("a helper with a root but no coverage left %v under the root", entries)
+		}
 	})
 }
 

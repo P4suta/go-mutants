@@ -223,19 +223,21 @@ func HelperCoverRoot() string { return os.Getenv(HelperCoverRootEnv) }
 // other than the parent's GOCOVERDIR, so that helper counters stay out of the
 // parent's profile and the concurrent covmeta renames stop colliding.
 //
-// The two ways a root can be missing are told apart by the helper's own
-// GOCOVERDIR, and the answers are opposite. No root and no GOCOVERDIR is a run
-// with no coverage anywhere: nothing to redirect, and creating a directory would
-// be creating the leak this exists to have stopped. No root but a GOCOVERDIR
-// inherited from the parent is the mistake — a TestMain that ran m.Run itself,
-// an environment policy that stripped the variable — and it is refused, because
-// carrying on means writing covmeta into the directory `go test` is collecting.
+// The helper's own GOCOVERDIR decides first. Without one the process is not a
+// coverage run — nothing is instrumented, nothing writes counters — so there is
+// nothing to redirect, whether or not an ancestor's root is still in the
+// environment; creating a directory then would be creating the leak this exists
+// to have stopped, with no owner to remove it. With a GOCOVERDIR and no root the
+// answer is the opposite: that is a coverage run whose root went missing on the
+// way in — a TestMain that ran m.Run itself, an environment policy that stripped
+// the variable — and it is refused, because carrying on means writing covmeta
+// into the directory `go test` is collecting.
 func isolateCoverageOutput() error {
+	if os.Getenv(CoverDirEnv) == "" {
+		return nil
+	}
 	root := HelperCoverRoot()
 	if root == "" {
-		if os.Getenv(CoverDirEnv) == "" {
-			return nil
-		}
 		return fmt.Errorf("%s is unset, so this helper has nowhere private to write coverage output",
 			HelperCoverRootEnv)
 	}
