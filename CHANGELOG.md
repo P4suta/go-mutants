@@ -21,12 +21,12 @@ Entries say *why* a change was made, not only what changed.
   every way it could contradict itself, the history store under the operating
   system's cache directory, the projection into the published
   mutation-testing-report format, the self-contained HTML page rendered from it,
-  and the `report merge` that puts a split run back together. 2391 mutants —
+  and the `report merge` that puts a split run back together. 2497 mutants —
   1095 in `internal/report`, 461 in `internal/config`, 450 in
-  `internal/mutation`, 146 in `internal/coverage`, 89 in `internal/schemas`, 68
-  in `internal/glob`, 48 in `internal/interval`, 16 in
-  `internal/operatorselect`, 11 in `internal/drift`, 7 in `internal/testflag` —
-  2327 detected, 64 declared, **100.00%**, on every run.
+  `internal/mutation`, 146 in `internal/coverage`, 106 in `internal/gocmd`, 89
+  in `internal/schemas`, 68 in `internal/glob`, 48 in `internal/interval`, 16
+  in `internal/operatorselect`, 11 in `internal/drift`, 7 in `internal/testflag`
+  — 2432 detected, 65 declared, **100.00%**, on every run.
   The package arrived the only way this list is allowed to grow: the first
   measurement over `internal/report` reported 321 unexpected survivors, 150 of
   them mutants no binary reached at all. Two hundred and eighty-seven are now
@@ -123,21 +123,23 @@ Entries say *why* a change was made, not only what changed.
   run that did not ask to be gated. `--strict` still fails the job on the first
   unexpected survivor and is what actually keeps CI honest.
 
-  One thing is deliberately not in this entry: a wall clock. The two runs that
-  established the tally above took 8m40s and 11m53s at `--jobs 4` against a warm
-  build cache, and both were measured on a machine that spent the whole of them
-  compiling another project at a load average between 20 and 65 on eight cores —
-  so they are an upper bound rather than a budget, and `.go-mutants.toml`,
-  `mise.toml` and `docs/development.md` all say so where the previous scopes'
-  figures are recorded. The second run also reported 23 `inconclusive` mutants,
-  every one of them a mutant the first run killed in under a second: the
-  per-mutant timeout is `max(10s, slowest baseline × 5)`, which is the
-  ten-second floor here, and `internal/report`'s suite is about half a second
-  where the nine-package command was a fifth of that — twenty times the timeout
-  rather than eighty. Twenty is ample on a machine doing one thing. Whether this
-  scope wants an explicit `test.timeout` is a decision the clean measurement
-  should inform, and writing a number into that file to paper over a loaded
-  machine is the thing it exists not to do.
+  The wall clock, measured on the shared machine that widened the scope, at
+  `--jobs 4`: warm, with the derived per-mutant timeout at its 10 s floor,
+  6m13s and 6m30s; two more warm runs on the same machine read 8m42s and 9m02s
+  while it had picked up other work — one of them had derived a 23.6 s timeout
+  from a baseline that read 4.7 s under load, paid twice by each of the four
+  mutants that never return, and the other reported two of its kills as
+  `inconclusive`, killed once and timed out on the confirming run. Cold, 9m31s,
+  of which more than half is those four mutants waiting out, twice each, a
+  timeout sized on the compiling first baseline run (38.7 s where the runs after
+  it asked for 10 s); that mechanism is answered in the engine, which now sizes
+  the budget on the runs after the first, and the cold figure on that engine is
+  owed by the next widening. Whether this scope wants an explicit
+  `test.timeout` was the open question the first two runs left, and the
+  measurement answers it for now: on the floor the tally is exact, and the two
+  inconclusive kills appeared only under outside load. `.go-mutants.toml`,
+  `mise.toml` and `docs/development.md` record the same figures where the
+  previous scopes' are recorded.
 - **The dogfood gate covers the toolchain wrapper.** This repository's own
   `.go-mutants.toml` now includes `internal/gocmd/*.go`, so the gate is ten
   whole packages rather than nine, and the tenth is the one every other phase

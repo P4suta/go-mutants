@@ -465,15 +465,17 @@ jobs:
   # 1m48s -- larger and faster than before the bound, because the two that
   # allocate no longer wait out two timeouts each.
   #
-  # The scope is now 2391 mutants: internal/report joined, which is nearly as
-  # many again, and it brought a fourth mutant that never returns. No cold run
-  # of that scope has been measured yet, and the two warm ones that established
-  # its tally were taken on a machine at a load average of 20 to 65 -- 8m40s and
-  # 11m53s, which are an upper bound rather than a budget. Twenty-five minutes
-  # is left alone on purpose: it has room for both figures several times over,
-  # and raising or lowering it before there is a clean measurement would be
-  # guessing in whichever direction. The memory bound is what keeps a runner
-  # from being the thing that runs out first.
+  # The scope is now 2497 mutants: internal/report joined, which is nearly as
+  # many again, and it brought a fourth mutant that never returns. Warm on a
+  # quiet machine that scope is 6m13s-6m30s; cold it is 9m31s, and more than
+  # half of the cold figure is those four mutants waiting out, twice each, a
+  # timeout sized on the compiling first baseline run (38.7s where the runs
+  # after it asked for 10s) -- which the engine now sizes on the runs after
+  # the first. Twenty-five minutes has room for the measured cold run two and
+  # a half times over; what to watch as the scope grows is how many mutants
+  # hang and how loud the runner is, since both move the derived timeout. The
+  # memory bound is what keeps a runner from being the thing that runs out
+  # first.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25

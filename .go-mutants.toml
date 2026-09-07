@@ -21,7 +21,7 @@
 # how every one of them arrived and the only way the next one will: that story
 # is in CHANGELOG.md, which [mutation] points at rather than retelling.
 #
-# Three of the ten joined for free, which is the one way a floor is allowed to
+# Three of the eleven joined for free, which is the one way a floor is allowed to
 # widen without a test being written first: they were measured before the line
 # was added and every mutant in them was already dead, so this file grew three
 # include lines and three test patterns and not one expectation. That is the
@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2323 killed, four caught by the timeout, sixty-four declared, 100.00%,
+# race: 2428 killed, four caught by the timeout, sixty-five declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -123,8 +123,8 @@ profile = "balanced"
 #   internal/drift/*.go            11
 #   internal/testflag/*.go          7
 #
-# catalogues 2391 mutants and detects 2327 of them -- 2323 killed and four
-# caught by the timeout -- leaving the sixty-four rows declared below and a
+# catalogues 2497 mutants and detects 2432 of them -- 2428 killed and four
+# caught by the timeout -- leaving the sixty-five rows declared below and a
 # score of 100.00%, in the wall clock recorded under [policy].
 #
 # internal/report is nearly as large as the other nine together, and that is
@@ -760,26 +760,28 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2391 mutants. Two thousand
-# three hundred and twenty-seven are detected -- 2323 killed, of which two are
+# Measured, not wished for. The scope catalogues 2497 mutants. Two thousand
+# four hundred and thirty-two are detected -- 2428 killed, of which two are
 # killed by the memory bound, and four caught by the timeout -- and the other
-# sixty-four are the rows declared above, which leave the denominator rather
+# sixty-five are the rows declared above, which leave the denominator rather
 # than counting against it, so the measured score is 100.00%, with all
-# sixty-four expectations fulfilled and none stale. Every one of those numbers
-# was the same on every run of this scope, the killed/timeout split included;
-# before the memory bound it was not, and the note at the top of this file says
-# why.
+# sixty-five expectations fulfilled and none stale. Every one of those numbers
+# was the same on four of the five runs that measured this scope, the
+# killed/timeout split included; the fifth, taken while the machine picked up
+# other work, reported two of the kills as `inconclusive`, and what that means
+# is written under the pairs below.
 #
 # The bound itself is derived and worth quoting, because it is the one number
 # here that is a fact about this repository's own suite rather than about the
 # catalogue -- `go-mutants run -v` prints it:
 #
-#   memory: baseline peak 158.1 MiB, bound 1.0 GiB (derived)
+#   memory: baseline peak 157.5 MiB, bound 1.0 GiB (derived)
 #
-# 158.1 MiB x 4 is 632 MiB, so the 1 GiB floor is still what applies and the
+# 157.5 MiB x 4 is 630 MiB, so the 1 GiB floor is still what applies and the
 # bound is about six times what the unmutated suite needs. The peak moved with
-# the tenth package -- internal/report's suite writes and reads whole documents
-# -- and the bound did not, because the floor was always the larger of the two.
+# the eleventh package -- internal/report's suite writes and reads whole
+# documents -- and the bound did not, because the floor was always the larger
+# of the two.
 # Nothing legitimate is close to it; the two mutants it stops reach 1.1 GiB in
 # about a second and a half, which is the difference between a bound that
 # catches runaways and one that fails honest tests.
@@ -813,6 +815,11 @@ strict = false
 #     warm test-owned build cache   1296 mutants in 1m07s, 1m29s and 1m33s,
 #                                   1402 in 1m28s, 1m33s and 1m38s
 #     cold test-owned build cache   2m05s and 3m45s
+#   10 -> 11 packages, on one shared machine that was quiet for some of it
+#     warm test-owned build cache   2497 mutants in 6m13s and 6m30s with the
+#                                   derived timeout at its 10s floor, 8m42s
+#                                   and 9m02s when other work moved it
+#     cold test-owned build cache   9m31s, with the timeout at 38.7s
 #
 # The third pair is the one that needed explaining, because 425 more mutants did
 # not cost fifty seconds; four more mutants that never return did. A timeout is
@@ -904,30 +911,42 @@ strict = false
 # part of that tally again rather than an exception to it; the note at the top
 # of this file says what it took.
 #
-# THE TEN-PACKAGE SCOPE IS OWED A CLEAN MEASUREMENT, and this file says so
-# rather than quoting one it does not have. Two runs established the tally
-# above -- 2391 catalogued, 2327 detected, 2323 killed and four timed out, 64
-# expected, twelve of those never executed at all -- and both were measured on a
-# machine that spent the whole of them compiling another project, at a load
-# average between 20 and 65 on eight cores against the four workers `jobs`
-# above asks for. They took 8m40s and 11m53s. No pair against the nine-package
-# scope was taken on that machine, and no cold run of this scope was taken at
-# all, so there is no ratio here to compare with the four pairs above; the
-# figures are an upper bound and are labelled as one.
+# The sixth pair is the eleventh package, and it is the first one the wall
+# clock could not be read off the catalogue. Warm, on the 10s floor, the scope
+# takes 6m13s and 6m30s: 2497 mutants at four workers, most of them measured in
+# under a second, and internal/report's suite -- about half a second a run,
+# where the nine-package command was a fifth of that -- is what makes the
+# thousand of them that live in it cost what they cost. The two runs beside
+# those, 8m42s and 9m02s, are the same tree and the same tally on the same
+# machine, and the difference is the other work the machine had picked up:
+# one of them derived a 23.6s timeout from a baseline that read 4.7s under
+# load, and the four mutants that never return paid that twice each, which is
+# three minutes of a nine-minute run spent waiting for a budget the machine
+# rather than the suite had set. The other kept the floor and lost its time
+# in the runs themselves, and reported two of its 2428 kills as
+# `inconclusive`: killed once, timed out on the confirming run, the way a
+# suite that is fast in a quiet second and stalls in a loud one looks from
+# outside. The tally is the number this gate is judged on, and it was
+# identical everywhere but that column.
 #
-# The second of those two runs also reported 23 `inconclusive` mutants, and that
-# is the part worth acting on rather than smoothing over. An inconclusive result
-# is a mutant that timed out once and did not time out again on the retry, and
-# every one of those 23 was killed in under a second by the run before it. The
-# per-mutant timeout is max(10s, slowest baseline x 5), which resolves to the
-# 10-second floor for this scope, and internal/report's suite is why the floor
-# is closer than it was: about half a second where the nine-package command was
-# a fifth of that, so a mutant of it has about twenty times the timeout rather
-# than eighty. Twenty is ample on a machine doing one thing and is not ample on
-# one doing twelve. Whether this scope wants an explicit `test.timeout` is a
-# decision for the clean measurement to inform, and it is deliberately not made
-# here: a number written into this file to paper over a loaded machine is the
-# kind of number this file exists not to keep.
+# Cold, the scope takes 9m31s, and more than half of that is one number. The
+# first of the three baseline runs is the one that compiles, and cold it
+# measured 7.7s where the runs after it measured 2s; max(10s, slowest x 5)
+# sized the timeout on the compiling run at 38.7s, and the four mutants that
+# never return paid it twice each -- five minutes of worker time waiting for a
+# budget no mutant run ever needed, since their binaries are built once
+# beforehand. That is the mechanism the fifth pair named at 2m05s -> 3m45s,
+# now large enough to be most of the run, and it is answered where it lives
+# rather than here: the engine sizes the budget on the runs after the first,
+# and the cold figure on that engine is owed by the next widening rather than
+# guessed at by this one.
+#
+# Whether this scope wants an explicit `test.timeout` was the open question the
+# first two runs left, and the measurement answers it for now: on the floor
+# the tally is exact, and the two inconclusive kills appeared only under
+# outside load that also moved the derived timeout. A number written into
+# this file to paper over a loaded machine is the kind of number this file
+# exists not to keep, so the floor stays derived.
 #
 # The floor moved with this scope, for the first time since it went to 99, and
 # the arithmetic is why. It is worth being exact about which gate the remaining
@@ -939,12 +958,12 @@ strict = false
 #                         dogfood task and for CI. There is no headroom on that
 #                         gate at all, and none is wanted.
 #   minimum_score = 99.5  compared against the measured score whether or not
-#                         --strict was passed. Two thousand three hundred and
-#                         twenty-seven scored mutants are worth 0.043 points
-#                         each, so 2316/2327 = 99.53% clears 99.5 and
-#                         2315/2327 = 99.48% does not: an ungated
-#                         `go-mutants run` reports up to eleven survivors and
-#                         exits 0, and fails at twelve.
+#                         --strict was passed. Two thousand four hundred and
+#                         thirty-two scored mutants are worth 0.041 points
+#                         each, so 2420/2432 = 99.51% clears 99.5 and
+#                         2419/2432 = 99.47% does not: an ungated
+#                         `go-mutants run` reports up to twelve survivors and
+#                         exits 0, and fails at thirteen.
 #
 # Ninety-six is what stood here while 120 mutants were scored, where it bought
 # four survivors of slack. At 544 the same number would buy twenty-one, which is
@@ -955,12 +974,12 @@ strict = false
 # floor bought went five, five, eight, twelve while the catalogue grew tenfold
 # -- always short of the twenty-one that moved the number the last time.
 #
-# One percent of 2327 is 23.27, which is not short of it. Twenty-three survivors
+# One percent of 2432 is 24.32, which is not short of it. Twenty-four survivors
 # is more slack than the twenty-one that was judged too much at 544, so the same
 # rule that kept the number at 99 through five widenings is the rule that moves
 # it now, and it moves to the value that leaves the backstop where it has
-# actually been: 99.5 buys eleven survivors, where 99 bought twelve before this
-# widening. The floor is a fixed number of survivors rather than a fixed
+# actually been: 99.5 buys twelve survivors, where 99 bought thirteen before
+# this widening. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
 # grows enough to make that count material" meant.
 #

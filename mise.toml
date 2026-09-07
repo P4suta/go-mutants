@@ -404,25 +404,16 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 1402 mutants at 100.00%, 1m28s-1m38s at
-# --jobs 4 against a warm test-owned build cache and 3m45s-4m01s against a cold
-# one, on the shared machine that measured the last widening. Cold is what CI
-# measures, because the dogfood job points GO_MUTANTS_TEST_GOCACHE at the
-# runner's temporary directory and never restores it. .go-mutants.toml records
-# that measurement in full under [policy], next to the scope it is a
-# measurement of, including the run it is paired with, the derived memory bound
-# that made this scope faster than the smaller one before it, and why the cold
-# figure moved further than the catalogue did.
-# The budget this job is sized against: 2391 mutants at 100.00%. The wall clock
-# for that scope is owed a clean measurement and this comment says so rather
-# than quoting one: the two runs that established the tally took 8m40s and
-# 11m53s at --jobs 4 against a warm test-owned build cache, on a machine that
-# spent both of them compiling another project at a load average between 20 and
-# 65 on eight cores. Cold is what CI measures, because the dogfood job points
+# The budget this job is sized against: 2497 mutants at 100.00%, 6m13s-6m30s at
+# --jobs 4 against a warm test-owned build cache with the derived timeout at
+# its 10s floor (8m42s-9m02s when other work on the machine moved that
+# timeout), and 9m31s against a cold one, on the shared machine that measured
+# the last widening. Cold is what CI measures, because the dogfood job points
 # GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never
-# restores it, and no cold run of this scope has been taken at all yet.
-# .go-mutants.toml records all of that under [policy], next to the scope it is
-# a measurement of.
+# restores it -- and cold, more than half of the run is the four mutants that
+# never return paying a timeout sized on the compiling first baseline run,
+# which the engine now sizes on the runs after it. .go-mutants.toml records all
+# of that under [policy], next to the scope it is a measurement of.
 #
 # What the gate cost before is history, and every figure is labelled with the
 # scope that produced it, because a duration without its scope reads as a
@@ -462,17 +453,15 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 #                                        1m07-1m33s: the 52-58s is a different
 #                                        machine, and only the pair is a
 #                                        comparison.
-#  10 packages, 2391          8m40s+  internal/report joined: what a run
+#   11 packages, 2497        6m13-6m30s  internal/report joined: what a run
 #                                        writes down, and the first package in
 #                                        the scope that writes files. Nearly
-#                                        twice the catalogue, and a fourth
-#                                        mutant that never returns. The figure
-#                                        is the only one there is and is not a
-#                                        budget: the machine that produced it
-#                                        was at a load average of 20 to 65 on
-#                                        eight cores throughout, so it is an
-#                                        upper bound wearing a measurement's
-#                                        clothes.
+#                                        as many mutants again, and a fourth
+#                                        mutant that never returns. The range
+#                                        is the two runs on the 10s floor; two
+#                                        more on the same machine read 8m42s
+#                                        and 9m02s while it had other work,
+#                                        and the tally was the same on all.
 #
 # Every row is a warm cache. The last is the exception in a second way: every
 # other row was measured against a machine doing nothing else, which is what
