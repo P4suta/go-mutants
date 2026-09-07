@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -712,20 +713,69 @@ var errNoRemovableHardLink = errors.New(
 // cache, which is the ordinary arrangement on a GitHub Windows runner. See
 // [HardLinksAreRemovable].
 func linkOrCopyExecutable(from, to string) error {
+	// The destination is *replaced*, never written through, and that is the
+	// difference between an install and a catastrophe.
+	//
+	// Both callers can arrive at a path that already holds something: the
+	// shared install if two processes ever race for one directory, and every
+	// scripted compile whose `-o` names a file a previous one produced. A hard
+	// link is a second name for one file, so on a platform that links, a
+	// destination left in place is very often the *source* under another name —
+	// and opening it for writing then truncates the very binary being
+	// installed. That is not hypothetical: `linkFile` refuses an existing
+	// destination with EEXIST, so the copy below is exactly the path such a
+	// call takes, and it used to open the destination `O_TRUNC` and read the
+	// emptied source back.
+	//
+	// Unlinking first costs nothing and settles it for both paths: a name is
+	// removed rather than a file, so a source that shared it is untouched. A
+	// destination that exists and cannot be removed is an error rather than
+	// something to write around — on Windows that means an image still mapped
+	// by a running process, which is the one case where writing anyway would be
+	// worst.
+	if err := os.Remove(to); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
 	if err := linkFile(from, to); err == nil {
 		return nil
 	}
+	return copyExecutable(from, to)
+}
+
+// copyExecutable writes from to a sibling of to and renames it into place.
+//
+// The staging file is what keeps the destination from ever being open for
+// writing under its own name, which is the same rule the rule table's own
+// publisher follows and for a sharper reason here: a half-written executable is
+// a file another process may already be trying to start. The rename is atomic
+// on both supported platforms, so a reader sees the old file or the new one.
+//
+// It is a sibling rather than a file in the temporary directory because a
+// rename across filesystems is not a rename, and the destinations this package
+// writes to — a scratch directory on one volume, a shared install on another —
+// are exactly where that would bite.
+func copyExecutable(from, to string) error {
 	source, err := os.Open(from)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = source.Close() }()
-	destination, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+
+	staging, err := os.CreateTemp(filepath.Dir(to), filepath.Base(to)+".tmp-")
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(destination, source)
-	return errors.Join(copyErr, destination.Close())
+	name := staging.Name()
+	_, copyErr := io.Copy(staging, source)
+	// os.CreateTemp opens at 0o600, which is a file nobody can execute.
+	chmodErr := staging.Chmod(0o755)
+	if err := errors.Join(copyErr, chmodErr, staging.Close()); err != nil {
+		return errors.Join(err, os.Remove(name))
+	}
+	if err := os.Rename(name, to); err != nil {
+		return errors.Join(err, os.Remove(name))
+	}
+	return nil
 }
 
 // Main is the TestMain of a package whose tests script the `go` command.

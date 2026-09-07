@@ -693,3 +693,138 @@ func TestFakeGoRemovalRetriesLongerWhereAnExitingChildHoldsItsImage(t *testing.T
 		t.Errorf("windows gives up after %s, want at least a second for a mapping to be torn down", got)
 	}
 }
+
+// TestInstallReplacesADestinationRatherThanWritingThroughIt is the one way this
+// package could have destroyed the binary it is a copy of.
+//
+// Both installs reuse a destination: the shared `go` when a second process
+// arrives at the same path, and every scripted compile whose `-o` names a file
+// that is already there. A hard link is a second *name* for one file, so on a
+// platform that links, opening the destination for writing opens the source —
+// and the old code opened it `O_TRUNC`. Linking a fresh install over an
+// existing one fails with EEXIST, the copy fallback ran, and it truncated the
+// running test binary to nothing before reading it.
+//
+// So the destination is removed and then replaced, never written through: the
+// link path unlinks a name and makes a new one, and the copy path stages a
+// sibling and renames it over. The rows below are the two shapes a destination
+// comes in, against both a linking platform and a copying one, and the
+// assertion in each is that the *source* still holds what it held.
+func TestInstallReplacesADestinationRatherThanWritingThroughIt(t *testing.T) {
+	const body = "the program that must survive\n"
+
+	for _, existing := range []struct {
+		name string
+		make func(t *testing.T, from, to string)
+	}{
+		{
+			name: "a hard link to the source",
+			make: func(t *testing.T, from, to string) {
+				t.Helper()
+				if err := os.Link(from, to); err != nil {
+					t.Skipf("this filesystem cannot make the destination a link to the source: %v", err)
+				}
+			},
+		},
+		{
+			name: "an ordinary file of its own",
+			make: func(t *testing.T, from, to string) {
+				t.Helper()
+				if err := os.WriteFile(to, []byte("something older\n"), 0o755); err != nil {
+					t.Fatalf("writing the destination that is already there: %v", err)
+				}
+			},
+		},
+		{
+			name: "nothing at all",
+			make: func(*testing.T, string, string) {},
+		},
+	} {
+		for _, platform := range []struct {
+			name   string
+			linker func(from, to string) error
+		}{
+			{name: "a platform that links", linker: mutantkit.PlatformLinker("linux")},
+			{name: "a platform that copies", linker: mutantkit.PlatformLinker("windows")},
+		} {
+			t.Run(existing.name+", "+platform.name, func(t *testing.T) {
+				// No t.Parallel: the linker is replaced for the whole process.
+				restore := mutantkit.SetFakeGoLinker(platform.linker)
+				defer restore()
+
+				dir := t.TempDir()
+				from := filepath.Join(dir, "source")
+				if err := os.WriteFile(from, []byte(body), 0o755); err != nil {
+					t.Fatalf("writing the source: %v", err)
+				}
+				to := filepath.Join(dir, "installed")
+				existing.make(t, from, to)
+
+				if err := mutantkit.LinkOrCopyExecutable(from, to); err != nil {
+					t.Fatalf("installing over a destination that was already there: %v", err)
+				}
+
+				// The whole point: whatever happened to the destination, the
+				// source is untouched.
+				if got := testkit.ReadFile(t, from); string(got) != body {
+					t.Fatalf("the source now holds %q, want the %q it started with: the install "+
+						"wrote through a name it shared", got, body)
+				}
+				if got := testkit.ReadFile(t, to); string(got) != body {
+					t.Errorf("the install holds %q, want the source's %q", got, body)
+				}
+				info, err := os.Stat(to)
+				if err != nil {
+					t.Fatalf("stat of the install: %v", err)
+				}
+				if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm&0o111 == 0 {
+					t.Errorf("mode = %v, want the executable bit", perm)
+				}
+				// And nothing was left staged beside it.
+				if entries := testkit.Entries(t, dir); len(entries) != 2 {
+					t.Errorf("the directory holds %q, want just the source and the install", entries)
+				}
+			})
+		}
+	}
+}
+
+// TestCreateOutputCanBeAskedTwiceForTheSamePath is the reuse the helper above
+// is about, through the caller that really does it.
+//
+// A scheduler compiles a package's test binary into a path derived from its
+// import path, so two compiles in one run name the same file — and on a
+// platform that links, the file already there is the fake itself under a second
+// name. This is the shape that truncated the running test binary, and it is
+// worth having end to end rather than only against a source the test wrote.
+func TestCreateOutputCanBeAskedTwiceForTheSamePath(t *testing.T) {
+	t.Parallel()
+
+	f := mutantkit.FakeGo(t)
+	f.On("test", "-c").CreateOutput()
+	f.On("-test.run=^TestOnly$").Stdout("PASS\n")
+	env := fakeEnv(t, f)
+
+	out := filepath.Join(testkit.Scratch(t), "pkg.test")
+	for attempt := range 2 {
+		result := runFake(t, f, t.TempDir(), "test", "-c", "-o", out, "example.com/m/pkg")
+		if result.ExitCode != 0 {
+			t.Fatalf("compile %d exited %d, want 0:\n%s", attempt+1, result.ExitCode, result.Output)
+		}
+	}
+
+	// The fake is still a fake: nothing wrote through a name it shared with the
+	// binary this test is running in.
+	ran := runner.Run(t.Context(), runner.Spec{
+		Argv:    []string{out, "-test.run=^TestOnly$"},
+		Dir:     t.TempDir(),
+		Env:     env,
+		Timeout: 30 * time.Second,
+	})
+	if ran.Err != nil || ran.ExitCode != 0 {
+		t.Fatalf("running the rebuilt binary = exit %d, %v:\n%s", ran.ExitCode, ran.Err, ran.Output)
+	}
+	if got := strings.TrimSpace(string(ran.Output)); got != "PASS" {
+		t.Errorf("the rebuilt binary printed %q, want the rule scripted for it", got)
+	}
+}
