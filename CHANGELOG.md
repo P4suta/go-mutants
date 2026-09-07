@@ -3083,6 +3083,23 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- The test harness no longer leaves a coverage directory in the system
+  temporary directory once per test binary process. Every suite that runs
+  through `testkit.Helper` created a private `go-mutants-helper-cover-*` root
+  before its first test and removed it in a deferred function afterwards — and
+  a deferred function is exactly what a process that is killed does not run.
+  `go test -timeout`, a Ctrl-C, and above all a mutation run, which kills the
+  mutants that hang and starts a test binary per mutant to find them, each left
+  one behind for good; 11,842 of them were counted in one machine's `/tmp`.
+
+  The root is now created only when there is coverage to keep apart, which is
+  the only thing it was ever for. `go test -cover` exports `GOCOVERDIR` to the
+  test binary and a plain `go test` does not, so a run without it makes no
+  directory at all: nothing is instrumented, no coverage exit hook fires, and
+  the shared directory a helper's private one existed to stay away from does
+  not exist either. Under `-cover` nothing changes — each helper still writes
+  into a directory of its own named by its pid, and the root still goes when
+  the suite does. A directory that is never created cannot be left behind.
 - Parallel tests under the keep policy no longer fail on the test harness's own
   bookkeeping. Every test in one binary files its scratch directory under the
   same `<kept root>/<package>` directory, and a passing test's cleanup removed
