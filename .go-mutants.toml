@@ -13,34 +13,48 @@
 #   deterministic the same tree has to produce the same score twice, or the
 #                 minimum_score floor below is a coin flip rather than a gate.
 #
-# The scope is three whole packages, where it used to be two files, and two
+# The scope is six whole packages, where it used to be two files, and two
 # things bought that. A scoped test command now scopes the test binaries as
 # well, so a mutant is measured against the suites that cover it rather than
 # against every suite in the module -- that reason is written down under [test].
 # And internal/mutation's own suites now kill the survivors that kept the rest
 # of that package out -- that story is in CHANGELOG.md, which [mutation] points
 # at rather than retelling.
+#
+# The three smallest members joined last and joined for free, which is the one
+# way a floor is allowed to widen: they were measured first and every mutant in
+# them was already dead, so this file grew three include lines and three test
+# patterns and not one expectation. That is the rule below working rather than
+# an exception to it.
 
 version = 1
 
 [mutation]
 # Tiers are monotonically inclusive: balanced ⊂ strong ⊂ all.
 profile = "balanced"
-# Three whole packages: the mutation model everything downstream is built on --
-# catalogue, mutant identity, rule set, scoring, shard assignment and exit
-# policy -- the glob engine those identities depend on, and the five-way span
-# relation the interval forest is built on. All three are pure arithmetic or
-# pure text matching that everything downstream trusts, and none of them touches
-# a clock, a network or the filesystem, so a mutant either changes an answer or
-# it does not.
+# Six whole packages. The first three are the pure core: the mutation model
+# everything downstream is built on -- catalogue, mutant identity, rule set,
+# scoring, shard assignment and exit policy -- the glob engine those identities
+# depend on, and the five-way span relation the interval forest is built on.
+# The last three are the small deciders that sit on top of it and are trusted
+# the same way: which argument names a test-binary flag, which rules a profile
+# or an --operator name selects, and which change to an instrumented snapshot
+# the instrumentation did not make. All six are pure arithmetic, pure text
+# matching, or a pure filter over a digest table, and none of them reads a
+# clock or a network, so a mutant either changes an answer or it does not.
 #
 # The numbers this gate is sized against, from the run that produced them:
 #
-#   internal/mutation/*.go + internal/glob/*.go + internal/interval/*.go
+#   internal/mutation/*.go        450 mutants
+#   internal/glob/*.go             68
+#   internal/interval/*.go         48
+#   internal/operatorselect/*.go   16
+#   internal/drift/*.go            11
+#   internal/testflag/*.go          7
 #
-# catalogues 566 mutants (450 + 68 + 48) and kills 549 of them, which leaves the
-# seventeen rows declared below and a score of 100.00%, in about 1m20s at --jobs 4
-# — comfortably inside this gate's budget.
+# catalogues 600 mutants and kills 583 of them, which leaves the seventeen rows
+# declared below and a score of 100.00% -- comfortably inside this gate's
+# budget, in the wall clock recorded under [policy].
 #
 # internal/mutation was a single file here — shard.go — until its own suites
 # grew the tests that kill what the whole-package scope found; CHANGELOG.md
@@ -54,6 +68,9 @@ include = [
   "internal/mutation/*.go",
   "internal/glob/*.go",
   "internal/interval/*.go",
+  "internal/testflag/*.go",
+  "internal/operatorselect/*.go",
+  "internal/drift/*.go",
 ]
 exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # `operators` is intentionally omitted: the profile decides the families, which
@@ -177,8 +194,12 @@ id = "ad9321c58f07017b27f8a9dd8f1e4acad7a38d4a83a9e100589634d63512117c"
 reason = "Unkillable: this return is reached only for a string longer than math.MaxUint32 bytes, so killing it means allocating more than four gigabytes in a unit test."
 
 [test]
-# An argv vector, never a shell string. Scoped to the three packages the mutated
-# files live in, which is what the baseline proves before any mutant runs.
+# An argv vector, never a shell string. Scoped to the six packages the mutated
+# files live in, which is what the baseline proves before any mutant runs. The
+# list has to track `include` above line for line: a package whose files are
+# mutated but whose suite is not named here has no binary covering it, so every
+# mutant in it is reported `survived (uncovered)` and the gate measures the
+# scope's silence rather than its tests.
 #
 # This line is the whole reason the scope above could grow at all. go-mutants
 # reads a `test.command` that is `go test` followed only by package patterns as
@@ -233,6 +254,9 @@ command = [
   "./internal/mutation/...",
   "./internal/glob/...",
   "./internal/interval/...",
+  "./internal/testflag/...",
+  "./internal/operatorselect/...",
+  "./internal/drift/...",
 ]
 # Deliberately omitted, where this file used to pin 180s. The old number was
 # derived from a fact that scoping has deleted: the timeout had to clear
@@ -274,15 +298,31 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 566 mutants. Five hundred and
-# forty-nine are killed and the other seventeen are the rows declared above,
+# Measured, not wished for. The scope catalogues 600 mutants. Five hundred and
+# eighty-three are killed and the other seventeen are the rows declared above,
 # which leave the denominator rather than counting against it, so the measured
 # score is 100.00%, with all seventeen expectations fulfilled and none stale.
-# `mise run dogfood` measures between 1m10s and 1m30s at --jobs 4 over five
-# runs, about 1m20s on average, on the machine where the scope before this one
-# -- one file and two packages, 121 mutants -- took 48-50 seconds and the scope
-# before that -- two files, sixteen mutants -- took 7m08s. The spread is the
-# machine rather than the gate: the tallies below are identical on every run.
+#
+# What the three new packages cost is a paired measurement rather than a
+# remembered one -- the run before this widening and the run after it, back to
+# back on one machine at --jobs 4, three runs each:
+#
+#   warm test-owned build cache   566 mutants in 8.8-9.0s, 600 in 9.9-10.5s
+#   cold test-owned build cache   38s either way
+#
+# Thirty-four more mutants for about a second warm, and for nothing at all
+# cold, because a cold run is dominated by compiling the module and its test
+# binaries and the three new packages are 125 lines between them. Cold is what
+# CI measures: the dogfood job points GO_MUTANTS_TEST_GOCACHE at the runner's
+# temporary directory and never restores it from an actions cache.
+#
+# Only the ratio travels; the absolute numbers are the machine. The scope
+# before this one -- three packages, 566 mutants -- was recorded here as
+# 1m10s-1m30s on the machine that measured it, where the scope before that --
+# one file and two packages, 121 mutants -- took 48-50 seconds and the one
+# before that -- two files, sixteen mutants -- took 7m08s. What does not vary
+# with the machine is the tally: 600 catalogued, 583 killed, 17 expected, on
+# every run of an unchanged tree.
 #
 # The floor moved with the scope, and it had to: a percentage buys a different
 # number of survivors at every size, so leaving the number alone would have been
@@ -295,20 +335,23 @@ strict = false
 #                       task and for CI. There is no headroom on that gate at
 #                       all, and none is wanted.
 #   minimum_score = 99  compared against the measured score whether or not
-#                       --strict was passed. Five hundred and forty-nine scored
-#                       mutants are worth 0.18 points each, so 544/549 = 99.09%
-#                       clears 99 and 543/549 = 98.91% does not: an ungated
-#                       `go-mutants run` reports up to five survivors and exits
-#                       0, and fails at six.
+#                       --strict was passed. Five hundred and eighty-three
+#                       scored mutants are worth 0.17 points each, so
+#                       578/583 = 99.14% clears 99 and 577/583 = 98.97% does
+#                       not: an ungated `go-mutants run` reports up to five
+#                       survivors and exits 0, and fails at six.
 #
 # Ninety-six is what stood here while 120 mutants were scored, where it bought
 # four survivors of slack. At 544 the same number would buy twenty-one, which is
 # a materially weaker backstop wearing a number that had not changed, so it went
-# up rather than staying put. The floor is still deliberately the looser of the
-# two gates: it is the backstop for a run that did not ask to be gated, never
-# the thing keeping CI honest, and a green CI run is never green because of it.
-# Raise it again if the scope grows again; do not lower it to accommodate a
-# survivor that a test could kill.
+# up rather than staying put. Ninety-nine stayed put when the scope grew from
+# 549 scored mutants to 583, and that is arithmetic rather than inertia: one
+# percent of 549 is 5.49 and one percent of 583 is 5.83, so the slack this floor
+# buys is five survivors at both sizes. The floor is still deliberately the
+# looser of the two gates: it is the backstop for a run that did not ask to be
+# gated, never the thing keeping CI honest, and a green CI run is never green
+# because of it. Raise it again if the scope grows enough to change that count;
+# do not lower it to accommodate a survivor that a test could kill.
 minimum_score = 99
 require_mutants = true
 

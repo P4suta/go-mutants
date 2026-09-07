@@ -14,6 +14,37 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The dogfood gate covers `internal/testflag`, `internal/operatorselect` and
+  `internal/drift`.** The floor is six packages where it was three: 600 mutants
+  against 566, all 34 new ones killed, still 100.00%, still seventeen declared
+  equivalents — not one of them new. The three packages were measured before
+  they were included, one run each, and every mutant in them was already dead:
+  `testflag` 7, `operatorselect` 16, `drift` 11. So this change is three
+  `include` globs and the three `test.command` patterns that give them a binary,
+  with no test written and no `[[mutation.expect]]` row added, because there was
+  no survivor to kill and therefore nothing to argue equivalent. A row for a
+  mutant a test could kill is the skip list `.go-mutants.toml` refuses to keep,
+  and so is a row for a mutant nothing survived.
+
+  They are the small deciders the pure core is trusted through, which is why
+  they were the next three: which argument names a test-binary flag, which
+  rules a profile or an `--operator` name selects, and which change to an
+  instrumented snapshot the instrumentation did not make. Each is a pure
+  function of its inputs, so a mutant either changes an answer or it does not —
+  the same property that let the first three packages in.
+
+  It cost about a second. The run before this widening and the run after it,
+  back to back at `--jobs 4`, three runs each: 8.8–9.0s for 566 mutants and
+  9.9–10.5s for 600 against a warm test-owned build cache, and 38 seconds
+  either way against a cold one. Cold is the case CI measures, because the
+  dogfood job points `GO_MUTANTS_TEST_GOCACHE` at the runner's temporary
+  directory and never restores it, and a cold run is dominated by compiling the
+  module rather than by 34 more test processes over 125 more lines. The job's
+  25-minute budget was left alone on that evidence rather than on the hope that
+  it still fitted. `policy.minimum_score` stayed at 99 for the same kind of
+  reason: one percent of 549 scored mutants is 5.49 and one percent of 583 is
+  5.83, so the backstop buys five survivors of slack at both sizes and moving
+  it would have changed a gate nobody measured a need to change.
 - **A scripted `go` command, so that "what happens when the toolchain
   misbehaves" is a unit test.** `mutantkit.FakeGo` hands a test an executable
   named `go` that re-executes the test binary and answers from a rule table the
@@ -1863,10 +1894,12 @@ Entries say *why* a change was made, not only what changed.
   7m08s to 121 mutants in 48-50 seconds on the same machine — seven times the
   scope in a ninth of the time — and could grow from two files to two whole
   packages because of it. What bounded it after that was missing tests rather
-  than the clock, and those tests are in this release too, so the gate is now
+  than the clock, and those tests are in this release too, so the gate grew to
   three whole packages and 560 mutants in about 1m20s — see *The dogfood gate
-  covers every pure-core package* below. `.go-mutants.toml` records each
-  measurement where somebody widening the scope again will read it.
+  covers every pure-core package* below — and then to six packages and 600, in
+  the entry at the top of this section. `.go-mutants.toml` records each
+  measurement next to the scope that produced it, where somebody widening the
+  scope again will read it.
 
   Scoping also decides which test binaries get a *vote*, which is a correctness
   property and not only a speed one: a suite the baseline never measured can
