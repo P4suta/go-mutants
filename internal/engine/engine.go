@@ -55,8 +55,8 @@ const (
 	// misreport as scheduling noise.
 	MinDerivedTimeout = 10 * time.Second
 
-	// TimeoutFactor multiplies the slowest baseline run after the first; see
-	// [budgetBaseline].
+	// TimeoutFactor multiplies the slowest baseline run after the first — or
+	// the only run, when there is one; see [budgetBaseline].
 	TimeoutFactor = 5
 
 	// MinDerivedMemory is the floor under a derived per-mutant memory bound.
@@ -343,9 +343,9 @@ type RunOutcome struct {
 	BaselineRuns []time.Duration
 	// AverageBaseline and SlowestBaseline summarise BaselineRuns. Slowest is
 	// the run the budget is sized on — the slowest of the runs after the
-	// first, because the first is the one that compiles; see
-	// [budgetBaseline] — and not necessarily the slowest observation, which
-	// BaselineRuns still carries.
+	// first, because the first is the one that compiles, or the only run
+	// when there is one; see [budgetBaseline] — and not necessarily the
+	// slowest observation, which BaselineRuns still carries.
 	AverageBaseline time.Duration
 	SlowestBaseline time.Duration
 	// Timeout is the per-mutant timeout, and TimeoutSource says where it came

@@ -143,7 +143,7 @@ low = 60
 - `timeout`: a duration string such as `"60s"` or `"2m"`. Omitted derives
   `max(10s, slowest baseline × 5)`, where the slowest is taken over the
   baseline runs after the first — the first run of `go test` compiles, and a
-  mutant run never does.
+  mutant run never does — or is the only run when `test.baseline_runs` is 1.
 - `memory`: a byte size such as `"2GiB"` or `"512MiB"`, bounding the resident
   memory of each mutant's whole process tree. Omitted derives
   `max(1GiB, largest baseline peak × 4)`. The units are binary — `B`, `KiB`,
@@ -216,7 +216,8 @@ different programs.
 
 The configured timeout rather than the derived one is deliberate. A derived
 timeout is `max(10s, slowest baseline × 5)` over the runs after the first (the
-one that compiles), a wall-clock measurement that moves
+one that compiles; a single run is taken as it is), a wall-clock measurement that
+moves
 on every run, so hashing it would silently switch the cache off for exactly the
 projects worth caching. Each entry records the bound it was measured under
 instead, and a run adopts it only if its own bound could have produced the same

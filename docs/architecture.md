@@ -735,7 +735,8 @@ the outcome cache.
   manifest after the instrumented baseline; drift is exit 2 with the offending
   files listed. `--isolate` is reserved as the per-worker escape hatch.
 - **Timeouts.** Explicit, or `max(10s, slowest baseline × 5)` over the baseline
-  runs after the first, which is the one that compiles. A first timeout
+  runs after the first, which is the one that compiles — or over the only run
+  when there is one. A first timeout
   is not evidence: N test binaries on a loaded machine produce timeouts that
   say nothing about the mutant, and counting one as a detection would inflate
   the score exactly when the run is least able to notice. So every timed-out
@@ -967,7 +968,7 @@ and `go.mod` pins a language version and not a patch release.
 
 Two decisions are worth stating. The effective timeout is judged rather than
 keyed on: a derived bound is `max(10s, slowest baseline × 5)` over the runs
-after the first, a wall-clock
+after the first (the only run, when there is one), a wall-clock
 measurement, so hashing it would have given every run of a non-trivial project
 its own empty directory; each entry records the bound it was measured under and
 a lookup refuses one that bound could not have produced. And the partition runs

@@ -80,7 +80,8 @@ type TimeoutSource string
 // The timeout sources.
 const (
 	// TimeoutDerived is max(10s, slowest baseline × 5), where the slowest is
-	// taken over the runs after the first; see [BaselineCompleted.Slowest].
+	// taken over the runs after the first, or is the only run when there is
+	// one; see [BaselineCompleted.Slowest].
 	TimeoutDerived TimeoutSource = "derived"
 	// TimeoutExplicit is the configured `test.timeout` or `--timeout`.
 	TimeoutExplicit TimeoutSource = "explicit"
