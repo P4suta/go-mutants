@@ -23,7 +23,9 @@ import (
 // the larger of what was sampled and what was accounted.
 //
 // ru_maxrss is a high-water mark, not a reading, which is why nothing has to be
-// timed to catch it.
+// timed to catch it — and, on Linux, why it is not the child's: see
+// [accountedPeakBelongsToTheChild] there. [peakOf] decides per platform whether
+// this number is consulted at all.
 func peakRSSOf(ps *os.ProcessState) (int64, bool) {
 	if ps == nil {
 		return 0, false

@@ -60,3 +60,8 @@ func TruncationNotice(total int64) string { return truncationNotice(total) }
 // under the sampler's, which is what decides whether a tree the sampler missed
 // can have been ended by the bound at all. See exceededAtExit.
 func KernelBoundsMemory() bool { return kernelBoundsMemory }
+
+// AccountedPeakBelongsToTheChild reports whether wait4/job accounting on this
+// platform measures the child rather than the parent; see the per-platform
+// constant.
+func AccountedPeakBelongsToTheChild() bool { return accountedPeakBelongsToTheChild }

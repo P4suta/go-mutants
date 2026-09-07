@@ -227,9 +227,20 @@ type Result struct {
 	MemoryExceeded bool
 
 	// PeakMemory is the highest memory the child's process tree was observed to
-	// hold, in bytes, and is zero when this platform could not say. It is
-	// reported for every process this package runs, bounded or not, and a tree
-	// killed by [Spec.MemoryLimit] still reports how far it got.
+	// hold, in bytes, and is zero when nothing observed it. A tree killed by
+	// [Spec.MemoryLimit] still reports how far it got.
+	//
+	// Who observes it is the platform's business, and it decides which runs
+	// carry a number. On Windows the job object accounts for the whole tree
+	// from start to finish, and on macOS wait4's ru_maxrss is the child's own
+	// high-water mark, so every run reports one. On Linux ru_maxrss is *not*
+	// the child's own — a process started with clone(CLONE_VM|CLONE_VFORK),
+	// which is every process os/exec starts, inherits the parent's high-water
+	// mark, so a `/bin/true` started by a process that once held a gibibyte
+	// reports a gibibyte — and the only honest number is a sampled one. So on
+	// Linux every run is sampled, early and often at first and then every
+	// [MemorySampleInterval], and reports the highest sample; a run that ends
+	// before the first sample reports zero, having ended before anybody looked.
 	//
 	// It is deliberately not called RSS, because it is not the same quantity on
 	// both platforms and no conversion between them would be anything but a
@@ -539,14 +550,12 @@ func runProcess(ctx context.Context, spec Spec) Result {
 		timeoutC = timer.C
 	}
 
-	// A run with no bound starts no sampler at all, so the unbounded path — the
-	// baseline, the compiles, every command a caller never budgeted — costs
-	// nothing for a feature it did not ask for. A nil watchdog answers every
-	// question below with the zero value.
-	var watchdog *memoryWatchdog
-	if spec.MemoryLimit > 0 {
-		watchdog = watchMemory(sup, spec.MemoryLimit)
-	}
+	// Every run is sampled, bounded or not: with a limit the sampler is what
+	// enforces it, and without one it only measures, which on Linux is the one
+	// honest measurement there is (see [Result.PeakMemory]). What it costs — a
+	// goroutine and a handful of small reads a second — is paid per process,
+	// and a process that ends before the first sample has paid for nothing.
+	watchdog := watchMemory(sup, max(spec.MemoryLimit, 0))
 
 	var timedOut, memoryExceeded, killed bool
 	select {
@@ -601,7 +610,8 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	return result
 }
 
-// peakOf combines the two things that know how big the tree got.
+// peakOf combines the two things that know how big the tree got — where both
+// of them are telling the truth about the child.
 //
 // They are combined rather than chosen between because each sees something the
 // other cannot. The platform's own accounting covers a child that grew and
@@ -611,11 +621,26 @@ func runProcess(ctx context.Context, spec Spec) Result {
 // answer to "how much of the machine did this take", and neither is a number
 // go-mutants invented.
 //
+// Except on Linux, where the accounted number is max(the parent's high-water
+// mark when it forked, the child's own): see [accountedPeakBelongsToTheChild].
+// It is not consulted there at all. Recovering the half that is the child's —
+// "an accounted number above the parent's mark can only be the child's" — was
+// tried and withdrawn: the mark has to be read before the fork, a parent with
+// other goroutines allocating (a test binary under the race detector, or the
+// engine itself running discovery beside a mutant) moves it by hundreds of
+// megabytes between the read and the fork, and the number that then clears
+// the stale mark is the parent's after all. So on Linux the sampler is the
+// only witness, and a run nobody sampled reports no peak rather than the
+// parent's.
+//
 // It is called after the sampler has been stopped and waited for, and before
 // the supervisor is released — which on Windows is where the accounting lives,
 // and which happens in a defer at the end of [runProcess].
 func peakOf(sup supervisor, ps *os.ProcessState, watchdog *memoryWatchdog) int64 {
 	peak := watchdog.observedPeak()
+	if !accountedPeakBelongsToTheChild {
+		return peak
+	}
 	if accounted, ok := sup.peakMemory(ps); ok {
 		peak = max(peak, accounted)
 	}

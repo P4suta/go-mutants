@@ -549,7 +549,7 @@ and its result are one line.
 | `exit_code` | the exit status |
 | `timed_out` | whether the timeout ended it |
 | `duration_ms` | how long it ran |
-| `peak_memory_bytes` | the highest memory the command's whole process tree was observed to hold — the resident set on Unix, the job's committed charge on Windows; absent where the platform could not measure one |
+| `peak_memory_bytes` | the highest memory the command's whole process tree was observed to hold — the resident set on Unix, the job's committed charge on Windows; absent where nothing observed one. On Linux it is sampled — early and often in the child's first milliseconds, then every 100 ms — rather than taken from the kernel's `ru_maxrss`, which there carries the *parent's* high-water mark; a command that ended before its first sample carries none |
 | `output_bytes` | size of the whole captured output |
 | `output_sha256` | SHA-256 of the whole captured output |
 | `output_truncated` | whether the preserved file was cut at the 1 MiB cap |
@@ -659,7 +659,9 @@ frozen — so the fact that tells the two apart is recorded beside the outcome
 rather than as another word in it. `peak_memory_bytes` is written for every
 attempt, bounded or not, because "which mutant cost the machine most" is a
 question asked after the run and a recording that had measured only what it
-bounded could not answer it. It is the maximum over every binary the attempt
+bounded could not answer it — every process is sampled, bounded or not,
+which is what makes that true on Linux (see `exec` above). It is the
+maximum over every binary the attempt
 started rather than the deciding binary's — an attempt's cost is the worst
 moment it put the machine through, and the binary that settled it need not be
 the one that cost the most — and it is not the same quantity on both platforms:

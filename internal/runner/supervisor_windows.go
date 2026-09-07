@@ -215,7 +215,7 @@ func (s *jobSupervisor) terminate(<-chan struct{}, time.Duration) {
 // mutant that reached four gigabytes and then freed them still took the machine
 // for the moment it held them — and a peak cannot be missed between two ticks
 // of the sampler the way an instantaneous reading can.
-func (s *jobSupervisor) usedMemory() (int64, bool) { return jobPeakMemory(s.job) }
+func (s *jobSupervisor) usedMemory(bool) (int64, bool) { return jobPeakMemory(s.job) }
 
 // peakMemory reads the same accounting once more, after the tree is gone and
 // before the handle is closed. The exit status says nothing about memory on

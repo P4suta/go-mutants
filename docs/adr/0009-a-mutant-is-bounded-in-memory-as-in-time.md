@@ -56,9 +56,26 @@ and come back with a verdict about it.
 baseline, enforced at the process layer, over the whole tree.**
 
 1. **The runner measures every process and bounds the ones it is asked to.**
-   `runner.Result.PeakMemory` is reported for every child go-mutants starts, from
-   `wait4`'s `ru_maxrss` on POSIX and from the job object's `PeakJobMemoryUsed`
-   on Windows. The two are not the same quantity — resident pages against
+   `runner.Result.PeakMemory` comes from the job object's `PeakJobMemoryUsed`
+   on Windows, from `wait4`'s `ru_maxrss` on macOS, and on Linux from the
+   sampler alone — every run is sampled: once at the moment the child is
+   adopted, on the caller's own goroutine, then at 10, 25 and 50 ms, then
+   every 100 ms — and one that ended before its first sample reports no peak.
+   A sample walks the child's own tree through `/proc/<pid>/task/*/children`
+   rather than scanning every process on the machine, which is what makes the
+   first one cheap enough to take at once (a scan of a busy machine costs
+   milliseconds, which is most of what a short test binary lives) and which
+   also counts a descendant that left the process group; a kernel without
+   `CONFIG_PROC_CHILDREN` falls back to the group scan. The Linux exception
+   was found after this decision
+   was first written:
+   Go starts every child with `clone(CLONE_VM|CLONE_VFORK)`, and the
+   `ru_maxrss` the kernel then reports for the child begins at the *parent's*
+   high-water mark — measured on the repository's own machine, a `/bin/true`
+   started by a process that had touched a gibibyte reported 1,052,672 KiB.
+   A baseline peak taken that way would be the go-mutants process's own size,
+   and four times it a bound that stops nothing. The two are not the same
+   quantity — resident pages against
    committed charge — and neither is converted into the other, because a
    conversion between two things the kernels measure differently would be a
    number go-mutants invented. `runner.Spec.MemoryLimit` bounds one; while the
@@ -161,7 +178,10 @@ baseline, enforced at the process layer, over the whole tree.**
   paid for two or three processes rather than for the machine's hundreds. A
   bounded mutant on a busy host therefore reads a few hundred small files a
   second. Windows costs one `QueryInformationJobObject` per tick instead, which
-  is O(1). An unbounded run starts no sampler and pays none of it.
+  is O(1). Every run pays for its own sampler, bounded or not — the first
+  samples of a child's life walk only its own tree and cost microseconds, and
+  a child that is gone in ten milliseconds has paid for one or two of those;
+  only the steady ticks of a run that lives longer add the process-table scan.
 - The Linux sampler reads the **proportional set size** rather than `VmRSS`,
   because `VmRSS` counts a shared page once in every process that has it
   resident and a Go program's most interesting shared mapping — the fuzzing

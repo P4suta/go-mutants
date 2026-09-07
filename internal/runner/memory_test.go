@@ -62,16 +62,20 @@ const (
 func helperFootprint(t *testing.T) int64 {
 	t.Helper()
 
+	// A child that lives long enough to be sampled more than once: on Linux
+	// the sampler is the only measurement that is the child's own (see
+	// [runner.Result.PeakMemory]), and a helper that exits at once would be
+	// measured at whatever its first milliseconds happened to hold.
 	result := runner.Run(t.Context(), runner.Spec{
-		Argv: helperCommand(t, "exit", "0"),
+		Argv: helperCommand(t, "sleep", milliseconds(3*runner.MemorySampleInterval)),
 		Env:  helperEnviron(),
 	})
 	if result.Err != nil {
 		t.Fatalf("measuring the helper's footprint: Err = %v, want nil", result.Err)
 	}
 	if result.PeakMemory <= 0 {
-		t.Fatalf("PeakMemory = %d for a child that ran to completion, want the peak this platform measured",
-			result.PeakMemory)
+		t.Fatalf("PeakMemory = %d for a measured child that lived %s, want the peak this platform observed",
+			result.PeakMemory, 3*runner.MemorySampleInterval)
 	}
 	return result.PeakMemory
 }
@@ -133,7 +137,8 @@ func TestRunReportsThePeakResidentMemoryOfTheChild(t *testing.T) {
 
 // TestRunWithoutAMemoryLimitNeverReportsExceeded pins that the bound is opt-in,
 // the way the timeout is: a zero [runner.Spec.MemoryLimit] means unbounded and
-// not "bounded at zero".
+// not "bounded at zero" — and that a run is measured whether or not it is
+// bounded.
 func TestRunWithoutAMemoryLimitNeverReportsExceeded(t *testing.T) {
 	t.Parallel()
 
@@ -151,7 +156,7 @@ func TestRunWithoutAMemoryLimitNeverReportsExceeded(t *testing.T) {
 		t.Errorf("ExitCode = %d, want 0: nothing should have stopped it", result.ExitCode)
 	}
 	if result.PeakMemory <= 0 {
-		t.Error("PeakMemory = 0: an unbounded run is still a measured one")
+		t.Error("PeakMemory = 0: an unbounded run is still a sampled one")
 	}
 }
 
@@ -435,7 +440,10 @@ func TestABurstThatOutrunsTheSamplerIsStillMeasured(t *testing.T) {
 	if result.TimedOut {
 		t.Fatal("TimedOut = true for a helper that allocates and exits")
 	}
-	if result.PeakMemory <= limit {
+	// Only a platform whose accounting is the child's own can measure a burst
+	// the sampler missed; on Linux the sampler is the only witness, so a burst
+	// that ended between two ticks is honestly reported at whatever it saw.
+	if runner.AccountedPeakBelongsToTheChild() && result.PeakMemory <= limit {
 		t.Errorf("PeakMemory = %d, want above the %d bound: the helper did not grow far enough to prove anything",
 			result.PeakMemory, limit)
 	}
@@ -444,5 +452,71 @@ func TestABurstThatOutrunsTheSamplerIsStillMeasured(t *testing.T) {
 	// narrowed to avoid.
 	if !runner.KernelBoundsMemory() && result.MemoryExceeded && result.ExitCode == 0 {
 		t.Error("a helper that allocated and exited cleanly was reported as killed by its bound")
+	}
+}
+
+// TestPeakMemoryBelongsToTheChildAndNotTheParent pins the one property a
+// measurement has to have before a bound can be derived from it: it is about
+// the child.
+//
+// On Linux the kernel's ru_maxrss for a child started with clone(CLONE_VM|
+// CLONE_VFORK) — which is how os/exec starts every process — begins at the
+// parent's own high-water mark, so a `/bin/true` started by a process that once
+// held a gibibyte reports a gibibyte. Measured on this repository's own machine
+// before this test existed: 2 MiB before the parent touched memory, 1 GiB after.
+// A baseline peak taken that way is the go-mutants process's size, not the
+// suite's, and four times it is a bound that stops nothing.
+//
+// So the test process makes itself large first, then measures a child that
+// does nothing but wait long enough to be sampled, and requires the child's
+// peak to be a fraction of what the parent holds.
+func TestPeakMemoryBelongsToTheChildAndNotTheParent(t *testing.T) {
+	// Deliberately not parallel: the test holds a quarter of a gibibyte for
+	// its whole run, and the hog tests beside it hold up to an eighth each; a
+	// small runner should never see all of them at once.
+	const parentGrowth = 256 << 20
+	ballast := make([]byte, parentGrowth)
+	for i := 0; i < len(ballast); i += 4096 {
+		ballast[i] = 1
+	}
+	defer func() { _ = ballast[0] }()
+
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv: helperCommand(t, "sleep", milliseconds(3*runner.MemorySampleInterval)),
+		Env:  helperEnviron(),
+	})
+	if result.Err != nil || result.ExitCode != 0 {
+		t.Fatalf("Err = %v, ExitCode = %d, want a clean exit; output: %s", result.Err, result.ExitCode, result.Output)
+	}
+	if result.PeakMemory <= 0 {
+		t.Fatalf("PeakMemory = %d for a measured child that lived %s, want the peak this platform observed",
+			result.PeakMemory, 3*runner.MemorySampleInterval)
+	}
+	if result.PeakMemory >= parentGrowth/2 {
+		t.Errorf("PeakMemory = %d for a child that only slept, while its parent holds %d: the measurement "+
+			"is the parent's high-water mark, not the child's", result.PeakMemory, parentGrowth)
+	}
+}
+
+// TestAnUnboundedRunIsStillSampled pins that measuring and bounding are
+// separate things: a run that names no limit is never killed and never reports
+// MemoryExceeded, and still comes back with a peak, because every run is
+// sampled and only a bounded one can trip.
+func TestAnUnboundedRunIsStillSampled(t *testing.T) {
+	t.Parallel()
+
+	const grown = 64 << 20
+	result := runner.Run(t.Context(), runner.Spec{
+		Argv: append(helperCommand(t, "hog"), hogArgs(grown)...),
+		Env:  helperEnviron(),
+	})
+	if result.Err != nil || result.ExitCode != 0 {
+		t.Fatalf("Err = %v, ExitCode = %d, want a clean exit; output: %s", result.Err, result.ExitCode, result.Output)
+	}
+	if result.MemoryExceeded {
+		t.Error("MemoryExceeded = true for a run that named no limit")
+	}
+	if result.PeakMemory < grown {
+		t.Errorf("PeakMemory = %d, want at least the %d bytes the child made resident", result.PeakMemory, grown)
 	}
 }

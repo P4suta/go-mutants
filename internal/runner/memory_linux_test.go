@@ -123,6 +123,20 @@ func fakeProc(t *testing.T, procs []fakeProcess) string {
 		fields[23] = strconv.FormatInt(p.rssPages, 10)
 		writeProcFile(t, filepath.Join(dir, "stat"), strings.Join(fields, " ")+"\n")
 
+		if p.children != nil {
+			// The children file lives under a thread directory; the main thread
+			// has the pid's own id, and a process may have others.
+			taskDir := filepath.Join(dir, "task", strconv.Itoa(p.pid))
+			if err := os.MkdirAll(taskDir, 0o755); err != nil {
+				t.Fatalf("creating %s: %v", taskDir, err)
+			}
+			kids := make([]string, 0, len(p.children))
+			for _, kid := range p.children {
+				kids = append(kids, strconv.Itoa(kid))
+			}
+			writeProcFile(t, filepath.Join(taskDir, "children"), strings.Join(kids, " ")+" ")
+		}
+
 		if p.pssKB < 0 {
 			continue
 		}
@@ -142,6 +156,11 @@ type fakeProcess struct {
 	pgrp     int
 	rssPages int64
 	pssKB    int64
+	// children, when non-nil, writes a task/<pid>/children file naming them —
+	// an empty slice writes an empty file, which is a kernel that has the
+	// file and a process that has no children. nil writes no file at all,
+	// which is a kernel built without CONFIG_PROC_CHILDREN.
+	children []int
 }
 
 func writeProcFile(t *testing.T, path, content string) {
@@ -215,5 +234,96 @@ func TestAKernelWithoutSmapsRollupFallsBackToTheResidentSet(t *testing.T) {
 	// 64 MiB from the process with no rollup, 32 MiB from the one that has one.
 	if want := int64(96 * mib); got != want {
 		t.Errorf("groupResidentMemory = %d, want %d", got, want)
+	}
+}
+
+// TestTheTreeIsWalkedThroughTheChildrenFiles pins the measurement a
+// sample is made of when the kernel can name a process's children: the child
+// itself, its children, and their children — including one that left the
+// process group, which the group scan would not see and the kill will not
+// reach, but which is still memory this tree is holding.
+//
+// It is also the reason a sample is cheap enough to take at once: the walk
+// reads the tree's own few files rather than one file per process on the
+// machine, which on a busy developer box is several hundred reads and the
+// milliseconds a short-lived test binary does not have.
+func TestTheTreeIsWalkedThroughTheChildrenFiles(t *testing.T) {
+	original := procRoot
+	t.Cleanup(func() { procRoot = original })
+
+	const mib = 1 << 20
+	procRoot = fakeProc(t, []fakeProcess{
+		{pid: 100, pgrp: 100, rssPages: 1, pssKB: 10 * 1024, children: []int{101}},
+		{pid: 101, pgrp: 100, rssPages: 1, pssKB: 20 * 1024, children: []int{102}},
+		// A grandchild that called setsid: out of the group, still in the tree.
+		{pid: 102, pgrp: 102, rssPages: 1, pssKB: 40 * 1024, children: []int{}},
+		// A process in the same group that is not a descendant cannot happen
+		// on a real machine — a group member is by construction a descendant
+		// of its leader — but if it did, the walk does not invent it.
+		{pid: 300, pgrp: 300, rssPages: 1, pssKB: 80 * 1024, children: []int{}},
+	})
+
+	got, ok := treeResidentMemory(100)
+	if !ok {
+		t.Fatal("treeResidentMemory could not read the fake proc root")
+	}
+	if want := int64(70 * mib); got != want {
+		t.Errorf("treeResidentMemory = %d, want %d: the child, its child and the grandchild that left the group",
+			got, want)
+	}
+}
+
+// TestAKernelWithoutChildrenFilesFallsBackToTheGroupScan keeps a kernel built
+// without CONFIG_PROC_CHILDREN working: with no children file to walk, the
+// sample is the process-group scan it always was.
+func TestAKernelWithoutChildrenFilesFallsBackToTheGroupScan(t *testing.T) {
+	original := procRoot
+	t.Cleanup(func() { procRoot = original })
+
+	const mib = 1 << 20
+	procRoot = fakeProc(t, []fakeProcess{
+		{pid: 100, pgrp: 100, rssPages: 1, pssKB: 10 * 1024},
+		{pid: 101, pgrp: 100, rssPages: 1, pssKB: 20 * 1024},
+		{pid: 102, pgrp: 102, rssPages: 1, pssKB: 40 * 1024},
+	})
+
+	got, ok := treeResidentMemory(100)
+	if !ok {
+		t.Fatal("treeResidentMemory could not read the fake proc root")
+	}
+	if want := int64(30 * mib); got != want {
+		t.Errorf("treeResidentMemory = %d, want %d: without children files only the group can be summed",
+			got, want)
+	}
+}
+
+// TestAChildTheChildrenFileOmittedIsStillCountedByTheThoroughSample is the
+// race proc(5) warns about, staged: the children file is reliable only for a
+// stopped process, and a live child can be missing from it when a sibling
+// exits during the read. The quick sample honestly reports what the walk
+// reached; the thorough one — the one a bound is enforced from — adds every
+// group member the walk missed.
+func TestAChildTheChildrenFileOmittedIsStillCountedByTheThoroughSample(t *testing.T) {
+	original := procRoot
+	t.Cleanup(func() { procRoot = original })
+
+	const mib = 1 << 20
+	procRoot = fakeProc(t, []fakeProcess{
+		// The root names only one of its two children.
+		{pid: 100, pgrp: 100, rssPages: 1, pssKB: 10 * 1024, children: []int{101}},
+		{pid: 101, pgrp: 100, rssPages: 1, pssKB: 20 * 1024, children: []int{}},
+		// Alive, in the group, and absent from the file.
+		{pid: 103, pgrp: 100, rssPages: 1, pssKB: 40 * 1024, children: []int{}},
+		{pid: 300, pgrp: 300, rssPages: 1, pssKB: 80 * 1024, children: []int{}},
+	})
+
+	quick, ok := treeResidentMemory(100)
+	if !ok || quick != 30*mib {
+		t.Errorf("treeResidentMemory = %d, %v; want %d: the walk reports what the file names", quick, ok, 30*mib)
+	}
+	thorough, ok := treeAndGroupResidentMemory(100)
+	if !ok || thorough != 70*mib {
+		t.Errorf("treeAndGroupResidentMemory = %d, %v; want %d: the group member the file omitted is counted once",
+			thorough, ok, 70*mib)
 	}
 }

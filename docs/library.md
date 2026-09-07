@@ -1079,13 +1079,20 @@ process tree:
   its peak measured and would spend those two seconds allocating, so it is
   killed outright. The two flags are never both set, so a consumer branches on
   one of them and never on a message.
-- **`PeakMemory`** comes back from every call, bounded or not, and is the
-  maximum over the binaries the call started rather than the deciding binary's:
-  a call's cost is the worst moment it put the machine through. It is not the
-  same quantity on every platform and is not converted into one — the resident
-  set on Unix, the job's committed charge on Windows — and it is zero where the
-  platform could not measure one, which is why a consumer comparing it against
-  a budget checks that it is positive first.
+- **`PeakMemory`** comes back from every session call and every workspace
+  command, and is the maximum over the binaries the call started rather than
+  the deciding binary's: a call's cost is the worst moment it put the machine
+  through. It is not the same quantity on every platform and is not converted
+  into one — the resident set on Unix, the job's committed charge on Windows —
+  and it is zero where nothing measured one, which is why a consumer comparing
+  it against a budget checks that it is positive first. On Linux the number is
+  *sampled*, every 100 ms, because the kernel's own accounting for a child is
+  not the child's: `wait4`'s `ru_maxrss` starts from the parent's high-water
+  mark for every process Go starts there, so a `/bin/true` started by a process
+  that once held a gibibyte reports a gibibyte. Every process is sampled — early
+  and often in its first milliseconds, then every 100 ms — and a process that
+  ends before the first sample reports zero, honestly, rather than its parent's
+  size.
 
 It exists because a deadline does not bound a program that allocates. A mutant
 that turns a terminating loop into a non-terminating one that appends can take a

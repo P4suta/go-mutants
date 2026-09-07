@@ -28,6 +28,9 @@ type scriptedSupervisor struct {
 	// unmeasurable makes the platform unable to answer at all, which is not the
 	// same as an empty tree and has to end the sampler rather than stall it.
 	unmeasurable bool
+	// accounted is what the platform's own accounting reports for the reaped
+	// child; zero means it reports nothing.
+	accounted int64
 }
 
 func (s *scriptedSupervisor) configure(*exec.Cmd)                      {}
@@ -35,12 +38,14 @@ func (s *scriptedSupervisor) adopt(*exec.Cmd) error                    { return 
 func (s *scriptedSupervisor) terminate(<-chan struct{}, time.Duration) {}
 func (s *scriptedSupervisor) release()                                 {}
 
-func (s *scriptedSupervisor) peakMemory(*os.ProcessState) (int64, bool) { return 0, false }
+func (s *scriptedSupervisor) peakMemory(*os.ProcessState) (int64, bool) {
+	return s.accounted, s.accounted > 0
+}
 
 // usedMemory hands back the next scripted sample, and repeats the last one
 // once the script runs out so a watchdog that was expected not to trip has
 // something to keep reading.
-func (s *scriptedSupervisor) usedMemory() (int64, bool) {
+func (s *scriptedSupervisor) usedMemory(bool) (int64, bool) {
 	if s.unmeasurable {
 		return 0, false
 	}
@@ -199,6 +204,55 @@ func TestOnlyAKernelLineCanEndATreeTheSamplerDidNotSee(t *testing.T) {
 			if got != c.want {
 				t.Errorf("exceededAtExit(%t, %d, %d, %d, %t) = %t, want %t",
 					c.kernel, c.limit, c.peak, c.exitCode, c.killed, got, c.want)
+			}
+		})
+	}
+}
+
+// TestTheFirstSampleIsTakenBeforeWatchMemoryReturns pins why a child that
+// lives ten milliseconds still reports a peak: the sampler's first look is
+// taken on the caller's goroutine, before the child has had a chance to
+// finish, and only the later ones wait.
+func TestTheFirstSampleIsTakenBeforeWatchMemoryReturns(t *testing.T) {
+	t.Parallel()
+
+	sup := &scriptedSupervisor{samples: []int64{7 << 20}}
+	w := watchMemory(sup, 0)
+	if got := w.observedPeak(); got != 7<<20 {
+		t.Errorf("observedPeak right after watchMemory = %d, want the first sample %d, taken synchronously",
+			got, 7<<20)
+	}
+	w.stop()
+}
+
+// TestTheAccountedPeakIsConsultedOnlyWhereItBelongsToTheChild pins how
+// [peakOf] reads the kernel's number: everywhere but Linux it is the child's
+// and is combined with the samples; on Linux it is the parent's as often as
+// the child's and is ignored, leaving the sampler as the only witness.
+func TestTheAccountedPeakIsConsultedOnlyWhereItBelongsToTheChild(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name      string
+		sampled   int64
+		accounted int64
+	}{
+		{"accounting above the samples", 10 << 20, 300 << 20},
+		{"accounting below the samples", 50 << 20, 10 << 20},
+		{"no accounting at all", 10 << 20, 0},
+		{"nothing at all", 0, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			sup := &scriptedSupervisor{accounted: c.accounted}
+			w := &memoryWatchdog{}
+			w.record(c.sampled)
+			want := c.sampled
+			if accountedPeakBelongsToTheChild {
+				want = max(c.sampled, c.accounted)
+			}
+			if got := peakOf(sup, nil, w); got != want {
+				t.Errorf("peakOf(sampled %d, accounted %d) = %d, want %d", c.sampled, c.accounted, got, want)
 			}
 		})
 	}
