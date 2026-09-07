@@ -195,6 +195,40 @@ var repositoryExpectations = []Expectation{
 			"requiring an invalid document to come back GOM5003 rather than " +
 			"GOM5004.",
 	},
+	// The four rows this package brought with it, every one of them toInt in
+	// load.go: two comparisons that are equivalent on any word size, and the
+	// two saturating returns behind them, which are dead code on a 64-bit
+	// build and are the reason the rows say "on a 64-bit build" rather than
+	// "unkillable".
+	{
+		ID: "3293a81a48613c6b4ec80c0ec2327aa8b8494f35c4db89c61cde9968a858994e",
+		Reason: "Equivalent on every platform: `v > int64(maxInt)` and " +
+			"`v >= int64(maxInt)` select different branches only at exactly " +
+			"int64(maxInt), where the guard returns maxInt and falling " +
+			"through returns int(v) -- and int(int64(maxInt)) is maxInt, so " +
+			"both spellings narrow every int64 to the same int.",
+	},
+	{
+		ID: "271f4a89a0bc3384ae00bb92d1a73092af73b8560ec782d178262d867452f318",
+		Reason: "Unreachable on a 64-bit build, which is every platform this " +
+			"gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is " +
+			"math.MaxInt64 and no int64 is greater than it. Killing it means " +
+			"running this package's suite on a 32-bit GOARCH.",
+	},
+	{
+		ID: "dd85e0fa4c21d862861434da948c0b83e3cfabd62b13786d4d1b6c1ca8613af4",
+		Reason: "Equivalent on every platform: the same argument as the `>` " +
+			"row above, at the other end -- `<` and `<=` disagree only at " +
+			"exactly int64(minInt), where the guard returns minInt and " +
+			"falling through returns int(v), which is minInt.",
+	},
+	{
+		ID: "0465760a7c7529075e78c437ba8017e0d96ab3156b1dc7b484ee89256c7ba60c",
+		Reason: "Unreachable on a 64-bit build: minInt is -maxInt - 1, so " +
+			"int64(minInt) is math.MinInt64 and no int64 is less than it -- " +
+			"the mirror of the maxInt row above, and reachable on the same " +
+			"32-bit GOARCH.",
+	},
 }
 
 // The example everyone reads has to be an example that works. A documented
@@ -223,13 +257,14 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Eight whole packages. Scoped test binaries bought the first two
+			// Nine whole packages. Scoped test binaries bought the first two
 			// — the gate used to be two files, because every mutant ran every
 			// test binary in the module — internal/mutation's own tests
 			// bought the third, by killing the survivors that kept it out,
 			// the next three were measured before they were included and
-			// had no survivor to kill, and the last two were bought the same
-			// way the third was.
+			// had no survivor to kill, and the last three were bought the
+			// same way the third was. The ninth is this package: the file
+			// this test reads is now inside the scope that reads it.
 			//
 			// The order is the file's order, and it is asserted rather than
 			// sorted for the same reason the expectation ids are: a list
@@ -243,6 +278,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/drift/*.go",
 				"internal/coverage/*.go",
 				"internal/schemas/*.go",
+				"internal/config/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -256,8 +292,8 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		},
 		Test: Test{
 			// The command is the run's scope as well as its measurement: these
-			// eight patterns are the only packages a test binary is built for,
-			// and they have to be the eight Include names above. A package that
+			// nine patterns are the only packages a test binary is built for,
+			// and they have to be the nine Include names above. A package that
 			// is mutated but not named here gets no binary, so every mutant in
 			// it is reported `survived (uncovered)` — which is why both lists
 			// are pinned here rather than one of them.
@@ -265,13 +301,18 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"go", "test",
 				"./internal/mutation/...", "./internal/glob/...", "./internal/interval/...",
 				"./internal/testflag/...", "./internal/operatorselect/...", "./internal/drift/...",
-				"./internal/coverage/...", "./internal/schemas/...",
+				"./internal/coverage/...", "./internal/schemas/...", "./internal/config/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
 			// clearing internal/discover's toolchain-driving suite, which is no
 			// longer built. Zero is what "derive it" looks like here.
-			Timeout:      0,
+			Timeout: 0,
+			// `memory` is omitted for the same reason and pinned here for a
+			// sharper one: this scope is why the setting exists, so a number
+			// written into the file would be somebody's guess standing in for
+			// a bound derived from this repository's own baseline.
+			Memory:       0,
 			BaselineRuns: 3,
 		},
 		// `jobs` is pinned in the file rather than defaulted, so that a local

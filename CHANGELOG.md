@@ -14,6 +14,117 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The dogfood gate reads its own configuration.** This repository's own
+  `.go-mutants.toml` now includes `internal/config/*.go`, so the gate is nine
+  whole packages rather than eight, and the ninth is the reader of the file that
+  configures it: decoding, strict-mode key checking, per-value validation,
+  three-layer precedence, and the second pass over the document that lets a
+  diagnostic put a caret under the value it is about. 1296 mutants — 461 in
+  `internal/config`, 450 in `internal/mutation`, 146 in `internal/coverage`, 89
+  in `internal/schemas`, 68 in `internal/glob`, 48 in `internal/interval`, 16 in
+  `internal/operatorselect`, 11 in `internal/drift`, 7 in `internal/testflag` —
+  1266 detected, 30 declared, **100.00%**, in 52–58 seconds at `--jobs 4`
+  against a warm build cache and 1m48s cold, identical on every one of eleven
+  runs. CI's `dogfood` job keeps its 25-minute budget.
+
+  The package is there because the tests that kill its survivors are there,
+  which is the only way this list is allowed to grow. The first measurement over
+  `internal/config` reported 46 unexpected survivors, 15 of them mutants no
+  binary reached at all. Forty-two are now dead, killed by seventeen named tests
+  and by two existing suites given the assertions they were missing, and only
+  two of the package's mutants are still unreached. Nothing was excluded and no
+  budget was cut.
+
+  What the tests found is one theme, and it is a theme worth naming because it
+  is invisible to coverage: **the sentence a user reads was almost never
+  asserted.** Every list this package renders into a diagnostic — the profile
+  tiers, the cache modes, the report formats, the operator families — could be
+  emptied without a test noticing, because the tests asserted the code and the
+  key and never the message. So `unknown cache mode "maybe": expected` was a
+  passing diagnostic. `CacheMode.String`, `ReportFormat.String` and `Code.String`
+  could all return `""`; `Position.String` could print `55:0` for a line with no
+  column, or `""` for a position that points nowhere; `Set.String` could render
+  a set value as nothing at all; `Codes()` and `SchemaKeys()` could return `nil`
+  and the tests that walk them would pass vacuously — and `SchemaKeys` is what
+  `go-mutants init` walks to write a starter file, so a `nil` there is a
+  generated configuration with no settings in it.
+
+  Four more are error paths nothing had ever taken. `Load` was never asked to
+  fail: neither the file's own problems nor the cross-field rule that can only
+  be judged after merging had a test, so both `return Config{}, err` lines could
+  have returned `nil` and let a caller run the defaults while believing it had
+  read a file. `ioMessage` — which strips the `*fs.PathError` wrapper so that a
+  read failure does not print the path this package already prints — had no test
+  at all, and neither did `decodeError`'s last branch or three of
+  `decodeMessage`'s four, which are exactly the answers a future go-toml
+  rewording would land on.
+
+  The rest are the position walk, and they are white-box because the promises
+  are: `record` leaves out a key nobody can name and a node whose empty range
+  would otherwise resolve to line 1, column 1 and send every array diagnostic to
+  the top of the file; `recordValue` ignores a node the parser never filled in;
+  `joinKey` names a scope with nothing written under it yet by the scope. None
+  of them changes an answer `indexPositions` gives on a document the schema
+  admits, which is why no black-box test could reach them. `maxIndexDepth` is
+  the same shape and needed a document to see: the walk records a value nested
+  17 containers deep and nothing below that, and the two documents that pin it
+  are the only place in this repository where that bound is anything but a
+  constant.
+
+  The four survivors that are left are argued, one row each, and all four are
+  `toInt` — the saturating narrowing of a decoded TOML integer. Two are
+  comparisons that are equivalent on any word size, because `>` and `>=` can
+  only disagree at exactly `int64(maxInt)`, where both spellings return the same
+  `int`. The other two are the saturating returns behind them, which on a 64-bit
+  build are unreachable: `int64(maxInt)` is `math.MaxInt64` and nothing is
+  greater. The rows say "on a 64-bit build" rather than "unkillable" because a
+  32-bit `GOARCH` would kill them, and a ledger that overstates its own claim is
+  the thing this ledger exists not to be.
+
+  One cost came with the package, and paying it is what the memory bound below
+  is: four more mutants that never return. Negating either loop of the position
+  walk makes a TOML document endless, and `lineStarts` — negated, or with its
+  stride turned into a subtraction — stops advancing through the file and
+  appends instead. The two that spin can only be caught by the clock, and a
+  timeout is measured a second time before it is believed, so the three spinners
+  in this scope are 60 seconds of worker time and are what sets the gate's wall
+  clock. The two that allocate were worse than that and are now better: each is
+  stopped at about 1.1 GiB after a second and a half and reported as `killed`,
+  once, with no second attempt. `go-mutants run -v` prints the bound they were
+  measured against — `memory: baseline peak 118.2 MiB, bound 1.0 GiB (derived)`
+  — and the JSON report carries `memory_exceeded` and `peak_memory_bytes` beside
+  the outcome.
+
+  That is also why the summary is stable in a way it was not when this widening
+  was first measured. Until every mutant was bounded in memory, the two that
+  allocate were a race between the allocator and the clock, so the same tree
+  reported 1225 killed and five timed out on one run and 1226 and four on the
+  next. The score never moved, because both are detections — but the tally did,
+  and a gate whose own tally is a coin flip is a gate that is not finished. It
+  now reports the same 1296 / 1263 killed / 3 timed out / 30 declared on every
+  run.
+
+  Bounding memory also made this scope *cheaper* than the smaller one before it:
+  1296 mutants in 52–58 seconds where 1260 took 78–79 on the same machine, and
+  1m48s cold where the same tree took 1m52s. Thirty-six of those extra mutants
+  are `test.memory` itself and the byte-size vocabulary that reads it, which are
+  now inside the scope they made necessary — and seven survivors arrived with
+  them, all in `formatSize` and `parseSize`: a renderer whose unit boundaries
+  nothing had ever asserted (`1KiB` versus `1024B`, the exact power where a unit
+  gives way to the next, the size past the last suffix in the list) and the
+  refusal of a size too large for an `int64`, which is the branch standing
+  between a configured bound and `math.MinInt64`. All seven are dead, killed by
+  three named tests in `internal/config/memory_test.go`, one of which pins the
+  promise that makes the renderer worth having: what `formatSize` prints,
+  `parseSize` reads back.
+
+  `policy.minimum_score` stays at 99, re-checked rather than left alone. 1266
+  scored mutants make 1254/1266 = 99.05%, which clears it, and 1253/1266 =
+  98.97%, which does not — so the floor buys twelve survivors of slack where it
+  bought eight. That is the largest it has ever been and still short of the
+  twenty-one that moved this number from 96, and it remains the looser of the
+  two gates: `--strict` fails the job on the first unexpected survivor and is
+  what actually keeps CI honest.
 - **A mutant is bounded in memory the way it is bounded in time.** Widening the
   dogfood gate to `internal/config` brought in two mutants that never return
   *and allocate while not returning*: `negate-loop-condition` at

@@ -5,9 +5,13 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -546,6 +550,113 @@ func TestParseKeepsTOMLLevelMessages(t *testing.T) {
 	}
 }
 
+// Every branch of decodeMessage but the first is only reachable when go-toml
+// says something this package's vocabulary does not cover, which is what an
+// upstream rewording looks like from in here. The contract is that such a
+// rewording costs a clause and never leaks a Go identifier into a diagnostic,
+// so each degraded answer is asserted rather than left to the day it happens.
+func TestDecodeMessageDegradesRatherThanLeakingAGoType(t *testing.T) {
+	for _, test := range []struct{ name, key, message, want string }{
+		{
+			// The one shape that is reachable through Parse, and the one
+			// TestParseDescribesTypeMismatchesFromTheSchema exercises.
+			name:    "a known key and a kind this package names",
+			key:     "report.high",
+			message: "cannot decode TOML string into struct field config.documentReport.High of type int64",
+			want:    "must be an integer, not a string",
+		},
+		{
+			// A mismatch whose kind go-toml worded some other way: the key is
+			// still in the schema, so the sentence still says what the key
+			// takes and simply stops short of naming what was written.
+			name:    "a known key and a kind this package does not name",
+			key:     "report.high",
+			message: "cannot store a rune array in report.high",
+			want:    "must be an integer",
+		},
+		{
+			name:    "an unknown key and a kind this package names",
+			key:     "report.high.y",
+			message: "cannot store a table in report.high",
+			want:    "a table cannot be written here",
+		},
+		{
+			// Neither half is available, so the sentence says the one thing
+			// that is still true rather than quoting the library.
+			name:    "an unknown key and a kind this package does not name",
+			key:     "report.high.y",
+			message: "cannot store a rune array in report.high",
+			want:    "the value written here does not fit the key it was written under",
+		},
+		{
+			// Not a mismatch at all: a complaint about the file, in the
+			// file's own vocabulary, passes through untouched.
+			name:    "a complaint about the document itself",
+			key:     "",
+			message: "key version is already defined",
+			want:    "key version is already defined",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := decodeMessage(test.key, test.message)
+			if got != test.want {
+				t.Errorf("decodeMessage(%q, %q) = %q, want %q", test.key, test.message, got, test.want)
+			}
+			assertNoImplementationDetail(t, got)
+		})
+	}
+}
+
+// Every failure go-toml can reach through this schema is a *toml.DecodeError
+// or a strict-mode failure, so the last branch of decodeError is the one that
+// has to hold the day it reaches something else: still GOM3002, still naming
+// the file, still carrying the cause, and with no position it cannot know.
+func TestDecodeErrorKeepsAFailureItDoesNotRecognise(t *testing.T) {
+	cause := errors.New("the reader gave up")
+	err := decodeError(FileName, cause)
+
+	got := only(t, err)
+	if got.Code != CodeInvalidTOML {
+		t.Errorf("code = %s, want %s", got.Code, CodeInvalidTOML)
+	}
+	if got.File != FileName {
+		t.Errorf("File = %q, want %q", got.File, FileName)
+	}
+	if got.Position.Known() {
+		t.Errorf("an unrecognised failure claimed a position: %s", got.Position)
+	}
+	if want := "the configuration file is not valid TOML: the reader gave up"; got.Message != want {
+		t.Errorf("message = %q, want %q", got.Message, want)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("errors.Is did not reach the cause")
+	}
+}
+
+// SchemaKeys is walked by `go-mutants init` to write a starter configuration
+// with every setting in it, so it has to be the whole schema and in a fixed
+// order: a key it leaves out is a setting the generated file — the file a
+// project adopts as its record of what can be configured — silently omits.
+func TestSchemaKeysAreTheWholeSchemaInAFixedOrder(t *testing.T) {
+	keys := SchemaKeys()
+	if len(keys) != len(expectedTypes) {
+		t.Fatalf("SchemaKeys() returned %d keys, want the %d expectedTypes describes", len(keys), len(expectedTypes))
+	}
+	if !slices.IsSorted(keys) {
+		t.Errorf("SchemaKeys() is not sorted, so two runs can print it differently: %v", keys)
+	}
+	for _, key := range keys {
+		if _, ok := expectedTypes[key]; !ok {
+			t.Errorf("SchemaKeys() named %q, which the schema does not define", key)
+		}
+	}
+	// The tables are in it as well as the settings, which is what makes it
+	// the schema rather than a list of leaves.
+	if !slices.Contains(keys, "mutation") || !slices.Contains(keys, "mutation.include") {
+		t.Errorf("SchemaKeys() is missing a section or a setting: %v", keys)
+	}
+}
+
 // The schema and the sentences that describe it have to stay in step. A key
 // added to the structs below without an entry in expectedTypes would quietly
 // degrade to a vaguer message, and a stale entry would describe a key that no
@@ -841,6 +952,49 @@ func TestDirectoriesAreCanonicalisedOnce(t *testing.T) {
 	}
 }
 
+// A directory that cannot be normalised at all is handed back exactly as its
+// author wrote it, so that the validator quotes what was typed rather than a
+// half-cleaned version of it. That is a rule about the merge rather than about
+// either layer: the same spelling has to survive whichever door it came
+// through, and it is the merged value the diagnostic is built from.
+func TestUncanonicalisableDirectoriesReachTheValidatorVerbatim(t *testing.T) {
+	const (
+		absolute = "/absolute/out"
+		escaping = "../escape"
+	)
+	resolved := MergeOverlays(Defaults(), Overlay{
+		ReportDirectory: Explicit(absolute),
+		CacheDirectory:  Explicit(escaping),
+	})
+	if got := resolved.Report.Directory; got != absolute {
+		t.Errorf("report.directory = %q, want the author's own %q", got, absolute)
+	}
+	if got := resolved.Cache.Directory; got != escaping {
+		t.Errorf("cache.directory = %q, want the author's own %q", got, escaping)
+	}
+
+	// And this is what it buys: the sentence quotes the path that was written.
+	got := problems(t, resolved.Validate())
+	if len(got) != 2 {
+		t.Fatalf("want 2 problems, got %d: %v", len(got), got)
+	}
+	for _, problem := range got {
+		var written string
+		switch problem.Code {
+		case CodeInvalidReportDirectory:
+			written = absolute
+		case CodeInvalidCacheDirectory:
+			written = escaping
+		default:
+			t.Errorf("unexpected problem: %s", problem)
+			continue
+		}
+		if !strings.Contains(problem.Message, strconv.Quote(written)) {
+			t.Errorf("%s does not quote %q", problem, written)
+		}
+	}
+}
+
 // Not having configured go-mutants is not a configuration error.
 func TestLoadFileAbsent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
@@ -874,8 +1028,53 @@ func TestLoadFileUnreadable(t *testing.T) {
 	if err == nil {
 		t.Fatalf("LoadFile accepted a directory")
 	}
-	if got := only(t, err); got.Code != CodeUnreadable {
+	got := only(t, err)
+	if got.Code != CodeUnreadable {
 		t.Errorf("code = %s, want %s (%v)", got.Code, CodeUnreadable, err)
+	}
+	// The *Error already carries File, and the console prints it, so the
+	// message must not print it a second time. That is what stripping the
+	// *fs.PathError buys, and the only way to see it is to look at the
+	// sentence rather than at the code.
+	if got.File != path {
+		t.Errorf("File = %q, want %q", got.File, path)
+	}
+	if strings.Contains(got.Message, path) {
+		t.Errorf("the message repeats the path the error already carries: %q", got.Message)
+	}
+	if !strings.HasPrefix(got.Message, "the configuration file could not be read: ") {
+		t.Errorf("message = %q", got.Message)
+	}
+	// Whatever the operating system called it, the message ends with the
+	// operating system's own words and nothing else.
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("errors.As did not reach the *fs.PathError: %v", err)
+	}
+	if want := "the configuration file could not be read: " + pathErr.Err.Error(); got.Message != want {
+		t.Errorf("message = %q, want %q", got.Message, want)
+	}
+}
+
+// ioMessage is what strips the wrapper, and the branch it chooses is invisible
+// from outside: both spellings are a sentence about the same failure, and only
+// one of them says the path twice. Its three inputs are one call each, because
+// os.ReadFile only ever produces the first.
+func TestIOMessageStripsThePathWrapperAndNothingElse(t *testing.T) {
+	inner := errors.New("is a directory")
+	wrapped := &fs.PathError{Op: "read", Path: filepath.Join("project", FileName), Err: inner}
+	if got := ioMessage(wrapped); got != "is a directory" {
+		t.Errorf("ioMessage of a *fs.PathError = %q, want %q", got, "is a directory")
+	}
+	// errors.As walks the chain, so a wrapped read failure is stripped too.
+	if got := ioMessage(fmt.Errorf("reading configuration: %w", wrapped)); got != "is a directory" {
+		t.Errorf("ioMessage of a wrapped *fs.PathError = %q, want %q", got, "is a directory")
+	}
+	// An error that is not a *fs.PathError at all has no wrapper to remove,
+	// so it is printed exactly as it stands.
+	plain := errors.New("the device is not ready")
+	if got := ioMessage(plain); got != "the device is not ready" {
+		t.Errorf("ioMessage of a plain error = %q, want %q", got, "the device is not ready")
 	}
 }
 

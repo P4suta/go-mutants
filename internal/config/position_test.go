@@ -6,6 +6,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2/unstable"
 )
 
 // The document below is written with explicit \n and numbered in the comment,
@@ -249,5 +251,131 @@ func TestIndexPositionsUnknownKeys(t *testing.T) {
 	truncated := indexPositions([]byte("version = 1\n[report]\nhigh = 80\nlow = \n"))
 	if got, ok := truncated["version"]; !ok || got.Line != 1 {
 		t.Errorf("a truncated document lost the keys it did parse: %v %v", got, ok)
+	}
+}
+
+// maxIndexDepth is a bound on a diagnostic aid rather than on the schema, so
+// nothing else in this repository can be relied on to reach it: the deepest
+// path a valid configuration produces is `mutation.expect[i].id`, three levels
+// down. What the bound is for is a document that decoded but nests further
+// than anybody meant to, and the only way to see it hold is to write one.
+//
+// The two documents below are one level apart on purpose. A walk that stopped
+// a level early would leave a value the schema could still name without a
+// position, and a walk whose depth never grew would not stop at all — and a
+// diagnostic aid that recurses without a bound is the stack overflow this
+// constant exists to prevent.
+func TestIndexPositionsStopsAtTheDepthBound(t *testing.T) {
+	// recordValue is entered at depth 0 for the value of a top-level key, so
+	// the deepest container it still walks is the one at level
+	// maxIndexDepth+1, and a value nested one level below that has no
+	// position at all.
+	deepest := maxIndexDepth + 1
+
+	nestedArrays := func(levels int) string {
+		return "a = " + strings.Repeat("[", levels) + "1" + strings.Repeat("]", levels) + "\n"
+	}
+	arrayKey := func(levels int) string { return "a" + strings.Repeat("[0]", levels) }
+
+	if _, ok := indexPositions([]byte(nestedArrays(deepest)))[arrayKey(deepest)]; !ok {
+		t.Errorf("an element nested %d arrays deep has no position: the walk stopped early", deepest)
+	}
+	if _, ok := indexPositions([]byte(nestedArrays(deepest + 1)))[arrayKey(deepest+1)]; ok {
+		t.Errorf("an element nested %d arrays deep has a position: the bound did not hold", deepest+1)
+	}
+
+	// Inline tables are walked by the other half of recordValue and are
+	// bounded by the same constant, which is what keeps
+	// `expect = [{ id = "…" }]` as diagnosable as the block spelling without
+	// making it the way in past the bound.
+	nestedTables := func(levels int) string {
+		return "a = " + strings.Repeat("{ b = ", levels) + "1" + strings.Repeat(" }", levels) + "\n"
+	}
+	tableKey := func(levels int) string { return "a" + strings.Repeat(".b", levels) }
+
+	if _, ok := indexPositions([]byte(nestedTables(deepest)))[tableKey(deepest)]; !ok {
+		t.Errorf("a value nested %d inline tables deep has no position: the walk stopped early", deepest)
+	}
+	if _, ok := indexPositions([]byte(nestedTables(deepest + 1)))[tableKey(deepest+1)]; ok {
+		t.Errorf("a value nested %d inline tables deep has a position: the bound did not hold", deepest+1)
+	}
+}
+
+// record is the only place a position is written down, and its guards are
+// each about a wrong answer rather than a missing one: a key nobody can name,
+// and a node whose empty range would resolve to line 1, column 1 and send
+// every array diagnostic to the top of the file.
+//
+// None of this is reachable through indexPositions, which is the point. The
+// walk never hands record an empty key, and the guards are what make that
+// safe to keep believing — so they are asserted here, one call at a time.
+func TestRecordLeavesOutWhatItCannotLocate(t *testing.T) {
+	located := &unstable.Node{Kind: unstable.String, Raw: unstable.Range{Offset: 7, Length: 3}}
+
+	offsets := map[string]int{}
+	record(offsets, "report.high", located)
+	if got, ok := offsets["report.high"]; !ok || got != 7 {
+		t.Fatalf("offsets[report.high] = %d, %v; want 7, true", got, ok)
+	}
+
+	// A value nobody can name by key is a value no diagnostic can ask for.
+	record(offsets, "", located)
+	if _, ok := offsets[""]; ok {
+		t.Errorf("record wrote an entry under the empty key")
+	}
+
+	// An array carries an empty range in this parser, and an empty range
+	// starts at offset zero: a position that is wrong rather than absent.
+	record(offsets, "mutation.include", &unstable.Node{Kind: unstable.Array, Raw: unstable.Range{Offset: 7}})
+	if _, ok := offsets["mutation.include"]; ok {
+		t.Errorf("record located a node that carries no bytes")
+	}
+
+	// A missing node is survivable, because a missing position only ever
+	// degrades a message.
+	record(offsets, "report.low", nil)
+	if _, ok := offsets["report.low"]; ok {
+		t.Errorf("record located a node that is not there")
+	}
+
+	// go-toml matches struct fields case-insensitively, so the index has to
+	// hold the canonical spelling the validators name.
+	record(offsets, "Cache.Directory", located)
+	if _, ok := offsets["cache.directory"]; !ok {
+		t.Errorf("record did not canonicalise the key case")
+	}
+
+	if len(offsets) != 2 {
+		t.Errorf("offsets = %v, want exactly the two keys that could be located", offsets)
+	}
+}
+
+// recordValue's own guard is about a node the parser never filled in. Its Kind
+// is Invalid, so it has neither children to walk nor a value to point at, and
+// walking it anyway would file its empty range under a key.
+func TestRecordValueIgnoresANodeThatIsNotThere(t *testing.T) {
+	offsets := map[string]int{}
+	recordValue(offsets, "report.high", nil, 0)
+	recordValue(offsets, "report.low", &unstable.Node{Raw: unstable.Range{Offset: 7, Length: 3}}, 0)
+	if len(offsets) != 0 {
+		t.Errorf("recordValue located a node it could not read: %v", offsets)
+	}
+}
+
+// joinKey is what makes a scope and a name into the path a validator uses. The
+// empty-key case is the one indexPositions never produces and the one a
+// caller would produce first: an array-of-tables scope with nothing written
+// under it yet is named by the scope.
+func TestJoinKey(t *testing.T) {
+	for _, test := range []struct{ prefix, key, want string }{
+		{"", "version", "version"},
+		{"mutation", "profile", "mutation.profile"},
+		{"mutation.expect[0]", "id", "mutation.expect[0].id"},
+		{"mutation.expect[0]", "", "mutation.expect[0]"},
+		{"", "", ""},
+	} {
+		if got := joinKey(test.prefix, test.key); got != test.want {
+			t.Errorf("joinKey(%q, %q) = %q, want %q", test.prefix, test.key, got, test.want)
+		}
 	}
 }

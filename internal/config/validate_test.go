@@ -5,6 +5,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/P4suta/go-mutants/internal/glob"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
@@ -94,6 +96,146 @@ func TestOverlayValidateAcceptsTheEdges(t *testing.T) {
 	}
 	if err := (Overlay{BaselineRuns: Explicit(MinBaselineRuns), Jobs: Explicit(MinJobs)}).Validate(); err != nil {
 		t.Errorf("Validate rejected the bottom of every range: %v", err)
+	}
+}
+
+// A code tells a reader where to look a rule up; the sentence is what they act
+// on, and it is the whole product of a diagnostic. Every list this package
+// renders into one — the tiers, the cache modes, the report formats — and
+// every value it quotes back is asserted here in full, because a message with
+// an empty list in the middle of it still carries the right code, still names
+// the right key, and still tells the reader nothing.
+func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		overlay Overlay
+		code    Code
+		want    string
+	}{
+		{
+			// The name is rendered through Tier.String, so a tier that is not
+			// one of the three is quoted as what it is rather than as a
+			// number, and the three are listed for the reader to choose from.
+			name:    "an unknown profile lists the tiers",
+			overlay: Overlay{Profile: Explicit(mutation.Tier(9))},
+			code:    CodeUnknownProfile,
+			want:    `unknown profile "tier(9)": expected "balanced", "strong", "all"`,
+		},
+		{
+			name:    "an unknown cache mode lists the modes",
+			overlay: Overlay{CacheMode: Explicit(CacheMode("maybe"))},
+			code:    CodeUnknownCacheMode,
+			want:    `unknown cache mode "maybe": expected "auto", "on", "off"`,
+		},
+		{
+			name:    "an unknown report format lists the formats",
+			overlay: Overlay{ReportFormats: Explicit([]ReportFormat{"xml"})},
+			code:    CodeUnknownReportFormat,
+			want:    `unknown report format "xml": expected "json", "html"`,
+		},
+		{
+			name:    "an absolute cache directory ends with the rule",
+			overlay: Overlay{CacheDirectory: Explicit("/abs")},
+			code:    CodeInvalidCacheDirectory,
+			want: `"/abs" is not usable as a cache directory: ` +
+				"give a relative path that stays inside the tree it is resolved against",
+		},
+		{
+			// The same sentence, because it is the same rule: a directory
+			// resolves under the tree it is given, whichever tree that is.
+			name:    "an escaping report directory ends with the same rule",
+			overlay: Overlay{ReportDirectory: Explicit("../out")},
+			code:    CodeInvalidReportDirectory,
+			want: `"../out" is not usable as a report directory: ` +
+				"give a relative path that stays inside the tree it is resolved against",
+		},
+		{
+			// Rendered the way the exit policy renders a floor, so the number
+			// in the configuration error is the number in the failure message.
+			name:    "a score floor is printed the way the exit policy prints it",
+			overlay: Overlay{MinimumScore: Explicit(101.0)},
+			code:    CodeMinimumScoreOutOfRange,
+			want:    "a minimum score of 101 is outside 0..100",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.overlay.Validate()
+			if err == nil {
+				t.Fatalf("Validate accepted %+v", test.overlay)
+			}
+			got := only(t, err)
+			if got.Code != test.code {
+				t.Errorf("code = %s, want %s", got.Code, test.code)
+			}
+			if got.Message != test.want {
+				t.Errorf("message = %q, want %q", got.Message, test.want)
+			}
+		})
+	}
+}
+
+// The operator diagnostic is the one list this package does not own: the
+// families and the rule names come out of the frozen v1 catalogue, and the
+// counts move with it. So it is asserted against the catalogue rather than
+// against a transcription of it — every family by name, and both counts —
+// which is what makes "expected one of the 11 families ()" a failure.
+func TestUnknownOperatorNamesEveryFamilyInTheCatalogue(t *testing.T) {
+	err := (Overlay{Operators: Explicit([]string{"telepathy"})}).Validate()
+	if err == nil {
+		t.Fatalf("Validate accepted an operator that is neither a family nor a rule")
+	}
+	got := only(t, err)
+	if got.Code != CodeUnknownOperator {
+		t.Fatalf("code = %s, want %s", got.Code, CodeUnknownOperator)
+	}
+	if !strings.HasPrefix(got.Message, `unknown operator "telepathy": `) {
+		t.Errorf("the message does not quote what was written: %q", got.Message)
+	}
+
+	registry := mutation.CanonicalRegistry()
+	families := registry.Families()
+	if len(families) == 0 {
+		t.Fatalf("the catalogue reports no families at all")
+	}
+	for _, family := range families {
+		if !strings.Contains(got.Message, string(family)) {
+			t.Errorf("the message does not offer the %q family: %q", string(family), got.Message)
+		}
+	}
+	if want := fmt.Sprintf("%d families", len(families)); !strings.Contains(got.Message, want) {
+		t.Errorf("the message does not say %q: %q", want, got.Message)
+	}
+	if want := fmt.Sprintf("%d rule names", registry.Len()); !strings.Contains(got.Message, want) {
+		t.Errorf("the message does not say %q: %q", want, got.Message)
+	}
+}
+
+// A glob that does not compile is reported with the matcher's own complaint
+// and its own column, unwrapped. The wrapper repeats the pattern and words the
+// column differently, and this package has already quoted the pattern once —
+// so what the reader would get instead is the same string twice in one line.
+func TestInvalidPatternQuotesTheMatcherWithoutItsWrapper(t *testing.T) {
+	err := (Overlay{Include: Explicit([]string{"a//b"})}).Validate()
+	if err == nil {
+		t.Fatalf("Validate accepted a pattern that does not compile")
+	}
+	got := only(t, err)
+	if got.Code != CodeInvalidGlob {
+		t.Fatalf("code = %s, want %s", got.Code, CodeInvalidGlob)
+	}
+	want := `invalid pattern "a//b": empty path element between two '/' (at character 3)`
+	if got.Message != want {
+		t.Errorf("message = %q, want %q", got.Message, want)
+	}
+
+	// The cause is still reachable underneath, which is what lets a caller ask
+	// which pattern failed without reading the sentence.
+	var syntax *glob.SyntaxError
+	if !errors.As(err, &syntax) {
+		t.Fatalf("errors.As did not reach the *glob.SyntaxError: %v", err)
+	}
+	if strings.Contains(got.Message, syntax.Error()) {
+		t.Errorf("the message repeats the wrapper it was supposed to unwrap: %q", got.Message)
 	}
 }
 
@@ -282,6 +424,54 @@ func TestLoad(t *testing.T) {
 	}
 	if diff := cmp.Diff(Defaults(), resolved); diff != "" {
 		t.Errorf("(-want +got):\n%s", diff)
+	}
+}
+
+// Load is a sequence, and each step of it can fail. The two that no other test
+// reaches are the ends of it: a file the reader refuses, and a configuration
+// that is only wrong once the layers are merged. Neither may be merged over
+// the defaults and handed back as a Config: a caller that ignored the error
+// would then be running the defaults while believing it read a file.
+func TestLoadStopsAtEveryStepThatFails(t *testing.T) {
+	dir := t.TempDir()
+
+	// The file's own problems, which LoadFile reports and Load forwards.
+	unknown := filepath.Join(dir, "unknown.toml")
+	if err := os.WriteFile(unknown, []byte("version = 1\nflavour = \"vanilla\"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	resolved, err := Load(unknown, Overlay{})
+	if err == nil {
+		t.Fatalf("Load accepted a file with an unknown key")
+	}
+	if got := only(t, err); got.Code != CodeUnknownKey {
+		t.Errorf("code = %s, want %s (%v)", got.Code, CodeUnknownKey, err)
+	}
+	if diff := cmp.Diff(Config{}, resolved); diff != "" {
+		t.Errorf("a failed Load handed back a configuration (-want +got):\n%s", diff)
+	}
+
+	// A cross-field rule, which neither layer can judge on its own: 90 is a
+	// legal low threshold and 80 is the default high, so the file is fine and
+	// the pair is not.
+	inverted := filepath.Join(dir, "inverted.toml")
+	if writeErr := os.WriteFile(inverted, []byte("version = 1\n[report]\nlow = 90\n"), 0o600); writeErr != nil {
+		t.Fatalf("write: %v", writeErr)
+	}
+	if file, fileErr := LoadFile(inverted); fileErr != nil {
+		t.Fatalf("the file is not the problem: %v", fileErr)
+	} else if !file.Present {
+		t.Fatalf("Present = false for a file that was written")
+	}
+	resolved, err = Load(inverted, Overlay{})
+	if err == nil {
+		t.Fatalf("Load accepted a low threshold above the default high")
+	}
+	if got := only(t, err); got.Code != CodeThresholdsInverted {
+		t.Errorf("code = %s, want %s (%v)", got.Code, CodeThresholdsInverted, err)
+	}
+	if diff := cmp.Diff(Config{}, resolved); diff != "" {
+		t.Errorf("a failed Load handed back a configuration (-want +got):\n%s", diff)
 	}
 }
 

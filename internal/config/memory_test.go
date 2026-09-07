@@ -3,7 +3,10 @@
 
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestParseSizeReadsBinaryUnitsAndRefusesTheDecimalOnes is the whole of the
 // size vocabulary in one table.
@@ -64,6 +67,125 @@ func TestParseSizeReadsBinaryUnitsAndRefusesTheDecimalOnes(t *testing.T) {
 		}
 		if err := (Overlay{Memory: Explicit(size)}).Validate(); err == nil {
 			t.Errorf("a memory bound of %q was accepted by the validator", negative)
+		}
+	}
+}
+
+// A number that parses, is finite, and is still bigger than an int64 is its own
+// refusal, separate from every other one above: `1e400` is caught by
+// strconv.ParseFloat, and `1e19` is not. The guard between them is written as a
+// division so the comparison itself cannot overflow, and it is the branch that
+// stands between a configured bound and math.MinInt64 — a negative bound every
+// process is over, which would kill every mutant a run started.
+func TestParseSizeRefusesASizeLargerThanAnyMachineHas(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{
+		"1e19",
+		// The scale is applied to the comparison as well, so a number small
+		// enough on its own is still refused once its unit is read.
+		"1e19KiB",
+		"10000000000TiB",
+		// float64(math.MaxInt64) rounds *up* to 2^63, which is the one value
+		// that would pass a `>` test and then convert to math.MinInt64.
+		"9223372036854775808",
+	} {
+		got, err := parseSize(text)
+		if err == nil {
+			t.Errorf("parseSize(%q) = %d, want a refusal", text, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), "larger than any machine has") {
+			t.Errorf("parseSize(%q) = %v, want the size to be refused for being too large", text, err)
+		}
+	}
+}
+
+// formatSize is the other half of the vocabulary, and it has one promise:
+// what it prints, parseSize reads back. That promise is what lets a bound
+// quoted in a diagnostic be pasted into the configuration that produced it, and
+// it is the only reason this renders `1KiB` rather than `1024B`.
+//
+// The table is the unit boundaries and nothing else, because the boundaries are
+// where every mistake this function can make lives: one byte either side of
+// 1 KiB, the exact power where a unit gives way to the next, and the size past
+// the last unit the list holds.
+func TestFormatSizePrintsWhatParseSizeReadsBack(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		size int64
+		want string
+	}{
+		{0, "0B"},
+		{1, "1B"},
+		// Bytes hold right up to the boundary, and the boundary itself is the
+		// first size that is not bytes.
+		{1023, "1023B"},
+		{1 << 10, "1KiB"},
+		{1536, "1.5KiB"},
+		{(1 << 20) - 1, "1023.9990234375KiB"},
+		// Each exact power is the smallest size its unit names, which is the
+		// off-by-one the loop's break condition decides.
+		{1 << 20, "1MiB"},
+		{1 << 30, "1GiB"},
+		{1 << 40, "1TiB"},
+		{3 << 39, "1.5TiB"},
+		// TiB is the last suffix, so a larger size keeps counting in it rather
+		// than losing its unit.
+		{1 << 50, "1024TiB"},
+	} {
+		got := formatSize(c.size)
+		if got != c.want {
+			t.Errorf("formatSize(%d) = %q, want %q", c.size, got, c.want)
+			continue
+		}
+		back, err := parseSize(got)
+		if err != nil {
+			t.Errorf("parseSize(formatSize(%d)) = %v, and a bound this tool prints has to be one it reads",
+				c.size, err)
+			continue
+		}
+		if back != c.size {
+			t.Errorf("parseSize(formatSize(%d)) = %d, want the size it started as", c.size, back)
+		}
+	}
+}
+
+// The one place formatSize is read by a user is the refusal of a bound that
+// leaves no room, and a refusal that quotes the value back has to quote it in
+// the spelling the file accepts. Nothing else in this package asserts that
+// sentence, so an empty rendering — or one in the wrong unit — would be a
+// diagnostic nobody could act on and a test nobody would see fail.
+func TestANonPositiveMemoryBoundIsQuotedBackInItsOwnUnits(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct{ text, quoted string }{
+		{"-1", "-1B"},
+		// A negative is below the byte boundary, so it is quoted in bytes
+		// however it was written. That is not a rounding of the truth: the
+		// unit loop divides, and dividing a negative would name a unit the
+		// value does not have.
+		{"-2GiB", "-2147483648B"},
+		{"0", "0B"},
+	} {
+		size, err := parseSize(c.text)
+		if err != nil {
+			t.Fatalf("parseSize(%q) = %v", c.text, err)
+		}
+		validateErr := (Overlay{Memory: Explicit(size)}).Validate()
+		if validateErr == nil {
+			t.Errorf("Validate accepted a memory bound of %q", c.text)
+			continue
+		}
+		got := only(t, validateErr)
+		if got.Code != CodeNonPositiveMemory {
+			t.Errorf("code = %s, want %s", got.Code, CodeNonPositiveMemory)
+		}
+		want := "a memory bound of " + c.quoted + " leaves no room for a test binary: " +
+			"omit the key to derive max(1GiB, largest baseline peak × 4)"
+		if got.Message != want {
+			t.Errorf("message = %q, want %q", got.Message, want)
 		}
 	}
 }
