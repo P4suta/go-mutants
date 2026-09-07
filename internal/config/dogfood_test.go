@@ -201,7 +201,7 @@ var repositoryExpectations = []Expectation{
 	// build and are the reason the rows say "on a 64-bit build" rather than
 	// "unkillable".
 	{
-		ID: "79dea4f679f1ef59267dce99272142ba13582fce21786fdbae4ea7aa108ba85c",
+		ID: "3293a81a48613c6b4ec80c0ec2327aa8b8494f35c4db89c61cde9968a858994e",
 		Reason: "Equivalent on every platform: `v > int64(maxInt)` and " +
 			"`v >= int64(maxInt)` select different branches only at exactly " +
 			"int64(maxInt), where the guard returns maxInt and falling " +
@@ -209,21 +209,21 @@ var repositoryExpectations = []Expectation{
 			"both spellings narrow every int64 to the same int.",
 	},
 	{
-		ID: "e7b8497ec494da7935fcb3646531b21486ad4f7e60dfb93ba0c169c2c619cae9",
+		ID: "271f4a89a0bc3384ae00bb92d1a73092af73b8560ec782d178262d867452f318",
 		Reason: "Unreachable on a 64-bit build, which is every platform this " +
 			"gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is " +
 			"math.MaxInt64 and no int64 is greater than it. Killing it means " +
 			"running this package's suite on a 32-bit GOARCH.",
 	},
 	{
-		ID: "6a044326622383ba8ae8fdc98663db0d446b4b018c7a68a3ae8c32acebca238b",
+		ID: "dd85e0fa4c21d862861434da948c0b83e3cfabd62b13786d4d1b6c1ca8613af4",
 		Reason: "Equivalent on every platform: the same argument as the `>` " +
 			"row above, at the other end -- `<` and `<=` disagree only at " +
 			"exactly int64(minInt), where the guard returns minInt and " +
 			"falling through returns int(v), which is minInt.",
 	},
 	{
-		ID: "c390a566246d862dbd80c2af2835fdace70ce89ab7850da72a5c60d0d0ecc1d6",
+		ID: "0465760a7c7529075e78c437ba8017e0d96ab3156b1dc7b484ee89256c7ba60c",
 		Reason: "Unreachable on a 64-bit build: minInt is -maxInt - 1, so " +
 			"int64(minInt) is math.MinInt64 and no int64 is less than it -- " +
 			"the mirror of the maxInt row above, and reachable on the same " +
@@ -307,7 +307,12 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 			// binaries are scoped, so it derives from the baseline rather than
 			// clearing internal/discover's toolchain-driving suite, which is no
 			// longer built. Zero is what "derive it" looks like here.
-			Timeout:      0,
+			Timeout: 0,
+			// `memory` is omitted for the same reason and pinned here for a
+			// sharper one: this scope is why the setting exists, so a number
+			// written into the file would be somebody's guess standing in for
+			// a bound derived from this repository's own baseline.
+			Memory:       0,
 			BaselineRuns: 3,
 		},
 		// `jobs` is pinned in the file rather than defaulted, so that a local

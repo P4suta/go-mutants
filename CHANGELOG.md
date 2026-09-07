@@ -19,14 +19,13 @@ Entries say *why* a change was made, not only what changed.
   whole packages rather than eight, and the ninth is the reader of the file that
   configures it: decoding, strict-mode key checking, per-value validation,
   three-layer precedence, and the second pass over the document that lets a
-  diagnostic put a caret under the value it is about. 1260 mutants — 450 in
-  `internal/mutation`, 425 in `internal/config`, 146 in `internal/coverage`, 89
+  diagnostic put a caret under the value it is about. 1296 mutants — 461 in
+  `internal/config`, 450 in `internal/mutation`, 146 in `internal/coverage`, 89
   in `internal/schemas`, 68 in `internal/glob`, 48 in `internal/interval`, 16 in
   `internal/operatorselect`, 11 in `internal/drift`, 7 in `internal/testflag` —
-  1230 detected, 30 declared, **100.00%**, in 78–79 seconds at `--jobs 4`
-  against a warm build cache where eight packages took 24–28 on the same
-  machine. CI's `dogfood` job keeps its 25-minute budget: the same pair measured
-  cold is 52 seconds and 1m52s.
+  1266 detected, 30 declared, **100.00%**, in 52–58 seconds at `--jobs 4`
+  against a warm build cache and 1m48s cold, identical on every one of eleven
+  runs. CI's `dogfood` job keeps its 25-minute budget.
 
   The package is there because the tests that kill its survivors are there,
   which is the only way this list is allowed to grow. The first measurement over
@@ -82,23 +81,47 @@ Entries say *why* a change was made, not only what changed.
   32-bit `GOARCH` would kill them, and a ledger that overstates its own claim is
   the thing this ledger exists not to be.
 
-  One cost came with the package and is written down where the numbers are:
-  four more mutants that never return. Negating either loop of the position walk
-  makes a TOML document endless, and `lineStarts` — negated, or with its stride
-  turned into a subtraction — stops advancing through the file. A timeout is
-  measured a second time before it is believed, so five such mutants are 100
-  seconds of worker time, and that, rather than the 425 mutants, is what the
-  gate's wall clock now is. One of them is also the reason `.go-mutants.toml`
-  now qualifies its own determinism claim: `i < 0` negated in `lineStarts`
-  appends to a slice rather than spinning, so it is recorded as killed when the
-  allocator reaches it first and as timed out when the clock does. Both are
-  detections, so the catalogue, the score and the verdict are identical on every
-  run; only the killed/timeout split moves.
+  One cost came with the package, and paying it is what the memory bound below
+  is: four more mutants that never return. Negating either loop of the position
+  walk makes a TOML document endless, and `lineStarts` — negated, or with its
+  stride turned into a subtraction — stops advancing through the file and
+  appends instead. The two that spin can only be caught by the clock, and a
+  timeout is measured a second time before it is believed, so the three spinners
+  in this scope are 60 seconds of worker time and are what sets the gate's wall
+  clock. The two that allocate were worse than that and are now better: each is
+  stopped at about 1.1 GiB after a second and a half and reported as `killed`,
+  once, with no second attempt. `go-mutants run -v` prints the bound they were
+  measured against — `memory: baseline peak 118.2 MiB, bound 1.0 GiB (derived)`
+  — and the JSON report carries `memory_exceeded` and `peak_memory_bytes` beside
+  the outcome.
 
-  `policy.minimum_score` stays at 99, re-checked rather than left alone. 1230
-  scored mutants make 1218/1230 = 99.02%, which clears it, and 1217/1230 =
-  98.94%, which does not — so the floor now buys twelve survivors of slack where
-  it bought eight. That is the largest it has ever been and still short of the
+  That is also why the summary is stable in a way it was not when this widening
+  was first measured. Until every mutant was bounded in memory, the two that
+  allocate were a race between the allocator and the clock, so the same tree
+  reported 1225 killed and five timed out on one run and 1226 and four on the
+  next. The score never moved, because both are detections — but the tally did,
+  and a gate whose own tally is a coin flip is a gate that is not finished. It
+  now reports the same 1296 / 1263 killed / 3 timed out / 30 declared on every
+  run.
+
+  Bounding memory also made this scope *cheaper* than the smaller one before it:
+  1296 mutants in 52–58 seconds where 1260 took 78–79 on the same machine, and
+  1m48s cold where the same tree took 1m52s. Thirty-six of those extra mutants
+  are `test.memory` itself and the byte-size vocabulary that reads it, which are
+  now inside the scope they made necessary — and seven survivors arrived with
+  them, all in `formatSize` and `parseSize`: a renderer whose unit boundaries
+  nothing had ever asserted (`1KiB` versus `1024B`, the exact power where a unit
+  gives way to the next, the size past the last suffix in the list) and the
+  refusal of a size too large for an `int64`, which is the branch standing
+  between a configured bound and `math.MinInt64`. All seven are dead, killed by
+  three named tests in `internal/config/memory_test.go`, one of which pins the
+  promise that makes the renderer worth having: what `formatSize` prints,
+  `parseSize` reads back.
+
+  `policy.minimum_score` stays at 99, re-checked rather than left alone. 1266
+  scored mutants make 1254/1266 = 99.05%, which clears it, and 1253/1266 =
+  98.97%, which does not — so the floor buys twelve survivors of slack where it
+  bought eight. That is the largest it has ever been and still short of the
   twenty-one that moved this number from 96, and it remains the looser of the
   two gates: `--strict` fails the job on the first unexpected survivor and is
   what actually keeps CI honest.

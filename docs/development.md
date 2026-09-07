@@ -363,8 +363,8 @@ is on the order of ten seconds. `mise.toml` describes the whole unit tier as
 seconds on a warm machine and a couple of minutes cold, which is what its 15m
 alarm is sized around; the integration tier is tens of minutes, of which
 `internal/engine` alone is eight to ten of real toolchain work; and
-`.go-mutants.toml` sizes `mise run dogfood` at 78–79 seconds at `--jobs 4`
-against a warm build cache, and 1m52s against a cold one.
+`.go-mutants.toml` sizes `mise run dogfood` at 52–58 seconds at `--jobs 4`
+against a warm build cache, and 1m48s against a cold one.
 Anything far from those shapes is worth a `mise run test-cost` before it is
 worth a workaround.
 
@@ -1164,8 +1164,8 @@ the settings they justify. It covers nine whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
+| `internal/config` | 461 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
 | `internal/mutation` | 450 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
-| `internal/config` | 425 | the reader of the file above — decoding, validation, precedence, and the walk that locates a diagnostic in it |
 | `internal/coverage` | 146 | the profile reader, and the mapping that decides which suites a mutant is measured against |
 | `internal/schemas` | 89 | the JSON schema validation every published document goes through |
 | `internal/glob` | 68 | the glob engine those identities depend on |
@@ -1180,35 +1180,54 @@ so a mutant either changes an answer or it does not. `internal/config` reaches
 the filesystem in exactly one place — `os.ReadFile` in `LoadFile` — and
 everything under it takes bytes and returns an answer.
 
-The numbers the gate is sized against: 1260 mutants catalogued, 1230 detected —
-1225 killed and five caught by the per-mutant timeout, which is what a loop that
-never returns looks like from outside — thirty declared expectations, **a score
-of 100.00%**, in 78–79 seconds at `--jobs 4` against a warm test-owned build
-cache and 1m52s against a cold one. `policy.minimum_score = 99` is compared on
-every run, `--strict` or not, and at this size it does not fail until the
-thirteenth unexpected survivor — so `--strict` is the thing that actually fails
-this job, on the first.
+The numbers the gate is sized against: 1296 mutants catalogued, 1266 detected —
+1263 killed and three caught by the per-mutant timeout — thirty declared
+expectations, **a score of 100.00%**, in 52–58 seconds at `--jobs 4` against a
+warm test-owned build cache and 1m48s against a cold one, identical on every one
+of eleven runs. Two later runs on a busier machine took 70 and 78 seconds with
+the same tally, which is the usual caveat: only the ratios travel.
+`policy.minimum_score = 99` is compared on every run, `--strict` or not, and at
+this size it does not fail until the thirteenth unexpected survivor — so
+`--strict` is the thing that actually fails this job, on the first.
 
-One number in that summary is not stable, and it is worth knowing which before
-diffing two runs. A timeout is measured a second time before it is believed, and
-the five mutants that never return are what sets this gate's wall clock: a
-hundred seconds of worker time on a run whose other 1255 mutants are
-milliseconds each. Four of the five time out every time. The fifth — `i < 0`
-negated in `internal/config`'s `lineStarts` — appends to a slice rather than
-spinning, so it is recorded as killed when the allocator reaches it before the
-clock does and as timed out when it does not. Both are detections, so the total,
-the score and the verdict do not move; only the killed/timeout split does.
+Five of those mutants never return, and they are worth knowing about because
+they, rather than the catalogue, are what sets this gate's wall clock. **Three
+spin**: `negate-loop-condition` on `internal/coverage/textfmt.go`'s `for
+scanner.Scan()`, and the same operator on either loop of `internal/config`'s
+position walk. A spinning mutant holds nothing, so only the clock can catch it,
+and a timeout is measured a second time before it is believed — two ten-second
+waits each, sixty seconds of worker time.
 
-The one mutant the timeout catches is `negate-loop-condition` on
-`internal/coverage/textfmt.go`'s `for scanner.Scan()`, and it is caught by the
-*timeout* rather than by the memory bound because it spins rather than
-allocating: it calls `Scan()` on an exhausted scanner forever and holds nothing.
-A mutant of that shape whose body appends is a different animal — it takes the
-machine long before any usable deadline expires — and that is what the memory
-bound is for; see
-[ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md). At this scope
-the derived bound is 1 GiB, its floor: the baseline peaks at about 126 MiB and
-four times that is under it.
+**Two allocate**, and they are the reason a mutant is now bounded in memory as
+well as in time. `internal/config`'s `lineStarts`, with `i < 0` negated or its
+stride turned into a subtraction, appends to a slice instead of advancing
+through the file. Before the bound existed those two were the most expensive
+mutants in the run and their verdict was a race — killed when the allocator
+reached them first, timed out when the clock did — and on a GitHub runner the
+job did not go red so much as disappear, with "The runner has received a
+shutdown signal". Now each is stopped at about 1.1 GiB after a second and a half
+and reported as `killed`, once, with no second attempt: a memory kill is a kill
+rather than a verdict to confirm. See
+[ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md).
+
+The bound is derived from the same baseline runs the timeout is, as
+`max(1 GiB, largest baseline peak × 4)`, and `go-mutants run -v` prints what it
+resolved to:
+
+```text
+memory: baseline peak 118.2 MiB, bound 1.0 GiB (derived)
+```
+
+118.2 MiB × 4 is 473 MiB, so the 1 GiB floor applies and the bound is about
+seven times what the unmutated suite needs — far enough above anything
+legitimate that it catches runaways rather than honest tests. `-v` also names
+the bound on each mutant it stops (`killed by … (memory: 1.1 GiB > 1.0 GiB
+bound)`), and the JSON report carries `memory_exceeded` and `peak_memory_bytes`
+on the mutant and on each execution.
+
+With that in place the whole summary is stable: the same 1296 / 1263 / 3 / 30 on
+every run, killed-versus-timed-out included. It was not before, and a widening
+that makes a gate's own tally a coin flip is a widening that is not finished.
 
 Two things live outside the file. `--strict` is passed by the task rather than
 written into `policy.strict`, because the gate belongs to the caller: a developer
@@ -1241,7 +1260,7 @@ while the catalogue grows can make the gate looser without anybody deciding to.
 Re-checked is not the same as moved. It went 96 → 99 when the catalogue went
 from 120 scored mutants to 544, where the old number would have bought
 twenty-one survivors of slack instead of four; it has stayed at 99 through the
-widenings since, because one percent of 549, 583, 809 and 1230 is five, five,
+widenings since, because one percent of 549, 583, 809 and 1266 is five, five,
 eight and twelve — the largest of those, and still short of the twenty-one that
 moved it last time. Do the arithmetic, write the answer next to the number, and
 only then decide whether it moves.

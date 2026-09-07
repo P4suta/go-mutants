@@ -404,13 +404,14 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 1260 mutants at 100.00%, 78-79 seconds
-# at --jobs 4 against a warm test-owned build cache and 1m52s against a cold
+# The budget this job is sized against: 1296 mutants at 100.00%, 52-58 seconds
+# at --jobs 4 against a warm test-owned build cache and 1m48s against a cold
 # one. Cold is what CI measures, because the dogfood job points
 # GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and never
 # restores it. .go-mutants.toml records that measurement in full under
-# [policy], next to the scope it is a measurement of, including the run of the
-# previous scope it is paired with.
+# [policy], next to the scope it is a measurement of, including the run it is
+# paired with and the derived memory bound that made this scope faster than the
+# smaller one before it.
 #
 # What the gate cost before is history, and every figure is labelled with the
 # scope that produced it, because a duration without its scope reads as a
@@ -435,27 +436,42 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 #                                        joined, and one of their mutants loops
 #                                        forever.
 #   9 packages, 1260             78-79s  internal/config joined, and four more
-#                                        of its mutants never return.
+#                                        of its mutants never return. Before
+#                                        the memory bound.
+#   9 packages, 1296             52-58s  every mutant is bounded in memory as
+#                                        well as in time, so the two that
+#                                        allocate are killed in a second and a
+#                                        half instead of waiting out two
+#                                        timeouts each. The catalogue grew by
+#                                        36 in the same step, because
+#                                        `test.memory` and the size vocabulary
+#                                        that reads it are mutated too.
 #
 # Every row is a warm cache. The middle two were measured back to back on one
 # idle machine; the fifth was measured on the same machine with other work on
 # it, which is why it is a range and why it is not three times the row above it
-# in any strict sense; the last was measured on a different machine, which also
-# reran the row above it and got 24-28s, so those two are the pair to compare.
-# Only the ratios travel.
+# in any strict sense; the last two were measured on a different machine, which
+# also reran the fifth and got 24-28s, so the pairs to compare are the fifth
+# with the sixth and the sixth with the last. Only the ratios travel.
 #
 # A good part of the difference between the fourth and fifth rows is one mutant
 # rather than the other two hundred and thirty-four, and almost all of the
-# difference between the fifth and the last is four mutants rather than the
+# difference between the fifth and the sixth is four mutants rather than the
 # other four hundred and twenty-one. Negating ParseTextfmt's scanner loop makes
 # an empty document loop forever, and negating either loop of internal/config's
-# position walk -- or turning lineStarts' stride into a subtraction -- does the
-# same to a TOML document. The only way to catch that is to wait out the
-# per-mutant timeout, twice, because a timeout is measured again before it is
-# believed: five such mutants are 100 seconds of worker time on a run whose
-# other 1255 mutants are milliseconds each. The timeout is itself max(10s,
-# slowest baseline x 5) and so grows with the load. .go-mutants.toml says so
-# where the numbers live.
+# position walk does the same to a TOML document. The only way to catch that is
+# to wait out the per-mutant timeout, twice, because a timeout is measured again
+# before it is believed.
+#
+# The last row is that cost being paid down rather than tolerated. Two of those
+# five did not spin, they allocated -- lineStarts, negated or with its stride
+# turned into a subtraction, appends instead of advancing -- and a mutant is now
+# bounded in memory as well as in time, so those two are killed at about 1.1 GiB
+# after a second and a half rather than waiting twice. Sixty seconds of waiting
+# where there were a hundred, and a scope 36 mutants larger that finishes 25
+# seconds sooner. The timeout is itself max(10s, slowest baseline x 5) and the
+# bound is max(1GiB, largest baseline peak x 4); both grow with the machine, and
+# .go-mutants.toml says so where the numbers live.
 #
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
