@@ -3529,6 +3529,46 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- The Windows job object's limits are no longer written through a pointer the
+  Go runtime is free to move. `SetInformationJobObject` and
+  `QueryInformationJobObject` take the structure as an address plus a length,
+  and `golang.org/x/sys/windows` spells that parameter `uintptr` — so both call
+  sites wrote `uintptr(unsafe.Pointer(&info))` in the argument list of an
+  ordinary Go function, which is exactly where the conversion means nothing.
+  It is safe in the argument list of the assembly call and nowhere else:
+  `syscall.SyscallN` carries `//go:uintptrkeepalive` and `//go:nosplit`, and
+  the runtime's note beside those pragmas says why — *"stack copying does not
+  account for uintptrkeepalive, so the stack must not grow"*.
+
+  One frame earlier, nothing holds. `info` is a stack local, because a uintptr
+  is not a pointer and escape analysis has nothing to follow; the x/sys
+  wrapper's own prologue is a stack-growth point. A goroutine that grows there
+  has its frames copied and its old stack span returned to the pool with the
+  uintptr still naming the old address, another goroutine takes the span and
+  writes its own frames into it, and the kernel reads whatever landed at that
+  offset. `LimitFlags` naming a limit the structure does not carry is
+  `ERROR_INVALID_PARAMETER`. The `runtime.KeepAlive` beside each call was the
+  misreading that hid it: it keeps a value from being *collected*, and a stack
+  frame is not collected, it is moved.
+
+  Only a concurrent run can show it, because a freed stack span is only
+  overwritten while something else is running — which is why it appeared once
+  and never again: `GOM7201: could not set kill-on-close on the Windows job
+  object that owns the child process tree: The parameter is incorrect.`, on
+  windows-latest, under the eight concurrent `Workspace.Exec` calls of
+  `TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch`.
+
+  Both calls now go through `syscall.SyscallN` with the conversion written in
+  its argument list, which is the one construction the compiler and the runtime
+  support. The flags and the value each of them names moved into portable code,
+  so the pairing that `ERROR_INVALID_PARAMETER` is the punishment for getting
+  wrong is checked by a `go test` on every platform rather than only on the one
+  where it is a failed run. A failed call now names the flags, the memory limit
+  and the structure size it was refused with, because the previous message left
+  the next occurrence as undiagnosable as the first. And the rule itself is a
+  gate: a source scan over the whole module fails on any
+  `uintptr(unsafe.Pointer(...))` outside a syscall's argument list, which `go
+  vet` has no analyzer for.
 - A child no longer inherits the parent's `GOCOVERDIR`. Every environment
   `internal/execute` composes — for the `go` commands, for a mutant's test
   binary, for a probe pass, for a control run and for the coverage profiling
