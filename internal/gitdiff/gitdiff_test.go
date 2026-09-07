@@ -72,9 +72,15 @@ func newRepo(t *testing.T) *repo {
 
 // git runs one command in the repository and returns its trimmed standard
 // output, failing the test if it does not succeed.
+//
+// It passes no setting that turns signing off: the repository has no
+// configuration file to carry signing, so it is off already, and asking git
+// to switch it off is what a signing-policy wrapper refuses — see
+// [testkit.GitInit] for the rule and internal/testkit's gate for what enforces
+// it.
 func (r *repo) git(args ...string) string {
 	r.t.Helper()
-	argv := append([]string{"-C", r.dir, "-c", "commit.gpgsign=false"}, args...)
+	argv := append([]string{"-C", r.dir}, args...)
 	cmd := exec.Command("git", argv...)
 	cmd.Env = r.env
 	out, err := cmd.CombinedOutput()
