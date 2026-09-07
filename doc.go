@@ -4,7 +4,8 @@
 // Package gomutants exposes go-mutants' reusable mutation engine.
 //
 // Open freezes a source tree in a disposable snapshot. A Workspace can run
-// baseline commands against that snapshot and can be prepared exactly once.
+// baseline commands against that snapshot, can say what the frozen module holds
+// ([Workspace.Module]), and can be prepared exactly once.
 // Preparing discovers, validates, and instruments the selected mutants and
 // compiles the selected packages' test binaries once. The resulting Session
 // then executes any number of mutant and test-target combinations without
@@ -39,5 +40,5 @@
 // docs/library.md is the long form: the lifecycle and its locking, every option
 // field with its default, the invariants of every result, the guarantees the
 // engine makes about temporary directories, reserved variables and paired
-// timeouts, and a `go list` passthrough recipe.
+// timeouts, and what [Workspace.Module] answers about the frozen tree.
 package gomutants

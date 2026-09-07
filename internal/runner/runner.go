@@ -6,6 +6,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"slices"
@@ -62,6 +63,26 @@ type Spec struct {
 	// selects [DefaultOutputLimit]; anything positive below [MinOutputLimit]
 	// is raised to it so the truncation notice still fits inside the budget.
 	OutputLimit int
+
+	// SeparateStdout asks for [Result.Stdout] beside [Result.Output]: the
+	// child's standard output on its own, under the same [Spec.OutputLimit]
+	// accounting.
+	//
+	// It exists for the one kind of caller that has to *parse* what a command
+	// printed. `go list -json` writes its document to stdout and writes
+	// warnings, module downloads and toolchain switches to stderr, and every
+	// one of those is a command that exits zero and did what it was asked — so
+	// a decoder handed the combined capture fails on the first byte of
+	// `go: warning: …`. The combined stream is still what a person reading a
+	// failure needs and is still what the recording digests, so both are kept
+	// rather than one replaced by the other.
+	//
+	// It is opt-in because it changes the combined capture: two writers mean
+	// two pipes, so the interleaving in [Result.Output] becomes the operating
+	// system's rather than the child's. Every caller that reads output as
+	// evidence wants the single pipe, which is what it gets by leaving this
+	// false.
+	SeparateStdout bool
 
 	// Trace is where this execution is recorded. It is the run's own recorder,
 	// handed down through the options of every layer rather than reached for
@@ -180,6 +201,20 @@ type Result struct {
 	// [OutputTruncatedPrefix], and it is paid for out of the budget:
 	// len(Output) never exceeds the limit.
 	Output []byte
+
+	// Stdout is the child's standard output alone, or nil when
+	// [Spec.SeparateStdout] did not ask for it. It is capped the same way
+	// Output is, out of the same [Spec.OutputLimit].
+	//
+	// It is for a caller that has to decode what the command printed; Output
+	// stays the evidence, and it is Output the recording digests, because a
+	// failure is read with the child's diagnostics beside its document rather
+	// than with them thrown away. A capture that lost bytes is unusable as a
+	// document either way — the notice and the tail are what survive — and
+	// [Result.Truncated] is what says so, for both fields at once: the combined
+	// total is at least the stdout total, so a stdout capture that was
+	// truncated is one whose Truncated is already set.
+	Stdout []byte
 
 	// OutputBytes is everything the child wrote to both streams, kept or not.
 	// It is what the process produced and not what survived the cap, so it is
@@ -346,7 +381,23 @@ func runProcess(ctx context.Context, spec Spec) Result {
 		return Result{ExitCode: ExitCodeUnavailable, Duration: time.Since(started)}
 	}
 
-	out := newTailWriter(effectiveOutputLimit(spec.OutputLimit))
+	limit := effectiveOutputLimit(spec.OutputLimit)
+	out := newTailWriter(limit)
+	// The second capture exists only when a caller asked for it, and it is what
+	// splits the child's two streams onto two pipes; see [Spec.SeparateStdout].
+	var stdoutOnly *tailWriter
+	if spec.SeparateStdout {
+		stdoutOnly = newTailWriter(limit)
+	}
+	// captured is what the two writers hold, read once per exit path so that
+	// every path reports the same observation.
+	captured := func(result Result) Result {
+		result.Output, result.OutputBytes, result.Truncated = out.capture()
+		if stdoutOnly != nil {
+			result.Stdout, _, _ = stdoutOnly.capture()
+		}
+		return result
+	}
 
 	// Supervision is established before anything is running, so a machine that
 	// cannot supervise never gets as far as spawning a child.
@@ -365,8 +416,16 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	cmd.Stdin = nil
 	// One writer for both streams: os/exec sees that they are the same value
 	// and gives the child a single pipe, so the interleaving is the child's.
+	//
+	// A caller that asked for the split gets two pipes instead, because that is
+	// the only way to know which stream a byte came from — and gives up the
+	// exact interleaving in exchange, which is why it is opt-in. The tail
+	// writer's mutex is what makes the combined capture correct either way.
 	cmd.Stdout = out
 	cmd.Stderr = out
+	if stdoutOnly != nil {
+		cmd.Stdout = io.MultiWriter(out, stdoutOnly)
+	}
 	// Bound the wait for output to reach EOF after the child exits, so an
 	// orphaned descendant still holding the pipe cannot stall the run.
 	cmd.WaitDelay = IODrainGrace
@@ -391,15 +450,11 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	if err := sup.adopt(cmd); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		output, produced, truncated := out.capture()
-		return Result{
-			ExitCode:    ExitCodeUnavailable,
-			Duration:    time.Since(started),
-			Output:      output,
-			OutputBytes: produced,
-			Truncated:   truncated,
-			Err:         err,
-		}
+		return captured(Result{
+			ExitCode: ExitCodeUnavailable,
+			Duration: time.Since(started),
+			Err:      err,
+		})
 	}
 
 	var waitErr error
@@ -431,15 +486,11 @@ func runProcess(ctx context.Context, spec Spec) Result {
 	// close(exited) happens before every read above, so waitErr and
 	// cmd.ProcessState are safe to read from here on.
 
-	output, produced, truncated := out.capture()
-	result := Result{
-		ExitCode:    ExitCodeUnavailable,
-		TimedOut:    timedOut,
-		Duration:    time.Since(started),
-		Output:      output,
-		OutputBytes: produced,
-		Truncated:   truncated,
-	}
+	result := captured(Result{
+		ExitCode: ExitCodeUnavailable,
+		TimedOut: timedOut,
+		Duration: time.Since(started),
+	})
 	if !killed {
 		result.ExitCode = exitCodeOf(cmd.ProcessState)
 		result.Err = waitFailure(waitErr)

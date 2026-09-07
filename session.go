@@ -440,7 +440,8 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 				if verifyErr != nil {
 					return fmt.Errorf("gomutants: prepare verification overlay: %w", verifyErr)
 				}
-				verified, verifyErr := w.runCommand(ctx, verify, verifyBase, trace.ExecKindVerify)
+				verified, verifyErr := w.runCommand(ctx, verify, verifyBase,
+					commandLabel{kind: trace.ExecKindVerify})
 				if verifyErr != nil {
 					return fmt.Errorf("gomutants: prepare instrumented verification: %w", verifyErr)
 				}

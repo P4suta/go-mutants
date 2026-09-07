@@ -244,7 +244,7 @@ func imagesOf(sources map[string]string) map[string]sourceImage {
 
 // TestWorkspaceLifecycleRefusalsAreOneStateMachine drives every reachable
 // combination of the four fields that say what has become of a workspace, and
-// the two calls that answer to them.
+// the three calls that answer to them.
 //
 // They are one table because they are one decision, and because the fields
 // stopped being able to speak for each other. "A preparation that began and
@@ -257,15 +257,25 @@ func imagesOf(sources map[string]string) map[string]sourceImage {
 // Prepare is driven with a profile no engine accepts, so that a state the
 // lifecycle does *not* refuse comes back with the option's own message: it is
 // how a row says "not refused" without this unit test having to own a snapshot.
-// Exec is driven with an empty command for the same reason.
+// Exec is driven with an empty command and Module with an absolute pattern for
+// the same reason — each is an argument the call refuses *after* the lifecycle
+// has said yes and before it touches the snapshot, so a row that shows the
+// argument's message is a row where the lifecycle allowed the call.
 func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 	t.Parallel()
 
 	const (
 		noExecutable = "gomutants: exec: command has no executable"
 		badProfile   = `gomutants: prepare profile "nope": expected balanced, strong, or all`
+		// The argument mistake Module answers a state that allows it with, and
+		// the counterpart of noExecutable: both are refused after the lifecycle
+		// has said yes and before the snapshot is touched, which is what lets
+		// this table drive a workspace that has no snapshot at all.
+		badQuery     = `gomutants: module: invalid query: package pattern "/etc" is absolute; patterns are module-relative`
 		execClosed   = "gomutants: exec: workspace is closed"
 		execFailed   = "gomutants: exec: workspace preparation failed; its tree may hold instrumented sources"
+		moduleClosed = "gomutants: module: workspace is closed"
+		moduleFailed = "gomutants: module: workspace preparation failed; its tree may hold instrumented sources"
 		prepClosed   = "gomutants: prepare: workspace is closed"
 		prepAgain    = "gomutants: prepare: workspace has already been prepared"
 	)
@@ -278,17 +288,20 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 		session        bool
 		// The message each call answers with, refusal or not.
 		exec    string
+		module  string
 		prepare string
 	}{
 		{
 			name:    "freshly opened",
 			exec:    noExecutable,
+			module:  badQuery,
 			prepare: badProfile,
 		},
 		{
 			name:           "a preparation in flight",
 			prepareStarted: true,
 			exec:           noExecutable,
+			module:         badQuery,
 			prepare:        prepAgain,
 		},
 		{
@@ -296,6 +309,7 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 			prepareStarted: true,
 			session:        true,
 			exec:           noExecutable,
+			module:         badQuery,
 			prepare:        prepAgain,
 		},
 		{
@@ -303,12 +317,14 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 			prepareStarted: true,
 			prepareFailed:  true,
 			exec:           execFailed,
+			module:         moduleFailed,
 			prepare:        prepAgain,
 		},
 		{
 			name:    "closed",
 			closed:  true,
 			exec:    execClosed,
+			module:  moduleClosed,
 			prepare: prepClosed,
 		},
 		{
@@ -316,6 +332,7 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 			closed:         true,
 			prepareStarted: true,
 			exec:           execClosed,
+			module:         moduleClosed,
 			prepare:        prepClosed,
 		},
 		{
@@ -326,6 +343,7 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 			prepareStarted: true,
 			prepareFailed:  true,
 			exec:           execClosed,
+			module:         moduleClosed,
 			prepare:        prepClosed,
 		},
 	}
@@ -348,11 +366,18 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 			if got := errorText(execErr); got != c.exec {
 				t.Errorf("Exec = %q, want %q", got, c.exec)
 			}
+			// The query is one no state accepts, so what changes between rows is
+			// the lifecycle's answer and nothing else: a state that allows a
+			// listing says so by refusing the *pattern*.
+			_, moduleErr := workspace.Module(t.Context(), ModuleQuery{Packages: []string{"/etc"}})
+			if got := errorText(moduleErr); got != c.module {
+				t.Errorf("Module = %q, want %q", got, c.module)
+			}
 			_, prepareErr := workspace.Prepare(t.Context(), PrepareOptions{Profile: "nope"})
 			if got := errorText(prepareErr); got != c.prepare {
 				t.Errorf("Prepare = %q, want %q", got, c.prepare)
 			}
-			assertLifecycleSentinels(t, execErr, prepareErr)
+			assertLifecycleSentinels(t, execErr, moduleErr, prepareErr)
 			if c.closed {
 				return
 			}
@@ -365,6 +390,9 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 			if _, err := workspace.Exec(t.Context(), Command{}); !errors.Is(err, ErrWorkspaceClosed) {
 				t.Errorf("Exec after Close = %v, want ErrWorkspaceClosed", err)
 			}
+			if _, err := workspace.Module(t.Context(), ModuleQuery{}); !errors.Is(err, ErrWorkspaceClosed) {
+				t.Errorf("Module after Close = %v, want ErrWorkspaceClosed", err)
+			}
 			if _, err := workspace.Prepare(t.Context(), PrepareOptions{}); !errors.Is(err, ErrWorkspaceClosed) {
 				t.Errorf("Prepare after Close = %v, want ErrWorkspaceClosed", err)
 			}
@@ -375,14 +403,14 @@ func TestWorkspaceLifecycleRefusalsAreOneStateMachine(t *testing.T) {
 // assertLifecycleSentinels requires each refusal to carry exactly the sentinel
 // its message names, because a consumer acts on the sentinel and reads the
 // message.
-func assertLifecycleSentinels(t *testing.T, execErr, prepareErr error) {
+func assertLifecycleSentinels(t *testing.T, errs ...error) {
 	t.Helper()
 	sentinels := map[string]error{
 		"workspace is closed":                 ErrWorkspaceClosed,
 		"workspace has already been prepared": ErrWorkspacePrepared,
 		"workspace preparation failed":        ErrPrepareFailed,
 	}
-	for _, err := range []error{execErr, prepareErr} {
+	for _, err := range errs {
 		for phrase, sentinel := range sentinels {
 			named := strings.Contains(errorText(err), phrase)
 			if named != errors.Is(err, sentinel) {

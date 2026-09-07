@@ -124,7 +124,9 @@ const (
 	ExecKindInstrumentedBaseline = "instrumented-baseline"
 	// ExecKindCovdataTextfmt converts a coverage directory into a profile.
 	ExecKindCovdataTextfmt = "covdata-textfmt"
-	// ExecKindGoList lists the packages a test binary set covers.
+	// ExecKindGoList lists packages: the set a test binary covers, or — with
+	// the subject `module` — the whole of what a library consumer asked
+	// `Workspace.Module` about.
 	ExecKindGoList = "go-list"
 	// ExecKindGoTestC compiles one test binary: `go test -c`.
 	ExecKindGoTestC = "go-test-c"
