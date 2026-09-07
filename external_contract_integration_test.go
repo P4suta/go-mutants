@@ -108,6 +108,12 @@ var (
 	// The control run: the original program through the same prepared binaries,
 	// which is what a consumer used to open a second workspace for.
 	_ func(*gomutants.Session, context.Context, gomutants.ControlRequest) (gomutants.ControlResult, error) = (*gomutants.Session).Control
+	// Covering tests: the tests whose coverage reaches each mutant, for a
+	// consumer that keeps per-mutant evidence and re-checks a mutant against
+	// one test rather than a suite.
+	_ func(*gomutants.Session, context.Context) (map[string][]gomutants.TestRef, error) = (*gomutants.Session).CoveringTests
+	_ string = gomutants.TestRef{}.Package
+	_ string = gomutants.TestRef{}.Name
 	_ string        = gomutants.ControlRequest{}.Package
 	_ []string      = gomutants.ControlRequest{}.Args
 	_ []string      = gomutants.ControlRequest{}.Env
