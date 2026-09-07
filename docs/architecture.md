@@ -506,8 +506,13 @@ Before that ordering begins, `Prepare` takes the workspace's exclusive lock and
 re-digests the frozen snapshot. `Workspace.Exec` uses the shared side of the
 same lock, so independent controls can run concurrently and both `Prepare` and
 `Close` wait for every one. Each call has its own temporary directory; any
-change it leaves in the shared frozen tree is a deterministic preparation
-failure, never an input silently accepted by discovery.
+change a command leaves in the shared frozen tree *before* `Prepare` is a
+deterministic preparation failure, never an input silently accepted by
+discovery. That gate is a gate on the way in and runs once. Commands are also
+allowed after a preparation has succeeded — the tree they run against is then
+byte for byte the snapshot `Open` froze — and a change one of those leaves is
+nobody's failure: there is no later discovery for it to corrupt, the frozen
+digests do not move, and `Session.Changes` is what reports it.
 
 One call is one target against however many binaries `ProbeRequest.Package`
 selects, each started exactly as a mutant's is — same working directory, same
