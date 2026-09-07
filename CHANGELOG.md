@@ -14,6 +14,18 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A mutant can be measured against named tests of a binary, not only
+  against the binary.** `internal/execute` takes, on a mutant run and on a
+  control, a selection of top-level tests per binary and starts that binary
+  with `-test.run` anchored to an alternation of their escaped names, placed
+  with the harness-owned flags; a binary with no selection runs whole, as
+  before. A selection for a binary the run does not start, an empty
+  selection, and a caller-supplied `-test.run` beside a selection are each
+  refused before anything starts, for the reason an empty binary set is: a
+  measurement that runs nothing passes. The attempt reports the tests it was
+  narrowed to, and the `mutant-exec` record of trace v1 carries them as
+  `tests`, one `<import path> <name>` label each. It is the execution half of
+  test-level narrowing; the engine does not use it yet.
 - **A mutant can be mapped to the tests that reach it, not only to the
   binaries.** Coverage-guided selection has always answered "which test
   binaries reach this line" and let a run skip the binaries that do not. On a

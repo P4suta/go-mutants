@@ -50,6 +50,12 @@ type ControlRun struct {
 	// consumer to read a mutant's failing suite as the mutant's doing.
 	Binaries []int
 
+	// Tests narrows what each selected binary runs to the named tests, keyed
+	// by import path, exactly as [MutantRun.Tests] does and refused for the
+	// same reasons. A control of a narrowed measurement runs the tests the
+	// measurement ran, or it is a control of something else.
+	Tests map[string][]string
+
 	// Args are passed verbatim to each selected test binary after the
 	// harness-owned timeout flag, as [MutantRun.Args] are, and `-test.timeout`
 	// is reserved for the same reason. They are meant to be the *same*
@@ -200,6 +206,11 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 	if err != nil {
 		return controlErrored(err)
 	}
+	if err = validateTestSelection(c.Tests, selected, func(importPath, why string) error {
+		return &Error{Code: CodeControlInvalid, Message: "the control run names tests of " + importPath + " " + why}
+	}); err != nil {
+		return controlErrored(err)
+	}
 	scratch, err := workerScratch(opts.ScratchDir)
 	if err != nil {
 		return controlErrored(err)
@@ -223,7 +234,7 @@ func RunControl(ctx context.Context, opts Options, c ControlRun, bins []TestBina
 
 		logPath := logs.path(i)
 		spec, result := startTarget(ctx, opts, trace.ExecKindControlRun, bin.ImportPath,
-			bin, env, c.Timeout, c.MemoryLimit, c.Args, logPath, c.OutputLimit)
+			bin, env, c.Timeout, c.MemoryLimit, c.Args, c.Tests[bin.ImportPath], logPath, c.OutputLimit)
 		last = result
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
@@ -379,6 +390,11 @@ func validateControlArgs(c ControlRun) error {
 		return &Error{
 			Code:    CodeControlInvalid,
 			Message: "the control target overrides -test.timeout, which is reserved by the process supervisor",
+		}
+	case len(c.Tests) > 0 && suppliesTestRun(c.Args):
+		return &Error{
+			Code:    CodeControlInvalid,
+			Message: "the control target supplies -test.run, which this run reserved by narrowing the control to named tests",
 		}
 	case c.RecordTestLog && suppliesTestLog(c.Args):
 		return &Error{

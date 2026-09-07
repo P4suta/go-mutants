@@ -628,6 +628,7 @@ own mutant record.
 | `worker` | which execution slot ran it, from zero |
 | `package` | the package the mutant belongs to |
 | `binaries` | the test binaries this attempt ran, in order, by import path |
+| `tests` | the tests the attempt was narrowed to, as `<import path> <name>` labels; absent when every binary ran whole |
 | `args` | the arguments the execution ran with |
 | `timeout_ms` | the timeout the execution was given |
 | `outcome` | `killed`, `survived`, `timed_out`, `inconclusive`, `errored`, or `not_run` |

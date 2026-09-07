@@ -242,6 +242,11 @@ type MutantRecord struct {
 	// outlives the temporary directory the file lived in.
 	Binaries []string `json:"binaries,omitempty"`
 
+	// Tests are the tests the attempt was narrowed to, as `<import path>
+	// <name>` labels in one order — the import path holds no space, so the
+	// two halves are recoverable — and absent when every binary ran whole.
+	Tests []string `json:"tests,omitempty"`
+
 	Args      []string `json:"args,omitempty"`
 	TimeoutMS int64    `json:"timeout_ms,omitempty"`
 
