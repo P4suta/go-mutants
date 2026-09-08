@@ -4375,6 +4375,33 @@ Entries say *why* a change was made, not only what changed.
 
 ### Notes
 
+- `internal/discover` has a fast in-process scan harness beside its
+  toolchain-driven tests. `scanSource` parses and type-checks one file of Go
+  source and runs the whole mutation walk over it through `discovery.scanParsed`
+  — no package load, no toolchain, milliseconds instead of seconds — so a test
+  can pin the AST-level behaviour of one construct: the guard form a statement
+  resolves to and the types a Form D site declares, the branch proof a
+  decreasing edit in an inert condition carries, and the probe hint the effect
+  and panic analyses gate. It is what makes it practical to write a test per
+  observable decision of the guard, branch, and effect phases rather than one
+  per whole fixture module, which is the groundwork for bringing the package
+  into the dogfood gate. The `Code.String` and `Error` renderings are pinned
+  directly, since they need no walk at all.
+- `sameEnvKey` and `pathsEqual` delegate to `sameEnvKeyOn` and `pathsEqualOn`,
+  which take the operating system as an argument. The comparison they make
+  differs by platform — Windows folds case, every other platform does not — so a
+  test bound to the host it runs on can only ever reach one of the two branches;
+  naming the OS lets one host prove both, which is what a mutation gate on a
+  single platform needs to cover the code at all.
+- The toolchain-driven `internal/discover` tests resolve their `testdata`
+  fixtures from the test file's own location (`runtime.Caller`) rather than the
+  working directory. `go test` runs them from the package directory, but the
+  mutation engine's coverage narrowing profiles and subset-controls the compiled
+  test binary from elsewhere; a cwd-relative `testdata` vanished there, failed
+  the subset control, and forced every mutant those tests cover to widen to the
+  whole binary instead of narrowing to the tests that reach it. go-mutants
+  deliberately builds without `-trimpath`, so the compiled-in source path is
+  real and this resolution is stable.
 - The dashboard draws with ASCII glyphs only, its score gauge included.
   bubbletea enables virtual-terminal processing on Windows but does not touch
   the console output code page, so a ConHost on a legacy OEM code page renders

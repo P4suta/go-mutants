@@ -194,7 +194,15 @@ func setEnv(env []string, name, value string) []string {
 // spelling of its name — PATH is written "Path" as often as "PATH" — and
 // exactly everywhere else.
 func sameEnvKey(a, b string) bool {
-	if runtime.GOOS == "windows" {
+	return sameEnvKeyOn(a, b, runtime.GOOS)
+}
+
+// sameEnvKeyOn is [sameEnvKey] with the operating system named, so a test can
+// pin both spellings of the rule on the one host it runs on: the running
+// platform can only ever exercise its own branch, which would leave the other's
+// comparison unproved.
+func sameEnvKeyOn(a, b, goos string) bool {
+	if goos == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
@@ -475,7 +483,14 @@ func samePath(a, b string) bool {
 
 // pathsEqual compares two paths the way the platform's file system does.
 func pathsEqual(a, b string) bool {
-	if runtime.GOOS == "windows" {
+	return pathsEqualOn(a, b, runtime.GOOS)
+}
+
+// pathsEqualOn is [pathsEqual] with the operating system named, for the same
+// reason [sameEnvKeyOn] takes one: a test on any single host would otherwise
+// leave the other platform's comparison unproved.
+func pathsEqualOn(a, b, goos string) bool {
+	if goos == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b

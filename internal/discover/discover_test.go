@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,16 +49,37 @@ func toolchain(t *testing.T) gocmd.Toolchain {
 }
 
 // fixture returns the absolute path of a testdata module.
+//
+// The path is resolved from this source file's own location rather than the
+// process's working directory, so the toolchain-driven tests find their
+// fixtures however they are launched. `go test` runs them from the package
+// directory, but the mutation engine's coverage narrowing runs the compiled
+// test binary from elsewhere to profile and subset-control it, and a
+// cwd-relative "testdata" would vanish there — which forced every mutant these
+// tests cover to widen to the whole binary instead of narrowing.
 func fixture(t *testing.T, name string) string {
 	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", name))
+	path, err := fixturePath(name)
 	if err != nil {
-		t.Fatalf("resolving the fixture path: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("fixture %s is missing: %v", name, err)
 	}
 	return path
+}
+
+// fixturePath resolves a testdata module from this source file's own location,
+// which is what makes the resolution independent of the working directory. It
+// takes no [testing.T] so that the package-level fixture caches
+// ([wholeMainmod]) can share it.
+func fixturePath(name string) (string, error) {
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", errors.New("runtime.Caller failed")
+	}
+	path := filepath.Join(filepath.Dir(self), "testdata", name)
+	if _, err := os.Stat(path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // discoverFixture runs a discovery over a testdata module, failing the test on
