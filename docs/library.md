@@ -54,6 +54,9 @@ Open ──▶ Workspace.Exec*  ──▶ Workspace.Prepare ──▶ Session.Ca
 - **`Session.Control`** reuses the same binaries to run the *original* program:
   an execution minus the activation. See
   [`Session.Control`](#sessioncontrol).
+- **`Session.CoveringTests`** reports, per mutant, the tests whose own coverage
+  reaches it — the per-test twin of a report's covering packages. See
+  [`Session.CoveringTests`](#sessioncoveringtests).
 - **`Session.Changes`** reports, in path order, anything written into the
   prepared snapshot since it was prepared — by a `Session.Exec` or
   `Session.Control` target, or by a `Workspace.Exec` command run beside the
@@ -705,6 +708,51 @@ its own, the way down to those executions is `ControlResult.ExecSeqs` — a fiel
 so that nobody has to parse the note's `detail`, which is a sentence written for
 a person.
 
+## `Session.CoveringTests`
+
+```go
+func (s *Session) CoveringTests(
+	ctx context.Context,
+) (map[string][]TestRef, error)
+```
+
+**What it is.** For every accepted mutant, the tests whose own coverage reaches
+its lines, keyed by [`Mutant.ID`] and valued by `[]TestRef` — a package import
+path and a top-level test name — sorted by package and then name. It is the
+per-test twin of the covering *packages* a run report carries, and it exists for
+a consumer that keeps per-mutant evidence: knowing a mutant is reached only by
+`TestClamp` of one package, rather than by that whole package, is what lets the
+consumer re-check the mutant against one test instead of a suite.
+
+**How it measures.** It compiles the prepared test binaries once more with
+coverage instrumentation, runs each of their tests on its own with no mutant
+activated, and maps every accepted mutant to the tests whose profile shows a
+covered statement on its lines. That is one profiling pass, paid when the method
+is called and not before. `-coverpkg` names exactly the packages the mutants
+live in — real files the instrumentation overlay only replaces — rather than the
+whole module, which would draw the go cover tool at the generated runtime this
+session carries in an overlay and cannot read.
+
+**What it leaves out.** A test that does not pass when run on its own is not
+used: its isolated coverage is not trustworthy — it is order-dependent, or was
+never green — so a mutant only such a test would cover is reported as covered by
+nothing rather than by a test that cannot be relied on. A mutant no passing test
+reaches is **absent** from the map, which is the honest statement that this
+measurement found nothing covering it, distinct from a present key with an empty
+list, which never occurs. Only accepted mutants appear: a rejected mutant has no
+prepared form to cover.
+
+**The mapping is by line interval only**, exactly as the engine's coverage
+narrowing is: a block counts as reaching a mutant when it covers the line,
+whether or not the mutated expression was evaluated. The over-approximation errs
+towards naming a test rather than missing one, which is the safe direction for a
+consumer deciding what to re-run.
+
+**Errors.** `ErrSessionClosed` for a closed session; otherwise the build or
+profiling failure, wrapped, if the toolchain could not produce the coverage. A
+run with no coverage does not fail the caller silently: the error says what
+could not be built or read.
+
 ## Recording what a target touched
 
 ```go
@@ -843,7 +891,7 @@ were introduced, and none of them is a message you may parse.
 | `ErrWorkspaceClosed` | `Workspace.Exec`, `Workspace.Prepare` | the workspace is closed |
 | `ErrWorkspacePrepared` | a second `Workspace.Prepare` | a workspace may be prepared once, a failed preparation included |
 | `ErrPrepareFailed` | `Workspace.Exec` | a preparation began and failed, so the tree may hold instrumented sources; open another workspace |
-| `ErrSessionClosed` | `Session.Exec`, `Session.Probe`, `Session.Control`, `Session.Changes` | the session, or the workspace that owned it, is closed |
+| `ErrSessionClosed` | `Session.Exec`, `Session.Probe`, `Session.Control`, `Session.Changes`, `Session.CoveringTests` | the session, or the workspace that owned it, is closed |
 | `ErrInvalidMutantID` | `Session.Exec` | `ExecRequest.Mutant` is not an identity: too short, too long, or not lowercase hex |
 | `ErrMutantNotFound` | `Session.Exec` | a well-formed prefix no catalogued mutant carries |
 | `ErrAmbiguousMutant` | `Session.Exec` | a prefix more than one mutant carries; `Matches` names them |

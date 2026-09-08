@@ -81,6 +81,7 @@ type Session struct {
 	env            []string
 	catalog        *mutation.Catalog
 	publicCatalog  Catalog
+	modulePath     string
 	accepted       map[string]bool
 	rejections     map[string]Rejection
 	binaries       []execute.TestBinary
@@ -590,6 +591,7 @@ func (w *Workspace) prepare(ctx context.Context, options PrepareOptions) (sessio
 		env:            slices.Clone(w.env),
 		catalog:        catalog,
 		publicCatalog:  publicCatalog,
+		modulePath:     found.ModulePath,
 		accepted:       accepted,
 		rejections:     rejectionIndex,
 		binaries:       slices.Clone(mainBuild.binaries),

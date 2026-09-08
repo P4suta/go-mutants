@@ -14,6 +14,19 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A library consumer can ask which tests cover each mutant.**
+  `(*Session).CoveringTests` returns, for every accepted mutant, the tests whose
+  own coverage reaches its lines — a `map[mutant-id][]TestRef`, where a `TestRef`
+  is a package import path and a top-level test name. It is the per-test twin of
+  the covering packages a run report already carries, exposed through the public
+  API for a consumer that keeps per-mutant evidence and wants to re-check a
+  mutant against one test rather than a whole suite. It compiles the prepared
+  binaries once with coverage on, profiles each test alone, and maps by line
+  interval as the engine does; a test that fails when run alone is left out, and
+  a mutant no passing test reaches is absent from the map rather than present
+  with an empty list. `-coverpkg` names only the packages the mutants live in,
+  not the whole module, because the generated runtime lives in this session's
+  overlay and the go cover tool, run as a separate process, cannot read it.
 - **A run narrows each mutant to the tests that cover it, not just to the test
   binaries.** This is the payoff of the three changes before it, wired into the
   engine and made the default. `test.narrowing = "test"` profiles every test on
