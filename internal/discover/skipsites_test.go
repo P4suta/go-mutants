@@ -479,7 +479,7 @@ func TestCompareSkipSitesOrdersByEachKeyInTurn(t *testing.T) {
 	// The "then reason" row leans on the reason being compared as a string:
 	// "array-length" < "const-decl", which is the order compareSkipSites
 	// promises and not the reasonRank order the suppression sort uses.
-	if !("array-length" < "const-decl") {
+	if "array-length" >= "const-decl" {
 		t.Fatal("this test assumes array-length sorts before const-decl as a string")
 	}
 }
