@@ -4387,14 +4387,12 @@ Entries say *why* a change was made, not only what changed.
   per whole fixture module, which is the groundwork for bringing the package
   into the dogfood gate. The `Code.String` and `Error` renderings are pinned
   directly, since they need no walk at all.
-
 - `sameEnvKey` and `pathsEqual` delegate to `sameEnvKeyOn` and `pathsEqualOn`,
   which take the operating system as an argument. The comparison they make
   differs by platform — Windows folds case, every other platform does not — so a
   test bound to the host it runs on can only ever reach one of the two branches;
   naming the OS lets one host prove both, which is what a mutation gate on a
   single platform needs to cover the code at all.
-
 - The dashboard draws with ASCII glyphs only, its score gauge included.
   bubbletea enables virtual-terminal processing on Windows but does not touch
   the console output code page, so a ConHost on a legacy OEM code page renders
