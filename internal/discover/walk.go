@@ -93,6 +93,31 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 	if err != nil {
 		return &Error{Code: CodeFileUnreadable, Message: "cannot read " + strconv.Quote(rel), Err: err}
 	}
+	return d.scanParsed(rel, packagePath(pkg), src, tokFile, file, pkg.TypesInfo, pkg.Types)
+}
+
+// scanParsed runs the mutation walk over one file that has already been parsed
+// and type-checked, emitting its candidates and skips into d.
+//
+// It is the part of discovery that needs no package loader: every input is
+// passed in rather than read from a [packages.Package], so a caller that has
+// built an *ast.File and a *types.Info another way — go/parser and go/types over
+// a synthetic source, for instance — can exercise the whole walk without a
+// toolchain. [discovery.file] is the loader-fed caller, and it is the only
+// difference between a real discovery and a test's: both reach the walk through
+// here, so the two cannot come to disagree about what the walk does.
+//
+// tokFile is the [token.File] file's positions resolve against, info its type
+// information, and pkgTypes the package it was checked in — what the guard
+// resolver needs to name the type an edit would produce.
+func (d *discovery) scanParsed(
+	rel, pkgPath string,
+	src []byte,
+	tokFile *token.File,
+	file *ast.File,
+	info *types.Info,
+	pkgTypes *types.Package,
+) error {
 	if uint64(len(src)) > math.MaxUint32 {
 		return &Error{
 			Code:    CodeFileUnreadable,
@@ -108,13 +133,13 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 	scan := &fileScan{
 		discovery:    d,
 		rel:          rel,
-		pkgPath:      packagePath(pkg),
+		pkgPath:      pkgPath,
 		src:          src,
 		digest:       digest,
 		tokFile:      tokFile,
-		info:         pkg.TypesInfo,
-		suppressions: collectSuppressions(file, pkg.TypesInfo),
-		guard:        newGuardResolver(file, pkg.TypesInfo, pkg.Types, tokFile),
+		info:         info,
+		suppressions: collectSuppressions(file, info),
+		guard:        newGuardResolver(file, info, pkgTypes, tokFile),
 	}
 	return scan.walk(file)
 }

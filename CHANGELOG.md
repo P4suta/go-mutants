@@ -3561,6 +3561,18 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **`internal/discover`'s mutation walk can be driven without a toolchain.**
+  The walk over one file — the part that finds candidates and records skips —
+  now goes through `discovery.scanParsed`, which takes an already-parsed
+  `*ast.File` and its `*types.Info` rather than a loaded `packages.Package`. The
+  package loader stays the only caller in a real run, so nothing changes about
+  what a discovery finds; what it buys is a seam a test can reach with
+  `go/parser` and `go/types` alone. Until now every discovery test loaded a
+  fixture module through `go/packages`, which costs a package load each and is
+  why `internal/discover` — around fifteen hundred mutants over a suite that
+  runs the toolchain for every one — has never fitted in the dogfood gate. The
+  seam is what lets its AST-level behaviour be tested in milliseconds instead,
+  and the survivors that measurement finds be killed one fast test at a time.
 - **The derived per-mutant timeout is sized on a baseline run that did not
   compile.** The first of the baseline runs is the one that compiles the test
   binaries, and on a cold build cache — which is what CI measures, its cache
