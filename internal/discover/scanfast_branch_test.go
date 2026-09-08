@@ -103,6 +103,11 @@ func TestABranchProofNeedsAnInertConditionAndABody(t *testing.T) {
 			false,
 		},
 		{
+			"a field read of a call result is not inert",
+			"package pkg\ntype S struct{ n int }\nfunc g() S { return S{} }\nfunc F(b int) int { if g().n <= b {\nreturn 1\n}\nreturn 0 }\n",
+			false,
+		},
+		{
 			"a comparison outside a condition is not gated",
 			"package pkg\nfunc F(a, b int) bool { return a <= b }\n",
 			false,
@@ -232,6 +237,31 @@ func TestAnEqualityIsInertOnlyWhenItCannotPanic(t *testing.T) {
 			"a numeric conversion stays inert",
 			"package pkg\nfunc F(x int32, b, c, d int) int { if int(x) == b || c <= d {\nreturn 1\n}\nreturn 0 }\n",
 			true,
+		},
+		{
+			"an array of comparable elements is inert",
+			"package pkg\nfunc F(a1, a2 [2]int, c, d int) int { if a1 == a2 || c <= d {\nreturn 1\n}\nreturn 0 }\n",
+			true,
+		},
+		{
+			"an array of interfaces may panic on comparison",
+			"package pkg\nfunc F(a1, a2 [2]any, c, d int) int { if a1 == a2 || c <= d {\nreturn 1\n}\nreturn 0 }\n",
+			false,
+		},
+		{
+			"a struct of comparable fields is inert",
+			"package pkg\ntype P struct{ x, y int }\nfunc F(p1, p2 P, c, d int) int { if p1 == p2 || c <= d {\nreturn 1\n}\nreturn 0 }\n",
+			true,
+		},
+		{
+			"a struct with an interface field may panic",
+			"package pkg\ntype Q struct{ v any }\nfunc F(q1, q2 Q, c, d int) int { if q1 == q2 || c <= d {\nreturn 1\n}\nreturn 0 }\n",
+			false,
+		},
+		{
+			"a slice-to-array conversion is not inert",
+			"package pkg\nfunc F(s []int, b, c, d int) int { if [2]int(s) == [2]int{} || c <= d {\nreturn 1\n}\nreturn 0 }\n",
+			false,
 		},
 	}
 	for _, tc := range cases {
