@@ -442,3 +442,55 @@ func TestSkipSitesAreOrderedByPathLineColumnAndReason(t *testing.T) {
 		}
 	}
 }
+
+// TestCompareSkipSitesOrdersByEachKeyInTurn pins compareSkipSites directly, by
+// the sign it returns for two sites that differ in exactly one key. The
+// monotonic check elsewhere in this file re-uses the comparator to verify its
+// own output and so cannot see a key drop out; naming the expected sign for
+// each key does. Path orders first, then line, then column, then reason, and a
+// site equals itself.
+func TestCompareSkipSitesOrdersByEachKeyInTurn(t *testing.T) {
+	t.Parallel()
+
+	base := SkipSite{Path: "b/f.go", Line: 10, Column: 5, Reason: SkipConstDecl}
+	cases := []struct {
+		name string
+		x, y SkipSite
+		want int // -1 x before y, +1 x after y, 0 equal
+	}{
+		{"path decides first", SkipSite{Path: "a/f.go", Line: 99, Column: 99}, base, -1},
+		{"then line", SkipSite{Path: "b/f.go", Line: 9, Column: 99}, base, -1},
+		{"then column", SkipSite{Path: "b/f.go", Line: 10, Column: 4}, base, -1},
+		{"then reason", SkipSite{Path: "b/f.go", Line: 10, Column: 5, Reason: SkipArrayLength}, base, -1},
+		{"a site equals itself", base, base, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := compareSkipSites(tc.x, tc.y)
+			if sign(got) != tc.want {
+				t.Errorf("compareSkipSites = %d (sign %d), want sign %d", got, sign(got), tc.want)
+			}
+			if sign(compareSkipSites(tc.y, tc.x)) != -tc.want {
+				t.Errorf("comparator is not antisymmetric for %s", tc.name)
+			}
+		})
+	}
+	// The "then reason" row leans on the reason being compared as a string:
+	// "array-length" < "const-decl", which is the order compareSkipSites
+	// promises and not the reasonRank order the suppression sort uses.
+	if !("array-length" < "const-decl") {
+		t.Fatal("this test assumes array-length sorts before const-decl as a string")
+	}
+}
+
+func sign(n int) int {
+	switch {
+	case n < 0:
+		return -1
+	case n > 0:
+		return 1
+	default:
+		return 0
+	}
+}
