@@ -4393,6 +4393,15 @@ Entries say *why* a change was made, not only what changed.
   test bound to the host it runs on can only ever reach one of the two branches;
   naming the OS lets one host prove both, which is what a mutation gate on a
   single platform needs to cover the code at all.
+- The toolchain-driven `internal/discover` tests resolve their `testdata`
+  fixtures from the test file's own location (`runtime.Caller`) rather than the
+  working directory. `go test` runs them from the package directory, but the
+  mutation engine's coverage narrowing profiles and subset-controls the compiled
+  test binary from elsewhere; a cwd-relative `testdata` vanished there, failed
+  the subset control, and forced every mutant those tests cover to widen to the
+  whole binary instead of narrowing to the tests that reach it. go-mutants
+  deliberately builds without `-trimpath`, so the compiled-in source path is
+  real and this resolution is stable.
 - The dashboard draws with ASCII glyphs only, its score gauge included.
   bubbletea enables virtual-terminal processing on Windows but does not touch
   the console output code page, so a ConHost on a legacy OEM code page renders
