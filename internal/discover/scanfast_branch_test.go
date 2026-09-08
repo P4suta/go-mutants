@@ -78,6 +78,16 @@ func TestABranchProofNeedsAnInertConditionAndABody(t *testing.T) {
 			true,
 		},
 		{
+			"a decreasing edit nested in a connective is walked to the if",
+			"package pkg\nfunc F(a, b, c int) int { if a <= b && c > 0 {\nreturn 1\n}\nreturn 0 }\n",
+			true,
+		},
+		{
+			"a decreasing edit nested in a disjunction is walked too",
+			"package pkg\nfunc F(a, b, c int) int { if a <= b || c > 0 {\nreturn 1\n}\nreturn 0 }\n",
+			true,
+		},
+		{
 			"a for condition is gated too",
 			"package pkg\nfunc F(a, b int) int { s := 0\nfor a <= b {\ns++\na++\n}\nreturn s }\n",
 			true,
