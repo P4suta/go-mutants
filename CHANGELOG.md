@@ -4375,6 +4375,19 @@ Entries say *why* a change was made, not only what changed.
 
 ### Notes
 
+- `internal/discover` has a fast in-process scan harness beside its
+  toolchain-driven tests. `scanSource` parses and type-checks one file of Go
+  source and runs the whole mutation walk over it through `discovery.scanParsed`
+  — no package load, no toolchain, milliseconds instead of seconds — so a test
+  can pin the AST-level behaviour of one construct: the guard form a statement
+  resolves to and the types a Form D site declares, the branch proof a
+  decreasing edit in an inert condition carries, and the probe hint the effect
+  and panic analyses gate. It is what makes it practical to write a test per
+  observable decision of the guard, branch, and effect phases rather than one
+  per whole fixture module, which is the groundwork for bringing the package
+  into the dogfood gate. The `Code.String` and `Error` renderings are pinned
+  directly, since they need no walk at all.
+
 - The dashboard draws with ASCII glyphs only, its score gauge included.
   bubbletea enables virtual-terminal processing on Windows but does not touch
   the console output code page, so a ConHost on a legacy OEM code page renders

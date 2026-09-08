@@ -114,3 +114,54 @@ func Positive(v int) bool {
 		t.Errorf("scan found %v, want a gt-to-ge candidate", got.rules())
 	}
 }
+
+// guard returns the Guard of the first candidate matching rule and original,
+// and whether one was found. It is how a fast test pins the rewrite site
+// (Form S, C, or D and its declared types) discovery computed for a construct.
+func (s scanned) guard(rule, original string) (Guard, bool) {
+	for _, c := range s.candidates {
+		if c.Rule.Name == rule && c.Original == original {
+			return c.Guard, true
+		}
+	}
+	return Guard{}, false
+}
+
+// count returns how many candidates match rule and original, which is how a
+// fast test pins that a construct is a mutation site exactly once (or not at
+// all).
+func (s scanned) count(rule, original string) int {
+	n := 0
+	for _, c := range s.candidates {
+		if c.Rule.Name == rule && c.Original == original {
+			n++
+		}
+	}
+	return n
+}
+
+// declSummary renders a Form D guard's declared types as "name:type" joined by
+// spaces, in source order, which is how a fast test names what a `:=` or `var`
+// site must declare.
+func declSummary(g Guard) string {
+	out := ""
+	for i, d := range g.DeclTypes {
+		if i > 0 {
+			out += " "
+		}
+		out += d.Name + ":" + d.Type
+	}
+	return out
+}
+
+// branch returns the BranchProof of the first candidate matching rule and
+// original, or nil. It is how a fast test pins whether the branch-proof phase
+// discharged a decreasing edit's gated body.
+func (s scanned) branch(rule, original string) *BranchProof {
+	for _, c := range s.candidates {
+		if c.Rule.Name == rule && c.Original == original {
+			return c.Branch
+		}
+	}
+	return nil
+}
