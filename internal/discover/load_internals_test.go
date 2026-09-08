@@ -94,3 +94,41 @@ func TestEnvironmentFromPlacesTheToolchainAheadOfPath(t *testing.T) {
 		}
 	})
 }
+
+// TestSameEnvKeyOnFollowsTheNamedPlatform pins both branches of the env-key
+// rule on whatever host runs it: Windows answers a variable to any spelling of
+// its name, and every other platform matches exactly. A test bound to the
+// running platform could only reach one branch; naming the OS reaches both.
+func TestSameEnvKeyOnFollowsTheNamedPlatform(t *testing.T) {
+	t.Parallel()
+
+	if !sameEnvKeyOn("Path", "PATH", "windows") {
+		t.Error("on windows, Path and PATH are the same variable")
+	}
+	if sameEnvKeyOn("Path", "PATH", "linux") {
+		t.Error("off windows, Path and PATH are different variables")
+	}
+	if !sameEnvKeyOn("PATH", "PATH", "linux") {
+		t.Error("a variable always matches its own spelling")
+	}
+	if !sameEnvKeyOn("PATH", "PATH", "windows") {
+		t.Error("a variable always matches its own spelling on windows too")
+	}
+}
+
+// TestPathsEqualOnFollowsTheNamedPlatform pins both branches of the path rule
+// the same way: Windows compares paths case-insensitively, every other platform
+// exactly.
+func TestPathsEqualOnFollowsTheNamedPlatform(t *testing.T) {
+	t.Parallel()
+
+	if !pathsEqualOn(`C:\Go\bin`, `c:\go\bin`, "windows") {
+		t.Error("on windows, paths differing only in case are equal")
+	}
+	if pathsEqualOn("/Go/bin", "/go/bin", "linux") {
+		t.Error("off windows, paths differing in case are distinct")
+	}
+	if !pathsEqualOn("/go/bin", "/go/bin", "linux") {
+		t.Error("a path always equals itself")
+	}
+}
