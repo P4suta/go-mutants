@@ -74,6 +74,19 @@ internal/testkit/module_test.go
 internal/testkit/tiers_test.go
 internal/testkit/tools_test.go
 
+# licensegate_test.go is the REUSE gate, and it asks git which files this
+# repository commits. That is a question only git can answer: a filesystem walk
+# would have to reimplement .gitignore to tell a committed file from a build
+# output, and would then be a gate that agrees with a reimplementation rather
+# than with the tree.
+#
+# It stays in the unit tier because the state it replaces is worse than its
+# cost. REUSE.toml has existed since this repository did and nothing enforced
+# it: no tool pinned, no mise task, no workflow. A licensing manifest checked
+# only in a tier that does not run on every push is a manifest that drifts
+# between the pushes. About a tenth of a second, one `git ls-files`.
+internal/testkit/licensegate_test.go
+
 # internal/sourcegate's pointer-conversion gate type-checks this module, which needs
 # a real toolchain by construction: the questions it asks — which package
 # `u.Pointer` names under an import alias, whether the `syscall` in
