@@ -35,12 +35,21 @@ const AllowlistPath = "internal/testkit/testdata/unit-toolchain-allowlist.txt"
 // They are the spellings this repository actually uses rather than a general
 // analysis: gomutants.Open probes a toolchain and snapshots a module,
 // gocmd.Locate runs `go version` and `go env`, an os/exec lookup of the go
-// binary is the hand-rolled form that predates the harness, and the three
-// harness helpers are how everything migrated onto it asks for a toolchain or a
-// git. A file containing any of them cannot run on a machine without Go, and —
-// far more to the point — it costs a process tree rather than a function call.
+// binary — and the same lookup of git — is the hand-rolled form that predates
+// the harness, and the six harness
+// helpers are how everything migrated onto it asks for a toolchain or a git. A
+// file containing any of them cannot run on a machine without Go or without
+// git, and — far more to the point — it costs a process tree rather than a
+// function call.
 //
-// The last three are matched *unqualified*, which is the difference between a
+// The three git runners were missing from this list until a gate that reads
+// `git ls-files` was written against it and slipped through. GitBinary resolves
+// the tool and applies the policy, but Git, GitInit and GitCommit each start a
+// child on their own, and a file may call any of them without ever naming
+// GitBinary. A needle list that names the resolver and not the runners is a
+// list that catches the polite spelling.
+//
+// The last six are matched *unqualified*, which is the difference between a
 // rule and a rule with a hole in it. Written as `testkit.GoBinary(` they would
 // never match a call inside package testkit, so the one package whose whole
 // subject is which tools a test may reach would be exempt from the tier policy
@@ -54,10 +63,14 @@ const AllowlistPath = "internal/testkit/testdata/unit-toolchain-allowlist.txt"
 var toolchainNeedles = []string{
 	"gomutants." + "Open(",
 	"exec." + `LookPath("go")`,
+	"exec." + `LookPath("git")`,
 	"gocmd." + "Locate(",
 	"GoBinary" + "(",
 	"GitBinary" + "(",
 	"Toolchain" + "(",
+	"Git" + "(",
+	"GitInit" + "(",
+	"GitCommit" + "(",
 }
 
 // fakeableNeedles are the calls that can be handed a toolchain instead of
