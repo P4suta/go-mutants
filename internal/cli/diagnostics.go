@@ -17,6 +17,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/gocmd"
+	"github.com/P4suta/go-mutants/internal/schemas"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -37,6 +38,7 @@ const (
 	environmentFileName    = "environment.txt"
 	doctorFileName         = "doctor.txt"
 	reportFileName         = "report.json"
+	manifestFileName       = "manifest.json"
 	preservedPathsFileName = "preserved-paths.txt"
 
 	// environmentHeading opens the list of variable names in
@@ -106,6 +108,142 @@ type diagnosticsRequest struct {
 	hooks trace.Filesystem
 }
 
+// bundleContents says what each file of a bundle is for, in one line, for the
+// manifest to carry.
+//
+// It is a table rather than a sentence built at the call site, because the
+// manifest is read by a program that will show the line to a person: a bundle
+// attached to a bug report should need no covering note, and the note is the
+// same every time.
+var bundleContents = map[string]string{
+	errorFileName:             "the failure as the console printed it, then in full, then the typed chain underneath it",
+	environmentFileName:       "the build, the platform, the working directory, the toolchain, and the names -- never the values -- of the environment variables the process was started with",
+	doctorFileName:            "`go-mutants doctor` run against this workspace after the failure",
+	reportFileName:            "the run report, when the run got far enough to build one",
+	manifestFileName:          "this index",
+	preservedPathsFileName:    "the temporary directories the run was asked to keep, and the sentence that says so when it kept none",
+	trace.FileName:            "the recording of the run, as JSON Lines answering schema/trace-v1.schema.json",
+	trace.OutputDirectoryName: "the captured output of the commands the recording digested, one file per command, tail-truncated",
+}
+
+// A diagnosticsManifest is the one file of a bundle a program reads.
+//
+// It is an index of the directory rather than an account of the run. The
+// account is the recording beside it and the claim is the run report, and
+// restating either here would be the same run told twice -- which is the
+// mistake [writeDiagnostics] already refuses for the stream.
+type diagnosticsManifest struct {
+	DocumentType  string           `json:"document_type"`
+	SchemaVersion int              `json:"schema_version"`
+	ToolVersion   string           `json:"tool_version"`
+	RunID         string           `json:"run_id"`
+	Platform      manifestPlatform `json:"platform"`
+	Failure       manifestFailure  `json:"failure"`
+	Files         []manifestFile   `json:"files"`
+	Preserved     []string         `json:"preserved,omitempty"`
+}
+
+// manifestPlatform is the machine the run was measured on. Build constraints
+// decide which files a package even has, so a bundle is a statement about one.
+type manifestPlatform struct {
+	GOOS   string `json:"goos"`
+	GOARCH string `json:"goarch"`
+}
+
+// manifestFailure is what stopped the run, as the console said it.
+type manifestFailure struct {
+	// Code is omitted rather than blank for an error that carries none: cobra
+	// and pflag produce plain errors, and inventing a code for one would be a
+	// second identifier for a condition that has no first.
+	Code    string `json:"code,omitempty"`
+	Summary string `json:"summary"`
+}
+
+// manifestFile is one file of the bundle and what a reader will find in it.
+type manifestFile struct {
+	Name  string `json:"name"`
+	Holds string `json:"holds"`
+}
+
+// manifestFor builds the index of a bundle that holds exactly the named files.
+//
+// The names come from what the writer actually wrote rather than from a list of
+// what a bundle can hold, because those differ every time: a run that published
+// no report has no report.json, and a traced run's stream is already in this
+// directory rather than written again.
+func manifestFor(request diagnosticsRequest, written []string) diagnosticsManifest {
+	rendered := strings.TrimRight(func() string {
+		var b strings.Builder
+		RenderError(&b, request.err)
+		return b.String()
+	}(), "\n")
+	summary := firstLine(rendered)
+	summary = strings.TrimPrefix(summary, "error ")
+	code, rest, coded := splitCode(summary)
+	if coded {
+		summary = rest
+	} else {
+		code = ""
+	}
+	if summary == "" {
+		// A silent error renders nothing, and a manifest with no summary is a
+		// document the schema refuses. Saying that the bundle exists is more
+		// honest than leaving a reader with an empty field.
+		summary = "the run failed without a message the console prints"
+	}
+	files := make([]manifestFile, 0, len(written))
+	names := slices.Clone(written)
+	slices.Sort(names)
+	for _, name := range names {
+		holds, ok := bundleContents[name]
+		if !ok {
+			holds = "a file this build has no description for, which is a bug in bundleContents"
+		}
+		files = append(files, manifestFile{Name: name, Holds: holds})
+	}
+	preserved := make([]string, 0, len(request.outcome.Preserved))
+	for _, dir := range request.outcome.Preserved {
+		preserved = append(preserved, dir.Path)
+	}
+	slices.Sort(preserved)
+	return diagnosticsManifest{
+		DocumentType:  schemas.DiagnosticsV1,
+		SchemaVersion: 1,
+		ToolVersion:   Version,
+		RunID:         request.runID,
+		Platform:      manifestPlatform{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
+		Failure:       manifestFailure{Code: code, Summary: summary},
+		Files:         files,
+		Preserved:     preserved,
+	}
+}
+
+// bundleEntries is what the manifest indexes: everything already in the bundle
+// directory, plus the two files still to be written.
+//
+// The directory is listed rather than trusted to `written`, because a traced
+// run's bundle joins its recording and that directory holds things this writer
+// did not put there: the stream itself, and the `output/` directory beside it
+// holding the captured output of the commands the stream digested. Both are
+// what a reader will find, so both are what the index says.
+//
+// A listing that fails falls back to what was written. The manifest is a
+// convenience, and a bundle that lost its index because the directory could not
+// be read a moment after being written to would be a failure invented here.
+func bundleEntries(directory string, written []string) []string {
+	names := append(slices.Clone(written), manifestFileName, preservedPathsFileName)
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return names
+	}
+	for _, entry := range entries {
+		if !slices.Contains(names, entry.Name()) {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
+}
+
 // writeDiagnostics writes one failed run's bundle and returns the directory it
 // went into.
 //
@@ -144,11 +282,20 @@ func writeDiagnostics(ctx context.Context, request diagnosticsRequest) (path str
 		}
 	}()
 
+	// written is what the manifest indexes. It is what the writer actually
+	// wrote rather than what a bundle can hold, because those differ every
+	// time: a run that published no report has no report.json, and a traced
+	// run's stream is already in this directory rather than written again.
+	var written []string
 	write := func(name, content string) error {
 		if content == "" {
 			return nil
 		}
-		return writeFile(filepath.Join(directory, name), []byte(content), bundleFilePerm)
+		if writeErr := writeFile(filepath.Join(directory, name), []byte(content), bundleFilePerm); writeErr != nil {
+			return writeErr
+		}
+		written = append(written, name)
+		return nil
 	}
 	// The rendered failure first: it is the marker the collector reads, and it
 	// is what somebody opens the directory for.
@@ -181,6 +328,20 @@ func writeDiagnostics(ctx context.Context, request diagnosticsRequest) (path str
 		if err = write(reportFileName, string(document)); err != nil {
 			return "", err
 		}
+	}
+	// Second to last, and it names itself and the file after it. The index has
+	// to be written before the completion marker, because the marker is what
+	// says the bundle is finished -- so a manifest after it would be a file a
+	// collector could remove a bundle out from under. A bundle with no
+	// preserved-paths.txt is one the writer did not finish, and its manifest is
+	// a statement of what it was going to hold.
+	manifest, marshalErr := json.MarshalIndent(
+		manifestFor(request, bundleEntries(directory, written)), "", "  ")
+	if marshalErr != nil {
+		return "", marshalErr
+	}
+	if err = write(manifestFileName, string(manifest)+"\n"); err != nil {
+		return "", err
 	}
 	// Last, always, and never empty: its existence is what tells a collector the
 	// bundle is finished, and a zero-length file would leave a reader wondering

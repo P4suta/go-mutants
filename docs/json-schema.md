@@ -5,13 +5,14 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON contracts
 
-**Status: four schemas shipped, plus one vendored.**
+**Status: five schemas shipped, plus one vendored.**
 `schema/catalog-v1.schema.json`, `schema/run-report-v1.schema.json`,
-`schema/doctor-v1.schema.json` and `schema/trace-v1.schema.json` exist, are
-embedded in `internal/schemas`, and every document the CLI writes is validated
-against them in the tests. The Stryker projection is validated too, against the
-vendored third-party schema in `schema/stryker/` — which is deliberately kept
-out of that registry, for the reasons given below.
+`schema/doctor-v1.schema.json`, `schema/trace-v1.schema.json` and
+`schema/diagnostics-v1.schema.json` exist, are embedded in `internal/schemas`,
+and every document the CLI writes is validated against them in the tests. The
+Stryker projection is validated too, against the vendored third-party schema in
+`schema/stryker/` — which is deliberately kept out of that registry, for the
+reasons given below.
 
 go-mutants publishes four native document types and one lossy projection for
 the Stryker report ecosystem. The three that describe *results* are
@@ -21,7 +22,7 @@ discriminated by two fields that a consumer must check before decoding:
 { "document_type": "go-mutants/run-report", "schema_version": 1 }
 ```
 
-The fourth, `go-mutants/trace-event`, is not: a trace is a stream of lines
+The fifth, `go-mutants/trace-event`, is not: a trace is a stream of lines
 rather than a document, and it states its format once on its first line. See
 [below](#go-mutantstrace-event-v1).
 
@@ -543,6 +544,44 @@ machine with two problems should learn about both at once.
 
 This document describes the machine and not any code, so it carries no run ID,
 no workspace digest, and no mutants.
+
+## `go-mutants/diagnostics` v1
+
+The manifest of a failed run's diagnostics bundle, written as `manifest.json`
+beside the text files it indexes. See
+[the bundle](development.md#4-diagnosing-a-failing-test) for what a bundle is
+and where it goes.
+
+| Field | Contents |
+| --- | --- |
+| `document_type`, `schema_version` | `go-mutants/diagnostics`, `1` |
+| `tool_version` | The build that wrote the bundle |
+| `run_id` | The run it explains, which is also the name of the directory it is in |
+| `platform` | `goos`, `goarch` — the machine the run was measured on |
+| `failure` | `summary`, and `code` when the failure carries one |
+| `files[]` | `name`, `holds` — every file the bundle directory holds, in listing order |
+| `preserved[]` | The temporary directories the run was asked to keep; absent when it kept none |
+
+**It is an index of a directory, not an account of a run.** The account is the
+recording beside it and the claim is the run report, and restating either here
+would be the same run told twice. What it adds is the one thing neither carries:
+which files a reader will actually find, and which failure this directory is
+about — so a CI job that uploads the directory can also say what it uploaded,
+without parsing prose.
+
+`failure.code` is **absent rather than empty** for an error that has none. cobra
+and pflag produce plain errors, and minting a code for one would be a second
+identifier for a condition that has no first. Every code that does appear is one
+[`docs/errors.md`](errors.md) explains.
+
+`files[]` is what the directory holds rather than what a bundle can hold, and
+the two differ every time: a run that published no report has no `report.json`,
+and a traced run's bundle joins its recording, so it holds the stream and the
+`output/` directory beside it that this writer did not put there. The manifest
+is written second to last, after everything it names except itself and
+`preserved-paths.txt` — the completion marker stays the completion marker, and a
+bundle with no `preserved-paths.txt` is one the writer did not finish, whose
+manifest is a statement of what it was going to hold.
 
 ## Stryker projection
 
