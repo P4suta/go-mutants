@@ -5,6 +5,10 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Development
 
+**Status: implemented, and checked.** Every task, environment variable and
+command this page names exists; `internal/testkit/devdocs_test.go` fails when
+one stops existing or when this page stops naming one.
+
 How the developer infrastructure of this repository fits together: what a test
 gets from the harness, which tier it belongs in, where it writes, what a failure
 leaves behind, and how to read the account a run keeps of itself.
