@@ -21,6 +21,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/gitdiff"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
+	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/internal/tui"
 )
 
@@ -226,9 +227,10 @@ func neutralGitEnvironment(t *testing.T) {
 func TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone(t *testing.T) {
 	// No t.Parallel and no parallel subtests: t.Chdir refuses to run in one,
 	// and the working directory is where the command finds its workspace.
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git is not on PATH, so --changed cannot be exercised here: %v", err)
-	}
+	// GitBinary rather than a bare lookup: a developer without git skips, and a
+	// runner without it fails, which is what GO_MUTANTS_TEST_REQUIRE_TOOLS is
+	// for and what a lookup cannot be told.
+	_ = testkit.GitBinary(t)
 	// Both spellings of the same request, driven through one body: the bare
 	// flag, and the notation a user writes out longhand because the help says
 	// the value takes an equals sign.

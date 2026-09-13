@@ -44,6 +44,27 @@
 internal/discover/discover_test.go
 internal/discover/skipsites_test.go
 
+# internal/gitdiff runs a real `git` because every interesting thing about this
+# package is what git actually prints: which commit a merge base resolves to,
+# how a hunk header is spelled, what a missing upstream says. Its own file says
+# it first -- "a fake git would be a second implementation of the thing under
+# test" -- and that is the same argument internal/discover makes two entries up.
+#
+# It is here now because it was invisible before. The skip was a bare
+# exec.LookPath("git"), which GO_MUTANTS_TEST_REQUIRE_TOOLS cannot be told
+# about, and the needle list named GitBinary and not the lookup -- so a runner
+# whose git went missing retired eighteen tests and reported green, and every
+# mutant in internal/gitdiff would have survived a dogfood run that covered it.
+# Both halves are closed: the skip goes through testkit.GitBinary, and
+# exec.LookPath("git") is a needle like exec.LookPath("go") beside it.
+internal/gitdiff/gitdiff_test.go
+
+# internal/cli has one test that has to be inside a repository: the sentence
+# `--changed` prints when the branch it is on has no upstream. That sentence is
+# go-mutants' own output rather than git's, but there is no way to reach it
+# without a working tree for git to have an opinion about.
+internal/cli/run_test.go
+
 # internal/instrument generates Go source, and the only claim that matters about
 # generated source is that it is a program. These three compile what the
 # instrumenter produced — the mutated tree, the probe rewrite, the probe sites —

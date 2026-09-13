@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/gitdiff"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // The tests in this file drive a real git against a repository they script into
@@ -22,10 +23,13 @@ import (
 // header is spelled, what a missing upstream says. A fake git would be a second
 // implementation of the thing under test.
 //
-// They skip rather than fail when git is absent. `--changed` is the one feature
-// that needs a tool go-mutants does not ship, and a developer without git
-// installed should still be able to run the suite — the skip says why, so an
-// empty result is never mistaken for a passing one.
+// They skip rather than fail when git is absent, and the skip goes through
+// [testkit.GitBinary] rather than through a bare lookup. `--changed` is the one
+// feature that needs a tool go-mutants does not ship, and a developer without
+// git installed should still be able to run the suite — but a *runner* without
+// git must fail the job rather than retire eighteen tests and report green,
+// which is what GO_MUTANTS_TEST_REQUIRE_TOOLS decides and what a bare
+// exec.LookPath cannot be told.
 
 // The repository's fixed identity. Nothing here is read from the machine: the
 // global and system configurations are pointed at files that do not exist, so a
@@ -39,22 +43,22 @@ const (
 
 // A repo is one scripted git repository.
 type repo struct {
-	t   *testing.T
-	dir string
-	env []string
+	t      *testing.T
+	binary string
+	dir    string
+	env    []string
 }
 
 // newRepo initialises an empty repository in a temporary directory, or skips
 // the test when git cannot be found.
 func newRepo(t *testing.T) *repo {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git is not on PATH, so the --changed machinery cannot be exercised here: %v", err)
-	}
+	git := testkit.GitBinary(t)
 	dir := t.TempDir()
 	r := &repo{
-		t:   t,
-		dir: dir,
+		t:      t,
+		binary: git,
+		dir:    dir,
 		env: append(os.Environ(),
 			"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "absent-global-config"),
 			"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "absent-system-config"),
@@ -81,7 +85,7 @@ func newRepo(t *testing.T) *repo {
 func (r *repo) git(args ...string) string {
 	r.t.Helper()
 	argv := append([]string{"-C", r.dir}, args...)
-	cmd := exec.Command("git", argv...)
+	cmd := exec.Command(r.binary, argv...)
 	cmd.Env = r.env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -453,9 +457,7 @@ func TestFailures(t *testing.T) {
 		{
 			name: "outside a repository",
 			setup: func(t *testing.T) (string, string, []string) {
-				if _, err := exec.LookPath("git"); err != nil {
-					t.Skipf("git is not on PATH: %v", err)
-				}
+				_ = testkit.GitBinary(t)
 				return t.TempDir(), "HEAD", nil
 			},
 			code: gitdiff.CodeNotARepository,
