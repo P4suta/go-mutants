@@ -244,16 +244,35 @@ func harnessEnvironmentVariables(t *testing.T, root string) []string {
 	return slices.Compact(names)
 }
 
-// constantsIn is every exported string constant in one file whose value names a
-// variable in one of the harness's namespaces.
-func constantsIn(t *testing.T, path string) []string {
+// A sourceConstant is one exported string constant as the source declares it:
+// its name, its value, the documentation above it, and the file it is in.
+//
+// The doc comment is the part that makes this worth having rather than a list
+// of values. A ledger over environment variables needs only the value; a ledger
+// over diagnostic codes needs the sentence beside each one, and that sentence
+// exists nowhere but the source -- it cannot be reached from a running program.
+type sourceConstant struct {
+	Name  string
+	Value string
+	Doc   string
+	File  string
+}
+
+// exportedStringConstants is every exported string constant one file declares,
+// with the documentation a reader would find above it.
+//
+// Parsed with parser.ParseComments so that Doc is populated, and the comment
+// taken from the ValueSpec when it has one and from the enclosing GenDecl
+// otherwise -- which is how a single-spec `const ( // doc \n Name = "v" )` and a
+// block of documented specs both read the way a reader reads them.
+func exportedStringConstants(t *testing.T, path string) []sourceConstant {
 	t.Helper()
 
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parsing %s: %v", path, err)
 	}
-	var names []string
+	var found []sourceConstant
 	for _, declaration := range file.Decls {
 		general, ok := declaration.(*ast.GenDecl)
 		if !ok || general.Tok != token.CONST {
@@ -263,6 +282,10 @@ func constantsIn(t *testing.T, path string) []string {
 			value, ok := spec.(*ast.ValueSpec)
 			if !ok {
 				continue
+			}
+			doc := value.Doc
+			if doc == nil && len(general.Specs) == 1 {
+				doc = general.Doc
 			}
 			for index, name := range value.Names {
 				if !name.IsExported() || index >= len(value.Values) {
@@ -276,10 +299,27 @@ func constantsIn(t *testing.T, path string) []string {
 				if err != nil {
 					continue
 				}
-				if hasPrefixIn(unquoted, harnessEnvPrefixes) {
-					names = append(names, unquoted)
-				}
+				found = append(found, sourceConstant{
+					Name:  name.Name,
+					Value: unquoted,
+					Doc:   doc.Text(),
+					File:  path,
+				})
 			}
+		}
+	}
+	return found
+}
+
+// constantsIn is every exported string constant in one file whose value names a
+// variable in one of the harness's namespaces.
+func constantsIn(t *testing.T, path string) []string {
+	t.Helper()
+
+	var names []string
+	for _, constant := range exportedStringConstants(t, path) {
+		if hasPrefixIn(constant.Value, harnessEnvPrefixes) {
+			names = append(names, constant.Value)
 		}
 	}
 	return names
