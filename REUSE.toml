@@ -91,6 +91,26 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
+# Test inputs whose first bytes are the format under test.
+#
+# The fuzz corpus seed is read by `testing`'s own corpus reader, which requires
+# the file to open with `go test fuzz v1` and to hold one Go literal per
+# argument after it; a comment anywhere in it is a parse error, and `go test`
+# reports it as a corrupt corpus entry rather than as a licensing question.
+#
+# textfmt.sample.txt is a recording of what `go tool covdata textfmt` writes,
+# and its first line -- `mode: set` -- is part of the format internal/coverage
+# parses. A header in front of it would make the file a sample of something the
+# tool never produces, which is the one thing a sample may not be.
+[[annotations]]
+path = [
+  "internal/config/testdata/fuzz/FuzzParse/815f24358e6c0d51",
+  "internal/coverage/testdata/textfmt.sample.txt",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
 # The vendored Stryker report schema, and the Mutation Testing Elements viewer
 # the HTML report embeds. Both are Apache-2.0 rather than this project's dual
 # licence, so they get their own entry rather than joining the first-party one
