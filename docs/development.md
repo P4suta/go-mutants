@@ -1100,12 +1100,14 @@ no bundle at all. Either way, it holds:
 | `doctor.txt` | the `doctor` table for the machine |
 | `trace.jsonl` | the run's own account, out of the in-memory ring — only when the run was not traced, because a traced run's stream is already in this directory and writing the ring out beside it would be the same run told twice with one telling truncated |
 | `report.json` | the run report, if there was one |
+| `manifest.json` | the index: which files are here, which failure this is, and which run — the one file in the bundle a program reads, answering [`schema/diagnostics-v1.schema.json`](json-schema.md#go-mutantsdiagnostics-v1) |
 | `preserved-paths.txt` | what the run left on disk, or a line saying it left nothing |
 
-`error.txt` is written first and `preserved-paths.txt` last, and the presence of
-the last one — never empty, so a reader is never left wondering whether the run
-kept nothing or the writer stopped — is what says the bundle is finished. That is
-how the collector tells a finished bundle from a run still writing one. The
+`error.txt` is written first, `manifest.json` second to last and
+`preserved-paths.txt` last, and the presence of the last one — never empty, so a
+reader is never left wondering whether the run kept nothing or the writer
+stopped — is what says the bundle is finished. That is how the collector tells a
+finished bundle from a run still writing one. The
 newest ten are kept, `go-mutants trace clean` sweeps them with the recordings, an
 interrupted run writes none, and a bundle that cannot be written is a `GOM1014`
 warning rather than a different exit code.
