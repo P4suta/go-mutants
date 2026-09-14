@@ -483,14 +483,41 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 		t.Fatalf("freshly prepared snapshot already changed: %+v", changes)
 	}
 
+	// The binary is run once before anything is timed, and the reason is the
+	// whole of why the two proofs below were flaky.
+	//
+	// Both of them need the target to reach its own `init` -- that is where it
+	// records its pid, and without a pid the cleanup proof is vacuous rather
+	// than failing. What stands between `exec` and `init` is the loader, and on
+	// the two platforms that inspect a freshly written executable the first time
+	// anything runs it -- macOS hashing the whole image for its signature,
+	// Windows scanning it -- that cost is a fact about the machine and its load
+	// rather than about this code. It was measured here at over two seconds
+	// under a full parallel suite, which is how a budget of two seconds came to
+	// decide whether a proof about process cleanup ran at all.
+	//
+	// So the cost is paid outside the window: `-test.run=^$` builds nothing,
+	// runs no test, and exits at once, leaving the image warm. What the budget
+	// below then has to cover is the target's own first few instructions, which
+	// is not a number that varies with the machine. This is the same discipline
+	// internal/testkit's step alarm states at length -- a bound may end a hang
+	// and must never decide whether something was fast enough.
+	if _, warmErr := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  untested.ID,
+		Package: ".",
+		Args:    []string{"-test.run=^$"},
+		Timeout: time.Minute,
+	}); warmErr != nil {
+		t.Fatalf("warming the prepared test binary: %v", warmErr)
+	}
+
 	// Each blocking execution gets a pid file of its own, so that the second
 	// proof cannot be satisfied by what the first target wrote.
 	//
 	// Two seconds rather than the quarter of one this used to allow, because the
-	// target now has something to do before it is cut off: a freshly written test
-	// binary on a Windows runner is scanned before it runs, and a budget that
-	// expired during the loader would leave the pid unrecorded and the proof
-	// vacuous. It is still two orders below the minute the target sleeps for.
+	// target still has something to do before it is cut off, and the warm-up
+	// above is what keeps that something from being the loader. It is two orders
+	// below the minute the target sleeps for.
 	const blockingBudget = 2 * time.Second
 	timeoutPIDFile := filepath.Join(t.TempDir(), "timed-out.pid")
 	cancelPIDFile := filepath.Join(t.TempDir(), "cancelled.pid")

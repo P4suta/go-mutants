@@ -1059,30 +1059,36 @@ func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
 	}
 
 	summary := outcome.Report.Summary
-	if summary.Total != 16 {
-		t.Errorf("summary total = %d, want the 16 candidates that compile", summary.Total)
+	if summary.Total != 18 {
+		t.Errorf("summary total = %d, want the 18 candidates that compile", summary.Total)
 	}
 	// The rejected three are out of the score entirely: a mutant that cannot
-	// exist must never sit in a denominator. The sixteen that remain are all
+	// exist must never sit in a denominator. The eighteen that remain are all
 	// killed, which is the fixture's other claim about itself — a healthy
 	// mutant nothing killed would sit in the report as a survivor and read, at
 	// a glance, like a trap that slipped through.
 	if summary.ScorePercent == nil || *summary.ScorePercent != 100 {
-		t.Errorf("score = %v, want 100 over the sixteen that compile", summary.ScorePercent)
+		t.Errorf("score = %v, want 100 over the eighteen that compile", summary.ScorePercent)
 	}
-	if len(outcome.Report.Mutants) != 16 {
-		t.Errorf("the report holds %d executed mutants, want 16", len(outcome.Report.Mutants))
+	if len(outcome.Report.Mutants) != 18 {
+		t.Errorf("the report holds %d executed mutants, want 18", len(outcome.Report.Mutants))
 	}
 
 	validated := validatedOf(t, events)
-	if validated.Accepted != 16 || validated.Rejected != 3 {
-		t.Errorf("Validated = %+v, want 16 accepted and 3 rejected", validated)
+	if validated.Accepted != 18 || validated.Rejected != 3 {
+		t.Errorf("Validated = %+v, want 18 accepted and 3 rejected", validated)
 	}
 
 	// The control, by name. Every candidate in named.go has to be executed and
 	// killed, and none of them may appear among the rejections: a run that
 	// refused them again would still report three traps and a score of 100 over
 	// whatever was left, so the count assertions above would not notice.
+	//
+	// Six rather than four at this profile, and the two extra are the point of
+	// the file now. A named boolean *result* is carried by the statement form;
+	// a named boolean *condition* is carried by Form C', which writes the
+	// ordinary selector and converts it back. Both are shapes whose guard, not
+	// whose mutant, the compiler used to refuse.
 	for _, rejection := range outcome.Report.Rejected {
 		if rejection.Path == "named.go" {
 			t.Errorf("the named boolean candidate %s (%s) was rejected again: %s",
@@ -1105,8 +1111,8 @@ func TestRejectableRunReportsWhatWillNotCompile(t *testing.T) {
 			t.Errorf("the named boolean mutant %s (%s) was never executed", m.DisplayID, m.Rule)
 		}
 	}
-	if named != 4 {
-		t.Errorf("the report holds %d mutants in named.go, want the fixture's 4", named)
+	if named != 6 {
+		t.Errorf("the report holds %d mutants in named.go, want the fixture's 6", named)
 	}
 }
 
@@ -1208,8 +1214,8 @@ func TestMutantThatWasRejectedSaysSo(t *testing.T) {
 	}
 	// The catalogue is still whole, which is exactly why require_mutants stayed
 	// quiet and why the warning had to be the thing that spoke.
-	if summary := outcome.Report.Summary; summary.Total != 16 || summary.NotRun != 16 {
-		t.Errorf("summary = %+v, want the 16 that compile, all not-run", summary)
+	if summary := outcome.Report.Summary; summary.Total != 18 || summary.NotRun != 18 {
+		t.Errorf("summary = %+v, want the 18 that compile, all not-run", summary)
 	}
 	if score := outcome.Report.Summary.ScorePercent; score != nil {
 		t.Errorf("score = %v, want none: nothing was measured", *score)

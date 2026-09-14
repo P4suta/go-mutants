@@ -177,17 +177,14 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			},
 		},
 		{
-			// The condition of a named boolean type, which is negatable Go and
-			// no guard form's site. Three rules want it -- the negation and
-			// both settlements -- and each is declined separately, which is
-			// what the rule names in these rows are for: three identical lines
-			// would read as a counting bug rather than as three refusals.
-			path: "negate/negate.go",
-			sites: []string{
-				`negate/negate.go:48:5 unnameable-decl-type condition-to-false "f {"`,
-				`negate/negate.go:48:5 unnameable-decl-type condition-to-true "f {"`,
-				`negate/negate.go:48:5 unnameable-decl-type negate-condition "f {"`,
-			},
+			// The condition of a named boolean type, which three rules want and
+			// which every one of them used to be refused at. Form C' converts
+			// the selector back to the named type, so the file now records
+			// nothing at all -- and the empty list here is the assertion,
+			// because a refusal that came back would otherwise show up only as
+			// three mutants quietly missing.
+			path:  "negate/negate.go",
+			sites: nil,
 		},
 		{
 			// The addition inside the call on the `:=` line, which is the edit

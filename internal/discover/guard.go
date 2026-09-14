@@ -113,13 +113,75 @@ func (g *guardResolver) span(node ast.Node) (mutation.Span, bool) {
 }
 
 // guardFor computes the rewrite site for an edit anchored at one node,
-// reporting false when none of the three forms can express it. Every false is
+// reporting false when no form can express it. Every false is
 // a [SkipUnnameableDeclType] skip; see [Guard] for the full list of them.
 func (g *guardResolver) guardFor(anchor ast.Node) (Guard, bool) {
 	if site, ok := g.formCSite(anchor); ok {
 		return site, true
 	}
-	return g.statementSite(anchor)
+	if site, ok := g.statementSite(anchor); ok {
+		return site, true
+	}
+	return g.formCPrimeSite(anchor)
+}
+
+// formCPrimeSite looks outward for the nearest expression that is boolean
+// underneath and whose type this file can spell.
+//
+// It is [guardResolver.formCSite]'s fallback and shares its whole shape: the
+// same outward walk, the same stop at the first ancestor that is not an
+// expression, the same [guardResolver.wrappablePosition]. What differs is the
+// type gate -- bool *underneath* rather than exactly the universe bool -- and
+// that the site has to carry the type, because the selector the instrumenter
+// writes is untyped and has to be converted back.
+//
+// The order matters and is the reason this is a separate function rather than
+// a loosened gate in formCSite. Run last, it can only add sites: anything Form
+// C or one of the statement forms already covered is still covered by the form
+// that covered it, byte for byte and identity for identity.
+func (g *guardResolver) formCPrimeSite(anchor ast.Node) (Guard, bool) {
+	for node := anchor; node != nil; node = g.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return Guard{}, false
+		}
+		if !g.wrappableNamedBool(expr) {
+			continue
+		}
+		span, ok := g.span(expr)
+		if !ok {
+			return Guard{}, false
+		}
+		spelled, ok := g.typeString(g.info.Types[expr].Type)
+		if !ok {
+			// A boolean type this file cannot name. The same refusal Form D
+			// makes about a declared type, for the same reason: go-mutants
+			// knows what it would write and cannot say it in Go.
+			return Guard{}, false
+		}
+		return Guard{Form: GuardFormCPrime, SiteSpan: span, SiteType: spelled}, true
+	}
+	return Guard{}, false
+}
+
+// wrappableNamedBool reports whether an expression is boolean underneath but
+// not the universe bool, and sits where a conversion around it is legal Go.
+//
+// The universe bool is excluded rather than merely unnecessary: an expression
+// of that type is a Form C site, and letting this form claim one would change
+// which form an existing candidate uses, which is a change to the bytes of the
+// instrumented tree for no gain at all.
+func (g *guardResolver) wrappableNamedBool(expr ast.Expr) bool {
+	if g.info == nil {
+		return false
+	}
+	tv, ok := g.info.Types[expr]
+	if !ok || !tv.IsValue() || isUniverseBool(tv.Type) || !isBoolClassed(tv.Type) {
+		return false
+	}
+	// A conversion is an expression, so every position that accepts a
+	// parenthesised expression of the site's own type accepts one.
+	return g.wrappablePosition(expr)
 }
 
 // formCSite looks outward for the nearest bool-valued expression that may be

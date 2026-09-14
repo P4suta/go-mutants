@@ -92,7 +92,7 @@ The honest limits:
   for reasons that are not going to change, and cgo packages and generated
   files are excluded wholesale. Every one of those is a recorded skip with a
   reason rather than a silent omission.
-- **A rewrite site none of the three guard forms can express is skipped**, with
+- **A rewrite site no guard form can express is skipped**, with
   the reason `unnameable-decl-type`. The commonest are a `:=` that redeclares
   rather than declares, a declared type the file cannot spell with the imports
   it has, and a statement in a `for` post or an `if` initialiser, where a block

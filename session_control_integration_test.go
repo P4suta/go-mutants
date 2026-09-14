@@ -164,11 +164,26 @@ func TestControlRunsTheOriginalProgram(t *testing.T) {
 // mechanism nobody wrote down.
 func TestControlTimesOutLikeExec(t *testing.T) {
 	prepared := controlled(t)
+	// Run the binary once, untimed, before anything here is bounded. The
+	// argument is written out in full at the warm-up in api_integration_test.go
+	// and is the same one: the proofs below need the target to reach its own
+	// `init`, and what stands between `exec` and `init` is a loader whose cost
+	// on a freshly written image is a fact about the machine. Paying it here
+	// leaves the budget covering the target's own first instructions, which is
+	// not a number that varies.
+	if _, warmErr := prepared.session.Control(t.Context(), gomutants.ControlRequest{
+		Package: killableModule,
+		Args:    []string{"-test.run=^$"},
+		Timeout: time.Minute,
+	}); warmErr != nil {
+		t.Fatalf("warming the prepared test binary: %v", warmErr)
+	}
+
 	// Two seconds, for the reason the blocking executions in
-	// api_integration_test.go use it: a freshly written test binary is scanned
-	// before it runs on some machines, and a budget that expired inside the
-	// loader would leave the pid unrecorded and the proof vacuous. It is two
-	// orders below the minute the target sleeps for.
+	// api_integration_test.go use it: the target still has something to do
+	// before it is cut off, and the warm-up above is what keeps that something
+	// from being the loader. It is two orders below the minute the target
+	// sleeps for.
 	const budget = 2 * time.Second
 	controlPID := filepath.Join(t.TempDir(), "control.pid")
 	execPID := filepath.Join(t.TempDir(), "exec.pid")
@@ -963,6 +978,16 @@ func statDirectory(path string) (bool, error) {
 func TestAFailedControlStillPointsAtItsRecord(t *testing.T) {
 	prepared := controlled(t)
 	pidFile := filepath.Join(t.TempDir(), "cancelled.pid")
+	// Untimed, for the warm-up argument in api_integration_test.go: the
+	// cancellation below is armed by a clock, and a target still in its loader
+	// when it fires records no pid.
+	if _, warmErr := prepared.session.Control(t.Context(), gomutants.ControlRequest{
+		Package: killableModule,
+		Args:    []string{"-test.run=^$"},
+		Timeout: time.Minute,
+	}); warmErr != nil {
+		t.Fatalf("warming the prepared test binary: %v", warmErr)
+	}
 
 	cancelContext, cancel := context.WithCancel(t.Context())
 	timer := time.AfterFunc(2*time.Second, cancel)

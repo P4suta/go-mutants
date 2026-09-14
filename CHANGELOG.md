@@ -14,6 +14,26 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A condition of a named boolean type is a mutant again.** Form C′ is a
+  fourth guard form: the ordinary boolean selector with a conversion at each
+  end, `Flag(__gm.M[3] && bool(<mutated>) || !(__gm.M[3]) && bool(<original>))`.
+  Form C requires the site to be *exactly* the universe `bool`, because the
+  selector it writes is an untyped boolean expression and putting one where a
+  `Flag` was expected does not compile — so every condition of a named boolean
+  type was a recorded refusal, and with three rules wanting each such site
+  (the negation and both settlements) that was three refusals at one
+  coordinate. Both conversions are between a defined type and its underlying
+  type, so both are always legal, and a conversion evaluates its operand and
+  nothing else: the short-circuiting and the "exactly one operand is evaluated"
+  property are Form C's, unchanged.
+  It is tried last, after Form C and after both statement forms, and the order
+  is the guarantee rather than an implementation detail: a site any of those
+  already covered is covered by exactly the form that covered it, so no existing
+  mutant's bytes or identity moved. A boolean type the file cannot spell is
+  still refused, exactly as a Form D declaration of such a type is.
+  `fixtures/rejectable` — the module whose whole subject is what compiles —
+  gains the condition, so the claim is a mutant that is built, run and killed
+  rather than a sentence here.
 - **A `break L` can lose its label, and so can a `continue L`.** The new
   `labeled-branch` family holds `drop-break-label` and `drop-continue-label`. A
   labelled branch says "leave *that* construct"; dropping the label says "leave

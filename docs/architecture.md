@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: implemented.** The pure packages, the strict configuration decoder,
 the snapshot, the baseline execution layer, discovery for the whole
 eleven-family catalogue, guard-based instrumentation with its generated runtime
-in all three forms, compile validation, mutant execution, coverage-guided
+in all four forms, compile validation, mutant execution, coverage-guided
 selection, `RunReport v1` with its history store, the Stryker projection and
 the self-contained HTML report, the live TUI dashboard, `--changed`, `--shard`
 with `report merge`, `--explain`, the outcome cache, and the whole v1 command
@@ -254,6 +254,22 @@ executes.
 
   Short-circuiting alone selects the side; there is no allocation.
 
+- **Form C′ — converted boolean selector.** For a condition whose type is a
+  *named* boolean rather than the universe one:
+
+  ```go
+  Flag(__gm.M[3] && bool(<mutated condition>) || !(__gm.M[3]) && bool(<original>))
+  ```
+
+  The selector is untyped either way; what a named boolean needs is a
+  conversion back to it, and a conversion of each operand to `bool` first,
+  because `&&` and `||` want operands of one boolean type. Both directions are
+  conversions between a defined type and its underlying type, which are always
+  legal, and a conversion evaluates its operand and nothing else — so the
+  short-circuiting and the "exactly one operand is evaluated" property are Form
+  C's, unchanged. Discovery carries the spelling of the type down with the
+  hint, since the instrumenter never type-checks.
+
 - **Form D — declaration rewrite.** For `:=` and `var` initializers:
 
   ```go
@@ -265,7 +281,7 @@ executes.
   there and nowhere else, so every candidate carries the form, the site span,
   and any declared types down to instrumentation as a hint. A type that cannot
   be named is a recorded skip with reason `unnameable-decl-type`, never a
-  silent omission — and so is every other site none of the three forms can
+  silent omission — and so is every other site none of the forms can
   express; see [Operators](operators.md).
 
 **Flattening.** The mutated copy is re-tokenized with `go/scanner` and explicit
