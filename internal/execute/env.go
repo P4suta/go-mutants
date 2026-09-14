@@ -95,17 +95,25 @@ func baseEnvFrom(source []string, scratch string) []string {
 // rather than invented here, because the package set `go list` enumerates has
 // to be the package set discovery type-checked:
 //
-//   - GOWORK=off. The go command searches every parent directory for a
-//     `go.work` and obeys $GOWORK, so a snapshot placed one level below
-//     somebody's workspace would otherwise resolve against a file the snapshot
-//     does not contain — and every digest and identity this run mints assumes
-//     the snapshot is the whole truth.
+//   - GOWORK. The go command searches every parent directory for a `go.work`
+//     and obeys $GOWORK, so a snapshot placed one level below somebody's
+//     workspace would otherwise resolve against a file the snapshot does not
+//     contain — and every digest and identity this run mints assumes the
+//     snapshot is the whole truth. So it is off, unless the snapshot carries a
+//     workspace file of its own and the run is measuring it: then GOWORK names
+//     *that* file, because a module of a workspace resolves its siblings
+//     through it and a listing that ignored it would enumerate packages that do
+//     not build. Either way the caller's own $GOWORK decides nothing.
 //   - The located toolchain's directory in front of PATH. It does not decide
 //     which `go` runs — os/exec resolved that from [gocmd.Toolchain.GoBin]
 //     already — it decides what that `go` sees, because a toolchain that finds
 //     a different one ahead of it on PATH can hand work to it.
-func toolchainEnvFrom(source []string, toolchain gocmd.Toolchain, scratch string) []string {
-	env := setEnv(baseEnvFrom(source, scratch), "GOWORK", "off")
+func toolchainEnvFrom(source []string, toolchain gocmd.Toolchain, scratch, workFile string) []string {
+	gowork := "off"
+	if workFile != "" {
+		gowork = workFile
+	}
+	env := setEnv(baseEnvFrom(source, scratch), "GOWORK", gowork)
 	return prependPath(env, toolchain)
 }
 
