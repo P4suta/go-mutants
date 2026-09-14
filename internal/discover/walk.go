@@ -95,7 +95,8 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 	if err != nil {
 		return &Error{Code: CodeFileUnreadable, Message: "cannot read " + strconv.Quote(rel), Err: err}
 	}
-	return d.scanParsed(rel, packagePath(pkg), src, tokFile, file, pkg.TypesInfo, pkg.Types)
+	return d.scanParsed(rel, packagePath(pkg), src, tokFile, file, pkg.TypesInfo, pkg.Types,
+		d.packageImports(loaded, pkg))
 }
 
 // scanParsed runs the mutation walk over one file that has already been parsed
@@ -112,6 +113,12 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 // tokFile is the [token.File] file's positions resolve against, info its type
 // information, and pkgTypes the package it was checked in — what the guard
 // resolver needs to name the type an edit would produce.
+//
+// siblings is the import index of the package's *other* files, which is what
+// import completion may draw on; nil is a file with no siblings, which has
+// nothing to complete from. It is passed in rather than derived here for the
+// same reason everything else is: this is the part of discovery that needs no
+// package loader.
 func (d *discovery) scanParsed(
 	rel, pkgPath string,
 	src []byte,
@@ -119,6 +126,7 @@ func (d *discovery) scanParsed(
 	file *ast.File,
 	info *types.Info,
 	pkgTypes *types.Package,
+	siblings map[string]string,
 ) error {
 	if uint64(len(src)) > math.MaxUint32 {
 		return &Error{
@@ -141,7 +149,7 @@ func (d *discovery) scanParsed(
 		tokFile:      tokFile,
 		info:         info,
 		suppressions: collectSuppressions(file, info),
-		guard:        newGuardResolver(file, info, pkgTypes, tokFile),
+		guard:        newGuardResolver(file, info, pkgTypes, tokFile, siblings),
 	}
 	return scan.walk(file)
 }
@@ -731,21 +739,21 @@ func (s *fileScan) probesResult(value ast.Expr, declared types.Type) bool {
 // the `return-err-to-nil` the family exists for.
 func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ReturnSite) error {
 	if isExactlyError(s.typeOf(value)) {
-		return s.replaceReturn(value, ruleReturnErrToNil, "nil", site)
+		return s.replaceReturn(value, ruleReturnErrToNil, "nil", site, nil)
 	}
 	switch {
 	case isNumeric(declared):
-		return s.replaceReturn(value, ruleReturnZeroNumeric, "0", site)
+		return s.replaceReturn(value, ruleReturnZeroNumeric, "0", site, nil)
 	case isStringy(declared):
-		return s.replaceReturn(value, ruleReturnEmptyString, `""`, site)
+		return s.replaceReturn(value, ruleReturnEmptyString, `""`, site, nil)
 	case isBoolClassed(declared):
-		if err := s.replaceReturn(value, ruleReturnTrue, "true", site); err != nil {
+		if err := s.replaceReturn(value, ruleReturnTrue, "true", site, nil); err != nil {
 			return err
 		}
-		return s.replaceReturn(value, ruleReturnFalse, "false", site)
+		return s.replaceReturn(value, ruleReturnFalse, "false", site, nil)
 	case isNillable(declared):
 		// Not an error-typed value: that was settled above.
-		if err := s.replaceReturn(value, ruleReturnNil, "nil", site); err != nil {
+		if err := s.replaceReturn(value, ruleReturnNil, "nil", site, nil); err != nil {
 			return err
 		}
 		return s.replaceEmptyNeutral(value, declared, site)
@@ -762,7 +770,9 @@ func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *Return
 // failed run. It is not a skip either: `return 0` is not a place go-mutants
 // declined to mutate, it is a place where the mutation and the source are the
 // same program.
-func (s *fileScan) replaceReturn(value ast.Expr, name, replacement string, site *ReturnSite) error {
+func (s *fileScan) replaceReturn(
+	value ast.Expr, name, replacement string, site *ReturnSite, needs []Completion,
+) error {
 	rule, ok := s.matchers.rule(name)
 	if !ok {
 		return nil
@@ -771,7 +781,7 @@ func (s *fileScan) replaceReturn(value ast.Expr, name, replacement string, site 
 	if !ok || original == replacement {
 		return nil
 	}
-	return s.emitProbed(rule, value, replacement, site)
+	return s.emitProbed(rule, value, replacement, site, needs)
 }
 
 // enclosingResults returns the declared results of the function a node sits in.
@@ -882,13 +892,15 @@ func (s *fileScan) text(node ast.Node) (string, bool) {
 // to reach it is a syntax tree and a file that have stopped describing each
 // other, which is the condition [emit]'s span check exists to shout about.
 func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement string) error {
-	return s.emitProbed(rule, node, replacement, nil)
+	return s.emitProbed(rule, node, replacement, nil, nil)
 }
 
 // emitProbed is [fileScan.emitNode] for a candidate that also carries a probe
 // hint. The hint is a fact about the rewrite site of a *different* tree, so it
 // travels beside the candidate rather than changing anything about it.
-func (s *fileScan) emitProbed(rule mutation.Rule, node ast.Node, replacement string, site *ReturnSite) error {
+func (s *fileScan) emitProbed(
+	rule mutation.Rule, node ast.Node, replacement string, site *ReturnSite, needs []Completion,
+) error {
 	original, ok := s.text(node)
 	if !ok {
 		position := s.tokFile.PositionFor(node.Pos(), false)
@@ -898,7 +910,7 @@ func (s *fileScan) emitProbed(rule mutation.Rule, node ast.Node, replacement str
 				strconv.Itoa(position.Column) + " starts a node that reaches past the end of the file",
 		}
 	}
-	return s.emitAt(rule, node, node.Pos(), original, replacement, site)
+	return s.emitAt(rule, node, node.Pos(), original, replacement, site, needs)
 }
 
 // emit records one candidate, or the reason it was suppressed.
@@ -922,7 +934,7 @@ func (s *fileScan) emitProbed(rule mutation.Rule, node ast.Node, replacement str
 // present when this phase could prove the edit only narrows an `if` or `for`
 // condition, and nil otherwise. See [BranchProof].
 func (s *fileScan) emit(rule mutation.Rule, anchor ast.Node, pos token.Pos, original, replacement string) error {
-	return s.emitAt(rule, anchor, pos, original, replacement, nil)
+	return s.emitAt(rule, anchor, pos, original, replacement, nil, nil)
 }
 
 // emitAt is [fileScan.emit] with the probe hint the return-value family carries.
@@ -934,6 +946,7 @@ func (s *fileScan) emitAt(
 	pos token.Pos,
 	original, replacement string,
 	site *ReturnSite,
+	needs []Completion,
 ) error {
 	if reason, ok := s.suppressed(pos); ok {
 		s.recordAt(s.rel, reason, rule.Name, pos)
@@ -960,6 +973,12 @@ func (s *fileScan) emitAt(
 		s.recordAt(s.rel, SkipUnnameableDeclType, rule.Name, pos)
 		return nil
 	}
+	// The replacement text can need an import of its own -- `[]carrier.Box{}`
+	// spells a type where every other rule writes a constant -- and it is the
+	// same tree the guard is spliced into, so the two sets are one list. They
+	// are merged rather than concatenated: a rewrite that named one package
+	// twice would be one import declared twice.
+	guard.Imports = MergeCompletions(guard.Imports, needs)
 	// The probe hint is attached after the guard and never instead of it: a
 	// site the probe tree cannot express is still a site the mutant tree does,
 	// so a nil hint is not a skip and removes no candidate.
@@ -1035,7 +1054,7 @@ func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site
 	if mapped {
 		rule = ruleReturnEmptyMap
 	}
-	spelled, ok := s.guard.typeString(declared)
+	spelled, needs, ok := s.guard.typeString(declared)
 	if !ok {
 		// The same fact Form D records when it cannot spell a declared type:
 		// go-mutants knows what it would like to write here and cannot say it
@@ -1047,7 +1066,7 @@ func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site
 	// No probe hint. A slice is not comparable, so `r0 != []T{}` is not legal
 	// Go and the return form's `!=` cannot be written for it; the `return-nil`
 	// beside this one keeps its own, because `r0 != nil` is legal for both.
-	return s.replaceReturn(value, rule, spelled+"{}", nil)
+	return s.replaceReturn(value, rule, spelled+"{}", nil, needs)
 }
 
 // returnsBesideAnError reports whether the statement this value belongs to also

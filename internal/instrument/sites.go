@@ -506,31 +506,41 @@ func buildSites(
 	srcPath string,
 	mutants []mutation.Mutant,
 	hints Hints,
-) (interval.Forest[mutation.Mutant], map[mutation.Span]site, error) {
+) (interval.Forest[mutation.Mutant], map[mutation.Span]site, []discover.Completion, error) {
 	items := make([]interval.Item[mutation.Mutant], 0, len(mutants))
 	sites := make(map[mutation.Span]site, len(mutants))
+	var completions []discover.Completion
+	fail := func(err error) (
+		interval.Forest[mutation.Mutant], map[mutation.Span]site, []discover.Completion, error,
+	) {
+		return interval.Forest[mutation.Mutant]{}, nil, nil, err
+	}
 	for _, m := range mutants {
 		guard, err := hints.guardFor(m, srcPath)
 		if err != nil {
-			return interval.Forest[mutation.Mutant]{}, nil, err
+			return fail(err)
 		}
 		resolved, err := index.siteFor(m, guard, srcPath)
 		if err != nil {
-			return interval.Forest[mutation.Mutant]{}, nil, err
+			return fail(err)
 		}
 		if previous, seen := sites[resolved.span]; seen {
 			if err := agree(previous, resolved, m, srcPath); err != nil {
-				return interval.Forest[mutation.Mutant]{}, nil, err
+				return fail(err)
 			}
 		}
 		sites[resolved.span] = resolved
+		// Collected per mutant rather than per site: two mutants can share a
+		// site and reach it through guards that spell different types, and what
+		// the file needs is the union of what is written into it.
+		completions = discover.MergeCompletions(completions, guard.Imports)
 		items = append(items, interval.Item[mutation.Mutant]{Span: resolved.span, Payload: m})
 	}
 	forest, err := placeSites(srcPath, items)
 	if err != nil {
-		return interval.Forest[mutation.Mutant]{}, nil, err
+		return fail(err)
 	}
-	return forest, sites, nil
+	return forest, sites, completions, nil
 }
 
 // agree refuses two hints that name one site and disagree about what it is.

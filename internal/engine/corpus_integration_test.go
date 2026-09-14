@@ -414,14 +414,15 @@ func TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate(t *testing.
 }
 
 // TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen is a
-// refusal that is not a failure.
+// refusal that is not a failure, and the completion that is not a refusal.
 //
-// A guard at the addition inside `hidden.New(a + b)` would have to declare a
-// temporary of the type `c` is given, and that type is `*hidden.counter` — not
-// exported, so there is no source form of the declaration and discovery does
-// not invent one by adding an import. The site is recorded with the reserved
-// reason and the pass carries on: the ordinary candidate on the next line is
-// catalogued, executed and killed, and the run completes.
+// The refusal is an edit whose every enclosing expression has the type
+// `hidden.tally`, which is unexported: there is no source form of that type
+// outside its own package, and no import supplies one — which is the difference
+// from the `split` package below, where the type is exported and the name is
+// all that was missing. The site is recorded with the reserved reason and the
+// pass carries on: every other candidate in the module is catalogued, executed
+// and killed, and the run completes.
 //
 // The coordinates are asserted through internal/discover rather than through
 // the report, and the split is the one the two views were designed around: the
@@ -429,6 +430,15 @@ func TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate(t *testing.
 // — because forty coordinates per file is a document nobody would read, and the
 // listing carries the sites for the person who asked which. This is the one
 // fixture whose whole subject is a single site, so both are checked.
+//
+// The module's `split` package is the same question with the other answer, and
+// it is here rather than in a fixture of its own because it is the same
+// subject: a type the file being rewritten cannot spell. What separates the two
+// is *reach*. `*hidden.counter` is unexported, so no import makes it writable
+// and the refusal stands; `reachable.Extent` is exported and the package is one
+// a sibling file already imports, so the rewrite is given that import and the
+// mutant exists. The kill on split/unsayable.go is what says the instrumented
+// tree compiled with an import this phase added.
 func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *testing.T) {
 	t.Parallel()
 
@@ -445,14 +455,26 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 	if !slices.Equal(outcome.Report.Skips, wantSkips) {
 		t.Errorf("skips = %+v, want %+v", outcome.Report.Skips, wantSkips)
 	}
-	if found := discoveredOf(t, events); found.Skips != 1 || found.Candidates != 7 {
-		t.Errorf("Discovered = %+v, want 7 candidates and 1 skip", found)
+	if found := discoveredOf(t, events); found.Skips != 1 || found.Candidates != 15 {
+		t.Errorf("Discovered = %+v, want 15 candidates and 1 skip", found)
 	}
 	want := []string{
 		"killed hidden/hidden.go:17 return-nil",
 		"killed hidden/hidden.go:20 return-zero-numeric",
 		"killed hidden/hidden.go:35 return-zero-numeric",
 		"killed hidden/hidden.go:39 return-zero-numeric",
+		"killed reachable/reachable.go:18 return-zero-numeric",
+		"killed reachable/reachable.go:21 return-zero-numeric",
+		"killed split/sayable.go:19 return-zero-numeric",
+		"killed split/sayable.go:23 add-to-sub",
+		"killed split/sayable.go:23 return-zero-numeric",
+		// The line the module's second half is for. The tag of this `switch`
+		// has a type only the file beside it has a name for, so the guard is
+		// written with an import the rewrite adds — and this row is the proof
+		// that what came out compiled, ran, and was caught.
+		"killed split/unsayable.go:21 add-to-sub",
+		"killed split/unsayable.go:23 return-zero-numeric",
+		"killed split/unsayable.go:25 return-zero-numeric",
 		// The addition the fixture's Counted used to have refused. Its
 		// declaration is still one no form may rewrite; the initialiser
 		// expression around the edit is an `int`, and a closure returning an

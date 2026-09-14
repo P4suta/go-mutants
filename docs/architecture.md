@@ -314,10 +314,13 @@ executes.
   `T` comes from `types.TypeString` with an import-qualifier map, and it is
   discovery that computes it: the type information the qualifier needs is
   there and nowhere else, so every candidate carries the form, the site span,
-  and any declared types down to instrumentation as a hint. A type that cannot
-  be named is a recorded skip with reason `unnameable-decl-type`, never a
-  silent omission — and so is every other site none of the forms can
-  express; see [Operators](operators.md).
+  and any declared types down to instrumentation as a hint. Where the qualifier
+  has no name for a package, the guard may carry one: a candidate declares the
+  imports its spelling needs, limited to paths a sibling file of the same
+  package already has, and instrumentation splices them in beside the runtime's.
+  A type that cannot be named *anywhere* is a recorded skip with reason
+  `unnameable-decl-type`, never a silent omission — and so is every other site
+  none of the forms can express; see [Operators](operators.md).
 
 **Flattening.** The mutated copy is re-tokenized with `go/scanner` and explicit
 semicolons are inserted where automatic semicolon insertion would have applied,

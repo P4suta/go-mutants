@@ -10,6 +10,8 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/interval"
 	"github.com/P4suta/go-mutants/internal/mutation"
+
+	"github.com/P4suta/go-mutants/internal/discover"
 )
 
 // This file hands the package's external tests the flattener's self-check
@@ -77,9 +79,12 @@ func ParseSnapshot(srcPath string, src []byte) (*ast.File, *token.File, error) {
 	return parseSnapshotFile(srcPath, src)
 }
 
-// ImportSplices runs the runtime import injection over a syntax tree.
-func ImportSplices(file *ast.File, tok *token.File, srcPath, alias, importPath string) ([]Splice, error) {
-	return importSplices(file, tok, srcPath, alias, importPath)
+// ImportSplices runs the runtime import injection over a syntax tree, with
+// whatever completions a guard's spelling asked the file to gain.
+func ImportSplices(
+	file *ast.File, tok *token.File, srcPath, alias, importPath string, completions ...discover.Completion,
+) ([]Splice, error) {
+	return importSplices(file, tok, srcPath, alias, importPath, completions)
 }
 
 // AliasFor runs the alias choice over one file and the names the caller says

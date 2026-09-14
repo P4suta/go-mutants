@@ -14,6 +14,34 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A guard may now add the import its spelling needs.** Every form but the
+  plain boolean selector writes a type down, and a type is written with the name
+  its package has *in the file being rewritten* — so a file holding an
+  expression whose type belongs to a package it does not import was a refusal.
+  It is an ordinary shape: a helper in a sibling file returns one.
+  The rule is one line and it is what makes the addition safe: a completion may
+  only add a path **some file of the same package already imports**. Everything
+  an import injector normally has to prove then follows by construction. No
+  cycle is possible, because the package compiles today with that edge in its
+  graph and moving it between files does not change the graph. Visibility is
+  unchanged, because `internal/`, module boundaries and vendoring all judge the
+  importing *package*, which is the same package. And `go.mod` needs nothing,
+  because the requirement that resolves the path is already there.
+  The name is chosen at discovery, beside the type it appears in, because the
+  rendered type string already contains it — and a name the file binds is bumped
+  rather than refused, exactly as the generated runtime's alias is. A blank or a
+  dot import of the file's own is completed too: both import the package and
+  bind no name for it, which is the condition this exists for. Each guard
+  declares its own imports rather than the file's, because validation bisects
+  and any subset of a file's mutants may be instrumented alone.
+  What it does not fix is reach rather than spelling, and `unnameable-decl-type`
+  keeps that half: a type whose package no file of this one imports stays a
+  refusal, and so does an unexported name from another package, which has no
+  source form anywhere outside it. `fixtures/unnameable/` now holds one of each
+  side by side, and the kill on its `split` package is what says an instrumented
+  tree compiles with an import this tool added.
+  The smallest visible consequence is a probe that used to be refused: a result
+  type reached through a dot import is now spelled against a completed name.
 - **`explain --json` writes a `go-mutants/explain` document.** The flag used to
   be refused, on the argument that the run report and the recording already are
   the machine-readable forms and a third encoding of the same facts would be a

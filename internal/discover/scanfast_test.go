@@ -91,8 +91,73 @@ func scanWith(t *testing.T, src string, want func(mutation.Rule) bool) scanned {
 		digests:  map[string]string{},
 	}
 	tokFile := fset.File(file.Package)
-	if err := d.scanParsed("pkg/scan.go", "example.com/m/pkg", []byte(src), tokFile, file, info, pkg); err != nil {
+	if err := d.scanParsed("pkg/scan.go", "example.com/m/pkg", []byte(src), tokFile, file, info, pkg, nil); err != nil {
 		t.Fatalf("scanParsed:\n%s\n%v", src, err)
+	}
+	return scanned{candidates: d.candidates, sites: d.sites}
+}
+
+// scanPackage is [scanSource] over a package of more than one file.
+//
+// Only the first source is walked; the rest are type-checked beside it and are
+// there to be *siblings*. That is the whole point of the helper: a file may hold
+// an expression whose type belongs to a package only another file of the same
+// package imports, and what discovery does about that is a fact about the
+// package rather than about the file.
+//
+// The walked file is `pkg/scan.go` as in [scanSource], and the siblings are
+// `pkg/sibling0.go`, `pkg/sibling1.go` and so on, so that a test asserting a
+// path knows what to expect.
+func scanPackage(t *testing.T, primary string, siblings ...string) scanned {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "scan.go", primary, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parsing the source:\n%s\n%v", primary, err)
+	}
+	checked := []*ast.File{file}
+	for i, source := range siblings {
+		name := "sibling" + strconv.Itoa(i) + ".go"
+		parsed, parseErr := parser.ParseFile(fset, name, source, parser.ParseComments)
+		if parseErr != nil {
+			t.Fatalf("parsing %s:\n%s\n%v", name, source, parseErr)
+		}
+		checked = append(checked, parsed)
+	}
+
+	info := &types.Info{
+		Types:      map[ast.Expr]types.TypeAndValue{},
+		Defs:       map[*ast.Ident]types.Object{},
+		Uses:       map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+	}
+	var typeErrs []error
+	conf := types.Config{
+		Importer: importer.ForCompiler(fset, "source", nil),
+		Error:    func(e error) { typeErrs = append(typeErrs, e) },
+	}
+	pkg, _ := conf.Check("example.com/m/pkg", fset, checked, info)
+	if len(typeErrs) > 0 {
+		t.Fatalf("the fixture does not type-check (a scan fixture must):\n%s\n%v", primary, typeErrs)
+	}
+
+	matchers, err := newMatchers(SupportedRules())
+	if err != nil {
+		t.Fatalf("building the matchers: %v", err)
+	}
+	d := &discovery{
+		root:     "/module",
+		matchers: matchers,
+		skips:    map[skipKey]int{},
+		seen:     map[string]bool{},
+		digests:  map[string]string{},
+	}
+	tokFile := fset.File(file.Package)
+	err = d.scanParsed("pkg/scan.go", "example.com/m/pkg", []byte(primary), tokFile, file, info, pkg,
+		importsOf(checked))
+	if err != nil {
+		t.Fatalf("scanParsed:\n%s\n%v", primary, err)
 	}
 	return scanned{candidates: d.candidates, sites: d.sites}
 }
@@ -154,4 +219,22 @@ func Positive(v int) bool {
 	if !got.has("gt-to-ge", ">", ">=") {
 		t.Errorf("scan found %v, want a gt-to-ge candidate", got.rules())
 	}
+}
+
+// parseAll parses several sources into one file set, for a test about the
+// import index rather than about a walk.
+func parseAll(t *testing.T, sources []string) []*ast.File {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	files := make([]*ast.File, 0, len(sources))
+	for i, source := range sources {
+		name := "file" + strconv.Itoa(i) + ".go"
+		file, err := parser.ParseFile(fset, name, source, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parsing %s:\n%s\n%v", name, source, err)
+		}
+		files = append(files, file)
+	}
+	return files
 }

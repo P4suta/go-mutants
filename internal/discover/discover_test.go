@@ -191,6 +191,11 @@ var wantCandidates = []string{
 	"bits/bits.go shr-to-shl >>-><<",
 	"bits/bits.go delete-assignment out[0] = a & b->",
 	"bits/bits.go band-to-bor &->|",
+	// The package import completion draws on: exported, named, and imported
+	// by one file of package split and not the other.
+	"carrier/carrier.go return-zero-numeric Extent(b.n)->0",
+	"carrier/carrier.go return-zero-numeric int(e)->0",
+	"carrier/carrier.go return-zero-numeric deeper.Of(n)->0",
 	"compare/compare.go negate-condition a == b->!(a == b)",
 	"compare/compare.go condition-to-true a == b->true",
 	"compare/compare.go condition-to-false a == b->false",
@@ -230,6 +235,9 @@ var wantCandidates = []string{
 	"compare/compare.go return-false off->false",
 	"compare/compare.go return-zero-numeric m[true]->0",
 	"compare/compare.go true-to-false true->false",
+	// The package that is one edge too far: nothing in split imports it.
+	"deeper/deeper.go return-zero-numeric Thing(n)->0",
+	"deeper/deeper.go return-zero-numeric int(t)->0",
 	"deletion/deletion.go delete-call-statement Log(\"start\")->",
 	"deletion/deletion.go delete-assignment total = total + n->",
 	"deletion/deletion.go add-to-sub +->-",
@@ -443,6 +451,14 @@ var wantCandidates = []string{
 	"shadow/shadow.go return-zero-numeric true->0",
 	"shadow/shadow.go false-to-true false->true",
 	"shadow/shadow.go return-true false->true",
+	// Widest is the site import completion exists for: its `+` has the type
+	// carrier.Extent, and only the file beside it imports carrier. Deepest
+	// below it is the same shape one package further out, and is a skip.
+	"split/sayable.go return-zero-numeric carrier.Count(boxed(a).Size()) + b->0",
+	"split/sayable.go add-to-sub +->-",
+	"split/unsayable.go add-to-sub +->-",
+	"split/unsayable.go return-zero-numeric a->0",
+	"split/unsayable.go return-zero-numeric a->0",
 	"suppressed/suppressed.go return-zero-numeric len(Buffer{})->0",
 	"suppressed/suppressed.go negate-condition limit->!(limit)",
 	"suppressed/suppressed.go condition-to-false limit->false",
@@ -497,6 +513,10 @@ var wantSkips = []string{
 	// one for the single explicit type argument, and two for the list form.
 	"generics/generics.go type-param 5",
 	"labels/labels.go label-or-goto 1",
+	// Import completion's own boundary: a type whose package *no* file of this
+	// one imports. The sibling file beside it has no path to it either, which
+	// is what makes this a refusal while Widest in the same file is a site.
+	"split/unsayable.go unnameable-decl-type 1",
 	// The condition of a named boolean type: negatable Go, and no guard form.
 	"suppressed/suppressed.go array-length 2",
 	"suppressed/suppressed.go const-decl 4",

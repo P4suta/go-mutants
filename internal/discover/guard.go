@@ -7,7 +7,9 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
@@ -30,20 +32,76 @@ type guardResolver struct {
 	// empty value means the import is plain and the name is the package's own,
 	// which is only knowable from the [types.Package] at qualification time.
 	imports map[string]string
+	// siblings maps an import path some *other* file of this package imports to
+	// the name to prefer for it. It is what import completion may draw on, and
+	// imports.go argues at length why that set and no wider one.
+	siblings map[string]string
+	// added records the name each completed path has been given in this file,
+	// so that two rewrites of one file never bind one package twice under two
+	// names. It grows as the file is walked and is never reset.
+	added map[string]string
+	// taken is every name a completion may not bind: the file's own
+	// identifiers, the names its imports already bind, and the package block,
+	// which a file-scoped import may not collide with even across files.
+	taken map[string]bool
 }
 
 // newGuardResolver indexes one file.
-func newGuardResolver(file *ast.File, info *types.Info, pkg *types.Package, tokFile *token.File) *guardResolver {
+//
+// siblings is the import index of the package's other files, and may be nil for
+// a package of one file — a file with no siblings has nothing to complete from,
+// which is a smaller statement than "completion is off".
+func newGuardResolver(
+	file *ast.File, info *types.Info, pkg *types.Package, tokFile *token.File, siblings map[string]string,
+) *guardResolver {
 	g := &guardResolver{
-		info:    info,
-		pkg:     pkg,
-		tokFile: tokFile,
-		parent:  make(map[ast.Node]ast.Node),
-		imports: make(map[string]string),
+		info:     info,
+		pkg:      pkg,
+		tokFile:  tokFile,
+		parent:   make(map[ast.Node]ast.Node),
+		imports:  make(map[string]string),
+		siblings: siblings,
+		added:    make(map[string]string),
+		taken:    make(map[string]bool),
 	}
 	g.indexParents(file)
 	g.indexImports(file)
+	g.indexTakenNames(file)
 	return g
+}
+
+// indexTakenNames gathers every identifier a completion may not bind.
+//
+// Three scopes, and each of them can be wrong in a different way. Every
+// identifier in the file counts, because a local variable sharing the name
+// would shadow the import for exactly the statements a guard sits in. Every
+// name an existing import binds counts, including the implicit one of a plain
+// import, which no identifier node spells. And every name the package block
+// binds counts, which is not shadowing at all: Go forbids one name appearing in
+// a file block and in the package block of the same package, so a `var carrier`
+// in a sibling file makes `import carrier "…"` here a hard error.
+//
+// internal/instrument does the same three scopes for the runtime alias, by
+// reading the directory; here the package block arrives free, because the type
+// checker has already built it.
+func (g *guardResolver) indexTakenNames(file *ast.File) {
+	ast.Inspect(file, func(node ast.Node) bool {
+		if ident, ok := node.(*ast.Ident); ok {
+			g.taken[ident.Name] = true
+		}
+		return true
+	})
+	for importPath, local := range g.imports {
+		if local == "" {
+			local = defaultLocal(importPath)
+		}
+		g.taken[local] = true
+	}
+	if g.pkg != nil && g.pkg.Scope() != nil {
+		for _, name := range g.pkg.Scope().Names() {
+			g.taken[name] = true
+		}
+	}
 }
 
 // indexParents records every node's owner in one walk.
@@ -158,7 +216,7 @@ func (g *guardResolver) formESite(anchor ast.Node) (Guard, bool) {
 		if !ok {
 			return Guard{}, false
 		}
-		spelled, ok := g.typeString(g.info.Types[expr].Type)
+		spelled, needs, ok := g.typeString(g.info.Types[expr].Type)
 		if !ok {
 			// A type this file cannot name, which is not the end of the search:
 			// an expression around this one may have a type it can. The walk
@@ -167,7 +225,7 @@ func (g *guardResolver) formESite(anchor ast.Node) (Guard, bool) {
 			// ancestor, not the nearest one.
 			continue
 		}
-		return Guard{Form: GuardFormE, SiteSpan: span, SiteType: spelled}, true
+		return Guard{Form: GuardFormE, SiteSpan: span, SiteType: spelled, Imports: needs}, true
 	}
 	return Guard{}, false
 }
@@ -224,14 +282,14 @@ func (g *guardResolver) formCPrimeSite(anchor ast.Node) (Guard, bool) {
 		if !ok {
 			return Guard{}, false
 		}
-		spelled, ok := g.typeString(g.info.Types[expr].Type)
+		spelled, needs, ok := g.typeString(g.info.Types[expr].Type)
 		if !ok {
 			// A boolean type this file cannot name. The same refusal Form D
 			// makes about a declared type, for the same reason: go-mutants
 			// knows what it would write and cannot say it in Go.
 			return Guard{}, false
 		}
-		return Guard{Form: GuardFormCPrime, SiteSpan: span, SiteType: spelled}, true
+		return Guard{Form: GuardFormCPrime, SiteSpan: span, SiteType: spelled, Imports: needs}, true
 	}
 	return Guard{}, false
 }
@@ -539,17 +597,17 @@ func (g *guardResolver) statementGuard(stmt ast.Stmt) (Guard, bool) {
 	case *ast.AssignStmt:
 		// Not Form S, so it declares: the only assignment [FormSStatement]
 		// refuses is a `:=`.
-		declared, ok := g.defineTypes(s)
+		declared, needs, ok := g.defineTypes(s)
 		if !ok {
 			return Guard{}, false
 		}
-		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared}, true
+		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared, Imports: needs}, true
 	case *ast.DeclStmt:
-		declared, ok := g.declTypes(s)
+		declared, needs, ok := g.declTypes(s)
 		if !ok {
 			return Guard{}, false
 		}
-		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared}, true
+		return Guard{Form: GuardFormD, SiteSpan: span, DeclTypes: declared, Imports: needs}, true
 	default:
 		return Guard{}, false
 	}
@@ -569,13 +627,13 @@ func (g *guardResolver) statementGuard(stmt ast.Stmt) (Guard, bool) {
 // The names are collected before any of them is typed because
 // [guardResolver.rebindsOwnInitialiser] has to see the whole left-hand side at
 // once; see it for what a partial view would let through.
-func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, bool) {
+func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, []Completion, bool) {
 	idents := make([]*ast.Ident, 0, len(assign.Lhs))
 	names := make(map[string]bool, len(assign.Lhs))
 	for _, lhs := range assign.Lhs {
 		ident, ok := lhs.(*ast.Ident)
 		if !ok {
-			return nil, false
+			return nil, nil, false
 		}
 		if ident.Name == "_" {
 			continue
@@ -584,18 +642,20 @@ func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, bool) {
 		names[ident.Name] = true
 	}
 	if g.rebindsOwnInitialiser(names, assign.Rhs) {
-		return nil, false
+		return nil, nil, false
 	}
 
 	out := make([]DeclType, 0, len(idents))
+	var needs []Completion
 	for _, ident := range idents {
-		declared, ok := g.declTypeOf(ident)
+		declared, completed, ok := g.declTypeOf(ident)
 		if !ok {
-			return nil, false
+			return nil, nil, false
 		}
 		out = append(out, declared)
+		needs = MergeCompletions(needs, completed)
 	}
-	return out, true
+	return out, needs, true
 }
 
 // declTypes names what a `var` declaration inside a function body declares.
@@ -611,10 +671,10 @@ func (g *guardResolver) defineTypes(assign *ast.AssignStmt) ([]DeclType, bool) {
 // initialiser in it against every name it declares, and a spec that no
 // candidate sits in can still hold the line break that
 // [guardResolver.cutIsLineFree] refuses.
-func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, bool) {
+func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, []Completion, bool) {
 	gen, ok := decl.Decl.(*ast.GenDecl)
 	if !ok || gen.Tok != token.VAR {
-		return nil, false
+		return nil, nil, false
 	}
 	specs := make([]*ast.ValueSpec, 0, len(gen.Specs))
 	names := make(map[string]bool)
@@ -622,10 +682,10 @@ func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, bool) {
 	for _, spec := range gen.Specs {
 		value, ok := spec.(*ast.ValueSpec)
 		if !ok {
-			return nil, false
+			return nil, nil, false
 		}
 		if !g.cutIsLineFree(value) {
-			return nil, false
+			return nil, nil, false
 		}
 		specs = append(specs, value)
 		values = append(values, value.Values...)
@@ -637,23 +697,25 @@ func (g *guardResolver) declTypes(decl *ast.DeclStmt) ([]DeclType, bool) {
 		}
 	}
 	if g.rebindsOwnInitialiser(names, values) {
-		return nil, false
+		return nil, nil, false
 	}
 
 	var out []DeclType
+	var needs []Completion
 	for _, value := range specs {
 		for _, name := range value.Names {
 			if name.Name == "_" {
 				continue
 			}
-			declared, ok := g.declTypeOf(name)
+			declared, completed, ok := g.declTypeOf(name)
 			if !ok {
-				return nil, false
+				return nil, nil, false
 			}
 			out = append(out, declared)
+			needs = MergeCompletions(needs, completed)
 		}
 	}
-	return out, true
+	return out, needs, true
 }
 
 // cutIsLineFree reports whether the bytes internal/instrument has to remove
@@ -830,18 +892,20 @@ func (g *guardResolver) returnSite(stmt *ast.ReturnStmt, results *types.Tuple) *
 		}
 	}
 	spelled := make([]string, 0, results.Len())
+	var needs []Completion
 	for i := range results.Len() {
 		declared := results.At(i).Type()
 		if mentionsTypeParam(declared, make(map[types.Type]bool)) {
 			return nil
 		}
-		rendered, spellable := g.typeString(declared)
+		rendered, completed, spellable := g.typeString(declared)
 		if !spellable {
 			return nil
 		}
 		spelled = append(spelled, rendered)
+		needs = MergeCompletions(needs, completed)
 	}
-	return &ReturnSite{Span: span, Types: spelled}
+	return &ReturnSite{Span: span, Types: spelled, Imports: needs}
 }
 
 // probesResult reports whether the probe may stand in for the mutant at one
@@ -936,21 +1000,21 @@ func mentionsTypeParam(t types.Type, seen map[types.Type]bool) bool {
 
 // declTypeOf renders the type of one declared identifier as this file may
 // spell it.
-func (g *guardResolver) declTypeOf(ident *ast.Ident) (DeclType, bool) {
+func (g *guardResolver) declTypeOf(ident *ast.Ident) (DeclType, []Completion, bool) {
 	if g.info == nil {
-		return DeclType{}, false
+		return DeclType{}, nil, false
 	}
 	obj := g.info.Defs[ident]
 	if obj == nil {
 		// Not a definition: the identifier redeclares something declared
 		// earlier, or the checker recorded nothing for it.
-		return DeclType{}, false
+		return DeclType{}, nil, false
 	}
-	rendered, ok := g.typeString(obj.Type())
+	rendered, needs, ok := g.typeString(obj.Type())
 	if !ok {
-		return DeclType{}, false
+		return DeclType{}, nil, false
 	}
-	return DeclType{Name: ident.Name, Type: rendered}, true
+	return DeclType{Name: ident.Name, Type: rendered}, needs, true
 }
 
 // typeString renders a type as source this file could hold, or reports false.
@@ -962,26 +1026,32 @@ func (g *guardResolver) declTypeOf(ident *ast.Ident) (DeclType, bool) {
 // by printing the full import path. And a type may be perfectly qualifiable and
 // still unwritable, because it names something unexported in another package;
 // [nameable] walks the type for those.
-func (g *guardResolver) typeString(t types.Type) (string, bool) {
+func (g *guardResolver) typeString(t types.Type) (string, []Completion, bool) {
 	if t == nil {
-		return "", false
+		return "", nil, false
 	}
 	reachable := true
+	var completed []Completion
 	qualifier := func(p *types.Package) string {
-		name, ok := g.qualify(p)
+		name, completion, ok := g.qualify(p)
 		if !ok {
 			reachable = false
+			return ""
+		}
+		if completion != nil && !slices.Contains(completed, *completion) {
+			completed = append(completed, *completion)
 		}
 		return name
 	}
 	rendered := types.TypeString(t, qualifier)
 	if !reachable || rendered == "" {
-		return "", false
+		return "", nil, false
 	}
 	if !g.nameable(t, make(map[types.Type]bool)) {
-		return "", false
+		return "", nil, false
 	}
-	return rendered, true
+	slices.SortFunc(completed, func(a, b Completion) int { return strings.Compare(a.Path, b.Path) })
+	return rendered, completed, true
 }
 
 // qualify is the [types.Qualifier] the declared types are rendered with.
@@ -989,20 +1059,77 @@ func (g *guardResolver) typeString(t types.Type) (string, bool) {
 // The package under test renders unqualified, which is the whole reason this is
 // not [types.RelativeTo] over some other package: a local type written as
 // `mini.Buffer` into a file of package mini does not compile. Everything else
-// has to be reachable by a name the file already binds; discovery never adds an
-// import to make a type spellable.
-func (g *guardResolver) qualify(p *types.Package) (string, bool) {
+// has to be reachable by a name the file binds — or by one a *sibling* file
+// binds, which this file may then be given; imports.go argues why that and no
+// wider set.
+//
+// The second return is the import the answer depends on, and is nil whenever
+// the file could already spell it. A caller that cannot carry an import must
+// therefore not merely ignore it: a rendered type whose completion is dropped
+// is a type spelled with a name nothing binds.
+func (g *guardResolver) qualify(p *types.Package) (string, *Completion, bool) {
 	if p == nil || p == g.pkg {
-		return "", true
+		return "", nil, true
 	}
-	local, imported := g.imports[p.Path()]
-	if !imported {
-		return "", false
+	if local, imported := g.imports[p.Path()]; imported {
+		if local == "" {
+			return p.Name(), nil, true
+		}
+		return local, nil, true
 	}
-	if local == "" {
-		return p.Name(), true
+	return g.complete(p)
+}
+
+// complete gives this file a name for a package a sibling file imports.
+//
+// The name is chosen once per path per file and remembered, so that every
+// rewrite of one file agrees about what the package is called — two names for
+// one package would be two imports, and the second would be a redeclaration.
+//
+// A preferred name already bound in this file is bumped rather than refused.
+// Refusing would make the completion depend on whether some unrelated local
+// variable happened to share a package's name, which is a rule nobody could
+// predict; bumping is what internal/instrument already does for the runtime
+// alias, for the same reason.
+func (g *guardResolver) complete(p *types.Package) (string, *Completion, bool) {
+	importPath := p.Path()
+	if chosen, done := g.added[importPath]; done {
+		return chosen, &Completion{Path: importPath, Local: chosen}, true
 	}
-	return local, true
+	preferred, sibling := g.siblings[importPath]
+	if !sibling {
+		return "", nil, false
+	}
+	if preferred == "" {
+		preferred = p.Name()
+	}
+	if preferred == "" {
+		preferred = defaultLocal(importPath)
+	}
+	chosen := g.freeName(preferred)
+	g.added[importPath] = chosen
+	g.taken[chosen] = true
+	return chosen, &Completion{Path: importPath, Local: chosen}, true
+}
+
+// freeName is preferred, or preferred with the lowest number past 1 appended
+// that nothing in this file binds.
+//
+// The counter is bounded because an unbounded search over a set that only grows
+// is a loop whose termination depends on the data. A file binding `x`, `x2` …
+// `x64` is not one this tool needs to rewrite, and stopping is better than
+// spinning.
+func (g *guardResolver) freeName(preferred string) string {
+	if !g.taken[preferred] {
+		return preferred
+	}
+	for n := 2; n < 64; n++ {
+		candidate := preferred + strconv.Itoa(n)
+		if !g.taken[candidate] {
+			return candidate
+		}
+	}
+	return preferred
 }
 
 // nameable reports whether every part of a type can be written in this file.
@@ -1118,6 +1245,27 @@ func (g *guardResolver) nameableObj(obj *types.TypeName) bool {
 	if !obj.Exported() {
 		return false
 	}
-	_, ok := g.qualify(pkg)
-	return ok
+	return g.reachable(pkg)
+}
+
+// reachable reports whether a package can be named in this file, without
+// deciding what to call it.
+//
+// [guardResolver.qualify] would answer the same question and *choose a name* on
+// the way, which is a side effect a check should not have: a type refused a
+// moment later by [guardResolver.nameable] would leave a package reserved under
+// a name nothing ever writes. The reservation is harmless and deterministic,
+// and making the check pure is cheaper than explaining it.
+func (g *guardResolver) reachable(p *types.Package) bool {
+	if p == nil || p == g.pkg {
+		return true
+	}
+	if _, imported := g.imports[p.Path()]; imported {
+		return true
+	}
+	if _, done := g.added[p.Path()]; done {
+		return true
+	}
+	_, sibling := g.siblings[p.Path()]
+	return sibling
 }
