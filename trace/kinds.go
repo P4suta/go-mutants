@@ -291,6 +291,12 @@ const (
 	// `--isolate` exists for, so it is a note rather than a warning: a line per
 	// mutant would be a line per mutant.
 	NoteWorkerRestored = "worker-restored"
+
+	// NoteProbeTreeRestored is the probe tree put back the way the
+	// instrumentation left it, between one pass and the next. A probe pass runs
+	// a whole suite, and a suite that writes into the package directory it runs
+	// in would leave the next pass measuring a program nobody instrumented.
+	NoteProbeTreeRestored = "probe-tree-restored"
 	// NoteTraceGC is what collection removed from the trace root.
 	NoteTraceGC = "trace-gc"
 	// NoteCoverageUnavailable is why a coverage-guided run had no coverage,

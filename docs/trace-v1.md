@@ -818,6 +818,14 @@ as a `worker-restored` note carrying how many files had to be, not as a warning:
 for the suites this feature exists for, a drift after every mutant is the
 ordinary case rather than a surprise.
 
+A `probe` is the second tree a run with `test.probing = "on"` measures: the
+original program with a report attached, instrumented from the same source the
+mutant tree was. It is put back between passes, and for the `worker` copy's
+reason — a probe pass runs a whole suite, and a suite that writes into the
+package directory it runs in would leave the next pass measuring a program
+nobody instrumented. That too is a note rather than a warning, spelled
+`probe-tree-restored`.
+
 `stable` is what decides whether the Go build cache can be reused across
 snapshots, so a run that is unexpectedly slow is one `stable: false` away from
 an explanation.

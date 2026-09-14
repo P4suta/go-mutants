@@ -96,7 +96,7 @@ func (s *session) probePhase(
 	}
 
 	endPass := s.stage("probe", countNoun(len(probeBins), "binary"))
-	passes, err := s.probePasses(ctx, probeOpts, opts, probeBins)
+	passes, err := s.probePasses(ctx, probeOpts, opts, probeBins, temps.probe)
 	endPass(err)
 	if err != nil {
 		if interrupted(err) {
@@ -232,6 +232,7 @@ func (s *session) probeTree(
 // own and every mutant either saw would look like a mutant both saw.
 func (s *session) probePasses(
 	ctx context.Context, probeOpts execute.Options, opts probeOptions, bins []execute.TestBinary,
+	tree *snapshot.Snapshot,
 ) ([]probe.Pass, error) {
 	passes := make([]probe.Pass, 0, len(bins))
 	matched := binaryIndex(opts.bins)
@@ -274,8 +275,49 @@ func (s *session) probePasses(
 			continue
 		}
 		passes = append(passes, probe.Pass{Binary: target, Infected: attempt.Infected})
+		if err := s.restoreProbeTree(tree); err != nil {
+			return nil, err
+		}
 	}
 	return passes, nil
+}
+
+// restoreProbeTree puts the probe tree back the way the instrumentation left
+// it, between one pass and the next.
+//
+// A probe pass runs a whole suite, and a suite that legitimately writes into
+// the package directory it runs in -- an updated golden, a database in testdata
+// -- leaves the tree the next pass measures in a state the instrumentation
+// never produced. That would not make a pass fail; it would make it a pass over
+// a *different program*, and its answer is a licence not to execute a test.
+//
+// It is done on every run rather than only on an isolating one, and the reason
+// is that the alternative is a condition nobody can check. A run without
+// `--isolate` whose suite writes into its tree is stopped by the drift gate
+// long before this phase, so the walk usually finds nothing and costs one pass
+// of the manifest; a run with it has already said that its suite writes, and
+// this is where the probe tree gets what every worker gets.
+//
+// A failure to restore is a failure to probe. The tree cannot be trusted from
+// here on, and there is no partial answer worth keeping: the caller drops every
+// fact and measures everything.
+func (s *session) restoreProbeTree(tree *snapshot.Snapshot) error {
+	if tree == nil {
+		return nil
+	}
+	drifted, err := tree.Restore()
+	if err != nil {
+		return err
+	}
+	if len(drifted) > 0 {
+		// A note rather than a warning, for the reason the worker restore's is:
+		// for the suites this exists for a drift after every pass is the
+		// ordinary case, and a line per pass saying so would be a line per
+		// pass.
+		s.trace.Note(trace.NoteProbeTreeRestored, "",
+			countNoun(len(drifted), "file")+" put back after a probe pass")
+	}
+	return nil
 }
 
 // candidatesOf is the run's mutants as internal/probe needs to see them.

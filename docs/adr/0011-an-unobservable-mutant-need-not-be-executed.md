@@ -95,11 +95,27 @@ asserts anything about what they produce.
 ## Consequences
 
 A probing run and a run without one reach the same verdict for every mutant, and
-`internal/engine`'s `TestProbingReachesTheSameVerdictsForLessWork` is the
-standing proof: it runs `fixtures/unobserved` both ways, compares the verdicts as
-strings, and requires the probing run to have started strictly fewer
-`mutant-run` children. Cost is compared as counted child processes and never as
-a duration, for the reason this repository compares everything that way.
+two standing tests say so from different ends.
+`TestProbingReachesTheSameVerdictsForLessWork` runs `fixtures/unobserved` both
+ways: two mutants chosen to exercise the two answers a probe can give, so the
+settling, the narrowing and the saving are each asserted, the last of them as
+strictly fewer `mutant-run` children. Cost is compared as counted child
+processes and never as a duration, for the reason this repository compares
+everything that way.
+`TestProbingChangesNoVerdictOverTheWholeOperatorCorpus` runs `fixtures/families`
+both ways, which is every rule the registry implements with a live candidate
+each, and asserts only that not one verdict moved. It says nothing about the
+saving on purpose: whether that fixture holds a mutant a probe can settle is a
+fact about the fixture, and a test that required one would fail the day somebody
+tightened an assertion in it.
+
+The probe tree is put back between passes. A probe pass runs a whole suite, and
+a suite that legitimately writes into the package directory it runs in would
+leave the next pass measuring a program nobody instrumented — which would not
+make the pass fail, but would make its answer a licence about a different
+program. It is done on every probing run rather than only on an isolating one,
+because the alternative is a condition nobody can check; on a suite that writes
+nothing the walk finds nothing.
 
 What this does not do is measure per test. A test profiled alone is a different
 execution from the same test inside its suite — shared state, ordering,

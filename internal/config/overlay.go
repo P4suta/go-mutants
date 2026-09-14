@@ -266,6 +266,7 @@ func (c Config) overlay() Overlay {
 		TestCommand:     Explicit(c.Test.Command),
 		BaselineRuns:    Explicit(c.Test.BaselineRuns),
 		Narrowing:       Explicit(c.Test.Narrowing),
+		Probing:         Explicit(c.Test.Probing),
 		Jobs:            Explicit(c.Execution.Jobs),
 		CacheMode:       Explicit(c.Cache.Mode),
 		Strict:          Explicit(c.Policy.Strict),
