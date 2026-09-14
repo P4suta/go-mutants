@@ -194,6 +194,81 @@ func Positive(v int) bool {
 }
 `,
 	},
+	{
+		name: "a reversed step runs away from its bound",
+		rule: "incr-to-decr", original: "++",
+		want: TerminationUnbounded,
+		source: `package pkg
+
+func Sum(n int) int {
+	total := 0
+	for i := 0; i < n; i++ {
+		total += i
+	}
+	return total
+}
+`,
+	},
+	{
+		name: "a deleted step never reaches its bound",
+		rule: "delete-incdec", original: "i++",
+		want: TerminationUnbounded,
+		source: `package pkg
+
+func Sum(n int) int {
+	total := 0
+	for i := 0; i < n; i++ {
+		total += i
+	}
+	return total
+}
+`,
+	},
+	{
+		name: "a reversed stride runs away from its bound",
+		rule: "add-assign-to-sub-assign", original: "+=",
+		want: TerminationUnbounded,
+		source: `package pkg
+
+func Stride(n int) int {
+	total := 0
+	for i := 0; i < n; i += 2 {
+		total = total + 1
+	}
+	return total
+}
+`,
+	},
+	{
+		name: "a reversed countdown stride runs away too",
+		rule: "sub-assign-to-add-assign", original: "-=",
+		want: TerminationUnbounded,
+		source: `package pkg
+
+func Countdown(n int) int {
+	total := 0
+	for i := n; i > 0; i -= 2 {
+		total = total + 1
+	}
+	return total
+}
+`,
+	},
+	{
+		name: "a deleted step in the body is not the loop's step",
+		rule: "delete-assignment", original: "total = total + 1",
+		want: TerminationBounded,
+		source: `package pkg
+
+func Stride(n int) int {
+	total := 0
+	for i := 0; i < n; i += 2 {
+		total = total + 1
+	}
+	return total
+}
+`,
+	},
 }
 
 // TestTerminationIsProvedRatherThanTimedOut is the table.
@@ -277,57 +352,17 @@ func Sum(n int) int {
 	}
 }
 
-// TestAForPostStatementHasNoCandidateToday records why the step arm of
-// [fileScan.applyToLoop] is unreachable through a scan, and is the Red for the
-// day that changes.
+// TestReversingOrDeletingTheStepIsUnbounded is the step arm's arithmetic,
+// asked directly.
 //
-// A statement in a `for` post is refused by the guard chooser -- a block is not
-// legal Go there -- so `i++` and `i += 2` in a post produce no candidate at
-// all, and the edits that most obviously stop a loop stopping are edits
-// go-mutants cannot currently make. The reasoning for them is written and
-// tested below rather than left for later, because the shape of the answer is
-// not what is missing.
-//
-// When a form that can express a post statement lands, this test fails, and the
-// three cases it is standing in for move into the table above.
-func TestAForPostStatementHasNoCandidateToday(t *testing.T) {
-	t.Parallel()
-
-	found := scanSource(t, `package pkg
-
-func Stride(n int) int {
-	total := 0
-	for i := 0; i < n; i += 2 {
-		total = total + 1
-	}
-	return total
-}
-`)
-	for _, candidate := range found.candidates {
-		if candidate.Original == "+=" || candidate.Original == "i += 2" {
-			t.Fatalf("a `for` post statement now produces %s;\n"+
-				"\tmove the step cases out of TestReversingOrDeletingTheStepIsUnbounded\n"+
-				"\tand into terminationCases, where a scan will drive them",
-				candidate.Rule.String())
-		}
-	}
-	for _, site := range found.sites {
-		if site.Reason == SkipUnnameableDeclType {
-			return
-		}
-	}
-	t.Fatalf("the post statement produced neither a candidate nor an %s skip;\n"+
-		"\tsomething else changed and this test no longer says what it means",
-		SkipUnnameableDeclType)
-}
-
-// TestReversingOrDeletingTheStepIsUnbounded is the step arm, reasoned about
-// directly.
-//
-// It calls the decision rather than driving a scan, because a scan cannot
-// reach it -- see the test above. What it pins is the arithmetic: a loop whose
-// variable moves towards its bound stops, and one whose variable moves away
-// from it or does not move at all does not.
+// It calls the decision rather than driving a scan, and it used to do that
+// because a scan could not reach a `for` post statement at all. Form F changed
+// that, and the rows it was standing in for are now in terminationCases above,
+// where a real candidate carries a real proof. What is left here is the
+// arithmetic itself, over shapes including ones no single rule produces -- a
+// stride of four reversed, a step of nothing -- because the predicate is four
+// lines of sign comparison and a transposed row in it would produce a proof
+// that is confidently wrong.
 func TestReversingOrDeletingTheStepIsUnbounded(t *testing.T) {
 	t.Parallel()
 

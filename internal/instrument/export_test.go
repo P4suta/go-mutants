@@ -118,3 +118,8 @@ func WriteRuntime(root, dir string, catalog *mutation.Catalog) error {
 // buried in a block", which internal/discover answers separately for the same
 // statements. See TestBothPhasesAgreeOnWhatFormSCanWrap.
 func WrappableStatement(stmt ast.Stmt) bool { return wrappableStatement(stmt) }
+
+// ClosurableStatement runs this package's own answer to "may this statement be
+// moved into a closure", which internal/discover answers separately for the
+// same statements. See TestBothPhasesAgreeOnWhatFormFCanClose.
+func ClosurableStatement(stmt ast.Stmt) bool { return closurableStatement(stmt) }

@@ -38,17 +38,38 @@ func Redeclared(a int) (int, error) {
 // split is what Redeclared calls twice.
 func split(a int) (int, error) { return a, nil }
 
-// Post is the refusal a `for` post statement earns. A block is not legal
-// there: `for i := 0; i < n; if __gm.M[3] { i -= 2 } else { i += 2 }` does not
-// parse, so a hint pointing at it would be a hint the instrumenter could not
-// use.
+// Post is a Form F site, and it used to be a refusal.
+//
+// A block is not legal in a `for` post statement -- `for i := 0; i < n; if
+// __gm.M[3] { i -= 2 } else { i += 2 }` does not parse -- and that is still
+// true. What the slot does hold is a *simple* statement, and a call is one:
+// `for i := 0; i < n; func() { … }()` parses, runs the guard where the step
+// stood, and leaves the loop variable the closure captures the same variable
+// the step would have touched.
 func Post(n int, out []int) {
 	for i := 0; i < n; i += 2 {
 		out[0] += i
 	}
 }
 
-// Init is the same refusal in an `if` initialiser.
+// InitAssign is the same form in an `if` initialiser, which is the shape that
+// occurs in real Go: `if err = f(); err != nil` is an assignment in a slot no
+// block can stand in.
+func InitAssign(n int, out []int) int {
+	var half int
+	if half = n / 2; half > 0 {
+		out[0] = half
+	}
+	return half
+}
+
+// Init is the refusal that slot still earns, and the reason is the declaration
+// rather than the block.
+//
+// `half := n / 2` declares, and a declaration moved into a closure declares
+// inside the closure -- the condition after it would then name something that
+// is not there. Form D is what hoists a declaration out in front of its guard,
+// and an initialiser slot has no "in front of" to hoist to.
 func Init(n int) int {
 	if half := n / 2; half > 0 {
 		return half

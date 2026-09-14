@@ -97,6 +97,59 @@ func TestBothPhasesAgreeOnWhatFormSCanWrap(t *testing.T) {
 	}
 }
 
+// TestBothPhasesAgreeOnWhatFormFCanClose is the same duty for the other list.
+//
+// Form F's list is narrower than Form S's, and the narrowing is what makes a
+// second disagreement possible: a statement both phases agree Form S can wrap
+// is not therefore one both agree Form F can close. The failure modes are the
+// two above, in the same directions and with the same consequences.
+func TestBothPhasesAgreeOnWhatFormFCanClose(t *testing.T) {
+	t.Parallel()
+
+	for name, source := range everyStatementKind {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := parseStatement(t, source)
+			discovered := discover.FormFStatement(stmt)
+			closurable := instrument.ClosurableStatement(stmt)
+			switch {
+			case discovered && !closurable:
+				t.Errorf("discovery would hint Form F for %q and the instrumenter refuses it;\n"+
+					"\tevery such hint fails its run at a site conflict", source)
+			case !discovered && closurable:
+				t.Errorf("the instrumenter would close over %q and discovery never hints it;\n"+
+					"\tthat arm is unreachable, and unreachable code that looks like a feature\n"+
+					"\tis how the next widening gets made in one place only", source)
+			}
+		})
+	}
+}
+
+// TestEveryFormFStatementIsAlsoAFormSStatement is the relationship between the
+// two lists, which neither agreement test above can see.
+//
+// Form F is Form S inside a closure, so a statement it may close over is one
+// Form S may wrap -- the closure adds a function boundary and takes nothing
+// away. The converse is false and deliberately so: a `return` inside a closure
+// returns from the closure. A list that grew the other way would be a form
+// claiming to hold a statement the guard inside it cannot.
+func TestEveryFormFStatementIsAlsoAFormSStatement(t *testing.T) {
+	t.Parallel()
+
+	for name, source := range everyStatementKind {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			stmt := parseStatement(t, source)
+			if discover.FormFStatement(stmt) && !discover.FormSStatement(stmt) {
+				t.Errorf("Form F would close over %q and Form S would not wrap it, "+
+					"which is a guard holding a statement the guard inside it cannot", source)
+			}
+		})
+	}
+}
+
 // TestTheTableCoversEveryStatementTypeGoHas is the table's own guard.
 //
 // The agreement above is worth exactly as much as the set it is checked over,

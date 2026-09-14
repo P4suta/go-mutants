@@ -49,7 +49,7 @@ type familyTally struct{ killed, survived int }
 // It is aggregated by family rather than written out mutant by mutant because
 // what this fixture exists to prove is a statement about families: that every
 // one of the fourteen reaches execution, and that each one both kills and —
-// where the fixture leaves a gap on purpose — survives. A hundred and seven
+// where the fixture leaves a gap on purpose — survives. A hundred and eleven
 // per-mutant rows
 // would say the same thing in a form nobody reads, and would turn every
 // reformatting of the fixture into a wall of diff. The survivors are then named
@@ -64,8 +64,8 @@ type familyTally struct{ killed, survived int }
 var familiesTable = map[string]familyTally{
 	string(mutation.FamilyBooleanLiteral):    {killed: 2, survived: 2},
 	string(mutation.FamilyConditionNegation): {killed: 8, survived: 1},
-	string(mutation.FamilyBooleanConnective): {killed: 2, survived: 0},
-	string(mutation.FamilyComparison):        {killed: 10, survived: 0},
+	string(mutation.FamilyBooleanConnective): {killed: 3, survived: 0},
+	string(mutation.FamilyComparison):        {killed: 11, survived: 0},
 	string(mutation.FamilyIntegerArithmetic): {killed: 9, survived: 2},
 	string(mutation.FamilyFloatArithmetic):   {killed: 4, survived: 0},
 	string(mutation.FamilyReturnReplacement): {killed: 18, survived: 3},
@@ -73,9 +73,9 @@ var familiesTable = map[string]familyTally{
 	string(mutation.FamilyNeutralValue):      {killed: 2, survived: 1},
 	string(mutation.FamilyBranchReplacement): {killed: 12, survived: 2},
 	string(mutation.FamilyBitwise):           {killed: 6, survived: 2},
-	string(mutation.FamilyArithmeticAssign):  {killed: 6, survived: 1},
+	string(mutation.FamilyArithmeticAssign):  {killed: 7, survived: 1},
 	string(mutation.FamilyLabeledBranch):     {killed: 2, survived: 0},
-	string(mutation.FamilyStatementDeletion): {killed: 6, survived: 0},
+	string(mutation.FamilyStatementDeletion): {killed: 7, survived: 0},
 }
 
 // The families fixture's totals, stated once so that the assertions below read
@@ -83,13 +83,13 @@ var familiesTable = map[string]familyTally{
 // happened to produce. familiesBalanced and familiesStrong are the same
 // catalogue seen from the two narrower tiers.
 const (
-	familiesMutants   = 107
-	familiesKilled    = 91
+	familiesMutants   = 111
+	familiesKilled    = 95
 	familiesSurvived  = 16
 	familiesUncovered = 2
 
-	familiesBalanced = 67
-	familiesStrong   = 99
+	familiesBalanced = 69
+	familiesStrong   = 102
 )
 
 // TestFamiliesRunReachesEveryOperatorFamily is the catalogue end to end.
@@ -105,7 +105,7 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	opts.Config.Mutation.Profile = mutation.TierAll
 	// Four workers rather than the harness's one. Everything asserted here is a
 	// tally or a set, so the event *order* is not part of the claim — and this
-	// fixture starts a hundred and five processes, which is where the time goes.
+	// fixture starts a hundred and nine processes, which is where the time goes.
 	opts.Config.Execution.Jobs = 4
 
 	outcome, events, err := collect(t, t.Context(), opts)
@@ -203,12 +203,19 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 
 	assertFamiliesSurvivors(t, events)
 
-	// The two skips are the `i++` post statement of the fixture's counted loop:
-	// a block is not legal Go there, so both rules that match it are recorded
-	// with a reason instead of being catalogued. They are asserted because a
-	// guard form that silently began swallowing sites would otherwise look like
-	// progress.
-	wantSkips := []report.Skip{{Path: "loops.go", Reason: "unnameable-decl-type", Count: 2}}
+	// Nothing is skipped, and the empty list is an assertion rather than an
+	// omission.
+	//
+	// There used to be two, both on the `i++` post statement of the fixture's
+	// counted loop, because a block is not legal Go in a post slot and no form
+	// could express one. Form F expresses it, so they are mutants now. The
+	// `i := 0` initialiser beside them never was a skip: `0` is an integer
+	// literal and no rule proposes an edit there, so nothing was ever declined.
+	//
+	// This fixture holds one live candidate for every rule; refusals are
+	// fixtures/discovery's subject, and a skip appearing here would mean a
+	// guard form had silently begun swallowing sites.
+	wantSkips := []report.Skip(nil)
 	if !slices.Equal(outcome.Report.Skips, wantSkips) {
 		t.Errorf("skips = %+v, want %+v", outcome.Report.Skips, wantSkips)
 	}
@@ -247,8 +254,8 @@ func assertFamiliesSurvivors(t *testing.T, events []Event) {
 		"survived booleans.go:60 negate-condition",
 		"survived booleans.go:61 false-to-true",
 		"survived booleans.go:63 true-to-false",
-		"survived loops.go:67 add-assign-to-sub-assign",
-		"survived loops.go:69 return-zero-numeric",
+		"survived loops.go:85 add-assign-to-sub-assign",
+		"survived loops.go:87 return-zero-numeric",
 		"survived numbers.go:35 add-to-sub",
 		"survived numbers.go:35 mul-to-div",
 		"survived numbers.go:35 return-zero-numeric",

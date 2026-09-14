@@ -282,6 +282,15 @@ var wantCandidates = []string{
 	"forms/forms.go loop-condition-to-false i < n->false",
 	"forms/forms.go lt-to-le <-><=",
 	"forms/forms.go add-assign-to-sub-assign +=->-=",
+	"forms/forms.go add-assign-to-sub-assign +=->-=",
+	"forms/forms.go delete-assignment half = n / 2->",
+	"forms/forms.go div-to-mul /->*",
+	"forms/forms.go negate-condition half > 0->!(half > 0)",
+	"forms/forms.go condition-to-true half > 0->true",
+	"forms/forms.go condition-to-false half > 0->false",
+	"forms/forms.go gt-to-ge >->>=",
+	"forms/forms.go delete-assignment out[0] = half->",
+	"forms/forms.go return-zero-numeric half->0",
 	"forms/forms.go negate-condition half > 0->!(half > 0)",
 	"forms/forms.go condition-to-true half > 0->true",
 	"forms/forms.go condition-to-false half > 0->false",
@@ -462,7 +471,7 @@ var wantSkips = []string{
 	// that shadows and reads what it shadows, two in the `var` that does the
 	// same, three across the `var` block whose specs refer to each other, and
 	// one each for the two multi-line cuts.
-	"forms/forms.go unnameable-decl-type 12",
+	"forms/forms.go unnameable-decl-type 11",
 	"generated/generated.go generated 1",
 	// One for the generic function's constraint, one for the generic type's,
 	// one for the single explicit type argument, and two for the list form.
@@ -685,7 +694,16 @@ var wantFormsGuards = []string{
 	"negate-loop-condition i < n | C i < n []",
 	"loop-condition-to-false i < n | C i < n []",
 	"lt-to-le < | C i < n []",
+	"add-assign-to-sub-assign += | F i += 2 []",
 	"add-assign-to-sub-assign += | S out[0] += i []",
+	"delete-assignment half = n / 2 | F half = n / 2 []",
+	"div-to-mul / | F half = n / 2 []",
+	"negate-condition half > 0 | C half > 0 []",
+	"condition-to-true half > 0 | C half > 0 []",
+	"condition-to-false half > 0 | C half > 0 []",
+	"gt-to-ge > | C half > 0 []",
+	"delete-assignment out[0] = half | S out[0] = half []",
+	"return-zero-numeric half | S return half []",
 	"negate-condition half > 0 | C half > 0 []",
 	"condition-to-true half > 0 | C half > 0 []",
 	"condition-to-false half > 0 | C half > 0 []",
@@ -753,7 +771,7 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 	forms := make(map[GuardForm]int)
 	for _, c := range result.Candidates {
 		switch c.Guard.Form {
-		case GuardFormC, GuardFormS, GuardFormD, GuardFormCPrime:
+		case GuardFormC, GuardFormS, GuardFormD, GuardFormCPrime, GuardFormF:
 			forms[c.Guard.Form]++
 		default:
 			t.Errorf("%s %s: guard form %q is not one this build emits", c.Path, c.Span, c.Guard.Form)

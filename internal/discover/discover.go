@@ -188,6 +188,30 @@ const (
 	// write it. A type the file cannot name is refused, exactly as a Form D
 	// declaration of such a type is.
 	GuardFormCPrime GuardForm = "C'"
+	// GuardFormF is the statement guard inside a closure that is called at
+	// once:
+	//
+	//	func() { if __gm.M[7] { <mutated copy, flattened> } else { <original> } }()
+	//
+	// A call is an expression, so the whole thing is an expression statement --
+	// which is a *simple* statement, and simple statements are what the slots
+	// Form S cannot reach will hold. `for i := 0; i < n; if __gm.M[3] { … }` is
+	// not Go; `for i := 0; i < n; func() { … }()` is.
+	//
+	// The closure captures by reference, so a statement that assigns or
+	// increments works on the variable it named, and a `for` post statement
+	// operates on the per-iteration variable Go declares before running it --
+	// the closure is created and called within that statement, so it captures
+	// exactly what the statement would have touched.
+	//
+	// The statements this form may hold are *narrower* than Form S's, and the
+	// three it excludes are excluded for one reason each rather than for
+	// tidiness. A `return` inside the closure returns from the closure. A
+	// `defer` fires when the closure returns. A `break`, `continue` or `goto`
+	// cannot cross a function boundary at all. None of the three can appear in
+	// a slot this form reaches, so excluding them costs nothing and saying so
+	// costs one sentence. [FormFStatement] is the list.
+	GuardFormF GuardForm = "F"
 )
 
 // A DeclType is one identifier a Form D site declares, together with the source
@@ -233,11 +257,14 @@ type DeclType struct {
 //     send, a `defer` or a `go` for [GuardFormS], or a `:=` or a `var`
 //     declaration for [GuardFormD]. The search stops at the enclosing function,
 //     for the same reason.
-//  3. Otherwise the nearest enclosing expression whose type is boolean
-//     *underneath* -- a named boolean type, or a type parameter whose core type
-//     is boolean -- and whose type this file can spell, is a
-//     [GuardFormCPrime] site. It is last so that every site the first two
-//     forms covered is covered by the same form it was before.
+//  3. A statement in a slot that holds a *simple* statement rather than any
+//     statement -- an `if`, `switch` or `for` initialiser, or a `for` post
+//     statement -- is a [GuardFormF] site when it is one of the four
+//     [FormFStatement] names.
+//  4. Otherwise the nearest enclosing expression whose type is boolean
+//     *underneath* -- a named boolean type -- and whose type this file can
+//     spell, is a [GuardFormCPrime] site. It is last so that every site the
+//     forms before it covered is covered by the same form it was before.
 //
 // Anything else is refused, and a refused candidate is never emitted. The
 // refusals are all reported as [SkipUnnameableDeclType], which this phase reads
@@ -245,9 +272,9 @@ type DeclType struct {
 //
 //   - the nearest statement is one no form covers — a `switch` tag or a `range`
 //     clause;
-//   - the statement sits where a block is not legal Go, which is an `if`,
-//     `switch` or `for` initialiser, a `for` post statement, or a type switch
-//     guard: `for i := 0; i < n; if __gm.M[3] { … }` does not parse;
+//   - the statement sits where neither a block nor a call is legal Go: a type
+//     switch guard, a communication clause, or a `:=` in an initialiser slot,
+//     which declares and so cannot be moved into a closure;
 //   - a Form D site declares a type that cannot be spelled with the file's own
 //     imports;
 //   - a `:=` redeclares an existing variable instead of declaring every name on

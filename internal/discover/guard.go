@@ -294,12 +294,94 @@ func (g *guardResolver) statementSite(anchor ast.Node) (Guard, bool) {
 			return Guard{}, false
 		case ast.Stmt:
 			if !g.blockIsLegalFor(n) {
-				return Guard{}, false
+				return g.closureSite(n)
 			}
 			return g.statementGuard(n)
 		}
 	}
 	return Guard{}, false
+}
+
+// closureSite decides whether a statement a block cannot replace may be
+// replaced by a call instead.
+//
+// This is Form F, and it is what the initialiser and post slots were always
+// waiting for. Those slots hold a *simple* statement -- an expression
+// statement, a send, an `++`/`--`, an assignment, or a short declaration -- and
+// a block is not one of them, which is the whole of why `for i := 0; i < n; if
+// __gm.M[3] { … }` does not parse. A call is an expression, an expression alone
+// is an expression statement, and an expression statement is simple. So the
+// guard goes inside a closure and the closure is called where the statement
+// was.
+//
+// Two questions have to agree for that to be sound, and they are asked apart
+// because they are about different things. [FormFStatement] asks whether the
+// *statement* survives being moved into a function body, which is a question
+// about `return`, `defer` and the branch statements. simpleStmtSlot asks
+// whether the *slot* accepts a call, which is a question about the grammar: a
+// type switch guard is not a simple statement at all, and a communication
+// clause has to be a send or a receive, which a call is neither.
+func (g *guardResolver) closureSite(stmt ast.Stmt) (Guard, bool) {
+	if !FormFStatement(stmt) || !g.simpleStmtSlot(stmt) {
+		return Guard{}, false
+	}
+	span, ok := g.span(stmt)
+	if !ok {
+		return Guard{}, false
+	}
+	return Guard{Form: GuardFormF, SiteSpan: span}, true
+}
+
+// simpleStmtSlot reports whether a statement sits in a slot that holds a simple
+// statement, which is where a call is legal and a block is not.
+func (g *guardResolver) simpleStmtSlot(stmt ast.Stmt) bool {
+	switch parent := g.parent[stmt].(type) {
+	case *ast.ForStmt:
+		return parent.Init == stmt || parent.Post == stmt
+	case *ast.IfStmt:
+		return parent.Init == stmt
+	case *ast.SwitchStmt:
+		return parent.Init == stmt
+	case *ast.TypeSwitchStmt:
+		// The initialiser only. The Assign is the type switch guard, which is
+		// its own production and not a simple statement.
+		return parent.Init == stmt
+	default:
+		return false
+	}
+}
+
+// FormFStatement reports whether a statement is one Form F may move into a
+// closure.
+//
+// It is [FormSStatement]'s list minus three kinds, and each exclusion is a
+// different fact rather than caution:
+//
+//   - a `return` inside the closure returns from the *closure*, so the
+//     enclosing function would fall through instead;
+//   - a `defer` fires when the closure returns, which is immediately, rather
+//     than when the enclosing function does;
+//   - a `break`, `continue` or `goto` cannot cross a function boundary and
+//     would not compile.
+//
+// A `go` is the one that would be safe and is excluded anyway, because none of
+// the four can appear in a slot this form reaches -- the grammar there holds a
+// simple statement, and `return`, `defer` and `go` are not simple ones -- so
+// the list is exactly the four that can, and a fifth entry nothing could use
+// would be an arm nobody could reach.
+//
+// It is exported for [FormSStatement]'s reason: internal/instrument asks the
+// same question again, independently, and a test in that package holds the two
+// implementations to each other over every statement kind Go has.
+func FormFStatement(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt, *ast.SendStmt, *ast.IncDecStmt:
+		return true
+	case *ast.AssignStmt:
+		return s.Tok != token.DEFINE
+	default:
+		return false
+	}
 }
 
 // blockIsLegalFor reports whether a statement may be replaced by an `if`

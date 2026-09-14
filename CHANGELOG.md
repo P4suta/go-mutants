@@ -14,6 +14,33 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A `for` post statement and an `if` initialiser are mutable.** Form F is a
+  fifth guard form: the statement guard inside a closure that is called where
+  the statement stood, `func() { if __gm.M[7] { … } else { … } }()`. Those slots
+  hold a *simple* statement rather than any statement — `for i := 0; i < n; if
+  __gm.M[3] { … }` does not parse — and a call is an expression, an expression
+  alone is an expression statement, and an expression statement is simple.
+  Measured over this repository at profile `all`, `unnameable-decl-type` goes
+  from **43 refusals to 7**. The 36 that left were two dozen `for` post
+  statements and a dozen assignments in an `if` or `switch` initialiser; the 7
+  that remain are all a `:=` in an initialiser slot, which declares, and a
+  declaration moved into a closure declares inside the closure.
+  Form F's statement list is narrower than Form S's, and each exclusion is a
+  fact rather than caution: a `return` inside the closure returns from the
+  closure, a `defer` fires when the closure returns, and a branch statement
+  cannot cross a function boundary. None of the four can appear in a slot this
+  form reaches, so excluding them costs nothing. Two new tests hold the two
+  phases' copies of that list to each other over every statement kind Go has,
+  and a third holds Form F's list inside Form S's.
+  `fixtures/families` absorbed the consequence its own documentation had been
+  predicting. A counted loop has exactly one thing keeping it finite, and every
+  edit to that one thing is a loop that never ends — reverse the step, or delete
+  it — so the fixture's promise that every loop in it terminates under every
+  mutant could not survive the post statement becoming a site. There is no limit
+  value that saves it: the step mutants need zero or below and
+  `negate-loop-condition` needs above. So the loop is given a **second bound**,
+  advanced by its body rather than by its post statement, and no single edit can
+  remove both.
 - **A condition of a named boolean type is a mutant again.** Form C′ is a
   fourth guard form: the ordinary boolean selector with a conversion at each
   end, `Flag(__gm.M[3] && bool(<mutated>) || !(__gm.M[3]) && bool(<original>))`.

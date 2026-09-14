@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 rules are found by `go-mutants list` with stable IDs, coordinates, and the
 guard-site hint the instrumentation phase consumes, and `go-mutants run`
 instruments, compile-validates, executes, and scores every one of them through
-the four guard forms.
+the five guard forms.
 
 The **Status** column that used to sit in the table below is gone rather than
 filled in with one repeated word: it recorded the gap between "the rule mints
@@ -151,8 +151,11 @@ six refusals are recorded as `unnameable-decl-type`, which reads as "no guard
 form can express this site":
 
 - a statement no form covers (a `switch` tag, a `range` clause);
-- a statement in a position where a block is not legal Go (an `if`, `switch`,
-  or `for` initialiser, a `for` post statement, a type switch guard);
+- a statement in a position where neither a block nor a call is legal Go: a
+  type switch guard, which is its own production rather than a simple
+  statement; a communication clause, which has to be a send or a receive; or a
+  `:=` in an initialiser slot, which declares, and a declaration moved into a
+  closure declares inside the closure;
 - a Form D type, or a Form C′ site's own type, that cannot be spelled with the
   imports the file already has;
 - a `:=` that redeclares an existing variable rather than declaring every name
