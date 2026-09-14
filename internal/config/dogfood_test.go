@@ -148,27 +148,27 @@ var repositoryExpectations = []Expectation{
 			"primary key still decides every pair whose start lines differ.",
 	},
 	{
-		ID: "4316f032816f9b8bea32fd9582296b74674df9d53de742511356db366a4e68d9",
+		ID: "0a3d3f95007106459a795656a654361eae02402d127598bfc45450a820e66088",
 		Reason: "Unreachable: compileErr is set only when an embedded schema " +
 			"cannot be read, parsed, registered or compiled, and " +
 			"TestEveryRegisteredSchemaCompiles asserts that none of that " +
 			"happens in this build, so this branch is never taken.",
 	},
 	{
-		ID: "d8c4cff8932d9455d3ef8e81586b06ca622755ecb2f56c108a98ca56b40b25d7",
+		ID: "5cb664d2e809adfdd4470fbf6a7fd7ddb7068ce09deb658ed6e2b9c7b182c62e",
 		Reason: "Unreachable: the return the row above guards, reported " +
 			"`survived (uncovered)` because no suite reaches a line that " +
 			"needs compileErr to be non-nil.",
 	},
 	{
-		ID: "dc8a00968d7b71abe998d1d562013904cb4b84f09b97ee2bfd3e6827bbb3abe9",
+		ID: "ab3fe9b967a8ff13873ee2ac368189faebbcd4e54a46a38347e224104df93328",
 		Reason: "Unreachable: compileAll compiles every type in the registry " +
 			"and schemaFor looks up that same registry, so the lookup " +
 			"cannot miss; TestEveryRegisteredSchemaCompiles asserts it for " +
 			"every registered type.",
 	},
 	{
-		ID: "cc88bfab205c63ce546f8c6c20a8481ea065cb270f5c6027731c5a2e4186cfc1",
+		ID: "2dea908d1035bc8e2d08838ce8574d3283fd9fc4b27e9f9db81ef8662bbe64d8",
 		Reason: "Unreachable: the file is read out of an embed.FS fixed at " +
 			"build time, and TestEverySchemaIsRegistered plus " +
 			"TestEveryRegisteredSchemaCompiles assert that every registered " +
@@ -176,20 +176,20 @@ var repositoryExpectations = []Expectation{
 			"return.",
 	},
 	{
-		ID: "5b74b4c090cbff9cd61dc5bc551946c41f0275647a1e79d8c1eb541859d83890",
+		ID: "feb98c2f936af4a140bb1fa463fe2561e91c54bb6098869283b331a374b0be0b",
 		Reason: "Unreachable: the bytes are an embedded schema this " +
 			"repository's own tests parse and compile, so they are JSON in " +
 			"every build TestEveryRegisteredSchemaCompiles passes on.",
 	},
 	{
-		ID: "cbed187653982db4970d6f42da553e14e2ef7d932e05de603de728450c5bf382",
+		ID: "7b868ba58784a852adbe02c46d0a393354732780f63f12311749a97cccfec421",
 		Reason: "Unreachable: AddResource fails on a resource identity it " +
 			"cannot parse, and TestSchemaIDsMatchTheirFilenames pins every " +
 			"embedded schema's `$id` to `baseURL + <file>`, which is a URL " +
 			"by construction.",
 	},
 	{
-		ID: "939b4163d07d97de0f882ab4af250a72f14eaea40a377cff94f7aeab16b01b42",
+		ID: "d0b0a81899127a807a74ff16e4c1107fe0abda0cc1ec46a3091806d3cef0a886",
 		Reason: "Unreachable: every registered schema compiles, which is " +
 			"exactly what TestEveryRegisteredSchemaCompiles asserts by " +
 			"requiring an invalid document to come back GOM5003 rather than " +
@@ -427,23 +427,10 @@ var repositoryExpectations = []Expectation{
 			"that would forward it.",
 	},
 	{
-		ID: "8471bd3d5848c7aa2d0afe09b8e7ffd1621d7312c1bbe299ea97f184a0438797",
-		Reason: "Unreachable: the walk climbs to the parent only while the " +
-			"filesystem says a name is not there, and it stops at a path " +
-			"that is its own parent -- the volume root. Every path it is " +
-			"given is under a store root a file has just been read from, so " +
-			"it meets a name that resolves before it reaches one that has " +
-			"no parent.",
-	},
-	{
-		ID: "ec5aae2cd6b5938eab74dd4e90b24ceac892c9fdcf0ed2f0d17a05257ac87b8e",
-		Reason: "Unreachable: the same guard as the row above, spelled the " +
-			"other way.",
-	},
-	{
 		ID: "700cbc056f3fb82558d41158da5f717ce1041698df05826787554562ba3c2a3b",
-		Reason: "Unreachable: the branch the two rows above guard, which is the " +
-			"answer for a volume root that does not resolve.",
+		Reason: "Unreachable: the answer for a volume root that does not " +
+			"resolve, which needs a path none of whose ancestors exist -- " +
+			"and the root itself always does.",
 	},
 	{
 		ID: "2380340d24fe192076857b8148ca285ed7c8a60f2ef97ca79ae09c272d76d540",
@@ -562,12 +549,14 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
 		// The floor moved with the eleventh package, for the first time since
-		// it went to 99: one percent of 2432 scored mutants is twenty-four
+		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
-		// judged too much at 544. 99.5 buys twelve (2420/2432 = 99.51%
-		// clears, 2419/2432 = 99.47% does not), where 99 bought thirteen
-		// before this widening, so the backstop is the same backstop at a
-		// larger size. The arithmetic is written out in the file.
+		// judged too much at 544. It has not moved since, and that is the
+		// same arithmetic rather than inertia: at 2614 scored mutants half a
+		// percent buys thirteen survivors (2601/2614 = 99.50% clears,
+		// 2600/2614 = 99.46% does not), where it bought twelve when it was
+		// set -- still far short of the twenty-one that moves this number.
+		// The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",

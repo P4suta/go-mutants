@@ -404,9 +404,20 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # all live in .go-mutants.toml, next to the settings they justify; only the two
 # things that cannot be expressed in that file live here.
 #
-# The budget this job is sized against: 2549 mutants at 100.00% under the
-# default test-level narrowing (2026-09-08), which runs each mutant against the
-# tests that reach it rather than every binary that does. Warm, at --jobs 4
+# The budget this job is sized against, in counted quantities rather than in
+# seconds: 2677 mutants catalogued at profile balanced, 2614 of them scored,
+# six that provably never return and are settled by the per-mutant timeout, two
+# that allocate without bound and are settled by the memory bound, and 63
+# declared rows. Those are the numbers that decide what this job costs, and
+# every one of them is the same on any machine. What a machine then takes to
+# get through them is the machine's business; the timing narrative below is
+# history rather than a budget, and each figure in it is labelled with the
+# scope that produced it.
+#
+# The 2549-mutant figure this note used to open with is the ancestor of that
+# count: it was the scope at 100.00% under the default test-level narrowing
+# (2026-09-08), which runs each mutant against the tests that reach it rather
+# than every binary that does. Warm, at --jobs 4
 # against a test-owned build cache with the derived timeout at its 10s floor,
 # it measured about 5m10s on the shared machine under a load average near five (survivors pay a whole-binary confirmation, ADR 0010);
 # the 2497-mutant, 6m13s-6m30s figures the package-level default recorded

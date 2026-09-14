@@ -574,6 +574,16 @@ func TestParseShard(t *testing.T) {
 		{"", "two numbers separated by a slash"},
 		{"3", "two numbers separated by a slash"},
 		{"a/b", "whole numbers"},
+		// One bad part and one good one, in both positions. `a/b` alone cannot
+		// tell the two conversions apart -- every reading of the guard reports
+		// the same refusal when both fail -- so a guard that consulted only one
+		// of them, or that demanded both fail, would pass on `a/b` and then
+		// hand a user of `a/4` a complaint about the shard *number* instead of
+		// about the letter they typed. `strconv.Atoi` returns 0 beside its
+		// error, which is what makes the wrong answer plausible rather than
+		// obviously broken: 0 fails the range check further down.
+		{"a/4", "whole numbers"},
+		{"1/x", "whole numbers"},
 		{"1/0", "cannot be split into 0 shards"},
 		{"0/4", "between 1 and 4"},
 		{"5/4", "between 1 and 4"},

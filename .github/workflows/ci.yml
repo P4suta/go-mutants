@@ -477,7 +477,7 @@ jobs:
   # 1m48s -- larger and faster than before the bound, because the two that
   # allocate no longer wait out two timeouts each.
   #
-  # The scope is now 2497 mutants: internal/report joined, which is nearly as
+  # The scope was then 2497 mutants: internal/report joined, which is nearly as
   # many again, and it brought a fourth mutant that never returns. Warm on a
   # quiet machine that scope is 6m13s-6m30s; cold on this runner it is about
   # 4m45s, with the timeout at its 10s floor. It was 9m31s cold on a shared
@@ -489,6 +489,14 @@ jobs:
   # hang and how loud the runner is, since both move the derived timeout. The
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
+  #
+  # It is now 2677, and no package was added to get there. Discovery started
+  # reaching the case labels of a tagless switch, which it had been suppressing
+  # before it ever consulted the guard chooser, and that is 128 more mutants
+  # spread across the same eleven packages. Two of them never return -- the
+  # count of those went from four to six -- which is the part of the growth
+  # this job's budget feels, because a mutant that hangs costs a whole derived
+  # timeout and every other mutant costs a fraction of a second.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25
