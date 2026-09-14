@@ -29,6 +29,10 @@ What go-mutants is, what it produces, and what it will refuse to do.
   decides, and what it defaults to
 - [Diagnostic codes](errors.md) — every `GOM` code a build can print, what it
   means, and what to do about it
+- [Limitations](limitations.md) — everything go-mutants will not do, and what
+  it does instead
+- [Roadmap](roadmap.md) — the work nobody has done yet, and what finishing each
+  piece looks like
 - [JSON contracts](json-schema.md) — the documents go-mutants writes, and the
   rule for when one of them may change
 - [Run trace v1](trace-v1.md) — the diagnostic account a run keeps of itself,

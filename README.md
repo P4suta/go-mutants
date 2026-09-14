@@ -609,6 +609,8 @@ results, and not-run mutants are excluded from the score denominator.
 - [Operators](docs/operators.md)
 - [Configuration](docs/configuration.md)
 - [Diagnostic codes](docs/errors.md)
+- [Limitations](docs/limitations.md)
+- [Roadmap](docs/roadmap.md)
 - [JSON contracts](docs/json-schema.md)
 - [Run trace v1](docs/trace-v1.md)
 - [Stryker report ecosystem compatibility](docs/stryker-compatibility.md)

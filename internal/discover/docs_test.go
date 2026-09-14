@@ -15,63 +15,86 @@ import (
 )
 
 const (
-	// operatorsDoc is the page that lists the reasons a site is skipped.
+	// operatorsDoc is the page that lists the reasons a site is skipped, beside
+	// the rules that would otherwise have mutated it.
 	operatorsDoc = "docs/operators.md"
 	// exclusionsHeading opens the table of those reasons.
 	exclusionsHeading = "## Documented exclusions"
+
+	// limitationsDoc lists the same reasons from the other end: what go-mutants
+	// will not do, and what it does instead.
+	limitationsDoc = "docs/limitations.md"
+	// skipsHeading opens its table of them.
+	skipsHeading = "## Recorded skips"
 )
 
-// TestEverySkipReasonIsOnTheOperatorsPage keeps the table equal to what
-// discovery can emit, in both directions.
+// reasonTables are the pages that enumerate the skip reasons, and the heading
+// each one keeps them under.
 //
-// The page claims it already: "The reason strings below are the exact
+// Two pages rather than one because they answer different questions -- the
+// operators page says which rule was declined and the limitations page says
+// what a user gets instead -- and both are wrong in the same way if a reason is
+// added to the code and to neither.
+var reasonTables = map[string]string{
+	operatorsDoc:   exclusionsHeading,
+	limitationsDoc: skipsHeading,
+}
+
+// TestEverySkipReasonIsOnBothPages keeps the tables equal to what discovery can
+// emit, in both directions and on both pages.
+//
+// The operators page claims it already: "The reason strings below are the exact
 // identifiers `internal/discover` emits (they appear verbatim in `list` output
 // and in catalog/report JSON)". Nothing compared the two. A reason added to the
-// code and not to the page is one a user meets in their terminal and cannot
-// look up; a reason on the page that no build emits is a heading in
-// `--explain`'s output that never appears, and a reader who goes looking for it.
-func TestEverySkipReasonIsOnTheOperatorsPage(t *testing.T) {
+// code and not to a page is one a user meets in their terminal and cannot look
+// up; a reason on a page that no build emits is a heading in `--explain`'s
+// output that never appears, and a reader who goes looking for it.
+func TestEverySkipReasonIsOnBothPages(t *testing.T) {
 	t.Parallel()
-
-	documented := exclusionRows(t)
-	if len(documented) == 0 {
-		t.Fatalf("%s lists no exclusions; the parser has stopped seeing the table", operatorsDoc)
-	}
 
 	var emitted []string
 	for _, reason := range discover.AllSkipReasons() {
 		emitted = append(emitted, string(reason))
 	}
-	var named []string
-	for reason := range documented {
-		named = append(named, reason)
-	}
 	slices.Sort(emitted)
-	slices.Sort(named)
 
-	for _, reason := range emitted {
-		if !slices.Contains(named, reason) {
-			t.Errorf("discovery emits %q and %s does not list it", reason, operatorsDoc)
+	for page, heading := range reasonTables {
+		documented := reasonRows(t, page, heading)
+		if len(documented) == 0 {
+			t.Errorf("%s lists no skip reasons under %q; the parser has stopped seeing the table", page, heading)
+			continue
 		}
-	}
-	for _, reason := range named {
-		if !slices.Contains(emitted, reason) {
-			t.Errorf("%s lists %q and no build emits it", operatorsDoc, reason)
+		var named []string
+		for reason := range documented {
+			named = append(named, reason)
+		}
+		slices.Sort(named)
+		for _, reason := range emitted {
+			if !slices.Contains(named, reason) {
+				t.Errorf("discovery emits %q and %s does not list it", reason, page)
+			}
+		}
+		for _, reason := range named {
+			if !slices.Contains(emitted, reason) {
+				t.Errorf("%s lists %q and no build emits it", page, reason)
+			}
 		}
 	}
 }
 
 // TestEverySkipReasonRowSaysWhy keeps the second column from going blank.
 //
-// The reason string is what a user sees in their terminal; the Why cell is the
-// only place that says what it means. A row that names a reason and explains
-// nothing is a row that sends a reader back to the source.
+// The reason string is what a user sees in their terminal; the second cell is
+// the only place that says what it means. A row that names a reason and
+// explains nothing is a row that sends a reader back to the source.
 func TestEverySkipReasonRowSaysWhy(t *testing.T) {
 	t.Parallel()
 
-	for reason, why := range exclusionRows(t) {
-		if strings.TrimSpace(why) == "" {
-			t.Errorf("%s lists %q with nothing beside it", operatorsDoc, reason)
+	for page, heading := range reasonTables {
+		for reason, why := range reasonRows(t, page, heading) {
+			if strings.TrimSpace(why) == "" {
+				t.Errorf("%s lists %q with nothing beside it", page, reason)
+			}
 		}
 	}
 }
@@ -98,19 +121,19 @@ func TestEverySkipReasonExplanationIsOneSentence(t *testing.T) {
 	}
 }
 
-// exclusionRows is the exclusions table, as reason -> why.
-func exclusionRows(t *testing.T) map[string]string {
+// reasonRows is one page's skip-reason table, as reason -> why.
+func reasonRows(t *testing.T, page, heading string) map[string]string {
 	t.Helper()
 
-	source, err := os.ReadFile(filepath.Join(testkit.Root(t), filepath.FromSlash(operatorsDoc)))
+	source, err := os.ReadFile(filepath.Join(testkit.Root(t), filepath.FromSlash(page)))
 	if err != nil {
-		t.Fatalf("reading %s: %v", operatorsDoc, err)
+		t.Fatalf("reading %s: %v", page, err)
 	}
 	rows := map[string]string{}
 	inTable := false
 	for _, line := range strings.Split(string(source), "\n") {
 		if strings.HasPrefix(line, "## ") {
-			inTable = strings.TrimRight(line, " ") == exclusionsHeading
+			inTable = strings.TrimRight(line, " ") == heading
 			continue
 		}
 		trimmed := strings.TrimSpace(line)
@@ -122,7 +145,8 @@ func exclusionRows(t *testing.T) map[string]string {
 			continue
 		}
 		reason := strings.Trim(strings.TrimSpace(cells[0]), "`")
-		if reason == "" || reason == "Reason" || strings.HasPrefix(reason, "-") {
+		if reason == "" || reason == "Reason" || reason == "What go-mutants does" ||
+			strings.HasPrefix(reason, "-") || strings.Contains(reason, " ") {
 			continue
 		}
 		rows[reason] = strings.TrimSpace(cells[1])
