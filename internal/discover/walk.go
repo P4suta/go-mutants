@@ -796,12 +796,13 @@ func (s *fileScan) emitAt(
 	}
 	position := s.tokFile.PositionFor(pos, false)
 	s.candidates = append(s.candidates, Located{
-		Candidate: candidate,
-		Line:      position.Line,
-		Column:    position.Column,
-		Package:   s.pkgPath,
-		Guard:     guard,
-		Branch:    s.branchProof(rule, anchor),
+		Candidate:   candidate,
+		Line:        position.Line,
+		Column:      position.Column,
+		Package:     s.pkgPath,
+		Guard:       guard,
+		Branch:      s.branchProof(rule, anchor),
+		Termination: s.terminationProof(rule, anchor),
 	})
 	return nil
 }

@@ -252,6 +252,64 @@ catalogue keeps one deterministically: **the more local rule wins**. A
 produce the same bytes. Users never pay to run two IDs that mutate identical
 source.
 
+## Termination proof
+
+A mutant that never returns is reported as a timeout, and a timeout counts as a
+detection, so the verdict is already honest. What is not honest is how it is
+reached: the run waits out the per-mutant budget, and then waits it out again,
+because a timeout is measured a second time before it is believed. On a scope
+whose budget is derived from a slow baseline that is minutes of worker time for
+one mutant, and the only way to learn which mutant it was is to watch the clock.
+
+Whether a loop's bound survives an edit is not a fact about the machine. It is a
+fact about the syntax and the types, and discovery has both — so it is decided
+there, before anything is executed, and published on the mutant.
+
+**It never changes a verdict.** A mutant proved unbounded is catalogued,
+instrumented and measured like any other. The proof says what its timeout will
+mean, not whether to have one.
+
+### The shape it reads
+
+One: a three-clause `for` whose post statement moves an induction variable by a
+constant step, and whose condition compares that variable against something the
+loop does not change.
+
+```go
+for i := 0; i < n; i++ { … }      // counting up towards an upper bound
+for i := n; i > 0; i-- { … }      // counting down towards a lower bound
+for i := 0; i < n; i += 2 { … }   // and any constant stride
+```
+
+| Edit | Verdict | Why |
+| --- | --- | --- |
+| `negate-loop-condition`, `negate-condition` on the condition | `unbounded` | The variable now moves *away* from the bound. `i >= n` with `i++` is true forever once it is true at all |
+| `lt-to-le`, `le-to-lt`, `gt-to-ge`, `ge-to-gt` | `bounded` | The boundary moves by one, which changes how many iterations run and not whether they end |
+| a reversed or deleted step | `unbounded` | The variable never reaches the bound. Not reachable today: a statement in a `for` post is refused by the guard forms, so no such mutant exists yet |
+| anything else in the loop | `bounded` | An edit in the body does not stop a counted loop counting |
+
+`unbounded` means **there is an input for which the mutant does not terminate**,
+not that this suite has one. `for i := len(xs) - 1; i >= 0; i--` negated is
+entered only when `xs` is empty, so a suite that never passes an empty slice
+kills that mutant in the ordinary way. The proof is an upper bound on how many
+timeouts a scope can cost, which is what a budget wants.
+
+### What it refuses, and why the refusal is silent
+
+A `range`, a `for` with no condition, a condition over a call rather than a
+comparison, a condition over two moving variables, a body that assigns the
+variable or the bound. Each is refused without a proof and without a skip —
+**an absent proof is never a claim that a loop is fine**, and recording a skip
+for every loop go-mutants declined to reason about would bury the skips that
+mean "go-mutants declined to mutate this" under ones that mean "go-mutants
+declined to think about this". That is the [branch proof](#branch-proof)'s rule, applied to the
+second proof.
+
+Measured over this repository at profile `all`: 53 of 3037 mutants carry a
+proof, nine of them `unbounded`. One per cent sounds small and is the right one
+per cent — most mutants are not in a loop condition at all, and the nine are
+every counted loop in the tree whose guard an edit can remove.
+
 ## Documented exclusions
 
 These are recorded as skips with a reason and never silently dropped.

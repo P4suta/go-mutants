@@ -98,6 +98,7 @@ repository's prose worth reading, so here is where each ledger lives.
 | `fixtures/README.md` | the corpus modules and their conformance | `internal/testkit/corpus_test.go` |
 | how many children a run starts, by kind | the recording every run keeps | `internal/engine/workceiling_integration_test.go` |
 | that a run report and its recording agree | each other, re-derived independently | `internal/devtools/traceaudit/audit_test.go` |
+| which mutants provably cannot return | the loop shapes, decided before anything runs | `internal/discover/termination_test.go` |
 | what the dashboard looks like | the model, on the ASCII theme | `internal/tui/frames_test.go` |
 | that every narrowing reaches one verdict | ADR 0010 | `internal/engine/narrowing_integration_test.go` |
 | `REUSE.toml` | every file git holds or would hold | `internal/testkit/licensegate_test.go` |

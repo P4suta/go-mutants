@@ -124,6 +124,12 @@ type Located struct {
 	// optional in both directions: nothing downstream needs it, and a consumer
 	// that has it can discharge tests without running them. See [BranchProof].
 	Branch *BranchProof
+	// Termination is what this phase could prove about the loop the candidate
+	// sits in, or nil when it could prove nothing. It is optional in both
+	// directions for [Located.Branch]'s reason, and it never changes a verdict:
+	// a mutant proved unbounded is catalogued, instrumented and measured like
+	// any other. See [TerminationProof].
+	Termination *TerminationProof
 }
 
 // A GuardForm names one of the three rewrite shapes instrumentation composes a

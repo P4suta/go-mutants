@@ -65,7 +65,24 @@
         "end_byte": { "type": "integer", "minimum": 0 },
         "original": { "type": "string" },
         "replacement": { "type": "string" },
-        "branch": { "$ref": "#/$defs/branch" }
+        "branch": { "$ref": "#/$defs/branch" },
+        "termination": { "$ref": "#/$defs/termination" }
+      }
+    },
+    "termination": {
+      "description": "Present only when go-mutants could prove, before executing anything, whether this mutant's loop still stops. verdict is `bounded` when the edit leaves a decreasing measure and `unbounded` when it removes one -- meaning there is an input for which the mutant does not terminate, which a run will report as a timeout. It never changes a verdict: a mutant proved unbounded is catalogued, instrumented and measured like any other, and this says what its timeout will mean rather than whether to have one. Absent is the common case and is never a claim that a loop is fine: only the counted loop is recognised, and a range, a loop with no condition, or one whose body moves its own bound is refused silently. loop_line and loop_column address the `for` keyword, as 1-based lines and 1-based byte columns of the pristine file.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "reason", "loop_line", "loop_column"],
+      "properties": {
+        "verdict": { "enum": ["bounded", "unbounded"] },
+        "reason": {
+          "description": "One line naming the edit's effect on the measure, for a reader who wants to know why before believing it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "loop_line": { "type": "integer", "minimum": 1 },
+        "loop_column": { "type": "integer", "minimum": 1 }
       }
     },
     "branch": {

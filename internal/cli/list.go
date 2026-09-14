@@ -551,6 +551,34 @@ type catalogMutant struct {
 	// of an `if` or a `for`, and is omitted entirely when there is none. See
 	// [discover.BranchProof] for what the span promises.
 	Branch *catalogBranch `json:"branch,omitempty"`
+	// Termination is what discovery could prove about whether this mutant's
+	// loop still stops, and is omitted entirely when it could prove nothing.
+	// It never changes a verdict: a mutant proved unbounded is measured like
+	// any other, and this says what its timeout will mean rather than whether
+	// to have one. See [discover.TerminationProof].
+	Termination *catalogTermination `json:"termination,omitempty"`
+}
+
+// A catalogTermination is what discovery proved about one mutant's loop.
+type catalogTermination struct {
+	Verdict    string `json:"verdict"`
+	Reason     string `json:"reason"`
+	LoopLine   int    `json:"loop_line"`
+	LoopColumn int    `json:"loop_column"`
+}
+
+// catalogTerminationOf converts discovery's proof into the document's. Nil
+// stays nil, which is what keeps the property absent rather than null.
+func catalogTerminationOf(proof *discover.TerminationProof) *catalogTermination {
+	if proof == nil {
+		return nil
+	}
+	return &catalogTermination{
+		Verdict:    proof.Verdict,
+		Reason:     proof.Reason,
+		LoopLine:   proof.LoopLine,
+		LoopColumn: proof.LoopColumn,
+	}
 }
 
 // A catalogBranch is the body span a proved mutant's condition gates, in the
@@ -638,6 +666,7 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 			Original:    m.Original,
 			Replacement: m.Replacement,
 			Branch:      catalogBranchOf(where.Branch),
+			Termination: catalogTerminationOf(where.Termination),
 		})
 	}
 
