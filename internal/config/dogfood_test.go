@@ -474,21 +474,20 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Ten whole packages. Scoped test binaries bought the first two
-			// — the gate used to be two files, because every mutant ran every
-			// test binary in the module — internal/mutation's own tests
-			// bought the third, by killing the survivors that kept it out,
-			// the next three were measured before they were included and
-			// had no survivor to kill, and the three after those were bought
-			// the same way the third was. The ninth is this package: the file
-			// this test reads is inside the scope that reads it. The tenth is
-			// the toolchain wrapper, and it is the first one in this list
-			// that starts processes rather than deciding over values.
-			// had no survivor to kill, and the four after that were bought
-			// the same way the third was. The ninth is this package: the
-			// file this test reads is inside the scope that reads it. The
-			// tenth is internal/gocmd, the toolchain wrapper, and the
-			// eleventh is internal/report, which is what a run writes down.
+			// Thirteen whole packages, in the order the file lists them,
+			// which is the order they were added. The gate used to be two
+			// files, because every mutant ran every test binary in the
+			// module, and scoping the test binaries is what made whole
+			// packages affordable. Most arrived by having their survivors
+			// killed first, which is the rule; a few were measured before
+			// the line was added and had no survivor to kill, which is the
+			// only way a package is allowed in without a test being written
+			// for it. The ninth is this package: the file this test reads is
+			// inside the scope that reads it. The tenth, internal/gocmd, is
+			// the first here that starts processes rather than deciding over
+			// values; the eleventh, internal/report, is the first that writes
+			// files; and the thirteenth, internal/tempowner, is the first
+			// that takes a lock.
 			//
 			// The order is the file's order, and it is asserted rather than
 			// sorted for the same reason the expectation ids are: a list
@@ -506,6 +505,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/gocmd/*.go",
 				"internal/report/*.go",
 				"internal/testlog/*.go",
+				"internal/tempowner/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -532,6 +532,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/gocmd/...",
 				"./internal/report/...",
 				"./internal/testlog/...",
+				"./internal/tempowner/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
@@ -556,11 +557,13 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
 		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2822 scored mutants half a
-		// percent buys fourteen survivors (2808/2822 = 99.50% clears,
-		// 2807/2822 = 99.47% does not), where it bought twelve when it was
+		// same arithmetic rather than inertia: at 2943 scored mutants half a
+		// percent buys fourteen survivors (2929/2943 = 99.52% clears,
+		// 2928/2943 = 99.49% does not), where it bought twelve when it was
 		// set -- still far short of the twenty-one that moves this number.
-		// The arithmetic is written out in the file.
+		// Two widenings have now landed inside the same fourteen, which is
+		// what a floor written as a survivor count rather than as a
+		// percentage is for. The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",

@@ -1236,24 +1236,31 @@ undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
-the settings they justify. It covers twelve whole packages:
+the settings they justify. It covers thirteen whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
-| `internal/report` | 1095 | what a run writes down — the RunReport v1 document, the history store, the projection into the published format, the self-contained page, and the merge that puts a split run back together |
-| `internal/config` | 461 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
-| `internal/mutation` | 450 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
-| `internal/coverage` | 146 | the profile reader, and the mapping that decides which suites a mutant is measured against |
-| `internal/gocmd` | 106 | the toolchain wrapper — locating `go`, probing and parsing its version, the GOFLAGS merge, and the typed failures of all three |
+| `internal/report` | 1361 | what a run writes down — the RunReport v1 document, the history store, the projection into the published format, the self-contained page, and the merge that puts a split run back together |
+| `internal/config` | 505 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
+| `internal/mutation` | 477 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
+| `internal/coverage` | 162 | the profile reader, and the mapping that decides which suites a mutant is measured against |
+| `internal/tempowner` | 121 | which temporary directory a run owns, and which a later run may reclaim — the marker, the advisory lock, and the sweep |
+| `internal/gocmd` | 111 | the toolchain wrapper — locating `go`, probing and parsing its version, the GOFLAGS merge, and the typed failures of all three |
 | `internal/schemas` | 89 | the JSON schema validation every published document goes through |
-| `internal/glob` | 68 | the glob engine those identities depend on |
-| `internal/interval` | 48 | the five-way span relation the interval forest is built on |
+| `internal/glob` | 71 | the glob engine those identities depend on |
+| `internal/interval` | 50 | the five-way span relation the interval forest is built on |
+| `internal/drift` | 21 | which change to an instrumented snapshot the instrumentation did not make |
 | `internal/operatorselect` | 16 | which rules a profile or an `--operator` name selects |
-| `internal/drift` | 11 | which change to an instrumented snapshot the instrumentation did not make |
-| `internal/testflag` | 7 | which argument names a test-binary flag |
 | `internal/testlog` | 15 | the reader of the action log a test binary writes under `-test.testlogfile` |
+| `internal/testflag` | 7 | which argument names a test-binary flag |
 
-Eleven of the twelve are pure arithmetic, pure text matching, a pure filter over
+Those counts are what this platform catalogues, and the qualifier is load-bearing
+for one of them: `internal/tempowner/lock_windows.go` is not built where this
+gate runs, so discovery never opens it and none of its lines are in the 121. A
+gate that said nothing about what it does not cover would be a number wearing a
+gate's clothes.
+
+Ten of the thirteen are pure arithmetic, pure text matching, a pure filter over
 a digest table, or a pure decision over values handed in, with no clock and no
 network, so a mutant either changes an answer or it does not. `internal/config`
 reaches the filesystem in exactly one place — `os.ReadFile` in `LoadFile` — and
@@ -1289,6 +1296,34 @@ fails" and "a marker appeared between the read and the create" are staged by
 failing the *n*-th file creation, or by acting just before it. A test that uses
 any of this cannot be `t.Parallel`.
 
+`internal/tempowner` is the other one that writes, and it is the only one that
+takes a lock. It owns the directory a run works in — a marker file, an advisory
+`flock` on a second file beside it, and a sweep that reclaims what an earlier run
+left behind — so a survivor there is a syscall nobody made fail. Every one of
+them was killed, and the widening cost no declared row at all, which took five
+tests and one shape change. The three syscall answers a lock can give are
+separated at the wrapper that really calls `flock`, with a closed descriptor
+standing in for "the filesystem would not answer"; an unlock the kernel refuses
+is forwarded rather than swallowed; `Claim` is handed a clock RFC 3339 cannot
+write down, which is the one way this package's `json.Marshal` can fail and the
+one way to prove the lock does not outlive the marker that failed to be written;
+the sweep is given a lock it cannot give back, and spares the directory; and
+`directorySize` is given a directory that lists its names and refuses to stat
+them, which is `read` without `execute` and the only way to make
+`fs.DirEntry.Info` fail without racing a removal. Two of those reach the code
+through seams the package already had the shape for — `sweeper` holds its
+removal in a field, and now its acquire as well — and one through `acquire`,
+which takes its two syscalls as arguments so that a test refusing a lock does not
+reach every other test running beside it.
+
+The shape change is the one place the gate changed the source rather than the
+tests. `errors.Is(err, EWOULDBLOCK) || errors.Is(err, EAGAIN)` is two readings of
+one predicate wherever those errnos are equal, which is Linux and macOS, so
+`||` and `&&` select the same branch on every input: a mutant no test can kill,
+and one no ledger row could honestly declare, since the argument would hold only
+on the platforms this project's own gate happens to run on. Two cases of one
+`switch` say the same thing to a reader and propose nothing to mutate.
+
 Determinism survives that, and it is worth saying how. Every path those tests
 touch is under a `t.TempDir`; the failures are real errors from the real
 operating system, not sentinels; nothing asserts a wall clock or a directory
@@ -1297,8 +1332,8 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 2885 mutants catalogued, 2822 detected —
-2816 killed, two of them by the memory bound, and six caught by the per-mutant
+The numbers the gate is sized against: 3006 mutants catalogued, 2943 detected —
+2937 killed, two of them by the memory bound, and six caught by the per-mutant
 timeout — sixty-three declared expectations, **a score of 100.00%**, at
 `--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
 is compared on every run, `--strict` or not, and at this size it does not fail
@@ -1376,21 +1411,22 @@ The bound is derived from the same baseline runs the timeout is, as
 resolved to:
 
 ```text
-memory: baseline peak 157.5 MiB, bound 1.0 GiB (derived)
+memory: baseline peak 174.2 MiB, bound 1.0 GiB (derived)
 ```
 
-157.5 MiB × 4 is 630 MiB, so the 1 GiB floor still applies and the bound is
+174.2 MiB × 4 is 697 MiB, so the 1 GiB floor still applies and the bound is
 about six times what the unmutated suite needs — far enough above anything
 legitimate that it catches runaways rather than honest tests. The peak itself is
 one reading rather than a constant: the nine-package scope read 125.2 MiB, the
-ten-package one 141.5–147.4 MiB across three runs, and this one 157.5 MiB —
-each suite that starts processes or writes documents moved the number the bound
-is derived from, and none of them moved the bound, because the floor was always
-the larger of the two. `-v` also names the bound on each mutant it stops
+ten-package one 141.5–147.4 MiB across three runs, the twelve-package one
+157.5 MiB and this one 174.2 MiB — each suite that starts processes or writes
+documents moved the number the bound is derived from, and none of them moved the
+bound, because the floor was always the larger of the two. `-v` also names the
+bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 2885 / 2816 / 6 / 63 on
+With that in place the whole summary is stable: the same 3006 / 2937 / 6 / 63 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.

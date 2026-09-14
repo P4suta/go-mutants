@@ -14,6 +14,32 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`internal/tempowner` joined the dogfood gate, with no declared row.** 121
+  more mutants, every one of them killed, and the gate is now thirteen packages
+  and 3006 mutants at 100.00%. It is the second package in the scope that writes
+  files and the first that takes a lock, so a survivor there is a syscall nobody
+  made fail — which took five tests. The three answers `flock` can give are
+  separated at the wrapper that really calls it, with a closed descriptor
+  standing in for "the filesystem would not answer"; an unlock the kernel refuses
+  is forwarded rather than swallowed; `Claim` is handed a clock RFC 3339 cannot
+  write down, which is the one way this package's `json.Marshal` can fail and
+  therefore the one way to prove that a marker which could not be written does
+  not leave its lock behind; the sweep is given a lock it cannot give back, and
+  spares the directory rather than deleting one it no longer knows the state of;
+  and `directorySize` is given a directory that lists its names and refuses to
+  stat them, which is `read` without `execute` and the only way to make
+  `fs.DirEntry.Info` fail without racing a removal. `sweeper` gained an acquire
+  seam beside the removal seam it already had, for the same stated reason.
+  One shape changed in the source rather than in a test.
+  `errors.Is(err, EWOULDBLOCK) || errors.Is(err, EAGAIN)` is two readings of one
+  predicate wherever those errnos are equal, which is Linux and macOS, so `||`
+  and `&&` there select the same branch on every input. That is a mutant no test
+  can kill and no ledger row could honestly declare — its argument would hold
+  only on the platforms this project's own gate happens to run on — and two
+  cases of one `switch` say the same thing to a reader while proposing nothing
+  to mutate. `lock_windows.go` is not built where the gate runs, so none of its
+  lines are in the 121, and the scope table says so rather than letting the
+  number imply otherwise.
 - **`internal/testlog` joined the dogfood gate.** Fifteen more mutants, one
   declared row, and the widening cost a test for the read failure that is not
   about the bytes and a case for the blank line between two actions. The

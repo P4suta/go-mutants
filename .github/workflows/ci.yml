@@ -490,14 +490,15 @@ jobs:
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
   #
-  # It is now 2885 over twelve packages, and fifteen of those came from adding
-  # one: internal/testlog. The rest grew where the gate already looked --
-  # discovery reaching the case labels of a tagless switch, the workspace
-  # coordinate a mutant is catalogued under -- which is the ordinary way this
-  # number moves. Three came off again when discovery learned to refuse an edit
-  # whose replacement is the constant the source already holds, which is the
-  # only way this number has ever fallen. Six of them never return, and that
-  # count has not changed; it is the part of the growth this job's budget feels,
+  # It is now 3006 over thirteen packages, and 136 of those came from adding
+  # two: internal/testlog and internal/tempowner. The rest grew where the gate
+  # already looked -- discovery reaching the case labels of a tagless switch,
+  # the workspace coordinate a mutant is catalogued under -- which is the
+  # ordinary way this number moves. Three came off again when discovery learned
+  # to refuse an edit whose replacement is the constant the source already
+  # holds, which is the only way this number has ever fallen. Six of them never
+  # return, and that count has not changed; it is the part of the budget this
+  # job feels,
   # because a mutant that hangs costs a whole derived timeout and every other
   # mutant costs a fraction of a second.
   dogfood:
