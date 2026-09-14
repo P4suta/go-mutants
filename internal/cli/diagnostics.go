@@ -320,8 +320,13 @@ func writeDiagnostics(ctx context.Context, request diagnosticsRequest) (path str
 			return "", err
 		}
 	}
-	if request.outcome.Report != nil {
-		document, marshalErr := request.outcome.Report.Marshal()
+	// Whichever document the run published: a run over one module writes a run
+	// report and a run over a `go.work` writes a workspace report, and the
+	// bundle carries the one there is under the same name. What it is, is in
+	// the document -- `document_type` is the discriminator every consumer of
+	// these files checks before decoding.
+	if published := publishedDocument(request.outcome); published != nil {
+		document, marshalErr := published.Marshal()
 		if marshalErr != nil {
 			return "", marshalErr
 		}

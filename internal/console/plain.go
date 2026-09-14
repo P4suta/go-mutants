@@ -338,7 +338,8 @@ func (r *PlainRenderer) result(m engine.MutantResult) (string, bool) {
 	}
 	line := r.paint(outcomeStyle(m.Outcome), fmt.Sprintf("%-*s", OutcomeWidth, label)) + "  " +
 		shortID(m.DisplayID) + "  " +
-		m.Path + ":" + strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
+		engine.WorkspaceLocation(m.ModuleDir, m.Path) + ":" +
+		strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
 		r.paint(styleRule, m.Rule) + "  " +
 		FormatText(m.Original) + " -> " + FormatText(m.Replacement) + "  " +
 		r.paint(styleDetail, "("+FormatDuration(m.Duration)+cachedSuffix(m)+")") +

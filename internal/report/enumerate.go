@@ -72,7 +72,19 @@ type StoredRun struct {
 	// It is how the commands tell one workspace's history from another's, since
 	// a history directory is named after a digest of the tree's contents and
 	// therefore changes with every edit; see [History].
+	//
+	// It is empty for a workspace run, which measured several modules and names
+	// them in [StoredRun.Modules] instead.
 	ModulePath string
+	// Modules are the module paths a workspace run measured, in the order its
+	// document names them, and empty for a run over one module.
+	//
+	// Exactly one of this and ModulePath is set, which is what lets a command
+	// tell a workspace's history from the history of any one module in it: the
+	// two are different projects to this store, because a mutant measured in a
+	// workspace and the same mutant measured alone have different identities.
+	// See [WorkspaceReport].
+	Modules []string
 	// Status is how the run ended.
 	Status Status
 	// FinishedAt is when it ended, parsed from the document's RFC 3339 stamp.
@@ -495,6 +507,12 @@ type storedRun struct {
 		ModulePath string `json:"module_path"`
 	} `json:"workspace"`
 	Summary Summary `json:"summary"`
+	// Modules is a workspace report's module list, and absent from a run
+	// report. Only the module path of each is read: a listing names a run and
+	// does not decode what happened in it.
+	Modules []struct {
+		ModulePath string `json:"module_path"`
+	} `json:"modules"`
 }
 
 // readStoredRun decodes one document's header, or says in one line why it is
@@ -515,9 +533,18 @@ func readStoredRun(file storedFile) (StoredRun, string) {
 	if err = json.Unmarshal(data, &doc); err != nil {
 		return StoredRun{}, "it is not a run report this build can read: " + err.Error()
 	}
+	// Both kinds of document a run publishes are listed, because both are runs:
+	// a listing that named only one of them would make a workspace's history
+	// look empty and a `report clean` leave it behind.
+	//
+	// One version check serves both, because the two types are at the same
+	// version -- which is a fact rather than an assumption:
+	// TestTheTwoRunDocumentsShareASchemaVersion is what fails if they ever
+	// diverge, and then this needs the branch it deliberately does not have.
 	switch {
-	case doc.DocumentType != DocumentType:
-		return StoredRun{}, "it is " + quote(doc.DocumentType) + ", not a " + DocumentType + " document"
+	case doc.DocumentType != DocumentType && doc.DocumentType != WorkspaceDocumentType:
+		return StoredRun{}, "it is " + quote(doc.DocumentType) + ", not a " + DocumentType +
+			" or a " + WorkspaceDocumentType + " document"
 	case doc.SchemaVersion != SchemaVersion:
 		return StoredRun{}, "it is schema version " + strconv.Itoa(doc.SchemaVersion) +
 			", and this build reads version " + strconv.Itoa(SchemaVersion)
@@ -530,10 +557,15 @@ func readStoredRun(file storedFile) (StoredRun, string) {
 	if err != nil {
 		return StoredRun{}, "its finish time " + quote(doc.FinishedAt) + " is not an RFC 3339 timestamp"
 	}
+	var modules []string
+	for _, module := range doc.Modules {
+		modules = append(modules, module.ModulePath)
+	}
 	return StoredRun{
 		RunID:      doc.RunID,
 		Path:       file.path,
 		ModulePath: doc.Workspace.ModulePath,
+		Modules:    modules,
 		Status:     doc.Status,
 		FinishedAt: finished,
 		Summary:    doc.Summary,

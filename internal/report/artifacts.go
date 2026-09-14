@@ -54,7 +54,19 @@ func (a Artifacts) Any() bool { return a.ProjectionPath != "" || a.HTMLPath != "
 // ArtifactOptions is everything [WriteArtifacts] needs.
 type ArtifactOptions struct {
 	// Report is the run to publish. It is read and never modified.
+	//
+	// Exactly one of Report and Workspace is set: a run over one module has a
+	// run report, and a run over a `go.work` has a workspace report instead.
 	Report *Report
+	// Workspace is the workspace run to publish, for a run over a `go.work`.
+	//
+	// The artefacts are one document and one page for the whole workspace
+	// rather than a pair per module, because the viewer's question is about the
+	// project: a reader opening the HTML report wants the tree, and a directory
+	// of N pages would make them open N of them to find out whether anything
+	// survived. Every path in them is relative to the workspace root, which is
+	// what a mutation-testing-report's paths mean.
+	Workspace *WorkspaceReport
 	// WorkspaceRoot is the absolute path of the user's tree: what the report's
 	// paths are relative to, what the pristine source is read from, and what a
 	// relative Directory resolves against.
@@ -79,6 +91,25 @@ type ArtifactOptions struct {
 	Low  int
 }
 
+// projectionOf builds the mutation-testing-report projection of whichever kind
+// of run this is.
+func projectionOf(opts ArtifactOptions) (*Projection, error) {
+	if opts.Workspace != nil {
+		return ProjectWorkspace(WorkspaceProjectionOptions{
+			Workspace:     opts.Workspace,
+			WorkspaceRoot: opts.WorkspaceRoot,
+			High:          opts.High,
+			Low:           opts.Low,
+		})
+	}
+	return Project(ProjectionOptions{
+		Report:        opts.Report,
+		WorkspaceRoot: opts.WorkspaceRoot,
+		High:          opts.High,
+		Low:           opts.Low,
+	})
+}
+
 // WriteArtifacts publishes the project artefacts for one run.
 //
 // The order is the contract. The projection is built, encoded, and validated
@@ -98,19 +129,14 @@ func WriteArtifacts(opts ArtifactOptions) (Artifacts, error) {
 	if !wantJSON && !wantHTML {
 		return Artifacts{}, nil
 	}
-	if opts.Report == nil {
+	if opts.Report == nil && opts.Workspace == nil {
 		return Artifacts{}, &Error{
 			Code:    CodeNoReport,
 			Message: "there is no report to publish into " + opts.Directory,
 		}
 	}
 
-	projection, err := Project(ProjectionOptions{
-		Report:        opts.Report,
-		WorkspaceRoot: opts.WorkspaceRoot,
-		High:          opts.High,
-		Low:           opts.Low,
-	})
+	projection, err := projectionOf(opts)
 	if err != nil {
 		return Artifacts{}, err
 	}

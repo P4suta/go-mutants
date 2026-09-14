@@ -362,10 +362,23 @@ type RunOutcome struct {
 	MemorySource MemorySource
 
 	// Report is the published run report, or nil when the run stopped before
-	// there was anything to publish. It is the document on disk, so a caller
-	// deciding an exit code or writing `--json` is looking at exactly what the
-	// user can read in the file.
+	// there was anything to publish — and nil for a run over a workspace, which
+	// publishes [RunOutcome.WorkspaceReport] instead. It is the document on
+	// disk, so a caller deciding an exit code or writing `--json` is looking at
+	// exactly what the user can read in the file.
 	Report *report.Report
+
+	// WorkspaceReport is the published workspace report, for a run over a
+	// `go.work`, and nil for every other run.
+	//
+	// A workspace is measured as one run over one catalogue that spans its
+	// modules and reported one module at a time, because `workspace.module_path`
+	// is required of a run report and a workspace has no single answer for it;
+	// this document is the run's own counts and every module's report inside
+	// it. See ADR 0012. Exactly one of it and [RunOutcome.Report] is set, so a
+	// caller reading the wrong one gets nil rather than a document about
+	// something else.
+	WorkspaceReport *report.WorkspaceReport
 	// RunPath and LatestPath are where the report was filed, as published in
 	// [ReportPublished].
 	RunPath    string
@@ -709,9 +722,13 @@ func exitCodeOf(out RunOutcome) int {
 // picture. Threading a dozen values through would make the difference between
 // them a matter of remembering which ones; a struct makes it one call.
 type state struct {
-	found   discover.Result
-	catalog *mutation.Catalog
-	mode    report.SelectionMode
+	// workspace is whether the tree measured is a `go.work` rather than one
+	// module. It is settled before anything is copied and read by every phase
+	// that has to name a module. See ADR 0012.
+	workspace bool
+	found     discovered
+	catalog   *mutation.Catalog
+	mode      report.SelectionMode
 	// changed is the changed-line set a `--changed` run narrowed itself by, or
 	// nil. It is resolved before anything is copied or built, so that a bad ref
 	// costs a second rather than a baseline.
@@ -762,25 +779,36 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	}
 	out.WorkspaceRoot = root
 
-	// A workspace is refused here rather than three phases later, and the code
-	// is internal/discover's rather than a second one of this package's: it is
-	// the same condition, and two identifiers for one condition is one for a
-	// user to search for in vain. See [discover.CheckWorkspace].
+	// Whether this tree is a workspace is settled here, before anything is
+	// copied, and the code is internal/discover's rather than a second one of
+	// this package's: it is the same question, and two answers to one question
+	// is one for a user to search for in vain. See [discover.DetectWorkspace].
 	//
-	// What the earliness buys is the *diagnosis*. Discovery would refuse this
-	// tree too, but only after the copy, the scope resolution and a full
-	// baseline — and the scope resolution gets there first with a different
-	// story, because `go list ./...` in a workspace directory places no
-	// package and the run therefore blamed the user's test command for
-	// matching nothing. Asked before anything is copied, the answer names the
-	// user's own `go.work` rather than the snapshot's.
-	if workspaceErr := discover.CheckWorkspace(root); workspaceErr != nil {
-		return workspaceErr
+	// What the earliness buys is the *diagnosis* of a workspace that cannot be
+	// measured. Discovery would refuse such a tree too, but only after the
+	// copy, the scope resolution and a full baseline — and the scope
+	// resolution gets there first with a different story, because `go list
+	// ./...` in a workspace directory places no package under GOWORK=off and
+	// the run therefore blamed the user's test command for matching nothing.
+	// Asked before anything is copied, the answer names the user's own
+	// `go.work` rather than the snapshot's.
+	workspace, err := discover.DetectWorkspace(root)
+	if err != nil {
+		return err
 	}
+	s.patterns = treePatterns(workspaceModulesOf(workspace))
 
 	command, err := testCommand(cfg, opts.TestArgv)
 	if err != nil {
 		return err
+	}
+	// At a workspace root `./...` names nothing: the root is not itself a
+	// module, and the go command says so rather than guessing. What the user
+	// meant by it is every module's own `./...`, and this is where that is
+	// spelled out -- before the command is recorded, so the command the report
+	// carries is the command that ran. See [expandWholeTree].
+	if workspace != nil {
+		command = expandWholeTree(command, workspace.Modules)
 	}
 	out.TestCommand = command
 	out.Workers = cfg.Execution.Jobs
@@ -888,7 +916,12 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	// Recorded only once the claim succeeded: a directory nobody owns cannot be
 	// marked kept, and the failure above has already removed it.
 	temps.scratch, temps.scratchOwner = scratch, scratchOwner
-	env := childEnv(scratch)
+	// The environment every command measured against the snapshot runs with.
+	// A workspace run names the snapshot's own workspace file in GOWORK, which
+	// is what makes the scope resolution and the baseline resolve the modules
+	// the way discovery and the builds do; a run over one module says nothing
+	// about workspaces here, exactly as it did before. See ADR 0012.
+	env := workspaceEnv(childEnv(scratch), workspace != nil)
 
 	// The test command's own scope, proven before a single command is measured.
 	// A pattern that names nothing is a mistake in the invocation, exactly like
@@ -944,12 +977,13 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	// A partial report claiming to have run everything would be the one claim
 	// nobody could check.
 	st := &state{
-		mode:    selectionMode(opts),
-		changed: changed,
-		shard:   shardOf(opts),
-		results: make(map[string]report.MutantResult),
-		display: make(map[string]MutantResult),
-		notRun:  make(map[string]report.NotRunReason),
+		workspace: workspace != nil,
+		mode:      selectionMode(opts),
+		changed:   changed,
+		shard:     shardOf(opts),
+		results:   make(map[string]report.MutantResult),
+		display:   make(map[string]MutantResult),
+		notRun:    make(map[string]report.NotRunReason),
 	}
 	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, out, st, &temps)
 	if mutateErr != nil {
@@ -984,7 +1018,7 @@ func (s *session) baseline(
 	s.enterPhase(PhaseBaseline, fmt.Sprintf("building the snapshot, then %s of %s",
 		countNoun(runs, "timed run"), strings.Join(command, " ")))
 
-	build := toolchain.Command("build", "./...")
+	build := toolchain.Command(append([]string{"build"}, s.patterns...)...)
 	build.Dir = root
 	build.Env = env
 	build.Timeout = BaselineCap
@@ -1144,35 +1178,37 @@ func (s *session) mutate(
 	// The include and exclude patterns are applied here and never to the
 	// snapshot walk; see the long argument at the snapshot above.
 	endDiscover := s.stage("discover", "")
-	found, err := discover.Discover(ctx, discover.Options{
+	found, err := discoverTree(ctx, st.workspace, discover.Options{
 		SnapshotRoot: snap.Root,
 		Toolchain:    toolchain,
 		Rules:        rules,
 		Include:      include,
 		Exclude:      exclude,
+		Workspace:    st.workspace,
 	})
 	endDiscover(err)
 	if err != nil {
 		return err
 	}
 	st.found = found
-	s.emit(Discovered{Candidates: len(found.Candidates), Skips: skipTotal(found.Skips)})
+	candidates := found.candidates()
+	s.emit(Discovered{Candidates: len(candidates), Skips: skipTotal(found.skips())})
 
 	endCatalog := s.stage("catalog", "")
-	catalog, err := discover.BuildCatalog(found)
+	catalog, err := discover.BuildCatalogOf(found.results)
 	if err != nil {
 		endCatalog(err)
 		return err
 	}
 	st.catalog = catalog
-	st.display, st.packages = displayIndex(catalog, found.Candidates)
+	st.display, st.packages = displayIndex(catalog, candidates, found.modules)
 
 	// The guard hints travel with the catalogue from here on. They are the one
 	// thing instrumentation cannot work out for itself — which rewrite form an
 	// edit takes is a question about types, and only this pass had a type
 	// checker — so losing them between the two phases would not be a missing
 	// optimisation, it would be a run that instruments nothing.
-	hints, err := instrument.HintsOf(found.Candidates)
+	hints, err := instrument.HintsOf(candidates)
 	endCatalog(err)
 	if err != nil {
 		return err
@@ -1183,7 +1219,8 @@ func (s *session) mutate(
 		Snap:         snap,
 		Catalog:      catalog,
 		Hints:        hints,
-		Modules:      []validate.Module{{Dir: ".", Path: found.ModulePath}},
+		Modules:      found.validateModules(),
+		Packages:     s.patterns,
 		Toolchain:    toolchain,
 		Jobs:         cfg.Execution.Jobs,
 		BuildTimeout: BaselineCap,
@@ -1236,7 +1273,7 @@ func (s *session) mutate(
 	}
 
 	endDrift := s.stage("drift", "")
-	err = driftGate(snap, validated.Instrumented)
+	err = driftGate(snap, validated.Instrumented, validated.RuntimeDirs()...)
 	endDrift(err)
 	if err != nil {
 		return err
@@ -1252,6 +1289,7 @@ func (s *session) mutate(
 	execOpts := execute.Options{
 		Toolchain:    toolchain,
 		SnapshotRoot: snap.Root,
+		Workspace:    st.workspace,
 		BinDir:       filepath.Join(scratch, binDirName),
 		ScratchDir:   filepath.Join(scratch, workerDirName),
 		Jobs:         cfg.Execution.Jobs,
@@ -1291,7 +1329,7 @@ func (s *session) mutate(
 	patterns, scoped := testScope(out.TestCommand)
 	if scoped {
 		execOpts.Packages = patterns
-		execOpts.CoverPkg = found.ModulePath + coverPkgSuffix
+		execOpts.CoverPkg = found.coverPkg(coverPkgSuffix)
 	} else {
 		s.warnCode(string(coverage.CodeCustomTestCommand), customTestCommand(out.TestCommand))
 	}
@@ -1310,7 +1348,7 @@ func (s *session) mutate(
 	}
 
 	if execOpts.CoverPkg != "" {
-		runs, st.coverage, err = s.coveragePhase(ctx, execOpts, scratch, found.ModulePath, bins, runs, st,
+		runs, st.coverage, err = s.coveragePhase(ctx, execOpts, scratch, found.modulePath(), bins, runs, st,
 			cfg.Test.Narrowing)
 		if err != nil {
 			return err
@@ -1328,7 +1366,7 @@ func (s *session) mutate(
 			root:       snap.SourceRoot,
 			catalog:    catalog,
 			hints:      hints,
-			modulePath: found.ModulePath,
+			modulePath: found.modulePath(),
 			toolchain:  toolchain,
 			env:        env,
 			jobs:       cfg.Execution.Jobs,
@@ -1596,8 +1634,8 @@ func (s *session) instrumentedBaseline(
 // to its pristine bytes, so it does not drift at all — and the test binaries are
 // not among either, because internal/execute refuses a binary directory inside
 // the snapshot for precisely this reason.
-func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result) error {
-	unexpected, err := drift.Unexpected(snap, instrumented)
+func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result, generated ...string) error {
+	unexpected, err := drift.Unexpected(snap, instrumented, generated...)
 	if err != nil {
 		return &Error{
 			Code:    CodeWorkspaceDrift,
@@ -1785,6 +1823,7 @@ func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 				ID:        id,
 				DisplayID: shown.DisplayID,
 				Path:      shown.Path,
+				ModuleDir: shown.ModuleDir,
 				Line:      shown.Line,
 				Rule:      shown.Rule,
 				Worker:    worker,
@@ -1960,7 +1999,7 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 
 	endBuild := s.stage("build", countNoun(len(results), "result"))
 	finished := s.now()
-	rep, err := report.Build(report.Options{
+	buildOpts := report.Options{
 		// "unknown" rather than the empty string a caller that forgot would
 		// pass. The document requires a non-empty version, and failing a whole
 		// run at the very last step over a display field would throw away
@@ -1976,12 +2015,12 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		ChangedRef:       changedRef(st),
 		Shard:            st.shard,
 		Selected:         st.selected,
-		ModulePath:       st.found.ModulePath,
-		GoVersion:        goVersion(st.found.GoVersion, out.Toolchain.Version.Release),
+		ModulePath:       st.found.modulePath(),
+		GoVersion:        goVersion(st.found.goVersion(), out.Toolchain.Version.Release),
 		WorkspaceDigest:  out.WorkspaceDigest,
 		Catalog:          st.catalog,
-		Located:          st.found.Candidates,
-		Skips:            st.found.Skips,
+		Located:          st.found.candidates(),
+		Skips:            st.found.skips(),
 		Results:          results,
 		Rejections:       st.rejections,
 		TestCommand:      out.TestCommand,
@@ -2015,19 +2054,27 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 			Version: out.Toolchain.Version.String(),
 		},
 		ResolvedCommand: out.ResolvedTestCommand,
-	})
+	}
+	rep, workspace, err := s.document(buildOpts, st)
 	endBuild(err)
 	if err != nil {
 		return err
 	}
 
 	endHistory := s.stage("history", opts.HistoryRoot)
-	runPath, latestPath, err := report.History{Root: opts.HistoryRoot}.Write(rep)
+	history := report.History{Root: opts.HistoryRoot}
+	var runPath, latestPath string
+	if workspace != nil {
+		runPath, latestPath, err = history.WriteWorkspace(workspace)
+	} else {
+		runPath, latestPath, err = history.Write(rep)
+	}
 	endHistory(err)
 	if err != nil {
 		return err
 	}
 	out.Report = rep
+	out.WorkspaceReport = workspace
 	out.RunPath = runPath
 	out.LatestPath = latestPath
 	s.trace.Artifact(trace.ArtifactReportRun, runPath)
@@ -2050,6 +2097,7 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 	endArtifacts := s.stage("artifacts", opts.Config.Report.Directory)
 	artifacts, artifactErr := report.WriteArtifacts(report.ArtifactOptions{
 		Report:        rep,
+		Workspace:     workspace,
 		WorkspaceRoot: out.WorkspaceRoot,
 		Directory:     opts.Config.Report.Directory,
 		Formats:       opts.Config.Report.Formats,
@@ -2079,15 +2127,16 @@ func (s *session) publish(opts Options, out *RunOutcome, st *state, status repor
 		return artifactErr
 	}
 
-	tally, err := rep.Tally()
+	published := publishedRun(rep, workspace)
+	tally, err := published.tally()
 	if err != nil {
 		return err
 	}
 	out.Verdict = mutation.Decide(tally, opts.Config.Policy, mutation.Signals{
-		ExpectationFailure: rep.ExpectationFailure(),
+		ExpectationFailure: published.expectationFailure(),
 	})
 
-	summary := s.compose(out, st, tally, rep)
+	summary := s.compose(out, st, tally, published)
 	s.summary = &summary
 	return nil
 }
@@ -2161,11 +2210,11 @@ func reportStages(timing Timing) []report.StageTiming {
 }
 
 // compose assembles the closing summary block.
-func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, rep *report.Report) RunSummary {
+func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, published publishedRunView) RunSummary {
 	summary := RunSummary{
 		RunID:    out.RunID,
 		ExitCode: out.Verdict.Code,
-		Notable:  notable(st, rep),
+		Notable:  published.notable(st),
 		Counts: Counts{
 			Total:        tally.Total(),
 			Killed:       tally.Killed,
@@ -2174,22 +2223,22 @@ func (s *session) compose(out *RunOutcome, st *state, tally mutation.Tally, rep 
 			Inconclusive: tally.Inconclusive,
 			Errored:      tally.Errored,
 			NotRun:       tally.NotRun,
-			Rejected:     len(rep.Rejected),
+			Rejected:     published.rejected(),
 			// Read out of the document rather than counted beside it, exactly
 			// as every other number in this block is.
-			Uncovered: uncoveredOf(rep),
-			Cached:    rep.Cache.Hits,
+			Uncovered: published.uncovered(),
+			Cached:    published.cacheHits(),
 		},
 		Coverage: st.coverage.Mode(),
-		Cache:    cacheMode(rep.Cache.Mode),
+		Cache:    cacheMode(published.cacheMode()),
 		Score:    mutation.ScoreOf(tally),
 		Warnings: len(s.warnings),
-		Skips:    skipCounts(st.found.Skips),
+		Skips:    skipCounts(st.found.skips()),
 	}
 	if len(out.Verdict.Failures) > 0 {
 		summary.Failure = out.Verdict.Failures[0]
 	}
-	for _, expectation := range rep.Expectations {
+	for _, expectation := range published.expectations() {
 		switch expectation.State {
 		case report.StateFulfilled:
 			summary.Expectations.Fulfilled++
@@ -2225,9 +2274,9 @@ var notableRank = map[mutation.Outcome]int{
 // runs — and a reader scanning the block gets the two kinds in two runs rather
 // than interleaved. It is a sub-order within one rank rather than a rank of its
 // own, so a covered survivor still comes before every timeout.
-func notable(st *state, rep *report.Report) []MutantResult {
-	out := make([]MutantResult, 0, len(rep.Mutants))
-	for _, m := range rep.Mutants {
+func notable(st *state, mutants []report.Mutant) []MutantResult {
+	out := make([]MutantResult, 0, len(mutants))
+	for _, m := range mutants {
 		core, err := m.Outcome.Mutation()
 		if err != nil {
 			continue
@@ -2288,9 +2337,9 @@ func boolRank(b bool) int {
 // uncoveredOf counts the mutants the run reported as uncovered, read out of the
 // published document rather than counted beside it — the same discipline every
 // other number in the closing summary follows.
-func uncoveredOf(rep *report.Report) int {
+func uncoveredOf(mutants []report.Mutant) int {
 	count := 0
-	for _, m := range rep.Mutants {
+	for _, m := range mutants {
 		if m.Uncovered {
 			count++
 		}
@@ -2318,28 +2367,47 @@ func uncoveredOf(rep *report.Report) int {
 func displayIndex(
 	catalog *mutation.Catalog,
 	candidates []discover.Located,
+	modules []discover.WorkspaceModule,
 ) (display map[string]MutantResult, packages map[string]string) {
 	type key struct {
-		path string
-		span mutation.Span
-		rule string
+		// module is part of the key for the reason it is part of the identity:
+		// two modules of one workspace can each hold an `app.go`, and an edit
+		// at one span by one rule in each is two candidates.
+		module string
+		path   string
+		span   mutation.Span
+		rule   string
 	}
 	located := make(map[key]discover.Located, len(candidates))
 	for _, candidate := range candidates {
-		k := key{path: candidate.Path, span: candidate.Span, rule: candidate.Rule.Name}
+		k := key{
+			module: candidate.ModulePath,
+			path:   candidate.Path,
+			span:   candidate.Span,
+			rule:   candidate.Rule.Name,
+		}
 		if _, seen := located[k]; !seen {
 			located[k] = candidate
 		}
+	}
+	// Where each module sits, so that what a person reads is a path they can
+	// open. A run report's paths are relative to the module they belong to --
+	// that is what the identity is keyed on -- and `app.go` on a console line
+	// of a workspace run would be a sentence about two files.
+	dirs := make(map[string]string, len(modules))
+	for _, module := range modules {
+		dirs[module.Path] = module.Dir
 	}
 
 	display = make(map[string]MutantResult, catalog.Len())
 	packages = make(map[string]string, catalog.Len())
 	for _, m := range catalog.Mutants() {
-		where := located[key{path: m.Path, span: m.Span, rule: m.Rule.Name}]
+		where := located[key{module: m.ModulePath, path: m.Path, span: m.Span, rule: m.Rule.Name}]
 		display[m.ID] = MutantResult{
 			ID:          m.ID,
 			DisplayID:   m.DisplayID,
 			Path:        m.Path,
+			ModuleDir:   dirs[m.ModulePath],
 			Line:        where.Line,
 			Column:      where.Column,
 			Rule:        m.Rule.Name,
@@ -2474,6 +2542,13 @@ type session struct {
 	events   chan<- Event
 	warnings []Warning
 	closed   bool
+	// patterns is what "every package of the tree" means for this run: `./...`
+	// for a module, and one `./<dir>/...` per module for a workspace, because
+	// the go command does not accept `./...` at a workspace root. It is settled
+	// once, before anything is copied, and is what the baseline build, the
+	// validation build and the test-binary listing are all issued with. See
+	// [treePatterns].
+	patterns []string
 	// published is the fan-out of the recording onto this stream, or nil for a
 	// run that did not ask for one. See [eventSink].
 	published *eventSink

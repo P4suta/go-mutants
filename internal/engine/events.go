@@ -454,6 +454,15 @@ type MutantResult struct {
 	DisplayID string
 	// Path is the '/'-normalized module-relative source path.
 	Path string
+	// ModuleDir is where the module Path is relative to sits within the tree
+	// the user is looking at, and is empty for a run over one module -- where
+	// the module *is* the tree.
+	//
+	// It is what a renderer joins onto Path to name a file somebody can open.
+	// Path stays module-relative because that is what the identity and the
+	// module's own report are keyed on, and in a workspace `app.go` on its own
+	// is a sentence about two files. See [WorkspaceLocation].
+	ModuleDir string
 	// Line and Column are the 1-based coordinates discovery reported, with the
 	// column measured in bytes.
 	Line   int
@@ -566,9 +575,12 @@ type MutantStarted struct {
 	ID string
 	// DisplayID is the short form.
 	DisplayID string
-	// Path and Line locate the mutant for a progress line.
-	Path string
-	Line int
+	// Path and Line locate the mutant for a progress line, with ModuleDir
+	// saying which module of a workspace Path is relative to. See
+	// [WorkspaceLocation].
+	Path      string
+	ModuleDir string
+	Line      int
 	// Rule is the operator that proposed the edit.
 	Rule string
 	// Worker is the worker that claimed it.
@@ -860,4 +872,17 @@ func (RunCompleted) event()      {}
 func (e BaselineCompleted) clone() BaselineCompleted {
 	e.Runs = slices.Clone(e.Runs)
 	return e
+}
+
+// WorkspaceLocation is where a mutant's file sits in the tree a person is
+// looking at: under its module's own directory inside a workspace, and exactly
+// its own path outside one.
+//
+// It is the one place the join is spelled, so that a console line, a progress
+// line and a dashboard row cannot disagree about what a file is called.
+func WorkspaceLocation(moduleDir, path string) string {
+	if moduleDir == "" || moduleDir == "." {
+		return path
+	}
+	return moduleDir + "/" + path
 }

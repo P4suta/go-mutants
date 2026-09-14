@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -124,6 +125,15 @@ type ProjectionOptions struct {
 	// a reader the guard scaffolding instead of their own code, with every
 	// location pointing into it.
 	WorkspaceRoot string
+	// PathPrefix is the directory [Report]'s paths are relative to *within*
+	// [ProjectionOptions.WorkspaceRoot], and is empty for a run over one
+	// module.
+	//
+	// A run report's paths are relative to the module it is about, and in a
+	// workspace that is not the root: two modules can each hold an `app.go`,
+	// so without the prefix one file's mutants would be read out of the other
+	// file and both would land under one key. See [ProjectWorkspace].
+	PathPrefix string
 	// High and Low are the viewer's colouring thresholds.
 	High int
 	Low  int
@@ -145,32 +155,9 @@ func Project(opts ProjectionOptions) (*Projection, error) {
 	}
 	sources := &sourceReader{root: opts.WorkspaceRoot, indexes: map[string]*sourceIndex{}}
 	files := make(map[string]*ProjectionFile, len(opts.Report.Mutants))
-
-	for i := range opts.Report.Mutants {
-		m := &opts.Report.Mutants[i]
-		index, err := sources.index(m.Path)
-		if err != nil {
-			return nil, err
-		}
-		if err = checkSpan(m, index); err != nil {
-			return nil, err
-		}
-		file := fileFor(files, m.Path, index)
-		file.Mutants = append(file.Mutants, projectMutant(m, index))
+	if err := projectInto(files, sources, opts.Report, opts.PathPrefix); err != nil {
+		return nil, err
 	}
-	for i := range opts.Report.Rejected {
-		r := &opts.Report.Rejected[i]
-		index, err := sources.index(r.Path)
-		if err != nil {
-			return nil, err
-		}
-		file := fileFor(files, r.Path, index)
-		file.Mutants = append(file.Mutants, projectRejection(r, index))
-	}
-	for _, file := range files {
-		slices.SortFunc(file.Mutants, compareProjected)
-	}
-
 	return &Projection{
 		// The report format's major version, which is 2. It is *not* the
 		// version of the npm package the schema was vendored from; see
@@ -180,6 +167,101 @@ func Project(opts ProjectionOptions) (*Projection, error) {
 		Thresholds:    ProjectionThresholds{High: opts.High, Low: opts.Low},
 		Files:         files,
 	}, nil
+}
+
+// ProjectWorkspace builds one projection of a whole workspace run.
+//
+// One document rather than one per module, because the viewer's question is
+// about the project: a reader opening the HTML report wants the tree, and a
+// directory of N reports would make them open N of them to find out whether
+// anything survived. Each module's paths are prefixed with its own directory,
+// which is both what keeps two modules' `app.go` apart in the file map and what
+// makes every path in the document relative to the same root — which is what a
+// mutation-testing-report's paths mean.
+func ProjectWorkspace(opts WorkspaceProjectionOptions) (*Projection, error) {
+	if opts.Workspace == nil {
+		return nil, &Error{
+			Code:    CodeNoReport,
+			Message: "there is no workspace report to project into the mutation-testing-report format",
+		}
+	}
+	sources := &sourceReader{root: opts.WorkspaceRoot, indexes: map[string]*sourceIndex{}}
+	files := make(map[string]*ProjectionFile)
+	for _, module := range opts.Workspace.Modules {
+		if err := projectInto(files, sources, module.Report, module.Dir); err != nil {
+			return nil, err
+		}
+	}
+	return &Projection{
+		SchemaVersion: stryker.ReportSchemaVersion,
+		Thresholds:    ProjectionThresholds{High: opts.High, Low: opts.Low},
+		Files:         files,
+	}, nil
+}
+
+// WorkspaceProjectionOptions is [ProjectionOptions] for a whole workspace run.
+type WorkspaceProjectionOptions struct {
+	// Workspace is the run to project. It is read and never modified.
+	Workspace *WorkspaceReport
+	// WorkspaceRoot is the user's own tree, for the reason
+	// [ProjectionOptions.WorkspaceRoot] gives.
+	WorkspaceRoot string
+	// High and Low are the viewer's colouring thresholds.
+	High int
+	Low  int
+}
+
+// projectInto adds one run report's mutants and rejections to a file map,
+// under a path prefix.
+func projectInto(
+	files map[string]*ProjectionFile,
+	sources *sourceReader,
+	r *Report,
+	prefix string,
+) error {
+	if r == nil {
+		return &Error{
+			Code:    CodeNoReport,
+			Message: "there is no report to project into the mutation-testing-report format",
+		}
+	}
+	for i := range r.Mutants {
+		m := &r.Mutants[i]
+		where := projectedPath(prefix, m.Path)
+		index, err := sources.index(where)
+		if err != nil {
+			return err
+		}
+		if err = checkSpan(m, index); err != nil {
+			return err
+		}
+		file := fileFor(files, where, index)
+		file.Mutants = append(file.Mutants, projectMutant(m, index))
+	}
+	for i := range r.Rejected {
+		rejected := &r.Rejected[i]
+		where := projectedPath(prefix, rejected.Path)
+		index, err := sources.index(where)
+		if err != nil {
+			return err
+		}
+		file := fileFor(files, where, index)
+		file.Mutants = append(file.Mutants, projectRejection(rejected, index))
+	}
+	for _, file := range files {
+		slices.SortFunc(file.Mutants, compareProjected)
+	}
+	return nil
+}
+
+// projectedPath is where a module-relative path sits in the projection, which
+// is under the module's own directory when there is one.
+//
+// No guard on the empty prefix or on ".", because path.Join already answers
+// both with the path itself -- and a guard that only ever agreed with the line
+// below it would be a branch no test could tell from its absence.
+func projectedPath(prefix, rel string) string {
+	return path.Join(prefix, rel)
 }
 
 // Marshal encodes the projection as the bytes `mutation.json` holds.

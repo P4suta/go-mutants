@@ -78,10 +78,10 @@ type Options struct {
 	// are enumerated.
 	SnapshotRoot string
 
-	// WorkFile is the workspace file inside the snapshot that every `go`
-	// command must obey, and is empty for every run that is not a workspace
+	// Workspace says that the snapshot is a `go.work` and its modules are to be
+	// resolved through it. It is false for every run that is not a workspace
 	// run. See [toolchainEnvFrom] for what it does and does not change.
-	WorkFile string
+	Workspace bool
 
 	// Packages are the Go package patterns whose test binaries are compiled.
 	// Empty means [allPackages] — every package in the snapshot — which is what
@@ -502,7 +502,7 @@ func listPackages(ctx context.Context, opts Options) ([]listedPackage, error) {
 	args := append([]string{"list", "-json=" + listFields}, opts.patterns()...)
 	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
-	spec.Env = toolchainEnvFrom(opts.Env, opts.Toolchain, "", opts.WorkFile)
+	spec.Env = toolchainEnvFrom(opts.Env, opts.Toolchain, "", opts.Workspace)
 	spec.Timeout = opts.Timeout
 	spec.OutputLimit = listOutputLimit
 	spec.Trace = opts.Trace
@@ -632,7 +632,7 @@ func compile(ctx context.Context, opts Options, bin TestBinary) error {
 	spec := opts.Toolchain.Command(args...)
 	spec.Dir = opts.SnapshotRoot
 	spec.Env = gocmd.AppendGoflags(
-		toolchainEnvFrom(opts.Env, opts.Toolchain, "", opts.WorkFile), gocmd.VetOff)
+		toolchainEnvFrom(opts.Env, opts.Toolchain, "", opts.Workspace), gocmd.VetOff)
 	spec.Timeout = opts.Timeout
 	spec.Trace = opts.Trace
 	spec.Kind = trace.ExecKindGoTestC

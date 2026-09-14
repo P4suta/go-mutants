@@ -397,8 +397,8 @@ func TestDiscoverWorkspaceMeasuresEveryModuleUnderItsOwnPath(t *testing.T) {
 	builder := mutation.NewBuilder()
 	for _, result := range results {
 		for _, located := range result.Result.Candidates {
-			if err := builder.Add(located.Candidate); err != nil {
-				t.Fatalf("cataloguing %s: %v", located.Candidate.Where(), err)
+			if addErr := builder.Add(located.Candidate); addErr != nil {
+				t.Fatalf("cataloguing %s: %v", located.Where(), addErr)
 			}
 		}
 	}

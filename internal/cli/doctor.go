@@ -22,6 +22,7 @@ import (
 	"golang.org/x/mod/modfile"
 
 	"github.com/P4suta/go-mutants/internal/config"
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/runner"
@@ -239,8 +240,25 @@ func toolchainCheck(toolchain gocmd.Toolchain, err error) check {
 	return check{checkToolchain, statusOK, detail}
 }
 
-// moduleCheck reports the module this directory is the root of.
+// moduleCheck reports the module this directory is the root of, or the
+// workspace it is the root of.
+//
+// A `go.work` is a tree go-mutants measures -- as one run over every module it
+// joins, see ADR 0012 -- so a check that only knew about `go.mod` would tell a
+// user standing in a workspace that the tool cannot run where it can.
 func moduleCheck(dir string) check {
+	workspace, err := discover.DetectWorkspace(dir)
+	if err != nil {
+		return check{checkModule, statusFail, detailOf(err)}
+	}
+	if workspace != nil {
+		modules := make([]string, 0, len(workspace.Modules))
+		for _, module := range workspace.Modules {
+			modules = append(modules, module.Path)
+		}
+		return check{checkModule, statusOK, countNoun(len(modules), "module") + " (" +
+			filepath.Join(dir, discover.WorkspaceFile) + "): " + strings.Join(modules, ", ")}
+	}
 	module, err := moduleAt(dir)
 	if err != nil {
 		return check{checkModule, statusFail, detailOf(err)}

@@ -353,7 +353,7 @@ func (m *model) claim(e engine.MutantStarted) {
 	m.slots[e.Worker] = slot{
 		busy:      true,
 		displayID: e.DisplayID,
-		path:      e.Path,
+		path:      engine.WorkspaceLocation(e.ModuleDir, e.Path),
 		line:      e.Line,
 		rule:      e.Rule,
 		since:     m.clock,

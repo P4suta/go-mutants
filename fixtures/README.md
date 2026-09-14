@@ -45,7 +45,7 @@ at.
 | `probeable/` | `fixture.example/probeable` | The probe session. Four mutants and no other mutable expression: three a probe tree has a form for — two return-value ones and a boolean literal — and, in `Doubled`, one it has none for, so both directions of the layer can be stated: a probed mutant whose absence from a measurement is a fact, and an unprobed one whose absence means nothing at all and which a consumer has to treat as infected by every test. The unprobed one is unprobed for a reason no later form can lift, rather than for want of a form: its statement's operands are calls, and a probe stands in for a mutant by evaluating what the original evaluates. It returns a struct so that no return-value rule proposes a second mutant beside it, which keeps the fixture's own rule that a rule names exactly one mutant. Every probed function returns a value differing from its mutant's constant on every call, so a test that does not name it is a test that never reached it. Its `isolated/` package holds nothing to mutate and imports nothing that does, so its binary links no runtime and writes no log — the one absence a probe pass must read as the empty set rather than as a failure. |
 | `unobserved/` | `fixture.example/unobserved` | The two answers a probe pass can give, one mutant each. `Gate`'s comparison is read differently by the two binaries — this package's own tests pass the boundary value, where `<` and `<=` disagree, and the caller's never do — so the mutant is covered by both and narrowed to one. `Same`'s `n * 1` and `n / 1` are the same number for every int, so no binary can name it and the run reports it as a survivor without executing it. The second is a genuinely equivalent mutant, which is the class a probe exists to stop paying for, and one contrived enough to check by eye. |
 | `families/` | `fixture.example/families` | The whole operator catalogue. Twenty-four small functions in one package holding at least one live candidate for each of the 49 rules the frozen registry names — 111 mutants at profile `all`, 102 at `strong`, 69 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
-| `workspace/` | `fixture.example/workspace/app`, `fixture.example/workspace/lib` | A `go.work` joining two modules. Pointed at `app/` it is a scope test: the snapshot is that module alone, six mutants, all killed. Pointed at its own root it is a refusal — a workspace has no single module path, no single set of identities and no single baseline, so the run stops with GOM4102 before anything is copied. `app` deliberately imports nothing from `lib`; see below. |
+| `workspace/` | `fixture.example/workspace/app`, `fixture.example/workspace/cross`, `fixture.example/workspace/lib` | A `go.work` joining three modules, and the two things a workspace has to be able to say. Pointed at `app/` it is a scope test: the snapshot is that module alone, six mutants, all killed. Pointed at its own root it is one run over eleven mutants, all killed — and three of those are `lib`'s, whose own test asserts nothing, so only `cross`'s tests can kill them. Three separate runs would report them as survivors in a module whose tests are green, which is why a workspace is one run. `app` deliberately imports nothing from `lib`; see below. |
 | `tagged/` | `fixture.example/tagged` | Build constraints as an input to the catalogue. Two boolean literals, one of them in a file under `//go:build special`, so a run under `GOFLAGS=-tags=special` catalogues two mutants where a run without it catalogues one — and the two runs key their cached outcomes differently, because GOFLAGS is in the cache context. |
 | `untested/` | `fixture.example/untested` | A package with tests beside one without. `lib/`'s two mutants are killed; `orphan/`'s two are settled as uncovered survivors without being executed, because no test binary reaches the line. It is also the specimen for the one test command that names real packages and still builds nothing: `go test ./orphan/...` is refused with GOM4022 rather than reported as a score of zero. |
 | `selfwriting/` | `fixture.example/selfwriting` | A passing test suite that writes a file into the package directory it runs in. Every mutant is measured against the snapshot the baseline was measured against, so a suite that edits that tree makes the score a mixture of two programs; the run stops at the drift gate with GOM4014, and `Prepare` refuses the same tree at its verification stage with a `*DriftError`. It is also the fixture for `--isolate`, the way through: its suite refuses, at the top, to find an earlier mutant's witness, and `Nudge` is a function nothing asserts about — so under isolation `Nudge`'s mutants survive and without the copy being put back between passes they are killed by the check instead. One mutant is reported as *killed* without the flag and *survived* with it, and the survival is the true answer. |
@@ -212,7 +212,7 @@ sources, has no directory and has a section of its own:
 
 | Fixture | Driving tests |
 | --- | --- |
-| `workspace/` | `internal/engine`: `TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt`, `TestRunAtTheWorkspaceRootIsRefused` |
+| `workspace/` | `internal/engine`: `TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt`, `TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce`; `internal/cli`: `TestListAtAWorkspaceRootListsEveryModule` |
 | `tagged/` | `internal/engine`: `TestBuildTagsNarrowTheCatalogueThroughGOFLAGS`, `TestFixtureReportsMatchTheirGoldens` |
 | `untested/` | `internal/engine`: `TestAPackageWithoutTestsReportsItsMutantsAsUncoveredSurvivors`, `TestScopingTheTestCommandToTheUntestedPackageIsRefused`, `TestFixtureReportsMatchTheirGoldens` |
 | `selfwriting/` | `internal/engine`: `TestATestThatWritesIntoItsOwnDirectoryStopsTheRunAtTheDriftGate`, `TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants`; root package: `TestPrepareRefusesDriftFromTheBaselineItself` |
@@ -220,7 +220,9 @@ sources, has no directory and has a section of its own:
 | `unobserved/` | `internal/engine`: `TestProbingReachesTheSameVerdictsForLessWork`, `TestAProbeSettledSurvivorIsNotAnUncoveredOne` |
 | `simple/`, `killable/`, `untested/`, `tagged/` | `internal/engine`: `TestFixtureReportsMatchTheirGoldens`, against `internal/engine/testdata/<fixture>.report.golden.json` |
 
-The workspace fixture's one constraint is the one a reader will want to relax:
+The workspace fixture carries two constraints, and both are ones a reader will
+want to relax.
+
 **`app` imports nothing from `lib`.** A run pointed at `app/` snapshots `app/`
 alone — the workspace file is one directory above the root it was given and is
 not copied — so the snapshot is resolved as the single module it contains. An
@@ -228,10 +230,19 @@ import of the sibling would therefore not be a scope test at all: it would be a
 `go build` failure inside the snapshot, and the fixture would stop being able to
 say anything about what a run inside a workspace measures. What makes the
 absence of `lib` observable instead is its *fate*: all three of its mutants
-survive on purpose — `neq-to-eq` on the comparison, `return-true` and
-`return-false` on the expression it returns — so a run that reached across the
-workspace would report survivors and a lower score where the test requires
-every mutant killed.
+survive anything but `cross`'s tests — `neq-to-eq` on the comparison,
+`return-true` and `return-false` on the expression it returns — and `cross` is
+not in that snapshot either, so a run that reached across the workspace would
+report survivors and a lower score where the test requires every mutant killed.
+
+**`lib`'s own test asserts nothing, and `cross` is the module that tests it.**
+That is the whole of what a workspace run can do that three separate runs
+cannot: `lib`'s mutants are killed by another module's tests or not at all. A
+test added to `lib` would leave the suite green, the score unchanged, and the
+fixture unable to tell a run that measured the modules together from one that
+measured them apart. `cross` requires `lib` neither directly nor through a
+replace, so it builds inside the workspace and nowhere else — the same probe
+`internal/discover`'s own `testdata/workspace` uses, for the same reason.
 
 `untested/orphan` and `selfwriting/`'s witness file are load-bearing in the same
 way. Adding an `orphan_test.go` would leave the module compiling and the suite

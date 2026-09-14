@@ -78,10 +78,11 @@ func MapTests(opts TestOptions) TestResult {
 	}
 	slices.SortFunc(tests, compareTestKeys)
 
+	modules := modulesOf(opts.ModulePath, opts.Mutants)
 	matched := make(map[string]bool)
 	indexes := make(map[TestKey]fileIndex, len(tests))
 	for _, key := range tests {
-		indexes[key] = newFileIndex(opts.Profiles[key], opts.ModulePath, matched)
+		indexes[key] = newFileIndex(opts.Profiles[key], modules, matched)
 	}
 
 	result := TestResult{
@@ -93,7 +94,7 @@ func MapTests(opts TestOptions) TestResult {
 	for _, m := range opts.Mutants {
 		var covering []TestKey
 		for _, key := range tests {
-			if indexes[key].covers(m.Path, m.StartLine, m.EndLine) {
+			if indexes[key].covers(profilePath(opts.ModulePath, m), m.StartLine, m.EndLine) {
 				covering = append(covering, key)
 			}
 		}

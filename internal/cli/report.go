@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/schemas"
@@ -354,10 +355,11 @@ func readHistory() (history, error) {
 			Err:     err,
 		}
 	}
-	module, err := moduleAt(dir)
+	project, err := projectAt(dir)
 	if err != nil {
 		return history{}, err
 	}
+	module := project.name()
 	listing, err := report.History{}.List()
 	if err != nil {
 		return history{}, err
@@ -375,7 +377,7 @@ func readHistory() (history, error) {
 	for _, workspace := range listing.Workspaces {
 		mine := make([]report.StoredRun, 0, len(workspace.Runs))
 		for _, run := range workspace.Runs {
-			if run.ModulePath == module {
+			if project.holds(run) {
 				mine = append(mine, run)
 			}
 		}
@@ -401,6 +403,62 @@ func readHistory() (history, error) {
 	// with the one `report list` inside a directory used. See [report.NewestFirst].
 	slices.SortFunc(found.runs, report.NewestFirst)
 	return found, nil
+}
+
+// A project is what "this directory's history" means: one module, or the set of
+// modules a `go.work` joins.
+//
+// The two are different projects to the history store, and deliberately so: a
+// mutant measured in a workspace and the same mutant measured alone have
+// different identities, so a listing that mixed the two would be offering runs
+// whose ids do not mean the same thing. See ADR 0012.
+type project struct {
+	// module is the module path, for a directory that is one module.
+	module string
+	// modules are the module paths a `go.work` joins, in `use` order, and
+	// empty for a directory that is one module.
+	modules []string
+}
+
+// projectAt reads what the directory is: a module, or a workspace of them.
+func projectAt(dir string) (project, error) {
+	workspace, err := discover.DetectWorkspace(dir)
+	if err != nil {
+		return project{}, err
+	}
+	if workspace != nil {
+		modules := make([]string, 0, len(workspace.Modules))
+		for _, module := range workspace.Modules {
+			modules = append(modules, module.Path)
+		}
+		return project{modules: modules}, nil
+	}
+	module, err := moduleAt(dir)
+	if err != nil {
+		return project{}, err
+	}
+	return project{module: module}, nil
+}
+
+// name is what a message calls this project.
+func (p project) name() string {
+	if p.module != "" {
+		return p.module
+	}
+	return "the workspace of " + strings.Join(p.modules, ", ")
+}
+
+// holds reports whether a stored run measured this project.
+//
+// A workspace run names its modules and no module path; a single-module run
+// names a module path and no modules. So the two never match each other, which
+// is the answer: a run of `app` alone is not a run of the workspace `app`
+// belongs to, and its mutant ids say so.
+func (p project) holds(run report.StoredRun) bool {
+	if p.module != "" {
+		return run.ModulePath == p.module
+	}
+	return slices.Equal(run.Modules, p.modules)
 }
 
 // formatScore renders a run's score for a column, and says so when there is
@@ -474,22 +532,11 @@ func (o *mergeOptions) execute(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return usagef("report merge takes the shard reports to merge, as in `go-mutants report merge shard-1.json shard-2.json`")
 	}
-	shards := make([]*report.Report, 0, len(args))
-	for _, path := range args {
-		shard, err := readReport(path)
-		if err != nil {
-			return err
-		}
-		shards = append(shards, shard)
-	}
-
-	merged, err := report.MergeShards(report.MergeOptions{
-		// Minted here rather than inside internal/report: a run id is a run's
-		// identity, and that package files documents rather than starting
-		// anything. The merged document is a new artefact and deserves its own.
-		RunID:  engine.NewRunID(time.Now()),
-		Shards: shards,
-	})
+	// Minted here rather than inside internal/report: a run id is a run's
+	// identity, and that package files documents rather than starting anything.
+	// The merged document is a new artefact and deserves its own.
+	runID := engine.NewRunID(time.Now())
+	merged, documentType, err := mergeDocuments(args, runID)
 	if err != nil {
 		return err
 	}
@@ -500,7 +547,7 @@ func (o *mergeOptions) execute(cmd *cobra.Command, args []string) error {
 	// Checked before it is written, not after. A merged document is what a CI
 	// job publishes, and publishing one that does not satisfy the schema
 	// go-mutants itself defines would be worse than refusing to publish at all.
-	if err = schemas.Validate(schemas.RunReportV1, data); err != nil {
+	if err = schemas.Validate(documentType, data); err != nil {
 		return err
 	}
 
@@ -508,13 +555,13 @@ func (o *mergeOptions) execute(cmd *cobra.Command, args []string) error {
 		_, err = cmd.OutOrStdout().Write(data)
 		return err
 	}
-	if err = report.WriteFile(o.output, merged); err != nil {
+	if err = writeMergedFile(o.output, data); err != nil {
 		return err
 	}
 	// To standard error, so that the path is visible when somebody is watching
 	// and out of the way of anything reading standard output.
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "merged %s into %s\n",
-		countNoun(len(shards), "shard report"), o.output)
+		countNoun(len(args), "shard report"), o.output)
 	return nil
 }
 
@@ -540,20 +587,134 @@ func runReportValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err = schemas.Validate(schemas.RunReportV1, data); err != nil {
+	// The document's own discriminator decides which schema it is checked
+	// against. A run over a `go.work` publishes a workspace report rather than
+	// a run report, and a command that assumed one kind would tell the user
+	// their valid document is invalid -- naming the fields of the *other* type
+	// as the ones it is missing, which is the least useful true sentence
+	// available.
+	documentType, err := report.DocumentTypeOf(data)
+	if err != nil {
+		return err
+	}
+	if err = schemas.Validate(documentType, data); err != nil {
 		return err
 	}
 	// Decoded as well as validated, because the two catch different things: the
 	// schema is what a consumer relies on, and this build's own reader is what
 	// `report merge` will use on the same file. A document that satisfies one
 	// and not the other is worth knowing about now rather than at the merge.
-	r, err := report.Parse(data)
+	summary, err := validatedSummary(documentType, data)
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: valid %s v%d, run %s, %s\n",
-		path, r.DocumentType, r.SchemaVersion, r.RunID, countNoun(len(r.Mutants), "mutant"))
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", path, summary)
 	return nil
+}
+
+// validatedSummary decodes a document of either kind and says what it is.
+func validatedSummary(documentType string, data []byte) (string, error) {
+	if documentType == report.WorkspaceDocumentType {
+		w, err := report.ParseWorkspace(data)
+		if err != nil {
+			return "", err
+		}
+		total := 0
+		for _, module := range w.Modules {
+			total += len(module.Report.Mutants)
+		}
+		return fmt.Sprintf("valid %s v%d, run %s, %s across %s",
+			w.DocumentType, w.SchemaVersion, w.RunID,
+			countNoun(total, "mutant"), countNoun(len(w.Modules), "module")), nil
+	}
+	r, err := report.Parse(data)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("valid %s v%d, run %s, %s",
+		r.DocumentType, r.SchemaVersion, r.RunID, countNoun(len(r.Mutants), "mutant")), nil
+}
+
+// A marshalable is a document that can be written back out, which is the only
+// thing `report merge` needs of the two kinds it merges.
+type marshalable interface{ Marshal() ([]byte, error) }
+
+// mergeDocuments merges the shard documents at the given paths, whichever kind
+// they are, and says which kind it produced.
+//
+// A workspace run's shards are workspace documents, each holding its share of
+// every module — so merging them is merging each module's reports and putting
+// the results back in the same order, which is what [report.MergeWorkspaces]
+// does. The kind is read from the first document and every other one has to
+// agree: a run report and a workspace report are not shards of one run, and a
+// merge that took one for the other would be describing two runs.
+func mergeDocuments(paths []string, runID string) (marshalable, string, error) {
+	documentType, err := documentTypeAt(paths[0])
+	if err != nil {
+		return nil, "", err
+	}
+	if documentType == report.WorkspaceDocumentType {
+		shards := make([]*report.WorkspaceReport, 0, len(paths))
+		for _, path := range paths {
+			shard, readErr := readWorkspaceReport(path)
+			if readErr != nil {
+				return nil, "", readErr
+			}
+			shards = append(shards, shard)
+		}
+		merged, mergeErr := report.MergeWorkspaces(report.MergeWorkspaceOptions{
+			RunID:  runID,
+			Shards: shards,
+		})
+		return merged, schemas.WorkspaceReportV1, mergeErr
+	}
+	shards := make([]*report.Report, 0, len(paths))
+	for _, path := range paths {
+		shard, readErr := readReport(path)
+		if readErr != nil {
+			return nil, "", readErr
+		}
+		shards = append(shards, shard)
+	}
+	merged, mergeErr := report.MergeShards(report.MergeOptions{RunID: runID, Shards: shards})
+	return merged, schemas.RunReportV1, mergeErr
+}
+
+// documentTypeAt is what the document at a path says it is.
+func documentTypeAt(path string) (string, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return "", err
+	}
+	documentType, err := report.DocumentTypeOf(data)
+	if err != nil {
+		return "", notAReport(path, "merge", err)
+	}
+	return documentType, nil
+}
+
+// readWorkspaceReport is [readReport] for the other document type, with the
+// same order: the schema first, then this build's own reader.
+func readWorkspaceReport(path string) (*report.WorkspaceReport, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err = schemas.Validate(schemas.WorkspaceReportV1, data); err != nil {
+		return nil, notAReport(path, "merge", err)
+	}
+	w, err := report.ParseWorkspace(data)
+	if err != nil {
+		return nil, notAReport(path, "merge", err)
+	}
+	return w, nil
+}
+
+// writeMergedFile writes the merged document atomically, the way the history
+// store writes its own: a crash leaves either the previous file or the new one
+// and never a correctly named file full of nothing.
+func writeMergedFile(path string, data []byte) error {
+	return report.WriteBytes(path, data)
 }
 
 // readReport reads one document and decodes it, validating it against the

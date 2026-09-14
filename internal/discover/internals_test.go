@@ -90,7 +90,7 @@ func TestEnvironmentFromUsesTheFrozenBase(t *testing.T) {
 	t.Setenv("FROZEN", "ambient")
 	t.Setenv("AMBIENT_ONLY", "must-not-appear")
 
-	env := environmentFrom(base, gocmd.Toolchain{GoBin: filepath.Join(dir, "go")}, "")
+	env := environmentFrom(base, gocmd.Toolchain{GoBin: filepath.Join(dir, "go")}, false)
 	if got := lookupEnv(env, "FROZEN"); len(got) != 1 || got[0] != "value" {
 		t.Errorf("FROZEN = %v, want the captured value", got)
 	}
@@ -147,16 +147,15 @@ func TestEnvironmentSwitchesWorkspaceModeOff(t *testing.T) {
 				if len(got) != 1 || got[0] != "off" {
 					t.Errorf("GOWORK = %v, want exactly one entry set to off", got)
 				}
-				// A workspace run names the snapshot's own workspace file and
-				// nothing else changes: the ambient GOWORK is replaced exactly
-				// as it is when the answer is off, because what makes the
-				// guarantee hold is that the caller's environment never
-				// decides this.
-				inside := filepath.Join("snapshot", "go.work")
-				named := lookupEnv(environmentFrom(nil, tc, inside), "GOWORK")
-				if len(named) != 1 || named[0] != inside {
-					t.Errorf("GOWORK with a work file = %v, want exactly one entry set to %s",
-						named, inside)
+				// A workspace run removes it instead, so the go command finds
+				// the workspace file of the tree it is running in by walking up
+				// from its own working directory. Removed and not emptied: an
+				// empty value is a value, and the go command reads an empty
+				// GOWORK as "no workspace" rather than as "decide for
+				// yourself". The caller's ambient one is gone either way, which
+				// is what makes the guarantee hold.
+				if inWorkspace := lookupEnv(environmentFrom(nil, tc, true), "GOWORK"); len(inWorkspace) != 0 {
+					t.Errorf("GOWORK in a workspace run = %v, want no entry at all", inWorkspace)
 				}
 			})
 		}

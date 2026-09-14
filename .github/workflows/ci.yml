@@ -490,7 +490,7 @@ jobs:
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
   #
-  # It is now 2736, and no package was added to get there. Discovery started
+  # It is now 2873, and no package was added to get there. Discovery started
   # reaching the case labels of a tagless switch, which it had been suppressing
   # before it ever consulted the guard chooser, and that is 128 more mutants
   # spread across the same eleven packages. Two of them never return -- the

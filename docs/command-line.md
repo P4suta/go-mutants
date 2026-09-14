@@ -16,6 +16,18 @@ there and nowhere else; see [Configuration](configuration.md) for what it holds.
 Nothing here modifies your tree: every command that measures anything does so
 against a disposable copy.
 
+A directory holding a `go.work` is measured as **one run over every module it
+joins**, so that a mutant is executed against every test that covers it —
+whichever module compiled that test. `run` publishes a
+`go-mutants/workspace-report` there rather than a run report, with each module's
+own run report inside it, and `list` names the modules rather than a module
+path. `report merge` puts a sharded workspace run back together module by
+module, and the `report` and `explain` commands treat the workspace as a project
+of its own — a run of one module measured alone is not one of its runs, because
+the two mint different mutant identities. See
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) for what that
+costs.
+
 ## The commands
 
 | Command | What it does |
@@ -53,7 +65,8 @@ The one command that measures anything. It copies the workspace into a
 disposable snapshot, proves the unmutated tests pass there, discovers the
 candidates, validates that they compile, instruments the snapshot once, and
 measures one mutant per test process — then writes a `run-report-v1` document
-and publishes `reports/mutation/mutation.{json,html}`.
+and publishes `reports/mutation/mutation.{json,html}`. At a `go.work` root the
+document is a `workspace-report-v1` instead, holding one run report per module.
 
 The flags that change a verdict rather than a rendering:
 
@@ -86,7 +99,8 @@ a score is a fraction of.
 ## `go-mutants doctor`
 
 One line per check — the toolchain and its version, the module this directory
-is in, git, the cache directory, the platform, the configuration file — with
+is in (or the modules its `go.work` joins), git, the cache directory, the
+platform, the configuration file — with
 `ok`, `warn` or `fail` beside each. A `warn` is a check that failed on something
 only an opt-in feature needs and never fails the command; any `fail` exits 2.
 

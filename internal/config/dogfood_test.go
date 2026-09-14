@@ -134,41 +134,41 @@ var repositoryExpectations = []Expectation{
 			"four gigabytes in a unit test.",
 	},
 	{
-		ID: "d42fb63591d5db90e42e36081a7f65630aae5c925098abab5ed536f7dd5f57bb",
+		ID: "6e4a484ef1b13b165636f2c9e736bba568df0d13df9e42ae85fda86d882d1774",
 		Reason: "Equivalent: this is the tie-break of a sort whose primary key " +
 			"is the start line, so it only orders intervals that share one; " +
 			"merge joins any such run into [start, max end] whatever their " +
 			"order, and nothing downstream reads the order itself.",
 	},
 	{
-		ID: "96e3e2eaaff49e3c662188a99235ddcd673af4d3e5c9189bd9b42461d3a5faa6",
+		ID: "d0c24e273d49ff84d81e3b6e9f100c753eeb97c9a819c862c313ef3e44714e21",
 		Reason: "Equivalent: the same tie-break as the row above -- intervals " +
 			"sharing a start line all overlap, so merge folds them into " +
 			"[start, max end] however the sort arranges them, and the " +
 			"primary key still decides every pair whose start lines differ.",
 	},
 	{
-		ID: "a8237c43e03fd9e633b7dd558bad7ba180328124c3de5ff86e5998ee19124a4c",
+		ID: "00110ba284fd3da4b8408c57a7bfa66a2187047ede44d2adb78d948757c8ac4d",
 		Reason: "Unreachable: compileErr is set only when an embedded schema " +
 			"cannot be read, parsed, registered or compiled, and " +
 			"TestEveryRegisteredSchemaCompiles asserts that none of that " +
 			"happens in this build, so this branch is never taken.",
 	},
 	{
-		ID: "5dfdfc895fcd322e018ef0cafb3bfc69511729b08a2ce86b8db6e4d837c07702",
+		ID: "22db5c4a94a19f10e8d159ff0b1b1fa7bc069f9188d1fea90cd5c77fce6ec2bc",
 		Reason: "Unreachable: the return the row above guards, reported " +
 			"`survived (uncovered)` because no suite reaches a line that " +
 			"needs compileErr to be non-nil.",
 	},
 	{
-		ID: "f15a9180a3334747013cda29e7839d0f3074d6eddf6ca6bd59083b2dbefa179f",
+		ID: "20f61827e337d7d8df88ce7c1b1dd7194ae27b45046037dbb40f6c2397ca5587",
 		Reason: "Unreachable: compileAll compiles every type in the registry " +
 			"and schemaFor looks up that same registry, so the lookup " +
 			"cannot miss; TestEveryRegisteredSchemaCompiles asserts it for " +
 			"every registered type.",
 	},
 	{
-		ID: "983f4838a49d37538553dd88db49af35189dd436620d65a5585875d241839a21",
+		ID: "fa9198cae68dd0d7dd80f6472facc13d667dbce0a9058daa0c4966df57a03d74",
 		Reason: "Unreachable: the file is read out of an embed.FS fixed at " +
 			"build time, and TestEverySchemaIsRegistered plus " +
 			"TestEveryRegisteredSchemaCompiles assert that every registered " +
@@ -176,20 +176,20 @@ var repositoryExpectations = []Expectation{
 			"return.",
 	},
 	{
-		ID: "240b83cf253c8a0be78af6a577fa1e5aac790e91f17aa0b3fad28c8ea9592f56",
+		ID: "af2611a10aede2a5c1a3d950fb443d87a838d4f43b38b9ae7add828ab038e0de",
 		Reason: "Unreachable: the bytes are an embedded schema this " +
 			"repository's own tests parse and compile, so they are JSON in " +
 			"every build TestEveryRegisteredSchemaCompiles passes on.",
 	},
 	{
-		ID: "4e5e675648a454570b0e5ebdc67c29add60e07e077bfc20bb0d2130559b2fc99",
+		ID: "2293c23d9c88aecfa2ff1653021a8bc7ac0829a88aa3d692cf4834be61a25c73",
 		Reason: "Unreachable: AddResource fails on a resource identity it " +
 			"cannot parse, and TestSchemaIDsMatchTheirFilenames pins every " +
 			"embedded schema's `$id` to `baseURL + <file>`, which is a URL " +
 			"by construction.",
 	},
 	{
-		ID: "1563c960a9b93088c64e78f07be618e1354cf4027bc2a51a967fa2cfa5af673b",
+		ID: "a20ef5c99cbd0a4949615e0ef6de29ae6a29e43d177520ca24701dc206aebb06",
 		Reason: "Unreachable: every registered schema compiles, which is " +
 			"exactly what TestEveryRegisteredSchemaCompiles asserts by " +
 			"requiring an invalid document to come back GOM5003 rather than " +
@@ -252,7 +252,7 @@ var repositoryExpectations = []Expectation{
 			"4096 is positive for any document at all.",
 	},
 	{
-		ID: "ed7481e8cd1f94434f5337692cf82a700e764f04ad21539a96dc7ea1d095ed0a",
+		ID: "032117c6b39b2b56b5f93fc691a60108f9c8bfe0f891ab6277841afbfcf16cf1",
 		Reason: "Equivalent: the second argument of make is a capacity hint, " +
 			"the runtime clamps a negative one to zero, and a map holds the " +
 			"same entries whatever it was sized for.",
@@ -273,7 +273,7 @@ var repositoryExpectations = []Expectation{
 			"every duration the same.",
 	},
 	{
-		ID: "73674bbd5d0ff2893df5f890a642badf7cb4414ab97ea227641f07e2c7d7520b",
+		ID: "2cb2d796d3f68b0d5562e1f541649e595cbad7584f96b480981683a2571a6ea3",
 		Reason: "Equivalent: `<=` and `<` disagree only for an id of exactly " +
 			"DisplayIDLength characters, where returning `id` and returning " +
 			"`id[:DisplayIDLength]` return the same string.",
@@ -315,20 +315,20 @@ var repositoryExpectations = []Expectation{
 			"row above.",
 	},
 	{
-		ID: "bb5d7070cdfcd8f9a300d14e4ac613ef4b5c4696ce6941d6933e76e381862c20",
+		ID: "e8ab25167708cd5aaf7c72f137bf600ea3046c5b2d92512b85b32dadc957de41",
 		Reason: "Equivalent: a rejected mutant's disposition carries no " +
 			"outcome, and StateOf answers `unfulfilled` through the " +
 			"Rejected case and through the default alike, because the zero " +
 			"Outcome is not OutcomeSurvived. Nothing else reads the field.",
 	},
 	{
-		ID: "926d93171820882528895f954fa11206a0277bf20ede3b5beed639d7d333437b",
+		ID: "6ff6656d50385f425cd37c8ae327942d870a06a596016e8e8f1c159c3c4cee14",
 		Reason: "Equivalent: the `existed` flag is read only by the rollback " +
 			"that puts a document back, and a caller handed this error " +
 			"returns before there is a rollback to run.",
 	},
 	{
-		ID: "e8db06e466a9891f3385d91579a4e8b3e3a0d0371fd517ac84d82c44c93edee7",
+		ID: "3df5f41b6b99375178004b38f82f50defccf85ee3f1ac56865cb1e201d4bede8",
 		Reason: "Equivalent: both callers impose a total order of their own on " +
 			"what this returns -- readWorkspace sorts the runs by " +
 			"NewestFirst and the damaged rows by path, and RemoveRuns only " +
@@ -336,25 +336,25 @@ var repositoryExpectations = []Expectation{
 			"back in is not observable.",
 	},
 	{
-		ID: "94ebea36dab33b2c9cd25cad0af4cdefce2091feb7f815b069bc5af30558f938",
+		ID: "29d4bb15990c0c2328ba7c85e0974824de2680ecc5a29664ff93142f705a8a9f",
 		Reason: "Unreachable: partition has already translated every result's " +
 			"outcome through OutcomeOf, which refuses anything outside the " +
 			"six, and mutation.Tally records all six -- so the count this " +
 			"forwards cannot fail.",
 	},
 	{
-		ID: "fcbf85329076ce6bddc0f6c222cff55456e4b3449b18881a88bad9ce01b8e52d",
+		ID: "63fba47e46fd2eaf58a388f3833f6fa4ecc1d416235add089d15bb8a9b20366b",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
 	{
-		ID: "d5aca19227c0b4c0221af1a67665df1f4004d869618127b1aa9ba326ada9d996",
+		ID: "e6b01720387d77612150d7bd2e4ce18cdcf86f5fa30a6af88e61b55206624c43",
 		Reason: "Unreachable: the same argument one level in -- tallyOf reads " +
 			"the outcomes partition has already accepted, so " +
 			"mutation.TallyOf cannot refuse one.",
 	},
 	{
-		ID: "6aa0c9767b21b5d04e22f95cdd4e68d034edd744bbe5508cf5436cfb2ee312e4",
+		ID: "c0e882fe05489e4c5f690258cff937433a90569d7dd9c66d29cb87e2fed26b96",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
@@ -370,32 +370,45 @@ var repositoryExpectations = []Expectation{
 			"that would report it.",
 	},
 	{
-		ID: "7d277185c89cfbde1548bd9ef18ad72e2ab7ef007bc4c3353c5029e6fafbc67e",
+		ID: "ba78b2e7e77f5879222b374948ab1f36a6a4e745b3d99729c1a1a9eb708a9f95",
 		Reason: "Unreachable: the counts disagree only when a row was not " +
 			"consumed by the catalogue walk, and a row is consumed exactly " +
 			"when its id is catalogued -- so the loop above always finds " +
 			"the row this line exists to report the absence of.",
 	},
 	{
-		ID: "7dd25029ee5d776af3373a66167256898409217c7d655bf0fbbad65a6a8aab1b",
+		ID: "843a24ebe25ecb3c9b062e5df5776e2f82236eea1c85b70c904342083ece1abc",
+		Reason: "Unreachable: every module's report has been built or merged " +
+			"by the time this runs, and a report that was is one whose every " +
+			"outcome mutation.TallyOf accepted -- so the aggregate over those " +
+			"same outcomes cannot fail. Both constructors return through this " +
+			"one line, which is why it is declared once rather than at each of them.",
+	},
+	{
+		ID: "7647d940eade086845f48dc51b2515eada4bd201d25632874d9eadf7b852530e",
+		Reason: "Unreachable: the same failure as the row above, on the line " +
+			"that would forward it.",
+	},
+	{
+		ID: "95b0ddca198266155d3b025dfb8fd94e4b6db7b96486b194b2bad78bbce211b8",
 		Reason: "Unkillable: encoding/json fails only on a value it cannot " +
 			"represent -- a cycle, a channel or function field, a " +
 			"non-finite float -- and a Projection is strings, ints and a " +
 			"map of them, so no value of the type can make Encode fail.",
 	},
 	{
-		ID: "779e89c5aa67aa6ee881c10fc35d27ec70f693c193005ece49b215d40c95321a",
+		ID: "58b9a70ee05269bf17d5a0fcc2d3c9ee39d5a821d385abc02665e9050494d5af",
 		Reason: "Unkillable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "fb9d1e077634dc9befaec38521c6026643a2bb81dfb66404cbe2eb3ee232ee1e",
+		ID: "cdaeae3a0171381e52574b95f907baec6d0bc2fb39d12cc32c7745c973f49c05",
 		Reason: "Unkillable: the same encoding, reached through WriteArtifacts " +
 			"-- the document it publishes is the Projection the row above " +
 			"is about.",
 	},
 	{
-		ID: "4dad6256bc511e6795e5e344201ef55546b6d1bc41df6c38ff5f02ad9406c2db",
+		ID: "0653f507f92b55eeca7b45c60b1c54f4e6823d6b2fb84c383f9d31b95be55303",
 		Reason: "Unkillable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
@@ -415,25 +428,25 @@ var repositoryExpectations = []Expectation{
 			"was given.",
 	},
 	{
-		ID: "3190c37f7f6fc15fd4d516a8beb3f098a6a4aaaff0930c9dc3026d81b859d7f8",
+		ID: "0b273dc1d64bac1ceef63affc3d880d1f737c81c962e1e73e364fe7b9a6d4e5f",
 		Reason: "Unkillable: filepath.Abs returns an error only when os.Getwd " +
 			"does, which needs this process's own working directory to have " +
 			"been deleted -- a state a test would be arranging for every " +
 			"other test in the same binary.",
 	},
 	{
-		ID: "ace7fb73f25d06b183db8d38fe3fdafb0cea0462c99c02b82b6ca9863d399164",
+		ID: "170340b291e6416303a6270f2a4395876b8639ef12ab690c95169525511abe07",
 		Reason: "Unkillable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
 	{
-		ID: "700cbc056f3fb82558d41158da5f717ce1041698df05826787554562ba3c2a3b",
+		ID: "9fbb23c0f5a691d282c91d6f4e76e10cdeef49d64cd129e6e11c8b375c46531c",
 		Reason: "Unreachable: the answer for a volume root that does not " +
 			"resolve, which needs a path none of whose ancestors exist -- " +
 			"and the root itself always does.",
 	},
 	{
-		ID: "2380340d24fe192076857b8148ca285ed7c8a60f2ef97ca79ae09c272d76d540",
+		ID: "d0c7b47105ddeaca591bf4e46a18272d93b0b4e053f4896013277cc950d2abd6",
 		Reason: "Unreachable: filepath.EvalSymlinks walks a path from the left " +
 			"and reports the first name it cannot resolve, so a path it " +
 			"calls `not there` and a parent that fails for some other " +
@@ -441,7 +454,7 @@ var repositoryExpectations = []Expectation{
 			"answers with the same failure.",
 	},
 	{
-		ID: "e136ee1f2165220ec767905f8c86ed8a73d44f043657f2ac293afc970793a275",
+		ID: "6234ee76e3bbd193c4afb81a22fcef3027a038ac604c4dda243fff2d30133f7a",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
@@ -553,9 +566,9 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
 		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2673 scored mutants half a
-		// percent buys thirteen survivors (2660/2673 = 99.51% clears,
-		// 2659/2673 = 99.48% does not), where it bought twelve when it was
+		// same arithmetic rather than inertia: at 2808 scored mutants half a
+		// percent buys fourteen survivors (2794/2808 = 99.50% clears,
+		// 2793/2808 = 99.47% does not), where it bought twelve when it was
 		// set -- still far short of the twenty-one that moves this number.
 		// The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},

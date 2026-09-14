@@ -58,6 +58,14 @@ const (
 	// job which uploads the directory can say what it uploaded. It is an index
 	// rather than an account — the account is the recording beside it.
 	DiagnosticsV1 = "go-mutants/diagnostics"
+
+	// WorkspaceReportV1 is what a run over a `go.work` publishes instead of a
+	// run report: the run's own counts, and every module's run report embedded
+	// inside it. It exists because `workspace.module_path` is required of a run
+	// report and a workspace has no single answer for it, and the modules'
+	// documents are embedded rather than filed beside it because a history
+	// store names a run's document by its run id. See ADR 0012.
+	WorkspaceReportV1 = "go-mutants/workspace-report"
 )
 
 // registry maps a document type onto the schema file in [schema.FS] that
@@ -85,6 +93,8 @@ var registry = map[string]string{
 	DoctorV1:      "doctor-v1.schema.json",
 	RunReportV1:   "run-report-v1.schema.json",
 	TraceEventV1:  "trace-v1.schema.json",
+
+	WorkspaceReportV1: "workspace-report-v1.schema.json",
 }
 
 // baseURL is the identity a schema gets when its file declares no "$id".

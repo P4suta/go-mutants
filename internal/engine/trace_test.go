@@ -353,7 +353,7 @@ func TestMutantResultCarriesKilledByAttemptsAndCoveringPackages(t *testing.T) {
 		Attempts:             3,
 		CoveringTestPackages: covering,
 	}}}
-	block := notable(st, rep)
+	block := notable(st, rep.Mutants)
 	if len(block) != 1 {
 		t.Fatalf("notable listed %d mutants, want the one survivor", len(block))
 	}

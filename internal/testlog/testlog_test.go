@@ -81,6 +81,18 @@ func TestParseTestLog(t *testing.T) {
 		complete: true,
 		entries:  []testlog.Entry{{Op: testlog.OpOpen, Name: "/tmp/x\r"}},
 	}, {
+		// A blank line between actions. The testing package does not write one,
+		// but a log is read line by line and an empty line is not an action --
+		// reporting it as one would put an entry with no operation and no name
+		// into a measurement a consumer acts on.
+		name:     "a blank line between actions",
+		input:    header + "getenv HOME\n\nopen /tmp/x\n",
+		complete: true,
+		entries: []testlog.Entry{
+			{Op: testlog.OpGetenv, Name: "HOME"},
+			{Op: testlog.OpOpen, Name: "/tmp/x"},
+		},
+	}, {
 		name:    "a file that is not a log",
 		input:   "PASS\nok  \tfixture.example/killable\t0.01s\n",
 		wantErr: testlog.ErrNoHeader,
@@ -138,3 +150,28 @@ func TestOperationsArePinned(t *testing.T) {
 		t.Errorf("Header = %q, want the line testing/internal/testdeps writes", testlog.Header)
 	}
 }
+
+// TestParseCarriesUpAReadFailure is the one failure that is not about the bytes.
+//
+// A log is read whole before it is parsed, because the header and the final
+// newline are both facts about the file rather than about a line -- so a read
+// that stops half way is a file nobody has seen all of, and answering it with
+// an empty measurement would be answering "this target touched nothing", which
+// is a thing a consumer acts on.
+func TestParseCarriesUpAReadFailure(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("the file went away")
+	log, err := testlog.Parse(failingReader{err: want})
+	if !errors.Is(err, want) {
+		t.Fatalf("Parse() error = %v, want %v", err, want)
+	}
+	if log.Complete || len(log.Entries) != 0 {
+		t.Errorf("Parse() = %+v beside an error, want nothing at all", log)
+	}
+}
+
+// failingReader is a reader that only fails, for the test above.
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }

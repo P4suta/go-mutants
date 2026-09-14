@@ -152,6 +152,23 @@ type Options struct {
 	// interrupted run — is a real state that no count of results can express.
 	Selected int
 
+	// Module is which module of the catalogue this document is about, and is
+	// empty for a run over one module -- which is every run that is not a
+	// workspace run.
+	//
+	// A workspace is measured as one run over one catalogue that spans its
+	// modules and reported one module at a time, because `workspace.module_path`
+	// is required of a run report and a workspace has no single answer for it.
+	// See ADR 0012. So the catalogue given here is the whole one and this says
+	// whose document is being built: the mutants of the other modules belong to
+	// their own documents, and counting them here would make every module's
+	// score the workspace's.
+	//
+	// It is the value a catalogued mutant's own ModulePath carries, which for a
+	// single-module catalogue is the empty string -- so a run that is not a
+	// workspace run selects everything by leaving this alone.
+	Module string
+
 	// ModulePath, GoVersion and WorkspaceDigest name the tree that was read.
 	// The digest is required and checked; the other two fall back to "unknown".
 	ModulePath      string
@@ -517,7 +534,13 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 	mutants := make([]Mutant, 0, len(catalogued))
 	rejected := make([]Rejected, 0, len(rejections))
 	for _, m := range catalogued {
-		where, ok := located[locationKey{path: m.Path, span: m.Span, rule: m.Rule.Name}]
+		// One module's document holds one module's mutants. Everything else in
+		// the catalogue belongs to a sibling's, and for a run over one module
+		// the two strings are both empty and nothing is skipped.
+		if m.ModulePath != opts.Module {
+			continue
+		}
+		where, ok := located[keyOf(m.ModulePath, m.Path, m.Span, m.Rule.Name)]
 		if !ok {
 			return nil, nil, &Error{
 				Code: CodeMissingLocation,
@@ -756,53 +779,77 @@ func joinReasons() string {
 	return strings.Join(names, ", ")
 }
 
-// checkAccountedFor proves that every result and every rejection was consumed
-// by the catalogue walk.
+// checkAccountedFor proves that every result and every rejection names a
+// catalogued mutant, and that every one of them belonging to this document was
+// consumed by the catalogue walk.
 //
-// It is a counting argument rather than a second lookup loop: the walk consumed
-// one distinct id per row it produced, the maps hold distinct ids, so equal
-// counts mean equal sets. What it catches is a result or a rejection naming a
-// mutant the catalogue does not have — which means two phases are looking at
-// different catalogues, and everything downstream of that is fiction.
+// A row naming a mutant the catalogue does not have means two phases are
+// looking at different catalogues, and everything downstream of that is
+// fiction, so it is named where it is found. The rest is a counting argument
+// rather than a second lookup loop: the walk consumed one distinct id per row
+// it produced, the rows hold distinct ids, so equal counts mean equal sets.
+//
+// "Belonging to this document" is what makes the count right in a workspace,
+// where one run's results span the modules and one document holds one module's.
+// A row for another module's mutant is not unaccounted for; it is accounted for
+// in that module's document. For a run over one module every row belongs here,
+// exactly as it always did.
 func checkAccountedFor(opts Options, mutants, rejected int) error {
-	if len(opts.Results) != mutants {
-		return unknownMutant("result", opts.Results, func(r MutantResult) string { return r.ID }, opts.Catalog)
+	if err := checkRowsOf(opts, "result", opts.Results,
+		func(r MutantResult) string { return r.ID }, mutants); err != nil {
+		return err
 	}
-	if len(opts.Rejections) != rejected {
-		return unknownMutant("rejection", opts.Rejections, func(r Rejection) string { return r.ID }, opts.Catalog)
-	}
-	return nil
+	return checkRowsOf(opts, "rejection", opts.Rejections,
+		func(r Rejection) string { return r.ID }, rejected)
 }
 
-// unknownMutant names the first row whose id the catalogue does not know. The
-// rows are already known to be distinct, so there is one.
-func unknownMutant[T any](kind string, rows []T, id func(T) string, catalog *mutation.Catalog) error {
+// checkRowsOf is [checkAccountedFor] for one kind of row.
+func checkRowsOf[T any](opts Options, kind string, rows []T, id func(T) string, consumed int) error {
+	mine := 0
 	for _, row := range rows {
-		if _, known := catalog.ByID(id(row)); !known {
+		m, known := opts.Catalog.ByID(id(row))
+		if !known {
 			return &Error{
 				Code: CodeUnknownMutant,
 				Message: fmt.Sprintf("the %s for mutant %s names an id that is not in this run's catalogue",
 					kind, display(id(row))),
 			}
 		}
+		if m.ModulePath == opts.Module {
+			mine++
+		}
 	}
-	// Unreachable: the counts only disagree when a row was not consumed, and a
-	// row is consumed exactly when its id is catalogued. Reported rather than
-	// returned as nil, because a nil here would silently produce a report that
-	// has lost a mutant.
+	if mine == consumed {
+		return nil
+	}
+	// Unreachable: the counts only disagree when a row of this module was not
+	// consumed, and such a row is consumed exactly when its id is catalogued --
+	// which the loop above has just established of every row. Reported rather
+	// than returned as nil, because a nil here would silently produce a report
+	// that has lost a mutant.
 	return &Error{
 		Code:    CodeUnknownMutant,
 		Message: "internal error: a " + kind + " could not be matched to the catalogue",
 	}
 }
 
-// locationKey identifies a candidate by everything the catalogue keeps, which
-// is what lets a catalogued mutant be joined back to the coordinates discovery
-// found it at. It is the same join internal/cli makes for `list --json`.
+// A locationKey is what identifies one candidate among the discovery's: the
+// module it belongs to, the file within that module, the span, and the rule.
+//
+// The module is part of it for the reason it is part of the identity: two
+// modules of one workspace can each hold an `app.go`, and an edit at one span
+// by one rule in each is two candidates. A key without it would hand one
+// module's coordinates to the other module's mutant, silently.
 type locationKey struct {
-	path string
-	span mutation.Span
-	rule string
+	module string
+	path   string
+	span   mutation.Span
+	rule   string
+}
+
+// keyOf is the location key of one candidate.
+func keyOf(module, path string, span mutation.Span, rule string) locationKey {
+	return locationKey{module: module, path: path, span: span, rule: rule}
 }
 
 // branchOf converts discovery's branch proof into the document's. Nil stays
@@ -826,7 +873,7 @@ func branchOf(proof *discover.BranchProof) *Branch {
 func locate(candidates []discover.Located) map[locationKey]discover.Located {
 	out := make(map[locationKey]discover.Located, len(candidates))
 	for _, candidate := range candidates {
-		key := locationKey{path: candidate.Path, span: candidate.Span, rule: candidate.Rule.Name}
+		key := keyOf(candidate.ModulePath, candidate.Path, candidate.Span, candidate.Rule.Name)
 		if _, seen := out[key]; !seen {
 			out[key] = candidate
 		}

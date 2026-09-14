@@ -268,7 +268,7 @@ func TestNotableGroupsUncoveredSurvivorsAfterCoveredOnes(t *testing.T) {
 	}
 
 	got := make([]string, 0, len(rows))
-	for _, m := range notable(st, rep) {
+	for _, m := range notable(st, rep.Mutants) {
 		got = append(got, m.ID)
 	}
 	want := []string{"c-a", "c-z", "u-a", "u-z", "t-a"}
@@ -276,7 +276,7 @@ func TestNotableGroupsUncoveredSurvivorsAfterCoveredOnes(t *testing.T) {
 		t.Errorf("notable = %v, want %v", got, want)
 	}
 	// And the flag travels, or the renderer cannot say why the mutant survived.
-	for _, m := range notable(st, rep) {
+	for _, m := range notable(st, rep.Mutants) {
 		if want := strings.HasPrefix(m.ID, "u-"); m.Uncovered != want {
 			t.Errorf("%s: Uncovered = %t, want %t", m.ID, m.Uncovered, want)
 		}
@@ -294,10 +294,10 @@ func TestUncoveredOfCountsTheDocumentRatherThanTheRun(t *testing.T) {
 		{ID: "b"},
 		{ID: "c", Uncovered: true},
 	}}
-	if got := uncoveredOf(rep); got != 2 {
+	if got := uncoveredOf(rep.Mutants); got != 2 {
 		t.Errorf("uncoveredOf = %d, want 2", got)
 	}
-	if got := uncoveredOf(&report.Report{}); got != 0 {
+	if got := uncoveredOf(nil); got != 0 {
 		t.Errorf("uncoveredOf of an empty report = %d, want 0", got)
 	}
 }
