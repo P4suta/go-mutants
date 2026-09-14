@@ -212,6 +212,33 @@ const (
 	// a slot this form reaches, so excluding them costs nothing and saying so
 	// costs one sentence. [FormFStatement] is the list.
 	GuardFormF GuardForm = "F"
+	// GuardFormE is the typed expression selector: the guard inside a closure
+	// that returns the site's own type and is called where the expression was.
+	//
+	//	func() int { if __gm.M[7] { return <mutated, flattened> } else { return <original> } }()
+	//
+	// It is the last form tried and the one that needs the least of its site: an
+	// expression, in a position where an expression of the same type is legal,
+	// whose type this file can spell. What it buys is every position that holds
+	// an expression and no statement a guard can stand in -- a `switch` tag, a
+	// `range` clause, a type switch guard, and the initialiser of a `:=` in a
+	// slot Form F cannot reach.
+	//
+	// Three properties come from the closure being *where the expression was*
+	// rather than hoisted in front of it, and each one is a refusal some other
+	// design would have had to make. The expression is evaluated in the same
+	// order and the same number of times, because a call is evaluated where it
+	// is written. Every name in scope at the expression is in scope inside the
+	// closure, including a `:=`'s own declared name -- Go begins a declared
+	// name's scope at the *end* of its specification, so a closure inside the
+	// initialiser is before that end and reads the enclosing declaration, which
+	// is what the original did. And no new identifier is invented, so there is
+	// no name to allocate and no name to collide.
+	//
+	// [Guard.SiteType] carries the result type, spelled as this file may write
+	// it. A type the file cannot name is refused, which is the last refusal
+	// `unnameable-decl-type` is left naming.
+	GuardFormE GuardForm = "E"
 )
 
 // A DeclType is one identifier a Form D site declares, together with the source
@@ -262,9 +289,11 @@ type DeclType struct {
 //     statement -- is a [GuardFormF] site when it is one of the four
 //     [FormFStatement] names.
 //  4. Otherwise the nearest enclosing expression whose type is boolean
-//     *underneath* -- a named boolean type -- and whose type this file can
-//     spell, is a [GuardFormCPrime] site. It is last so that every site the
-//     forms before it covered is covered by the same form it was before.
+//     *underneath* -- a named boolean type -- is a [GuardFormCPrime] site.
+//  5. Otherwise the nearest enclosing expression of any type this file can
+//     spell is a [GuardFormE] site. Each form is tried after the ones before
+//     it, so every site an earlier form covered is covered by exactly that
+//     form: a new form adds sites and moves none.
 //
 // Anything else is refused, and a refused candidate is never emitted. The
 // refusals are all reported as [SkipUnnameableDeclType], which this phase reads
@@ -272,9 +301,8 @@ type DeclType struct {
 //
 //   - the nearest statement is one no form covers — a `switch` tag or a `range`
 //     clause;
-//   - the statement sits where neither a block nor a call is legal Go: a type
-//     switch guard, a communication clause, or a `:=` in an initialiser slot,
-//     which declares and so cannot be moved into a closure;
+//   - an expression in a position that needs more than its type: an assignment
+//     target, the operand of `++` or `&`, a field name;
 //   - a Form D site declares a type that cannot be spelled with the file's own
 //     imports;
 //   - a `:=` redeclares an existing variable instead of declaring every name on
@@ -441,10 +469,6 @@ const (
 	// SkipArrayLength marks an expression inside an array length. It is part of
 	// a type, evaluated by the compiler and never at run time.
 	SkipArrayLength SkipReason = "array-length"
-	// SkipCaseLabel marks an expression in the label list of a `switch` case or
-	// in the communication clause of a `select`. Case *bodies* are ordinary
-	// code and are mutated; v2 revisits the labels themselves.
-	SkipCaseLabel SkipReason = "case-label"
 	// SkipPackageVarInit marks an expression in a package-level variable
 	// initialiser, `//go:embed` declarations included. Initialisation order is
 	// a global property that a per-mutant guard cannot express in v1.
@@ -499,7 +523,6 @@ var explanations = map[SkipReason]string{
 	SkipExcluded:           "mutation.include and mutation.exclude removed the file",
 	SkipConstDecl:          "the expression is inside a const declaration, where a constant has to stay constant and one edit can renumber a whole iota block",
 	SkipArrayLength:        "the expression is an array length, which is part of a type and is evaluated by the compiler rather than at run time",
-	SkipCaseLabel:          "the expression labels a tagged switch case, whose label is compared against the tag, or a type switch case, whose labels name types; a tagless switch's labels are ordinary boolean contexts and are mutated",
 	SkipPackageVarInit:     "the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1",
 	SkipTypeParam:          "the expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values",
 	SkipLabelOrGoto:        "the statement is a goto, whose target cannot be moved without jumping over a declaration or into a block, and whose removal would leave a function reaching its closing brace without returning",
@@ -531,7 +554,6 @@ func AllSkipReasons() []SkipReason {
 		SkipExcluded,
 		SkipConstDecl,
 		SkipArrayLength,
-		SkipCaseLabel,
 		SkipPackageVarInit,
 		SkipTypeParam,
 		SkipLabelOrGoto,

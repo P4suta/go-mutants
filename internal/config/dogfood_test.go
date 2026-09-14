@@ -67,7 +67,7 @@ var repositoryExpectations = []Expectation{
 			"already known to differ, so `<` and `<=` are the same test.",
 	},
 	{
-		ID: "90dcb6c9a5eef3328c6287e649f96f5d71187376e2fdb906a262947c815a0c75",
+		ID: "900c4913fd6dc386d37c0cbd9d5753f2330504920ae559e3c76a45b806db0a21",
 		Reason: "Equivalent: OutcomeNotRun is the zero value of Outcome, being " +
 			"first in its iota block, so `return OutcomeNotRun` and `return 0` " +
 			"are the same constant -- the same argument as the Disjoint row above.",
@@ -552,9 +552,9 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
 		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2614 scored mutants half a
-		// percent buys thirteen survivors (2601/2614 = 99.50% clears,
-		// 2600/2614 = 99.46% does not), where it bought twelve when it was
+		// same arithmetic rather than inertia: at 2621 scored mutants half a
+		// percent buys thirteen survivors (2608/2621 = 99.50% clears,
+		// 2607/2621 = 99.46% does not), where it bought twelve when it was
 		// set -- still far short of the twenty-one that moves this number.
 		// The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},

@@ -1296,8 +1296,8 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 2677 mutants catalogued, 2614 detected —
-2608 killed, two of them by the memory bound, and six caught by the per-mutant
+The numbers the gate is sized against: 2684 mutants catalogued, 2621 detected —
+2615 killed, two of them by the memory bound, and six caught by the per-mutant
 timeout — sixty-three declared expectations, **a score of 100.00%**, at
 `--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
 is compared on every run, `--strict` or not, and at this size it does not fail
@@ -1389,7 +1389,7 @@ the larger of the two. `-v` also names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 2677 / 2608 / 6 / 63 on
+With that in place the whole summary is stable: the same 2684 / 2615 / 6 / 63 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.
@@ -1436,8 +1436,8 @@ with the eleventh package the same rule moved the number again, to 99.5: twelve
 survivors of slack (2420/2432 clears, 2419/2432 does not) where 99 bought
 thirteen before the widening. It has stayed at 99.5 since, through a catalogue
 that grew to 2614 scored mutants without a package being added, and that is the
-same arithmetic once more: half a percent of 2614 is thirteen survivors
-(2601/2614 clears, 2600/2614 does not), one more than when the number was set
+same arithmetic once more: half a percent of 2621 is thirteen survivors
+(2608/2621 clears, 2607/2621 does not), one more than when the number was set
 and still far short of twenty-one. The floor is a fixed number of survivors rather
 than a fixed percentage of a growing catalogue. Do the arithmetic, write the
 answer next to the number, and only then decide whether it moves.

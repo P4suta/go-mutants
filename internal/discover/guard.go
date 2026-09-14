@@ -122,7 +122,79 @@ func (g *guardResolver) guardFor(anchor ast.Node) (Guard, bool) {
 	if site, ok := g.statementSite(anchor); ok {
 		return site, true
 	}
-	return g.formCPrimeSite(anchor)
+	if site, ok := g.formCPrimeSite(anchor); ok {
+		return site, true
+	}
+	return g.formESite(anchor)
+}
+
+// formESite looks outward for the nearest expression this file can spell the
+// type of.
+//
+// It is the last form and the least demanding one, which is why it is last: a
+// site any earlier form covers is covered by that form, and this adds the
+// positions none of them reach. A `switch` tag, a `range` clause and a type
+// switch guard are expressions with no statement around them a guard can stand
+// in; the initialiser of a `:=` in an `if` or `for` header is an expression
+// whose statement declares, which Form F cannot move into a closure and Form D
+// has nowhere to hoist to.
+//
+// The walk is [guardResolver.formCSite]'s, and the two conditions are the ones
+// the closure needs. The expression has to be a *value* -- a type in a type
+// switch case and a package name in a qualified identifier are expressions to
+// go/ast and neither is something a function can return. And its type has to be
+// spellable, because the closure's result type is written out; that is the last
+// refusal `unnameable-decl-type` is left naming.
+func (g *guardResolver) formESite(anchor ast.Node) (Guard, bool) {
+	for node := anchor; node != nil; node = g.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return Guard{}, false
+		}
+		if !g.wrappableValue(expr) {
+			continue
+		}
+		span, ok := g.span(expr)
+		if !ok {
+			return Guard{}, false
+		}
+		spelled, ok := g.typeString(g.info.Types[expr].Type)
+		if !ok {
+			// A type this file cannot name, which is not the end of the search:
+			// an expression around this one may have a type it can. The walk
+			// continues for the same reason Form C's does when it meets a
+			// non-boolean expression -- the site is the nearest *usable*
+			// ancestor, not the nearest one.
+			continue
+		}
+		return Guard{Form: GuardFormE, SiteSpan: span, SiteType: spelled}, true
+	}
+	return Guard{}, false
+}
+
+// wrappableValue reports whether an expression is a value of a type a closure
+// could return, and sits where a call of that type is legal Go.
+//
+// "Value" is the load-bearing word and go/types answers it: `case int:` in a
+// type switch records a *type* rather than a value, `fmt` in `fmt.Println`
+// records a package, and `len` records a builtin. None of the three is
+// something a function can return, and all three are ast.Expr.
+//
+// Untyped constants need no special case, and that is worth saying because it
+// looks as though they would. The checker records the type an expression
+// *settled on*, so the `1` of `var x float64 = 1` records `float64` and the
+// closure returns a float64; a constant in a context that keeps it untyped is
+// in a constant declaration, which discovery suppresses whole before any of
+// this is asked.
+func (g *guardResolver) wrappableValue(expr ast.Expr) bool {
+	if g.info == nil {
+		return false
+	}
+	tv, ok := g.info.Types[expr]
+	if !ok || !tv.IsValue() || tv.Type == nil {
+		return false
+	}
+	return g.wrappablePosition(expr)
 }
 
 // formCPrimeSite looks outward for the nearest expression that is boolean

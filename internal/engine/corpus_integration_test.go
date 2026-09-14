@@ -444,13 +444,21 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 	if !slices.Equal(outcome.Report.Skips, wantSkips) {
 		t.Errorf("skips = %+v, want %+v", outcome.Report.Skips, wantSkips)
 	}
-	if found := discoveredOf(t, events); found.Skips != 1 || found.Candidates != 3 {
-		t.Errorf("Discovered = %+v, want 3 candidates and 1 skip", found)
+	if found := discoveredOf(t, events); found.Skips != 1 || found.Candidates != 7 {
+		t.Errorf("Discovered = %+v, want 7 candidates and 1 skip", found)
 	}
 	want := []string{
 		"killed hidden/hidden.go:17 return-nil",
 		"killed hidden/hidden.go:20 return-zero-numeric",
-		"killed unnameable.go:21 return-zero-numeric",
+		"killed hidden/hidden.go:35 return-zero-numeric",
+		"killed hidden/hidden.go:39 return-zero-numeric",
+		// The addition the fixture's Counted used to have refused. Its
+		// declaration is still one no form may rewrite; the initialiser
+		// expression around the edit is an `int`, and a closure returning an
+		// `int` stands where it stood.
+		"killed unnameable.go:25 add-to-sub",
+		"killed unnameable.go:26 return-zero-numeric",
+		"killed unnameable.go:46 return-zero-numeric",
 	}
 	got := slices.Clone(results(events))
 	slices.Sort(got)
@@ -465,11 +473,13 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 	wantSites := []discover.SkipSite{{
 		Path:   "unnameable.go",
 		Reason: discover.SkipUnnameableDeclType,
-		Line:   20,
-		Column: 20,
+		Line:   44,
+		Column: 23,
 		// The rule is part of the site because one coordinate can carry
-		// several refusals, and here it also says which edit the fixture is
-		// about: the addition inside the call, not the declaration around it.
+		// several refusals, and here it says which edit the fixture is about:
+		// the addition between two values of the unexported numeric type, in a
+		// `switch` tag, which is the one shape where the edit's own expression
+		// and every expression around it is something this file cannot name.
 		Rule: "add-to-sub",
 	}}
 	if !slices.Equal(sites, wantSites) {

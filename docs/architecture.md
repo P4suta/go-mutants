@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: implemented.** The pure packages, the strict configuration decoder,
 the snapshot, the baseline execution layer, discovery for the whole
 eleven-family catalogue, guard-based instrumentation with its generated runtime
-in all five forms, compile validation, mutant execution, coverage-guided
+in all six forms, compile validation, mutant execution, coverage-guided
 selection, `RunReport v1` with its history store, the Stryker projection and
 the self-contained HTML report, the live TUI dashboard, `--changed`, `--shard`
 with `report merge`, `--explain`, the outcome cache, and the whole v1 command
@@ -286,6 +286,24 @@ executes.
   closure returns, and a `break`, `continue` or `goto` cannot cross a function
   boundary — none of which can appear in one of these slots anyway, which is
   why excluding them costs nothing.
+
+- **Form E — typed expression closure.** For an expression with no statement
+  around it a guard can stand in — a `switch` tag, a `range` clause, a type
+  switch guard, the initialiser of a `:=` in a header slot:
+
+  ```go
+  func() int { if __gm.M[7] { return <mutated> } else { return <original> } }()
+  ```
+
+  It is the last form tried and needs the least of its site: an expression, in
+  a position where an expression of the same type is legal, whose type this
+  file can spell. Three properties follow from the closure being *where the
+  expression was* rather than hoisted in front of it, and each is a refusal
+  some other design would have had to make: the expression is evaluated in the
+  same order and the same number of times; every name in scope at the
+  expression is in scope inside the closure, including a `:=`'s own declared
+  name, whose scope begins at the end of its specification; and no identifier
+  is invented, so nothing can collide.
 
 - **Form D — declaration rewrite.** For `:=` and `var` initializers:
 

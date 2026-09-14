@@ -159,8 +159,6 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 				`suppressed/suppressed.go:50:33 package-var-init return-true "1 == 2"`,
 				`suppressed/suppressed.go:50:35 package-var-init eq-to-neq "== 2 }"`,
 				`suppressed/suppressed.go:58:18 const-decl gt-to-ge "> 2"`,
-				`suppressed/suppressed.go:82:9 case-label add-to-sub "+ 1:"`,
-				`suppressed/suppressed.go:84:9 case-label mul-to-div "* 2:"`,
 			},
 		},
 		{
@@ -187,13 +185,14 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			sites: nil,
 		},
 		{
-			// The addition inside the call on the `:=` line, which is the edit
-			// whose Form D site declares a type this file cannot spell. The
-			// coordinate is the edit's and not the declaration's, which is
-			// what makes it findable: the refusal is about the statement, and
-			// the statement is where the reader has to look.
+			// The one refusal left in the corpus, and the coordinate is the
+			// edit's own. Arithmetic over an unexported numeric type from
+			// another package has that type, a `switch` tag has no statement
+			// around it for any statement form to stand in, and it is not
+			// boolean — so the search walks outward, finds nothing it can
+			// name, and declines at the operator itself.
 			path:  "unnameable/unnameable.go",
-			sites: []string{`unnameable/unnameable.go:19:20 unnameable-decl-type add-to-sub "+ b)"`},
+			sites: []string{`unnameable/unnameable.go:42:23 unnameable-decl-type add-to-sub "+ hidd"`},
 		},
 	} {
 		equalStrings(t, describeSitesIn(t, root, result.SkipSites, want.path), want.sites)

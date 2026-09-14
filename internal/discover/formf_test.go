@@ -4,7 +4,6 @@
 package discover
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -105,68 +104,11 @@ func Run(values []int, n int) int {
 	}
 }
 
-// TestAShortDeclarationInAnInitialiserIsStillRefused is the refusal that
-// remains, and it is the one the form cannot remove.
-//
-// `for i := 0; …` declares `i`, and a declaration moved into a closure declares
-// it inside the closure: the loop condition would then name something that is
-// not there. Form D hoists a declaration out in front of its guard, and there
-// is no "in front" in an initialiser slot.
-func TestAShortDeclarationInAnInitialiserIsStillRefused(t *testing.T) {
-	t.Parallel()
-
-	got := scanSource(t, `package pkg
-
-func Sum(values []int, start int) int {
-	total := 0
-	for i := start + 1; i < len(values); i++ {
-		total += values[i]
-	}
-	return total
-}
-`)
-	for _, rule := range got.rules() {
-		if strings.HasPrefix(rule, "add-to-sub") {
-			t.Errorf("scan produced %v for a := in an initialiser", got.rules())
-		}
-	}
-	if !got.hasSkip(SkipUnnameableDeclType) {
-		t.Errorf("scan recorded %v, want a %s site", got.skips(), SkipUnnameableDeclType)
-	}
-}
-
-// TestATypeSwitchGuardIsStillRefused is the second slot a call cannot stand in.
-//
-// `v := x.(type)` is not a simple statement at all -- it is the type switch
-// guard, its own production -- so there is nothing a closure could be written
-// in place of.
-func TestATypeSwitchGuardIsStillRefused(t *testing.T) {
-	t.Parallel()
-
-	got := scanSource(t, `package pkg
-
-func Kind(values []any, i int) string {
-	switch v := values[i+1].(type) {
-	case int:
-		_ = v
-		return "int"
-	}
-	return ""
-}
-`)
-	for _, rule := range got.rules() {
-		if strings.HasPrefix(rule, "add-to-sub") {
-			t.Errorf("scan produced %v for a type switch guard", got.rules())
-		}
-	}
-	if !got.hasSkip(SkipUnnameableDeclType) {
-		t.Errorf("scan recorded %v, want a %s site", got.skips(), SkipUnnameableDeclType)
-	}
-}
-
-// TestACommunicationClauseIsStillRefused is the third. A `case` of a `select`
-// has to be a send or a receive, and a call is neither.
-func TestACommunicationClauseIsStillRefused(t *testing.T) {
+// TestACommunicationClauseIsNotAFormFSite pins the one slot that refuses a call
+// as well as a block. A `case` of a `select` has to be a send or a receive, and
+// a call is neither -- so the *statement* is no site of this form, and what
+// carries an edit inside it is the expression, through Form E.
+func TestACommunicationClauseIsNotAFormFSite(t *testing.T) {
 	t.Parallel()
 
 	got := scanSource(t, `package pkg
@@ -180,10 +122,14 @@ func Send(ch chan int, n int) string {
 	}
 }
 `)
-	for _, rule := range got.rules() {
-		if strings.HasPrefix(rule, "delete-") {
-			t.Errorf("scan produced %v for a communication clause", got.rules())
+	for _, candidate := range got.candidates {
+		if candidate.Guard.Form == GuardFormF {
+			t.Errorf("%s over %q uses Form F in a communication clause, where a call is "+
+				"neither a send nor a receive", candidate.Rule.Name, candidate.Original)
 		}
+	}
+	if !got.has("add-to-sub", "+", "-") {
+		t.Errorf("scan found %v, want the sent value's addition", got.rules())
 	}
 }
 

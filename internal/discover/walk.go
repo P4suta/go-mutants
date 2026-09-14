@@ -209,23 +209,6 @@ type suppression struct {
 // ordered.
 func (s suppression) width() int { return int(s.end - s.start) }
 
-// addCaseLabels suppresses the label list of every clause of one switch body.
-//
-// The labels and not the bodies: everything under a `case` is ordinary code and
-// is mutated like any other.
-func addCaseLabels(add func(token.Pos, token.Pos, SkipReason), body *ast.BlockStmt) {
-	if body == nil {
-		return
-	}
-	for _, statement := range body.List {
-		clause, ok := statement.(*ast.CaseClause)
-		if !ok || len(clause.List) == 0 {
-			continue
-		}
-		add(clause.List[0].Pos(), clause.List[len(clause.List)-1].End(), SkipCaseLabel)
-	}
-}
-
 // collectSuppressions collects every region of a file that cannot hold a mutable
 // expression, together with the reason.
 //
@@ -269,28 +252,25 @@ func collectSuppressions(file *ast.File, info *types.Info) []suppression {
 			if n.Len != nil {
 				add(n.Len.Pos(), n.Len.End(), SkipArrayLength)
 			}
-		case *ast.SwitchStmt:
-			// A *tagged* switch compares each label against the tag, and a
-			// guard cannot stand where a label does: Form C needs the
-			// expression to be exactly `bool`, which a label of `switch x` is
-			// not, and Form S needs a statement, which a label is not either.
-			//
-			// A *tagless* switch is the opposite case and is the reason this
-			// arm asks. `switch { case a > b: }` has an implicit tag of the
-			// typed constant `true`, so every label in it is exactly `bool` --
-			// which is precisely what a Form C site is. Suppressing those was
-			// a blanket rather than a verdict: the labels were never offered to
-			// the guard chooser at all, so nothing ever decided they could not
-			// be expressed.
-			if n.Tag != nil {
-				addCaseLabels(add, n.Body)
-			}
-		case *ast.TypeSwitchStmt:
-			// A type switch's labels hold types, not values, which is the same
-			// fact SkipTypeParam records elsewhere. No rule in the registry
-			// rewrites a type, and a "mutated" type is a different program
-			// rather than a mutant of this one.
-			addCaseLabels(add, n.Body)
+		// Neither kind of `switch` suppresses its case labels any more, and
+		// the two arms that used to are gone for two different reasons.
+		//
+		// A *tagless* switch's labels are exactly `bool` -- the implicit tag is
+		// the typed constant `true` -- so each of them is precisely a Form C
+		// site. Suppressing those was a blanket rather than a verdict: the
+		// labels were never offered to the guard chooser, so nothing ever
+		// decided they could not be expressed.
+		//
+		// A *tagged* switch's labels are compared against the tag and are
+		// ordinary expressions of the tag's type. Form C cannot take one --
+		// it needs exactly `bool` -- and no statement form can either, because
+		// a label is not a statement. Form E can: a label is an expression, and
+		// a closure returning the tag's type stands exactly where it stood.
+		//
+		// A *type* switch's labels hold types rather than values, which is why
+		// nothing here mentions them. No rule in the registry rewrites a type,
+		// so nothing is ever proposed at one and there is nothing to decline --
+		// the same silence a `fallthrough` gets, and for the same reason.
 		case *ast.FuncDecl:
 			if n.Type != nil && n.Type.TypeParams != nil {
 				add(n.Type.TypeParams.Pos(), n.Type.TypeParams.End(), SkipTypeParam)

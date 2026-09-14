@@ -252,7 +252,7 @@ func TestSuppressedReportsTheWidestRegion(t *testing.T) {
 }
 
 func TestWiderBreaksTiesDeterministically(t *testing.T) {
-	same := suppression{start: 1, end: 10, reason: SkipCaseLabel}
+	same := suppression{start: 1, end: 10, reason: SkipArrayLength}
 	other := suppression{start: 1, end: 10, reason: SkipConstDecl}
 	if !wider(other, same) {
 		t.Error("two identical regions must resolve by the frozen reason order")

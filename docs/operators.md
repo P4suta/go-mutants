@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 rules are found by `go-mutants list` with stable IDs, coordinates, and the
 guard-site hint the instrumentation phase consumes, and `go-mutants run`
 instruments, compile-validates, executes, and scores every one of them through
-the five guard forms.
+the six guard forms.
 
 The **Status** column that used to sit in the table below is gone rather than
 filled in with one repeated word: it recorded the gap between "the rule mints
@@ -125,53 +125,74 @@ the source:
 
 Discovery is the only phase with type information, so it is the phase that
 decides which rewrite form the instrumenter has to use, and hands that down with
-every candidate. Walking outward from the edit:
+every candidate. Walking outward from the edit, each form is tried after the
+ones before it:
 
-- the nearest enclosing expression whose static type is **exactly** the
-  universe `bool` is a **Form C** site;
-- otherwise the nearest enclosing statement, which is a **Form S** site when it
-  declares nothing (`ExprStmt`, `return`, an assignment that is not `:=`,
-  `++`/`--`, send, `defer`, `go`, `break`, `continue`, `goto`) and a **Form D**
-  site when it does (`:=`, or a `var` declaration with an initialiser). A Form D
-  hint carries the source spelling of every type the site declares, rendered
-  against the file's own imports;
-- otherwise the nearest enclosing expression that is boolean *underneath* — a
-  named boolean type — and whose type the file can spell, is a **Form C′**
-  site. It carries that spelling, and the instrumenter converts the selector
-  back to it at each end.
+1. the nearest enclosing expression whose static type is **exactly** the
+   universe `bool` is a **Form C** site;
+2. otherwise the nearest enclosing statement, which is a **Form S** site when it
+   declares nothing (`ExprStmt`, `return`, an assignment that is not `:=`,
+   `++`/`--`, send, `defer`, `go`, `break`, `continue`, `goto`) and a **Form D**
+   site when it does (`:=`, or a `var` declaration with an initialiser). A Form
+   D hint carries the source spelling of every type the site declares, rendered
+   against the file's own imports;
+3. a statement in a slot that holds a *simple* statement rather than any
+   statement — an `if`, `switch` or `for` initialiser, or a `for` post
+   statement — is a **Form F** site, when it is an expression statement, a send,
+   an `++`/`--`, or an assignment that is not `:=`;
+4. otherwise the nearest enclosing expression that is boolean *underneath* — a
+   named boolean type — is a **Form C′** site;
+5. otherwise the nearest enclosing expression of any type the file can spell is
+   a **Form E** site.
 
 Every search stops at the enclosing function, so a site is never chosen from
-outside the function literal an edit sits in. Form C′ is tried last rather than
-folded into Form C, and the order is the guarantee: a site either of the first
-three already covered is covered by exactly the form that covered it, so adding
-this one moved no existing mutant's bytes.
+outside the function literal an edit sits in.
 
-Everything else is refused, and a refused candidate is never catalogued. All
-six refusals are recorded as `unnameable-decl-type`, which reads as "no guard
-form can express this site":
+**The order is a promise, not an implementation detail.** Each form is tried
+after the ones before it, so a site an earlier form covers is covered by exactly
+that form — which means a new form adds sites and moves none, and no existing
+mutant's bytes or identity changed when one landed. Form C′ is not a loosened
+Form C for that reason, and Form E is not a loosened anything.
 
-- a statement no form covers (a `switch` tag, a `range` clause);
-- a statement in a position where neither a block nor a call is legal Go: a
-  type switch guard, which is its own production rather than a simple
-  statement; a communication clause, which has to be a send or a receive; or a
-  `:=` in an initialiser slot, which declares, and a declaration moved into a
-  closure declares inside the closure;
-- a Form D type, or a Form C′ site's own type, that cannot be spelled with the
-  imports the file already has;
-- a `:=` that redeclares an existing variable rather than declaring every name
-  afresh, which is a v1 restriction rather than a fact about Go;
-- a Form D site whose initialiser mentions a name that same site declares. Go
-  begins a declared name's scope at the **end** of its own specification, so
-  `total := total * 2` and `err := fmt.Errorf("…: %w", err)` read the enclosing
-  declaration; hoisting the new one out in front of the assignment would rebind
-  them to a zero value. The rewritten program usually still compiles, which is
-  why this is refused rather than left to the compiler. The whole of a `var`
-  block's names are weighed against the whole of its initialisers, because the
-  block is one site and one spec may name another's;
-- a Form D `var` whose declaring tokens cannot be cut out without moving a
-  line: a spec with no initialiser, or a spelled-out type, written across more
-  than one line. The rewrite removes the whole of the first and the type of the
-  second, and removing a line break moves every line after it.
+### What is refused
+
+Everything else, and a refused candidate is never catalogued. Every refusal is
+recorded as `unnameable-decl-type`, which reads as "no guard form can express
+this site". After Form E there are three shapes left, and only the first is
+about types at all:
+
+- **an expression whose type cannot be spelled with the imports the file already
+  has.** Form E writes the closure's result type out, and Form C′ writes a
+  conversion, so both need a name; a dot import binds a package's names without
+  binding a name for the package, and an unexported type from another package
+  has no name outside it. The search walks outward past one — an expression
+  *around* it may have a type the file can name — and refuses only when nothing
+  on the way out can be named. Arithmetic over an unexported numeric type from
+  another package, in a `switch` tag, is the smallest shape that reaches it;
+- **an expression that is not a value.** `case int:` in a type switch records a
+  type, `fmt` in `fmt.Println` records a package, `len` records a builtin. All
+  three are expressions to `go/ast`, none is something a closure can return;
+- **an expression in a position that needs more than its type.** An assignment
+  target and the operand of `++`, `--` or `&` have to be addressable, and a call
+  is not; a field name in `x.ok` is not an expression at all.
+
+Three shapes used to be on this list and are not any more, and each one is worth
+knowing about because the reason it left is the reason a form exists:
+
+- a `:=` that **redeclares** an existing variable, and a `var` or `:=` whose
+  **initialiser names a variable that same statement declares**. Go begins a
+  declared name's scope at the *end* of its own specification, so `total :=
+  total * 2` reads the enclosing `total`; Form D hoists the declaration out in
+  front of the assignment, which would rebind it to a zero value, so Form D
+  refuses — and Form E moves the initialiser *expression* instead, which
+  declares nothing and moves nothing;
+- a `var` whose **declaring tokens cannot be cut without moving a line**: a spec
+  with no initialiser, or a spelled-out type, written across more than one line.
+  Form D still refuses it, for the same reason; Form E takes the expression,
+  which cuts nothing;
+- a **`for` post statement or an `if` initialiser**, where a block is not legal
+  Go. Form F puts the guard in a closure; Form E takes the initialiser
+  expression where the statement itself declares.
 
 ## Branch proof
 
@@ -379,13 +400,12 @@ The reason strings below are the exact identifiers `internal/discover` emits
 | `const-decl` | Constant expressions must stay constant (covers `iota`) |
 | `array-length` | `[N]T` lengths are not runtime-evaluated expressions |
 | `type-param` | Type parameter lists, constraints, and type arguments are not value code |
-| `case-label` | The label of a *tagged* switch case, compared against the tag where no guard form can stand, or of a *type* switch case, which names a type rather than a value. A **tagless** switch's labels are exactly `bool` and are mutated like any other condition |
 | `package-var-init` | Initialization order hazards; covers `//go:embed` vars; v1 limitation |
 | `cgo` | cgo packages are excluded wholesale |
 | `generated` | Matches `^// Code generated .* DO NOT EDIT\.$` |
 | `excluded` | The file matched a configured `mutation.exclude` pattern |
 | `label-or-goto` | A `goto`, whose target cannot be moved without jumping over a declaration or into a block, and whose removal would leave a function reaching its closing brace without returning |
-| `unnameable-decl-type` | No guard form can express the rewrite site; see **Guard site hints** above for the six cases |
+| `unnameable-decl-type` | No guard form can express the rewrite site; see **Guard site hints** above for the three shapes that reach it |
 
 One reason remains reserved in the run-report schema and emitted by nothing:
 `struct-tag`. Nothing will ever emit it — a tag is part of a *type*, so there is

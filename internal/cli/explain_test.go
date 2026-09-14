@@ -105,18 +105,13 @@ func TestListExplainPrintsAWholeFileSkipWithoutACoordinate(t *testing.T) {
 // for each constant a return could become, and two identical lines would read
 // as a counting bug instead.
 const wantSkipDetail = `
-suppressed sites (19)
+suppressed sites (17)
 discovery passed these over; they are never candidates, so they are in no score
 
 array-length 2 sites
   the expression is an array length, which is part of a type and is evaluated by the compiler rather than at run time
   suppressed/suppressed.go:33:28 lt-to-le
   suppressed/suppressed.go:33:33 true-to-false
-
-case-label 2 sites
-  the expression labels a tagged switch case, whose label is compared against the tag, or a type switch case, whose labels name types; a tagless switch's labels are ordinary boolean contexts and are mutated
-  suppressed/suppressed.go:89:9 add-to-sub
-  suppressed/suppressed.go:91:9 mul-to-div
 
 const-decl 4 sites
   the expression is inside a const declaration, where a constant has to stay constant and one edit can renumber a whole iota block
