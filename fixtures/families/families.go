@@ -39,4 +39,10 @@
 // has no condition to negate — or take a bound the tests never hand a
 // degenerate value to. [Steps] says which value that is; adding a zero row to
 // its test would re-arm the landmine.
+//
+// One loop needs more than that, and says so at length: a counted loop has
+// exactly one thing keeping it finite, and every edit to that one thing is a
+// loop that never ends. [Steps] is given a second bound so that no single edit
+// can remove both — which is the general answer, and the only one, for a
+// counted loop in a fixture that promises this.
 package families

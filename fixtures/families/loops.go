@@ -3,22 +3,40 @@
 
 package families
 
-// Steps counts the iterations a bounded loop makes.
+// Steps counts the iterations a bounded loop makes, up to a cap of its own.
 //
 // KILLED. It carries `negate-loop-condition`, which is also the reason
-// TestSteps must never pass a limit of zero or below: `!(i < limit)` is true at
-// `i == 0` when the limit is not positive, the body runs, and the post
-// statement drives `i` further from the bound on every pass — a loop that never
-// ends and a mutant reported as a timeout five times the baseline later. With a
+// TestSteps must never pass a limit of zero or below: `!(i < limit && steps <
+// 64)` is true at `i == 0` when the limit is not positive, the body runs, and
+// the post statement drives `i` further from the bound on every pass. With a
 // positive limit the same mutant skips the loop and settles instantly.
 //
-// The `i := 0` initialiser and the `i++` post statement are positions where a
-// block is not legal Go, so the candidates on them are recorded as
-// `unnameable-decl-type` skips instead of being catalogued. The `steps++` in
-// the body is an ordinary statement and carries both of its rules.
+// # Two bounds, because one is not enough any more
+//
+// The cap is not decoration and the loop is not contrived for its own sake. A
+// counted loop has exactly one thing keeping it finite, and *every* edit to
+// that one thing is a loop that never ends: reverse the step and `i` runs away
+// from the bound, delete the step and it never reaches it. Those two edits used
+// to be unreachable — a `for` post statement was a position no guard form could
+// express — and Form F reaches them now.
+//
+// So a single-bound counted loop cannot satisfy this package's promise that
+// every loop here terminates under every mutant of it. The promise is not
+// weakened; the loop is given a second bound instead. `steps < 64` is advanced
+// by the body and `i < limit` by the post statement, so no *single* edit can
+// remove both, and every mutant is applied alone. Reverse or delete the post
+// statement and the cap stops it; reverse or delete `steps++` and the count
+// stops it; turn the `&&` into `||` and both still advance.
+//
+// Nothing in this file is refused any more. The `i++` post statement was the
+// package's only pair of `unnameable-decl-type` skips and is now a pair of
+// mutants; the `i := 0` initialiser beside it never was one, because `0` is an
+// integer literal and no rule proposes an edit there. A refusal appearing here
+// would mean a guard form had begun swallowing sites -- which is what the
+// engine's integration suite asserts, against an empty list.
 func Steps(limit int) int {
 	steps := 0
-	for i := 0; i < limit; i++ {
+	for i := 0; i < limit && steps < 64; i++ {
 		steps++
 	}
 	return steps

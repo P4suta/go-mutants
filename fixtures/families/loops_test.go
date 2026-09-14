@@ -17,6 +17,15 @@ func TestSteps(t *testing.T) {
 	if got := Steps(3); got != 3 {
 		t.Errorf("Steps(3) = %d, want 3", got)
 	}
+	// The row that makes the cap a bound rather than an ornament. Under the
+	// limit it is never consulted, so `steps < 64` and `steps <= 64` agree and
+	// `&&` and `||` agree with them; over the limit they all part company. It
+	// is also the row that kills the post statement's two mutants, which the
+	// cap stops rather than the limit: a loop whose `i` never advances runs
+	// exactly sixty-four times.
+	if got := Steps(100); got != 64 {
+		t.Errorf("Steps(100) = %d, want the cap's 64", got)
+	}
 }
 
 func TestRemaining(t *testing.T) {

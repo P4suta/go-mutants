@@ -97,6 +97,14 @@ func (r *guardRenderer) guard(node *siteNode, s site, orig []byte) ([]byte, erro
 		err = r.selector(&b, node, s, orig, s.siteType)
 	case discover.GuardFormS:
 		err = r.chain(&b, node, s, orig)
+	case discover.GuardFormF:
+		// The closure and its call are written around exactly the chain Form S
+		// writes, which is what keeps the two forms one renderer: what differs
+		// is the slot the result is legal in, not the guard inside it.
+		b.WriteString("func() { ")
+		if err = r.chain(&b, node, s, orig); err == nil {
+			b.WriteString(" }()")
+		}
 	case discover.GuardFormD:
 		r.declarations(&b, s)
 		err = r.chain(&b, node, s, orig)

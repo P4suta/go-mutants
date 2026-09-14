@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 **Status: implemented.** The pure packages, the strict configuration decoder,
 the snapshot, the baseline execution layer, discovery for the whole
 eleven-family catalogue, guard-based instrumentation with its generated runtime
-in all four forms, compile validation, mutant execution, coverage-guided
+in all five forms, compile validation, mutant execution, coverage-guided
 selection, `RunReport v1` with its history store, the Stryker projection and
 the self-contained HTML report, the live TUI dashboard, `--changed`, `--shard`
 with `report merge`, `--explain`, the outcome cache, and the whole v1 command
@@ -269,6 +269,23 @@ executes.
   short-circuiting and the "exactly one operand is evaluated" property are Form
   C's, unchanged. Discovery carries the spelling of the type down with the
   hint, since the instrumenter never type-checks.
+
+- **Form F — simple-statement closure.** For a statement in a slot that holds
+  a *simple* statement rather than any statement — an `if`, `switch` or `for`
+  initialiser, or a `for` post statement:
+
+  ```go
+  func() { if __gm.M[7] { <mutated, flattened> } else { <original> } }()
+  ```
+
+  A call is an expression, an expression alone is an expression statement, and
+  an expression statement is simple, so this parses where a block does not. The
+  closure captures by reference, so an assignment or an `++` inside it works on
+  the variable the statement named. Its statement list is *narrower* than Form
+  S's: a `return` would return from the closure, a `defer` would fire when the
+  closure returns, and a `break`, `continue` or `goto` cannot cross a function
+  boundary — none of which can appear in one of these slots anyway, which is
+  why excluding them costs nothing.
 
 - **Form D — declaration rewrite.** For `:=` and `var` initializers:
 

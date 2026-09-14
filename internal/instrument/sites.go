@@ -224,6 +224,17 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 		}
 		return site{form: discover.GuardFormS, span: span}, nil
 
+	case discover.GuardFormF:
+		stmt, ok := x.stmts[span]
+		if !ok {
+			return site{}, x.notFound(m, srcPath, span, "no statement covers these bytes")
+		}
+		if !closurableStatement(stmt) {
+			return site{}, x.unsupported(m, srcPath, span,
+				fmt.Sprintf("a %T is not one of the statements Form F moves into a closure", stmt))
+		}
+		return site{form: discover.GuardFormF, span: span}, nil
+
 	case discover.GuardFormD:
 		stmt, ok := x.stmts[span]
 		if !ok {
@@ -279,6 +290,26 @@ func wrappableStatement(stmt ast.Stmt) bool {
 		// than a semantic one: it has to be the final statement of a case
 		// clause, which a statement inside an `if` block is not.
 		return s.Tok != token.FALLTHROUGH
+	default:
+		return false
+	}
+}
+
+// closurableStatement reports whether a statement may be moved into a closure
+// that is called where it stood.
+//
+// It is [wrappableStatement]'s list minus a `return`, a `defer`, a `go` and
+// every branch statement, and the reasons are written out in
+// [discover.FormFStatement] beside the list this one has to agree with. Asking
+// again here rather than trusting the hint is the same fail-closed rule the
+// Form S check follows, and TestBothPhasesAgreeOnWhatFormFCanClose is what
+// keeps the two lists one list.
+func closurableStatement(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt, *ast.SendStmt, *ast.IncDecStmt:
+		return true
+	case *ast.AssignStmt:
+		return s.Tok != token.DEFINE
 	default:
 		return false
 	}
