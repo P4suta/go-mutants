@@ -79,8 +79,9 @@ low = 60
   mutant still runs on every invocation and never uses a cached outcome:
   survival fulfills it, a kill or confirmed timeout is exit 2, and an ID that
   has disappeared from the catalog is stale and also exit 2. The rows are
-  decoded and checked for shape and uniqueness today; the checking of the
-  evidence arrives with mutant execution.
+  decoded and checked for shape and uniqueness here, and the evidence itself is
+  checked where the results are: `internal/report`'s `Evaluate` reads the ledger
+  against the run, and `internal/engine` turns what it finds into the verdict.
 
 ### `[test]`
 

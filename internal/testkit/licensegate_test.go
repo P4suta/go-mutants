@@ -123,7 +123,15 @@ func TestEveryFileIsLicensed(t *testing.T) {
 	}
 }
 
-// trackedFiles is every path git holds, module-relative and slash-separated.
+// trackedFiles is every path git holds or would hold: the index, plus the files
+// beside it that nothing ignores.
+//
+// `--others --exclude-standard` is the half that decides when this gate fires.
+// Without it the scan sees only what is committed, so a new file's licensing is
+// checked one commit *after* it lands -- which is exactly how this gate first
+// failed on a schema it had watched being added. With it, the question is asked
+// where it can still be answered cheaply: in the working tree, by the pre-commit
+// hook, before the file is in the history.
 //
 // GitBinary is called for its policy rather than for its answer: it is what
 // turns a missing git into a skip locally and into a failure under
@@ -134,7 +142,7 @@ func TestEveryFileIsLicensed(t *testing.T) {
 func trackedFiles(t *testing.T, root string) []string {
 	t.Helper()
 	_ = GitBinary(t)
-	out := Git(t, root, "ls-files")
+	out := Git(t, root, "ls-files", "--cached", "--others", "--exclude-standard")
 	var files []string
 	for _, line := range strings.Split(out, "\n") {
 		if line = strings.TrimSpace(line); line != "" {

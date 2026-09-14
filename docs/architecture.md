@@ -12,7 +12,8 @@ in all three forms, compile validation, mutant execution, coverage-guided
 selection, `RunReport v1` with its history store, the Stryker projection and
 the self-contained HTML report, the live TUI dashboard, `--changed`, `--shard`
 with `report merge`, `--explain`, the outcome cache, and the whole v1 command
-tree — `run`, `list`, `doctor`, `init`, `report`, and `cache` — all exist.
+tree — `run`, `list`, `doctor`, `init`, `report`, `cache`, `explain` and
+`trace` — all exist.
 Each section below carries its own status line; nothing here should be read as
 a description of working software until its status says so.
 
@@ -1008,18 +1009,19 @@ is the whole of what was asked for and a failure is an error.
 
 | Package | Responsibility | Status |
 | --- | --- | --- |
-| module root (`gomutants`) | Public frozen-workspace and reusable-session API | implemented |
+| `.` — the module root (`gomutants`) | Public frozen-workspace and reusable-session API | implemented |
 | `cmd/go-mutants` | Thin main | implemented |
-| `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | `run`, `list` |
+| `internal/cli` | cobra tree, flag validation, GOM errors, exit codes | implemented |
 | `internal/config` | Strict TOML decode and precedence merge | implemented |
 | `internal/mutation` | Pure: spans, stable IDs, rules, catalog, score | implemented |
 | `internal/interval` | Pure: interval forest | implemented |
 | `internal/glob` | Pure: `**` glob semantics, fuzzed | implemented |
-| `internal/discover` | `packages.Load`, types walk, candidates, skips with their sites | 2 families |
+| `internal/discover` | `packages.Load`, types walk, candidates, skips with their sites | implemented |
 | `internal/instrument` | Forms S/C/D, flattener, runtime codegen, splicer | implemented |
 | `internal/snapshot` | Manifest, digests, link rejection, cleanup | implemented |
 | `internal/tempowner` | Temporary-directory lock, marker, and orphan sweep | implemented |
-| `internal/gocmd` | `go build`, `go test -c`, `go tool covdata` | build, test |
+| `internal/gocmd` | Locates the toolchain and composes its argument vectors | implemented |
+| `internal/gitdiff` | Which lines of the workspace changed since a ref, for `--changed` | implemented |
 | `internal/runner` | One process, timed, supervised and recorded; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping per binary and per test | implemented |
 | `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
@@ -1030,13 +1032,20 @@ is the whole of what was asked for and a failure is an error.
 | `internal/testflag` | Shared Go test-binary flag recognition | implemented |
 | `internal/report` | RunReport, projections, HTML, history, merge | implemented |
 | `internal/engine` | Orchestration, typestate pipeline, events | implemented |
+| `internal/testlog` | Reads the action log a Go test binary writes under `-test.v=test2json` | implemented |
 | `internal/console` | Deterministic plain-line renderer | implemented |
 | `internal/tui` | The bubbletea dashboard | implemented |
-| `internal/schemas` | Embedded JSON Schemas, validation before writing | catalog, run report, doctor |
+| `internal/schemas` | Embedded JSON Schemas, validation before writing | implemented |
+| `internal/sourcegate` | Rules about this module's own source that need it type-checked to state; no code of its own | implemented |
+| `internal/testsupport` | The previous home of the shared test helpers, kept as a forwarder while its call sites move | test-only support |
 | `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks, the keep-on-failure policy and its dumps | test-only support |
 | `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording, a scripted `go` command | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
-| `vendor-assets` | The vendored viewer bundle and its digest check | implemented |
+| `internal/devtools/testcost` | Turns `go test -json` into a per-package cost and skip table | developer tool |
+| `trace` | Public: the event contract, the recorder, the reader, and the sink | implemented |
+| `schema` | Public: the JSON Schema documents go-mutants publishes, embedded | implemented |
+| `schema/stryker` | The vendored mutation-testing-report schema and its provenance | vendored |
+| `vendor-assets` | The vendored viewer bundle and its digest check | vendored |
 
 Pure packages have no filesystem or process access, which is what makes the
 golden ID vectors and property tests meaningful.
