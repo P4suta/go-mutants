@@ -520,6 +520,14 @@ a fact about the source and not about a run — and it records the profile
 separately from the selection patterns so that two catalogs from the same tree
 can be compared byte-for-byte as a determinism gate.
 
+Two optional properties carry what discovery could prove about a mutant before
+anything ran. `branch` is the body a narrowing edit's condition gates; see
+[the run report's](#branch) description of the same shape. `termination` is
+whether the mutant's loop still stops — `bounded`, `unbounded`, or absent, and
+absent is the common case and never a claim that a loop is fine. See
+[Termination proof](operators.md#termination-proof). Neither changes a verdict,
+and a consumer that ignores both reads the same catalogue.
+
 ## `go-mutants/doctor` v1
 
 Produced only by `doctor --json`, and validated against
