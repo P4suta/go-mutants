@@ -110,10 +110,15 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
 - [ ] `mise run test-integration` green on Windows, Linux, and macOS
 - [ ] CI green on the exact release commit: the `quality` job, all three legs
       of the `platform-tests` matrix, `artifacts`, and `dogfood`
-- [ ] All three legs of the nightly `fuzz` matrix green — `FuzzParse`
-      (`internal/config`), `FuzzMatch` (`internal/glob`), and `FuzzFlatten`
-      (`internal/instrument`), each searching for its whole `-fuzztime` — with
-      no `fuzz-crasher-*` artifact uploaded
+- [ ] Every leg of the nightly `fuzz` matrix green, each searching for its
+      whole `-fuzztime`, with no `fuzz-crasher-*` artifact uploaded. Three of
+      them rewrite or decide about this repository's own inputs — `FuzzParse`
+      (`internal/config`), `FuzzMatch` (`internal/glob`), `FuzzFlatten`
+      (`internal/instrument`) — and five are readers of bytes go-mutants does
+      not control: `FuzzParseTextfmt` (`internal/coverage`), `FuzzParseDiff`
+      (`internal/gitdiff`), `FuzzValidate` (`internal/schemas`),
+      `FuzzMutantIdentity` (`internal/mutation`) and `FuzzBuild`
+      (`internal/interval`)
 - [ ] The nightly `property` job green at its deepened budget
       (`RAPID_CHECKS=2000`, `-count=5`, so each rerun draws a fresh seed), with
       no `rapid-failures` artifact uploaded
