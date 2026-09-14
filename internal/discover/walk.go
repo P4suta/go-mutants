@@ -388,6 +388,8 @@ func (s *fileScan) walk(file *ast.File) error {
 			failure = s.assignStmt(n)
 		case *ast.IncDecStmt:
 			failure = s.incDecStmt(n)
+		case *ast.BranchStmt:
+			failure = s.branchStmt(n)
 		case *ast.ExprStmt:
 			failure = s.exprStmt(n)
 		}
@@ -519,6 +521,113 @@ func (s *fileScan) negateCondition(cond ast.Expr, name string) error {
 		return nil
 	}
 	return s.emitNode(rule, cond, "!("+original+")")
+}
+
+// branchStmt is the labeled-branch family and the one refusal beside it.
+//
+// `break L` and `continue L` become `break` and `continue`. That is a real
+// question about a program: a labelled branch says "leave *that* construct",
+// and dropping the label says "leave the nearest one", which is a different
+// program wherever the two differ -- and wherever they do not, this refuses.
+//
+// The refusal is structural rather than statistical. If the label names the
+// innermost construct the bare form would bind to, the two statements are the
+// same program, token for token, and there is nothing to measure. What makes
+// that worth computing is that the answer differs between the two rules: a
+// `switch` inside a labelled `for` is breakable and not continuable, so
+// `break L` there is a real mutant -- the bare form leaves the switch -- while
+// `continue L` at the same position is equivalent.
+//
+// The unused-label trap disarms itself. An unused label does not compile, so
+// removing a label's only reference would break the tree; Form S keeps the
+// original bytes in its `else` arm, so `L` goes on being referenced whether or
+// not the mutant is active.
+//
+// `goto` is recorded as [SkipLabelOrGoto] rather than mutated, and
+// `fallthrough` is neither: see that constant for the first, and
+// [FormSStatement] for why the second is not even a site.
+func (s *fileScan) branchStmt(n *ast.BranchStmt) error {
+	switch n.Tok {
+	case token.GOTO:
+		s.recordAt(s.rel, SkipLabelOrGoto, "", n.Pos())
+		return nil
+	case token.BREAK, token.CONTINUE:
+	default:
+		return nil
+	}
+	if n.Label == nil {
+		// A bare branch has no label to drop.
+		return nil
+	}
+	name := ruleDropBreakLabel
+	if n.Tok == token.CONTINUE {
+		name = ruleDropContinueLabel
+	}
+	rule, ok := s.matchers.rule(name)
+	if !ok {
+		return nil
+	}
+	if s.labelNamesTheNearestTarget(n) {
+		// The mutation and the source are the same program. Silent, for
+		// [fileScan.replaceReturn]'s reason.
+		return nil
+	}
+	return s.emitNode(rule, n, n.Tok.String())
+}
+
+// labelNamesTheNearestTarget reports whether dropping the label would leave the
+// branch bound to the same construct it is bound to now.
+//
+// The walk is outward from the branch to the first construct its *bare* form
+// would bind to -- a `for` or `range` for `continue`, and those plus `switch`,
+// a type switch and `select` for `break` -- and the question is whether that
+// construct is the one the label labels. The comparison is by object rather
+// than by name: a label may be shadowed in an inner function literal, and two
+// labels spelled the same are two labels.
+//
+// A branch this phase cannot resolve answers true, which refuses the candidate.
+// That is the fail-closed direction: an unresolvable label is one this code
+// does not understand, and emitting a mutant on the strength of not
+// understanding it is how an equivalent mutant becomes a survivor somebody has
+// to argue about.
+func (s *fileScan) labelNamesTheNearestTarget(n *ast.BranchStmt) bool {
+	if s.guard == nil || s.info == nil {
+		return true
+	}
+	target, ok := s.info.Uses[n.Label].(*types.Label)
+	if !ok {
+		return true
+	}
+	for node := ast.Node(n); node != nil; node = s.guard.parent[node] {
+		if !s.bindsBareBranch(node, n.Tok) {
+			continue
+		}
+		labelled, ok := s.guard.parent[node].(*ast.LabeledStmt)
+		if !ok {
+			return false
+		}
+		return s.info.Defs[labelled.Label] == target
+	}
+	// No enclosing construct at all, which the type checker would already have
+	// refused. Fail closed.
+	return true
+}
+
+// bindsBareBranch reports whether a node is a construct an unlabelled branch of
+// the given kind binds to.
+//
+// The two sets differ by exactly the three constructs that are breakable and
+// not continuable, and that difference is the whole reason this family has two
+// rules rather than one.
+func (s *fileScan) bindsBareBranch(node ast.Node, tok token.Token) bool {
+	switch node.(type) {
+	case *ast.ForStmt, *ast.RangeStmt:
+		return true
+	case *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
+		return tok == token.BREAK
+	default:
+		return false
+	}
 }
 
 // settleCondition replaces a whole condition with a constant.

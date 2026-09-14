@@ -75,7 +75,7 @@ func Tiers() []Tier { return []Tier{TierBalanced, TierStrong, TierAll} }
 // edit.
 type Family string
 
-// The twelve v1 operator families, in canonical table order.
+// The fourteen v1 operator families, in canonical table order.
 const (
 	FamilyBooleanLiteral    Family = "boolean-literal"
 	FamilyConditionNegation Family = "condition-negation"
@@ -89,6 +89,7 @@ const (
 	FamilyBranchReplacement Family = "branch-replacement"
 	FamilyBitwise           Family = "bitwise"
 	FamilyArithmeticAssign  Family = "arithmetic-assignment"
+	FamilyLabeledBranch     Family = "labeled-branch"
 	FamilyStatementDeletion Family = "statement-deletion"
 )
 
@@ -143,8 +144,8 @@ func (r Rule) Validate() error {
 // internal/mutation/docs_test.go keeps docs/operators.md equal to them in both
 // directions, so neither number can drift without the other.
 const (
-	CanonicalFamilyCount = 13
-	CanonicalRuleCount   = 47
+	CanonicalFamilyCount = 14
+	CanonicalRuleCount   = 49
 )
 
 // familyDef is one row of the canonical operator table.
@@ -237,6 +238,16 @@ var canonicalTable = []familyDef{
 		"incr-to-decr",
 		"decr-to-incr",
 	}},
+	// Before statement-deletion, which is the table's ordering principle rather
+	// than an accident: dropping a label edits one token of a statement and
+	// deleting a statement removes all of them, so this is the more local edit
+	// of the two. Nothing ties with either, so the position buys no
+	// deduplication guarantee -- it buys the table staying readable in the one
+	// direction it is ordered in.
+	{FamilyLabeledBranch, TierAll, []string{
+		"drop-break-label",
+		"drop-continue-label",
+	}},
 	{FamilyStatementDeletion, TierAll, []string{
 		"delete-call-statement",
 		"delete-assignment",
@@ -276,8 +287,8 @@ type Registry struct {
 // every accessor returns copies of its slices.
 var canonical = mustRegistry(canonicalTable)
 
-// CanonicalRegistry returns the frozen v1 operator registry: 13 families and
-// 47 rules in the order of the design plan's table.
+// CanonicalRegistry returns the frozen v1 operator registry: 14 families and
+// 49 rules in the order of the design plan's table.
 func CanonicalRegistry() *Registry { return canonical }
 
 // CanonicalRules returns the v1 rules in table order.

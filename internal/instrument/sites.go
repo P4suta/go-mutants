@@ -243,12 +243,25 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 // rather than block-scoped: a `defer` inside the guard's block still runs when
 // the enclosing *function* returns, and a `go` still starts its goroutine, so
 // the block the guard adds changes nothing about when either fires.
+//
+// This list and [discover.FormSStatement] are one fact in two places, and the
+// second one is the fail-closed one: a hint naming a statement this package
+// cannot wrap has to be refused here rather than trusted. Two implementations
+// can disagree, so TestBothPhasesAgreeOnWhatFormSCanWrap drives every statement
+// kind Go has through both and requires the same answer.
 func wrappableStatement(stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
 		return true
 	case *ast.AssignStmt:
 		return s.Tok != token.DEFINE
+	case *ast.BranchStmt:
+		// A branch binds to the nearest enclosing construct of its own kind and
+		// an `if` is not one, so the block the guard adds changes nothing about
+		// where it goes. `fallthrough` is refused for a syntactic reason rather
+		// than a semantic one: it has to be the final statement of a case
+		// clause, which a statement inside an `if` block is not.
+		return s.Tok != token.FALLTHROUGH
 	default:
 		return false
 	}

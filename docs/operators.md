@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Mutation operators
 
-**Status: every family is executed.** All thirteen families and all forty-seven
+**Status: every family is executed.** All fourteen families and all forty-nine
 rules are found by `go-mutants list` with stable IDs, coordinates, and the
 guard-site hint the instrumentation phase consumes, and `go-mutants run`
 instruments, compile-validates, executes, and scores every one of them through
@@ -41,11 +41,12 @@ of the selected profile.
 | `branch-replacement` | `condition-to-true`, `condition-to-false`, `loop-condition-to-false` | strong |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl`, `andnot-to-band` | strong |
 | `arithmetic-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `incr-to-decr`, `decr-to-incr` | strong |
+| `labeled-branch` | `drop-break-label`, `drop-continue-label` | all |
 | `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-incdec` | all |
 
-That is 13 families and 47 enumerated rules. The design plan's headline said
+That is 14 families and 49 enumerated rules. The design plan's headline said
 43 while its own table listed 42; the registry has settled it in favour of the
-table. `mutation.CanonicalRuleCount` is 47 and the canonical registry tests
+table. `mutation.CanonicalRuleCount` is 49 and the canonical registry tests
 assert it, so the count cannot drift again without a test failing.
 
 ## Type conditions
@@ -281,9 +282,10 @@ defensive check that cannot actually fail survives `condition-to-false` in every
 suite, and a test that kills `condition-to-true` almost always kills
 `negate-condition` at the same span, so in `balanced` the family would mostly
 inflate the denominator with near duplicates of a rule already there. `all`
-adds
-`statement-deletion`, including `append` removal, which is the classic source
-of equivalent mutants in logging and metrics code.
+adds `labeled-branch`, whose survivors are the ones hardest to argue about — a
+label that changes nothing observable is equivalent in a way no analysis can
+settle — and `statement-deletion`, including `append` removal, which is the
+classic source of equivalent mutants in logging and metrics code.
 
 ## Deduplication
 
@@ -374,9 +376,14 @@ The reason strings below are the exact identifiers `internal/discover` emits
 | `cgo` | cgo packages are excluded wholesale |
 | `generated` | Matches `^// Code generated .* DO NOT EDIT\.$` |
 | `excluded` | The file matched a configured `mutation.exclude` pattern |
+| `label-or-goto` | A `goto`, whose target cannot be moved without jumping over a declaration or into a block, and whose removal would leave a function reaching its closing brace without returning |
 | `unnameable-decl-type` | No guard form can express the rewrite site; see **Guard site hints** above for the six cases |
 
-Reserved reasons that later phases emit: `struct-tag` and `label-or-goto`.
+One reason remains reserved in the run-report schema and emitted by nothing:
+`struct-tag`. Nothing will ever emit it — a tag is part of a *type*, so there is
+no run-time value for a guard to select between. See
+[Limitations](limitations.md) for the argument.
+
 `_test.go` files are built and run but never mutated; that is inherent, not a
 recorded skip, and neither is a `panic` call the deletion family declines nor a
 return value already spelled as its own replacement.

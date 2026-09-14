@@ -317,6 +317,39 @@ var wantCandidates = []string{
 	"generics/generics.go add-to-sub +->-",
 	"hidden/hidden.go return-nil &counter{n: n}->nil",
 	"hidden/hidden.go return-zero-numeric c.n->0",
+	"labels/labels.go negate-condition v == want->!(v == want)",
+	"labels/labels.go condition-to-true v == want->true",
+	"labels/labels.go condition-to-false v == want->false",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go drop-break-label break outer->break",
+	"labels/labels.go false-to-true false->true",
+	"labels/labels.go return-true false->true",
+	"labels/labels.go negate-condition v == bad->!(v == bad)",
+	"labels/labels.go condition-to-true v == bad->true",
+	"labels/labels.go condition-to-false v == bad->false",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go drop-continue-label continue outer->continue",
+	"labels/labels.go add-assign-to-sub-assign +=->-=",
+	"labels/labels.go return-zero-numeric total->0",
+	"labels/labels.go lt-to-le <-><=",
+	"labels/labels.go drop-break-label break loop->break",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go add-assign-to-sub-assign +=->-=",
+	"labels/labels.go return-zero-numeric total->0",
+	"labels/labels.go negate-condition v == want->!(v == want)",
+	"labels/labels.go condition-to-true v == want->true",
+	"labels/labels.go condition-to-false v == want->false",
+	"labels/labels.go eq-to-neq ==->!=",
+	"labels/labels.go false-to-true false->true",
+	"labels/labels.go return-true false->true",
+	"labels/labels.go delete-incdec n++->",
+	"labels/labels.go incr-to-decr ++->--",
+	"labels/labels.go negate-condition n < attempts->!(n < attempts)",
+	"labels/labels.go condition-to-true n < attempts->true",
+	"labels/labels.go condition-to-false n < attempts->false",
+	"labels/labels.go lt-to-le <-><=",
+	"labels/labels.go return-zero-numeric n->0",
+	"labels/labels.go return-empty-string out->\"\"",
 	"legacy/legacy.go return-true a == b->true",
 	"legacy/legacy.go return-false a == b->false",
 	"legacy/legacy.go eq-to-neq ==->!=",
@@ -431,6 +464,7 @@ var wantSkips = []string{
 	// One for the generic function's constraint, one for the generic type's,
 	// one for the single explicit type argument, and two for the list form.
 	"generics/generics.go type-param 5",
+	"labels/labels.go label-or-goto 1",
 	// The condition of a named boolean type: negatable Go, and no guard form.
 	"negate/negate.go unnameable-decl-type 3",
 	"suppressed/suppressed.go array-length 2",
@@ -1002,12 +1036,15 @@ func TestDiscoverAppliesOnlyTheSelectedRules(t *testing.T) {
 			t.Errorf("unselected rule produced a candidate: %s at %s", c.Rule.Name, c.Path)
 		}
 	}
-	// Six, and two of them are the tagless switch's own labels: `a == b` and
+	// Ten, and two of them are the tagless switch's own labels: `a == b` and
 	// the `==` of `ok == false`. A label of a switch with no tag is exactly
 	// `bool`, so it is an ordinary boolean context rather than a suppressed
-	// one -- see the corpus module's Switch for the three shapes.
-	if len(result.Candidates) != 6 {
-		t.Errorf("got %d eq-to-neq candidates, want 6: %v", len(result.Candidates), summarize(result.Candidates))
+	// one -- see the corpus module's Switch for the three shapes. Four more are
+	// in the labels package, whose functions each compare a value before
+	// branching; they are incidental to what that package is for, which is
+	// what a whole-module count of one rule looks like.
+	if len(result.Candidates) != 10 {
+		t.Errorf("got %d eq-to-neq candidates, want 10: %v", len(result.Candidates), summarize(result.Candidates))
 	}
 }
 

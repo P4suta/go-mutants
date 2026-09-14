@@ -9,7 +9,7 @@
 // against a fixture built for it: the baseline gate, compile validation,
 // coverage narrowing, the interruption path. This file proves the operators
 // themselves. `fixtures/families` holds at least one live candidate for each of
-// the forty-seven rules the frozen registry names, and the run here has to
+// the forty-nine rules the frozen registry names, and the run here has to
 // discover, instrument, compile, execute and score every one of them.
 //
 // It lives in its own file rather than at the end of integration_test.go
@@ -48,8 +48,9 @@ type familyTally struct{ killed, survived int }
 //
 // It is aggregated by family rather than written out mutant by mutant because
 // what this fixture exists to prove is a statement about families: that every
-// one of the thirteen reaches execution, and that each one both kills and —
-// where the fixture leaves a gap on purpose — survives. Ninety-two per-mutant rows
+// one of the fourteen reaches execution, and that each one both kills and —
+// where the fixture leaves a gap on purpose — survives. A hundred and seven
+// per-mutant rows
 // would say the same thing in a form nobody reads, and would turn every
 // reformatting of the fixture into a wall of diff. The survivors are then named
 // individually below, because that is the half a count cannot pin.
@@ -62,18 +63,19 @@ type familyTally struct{ killed, survived int }
 // are asserted separately, as coverage's own finding.
 var familiesTable = map[string]familyTally{
 	string(mutation.FamilyBooleanLiteral):    {killed: 2, survived: 2},
-	string(mutation.FamilyConditionNegation): {killed: 6, survived: 1},
+	string(mutation.FamilyConditionNegation): {killed: 8, survived: 1},
 	string(mutation.FamilyBooleanConnective): {killed: 2, survived: 0},
-	string(mutation.FamilyComparison):        {killed: 8, survived: 0},
+	string(mutation.FamilyComparison):        {killed: 10, survived: 0},
 	string(mutation.FamilyIntegerArithmetic): {killed: 9, survived: 2},
 	string(mutation.FamilyFloatArithmetic):   {killed: 4, survived: 0},
-	string(mutation.FamilyReturnReplacement): {killed: 16, survived: 3},
+	string(mutation.FamilyReturnReplacement): {killed: 18, survived: 3},
 	string(mutation.FamilyErrorSwallowing):   {killed: 4, survived: 0},
 	string(mutation.FamilyNeutralValue):      {killed: 2, survived: 1},
-	string(mutation.FamilyBranchReplacement): {killed: 8, survived: 2},
+	string(mutation.FamilyBranchReplacement): {killed: 12, survived: 2},
 	string(mutation.FamilyBitwise):           {killed: 6, survived: 2},
-	string(mutation.FamilyArithmeticAssign):  {killed: 4, survived: 1},
-	string(mutation.FamilyStatementDeletion): {killed: 5, survived: 0},
+	string(mutation.FamilyArithmeticAssign):  {killed: 6, survived: 1},
+	string(mutation.FamilyLabeledBranch):     {killed: 2, survived: 0},
+	string(mutation.FamilyStatementDeletion): {killed: 6, survived: 0},
 }
 
 // The families fixture's totals, stated once so that the assertions below read
@@ -81,13 +83,13 @@ var familiesTable = map[string]familyTally{
 // happened to produce. familiesBalanced and familiesStrong are the same
 // catalogue seen from the two narrower tiers.
 const (
-	familiesMutants   = 92
-	familiesKilled    = 76
+	familiesMutants   = 107
+	familiesKilled    = 91
 	familiesSurvived  = 16
 	familiesUncovered = 2
 
-	familiesBalanced = 61
-	familiesStrong   = 87
+	familiesBalanced = 67
+	familiesStrong   = 99
 )
 
 // TestFamiliesRunReachesEveryOperatorFamily is the catalogue end to end.
@@ -103,7 +105,7 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	opts.Config.Mutation.Profile = mutation.TierAll
 	// Four workers rather than the harness's one. Everything asserted here is a
 	// tally or a set, so the event *order* is not part of the claim — and this
-	// fixture starts ninety processes, which is where the time goes.
+	// fixture starts a hundred and five processes, which is where the time goes.
 	opts.Config.Execution.Jobs = 4
 
 	outcome, events, err := collect(t, t.Context(), opts)
@@ -121,7 +123,7 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	// bool selector, the statement guard, and the declaration rewrite — composes
 	// a compilable program over every family in this fixture, and a rejection
 	// here would mean one of the three stopped being able to express one of the
-	// thirteen. fixtures/rejectable is where a rejection is the expected answer.
+	// fourteen. fixtures/rejectable is where a rejection is the expected answer.
 	if len(outcome.Report.Rejected) != 0 {
 		t.Errorf("rejected = %+v, want none: every family in this fixture instruments", outcome.Report.Rejected)
 	}
@@ -240,11 +242,11 @@ func assertFamiliesSurvivors(t *testing.T, events []Event) {
 		"survived bits.go:44 return-zero-numeric",
 		"survived bits.go:44 shr-to-shl",
 		"survived bits.go:44 xor-to-band",
-		"survived booleans.go:54 condition-to-false",
-		"survived booleans.go:54 condition-to-true",
-		"survived booleans.go:54 negate-condition",
-		"survived booleans.go:55 false-to-true",
-		"survived booleans.go:57 true-to-false",
+		"survived booleans.go:60 condition-to-false",
+		"survived booleans.go:60 condition-to-true",
+		"survived booleans.go:60 negate-condition",
+		"survived booleans.go:61 false-to-true",
+		"survived booleans.go:63 true-to-false",
 		"survived loops.go:67 add-assign-to-sub-assign",
 		"survived loops.go:69 return-zero-numeric",
 		"survived numbers.go:35 add-to-sub",
@@ -450,7 +452,10 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 	if got := addedFamilies(balanced, strong); !slices.Equal(got, wantStrongAdds) {
 		t.Errorf("strong adds the families %v to balanced, want %v", got, wantStrongAdds)
 	}
-	wantAllAdds := []string{string(mutation.FamilyStatementDeletion)}
+	wantAllAdds := []string{
+		string(mutation.FamilyLabeledBranch),
+		string(mutation.FamilyStatementDeletion),
+	}
 	if got := addedFamilies(strong, all); !slices.Equal(got, wantAllAdds) {
 		t.Errorf("all adds the families %v to strong, want %v", got, wantAllAdds)
 	}

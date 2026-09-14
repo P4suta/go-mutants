@@ -14,6 +14,38 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A `break L` can lose its label, and so can a `continue L`.** The new
+  `labeled-branch` family holds `drop-break-label` and `drop-continue-label`. A
+  labelled branch says "leave *that* construct"; dropping the label says "leave
+  the nearest one", which is a different program wherever the two differ.
+  Wherever they do not, the mutant is equivalent token for token, so the family
+  carries a structural gate: if the label names the construct the bare form
+  would bind to anyway, no candidate is produced and nothing is recorded. The
+  gate is why there are two rules rather than one — a `switch` is breakable and
+  not continuable, so inside a `switch` inside a labelled `for`, `break L` is a
+  real mutant and `continue L` at the same position is not.
+  The trap that makes this family look impossible disarms itself: an unused
+  label does not compile, and the statement guard keeps the original bytes in
+  its `else` arm, so the label goes on being referenced whether or not the
+  mutant is active. Both phases' lists of what that guard can wrap grew
+  `*ast.BranchStmt` — `fallthrough` excepted, because it has to be the final
+  statement of a case clause — and a new test drives every statement kind Go has
+  through both lists and requires the same answer. That fact was held in two
+  places with no connection between them; widening one alone fails every run at
+  a site conflict, and widening the other alone is silent.
+  Tier `all`, beside `statement-deletion`, for the same reason.
+- **`label-or-goto` is a reason a build emits.** It has been in the run-report
+  schema's enumeration since v1 with nothing producing it, which is a string a
+  user could meet in a document and find nothing about. It now names a `goto`,
+  and says why: retargeting one is not stable, because Go forbids jumping over a
+  declaration or into a block, and removing one would leave a function reaching
+  its closing brace without returning — the argument the deletion family already
+  makes about `panic`. A `fallthrough` is neither mutated nor recorded, and the
+  difference is the point: a `goto` could be edited and is declined, while a
+  `fallthrough` is not a site at all.
+  `struct-tag` is now the only reserved and unemitted reason, and it will stay
+  that way: a tag is part of a *type*, so there is no run-time value for a guard
+  to select between.
 - **A guard that always fires, and one that never does, are now mutants.** The
   new `branch-replacement` family settles a whole condition at a constant:
   `condition-to-true` and `condition-to-false` on an `if`, and
