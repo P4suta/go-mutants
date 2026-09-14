@@ -254,6 +254,7 @@ var flagNames = map[string]string{
 	"test.timeout":       "--timeout",
 	"test.memory":        "--memory",
 	"execution.jobs":     "--jobs",
+	"execution.isolate":  "--isolate",
 	"cache.mode":         "--cache",
 	"policy.strict":      "--strict",
 	"report.formats":     "--report",

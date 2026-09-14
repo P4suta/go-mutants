@@ -251,6 +251,13 @@ narrowing = "` + c.Test.Narrowing.String() + `"
 # chore that should leave the machine usable. Raise it on a CI runner that has
 # nothing else to do.
 # jobs = 4
+# Off, and off is right for almost every project: a copy of the instrumented
+# tree per worker costs its size times the worker count on disk, and a walk of
+# that copy after every mutant. Turn it on when your tests write into the
+# package directory they run in — a golden file they update, a database they
+# create in testdata — which is the one thing a run cannot otherwise measure at
+# all. The drift gate will have told you, by name, which files.
+# isolate = true
 
 [cache]
 # auto reuses outcomes proven by a run whose tool version, toolchain, code,

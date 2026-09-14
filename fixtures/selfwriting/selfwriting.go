@@ -23,3 +23,15 @@ func Trim(n int) int {
 	}
 	return n
 }
+
+// Nudge is the fixture's survivor, and it is what makes isolation checkable.
+//
+// [TestNudge] calls it and asserts nothing, so every mutant of it lives — in a
+// binary that is otherwise passing. That is the point: under `--isolate` these
+// mutants survive, and without the copy being put back between them they are
+// *killed*, because the witness check at the top of the suite fails for every
+// mutant after the first. A survivor that turns into a kill is a signal no
+// count of files can give.
+func Nudge(n int) int {
+	return n + 1
+}

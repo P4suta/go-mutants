@@ -802,7 +802,7 @@ option enters it, which is why a traced and an untraced run share a cache.
 
 | Field | Meaning |
 | --- | --- |
-| `kind` | `workspace` or `probe` |
+| `kind` | `workspace`, `probe`, or `worker` |
 | `source` | the tree that was copied |
 | `dir` | where the copy is |
 | `stable` | whether the copy carried the source tree's modification times with it |
@@ -810,6 +810,13 @@ option enters it, which is why a traced and an untraced run share a cache.
 | `digest` | the frozen workspace digest |
 | `duration_ms` | how long freezing took |
 | `error` | why it failed, if it did |
+
+A `worker` is the copy of the *instrumented* tree one worker of an `--isolate`
+run owns. There is one per worker, its `source` is the run's own snapshot rather
+than the user's tree, and it is put back between mutants — which the run reports
+as a `worker-restored` note carrying how many files had to be, not as a warning:
+for the suites this feature exists for, a drift after every mutant is the
+ordinary case rather than a surprise.
 
 `stable` is what decides whether the Go build cache can be reused across
 snapshots, so a run that is unexpectedly slow is one `stable: false` away from

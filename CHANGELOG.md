@@ -14,6 +14,46 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`--isolate` gives every worker its own copy of the tree.** A project whose
+  tests legitimately write into the package directory they run in — a golden
+  file they update, a database they create in `testdata`, a test that changes
+  directory and writes relative — could not run go-mutants at all: the drift
+  gate stopped the run, correctly, because every mutant after the first would
+  have been measured against a tree the one before it edited. `--isolate`, or
+  `execution.isolate`, is the way through, and the gate's message now names it.
+  Each worker's copy is a snapshot in its own right, made *of* the instrumented
+  tree, so asking it what drifted is asking exactly "what did the tests write",
+  with no reconciliation and no second digest machinery. It is put back after
+  every **pass**, not every mutant, and the distinction is the one thing here
+  that is easy to get wrong: a survivor is measured twice — once against its
+  covering tests and once against the whole binary, which is ADR 0010's
+  confirmation — so a restore that only happened between mutants would leave
+  the second measuring a tree the first had edited.
+  An isolating run also restores the *shared* snapshot after the baseline. The
+  baseline runs the suite there before anything is instrumented, so without
+  that its own writes would be copied into every worker and reported by the
+  drift gate — the refusal the flag exists to get past. The gate then keeps its
+  full meaning rather than being skipped: nothing executes in the shared tree,
+  so what it reports is go-mutants having changed something it did not mean to.
+  What it costs is the tree's size times the worker count on disk and a walk of
+  one copy after every pass; the default is off. What it buys, beyond running
+  at all, is a verdict that is about the mutation: in the corpus fixture written
+  for this, one mutant is reported as killed without the flag and survived with
+  it, and the survival is the true answer.
+  `Snapshot.Restore` is the new machinery, and it verifies what it copies: a
+  restored file whose digest disagrees with the manifest means the tree it was
+  copied *from* has changed, which is `GOM7012` rather than a silent success.
+  The recording gains a `worker` snapshot kind and a `worker-restored` note
+  carrying how many files had to be put back — a note rather than a warning,
+  because for the suites this exists for a drift after every mutant is the
+  ordinary case.
+- **A bare `ExecuteContext(ctx, nil, …)` no longer reads the process's own
+  command line.** cobra falls back to `os.Args[1:]` when `SetArgs` has never
+  been called, and a nil slice is indistinguishable from not calling it — so an
+  embedded command line picked up whatever the surrounding program was invoked
+  with. For a test binary that is its own flags, which is how `mise run
+  golden-update` came to fail with `unknown shorthand flag: 'u' in -update`
+  from a command nobody had passed a flag to.
 - **A tagged `switch`'s case labels are mutants.** They used to be suppressed
   before the guard chooser was ever consulted, which made `case-label` a
   blanket rather than a verdict: nothing had decided they could not be

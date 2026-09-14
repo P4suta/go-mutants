@@ -252,6 +252,7 @@ const (
 const (
 	SnapshotKindWorkspace = "workspace"
 	SnapshotKindProbe     = "probe"
+	SnapshotKindWorker    = "worker"
 )
 
 // The files and directories a run reports having written or kept.
@@ -284,6 +285,12 @@ const (
 	NoteDiagnostics = "diagnostics"
 	// NoteDiagnosticsUnavailable is a bundle it could not write.
 	NoteDiagnosticsUnavailable = "diagnostics-unavailable"
+	// NoteWorkerRestored is a worker copy of the instrumented tree that was
+	// put back after a mutant, with how many files had to be. It is the sign
+	// that a suite writes into the package directory it runs in, which is what
+	// `--isolate` exists for, so it is a note rather than a warning: a line per
+	// mutant would be a line per mutant.
+	NoteWorkerRestored = "worker-restored"
 	// NoteTraceGC is what collection removed from the trace root.
 	NoteTraceGC = "trace-gc"
 	// NoteCoverageUnavailable is why a coverage-guided run had no coverage,

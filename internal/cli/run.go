@@ -130,6 +130,7 @@ type runOptions struct {
 	trace     string
 	keepTemp  string
 	jobs      int
+	isolate   bool
 	timeout   time.Duration
 	memory    string
 	verbose   int
@@ -298,6 +299,8 @@ func newRunCommandWith(o *runOptions) *cobra.Command {
 		"mutants to execute concurrently (default: execution.jobs, or min(CPUs, 8))")
 	flags.DurationVar(&o.timeout, "timeout", 0,
 		"per-mutant timeout; unset derives max(10s, slowest baseline x 5)")
+	flags.BoolVar(&o.isolate, "isolate", false,
+		"give every worker its own copy of the instrumented tree (default: execution.isolate)")
 	// A string rather than a typed flag, because pflag has a duration type and
 	// no byte-size one. The value goes through config.ParseMemory, so `2GB` is
 	// refused with the same sentence here and in the file, and the diagnostic
@@ -631,6 +634,7 @@ func runOverlay(cmd *cobra.Command, o *runOptions) (config.Overlay, error) {
 		Exclude:   config.When(flags.Changed("exclude"), o.exclude),
 		Operators: config.When(flags.Changed("operator"), o.operators),
 		Jobs:      config.When(flags.Changed("jobs"), o.jobs),
+		Isolate:   config.When(flags.Changed("isolate"), o.isolate),
 		Timeout:   config.When(flags.Changed("timeout"), o.timeout),
 	}
 	// The two spellings are mutually exclusive, so at most one is Changed. Each

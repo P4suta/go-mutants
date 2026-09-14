@@ -34,6 +34,13 @@ import (
 func runWith(t *testing.T, args ...string) error {
 	t.Helper()
 	cmd := newRunCommand()
+	if args == nil {
+		// Explicitly empty rather than nil: cobra reads the process's own argv
+		// when SetArgs has never been called, and nil is indistinguishable
+		// from that. Under `go test -update` that argv holds a flag no
+		// go-mutants command has.
+		args = []string{}
+	}
 	cmd.SetArgs(args)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -290,6 +297,13 @@ func overlayFrom(t *testing.T, args []string) config.Overlay {
 		o.report, _ = flags.GetString("report")
 		layer, fail = runOverlay(c, o)
 		return fail
+	}
+	if args == nil {
+		// Explicitly empty rather than nil: cobra reads the process's own argv
+		// when SetArgs has never been called, and nil is indistinguishable
+		// from that. Under `go test -update` that argv holds a flag no
+		// go-mutants command has.
+		args = []string{}
 	}
 	cmd.SetArgs(args)
 	cmd.SetOut(&bytes.Buffer{})

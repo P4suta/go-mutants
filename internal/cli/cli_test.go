@@ -296,7 +296,10 @@ func TestOverlayCarriesOnlyChangedFlags(t *testing.T) {
 		}
 		return nil
 	}
-	cmd.SetArgs(nil)
+	// Explicitly empty rather than nil: cobra reads the process's own argv when
+	// SetArgs has never been called, and nil is indistinguishable from that.
+	// Under `go test -update` that argv holds a flag no go-mutants command has.
+	cmd.SetArgs([]string{})
 	cmd.SetOut(&bytes.Buffer{})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -481,5 +484,31 @@ func TestInterpretDistinguishesTheSignals(t *testing.T) {
 	other := &engine.Error{Code: engine.CodeBaselineTestFailed, Message: "failed"}
 	if got := ExitCode(interpret(other, syscall.SIGTERM)); got != mutation.ExitInfrastructure {
 		t.Errorf("an ordinary failure with a signal recorded: exit = %d, want 2", got)
+	}
+}
+
+// TestNoArgumentsMeansNoArgumentsRatherThanTheProcessesOwn pins the one place
+// an embedded command line can pick up somebody else's.
+//
+// cobra reads os.Args[1:] when SetArgs has never been called, and a nil slice
+// is indistinguishable from not calling it. So `ExecuteContext(ctx, nil, …)`
+// used to run against whatever the surrounding program was invoked with — and
+// for a test binary that is its own flags, which is how `mise run
+// golden-update` came to fail with `unknown shorthand flag: 'u' in -update`
+// from a command nobody had passed a flag to.
+//
+// The flag is chosen to be one no go-mutants command has and one `go test`
+// does, so the test fails in exactly the way the defect did.
+func TestNoArgumentsMeansNoArgumentsRatherThanTheProcessesOwn(t *testing.T) {
+	previous := os.Args
+	t.Cleanup(func() { os.Args = previous })
+	os.Args = []string{"go-mutants", "-update", "--this-flag-does-not-exist"}
+
+	var out, errOut bytes.Buffer
+	if code := ExecuteContext(t.Context(), nil, &out, &errOut); code != int(mutation.ExitOK) {
+		t.Errorf("exit = %d, want 0; stderr = %q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Usage:") {
+		t.Errorf("a bare invocation printed %q, want the help", out.String())
 	}
 }

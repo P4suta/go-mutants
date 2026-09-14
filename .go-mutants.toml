@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2615 killed, six caught by the timeout, sixty-three declared, 100.00%,
+# race: 2620 killed, six caught by the timeout, sixty-three declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -112,7 +112,7 @@ profile = "balanced"
 # The numbers this gate is sized against, from the run that produced them:
 #
 #   internal/report/*.go         1224 mutants
-#   internal/config/*.go          485
+#   internal/config/*.go          490
 #   internal/mutation/*.go        458
 #   internal/coverage/*.go        154
 #   internal/gocmd/*.go           111
@@ -123,7 +123,7 @@ profile = "balanced"
 #   internal/drift/*.go            15
 #   internal/testflag/*.go          7
 #
-# catalogues 2684 mutants and detects 2621 of them -- 2615 killed and six caught
+# catalogues 2689 mutants and detects 2626 of them -- 2620 killed and six caught
 # by the timeout -- leaving the sixty-three rows declared below and a score of
 # 100.00%, in the wall clock recorded under [policy]. The count has grown three
 # times without the score moving, and every time for the same reason: code the
@@ -136,6 +136,10 @@ profile = "balanced"
 #                  chooser -- 128 mutants in code nobody added, spread across
 #                  every package here, of which six survived until the tests
 #                  that kill them were written (2026-09-14).
+#   2684 to 2689   `execution.isolate` and the code that reads it (2026-09-14):
+#                  five new mutants in internal/config, all killed by the
+#                  tests written with the feature. A widening the gate pays
+#                  for on its own.
 #   2677 to 2684   two new guard forms reached seven sites that had been
 #                  recorded refusals: a `:=` in a `for` initialiser, in six
 #                  places, and one that redeclares. Every one of the seven was
@@ -464,19 +468,19 @@ reason = "Unreachable: every registered schema compiles, which is exactly what T
 # out of the run, never to relax the check that noticed.
 
 [[mutation.expect]]
-id = "da6962bfd6364a6dc88c69bf087dbfe0b3c656a06792a122f081f69a7585703e"
+id = "81aa43f0f98d8a9ce447032f97f9433fd105da1a44cd8c8409a3656e2abf01ee"
 reason = "Equivalent on every platform: `v > int64(maxInt)` and `v >= int64(maxInt)` select different branches only at exactly int64(maxInt), where the guard returns maxInt and falling through returns int(v) -- and int(int64(maxInt)) is maxInt, so both spellings narrow every int64 to the same int."
 
 [[mutation.expect]]
-id = "5fb5f529dd138bc5a91fa7542bc406dbfdf12b0ff8ad63536a41c029d745b9e6"
+id = "8d2903054b69f85b0ce324b1eef21641d6915506643de2bfaac1fb4c03898249"
 reason = "Unreachable on a 64-bit build, which is every platform this gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is math.MaxInt64 and no int64 is greater than it. Killing it means running this package's suite on a 32-bit GOARCH."
 
 [[mutation.expect]]
-id = "7df627f07c3e78285bf6602785c6e0f5d8f117af4018505748e9e23d42e2618d"
+id = "b46ac300167a9342891250e7d7aa9f1cd2aa045337aeaa07fa42ed330164963b"
 reason = "Equivalent on every platform: the same argument as the `>` row above, at the other end -- `<` and `<=` disagree only at exactly int64(minInt), where the guard returns minInt and falling through returns int(v), which is minInt."
 
 [[mutation.expect]]
-id = "0609825e5d771c579eb7e2335afa6d224c3005ea2eb50eb82ff5e09fec76dcdd"
+id = "aeb06e51f9c0498640b35324a54268ddb0043161508e7a4542149a8bb9b66f65"
 reason = "Unreachable on a 64-bit build: minInt is -maxInt - 1, so int64(minInt) is math.MinInt64 and no int64 is less than it -- the mirror of the maxInt row above, and reachable on the same 32-bit GOARCH."
 
 # internal/gocmd, whose 106 mutants brought exactly one row, and it is a
@@ -801,8 +805,8 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2684 mutants. Two thousand
-# six hundred and twenty-one are detected -- 2615 killed and six caught by
+# Measured, not wished for. The scope catalogues 2689 mutants. Two thousand
+# six hundred and twenty-six are detected -- 2620 killed and six caught by
 # the timeout -- and the other sixty-three are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
 # is 100.00%, with all sixty-three expectations fulfilled and none stale. Every
@@ -1006,8 +1010,8 @@ strict = false
 #   minimum_score = 99.5  compared against the measured score whether or not
 #                         --strict was passed. Two thousand six hundred and
 #                         fourteen scored mutants are worth 0.038 points
-#                         each, so 2608/2621 = 99.50% clears 99.5 and
-#                         2607/2621 = 99.46% does not: an ungated
+#                         each, so 2613/2626 = 99.50% clears 99.5 and
+#                         2612/2626 = 99.46% does not: an ungated
 #                         `go-mutants run` reports up to thirteen survivors and
 #                         exits 0, and fails at fourteen.
 #
@@ -1025,9 +1029,9 @@ strict = false
 # rule that kept the number at 99 through five widenings is the rule that moved
 # it then, and it moved to the value that left the backstop where it had
 # actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
-# that widening. The scope has since grown to 2621 scored mutants without the
+# that widening. The scope has since grown to 2626 scored mutants without the
 # floor moving, and that is the same arithmetic reaching the same answer: half a
-# percent of 2621 is 13.11, so the slack went from twelve survivors to
+# percent of 2626 is 13.13, so the slack went from twelve survivors to
 # thirteen -- still far short of the twenty-one that moves this number. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
 # grows enough to make that count material" meant.

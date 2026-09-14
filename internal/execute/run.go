@@ -5,6 +5,8 @@ package execute
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -306,12 +308,52 @@ func RunOne(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) A
 	return runNarrowed(ctx, opts, whole, bins)
 }
 
+// ErrTreeNotRestored is what a failed [Options.Restore] is wrapped in.
+//
+// It is a sentinel rather than a message because [Schedule] has to recognise
+// one: a restore that failed is not a mutant that could not be measured, it is
+// a tree the run can no longer describe, and carrying on would measure every
+// later mutant against it.
+var ErrTreeNotRestored = errors.New("execute: the worker's copy of the tree could not be put back")
+
+// restoreTree puts this worker's tree back after a pass, or reports why not.
+func restoreTree(opts Options) error {
+	if opts.Restore == nil {
+		return nil
+	}
+	if err := opts.Restore(); err != nil {
+		return fmt.Errorf("%w: %w", ErrTreeNotRestored, err)
+	}
+	return nil
+}
+
 // runNarrowed executes one mutant against the test binaries exactly as its
 // [MutantRun.Tests] selection asks — the whole of each binary when it names
 // none. It is [RunOne] without the survivor confirmation, and the two are split
 // so that the confirmation is one place rather than tangled through the branch
 // that decides each binary.
 func runNarrowed(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) Attempt {
+	attempt := runPass(ctx, opts, m, bins)
+	if len(attempt.Binaries) == 0 {
+		// Nothing was started, so nothing can have been written and there is
+		// nothing to put back. It is the refusal paths below that reach this:
+		// a mutant with no identity, no timeout, or no binary to measure it.
+		return attempt
+	}
+	if err := restoreTree(opts); err != nil {
+		// The pass's own verdict is sound -- it ran, and what it saw is what it
+		// saw -- and it is dropped anyway, because [Schedule] is about to stop
+		// the run and a verdict published beside "the tree is now unknown"
+		// would be a verdict somebody reads later without the sentence beside
+		// it.
+		return errored(err)
+	}
+	return attempt
+}
+
+// runPass is [runNarrowed] without the restore: one pass over the selected
+// binaries, which is what the restore is *of*.
+func runPass(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) Attempt {
 	switch {
 	case strings.TrimSpace(m.ID) == "":
 		return errored(&Error{Code: CodeMutantInvalid, Message: "the mutant has no activation identity"})
@@ -565,6 +607,64 @@ func (a *Attempt) keep(result runner.Result) {
 // where cmd/go puts its own: the standard flag package keeps the last value it
 // sees, so a flag placed after a target's arguments would be the one the engine
 // silently overrode rather than the one it supplied.
+// workingDir is the directory a target runs in: the package's own directory in
+// the tree this worker owns.
+//
+// Without [Options.Tree] that is the shared snapshot and this is bin.Dir, which
+// is what every run did before isolation existed. With one, the same package
+// directory inside the worker's copy -- the binary is the same program wherever
+// it runs, and what a copy changes is the working directory, which is what a Go
+// test resolves `testdata` and every relative write against.
+//
+// The two paths are resolved before they are compared, and that is not
+// defensive: `go list` reports a package directory the operating system has
+// resolved, while the snapshot root is the path this process made. On macOS the
+// temporary directory is behind a link -- /var is /private/var -- so the two
+// spellings of one directory disagree, and a comparison of the raw strings
+// would find every binary to be outside the snapshot and silently run every
+// mutant in the shared tree. Isolation would then be a copy per worker that
+// nothing ever ran in.
+//
+// A directory that is not under the snapshot root even after resolution is
+// returned unchanged rather than refused. There is no such binary today --
+// [listPackages] reports directories of a tree rooted at the snapshot -- and the
+// honest answer for one that appeared is the directory it named: rebasing a
+// path that is not under the root would invent one, and refusing would fail a
+// run over a shape this function is not the right place to judge.
+func workingDir(opts Options, bin TestBinary) string {
+	if opts.Tree == "" || opts.SnapshotRoot == "" || opts.Tree == opts.SnapshotRoot {
+		return bin.Dir
+	}
+	rel, ok := under(opts.SnapshotRoot, bin.Dir)
+	if !ok {
+		return bin.Dir
+	}
+	return filepath.Join(opts.Tree, rel)
+}
+
+// under returns dir relative to root, and whether it is under it at all, with
+// both paths resolved first so that two spellings of one directory agree.
+func under(root, dir string) (string, bool) {
+	if rel, ok := relativeTo(root, dir); ok {
+		return rel, true
+	}
+	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+	resolvedDir, dirErr := filepath.EvalSymlinks(dir)
+	if rootErr != nil || dirErr != nil {
+		return "", false
+	}
+	return relativeTo(resolvedRoot, resolvedDir)
+}
+
+// relativeTo is filepath.Rel with "climbs out" folded into the boolean.
+func relativeTo(root, dir string) (string, bool) {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
 func startTarget(
 	ctx context.Context,
 	opts Options,
@@ -590,7 +690,7 @@ func startTarget(
 	argv = append(argv, args...)
 	spec := runner.Spec{
 		Argv:        argv,
-		Dir:         bin.Dir,
+		Dir:         workingDir(opts, bin),
 		Env:         env,
 		Timeout:     timeout,
 		MemoryLimit: memoryLimit,
