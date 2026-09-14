@@ -351,10 +351,11 @@ dispatch is a plain array load and the race detector stays quiet.
 
 ## Probe runtime and the infection log
 
-Status: the runtime, its log format and two probe forms — the return-value one
-and the boolean one — are implemented in `internal/instrument`, and the pass
-that drives these processes is implemented in `internal/execute` and reachable
-through the engine API's `Session.Probe`; the remaining forms are not.
+Status: the runtime, its log format and three probe forms — the return-value
+one, the boolean one and the value one — are implemented in
+`internal/instrument`, and the pass that drives these processes is implemented
+in `internal/execute` and reachable through the engine API's `Session.Probe`;
+the reachability form is not.
 
 The next proof a consumer can act on is **infection**: if the site of mutant
 `m` never evaluated to a value different from the original's during test `t`,
@@ -557,11 +558,70 @@ an inner mutant is recorded once, from the reading the program really evaluates.
 Each mutated reading is rendered from the pristine bytes with one edit, so it
 carries no inner call at all.
 
-Everything else is simply unprobed for now. An arithmetic operand and a deleted
-statement have no form, so a file holding only those comes out of `ModeProbe`
-byte for byte as its author wrote it, with no runtime import at all; a run then
-learns nothing about which tests could observe those mutants and runs them all,
-which is the safe direction.
+### The value probe
+
+The third form is the boolean one for everything that is not a boolean. It wraps
+the nearest expression around the edit whose value can be compared, in the
+closure Form E already is:
+
+```go
+func() T {
+    var p T = (<original>)
+    if p != (<mutated>) { __gm.Infect(i) }
+    return p
+}()
+```
+
+It is written on one line in the tree, as every rewrite here is; the shape above
+is the same text with the semicolons turned back into newlines.
+
+Standing where the expression stood is what makes it work, and it is what no
+statement rewrite could do: a `switch` tag and a `for` post statement have
+nowhere to hoist a temporary to, and this needs nowhere. The value is produced
+in the site's own context, so the compiler settles its type exactly as it
+settled the original's; the original is evaluated once, into `p`, and `p` is
+what the closure yields.
+
+Its conditions are the boolean form's plus two about the comparison itself. The
+value has to be **comparable without panicking** — a slice, a map and a function
+are not comparable at all, and two interfaces holding an incomparable dynamic
+type panic where a mutant would not — and it may not be **floating-point or
+complex**, since `-0.0 != 0` is false while the two are distinguishable. Both
+rules already existed: the first is what `internal/discover` applies to an `==`
+the user wrote, and the second is the return form's.
+
+### The ordering rule both in-place forms share
+
+Both forms put a **call** where an expression stood, and a call is not an
+ordinary operand. Go orders function calls, method calls, receive operations and
+binary logical operations within one expression, assignment or return statement,
+left to right — and leaves the reading of a plain variable beside them
+unordered. So replacing `n` with a call in `return n, bump()` moves the read of
+`n` from "some time" to "before `bump()`":
+
+```go
+var n int
+func bump() int { n = 5; return 1 }
+func F() (int, int) { return n, bump() }
+```
+
+gc really does evaluate the call first, so the original returns `(5, 1)` and a
+probed tree would return `(0, 1)`. A probe tree that is not the original program
+has nothing to say about the original program — so a site is measured only when
+everything its **own statement** evaluates beside it is inert.
+
+Its own statement, and only the expressions that statement evaluates itself: an
+`if`'s initialiser is a statement of its own and runs to completion first, a
+`case` clause's body is not evaluated with its labels, and a loop's body is not
+evaluated with its condition. Asking about those would refuse nearly every site
+for a hazard that cannot arise.
+
+Everything else is simply unprobed for now. A deleted statement has no form —
+its mutant differs by the *absence* of an effect, which no comparison can see —
+so a file holding only those comes out of `ModeProbe` byte for byte as its
+author wrote it, with no runtime import at all; a run then learns nothing about
+which tests could observe those mutants and runs them all, which is the safe
+direction.
 A probe site that turns out not to compile is dropped the same way, by the
 bisection in `internal/validate`: the mutant loses its probe and keeps
 everything else.

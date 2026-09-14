@@ -217,7 +217,11 @@ func returnSiteInside(t *testing.T, candidates []Located, src, snippet string) *
 // is the same fixture asserting the other answer.
 //
 // A refused hint costs the probe and never the mutant: every candidate here is
-// still catalogued, still mutated, and still guarded in the mutant tree.
+// still catalogued, still mutated, and still guarded in the mutant tree. Nor
+// does it cost the *measurement*, any more, and that is the second thing
+// asserted below: the value form measures the operand rather than the
+// statement, so a result type nothing can spell no longer takes the mutant
+// beside it down with it.
 func TestProbeSiteIsNilWhenAResultTypeCannotBeSpelled(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -240,9 +244,15 @@ func Ptr(p unsafe.Pointer) (int, unsafe.Pointer) { return 1, p }
 		t.Run(c.name, func(t *testing.T) {
 			candidates, _ := discoverProbeModule(t, c.source, c.extra)
 			got := candidateWithOriginal(t, candidates, c.rule, c.bytes)
-			if got.Guard.Probe != nil {
-				t.Errorf("return site = %+v, want none: the file cannot spell every result type",
-					got.Guard.Probe)
+			site := got.Guard.Probe
+			if site != nil && site.Form == ProbeFormReturn {
+				t.Errorf("return site = %+v, want none: the file cannot spell every result type", site)
+			}
+			// The operand the mutant replaces is an `int`, which the value form
+			// can spell and compare, so the candidate is measured after all --
+			// at the expression rather than at the statement.
+			if site == nil || site.Form != ProbeFormValue {
+				t.Errorf("probe site = %+v, want the value form over the operand", site)
 			}
 			if got.Guard.Form == "" {
 				t.Error("the candidate lost its guard form as well, so the refusal cost the mutant and not only the probe")
@@ -291,16 +301,20 @@ func Pair(a int) (int, Kind) { return a, Zero }
 	}
 }
 
-// TestProbeSiteIsNilForATypeParameterResult refuses the shape the compiler
+// TestTheReturnFormRefusesATypeParameterResult refuses the shape the compiler
 // might refuse.
 //
-// The probe compares a temporary against a constant, and a value of a type
-// parameter's type need not be comparable with one: the constraint decides, and
-// this phase does not reason about constraints. The bisection would find such a
-// site and drop that one mutant's probe, which is exactly the mechanism that
-// exists for the cases nobody foresaw — spending a build on a case that is
-// foreseen is not what it is for.
-func TestProbeSiteIsNilForATypeParameterResult(t *testing.T) {
+// The return form declares a temporary per result and compares one against a
+// constant, and a value of a type parameter's type need not be comparable with
+// one: the constraint decides, and this phase does not reason about
+// constraints. The bisection would find such a site and drop that one mutant's
+// probe, which is exactly the mechanism that exists for the cases nobody
+// foresaw — spending a build on a case that is foreseen is not what it is for.
+//
+// The value form is not refused, and the contrast is the reason it exists. It
+// declares one temporary, of the *operand's* own type, and the operand here is
+// an `int`: the type parameter is the result beside it and is never named.
+func TestTheReturnFormRefusesATypeParameterResult(t *testing.T) {
 	candidates, _ := discoverProbeModule(t, `package sample
 
 // Pair returns its own arguments, one of them of a type parameter's type.
@@ -308,8 +322,15 @@ func Pair[T any](a int, t T) (int, T) { return a, t }
 `, nil)
 
 	got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, "a")
-	if got.Guard.Probe != nil {
-		t.Errorf("return site = %+v, want none: one result is a type parameter", got.Guard.Probe)
+	site := got.Guard.Probe
+	if site != nil && site.Form == ProbeFormReturn {
+		t.Errorf("return site = %+v, want none: one result is a type parameter", site)
+	}
+	if site == nil || site.Form != ProbeFormValue {
+		t.Errorf("probe site = %+v, want the value form over the int operand", site)
+	}
+	if len(site.Types) != 1 || site.Types[0] != "int" {
+		t.Errorf("Types = %q, want the operand's own type", site.Types)
 	}
 }
 

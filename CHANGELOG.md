@@ -14,6 +14,46 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A typed operand is measured where it stands too.** The boolean form reaches
+  every Form C site; the value form is the same idea for everything that is not
+  a boolean — the arithmetic, the bitwise and the comparison families, which is
+  most of what a catalogue holds. It wraps the nearest expression around the
+  edit whose value can be compared, in the closure Form E already is:
+
+  ```go
+  func() T {
+      var p T = (<original>)
+      if p != (<mutated>) { __gm.Infect(i) }
+      return p
+  }()
+  ```
+
+  Standing where the expression stood is what no statement rewrite could do: a
+  `switch` tag and a `for` post statement have nowhere to hoist a temporary to,
+  and this needs nowhere. Its conditions are the boolean form's plus two about
+  the comparison itself — the value has to be comparable without panicking, and
+  it may not be floating-point or complex, since `-0.0 != 0` is false while the
+  two are distinguishable. Both rules already existed elsewhere in the phase.
+  It also rescues two sites the return form refuses. A `return` whose other
+  result is `unsafe.Pointer`, or a type parameter, has no return-form hint —
+  the form names every result — but the *operand* the mutant replaces may be an
+  ordinary `int`, and that is what this measures.
+- **Both in-place probe forms refuse a site their statement orders against.**
+  This is a soundness fix to the form landed beside it, found by writing the
+  test for the next one. A probe puts a **call** where an expression stood, and
+  Go orders function calls, method calls, receive operations and binary logical
+  operations within one statement's operands while leaving the reading of a
+  plain variable among them unordered. So a probe at `n` in `return n, bump()`
+  moves the read of `n` from "some time" to "before `bump()`", and where `bump`
+  writes `n` the two programs differ — gc really does evaluate the call first,
+  so the original returns `(5, 1)` and the probed tree would return `(0, 1)`.
+  A probe tree that is not the original program has nothing to say about the
+  original program, so a site is now measured only where everything its own
+  statement evaluates beside it is inert. Its own statement, and only the
+  expressions that statement evaluates itself: an `if`'s initialiser runs to
+  completion first, a `case` clause's body is not evaluated with its labels, and
+  a loop's body is not evaluated with its condition — asking about those would
+  refuse nearly every site for a hazard that cannot arise.
 - **A boolean site is measured where it stands.** The probe layer had one form,
   for the return-value rules, and every other mutant was unprobed — so a run
   learned nothing about which tests could observe a comparison, a boolean

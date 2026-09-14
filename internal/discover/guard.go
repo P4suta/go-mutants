@@ -174,6 +174,25 @@ func (g *guardResolver) span(node ast.Node) (mutation.Span, bool) {
 // reporting false when no form can express it. Every false is
 // a [SkipUnnameableDeclType] skip; see [Guard] for the full list of them.
 func (g *guardResolver) guardFor(anchor ast.Node) (Guard, bool) {
+	guard, ok := g.chooseForm(anchor)
+	if !ok {
+		return Guard{}, false
+	}
+	// A Form C site has already been offered the boolean probe form, which is
+	// cheaper and stronger where it applies: it needs no type written out and
+	// no temporary. Everything else is asked for the value form, which is the
+	// same question one step further from the edit -- what is the nearest
+	// expression around it whose value can be compared at all.
+	if guard.Probe == nil {
+		guard.Probe = g.valueProbe(anchor)
+	}
+	return guard, true
+}
+
+// chooseForm is the guard-form staircase itself: each form is tried after the
+// ones before it, so a site an earlier form covers is covered by exactly that
+// form.
+func (g *guardResolver) chooseForm(anchor ast.Node) (Guard, bool) {
 	if site, ok := g.formCSite(anchor); ok {
 		return site, true
 	}
@@ -228,6 +247,75 @@ func (g *guardResolver) formESite(anchor ast.Node) (Guard, bool) {
 		return Guard{Form: GuardFormE, SiteSpan: span, SiteType: spelled, Imports: needs}, true
 	}
 	return Guard{}, false
+}
+
+// valueProbe looks outward for the nearest expression whose value a probe could
+// compare, and returns the hint when it finds one.
+//
+// The rewrite is the closure the guard's own Form E is:
+//
+//	func() T { var p T = (ORIG); if p != (MUT) { __gm.Infect(i) }; return p }()
+//
+// and the walk is Form E's walk, with three conditions added on top of its two.
+// Standing where the expression stood is what makes the shape work at all: the
+// value is produced in the site's own context, so the compiler settles the type
+// exactly as it settled the original's, and nothing has to be hoisted to a
+// statement that may not exist -- a `switch` tag and a `for` post statement
+// have no room for one.
+//
+// The three conditions, in the order they can fail:
+//
+//   - **The value is comparable without panicking.** `p != MUT` is the whole
+//     measurement, and it has to be legal and total: a slice, a map and a
+//     function are not comparable at all, and two interfaces holding an
+//     incomparable dynamic type panic where a mutant would not. The rule is the
+//     one effects.go already applies to an `==` the user wrote.
+//   - **The value is not floating-point or complex.** `-0.0 != 0` is false while
+//     the two are distinguishable, so such a site would report "never differed"
+//     for a mutant a test really can kill. It is the return form's rule, and
+//     for the return form's reason.
+//   - **The site's whole statement is inert.** Both readings are evaluated, so
+//     an effect anywhere would happen more than once, and a panic in the
+//     mutated reading would be a divergence the comparison is never reached to
+//     record. The question reaches past the site to everything its statement
+//     evaluates beside it, because the rewrite puts a *call* where an
+//     expression stood: [guardResolver.inertContext] has the argument.
+//
+// A refusal walks outward rather than stopping, exactly as the guard forms'
+// walks do: an expression *around* this one may be comparable, or inert, where
+// this one is not.
+func (g *guardResolver) valueProbe(anchor ast.Node) *ProbeSite {
+	for node := anchor; node != nil; node = g.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return nil
+		}
+		if !g.wrappableValue(expr) {
+			continue
+		}
+		declared := g.info.Types[expr].Type
+		if !comparesWithoutPanic(declared) || floatingResult(declared) {
+			continue
+		}
+		if !g.inertContext(expr) || !g.panicFree(expr) {
+			continue
+		}
+		span, ok := g.span(expr)
+		if !ok {
+			return nil
+		}
+		spelled, needs, ok := g.typeString(declared)
+		if !ok {
+			continue
+		}
+		return &ProbeSite{
+			Form:    ProbeFormValue,
+			Span:    span,
+			Types:   []string{spelled},
+			Imports: needs,
+		}
+	}
+	return nil
 }
 
 // wrappableValue reports whether an expression is a value of a type a closure
@@ -359,13 +447,18 @@ func (g *guardResolver) formCSite(anchor ast.Node) (Guard, bool) {
 // both, because it walks every operand — and refuses that one, since a field
 // reached through a pointer is a dereference.
 //
+// The effect question is asked of the whole *statement* rather than of the site
+// alone, and [guardResolver.inertContext] argues why: the rewrite puts a call
+// where an expression stood, and a call is ordered against the other calls of
+// its statement where a plain operand is not.
+//
 // Exactly the universe bool is what makes the helper possible at all: it takes
 // and returns `bool`, so it is one non-generic function, and a named boolean
 // type could not be passed to it. That is the shape internal/instrument's own
 // doc.go rejects helper forms for in general — untyped constants, shifts, named
 // types — and none of those reach here.
 func (g *guardResolver) boolProbe(expr ast.Expr, span mutation.Span) *ProbeSite {
-	if !g.effectFree(expr) || !g.panicFree(expr) {
+	if !g.inertContext(expr) || !g.panicFree(expr) {
 		return nil
 	}
 	return &ProbeSite{Form: ProbeFormBool, Span: span}

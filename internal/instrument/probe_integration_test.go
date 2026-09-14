@@ -89,14 +89,15 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 	// unprobed for a reason a reader would have called a limitation.
 	//
 	// The counts are sites rather than mutants, and the two differ here in both
-	// directions: clamp.go's five are its two `return` statements and the three
-	// boolean expressions nested inside and beside them, while untested.go's
+	// directions: clamp.go's seven are its two `return` statements, the three
+	// boolean expressions nested inside and beside them, and the two numeric
+	// operands the value form measures where they stand, while untested.go's
 	// two are one `return` and the comparison inside it — which carries the two
 	// `return-bool` mutants *and* the comparison's own, in one site each.
 	if want := []string{"clamp.go", "ready.go", "untested.go"}; !slices.Equal(instrumented.FilesInstrumented, want) {
 		t.Errorf("probed %q, want %q", instrumented.FilesInstrumented, want)
 	}
-	if want := map[string]int{"clamp.go": 5, "ready.go": 1, "untested.go": 2}; !maps.Equal(instrumented.GuardsByFile, want) {
+	if want := map[string]int{"clamp.go": 7, "ready.go": 1, "untested.go": 2}; !maps.Equal(instrumented.GuardsByFile, want) {
 		t.Errorf("probe sites by file = %v, want %v", instrumented.GuardsByFile, want)
 	}
 
