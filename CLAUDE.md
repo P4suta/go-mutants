@@ -95,6 +95,7 @@ repository's prose worth reading, so here is where each ledger lives.
 | `docs/development.md`, `docs/ci.md`, this page | the mise tasks and harness variables they name | `internal/testkit/devdocs_test.go` |
 | `docs/adr/README.md` | the records beside it | `internal/testkit/devdocs_test.go` |
 | `docs/trace-v1.md` | every `ExecKind` | `trace/docs_test.go` |
+| `docs/json-schema.md` | every published schema, every document type, and its own counts | `internal/testkit/schemadocs_test.go` |
 | `fixtures/README.md` | the corpus modules and their conformance | `internal/testkit/corpus_test.go` |
 | how many children a run starts, by kind | the recording every run keeps | `internal/engine/workceiling_integration_test.go` |
 | that a run report and its recording agree | each other, re-derived independently | `internal/devtools/traceaudit/audit_test.go` |
