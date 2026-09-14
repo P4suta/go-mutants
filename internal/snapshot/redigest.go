@@ -224,7 +224,7 @@ func (s *Snapshot) restoreOne(change Drift) error {
 			Err:     mkErr,
 		}
 	}
-	_, digest, err := copyFile(src, dest, info.Mode())
+	_, digest, err := copyFile(src, dest, info.Mode(), info.ModTime())
 	if err != nil {
 		return &Error{
 			Code:    CodeRestoreFailed,

@@ -198,7 +198,7 @@ func TestCopySnapshotFilesRunsConcurrentlyAndKeepsPathOrder(t *testing.T) {
 	root := t.TempDir()
 	done := make(chan result, 1)
 	go func() {
-		entries, path, err := copySnapshotFiles(files, root, len(files), func(source, _ string, _ fs.FileMode) (int64, string, error) {
+		entries, path, err := copySnapshotFiles(files, root, len(files), func(source, _ string, _ fs.FileMode, _ time.Time) (int64, string, error) {
 			started <- source
 			<-release
 			return int64(len(source)), "digest-" + source, nil
@@ -229,7 +229,7 @@ func TestCopySnapshotFilesReturnsTheFirstPathError(t *testing.T) {
 		{rel: "b.go", abs: "b.go"},
 		{rel: "c.go", abs: "c.go"},
 	}
-	entries, path, err := copySnapshotFiles(files, t.TempDir(), len(files), func(source, _ string, _ fs.FileMode) (int64, string, error) {
+	entries, path, err := copySnapshotFiles(files, t.TempDir(), len(files), func(source, _ string, _ fs.FileMode, _ time.Time) (int64, string, error) {
 		switch source {
 		case "a.go":
 			return 0, "", first

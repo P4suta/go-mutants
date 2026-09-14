@@ -14,6 +14,42 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`internal/snapshot` joined the dogfood gate.** 329 more mutants and two
+  declared rows, and the gate is now fifteen packages and 3592 mutants at
+  100.00%. It is the package almost entirely made of failure paths — a walk, a
+  copy, the ownership of a directory while a run uses it, and the drift report
+  that proves the copy is still what it was — and the first measurement said so:
+  eighty survivors, thirty-four of them uncovered, and four mutants that never
+  returned. Most of those paths are now staged for real, because a staged
+  failure is the same failure a user will have: a source root that cannot be
+  listed, an entry that cannot be stat-ed because its directory is readable and
+  not searchable, a destination parent that refuses new directories, a source
+  file that cannot be read, a destination that already exists, a directory where
+  a file has to go.
+  What cannot be staged is now in one file, `internal/snapshot/seams.go`: eight
+  operating-system calls, each named for what it does and carrying the reason a
+  test cannot make it fail. Seven of them run inside a directory this process
+  created and locked moments before, and the eighth fails only when the process
+  has lost its working directory. Two of the eight went away instead of being
+  added, by carrying what the walk already read: a record now holds the
+  modification time its `Lstat` returned, so the copy does not stat the handle
+  it just opened and the directory stamp does not stat the directory it is
+  about. That is one syscall fewer per file and per directory, and it is *the*
+  reading — the manifest, the mode the copy is created with and the time it is
+  stamped with all come from one look at the entry, so a tree that changed under
+  the walk cannot produce a snapshot describing two different moments of it.
+  The four mutants that never returned were removed rather than measured. The
+  walk had two path helpers with a guard each — `pathOf` answering the empty
+  path with the root, and `walk` joining a name onto an empty parent — and the
+  other reading of both walks the root again at every depth. `filepath.Join` and
+  `path.Join` already answer the empty case, so each guard was a second spelling
+  of one answer and one of the spellings was an infinite recursion. The two
+  declared rows are one branch: the glob a configured report directory is
+  compiled into cannot fail to compile, because the value reaching it is
+  `path.Clean`'s output over a path the canonicaliser has already refused as
+  empty, absolute or escaping — which is exactly the set `glob.Compile` refuses.
+  It is kept rather than written as a `MustCompile`, because a guarantee between
+  two packages is not a reason to make one of them unable to disagree later.
 - **`internal/gitdiff` joined the dogfood gate, with no declared row.** 257 more
   mutants, every one of them killed, and the gate is now fourteen packages and
   3263 mutants at 100.00%. It was the widening this project's own notes called
