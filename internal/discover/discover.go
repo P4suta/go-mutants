@@ -394,6 +394,24 @@ const (
 	// the question "would the two programs have returned different values" —
 	// and the narrowest conditions, which [ProbeSite] states in full.
 	ProbeFormReturn ProbeForm = "return"
+
+	// ProbeFormBool is the boolean form: the site is measured where it stands,
+	// by a helper that evaluates both readings of it and yields the original's.
+	//
+	//	__gm.Differs(i, (<original>), (<mutated>))
+	//
+	// It reaches every Form C site — a comparison, a boolean operator, an `if`
+	// or `for` condition — which is most of what a run catalogues, and it is
+	// the one form whose conditions are about the *whole* site rather than
+	// about one operand: both readings are evaluated, so an effect anywhere in
+	// it would happen twice, and a mutant that rearranges short-circuiting can
+	// reach an operand the original never did.
+	//
+	// The helper is possible only here. Its parameters are `bool`, which is
+	// exactly what a Form C site is — a named boolean type could not be passed
+	// to it, and internal/instrument's doc.go gives the general argument
+	// against helper forms that this one shape escapes.
+	ProbeFormBool ProbeForm = "bool"
 )
 
 // A ProbeSite is what the probe tree needs to know about one candidate.

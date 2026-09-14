@@ -125,10 +125,24 @@ type probeEdit struct {
 // the wrong shape.
 func probeFor(m mutation.Mutant, guard discover.Guard) *probeEdit {
 	site := guard.Probe
-	if site == nil || site.Form != discover.ProbeFormReturn || !probeConstants[m.Replacement] {
+	if site == nil {
 		return nil
 	}
-	return &probeEdit{index: m.Index, result: site.Index, constant: m.Replacement}
+	switch site.Form {
+	case discover.ProbeFormReturn:
+		if !probeConstants[m.Replacement] {
+			return nil
+		}
+		return &probeEdit{index: m.Index, result: site.Index, constant: m.Replacement}
+	case discover.ProbeFormBool:
+		// Every mutant of a boolean site is probeable, whatever its rule. The
+		// return form needs a constant because it compares a temporary against
+		// one; this form compares the site's two *readings*, and the mutated
+		// reading is rendered from the source the way a guard's is.
+		return &probeEdit{index: m.Index}
+	default:
+		return nil
+	}
 }
 
 // Probes reports whether a [ModeProbe] pass writes a call naming this mutant's
@@ -162,11 +176,18 @@ func (h Hints) Probes(m mutation.Mutant) bool {
 // replaces, where each returned value sits inside them, and the type each
 // result has to be declared as.
 type probeSite struct {
-	// span is the byte range of the whole statement, in file coordinates.
+	// form is the shape the rewrite takes, from the hint. The renderer
+	// branches on it before reading anything else here, because the two forms
+	// carry different halves of this struct.
+	form discover.ProbeForm
+	// span is the byte range the rewrite replaces: the whole statement for
+	// [discover.ProbeFormReturn], the expression for [discover.ProbeFormBool].
 	span mutation.Span
-	// operands are the byte ranges of the returned values, in order.
+	// operands are the byte ranges of the returned values, in order, and empty
+	// for a boolean site, which has no operands to name.
 	operands []mutation.Span
-	// types is one spelled type per operand, from the hint.
+	// types is one spelled type per operand, from the hint, and empty for a
+	// boolean site, whose type is `bool` by construction.
 	types []string
 }
 
@@ -180,6 +201,9 @@ type probeSite struct {
 // inside the result the hint says it does — because the whole meaning of the
 // rewrite is that this temporary holds that value.
 func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
+	if hint.Form == discover.ProbeFormBool {
+		return x.boolSiteFor(m, hint, srcPath)
+	}
 	stmt, ok := x.stmts[hint.Span]
 	if !ok {
 		return probeSite{}, x.notFound(m, srcPath, hint.Span, "no statement covers these bytes")
@@ -207,7 +231,26 @@ func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, sr
 		return probeSite{}, x.notFound(m, srcPath, hint.Span,
 			fmt.Sprintf("result %d of it covers %s, which does not hold the edit", hint.Index, operands[hint.Index]))
 	}
-	return probeSite{span: hint.Span, operands: operands, types: hint.Types}, nil
+	return probeSite{form: hint.Form, span: hint.Span, operands: operands, types: hint.Types}, nil
+}
+
+// boolSiteFor resolves a boolean probe hint against the file.
+//
+// Two checks and no more, because the form needs no more: the bytes have to be
+// an expression, since the rewrite puts a call where they stood and a call is
+// an expression; and the edit has to sit inside them, since the mutated reading
+// is the site's own bytes with that one edit applied. The type is not checked
+// here and cannot be — this package has no type checker — and it does not need
+// to be: the helper takes `bool`, so a site that was not one fails to compile,
+// which is a refusal the validation pass already knows how to bisect.
+func (x *siteIndex) boolSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
+	if _, ok := x.exprs[hint.Span]; !ok {
+		return probeSite{}, x.notFound(m, srcPath, hint.Span, "no expression covers these bytes")
+	}
+	if !hint.Span.Contains(m.Span) {
+		return probeSite{}, x.notFound(m, srcPath, hint.Span, "the edit is not inside it")
+	}
+	return probeSite{form: hint.Form, span: hint.Span}, nil
 }
 
 // buildProbeSites arranges one file's probed mutants into the forest of `return`
@@ -287,7 +330,9 @@ func buildProbeSites(
 // temporary of one candidate's type and comparing the other candidate's
 // constant against it.
 func probesAgree(previous, current probeSite, m mutation.Mutant, srcPath string) error {
-	if slicesEqual(previous.operands, current.operands) && stringsEqual(previous.types, current.types) {
+	if previous.form == current.form &&
+		slicesEqual(previous.operands, current.operands) &&
+		stringsEqual(previous.types, current.types) {
 		return nil
 	}
 	return &Error{
@@ -411,6 +456,9 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 				r.path, node.Span),
 		}
 	}
+	if s.form == discover.ProbeFormBool {
+		return r.composeBool(node, s, rendered)
+	}
 	operands, err := r.operands(node, s, rendered)
 	if err != nil {
 		return nil, err
@@ -460,6 +508,116 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 		b.WriteByte('\n')
 	}
 	return b.Bytes(), nil
+}
+
+// composeBool renders one boolean site as its probe.
+//
+// The shape, for alternatives m1..mn with mutated readings M1..Mn and the
+// site's current text ORIG, is
+//
+//	A.Differs(in, … A.Differs(i1, (ORIG), (M1)) …, (Mn))
+//
+// where A is this file's alias for the runtime package. Each call yields its
+// second argument -- the original's reading -- so what the expression evaluates
+// to is ORIG whatever the chain around it records. That is why several mutants
+// of one site chain rather than fight over the slot, and why the innermost
+// operand is the original.
+//
+// ORIG is the site's bytes with the probes of any nested sites already folded
+// in, so an inner boolean site records from here. Each Mk is rendered from the
+// *pristine* bytes with that one edit applied, exactly as a guard's mutated
+// copy is -- which is what keeps a nested site from being measured twice, once
+// through the original and once through every reading around it.
+//
+// Line preservation holds for the reason the guard forms' does: everything
+// written before ORIG is on ORIG's first line and everything after it on ORIG's
+// last, because the prefixes hold no line break and every Mk comes back from
+// [Flatten].
+func (r *probeRenderer) composeBool(
+	node *siteNode, s probeSite, rendered map[*siteNode][]byte,
+) ([]byte, error) {
+	orig, err := r.withChildren(node, rendered)
+	if err != nil {
+		return nil, err
+	}
+
+	var b bytes.Buffer
+	b.WriteByte('(')
+	b.Write(orig)
+	b.WriteByte(')')
+	for _, m := range node.Alternatives {
+		edit, known := r.edits[m.ID]
+		if !known {
+			return nil, &Error{
+				Code: CodeSiteConflict,
+				Message: fmt.Sprintf("internal error: %s: mutant %s was placed at the probe site %s without an edit",
+					r.path, m.DisplayID, node.Span),
+			}
+		}
+		mutated, mutErr := r.mutated(s.span, m)
+		if mutErr != nil {
+			return nil, mutErr
+		}
+		var wrapped bytes.Buffer
+		fmt.Fprintf(&wrapped, "%s.Differs(%d, ", r.alias, edit.index)
+		wrapped.Write(b.Bytes())
+		wrapped.WriteString(", (")
+		wrapped.Write(mutated)
+		wrapped.WriteString("))")
+		b = wrapped
+	}
+
+	if got, want := CountLines(b.Bytes()), CountLines(r.original(s.span)); got != want {
+		return nil, &Error{
+			Code: CodeLineDrift,
+			Message: fmt.Sprintf(
+				"internal error: instrumenting %s would move a line: the probe at %s spans %d lines, its site spans %d",
+				strconv.Quote(r.path), node.Span, got+1, want+1),
+		}
+	}
+	return b.Bytes(), nil
+}
+
+// withChildren is the site's own bytes with the probes of its nested sites
+// folded in, which is what the original reading has to be.
+func (r *probeRenderer) withChildren(node *siteNode, rendered map[*siteNode][]byte) ([]byte, error) {
+	splices := make([]Splice, 0, len(node.Children))
+	for _, child := range node.Children {
+		splices = append(splices, Splice{
+			Span:        relativeTo(child.Span, node.Span.StartByte),
+			Original:    r.original(child.Span),
+			Replacement: rendered[child],
+		})
+	}
+	patched, _, err := Apply(r.original(node.Span), splices)
+	return patched, err
+}
+
+// mutated renders one mutant's reading of a site: the site's pristine bytes
+// with that one edit applied, folded onto a line.
+//
+// The pristine bytes rather than the composed ones, for the reason
+// [guardRenderer.mutated] uses them: a mutant is one edit to the program the
+// user wrote, and a copy carrying a nested site's probe would record that
+// site's mutants a second time from a reading nothing evaluates for its own
+// sake.
+func (r *probeRenderer) mutated(span mutation.Span, m mutation.Mutant) ([]byte, error) {
+	if !span.Contains(m.Span) {
+		return nil, &Error{
+			Code: CodeSiteConflict,
+			Message: fmt.Sprintf("%s: mutant %s at %s is not inside its own probe site %s",
+				r.path, m.DisplayID, m.Span, span),
+		}
+	}
+	patched, _, err := Apply(r.original(span), []Splice{{
+		Span:        relativeTo(m.Span, span.StartByte),
+		Original:    []byte(m.Original),
+		Replacement: []byte(m.Replacement),
+	}})
+	if err != nil {
+		return nil, err
+	}
+	return Flatten(patched)
 }
 
 // operands renders each returned value: its own pristine bytes, carrying

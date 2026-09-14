@@ -82,7 +82,11 @@ func TestProbeRuntimeGolden(t *testing.T) {
 		}
 	}
 
-	if got, want := exportedNames(t, generated, out), []string{"Infect"}; !equalStrings(got, want) {
+	// Two exports and no third. Infect is what a form calls once it has decided
+	// its site's two readings disagree; Differs makes that decision for the one
+	// form that holds both as values. Everything else a probe tree could reach
+	// for -- the log, the guard array, the header -- stays unexported.
+	if got, want := exportedNames(t, generated, out), []string{"Differs", "Infect"}; !equalStrings(got, want) {
 		t.Errorf("the generated probe runtime exports %v, want %v", got, want)
 	}
 }
@@ -315,12 +319,15 @@ func TestInfectIsRaceFree(t *testing.T) {
 // TestProbeModeRewritesOnlyWhereItHasAProbeForm pins what a probe tree does
 // with a catalogue it cannot measure.
 //
-// Only the return-value family has a probe form so far, so a file of
-// comparisons comes out as the file the user wrote — no rewrite, no import, and
-// no entry in the result. That is worth asserting rather than leaving implied:
-// a mode that rewrote a file by accident would produce a tree whose sites are
-// guarded and whose runtime activates none of them, which is a program that
-// looks instrumented and proves nothing.
+// A file whose every mutant is unprobed comes out as the file the user wrote —
+// no rewrite, no import, and no entry in the result. That is worth asserting
+// rather than leaving implied: a mode that rewrote a file by accident would
+// produce a tree whose sites are guarded and whose runtime activates none of
+// them, which is a program that looks instrumented and proves nothing.
+//
+// The fixture declares its one comparison unprobeable, which is how a mutant of
+// a boolean site ends up with no form: the site is measured by evaluating both
+// readings of it, so one holding an effect or a possible panic is refused.
 func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	t.Parallel()
 
@@ -332,7 +339,7 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	testkit.WriteFile(t, filepath.Join(root, "other.go"), other)
 
 	catalog := catalogOf(t, candidatesFor(t, nil, in))
-	result := probeSnapshot(t, root, catalog)
+	result := probeSnapshotWith(t, root, catalog, hintOptions{unprobedSites: []string{"a > b"}})
 
 	if got := testkit.ReadFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
 		t.Errorf("the catalogued file was rewritten in probe mode:\n%s", got)

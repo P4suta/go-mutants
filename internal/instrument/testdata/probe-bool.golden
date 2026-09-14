@@ -1,0 +1,19 @@
+// SPDX-FileCopyrightText: 2026 go-mutants contributors
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+// Package sample is a golden fixture: boolean sites measured where they stand,
+// one of them nested inside another, and one carrying two mutants at once.
+package sample; import __gm "example.com/mini/gomutants_rt"
+
+// Between reports whether v is inside the bounds.
+func Between(v, lo, hi int) bool {
+	if __gm.Differs(1, (__gm.Differs(0, (v > lo), (v>=lo)) && __gm.Differs(2, (v < hi), (v<=hi))), (v>lo||v<hi)) {
+		return true
+	}
+	return false
+}
+
+// Equal reports whether the two agree, and carries two mutants of one site.
+func Equal(a, b int) bool {
+	return __gm.Differs(4, __gm.Differs(3, (a == b), (!(a==b))), (a!=b))
+}

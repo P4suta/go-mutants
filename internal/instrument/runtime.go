@@ -225,12 +225,27 @@ func renderRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, error) {
 // and threading that through one template would produce a function whose every
 // line asks which tree it is generating, in exchange for saving a preamble.
 //
-// The package holds exactly one exported name, [ProbeEnv]'s reader excepted
-// because it is init. Infect is what a probe form calls when the mutated value
-// at its site would have differed from the original's; the file it appends to,
-// the guard array, and the header are unexported, because a probe tree has no
-// business reaching for any of them and a second export would be a second thing
-// to keep compatible.
+// The package holds two exported names, [ProbeEnv]'s reader excepted because it
+// is init, and the second one arrived with a form that could not use the first.
+// Infect is what a probe form calls when it has decided that the mutated
+// reading of its site would have differed from the original's. Differs makes
+// that decision for the one form that has both readings in hand as values: it
+// takes them, records through Infect when they disagree, and yields the
+// original's, so the site keeps the value the program it stands in for would
+// have had.
+//
+// A second export is a second thing to keep compatible, and it is worth it
+// here for a reason the guard forms do not share. internal/instrument's own
+// doc.go argues against helper calls in general — they break on untyped
+// constants, on shifts, and on named types, all of which the guard forms leave
+// to the compiler — and none of that reaches a helper whose parameters are the
+// universe `bool`, which is exactly and only what a Form C site is. Written
+// inline instead, the same measurement would need a temporary, a name chosen
+// against the file's scopes, and a statement to declare it in, at every site
+// that is an expression.
+//
+// The file the two append to, the guard array, and the header stay unexported,
+// because a probe tree has no business reaching for any of them.
 //
 // There is no table from mutant ID to index here, and that is the difference
 // that matters: a probe tree activates nothing, so it never resolves an ID.
@@ -298,6 +313,19 @@ func renderProbeRuntime(pkgName string, catalog *mutation.Catalog) ([]byte, erro
 	b.WriteString("\tif _, err := fmt.Fprintln(probeFile, i); err != nil {\n")
 	probeDiagnostic(&b, "\t\t", `"go-mutants: cannot append to the infection log "+probeFile.Name()`, "err")
 	b.WriteString("\t}\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("// Differs yields v, having recorded through Infect that mutant i's site would\n")
+	b.WriteString("// have read as m instead wherever the two disagree.\n")
+	b.WriteString("//\n")
+	b.WriteString("// It is what the boolean probe form is written as. Both readings are\n")
+	b.WriteString("// evaluated before the call, by the compiler, in the site's own context; what\n")
+	b.WriteString("// this adds is one comparison and, the first time it fails, one line in the\n")
+	b.WriteString("// log. The value returned is the original's, so the program this is spliced\n")
+	b.WriteString("// into is the program without it.\n")
+	b.WriteString("func Differs(i uint32, v, m bool) bool {\n")
+	b.WriteString("\tif v != m {\n\t\tInfect(i)\n\t}\n")
+	b.WriteString("\treturn v\n")
 	b.WriteString("}\n\n")
 
 	b.WriteString("// init opens the log the environment names and writes this process's header,\n")

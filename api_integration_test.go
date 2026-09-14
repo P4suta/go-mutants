@@ -1175,14 +1175,21 @@ func copyFixtureTree(name, destination string) error {
 // it.
 const probeableModule = "fixture.example/probeable"
 
-// probeableRules names the fixture's three mutants by the rule that produced
-// each, which is how every test below picks one out of the catalogue: no two
+// probeableRules names the fixture's mutants by the rule that produced each,
+// which is how every test below picks one out of the catalogue: no two
 // functions in the fixture share an operator, so a rule names exactly one
 // mutant whatever order the catalogue settles on.
+//
+// doubledRule is the unprobed specimen. Its statement's operands are calls, so
+// no probe form may evaluate them a second time or skip one on the mutant's
+// behalf -- which is why it is the right mutant to state the "absence carries
+// no information" invariant against, and why it stays the right one as forms
+// are added.
 const (
-	widthRule = "return-zero-numeric"
-	labelRule = "return-empty-string"
-	readyRule = "true-to-false"
+	widthRule   = "return-zero-numeric"
+	labelRule   = "return-empty-string"
+	readyRule   = "true-to-false"
+	doubledRule = "add-to-sub"
 )
 
 // A preparedFixture is one workspace and session prepared over
@@ -1597,21 +1604,28 @@ func probeOf(t *testing.T, session *gomutants.Session, request gomutants.ProbeRe
 // TestPrepareWithProbeMarksProbedMutants pins which mutants the probe tree
 // speaks for.
 //
-// The distinction is the whole safety of the layer. A return-value mutant has a
-// probe form and its site was compiled into the probe tree, so its absence from
-// an infection log is a fact. The boolean literal has no form at all: the file
-// holding it comes out of the probe pass byte for byte, so it can never be
-// recorded, and a consumer reading its absence as "not infected" would skip the
-// test that kills it. Probed is what tells the two apart, and a validation that
-// merely accepted every mutant would say nothing about it.
+// The distinction is the whole safety of the layer. A mutant with a form had
+// its site compiled into the probe tree, so its absence from an infection log
+// is a fact. `add-to-sub` on a statement whose operands are calls has no form
+// and never will: a probe stands in for a mutant by evaluating what the
+// original evaluates, and an operand with an effect is one no rewrite may
+// evaluate twice or skip on the mutant's behalf. The file holding it comes out
+// of the probe pass with nothing written for it, so it can never be recorded,
+// and a consumer reading its absence as "not infected" would skip the test that
+// kills it. Probed is what tells the two apart, and a validation that merely
+// accepted every mutant would say nothing about it.
+//
+// The rule rather than the family decides, which is what the boolean form
+// changed: `true-to-false` is not a return-value rule and is measured all the
+// same, where it stands.
 func TestPrepareWithProbeMarksProbedMutants(t *testing.T) {
 	catalog := probeable(t).catalog
-	if len(catalog.Mutants) != 3 {
-		t.Fatalf("the fixture catalogues %d mutants, want 3: %+v", len(catalog.Mutants), catalog.Mutants)
+	if len(catalog.Mutants) != 4 {
+		t.Fatalf("the fixture catalogues %d mutants, want 4: %+v", len(catalog.Mutants), catalog.Mutants)
 	}
 	probed := 0
 	for _, mutant := range catalog.Mutants {
-		want := mutant.Family == "return-replacement"
+		want := mutant.Rule != doubledRule
 		if mutant.Probed != want {
 			t.Errorf("mutant %s (%s/%s) Probed = %v, want %v",
 				mutant.DisplayID, mutant.Family, mutant.Rule, mutant.Probed, want)
@@ -1620,8 +1634,8 @@ func TestPrepareWithProbeMarksProbedMutants(t *testing.T) {
 			probed++
 		}
 	}
-	if probed != 2 {
-		t.Errorf("%d mutants are probed, want the fixture's 2 return-value ones", probed)
+	if probed != 3 {
+		t.Errorf("%d mutants are probed, want the fixture's 3 with a form", probed)
 	}
 }
 
@@ -1720,16 +1734,22 @@ func TestProbeReportsTheMutantsATestInfected(t *testing.T) {
 // meaningful, and the fallback would silently stop being conservative.
 func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 	prepared := probeable(t)
-	ready := mutantkit.APIByRule(t, prepared.catalog, readyRule)
-	if ready.Probed {
-		t.Fatalf("the fixture's boolean literal %s is probed; it is the specimen for the unprobed case",
+	unprobed := mutantkit.APIByRule(t, prepared.catalog, doubledRule)
+	if unprobed.Probed {
+		t.Fatalf("the fixture's effectful statement %s is probed; it is the specimen for the unprobed case",
+			unprobed.DisplayID)
+	}
+	// And the literal beside it is probed, so that "unprobed" here is a fact
+	// about this mutant rather than about a build in which nothing is probed.
+	if ready := mutantkit.APIByRule(t, prepared.catalog, readyRule); !ready.Probed {
+		t.Fatalf("the fixture's boolean literal %s is not probed either, so the contrast is gone",
 			ready.DisplayID)
 	}
 
 	whole := probeOf(t, prepared.session, gomutants.ProbeRequest{Package: probeableModule})
-	if slices.Contains(whole.Infected, ready.Index) {
+	if slices.Contains(whole.Infected, unprobed.Index) {
 		t.Errorf("a whole-package probe reported %v, which holds the unprobed mutant %d",
-			whole.Infected, ready.Index)
+			whole.Infected, unprobed.Index)
 	}
 	byIndex := make(map[uint32]gomutants.Mutant, len(prepared.catalog.Mutants))
 	for _, mutant := range prepared.catalog.Mutants {
@@ -1759,7 +1779,7 @@ func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 // would then never have found.
 func TestEveryKillIsPrecededByAnInfection(t *testing.T) {
 	prepared := probeable(t)
-	tests := []string{"TestWidth", "TestLabel", "TestReady", "TestFlagged"}
+	tests := []string{"TestWidth", "TestLabel", "TestReady", "TestDoubled", "TestFlagged"}
 
 	probedKills := 0
 	for _, name := range tests {

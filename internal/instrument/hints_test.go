@@ -62,6 +62,12 @@ type hintOptions struct {
 	// function declares is, by construction, spelled in the file that declares
 	// it — so the fixture says which of its statements stands for one.
 	unprobed []string
+	// unprobedSites lists the boolean expressions discovery would refuse to
+	// measure in place, spelled exactly as the fixture writes them. The form
+	// evaluates both readings of a site, so it needs the whole expression to be
+	// free of effects and of anything that can panic -- which syntax cannot
+	// show either, since a call is only an effect when it is one.
+	unprobedSites []string
 }
 
 // returnValueRules are the six rules whose candidates carry a probe hint. They
@@ -199,13 +205,39 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 		d.t.Fatalf("%s: no node covers %s", d.path, span)
 	}
 	guard, ok := d.formC(anchor)
-	if !ok {
+	if ok {
+		// A Form C site is a boolean probe site, which is discovery's own rule:
+		// the helper takes the universe bool and that is exactly what Form C
+		// requires. What syntax cannot show is a site with an effect or a
+		// possible panic in it, and [hintOptions.unprobedSites] is how a
+		// fixture states one.
+		guard.Probe = d.boolSite(guard)
+	} else {
 		if guard, ok = d.statementSite(anchor); !ok {
 			d.t.Fatalf("%s: no guard form covers the edit at %s (%q)", d.path, span, d.text(anchor))
 		}
 	}
-	guard.Probe = d.returnSite(anchor, span, rule)
+	// The return form replaces whatever the guard chose and never the other way
+	// round, exactly as it does in discovery: it compares the value the
+	// function would really have returned, which is the stronger evidence.
+	if site := d.returnSite(anchor, span, rule); site != nil {
+		guard.Probe = site
+	}
 	return guard
+}
+
+// boolSite derives the probe hint of a Form C site, or nothing for one the
+// fixture has declared unprobeable.
+func (d *hintDeriver) boolSite(guard discover.Guard) *discover.ProbeSite {
+	d.t.Helper()
+
+	text := string(d.src[guard.SiteSpan.StartByte:guard.SiteSpan.EndByte])
+	for _, refused := range d.opts.unprobedSites {
+		if text == refused {
+			return nil
+		}
+	}
+	return &discover.ProbeSite{Form: discover.ProbeFormBool, Span: guard.SiteSpan}
 }
 
 // returnSite derives the probe hint of a return-value candidate: the statement

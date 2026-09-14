@@ -82,15 +82,21 @@ func TestProbeTreeIsSemanticsPreserving(t *testing.T) {
 		t.Fatalf("instrumenting the snapshot as a probe tree: %v", instrumentErr)
 	}
 
-	// ready.go is absent, and that is the return form's boundary showing
-	// through: its mutant is `true-to-false` on the literal, which the
-	// catalogue kept over the `return-false` proposing the same edit, and a
-	// boolean literal has no probe form yet. An unprobed mutant costs a run
-	// nothing but the executions it could have skipped.
-	if want := []string{"clamp.go", "untested.go"}; !slices.Equal(instrumented.FilesInstrumented, want) {
+	// Every file of the fixture, and that is the boolean form showing through:
+	// ready.go's only mutant is `true-to-false` on a literal, which no return
+	// form can compare and which the boolean form measures where it stands.
+	// Before that form existed this file was the unprobed one, and it was
+	// unprobed for a reason a reader would have called a limitation.
+	//
+	// The counts are sites rather than mutants, and the two differ here in both
+	// directions: clamp.go's five are its two `return` statements and the three
+	// boolean expressions nested inside and beside them, while untested.go's
+	// two are one `return` and the comparison inside it — which carries the two
+	// `return-bool` mutants *and* the comparison's own, in one site each.
+	if want := []string{"clamp.go", "ready.go", "untested.go"}; !slices.Equal(instrumented.FilesInstrumented, want) {
 		t.Errorf("probed %q, want %q", instrumented.FilesInstrumented, want)
 	}
-	if want := map[string]int{"clamp.go": 3, "untested.go": 1}; !maps.Equal(instrumented.GuardsByFile, want) {
+	if want := map[string]int{"clamp.go": 5, "ready.go": 1, "untested.go": 2}; !maps.Equal(instrumented.GuardsByFile, want) {
 		t.Errorf("probe sites by file = %v, want %v", instrumented.GuardsByFile, want)
 	}
 
