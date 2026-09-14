@@ -96,16 +96,17 @@ func TestListExplainPrintsAWholeFileSkipWithoutACoordinate(t *testing.T) {
 //
 // The coordinates are the fixture's own and can be checked with an editor,
 // which is the point: line 33 holds two suppressed expressions inside one array
-// length, line 49 holds three inside one package-level initialiser — a
-// comparison and the two constants a return could be rewritten to — and the
-// generated file has no coordinate at all, because it was never opened.
+// length, line 49 holds two inside one package-level initialiser — a comparison
+// and the one constant a return there could be rewritten to — and the generated
+// file has no coordinate at all, because it was never opened.
 //
-// Each row names the rule that was declined, which is what makes line 49's two
-// rows at column 33 readable: they are the same expression refused twice, once
-// for each constant a return could become, and two identical lines would read
-// as a counting bug instead.
+// Each row names the rule that was declined, which is what makes line 49
+// readable. It would carry `return-false` as well, except that `1 == 2` is a
+// constant the checker folded to false: settling it false is the program
+// itself, not a mutant, and discovery refuses it before there is a suppression
+// to record. A site that is not an edit is not a declined edit either.
 const wantSkipDetail = `
-suppressed sites (17)
+suppressed sites (16)
 discovery passed these over; they are never candidates, so they are in no score
 
 array-length 2 sites
@@ -124,11 +125,10 @@ generated 1 site
   the file says it is generated, so an edit here would measure the generator's tests and be overwritten by its next run
   generated/generated.go
 
-package-var-init 5 sites
+package-var-init 4 sites
   the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1
   suppressed/suppressed.go:41:19 lt-to-le
   suppressed/suppressed.go:44:15 true-to-false
-  suppressed/suppressed.go:49:33 return-false
   suppressed/suppressed.go:49:33 return-true
   suppressed/suppressed.go:49:35 eq-to-neq
 

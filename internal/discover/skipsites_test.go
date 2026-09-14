@@ -142,7 +142,7 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			// declarations, both expressions hiding in one array length, the
 			// three package-level initialisers — the last of which is a
 			// function literal holding a comparison and a return, so it is
-			// three sites on one line — and the four case labels.
+			// two sites on one line — and the four case labels.
 			path: "suppressed/suppressed.go",
 			sites: []string{
 				`suppressed/suppressed.go:18:12 const-decl true-to-false "true"`,
@@ -152,10 +152,12 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 				`suppressed/suppressed.go:33:33 array-length true-to-false "true})"`,
 				`suppressed/suppressed.go:36:19 package-var-init lt-to-le "< 5"`,
 				`suppressed/suppressed.go:39:15 package-var-init true-to-false "true"`,
-				// One coordinate, two rules, and the rule names are what make
-				// the repetition readable: the literal's two return
-				// replacements were both declined there.
-				`suppressed/suppressed.go:50:33 package-var-init return-false "1 == 2"`,
+				// One coordinate and one rule, where both return replacements
+				// could have stood: `1 == 2` is a constant the checker folded
+				// to false, so `return-false` is not a mutation to decline --
+				// it is the program itself -- and the refusal is made before
+				// the suppression is recorded. A site that is not an edit is
+				// not a declined edit either.
 				`suppressed/suppressed.go:50:33 package-var-init return-true "1 == 2"`,
 				`suppressed/suppressed.go:50:35 package-var-init eq-to-neq "== 2 }"`,
 				`suppressed/suppressed.go:58:18 const-decl gt-to-ge "> 2"`,

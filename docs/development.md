@@ -1297,9 +1297,9 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 2888 mutants catalogued, 2822 detected —
+The numbers the gate is sized against: 2885 mutants catalogued, 2822 detected —
 2816 killed, two of them by the memory bound, and six caught by the per-mutant
-timeout — sixty-six declared expectations, **a score of 100.00%**, at
+timeout — sixty-three declared expectations, **a score of 100.00%**, at
 `--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
 is compared on every run, `--strict` or not, and at this size it does not fail
 until the fourteenth unexpected survivor — so `--strict` is the thing that
@@ -1390,7 +1390,7 @@ the larger of the two. `-v` also names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 2888 / 2816 / 6 / 66 on
+With that in place the whole summary is stable: the same 2885 / 2816 / 6 / 63 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.

@@ -520,7 +520,10 @@ var wantSkips = []string{
 	// The condition of a named boolean type: negatable Go, and no guard form.
 	"suppressed/suppressed.go array-length 2",
 	"suppressed/suppressed.go const-decl 4",
-	"suppressed/suppressed.go package-var-init 5",
+	// Four rather than five: the function literal in the last initialiser
+	// returns a constant comparison, so one of its two return replacements is
+	// the program it would mutate and was never an edit to decline.
+	"suppressed/suppressed.go package-var-init 4",
 	// The reason the reserved name was chosen for: a Form D site whose
 	// declared type is another package's unexported one.
 	"unnameable/unnameable.go unnameable-decl-type 1",

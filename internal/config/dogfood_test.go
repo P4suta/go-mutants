@@ -29,12 +29,6 @@ const repositoryConfig = "../../" + FileName
 // which row has gone stale.
 var repositoryExpectations = []Expectation{
 	{
-		ID: "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9",
-		Reason: "Equivalent: Disjoint is the zero value of Relation, " +
-			"being first in its iota block, so `return Disjoint` and " +
-			"`return 0` are the same constant.",
-	},
-	{
 		ID: "326eb774d53498b186d7a5990a0ee7f0c7dd2cf4934f6ba8adb79a0217b6025b",
 		Reason: "Equivalent: Len returns 0 through the guard for a reversed span " +
 			"and EndByte - StartByte otherwise, and that difference is 0 exactly " +
@@ -65,12 +59,6 @@ var repositoryExpectations = []Expectation{
 		Reason: "Equivalent: the comparison sits inside " +
 			"`if x.position != y.position`, where the two registry positions are " +
 			"already known to differ, so `<` and `<=` are the same test.",
-	},
-	{
-		ID: "900c4913fd6dc386d37c0cbd9d5753f2330504920ae559e3c76a45b806db0a21",
-		Reason: "Equivalent: OutcomeNotRun is the zero value of Outcome, being " +
-			"first in its iota block, so `return OutcomeNotRun` and `return 0` " +
-			"are the same constant -- the same argument as the Disjoint row above.",
 	},
 	{
 		ID: "cf02d1c0b8855d56c21d1216e47fec02bc0674638c7f3e8ab02ce647af24b391",
@@ -264,14 +252,6 @@ var repositoryExpectations = []Expectation{
 		Reason: "Equivalent: the second argument of make is a capacity hint, " +
 			"the runtime clamps a negative one to zero, and a map holds the " +
 			"same entries whatever it was sized for.",
-	},
-	{
-		ID: "eebd2dc5a8fd6ecb2591f3a05d97ab23dddaa1ee3810fadeca068fb460c8452e",
-		Reason: "Equivalent: OutcomeNotRun is the zero value of " +
-			"mutation.Outcome, being first in its iota block, so `return " +
-			"mutation.OutcomeNotRun` and `return 0` are the same constant " +
-			"-- the same argument as the Disjoint and OutcomeNotRun rows " +
-			"above.",
 	},
 	{
 		ID: "9525f578dd1e2ba9416b5840f04aa29eac46731dfc166d0a1d7bb4d29f9fa7e7",

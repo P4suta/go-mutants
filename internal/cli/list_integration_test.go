@@ -165,7 +165,11 @@ var wantSkips = []catalogSkip{
 	{Path: "generics/generics.go", Reason: "type-param", Count: 5},
 	{Path: "suppressed/suppressed.go", Reason: "array-length", Count: 2},
 	{Path: "suppressed/suppressed.go", Reason: "const-decl", Count: 4},
-	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 5},
+	// Four rather than five: the function literal in the last initialiser
+	// returns a constant comparison, so one of its two return replacements was
+	// never an edit to decline -- the mutation and the source are one program,
+	// and discovery refuses it before the suppression is recorded.
+	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 4},
 }
 
 // inFixture points the process at a copy of the discovery fixture for the

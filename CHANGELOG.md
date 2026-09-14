@@ -4049,6 +4049,28 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **A replacement the source already holds is not a mutation, whether the bytes
+  say so or only go/types does.** Discovery has always refused a candidate whose
+  replacement is spelled the same as the original — `return 0` under
+  `return-zero-numeric` is one program, not two — and `branch-replacement`
+  extended that to the constant a condition folds to. The return families did
+  not, so `return Disjoint`, where `Disjoint` is the head of an `iota` block,
+  was catalogued as a mutant replacing it with `0`: different bytes, the same
+  constant after the conversion the `return` itself performs, and no test in any
+  language can tell the two apart. This repository's own gate found that
+  survivor three times and declared it three times, which is three ledger rows
+  arguing one sentence — the signal that the tool, not the ledger, was the thing
+  to change. One predicate now answers for all three refusals: the settled
+  condition, the replaced result, and the `make` whose length is already zero
+  all ask whether the checker folded this expression to the value the
+  replacement writes. Only the *matching* direction goes, so `return-false` at a
+  constantly-true result stays — that is a function whose answer stops being the
+  one every caller relies on. It is a refusal rather than a skip, for the reason
+  the textual one is: a skip says go-mutants declined to mutate a site, and this
+  says there was never a mutant there to decline. The dogfood catalogue fell
+  from 2888 to 2885 and the ledger from sixty-six rows to sixty-three, with the
+  detected count unchanged at 2822: the only mutants that left the denominator
+  are the ones that could never have been in it.
 - **`internal/discover`'s mutation walk can be driven without a toolchain.**
   The walk over one file — the part that finds candidates and records skips —
   now goes through `discovery.scanParsed`, which takes an already-parsed

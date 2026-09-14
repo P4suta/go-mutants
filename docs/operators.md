@@ -77,9 +77,11 @@ the source:
   `""`, boolean becomes both `true` and `false`, and a pointer, slice, map,
   channel, function, or non-`error` interface becomes `nil`. A type parameter
   is refused — its underlying type is its constraint, so an unwary reading
-  would offer `return nil` for a function returning an `int`. A value that is
-  already spelled as its own replacement produces no candidate and no skip:
-  the mutation and the source would be the same program.
+  would offer `return nil` for a function returning an `int`. A value that
+  already *is* its own replacement produces no candidate and no skip — the
+  mutation and the source would be the same program — and that is asked of the
+  constant go/types folded rather than of the bytes, so `return Disjoint` from
+  an `iota` block is refused exactly as `return 0` is.
 - `error-swallowing` owns the values whose static type is exactly `error`, and
   `return-replacement` owns every other nillable result. `return err` is
   therefore `return-err-to-nil` and `return &myErr{}` from the same function is
@@ -108,11 +110,11 @@ the source:
   type, and Form C′ is what carries one: it writes the same selector and
   converts it back to the named type. A `for` with no condition and a `range`
   clause have nothing to settle and are passed over. A condition go/types has already
-  folded to a constant is refused in the matching direction only: settling a
-  constantly-true guard *true* writes different bytes for the same program,
-  while settling it *false* is a branch that stops firing, which is exactly the
-  mutant somebody wants when a build tag has quietly made a guard
-  unconditional.
+  folded to a constant is refused in the matching direction only, by the same
+  predicate `return-replacement` asks: settling a constantly-true guard *true*
+  writes different bytes for the same program, while settling it *false* is a
+  branch that stops firing, which is exactly the mutant somebody wants when a
+  build tag has quietly made a guard unconditional.
 - `statement-deletion` deletes an expression statement that is a call, a plain
   `=` assignment (`x = append(x, e)` included), and an `++`/`--`. It never
   deletes a `:=`, which would make every later use of the name a compile error,
@@ -451,7 +453,7 @@ no run-time value for a guard to select between. See
 
 `_test.go` files are built and run but never mutated; that is inherent, not a
 recorded skip, and neither is a `panic` call the deletion family declines nor a
-return value already spelled as its own replacement.
+site that already holds the value its replacement would write.
 
 ### The refusals that are not skips
 
@@ -463,9 +465,9 @@ here to decline*.
 | Refusal | The argument |
 | --- | --- |
 | A `panic` call, for `delete-call-statement` | Removing a terminating `panic` leaves a path that reaches the closing brace without returning. The mutant would not compile, and manufacturing a missing-return error wholesale in defensive code is not a measurement |
-| A value already spelled as its own replacement — `return 0`, `return nil`, and for `neutral-value` also `return []T{}` and `return make([]T, 0)` | The mutation and the source are the same program |
+| A site already spelled as its own replacement — `return 0`, `return nil`, `if false`, and for `neutral-value` also `return []T{}` and `return make([]T, 0)` | The mutation and the source are the same program |
+| A site whose value go/types already folded to its replacement — `return Disjoint` where `Disjoint` is the head of an `iota` block, `return Anonymous` where that constant is `""`, `if enabled` where `const enabled = 3 > 2` | The same argument one level down, and the one that earns its keep: a constant has one value however it is spelled, the compiler has already computed it, and two spellings of it are one program. Only the *matching* direction goes — `return-false` at a constantly-true result, and settling that guard `false`, are branches that stop firing, which is exactly the mutant somebody wants when a build tag has quietly made one unconditional |
 | A slice or a map returned beside a non-nil `error`, for `neutral-value` | By universal Go convention a caller that sees an error does not look at the other results, so `if err != nil { return nil, err }` mutated to `return []T{}, err` is equivalent. **This is an argument from convention, not a proof** — the same honesty the `panic` refusal above is stated with. It is gated per statement, so `return xs, nil` on the success path, where the rule is worth the most, is not touched. Without the gate most of the family's output would be this one shape |
-| A condition go/types folded to a constant, settled the way it already is, for `branch-replacement` | `const enabled = 3 > 2` used as a condition is spelled `enabled` and *is* `true`, so `condition-to-true` there writes different bytes for the same program. Only the matching direction goes; the other is a branch that stops firing |
 | `loop-condition-to-true`, everywhere | Not a refusal of a site but of a rule: it is the one edit whose every instance would cost a whole per-mutant timeout — twice, since a timeout is measured again before it is believed — to teach a reader what the source already says. `false` is the safe direction, and it is in the catalogue |
 
 `neutral-value` also carries no [probe hint](#guard-site-hints), deliberately.

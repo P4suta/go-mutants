@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2816 killed, six caught by the timeout, sixty-six declared, 100.00%,
+# race: 2816 killed, six caught by the timeout, sixty-three declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -111,23 +111,36 @@ profile = "balanced"
 #
 # The numbers this gate is sized against, from the run that produced them:
 #
-#   internal/report/*.go         1224 mutants
-#   internal/config/*.go          490
-#   internal/mutation/*.go        458
-#   internal/coverage/*.go        154
+#   internal/report/*.go         1361 mutants
+#   internal/config/*.go          505
+#   internal/mutation/*.go        477
+#   internal/coverage/*.go        162
 #   internal/gocmd/*.go           111
 #   internal/schemas/*.go          89
-#   internal/glob/*.go             68
+#   internal/glob/*.go             71
 #   internal/interval/*.go         50
+#   internal/drift/*.go            21
 #   internal/operatorselect/*.go   16
-#   internal/drift/*.go            15
+#   internal/testlog/*.go          15
 #   internal/testflag/*.go          7
 #
-# catalogues 2888 mutants and detects 2822 of them -- 2816 killed and six caught
-# by the timeout -- leaving the sixty-six rows declared below and a score of
+# catalogues 2885 mutants and detects 2822 of them -- 2816 killed and six caught
+# by the timeout -- leaving the sixty-three rows declared below and a score of
 # 100.00%, in the wall clock recorded under [policy]. The count has grown eight
 # times without the score moving, and every time for the same reason: code the
 # gate already covered started producing mutants it had not produced before.
+# Once it has fallen, for the opposite and better reason:
+#
+#   2888 to 2885   refusing an edit whose replacement is the constant the source
+#                  already holds (2026-09-14): three fewer mutants, and three
+#                  fewer rows in the ledger below. `return Disjoint`, `return
+#                  OutcomeNotRun` and `return mutation.OutcomeNotRun` were each
+#                  the head of an iota block returned where the rule proposes
+#                  `0`; go/types folds both readings to the same constant, so
+#                  there were never two programs there. Nothing that was killed
+#                  stopped being killed: the detected count is the same 2822 it
+#                  was, and only the denominator lost the three mutants that
+#                  could never have been in it.
 #
 #   2736 to 2873   measuring a `go.work` as one run over every module it joins
 #                  (2026-09-14): 137 new mutants, most of them the workspace
@@ -279,36 +292,40 @@ exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # keeps this file honest when a new family lands. Uncomment to narrow.
 # operators = ["comparison", "error-swallowing"]
 
-# A declared equivalent mutant. An expectation is evidence to check, not a skip
-# list: the row is judged on every run, survival fulfills it, a kill is exit 2,
-# and an ID that no longer exists in the catalog is stale and also exit 2. The
-# row below is judged by a test binary that ran; ten of the rows further down
-# are settled by coverage without a process being started, and the notes there
-# say why that is the same verdict rather than a weaker one.
+# The declared equivalent mutants. An expectation is evidence to check, not a
+# skip list: the row is judged on every run, survival fulfills it, a kill is
+# exit 2, and an ID that no longer exists in the catalog is stale and also
+# exit 2. Forty-two of the sixty-three rows are judged by a test binary that
+# ran; the other twenty-one are settled by coverage without a process being
+# started, and the notes there say why that is the same verdict rather than a
+# weaker one.
 #
-# This one is the real thing rather than an illustration. `Relate` returns the
-# named constant, and `Disjoint` is the first member of its iota block, so
-# `Disjoint` and `0` are the same value of the same type after constant
-# conversion -- there are not two programs here for a test to tell apart. It
-# was found by running this gate, and it is declared rather than tested away or
-# quietly excluded, which is the difference between a mutation score and a
-# number.
-[[mutation.expect]]
-id = "7c3b141c043e632d833e0d9b948690bf3efb9047c502de6cb3cd372dfc7685b9"
-reason = "Equivalent: Disjoint is the zero value of Relation, being first in its iota block, so `return Disjoint` and `return 0` are the same constant."
+# Every row was found by running this gate against this repository, and is
+# declared rather than tested away or quietly excluded, which is the difference
+# between a mutation score and a number.
+#
+# Three rows that used to stand at the head of this ledger are gone for the
+# better reason. `return Disjoint`, `return OutcomeNotRun` and `return
+# mutation.OutcomeNotRun` were each the first name of an iota block returned
+# where `return-zero-numeric` proposes `0` -- one constant, two spellings, one
+# program -- and discovery now refuses an edit whose replacement is the value
+# the source already holds, whether the bytes say so or only go/types does. A
+# ledger row retired by a refusal is worth three rows arguing the same sentence,
+# and the argument is in docs/operators.md under "The refusals that are not
+# skips" where a reader looking for it will be.
 
-# The sixteen rows that follow are the same kind of row, in internal/mutation:
-# the survivors there that no honest test can reach. Every survivor a test could
-# pin has a test instead, in that package's own suites, which is why this list
-# is sixteen rows rather than the forty-one the whole-package scope reported.
-# Each row says which of four things it is rather than repeating the word
-# "equivalent" sixteen times, because a ledger that argues the same sentence
-# over and over is the skip list this file refuses to keep.
+# The fifteen rows that follow are in internal/mutation: the survivors there
+# that no honest test can reach. Every survivor a test could pin has a test
+# instead, in that package's own suites, which is why this list is fifteen rows
+# rather than the forty-one the whole-package scope reported. Each row says
+# which of four things it is rather than repeating the word "equivalent" fifteen
+# times, because a ledger that argues the same sentence over and over is the
+# skip list this file refuses to keep.
 #
 # Every one of these ids names a mutant the include list above covers, so all
-# sixteen are catalogued and judged on every run of this gate rather than taken
+# fifteen are catalogued and judged on every run of this gate rather than taken
 # on trust: survival is what fulfills a row, a kill is exit 2, and an id the
-# catalogue no longer holds is stale and exit 2 as well. Eleven of them survive a
+# catalogue no longer holds is stale and exit 2 as well. Ten of them survive a
 # test binary that ran. The other five are reported `survived (uncovered)`
 # without a process being started, because no binary in this scope reaches the
 # line at all -- which is coverage saying, from a cheaper direction, exactly
@@ -337,10 +354,6 @@ reason = "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; a letter 
 [[mutation.expect]]
 id = "5ab87ae91e8e36e223776f77bc7073cf78024a5c0ee5c2f8c68ca40e54b0ce2c"
 reason = "Equivalent: the comparison sits inside `if x.position != y.position`, where the two registry positions are already known to differ, so `<` and `<=` are the same test."
-
-[[mutation.expect]]
-id = "900c4913fd6dc386d37c0cbd9d5753f2330504920ae559e3c76a45b806db0a21"
-reason = "Equivalent: OutcomeNotRun is the zero value of Outcome, being first in its iota block, so `return OutcomeNotRun` and `return 0` are the same constant -- the same argument as the Disjoint row above."
 
 # Equivalent for every value the type will admit: the mutation changes an
 # answer only for an input another check in the same package calls incoherent.
@@ -580,10 +593,6 @@ reason = "Equivalent: strings.Builder.Grow is a capacity hint and the page is th
 [[mutation.expect]]
 id = "032117c6b39b2b56b5f93fc691a60108f9c8bfe0f891ab6277841afbfcf16cf1"
 reason = "Equivalent: the second argument of make is a capacity hint, the runtime clamps a negative one to zero, and a map holds the same entries whatever it was sized for."
-
-[[mutation.expect]]
-id = "eebd2dc5a8fd6ecb2591f3a05d97ab23dddaa1ee3810fadeca068fb460c8452e"
-reason = "Equivalent: OutcomeNotRun is the zero value of mutation.Outcome, being first in its iota block, so `return mutation.OutcomeNotRun` and `return 0` are the same constant -- the same argument as the Disjoint and OutcomeNotRun rows above."
 
 [[mutation.expect]]
 id = "9525f578dd1e2ba9416b5840f04aa29eac46731dfc166d0a1d7bb4d29f9fa7e7"
@@ -871,11 +880,11 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2888 mutants. Two thousand
+# Measured, not wished for. The scope catalogues 2885 mutants. Two thousand
 # eight hundred and twenty-two are detected -- 2816 killed and six caught by
-# the timeout -- and the other sixty-six are the rows declared above, which
+# the timeout -- and the other sixty-three are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
-# is 100.00%, with all sixty-six expectations fulfilled and none stale. Every
+# is 100.00%, with all sixty-three expectations fulfilled and none stale. Every
 # one of those numbers
 # was the same on four of the five runs that measured this scope, the
 # killed/timeout split included; the fifth, taken while the machine picked up
