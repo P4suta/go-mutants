@@ -77,6 +77,7 @@ path = [
   "internal/console/testdata/verbose-one.golden.txt",
   "internal/console/testdata/verbose-two.golden.txt",
   "internal/engine/testdata/killable.report.golden.json",
+  "internal/engine/testdata/work-ceiling.golden.txt",
   "internal/engine/testdata/simple.report.golden.json",
   "internal/engine/testdata/tagged.report.golden.json",
   "internal/engine/testdata/untested.report.golden.json",

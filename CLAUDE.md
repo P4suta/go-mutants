@@ -96,6 +96,8 @@ repository's prose worth reading, so here is where each ledger lives.
 | `docs/adr/README.md` | the records beside it | `internal/testkit/devdocs_test.go` |
 | `docs/trace-v1.md` | every `ExecKind` | `trace/docs_test.go` |
 | `fixtures/README.md` | the corpus modules and their conformance | `internal/testkit/corpus_test.go` |
+| how many children a run starts, by kind | the recording every run keeps | `internal/engine/workceiling_integration_test.go` |
+| that every narrowing reaches one verdict | ADR 0010 | `internal/engine/narrowing_integration_test.go` |
 | `REUSE.toml` | every file git holds or would hold | `internal/testkit/licensegate_test.go` |
 
 Adding a page that enumerates something means adding its ledger in the same
