@@ -54,7 +54,7 @@ var repositoryExpectations = []Expectation{
 			"already known to differ, so `<` and `<=` are the same test.",
 	},
 	{
-		ID: "9fd083af0792f6b5155cb1cff8883f7a3dce112be8c53e3c92c2ccc0e813044b",
+		ID: "565a13327c3aeca8d6b512fc779934904a161a98911a06d6580a48d96a8f27d8",
 		Reason: "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; " +
 			"a letter plus colon is rejected by the identical post-clean volume " +
 			"guard immediately below, and every other two-byte path fails the " +
@@ -111,24 +111,24 @@ var repositoryExpectations = []Expectation{
 			"forwards can only come from WriteLengthPrefixed's 4 GiB field guard.",
 	},
 	{
-		ID: "ce40ad71426f18bdb1c7af2f1ab665321d3b2e150d071e52c39b9c6e38ada90c",
+		ID: "b0d2a8afec954577ebc1513a7524fa17426961c52e6efabaa029d99f7923e861",
 		Reason: "Unkillable: WriteLengthPrefixed fails only on a field longer " +
 			"than math.MaxUint32 bytes, so entering this branch means hashing an " +
 			"identity whose path is four gigabytes long.",
 	},
 	{
-		ID: "feba9b0fd4945263451deb51c5fbe281d6fd97a4c98c181f6aec9eebcab4c2c1",
+		ID: "941885a4446b5d0051d8aff50241e741d6bf8ea0e7cc04b26e2fb904189b4818",
 		Reason: "Unkillable: the same branch as the row above -- the error this " +
 			"forwards exists only for a field longer than math.MaxUint32 bytes.",
 	},
 	{
-		ID: "e8eb2f6092486a0554da44e0796371ab157e4bf07c574ef16d9ff8ece74f4474",
+		ID: "9843e3803263d340889f58b002b6e66622b2f25dcf4163a8d4fe48ab62fb038c",
 		Reason: "Unkillable: `>` and `>=` disagree only on a string of exactly " +
 			"math.MaxUint32 bytes, so telling them apart means allocating four " +
 			"gigabytes in a unit test.",
 	},
 	{
-		ID: "ad9321c58f07017b27f8a9dd8f1e4acad7a38d4a83a9e100589634d63512117c",
+		ID: "778f61b378f9a44f3cc836eccc8bcac2f79295189a0514b28e838b9340dab6b2",
 		Reason: "Unkillable: this return is reached only for a string longer " +
 			"than math.MaxUint32 bytes, so killing it means allocating more than " +
 			"four gigabytes in a unit test.",
@@ -553,9 +553,9 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
 		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2653 scored mutants half a
-		// percent buys thirteen survivors (2640/2653 = 99.51% clears,
-		// 2639/2653 = 99.47% does not), where it bought twelve when it was
+		// same arithmetic rather than inertia: at 2659 scored mutants half a
+		// percent buys thirteen survivors (2646/2659 = 99.51% clears,
+		// 2645/2659 = 99.47% does not), where it bought twelve when it was
 		// set -- still far short of the twenty-one that moves this number.
 		// The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},
