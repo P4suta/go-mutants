@@ -153,10 +153,8 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 				`suppressed/suppressed.go:50:33 package-var-init "1 == 2"`,
 				`suppressed/suppressed.go:50:35 package-var-init "== 2 }"`,
 				`suppressed/suppressed.go:58:18 const-decl "> 2"`,
-				`suppressed/suppressed.go:68:9 case-label "== b:"`,
-				`suppressed/suppressed.go:72:10 case-label "== fal"`,
-				`suppressed/suppressed.go:72:13 case-label "false:"`,
-				`suppressed/suppressed.go:89:16 case-label "< b):"`,
+				`suppressed/suppressed.go:82:9 case-label "+ 1:"`,
+				`suppressed/suppressed.go:84:9 case-label "* 2:"`,
 			},
 		},
 		{

@@ -100,7 +100,7 @@ func TestListExplainPrintsAWholeFileSkipWithoutACoordinate(t *testing.T) {
 // comparison and the two constants a return could be rewritten to — and the
 // generated file has no coordinate at all, because it was never opened.
 const wantSkipDetail = `
-suppressed sites (21)
+suppressed sites (19)
 discovery passed these over; they are never candidates, so they are in no score
 
 array-length 2 sites
@@ -108,12 +108,10 @@ array-length 2 sites
   suppressed/suppressed.go:33:28
   suppressed/suppressed.go:33:33
 
-case-label 4 sites
-  the expression labels a switch case or a select clause, which v1 leaves alone; the bodies underneath them are mutated
-  suppressed/suppressed.go:76:9
-  suppressed/suppressed.go:80:10
-  suppressed/suppressed.go:80:13
-  suppressed/suppressed.go:97:16
+case-label 2 sites
+  the expression labels a tagged switch case, whose label is compared against the tag, or a type switch case, whose labels name types; a tagless switch's labels are ordinary boolean contexts and are mutated
+  suppressed/suppressed.go:89:9
+  suppressed/suppressed.go:91:9
 
 const-decl 4 sites
   the expression is inside a const declaration, where a constant has to stay constant and one edit can renumber a whole iota block

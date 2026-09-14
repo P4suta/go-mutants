@@ -328,7 +328,7 @@ The reason strings below are the exact identifiers `internal/discover` emits
 | `const-decl` | Constant expressions must stay constant (covers `iota`) |
 | `array-length` | `[N]T` lengths are not runtime-evaluated expressions |
 | `type-param` | Type parameter lists, constraints, and type arguments are not value code |
-| `case-label` | `switch`/`select` label expressions; v1 limitation, planned for v2 |
+| `case-label` | The label of a *tagged* switch case, compared against the tag where no guard form can stand, or of a *type* switch case, which names a type rather than a value. A **tagless** switch's labels are exactly `bool` and are mutated like any other condition |
 | `package-var-init` | Initialization order hazards; covers `//go:embed` vars; v1 limitation |
 | `cgo` | cgo packages are excluded wholesale |
 | `generated` | Matches `^// Code generated .* DO NOT EDIT\.$` |
@@ -342,7 +342,12 @@ return value already spelled as its own replacement.
 
 ## Planned for v2
 
-`if`-branch replacement, map/slice neutral values, and `switch`/`select` case
-mutation. They are deliberately out of v1 because each needs either a new
-guard form or a type-directed neutral-value model that the instrumentation
-phase does not build yet.
+`if`-branch replacement and map/slice neutral values; each needs either a new
+guard form or a type-directed neutral-value model the instrumentation phase does
+not build yet. See [the roadmap](roadmap.md).
+
+A tagless `switch`'s case labels used to be on this list and are not any more:
+they are exactly `bool`, so Form C expresses them and nothing had to be built.
+What they were waiting on was somebody asking the guard chooser rather than
+suppressing them before it was consulted. A **tagged** switch's labels and a
+type switch's remain [documented exclusions](#documented-exclusions).

@@ -381,16 +381,22 @@ var wantCandidates = []string{
 	"suppressed/suppressed.go return-zero-numeric len(Buffer{})->0",
 	"suppressed/suppressed.go negate-condition limit->!(limit)",
 	"suppressed/suppressed.go return-zero-numeric a->0",
+	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go negate-condition ok == true->!(ok == true)",
 	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go true-to-false true->false",
 	"suppressed/suppressed.go return-empty-string \"equal and ok\"->\"\"",
+	"suppressed/suppressed.go eq-to-neq ==->!=",
+	"suppressed/suppressed.go false-to-true false->true",
 	"suppressed/suppressed.go return-empty-string \"not ok\"->\"\"",
+	"suppressed/suppressed.go return-empty-string \"one more\"->\"\"",
+	"suppressed/suppressed.go return-empty-string \"twice\"->\"\"",
 	"suppressed/suppressed.go negate-condition v > b->!(v > b)",
 	"suppressed/suppressed.go gt-to-ge >->>=",
 	"suppressed/suppressed.go return-empty-string \"greater\"->\"\"",
 	"suppressed/suppressed.go return-empty-string v->\"\"",
 	"suppressed/suppressed.go return-empty-string \"none\"->\"\"",
+	"suppressed/suppressed.go lt-to-le <-><=",
 	"suppressed/suppressed.go return-empty-string \"sent\"->\"\"",
 	"suppressed/suppressed.go negate-condition v == true->!(v == true)",
 	"suppressed/suppressed.go eq-to-neq ==->!=",
@@ -418,7 +424,7 @@ var wantSkips = []string{
 	// The condition of a named boolean type: negatable Go, and no guard form.
 	"negate/negate.go unnameable-decl-type 1",
 	"suppressed/suppressed.go array-length 2",
-	"suppressed/suppressed.go case-label 4",
+	"suppressed/suppressed.go case-label 2",
 	"suppressed/suppressed.go const-decl 4",
 	"suppressed/suppressed.go package-var-init 5",
 	// The reason the reserved name was chosen for: a Form D site whose
@@ -989,8 +995,12 @@ func TestDiscoverAppliesOnlyTheSelectedRules(t *testing.T) {
 			t.Errorf("unselected rule produced a candidate: %s at %s", c.Rule.Name, c.Path)
 		}
 	}
-	if len(result.Candidates) != 4 {
-		t.Errorf("got %d eq-to-neq candidates, want 4: %v", len(result.Candidates), summarize(result.Candidates))
+	// Six, and two of them are the tagless switch's own labels: `a == b` and
+	// the `==` of `ok == false`. A label of a switch with no tag is exactly
+	// `bool`, so it is an ordinary boolean context rather than a suppressed
+	// one -- see the corpus module's Switch for the three shapes.
+	if len(result.Candidates) != 6 {
+		t.Errorf("got %d eq-to-neq candidates, want 6: %v", len(result.Candidates), summarize(result.Candidates))
 	}
 }
 

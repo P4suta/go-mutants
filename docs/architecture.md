@@ -1186,6 +1186,7 @@ and a suite that wrote where it reads cannot be trusted to have noticed.
 
 ## Documented v1 limitations
 
-No `switch`/`select` case mutation, no cgo packages, no package-level `var`
+No mutation of a *tagged* switch's case labels or a type switch's, no cgo
+packages, no package-level `var`
 initializers, no cross-`GOOS` matrix (a run describes the host configuration),
 and `go.work` support limited to `use` directives inside the snapshot.

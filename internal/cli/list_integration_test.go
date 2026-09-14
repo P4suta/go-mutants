@@ -108,22 +108,35 @@ var wantMutants = []listedMutant{
 	{"suppressed/suppressed.go", 59, 33, "return-replacement", "return-empty-string", "Data", "\"\""},
 	{"suppressed/suppressed.go", 66, 5, "condition-negation", "negate-condition", "limit", "!(limit)"},
 	{"suppressed/suppressed.go", 67, 10, "return-replacement", "return-zero-numeric", "a", "0"},
-	{"suppressed/suppressed.go", 77, 6, "condition-negation", "negate-condition", "ok == true", "!(ok == true)"},
-	{"suppressed/suppressed.go", 77, 9, "comparison", "eq-to-neq", "==", "!="},
-	{"suppressed/suppressed.go", 77, 12, "boolean-literal", "true-to-false", "true", "false"},
-	{"suppressed/suppressed.go", 78, 11, "return-replacement", "return-empty-string", "\"equal and ok\"", "\"\""},
-	{"suppressed/suppressed.go", 81, 10, "return-replacement", "return-empty-string", "\"not ok\"", "\"\""},
-	{"suppressed/suppressed.go", 85, 6, "condition-negation", "negate-condition", "v > b", "!(v > b)"},
-	{"suppressed/suppressed.go", 85, 8, "comparison", "gt-to-ge", ">", ">="},
-	{"suppressed/suppressed.go", 86, 11, "return-replacement", "return-empty-string", "\"greater\"", "\"\""},
-	{"suppressed/suppressed.go", 89, 10, "return-replacement", "return-empty-string", "v", "\"\""},
-	{"suppressed/suppressed.go", 91, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
-	{"suppressed/suppressed.go", 98, 10, "return-replacement", "return-empty-string", "\"sent\"", "\"\""},
-	{"suppressed/suppressed.go", 100, 6, "condition-negation", "negate-condition", "v == true", "!(v == true)"},
-	{"suppressed/suppressed.go", 100, 8, "comparison", "eq-to-neq", "==", "!="},
-	{"suppressed/suppressed.go", 100, 11, "boolean-literal", "true-to-false", "true", "false"},
-	{"suppressed/suppressed.go", 101, 11, "return-replacement", "return-empty-string", "\"received\"", "\"\""},
-	{"suppressed/suppressed.go", 104, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
+	// The tagless switch's own labels, which a tag-carrying one would not have:
+	// `a == b` and the `==` of `ok == false` are exactly `bool`, so they are
+	// ordinary boolean contexts rather than suppressed ones.
+	{"suppressed/suppressed.go", 81, 9, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 82, 6, "condition-negation", "negate-condition", "ok == true", "!(ok == true)"},
+	{"suppressed/suppressed.go", 82, 9, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 82, 12, "boolean-literal", "true-to-false", "true", "false"},
+	{"suppressed/suppressed.go", 83, 11, "return-replacement", "return-empty-string", "\"equal and ok\"", "\"\""},
+	{"suppressed/suppressed.go", 85, 10, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 85, 13, "boolean-literal", "false-to-true", "false", "true"},
+	{"suppressed/suppressed.go", 86, 10, "return-replacement", "return-empty-string", "\"not ok\"", "\"\""},
+	// The tagged switch's bodies, and not its labels.
+	{"suppressed/suppressed.go", 90, 10, "return-replacement", "return-empty-string", "\"one more\"", "\"\""},
+	{"suppressed/suppressed.go", 92, 10, "return-replacement", "return-empty-string", "\"twice\"", "\"\""},
+	{"suppressed/suppressed.go", 96, 6, "condition-negation", "negate-condition", "v > b", "!(v > b)"},
+	{"suppressed/suppressed.go", 96, 8, "comparison", "gt-to-ge", ">", ">="},
+	{"suppressed/suppressed.go", 97, 11, "return-replacement", "return-empty-string", "\"greater\"", "\"\""},
+	{"suppressed/suppressed.go", 100, 10, "return-replacement", "return-empty-string", "v", "\"\""},
+	{"suppressed/suppressed.go", 102, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
+	// The boolean expression inside a communication clause: the clause is
+	// neither a Form S site nor a Form C one, and the value it sends is an
+	// ordinary expression with an ordinary boolean inside it.
+	{"suppressed/suppressed.go", 114, 16, "comparison", "lt-to-le", "<", "<="},
+	{"suppressed/suppressed.go", 115, 10, "return-replacement", "return-empty-string", "\"sent\"", "\"\""},
+	{"suppressed/suppressed.go", 117, 6, "condition-negation", "negate-condition", "v == true", "!(v == true)"},
+	{"suppressed/suppressed.go", 117, 8, "comparison", "eq-to-neq", "==", "!="},
+	{"suppressed/suppressed.go", 117, 11, "boolean-literal", "true-to-false", "true", "false"},
+	{"suppressed/suppressed.go", 118, 11, "return-replacement", "return-empty-string", "\"received\"", "\"\""},
+	{"suppressed/suppressed.go", 121, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
 
 	// A boolean literal used as a map key is value code: the type-argument
 	// suppression must not reach an ordinary index expression — that is the
@@ -146,7 +159,7 @@ var wantSkips = []catalogSkip{
 	{Path: "generated/generated.go", Reason: "generated", Count: 1},
 	{Path: "generics/generics.go", Reason: "type-param", Count: 5},
 	{Path: "suppressed/suppressed.go", Reason: "array-length", Count: 2},
-	{Path: "suppressed/suppressed.go", Reason: "case-label", Count: 4},
+	{Path: "suppressed/suppressed.go", Reason: "case-label", Count: 2},
 	{Path: "suppressed/suppressed.go", Reason: "const-decl", Count: 4},
 	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 5},
 }
