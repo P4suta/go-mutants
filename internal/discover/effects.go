@@ -486,3 +486,115 @@ func underlyingOf(t types.Type) types.Type {
 	}
 	return t.Underlying()
 }
+
+// inertContext reports whether the expressions the nearest enclosing statement
+// evaluates *alongside* this one hold nothing the language orders.
+//
+// # Why a probe has to ask this at all
+//
+// Both the boolean form and the value form put a **call** where an expression
+// stood, and a call is not an ordinary operand. Go orders function calls,
+// method calls, receive operations and binary logical operations within one
+// expression, assignment or return statement, left to right — and leaves the
+// reading of a plain variable beside them unordered. So replacing `n` with a
+// call in `return n, bump()` moves the read of n from "some time" to "before
+// bump()", and where bump writes n the two programs differ:
+//
+//	var n int
+//	func bump() int { n = 5; return 1 }
+//	func F() (int, int) { return n, bump() }
+//
+// gc really does evaluate the call first, so the original returns (5, 1) and
+// the probed tree would return (0, 1). A probe tree that is not the original
+// program has nothing to say about the original program.
+//
+// # Why the statement, and only its own expressions
+//
+// The ordering rule is written about the operands of one expression, assignment
+// or return statement, so the context is the nearest enclosing statement — and
+// only the expressions that statement evaluates itself. An `if`'s initialiser
+// is a statement of its own and runs to completion first, so nothing in it can
+// be reordered against the condition; a `case` clause's body is not evaluated
+// with its labels; a loop's body is not evaluated with its condition. Asking
+// about those would refuse nearly every site for a hazard that cannot arise.
+//
+// The site itself is among the expressions checked, which is deliberate rather
+// than redundant: both forms need their own site inert as well, for their own
+// reasons, so one question answers both.
+func (g *guardResolver) inertContext(expr ast.Expr) bool {
+	for node := ast.Node(expr); node != nil; node = g.parent[node] {
+		stmt, ok := node.(ast.Stmt)
+		if !ok {
+			continue
+		}
+		for _, operand := range statementOperands(stmt) {
+			if operand != nil && !g.effectFree(operand) {
+				return false
+			}
+		}
+		return true
+	}
+	// No enclosing statement: a package-level declaration's initialiser, whose
+	// ordering is the initialisation order and a different rule entirely.
+	// Discovery records those as `package-var-init` and never arrives here, so
+	// this is the fail-closed answer to a shape that should not exist.
+	return false
+}
+
+// statementOperands is every expression a statement evaluates itself, in source
+// order, and none of the expressions its nested statements evaluate.
+//
+// The distinction is the one [guardResolver.inertContext] rests on. A statement
+// that holds other statements — a block, an `if`, a loop, a clause — evaluates
+// its own expressions in one context and hands the rest their own, so an effect
+// inside a body is not an effect the condition is ordered against.
+//
+// A statement kind this build does not list contributes nothing, which is the
+// unsafe direction and is why the list is exhaustive over go/ast's statements
+// rather than a switch with a default. internal/discover's own tests walk every
+// statement kind Go has.
+func statementOperands(stmt ast.Stmt) []ast.Expr {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt:
+		return []ast.Expr{s.X}
+	case *ast.AssignStmt:
+		return append(append([]ast.Expr{}, s.Lhs...), s.Rhs...)
+	case *ast.ReturnStmt:
+		return s.Results
+	case *ast.IncDecStmt:
+		return []ast.Expr{s.X}
+	case *ast.SendStmt:
+		return []ast.Expr{s.Chan, s.Value}
+	case *ast.GoStmt:
+		return []ast.Expr{s.Call}
+	case *ast.DeferStmt:
+		return []ast.Expr{s.Call}
+	case *ast.IfStmt:
+		return []ast.Expr{s.Cond}
+	case *ast.ForStmt:
+		return []ast.Expr{s.Cond}
+	case *ast.RangeStmt:
+		return []ast.Expr{s.Key, s.Value, s.X}
+	case *ast.SwitchStmt:
+		return []ast.Expr{s.Tag}
+	case *ast.TypeSwitchStmt:
+		return nil
+	case *ast.CaseClause:
+		return s.List
+	case *ast.SelectStmt, *ast.CommClause:
+		// A `select` evaluates nothing itself: every channel operation belongs
+		// to one of its clauses, and each clause's own statement is where the
+		// ordering question is asked.
+		return nil
+	case *ast.BlockStmt, *ast.DeclStmt, *ast.LabeledStmt, *ast.BranchStmt,
+		*ast.EmptyStmt, *ast.BadStmt:
+		// None of these evaluates an expression of its own. A declaration's
+		// initialisers are the one arguable case, and they are handled by the
+		// statement the walk reaches next: a DeclStmt's specs are not
+		// ast.Stmt, so a site inside one walks past this to the enclosing
+		// block, where there is nothing to be ordered against.
+		return nil
+	default:
+		return nil
+	}
+}

@@ -134,10 +134,10 @@ func probeFor(m mutation.Mutant, guard discover.Guard) *probeEdit {
 			return nil
 		}
 		return &probeEdit{index: m.Index, result: site.Index, constant: m.Replacement}
-	case discover.ProbeFormBool:
-		// Every mutant of a boolean site is probeable, whatever its rule. The
+	case discover.ProbeFormBool, discover.ProbeFormValue:
+		// Every mutant of such a site is probeable, whatever its rule. The
 		// return form needs a constant because it compares a temporary against
-		// one; this form compares the site's two *readings*, and the mutated
+		// one; these two compare the site's two *readings*, and the mutated
 		// reading is rendered from the source the way a guard's is.
 		return &probeEdit{index: m.Index}
 	default:
@@ -201,8 +201,8 @@ type probeSite struct {
 // inside the result the hint says it does — because the whole meaning of the
 // rewrite is that this temporary holds that value.
 func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
-	if hint.Form == discover.ProbeFormBool {
-		return x.boolSiteFor(m, hint, srcPath)
+	if hint.Form == discover.ProbeFormBool || hint.Form == discover.ProbeFormValue {
+		return x.expressionSiteFor(m, hint, srcPath)
 	}
 	stmt, ok := x.stmts[hint.Span]
 	if !ok {
@@ -234,23 +234,31 @@ func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, sr
 	return probeSite{form: hint.Form, span: hint.Span, operands: operands, types: hint.Types}, nil
 }
 
-// boolSiteFor resolves a boolean probe hint against the file.
+// expressionSiteFor resolves a hint whose site is an expression rather than a
+// statement, which is both of the forms that measure a site where it stands.
 //
-// Two checks and no more, because the form needs no more: the bytes have to be
-// an expression, since the rewrite puts a call where they stood and a call is
-// an expression; and the edit has to sit inside them, since the mutated reading
-// is the site's own bytes with that one edit applied. The type is not checked
-// here and cannot be — this package has no type checker — and it does not need
-// to be: the helper takes `bool`, so a site that was not one fails to compile,
+// Three checks and no more, because the forms need no more: the bytes have to
+// be an expression, since the rewrite puts a call where they stood and a call
+// is an expression; the edit has to sit inside them, since the mutated reading
+// is the site's own bytes with that one edit applied; and the value form has to
+// carry the one type its closure writes out. Nothing about the *type* is
+// checked here and nothing can be — this package has no type checker — and
+// nothing needs to be: a site whose type the hint got wrong fails to compile,
 // which is a refusal the validation pass already knows how to bisect.
-func (x *siteIndex) boolSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
+func (x *siteIndex) expressionSiteFor(
+	m mutation.Mutant, hint *discover.ProbeSite, srcPath string,
+) (probeSite, error) {
 	if _, ok := x.exprs[hint.Span]; !ok {
 		return probeSite{}, x.notFound(m, srcPath, hint.Span, "no expression covers these bytes")
 	}
 	if !hint.Span.Contains(m.Span) {
 		return probeSite{}, x.notFound(m, srcPath, hint.Span, "the edit is not inside it")
 	}
-	return probeSite{form: hint.Form, span: hint.Span}, nil
+	if hint.Form == discover.ProbeFormValue && len(hint.Types) != 1 {
+		return probeSite{}, x.unsupported(m, srcPath, hint.Span,
+			fmt.Sprintf("a value probe hint spells %d types and its closure writes exactly one", len(hint.Types)))
+	}
+	return probeSite{form: hint.Form, span: hint.Span, types: hint.Types}, nil
 }
 
 // buildProbeSites arranges one file's probed mutants into the forest of `return`
@@ -456,8 +464,11 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 				r.path, node.Span),
 		}
 	}
-	if s.form == discover.ProbeFormBool {
+	switch s.form {
+	case discover.ProbeFormBool:
 		return r.composeBool(node, s, rendered)
+	case discover.ProbeFormValue:
+		return r.composeValue(node, s, rendered)
 	}
 	operands, err := r.operands(node, s, rendered)
 	if err != nil {
@@ -566,6 +577,70 @@ func (r *probeRenderer) composeBool(
 		wrapped.WriteString("))")
 		b = wrapped
 	}
+
+	if got, want := CountLines(b.Bytes()), CountLines(r.original(s.span)); got != want {
+		return nil, &Error{
+			Code: CodeLineDrift,
+			Message: fmt.Sprintf(
+				"internal error: instrumenting %s would move a line: the probe at %s spans %d lines, its site spans %d",
+				strconv.Quote(r.path), node.Span, got+1, want+1),
+		}
+	}
+	return b.Bytes(), nil
+}
+
+// composeValue renders one typed site as its probe.
+//
+// The shape, for alternatives m1..mn with mutated readings M1..Mn, the site's
+// current text ORIG and its spelled type T, is
+//
+//	func() T { var p T = (ORIG); if p != (M1) { A.Infect(i1) }; … ; return p }()
+//
+// where A is this file's alias for the runtime package and p is the temporary
+// the return form also names. It is the guard's own Form E with a measurement
+// inside it, and standing where the expression stood is what makes it work: the
+// value is produced in the site's own context, so the compiler settles its type
+// exactly as it settled the original's, and nothing has to be hoisted to a
+// statement that may not exist — a `switch` tag and a `for` post statement have
+// nowhere to put one.
+//
+// The original is evaluated once, into p, and p is what the closure yields, so
+// the program this is spliced into is the program without it. Each Mk is
+// evaluated once more, which is what the site's inertness pays for.
+//
+// ORIG carries the probes of any nested sites and each Mk is rendered from the
+// pristine bytes, for [probeRenderer.composeBool]'s reasons.
+func (r *probeRenderer) composeValue(
+	node *siteNode, s probeSite, rendered map[*siteNode][]byte,
+) ([]byte, error) {
+	orig, err := r.withChildren(node, rendered)
+	if err != nil {
+		return nil, err
+	}
+	temp := r.temps.at(0)
+
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "func() %s { var %s %s = (", s.types[0], temp, s.types[0])
+	b.Write(orig)
+	b.WriteString(");")
+	for _, m := range node.Alternatives {
+		edit, known := r.edits[m.ID]
+		if !known {
+			return nil, &Error{
+				Code: CodeSiteConflict,
+				Message: fmt.Sprintf("internal error: %s: mutant %s was placed at the probe site %s without an edit",
+					r.path, m.DisplayID, node.Span),
+			}
+		}
+		mutated, mutErr := r.mutated(s.span, m)
+		if mutErr != nil {
+			return nil, mutErr
+		}
+		fmt.Fprintf(&b, " if %s != (", temp)
+		b.Write(mutated)
+		fmt.Fprintf(&b, ") { %s.Infect(%d) };", r.alias, edit.index)
+	}
+	fmt.Fprintf(&b, " return %s }()", temp)
 
 	if got, want := CountLines(b.Bytes()), CountLines(r.original(s.span)); got != want {
 		return nil, &Error{

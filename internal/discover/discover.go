@@ -412,6 +412,25 @@ const (
 	// to it, and internal/instrument's doc.go gives the general argument
 	// against helper forms that this one shape escapes.
 	ProbeFormBool ProbeForm = "bool"
+
+	// ProbeFormValue is the typed form: the nearest expression around the edit
+	// whose value can be compared is wrapped in a closure that measures it.
+	//
+	//	func() T { var p T = (<original>); if p != (<mutated>) { __gm.Infect(i) }; return p }()
+	//
+	// It is the boolean form for everything that is not a boolean, and it costs
+	// what the boolean form does not: the type has to be written out, which is
+	// the machinery Form D's declarations and Form E's closures already go
+	// through. What it buys is the arithmetic, the bitwise and the comparison
+	// families measured at sites no statement rewrite could reach -- a `switch`
+	// tag and a `for` post statement have nowhere to hoist a temporary to, and
+	// this needs nowhere.
+	//
+	// Its conditions are the boolean form's plus two about the comparison
+	// itself: the value has to be comparable without panicking, and it may not
+	// be floating-point or complex, since `-0.0 != 0` is false while the two
+	// are distinguishable. [ProbeSite] states all of them.
+	ProbeFormValue ProbeForm = "value"
 )
 
 // A ProbeSite is what the probe tree needs to know about one candidate.

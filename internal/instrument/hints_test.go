@@ -68,6 +68,15 @@ type hintOptions struct {
 	// free of effects and of anything that can panic -- which syntax cannot
 	// show either, since a call is only an effect when it is one.
 	unprobedSites []string
+	// valueTypes gives the spelled type of each expression the value probe form
+	// measures, keyed by the expression exactly as the fixture writes it. A
+	// fixture that names none has no value sites, which is how every fixture
+	// written before that form existed keeps the bytes it had.
+	//
+	// It is stated rather than derived for [hintOptions.declared]'s reason: the
+	// type is what the closure writes in front of itself, and there is no
+	// honest way to guess it from the syntax.
+	valueTypes map[string]string
 }
 
 // returnValueRules are the six rules whose candidates carry a probe hint. They
@@ -217,6 +226,9 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 			d.t.Fatalf("%s: no guard form covers the edit at %s (%q)", d.path, span, d.text(anchor))
 		}
 	}
+	if guard.Probe == nil {
+		guard.Probe = d.valueSite(anchor)
+	}
 	// The return form replaces whatever the guard chose and never the other way
 	// round, exactly as it does in discovery: it compares the value the
 	// function would really have returned, which is the stronger evidence.
@@ -224,6 +236,36 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 		guard.Probe = site
 	}
 	return guard
+}
+
+// valueSite derives the probe hint of the nearest expression around the edit
+// that the fixture has given a type for.
+//
+// The walk is discovery's own -- outward from the edit until an expression
+// answers -- and what answers here is [hintOptions.valueTypes] rather than a
+// type checker. A fixture that names no expression has no value sites.
+func (d *hintDeriver) valueSite(anchor ast.Node) *discover.ProbeSite {
+	d.t.Helper()
+
+	if len(d.opts.valueTypes) == 0 {
+		return nil
+	}
+	for node := anchor; node != nil; node = d.parent[node] {
+		expr, ok := node.(ast.Expr)
+		if !ok {
+			return nil
+		}
+		spelled, named := d.opts.valueTypes[d.text(expr)]
+		if !named {
+			continue
+		}
+		return &discover.ProbeSite{
+			Form:  discover.ProbeFormValue,
+			Span:  d.span(expr),
+			Types: []string{spelled},
+		}
+	}
+	return nil
 }
 
 // boolSite derives the probe hint of a Form C site, or nothing for one the

@@ -95,6 +95,31 @@ type probeCase struct {
 // temporaries want.
 func probeCases() []probeCase {
 	return []probeCase{{
+		name:       "probe-value",
+		input:      "value.input",
+		candidates: probeValueEdits,
+		hints: hintOptions{
+			declared:   map[string]string{"k": "Kind", "total": "int"},
+			valueTypes: map[string]string{"Kind(a + b)": "Kind", "a*b + a": "int"},
+		},
+		sites: 2,
+		extra: func(t *testing.T, _, out []byte) {
+			// The closure's result type is the expression's own, spelled, so a
+			// named type is written out rather than collapsed to its
+			// underlying one — which is what makes the value legal where it
+			// stood.
+			assertContains(t, out, "func() Kind { var __gm_r0 Kind = (Kind(a + b));")
+			// Two mutants of one expression are two comparisons over one
+			// temporary, and the original is evaluated once whatever they are.
+			assertContains(t, out, "var __gm_r0 int = (a*b + a);"+
+				" if __gm_r0 != (a/b+a) { __gm.Infect(1) };"+
+				" if __gm_r0 != (a*b-a) { __gm.Infect(2) }; return __gm_r0 }()")
+			// No mutant is ever active in a probe tree.
+			if bytes.Contains(out, []byte(".M[")) {
+				t.Errorf("the probe tree reads an activation flag:\n%s", out)
+			}
+		},
+	}, {
 		name:       "probe-bool",
 		input:      "bool.input",
 		candidates: probeBoolEdits,
@@ -685,6 +710,17 @@ func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catal
 // The catalogues of the probe fixtures. Each states the rule, the bytes it
 // replaces located by a snippet that holds them, and what it writes — exactly
 // as internal/discover's return-value family would have proposed them.
+
+// probeValueEdits catalogues the value fixture: an operand of a named type, and
+// one expression carrying two mutants at once.
+func probeValueEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "add-to-sub", in: "k := Kind(a + b)", find: "+", with: "-"},
+		editSpec{rule: "mul-to-div", in: "total := a*b + a", find: "*", with: "/"},
+		editSpec{rule: "add-to-sub", in: "total := a*b + a", find: "+", with: "-"},
+	)
+}
 
 // probeBoolEdits catalogues the boolean fixture: a conjunction and each of its
 // halves, and a comparison carrying two mutants of one site.

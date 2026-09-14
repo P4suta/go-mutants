@@ -186,6 +186,25 @@
 // operands the original short-circuited past. internal/discover asks its panic
 // grammar of the whole expression, which settles both at once.
 //
+// The third form is the second one for everything that is not a boolean. It
+// wraps the nearest expression around the edit whose value can be compared, in
+// the closure Form E already is:
+//
+//	func() T { var p T = (<original>); if p != (<mutated>) { __gm.Infect(i) }; return p }()
+//
+// Standing where the expression stood is what no statement rewrite could do: a
+// `switch` tag and a `for` post statement have nowhere to hoist a temporary to,
+// and this needs nowhere. Its conditions are the boolean form's plus two about
+// the comparison — the value has to be comparable without panicking, and it may
+// not be floating-point or complex, since `-0.0 != 0` is false while the two
+// are distinguishable.
+//
+// Both in-place forms share one condition the return form states differently.
+// They put a *call* where an expression stood, and Go orders calls within one
+// statement's operands while leaving a plain read among them unordered — so a
+// site is measured only where everything its own statement evaluates beside it
+// is inert. internal/discover's effects.go carries the program that shows why.
+//
 // Everything else is unprobed. A mutant of another family is catalogued and
 // mutated exactly as before and simply not measured, so a file holding only
 // such mutants comes out of [ModeProbe] byte for byte as its author wrote it —
