@@ -108,9 +108,22 @@ const (
 	// MemorySourceExplicit is the configured `test.memory` or `--memory`.
 	MemorySourceExplicit MemorySource = "explicit"
 	// MemorySourceUnavailable is no bound: either nothing measured a peak to
-	// derive one from, or this platform cannot enforce one. Both are reported
-	// once, as a [Warning], because a user who thinks a runaway mutant will be
-	// stopped and is wrong should be told by the run rather than by the machine.
+	// derive one from, or this platform cannot enforce one.
+	//
+	// Neither is a [Warning], and the omission is argued rather than forgotten:
+	// a derived bound that cannot be enforced was never asked for, and a run
+	// without one is exactly the run go-mutants made before the bound existed,
+	// so warning about it would put a line on every clean macOS run forever --
+	// which is how a warning stops being read and takes the ones that matter
+	// with it. What is warned about is an *explicit* `test.memory` that this
+	// platform will not hold anybody to, because that one the user did ask for.
+	// See the engine's unenforcedMemoryReason, which is the rule, and
+	// TestOnlyAnExplicitBoundNobodyWillHoldIsWorthAWarning, which pins it.
+	//
+	// The fact is still reported, where a fact belongs rather than where an
+	// action belongs: this value in the event and in the run report, and one
+	// word on the `-v` line. A run that is not bounded says so; it does not
+	// interrupt to say it.
 	MemorySourceUnavailable MemorySource = "unavailable"
 )
 

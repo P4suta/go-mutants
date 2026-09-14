@@ -1296,12 +1296,12 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 2497 mutants catalogued, 2432 detected —
-2428 killed, two of them by the memory bound, and four caught by the per-mutant
-timeout — sixty-five declared expectations, **a score of 100.00%**, at
+The numbers the gate is sized against: 2677 mutants catalogued, 2614 detected —
+2608 killed, two of them by the memory bound, and six caught by the per-mutant
+timeout — sixty-three declared expectations, **a score of 100.00%**, at
 `--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
 is compared on every run, `--strict` or not, and at this size it does not fail
-until the thirteenth unexpected survivor — so `--strict` is the thing that
+until the fourteenth unexpected survivor — so `--strict` is the thing that
 actually fails this job, on the first.
 
 The wall clock, on the shared machine that widened the scope: warm, with the
@@ -1341,10 +1341,23 @@ through the file. Before the bound existed those two were the most expensive
 mutants in the run and their verdict was a race — killed when the allocator
 reached them first, timed out when the clock did — and on a GitHub runner the
 job did not go red so much as disappear, with "The runner has received a
-shutdown signal". Now each is stopped at about 1.1 GiB after a second and a half
-and reported as `killed`, once, with no second attempt: a memory kill is a kill
-rather than a verdict to confirm. See
+shutdown signal". Now, **where the bound can be enforced**, each is stopped at
+about 1.1 GiB after a second and a half and reported as `killed`, once, with no
+second attempt: a memory kill is a kill rather than a verdict to confirm. See
 [ADR 0009](adr/0009-a-mutant-is-bounded-in-memory-as-in-time.md).
+
+That qualifier is not decoration. The bound here is derived rather than
+configured, and a derived bound this platform cannot hold anybody to is dropped
+and recorded as `memory_source: unavailable` — deliberately without a warning,
+because a line on every clean run of an unsupported platform is how a warning
+stops being read. macOS is such a platform: it can say what a process cost once
+it is gone and cannot watch one while it runs. So on a macOS machine these two
+are not stopped at 1.1 GiB; measured on 2026-09-14 they reached resident peaks
+of 19.1 GiB and 10.5 GiB before the 20-second timeout ended them, and the report
+carries those peaks. The verdict is the same either way — a timeout is detected
+exactly as a memory kill is — but if you run `mise run dogfood` on a Mac, that
+is where the memory goes, and the run says so in `test.memory_source` rather
+than interrupting to tell you.
 
 There were nearly seven. Negating `timeout <= 0` in `internal/gocmd`'s
 `LocateContext` replaces a probe's configured deadline with the thirty-second
@@ -1376,7 +1389,7 @@ the larger of the two. `-v` also names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 2497 / 2428 / 4 / 65 on
+With that in place the whole summary is stable: the same 2677 / 2608 / 6 / 63 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.
@@ -1421,6 +1434,10 @@ eight, twelve and thirteen — always short of the twenty-one that moved it the
 time before. One percent of 2432 is twenty-four, which is not short of it, so
 with the eleventh package the same rule moved the number again, to 99.5: twelve
 survivors of slack (2420/2432 clears, 2419/2432 does not) where 99 bought
-thirteen before the widening. The floor is a fixed number of survivors rather
+thirteen before the widening. It has stayed at 99.5 since, through a catalogue
+that grew to 2614 scored mutants without a package being added, and that is the
+same arithmetic once more: half a percent of 2614 is thirteen survivors
+(2601/2614 clears, 2600/2614 does not), one more than when the number was set
+and still far short of twenty-one. The floor is a fixed number of survivors rather
 than a fixed percentage of a growing catalogue. Do the arithmetic, write the
 answer next to the number, and only then decide whether it moves.

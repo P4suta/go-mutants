@@ -678,6 +678,16 @@ func TestLocateIsCancellable(t *testing.T) {
 	if code := gocmd.CodeOf(err); code != gocmd.CodeVersionProbeFailed {
 		t.Fatalf("CodeOf(err) = %q (err %v), want %q", code, err, gocmd.CodeVersionProbeFailed)
 	}
+	// The code is the same for every way the probe can fail, so the code alone
+	// does not say this one was a cancellation. internal/runner reports a
+	// cancelled child as ExitCode -1 with a nil Err and TimedOut false -- which
+	// is indistinguishable from an ordinary non-zero exit unless the context is
+	// asked, and asking it is the line under test. Without this assertion the
+	// probe could stop asking and answer "exited with status -1" instead, and
+	// a user Ctrl-C'ing during start-up would be told their toolchain is broken.
+	if !strings.Contains(err.Error(), "was cancelled") {
+		t.Errorf("the failure does not say the probe was cancelled: %v", err)
+	}
 	if calls := f.Calls(); len(calls) != 0 {
 		t.Errorf("the cancelled probe still ran %+v, want nothing started", calls)
 	}

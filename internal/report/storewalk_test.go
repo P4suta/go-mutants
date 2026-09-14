@@ -506,6 +506,40 @@ func TestAFileThatWentAwayBetweenTheListingAndTheStat(t *testing.T) {
 	})
 }
 
+// TestRemoveRunsReportsAMarkerItCouldNotRead is the third answer the marker can
+// give, and the one a reading of only the first two turns into a lie.
+//
+// [report.ReadMarker] answers "this directory is ours", "this directory is not
+// ours", and "something is here that I could not read". RemoveRuns handles the
+// first two by name and the third by passing the failure up, and the shape of
+// that switch is what makes the difference invisible: drop the middle case and
+// an unreadable marker falls through to the digest comparison, where the empty
+// digest a failed read leaves behind does not match any workspace -- so the
+// caller is told the directory belongs to *another workspace*, confidently,
+// about a directory nobody can read at all. The code is what separates them.
+func TestRemoveRunsReportsAMarkerItCouldNotRead(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dir := filepath.Join(root, report.WorkspacesDirName, report.WorkspaceKey(fixtureDigest))
+	marker := filepath.Join(dir, report.MarkerFileName)
+	makeDir(t, marker, "in the way")
+	writeFile(t, filepath.Join(dir, report.RunsDirName, "20260218T091500Z-1111.json"), "{}")
+
+	removed, err := report.History{Root: root}.RemoveRuns(fixtureDigest)
+	if got := report.CodeOf(err); got != report.CodeHistoryDirectory {
+		t.Fatalf("RemoveRuns = %v (code %q), want %s -- an unreadable marker is not a foreign one",
+			err, got, report.CodeHistoryDirectory)
+	}
+	if want := "the workspace marker " + marker + " could not be read"; !strings.Contains(err.Error(), want) {
+		t.Errorf("the failure does not say %q: %v", want, err)
+	}
+	if removed.Runs != 0 {
+		t.Errorf("RemoveRuns reported %d documents removed from a directory it refused", removed.Runs)
+	}
+	exists(t, filepath.Join(dir, report.RunsDirName, "20260218T091500Z-1111.json"), true)
+}
+
 // TestRemoveRunsRefusesAMarkerThatNamesAnotherWorkspace is the collision the
 // truncated key exists to turn into a diagnosis.
 //
@@ -838,6 +872,34 @@ func TestResolvePathAnswersForNamesThatAreNotAllThere(t *testing.T) {
 		}
 		if want := filepath.Join(resolvedRoot, "real", "never", "created", "runs"); got != want {
 			t.Errorf("ResolvePath = %q, want %q — the part that resolves, then the rest verbatim", got, want)
+		}
+	})
+
+	t.Run("names that are not there under a link this test made", func(t *testing.T) {
+		t.Parallel()
+		// The subtest above resolves nothing on a platform whose temporary
+		// directory is not itself a symlink: `resolvedRoot` equals `root`
+		// there, so "the part that resolves, then the rest verbatim" and "the
+		// path unchanged" are the same string and the assertion holds against a
+		// resolver that does nothing at all. macOS happens to put /var behind a
+		// link to /private/var and Linux happens not to, which is not a
+		// difference this behaviour should be pinned by.
+		//
+		// So the link is made here. Every platform then has something to
+		// resolve, and the walk up through two names that were never created
+		// has to come back through it.
+		link := filepath.Join(root, "link")
+		if err := os.Symlink(real, link); err != nil {
+			t.Skipf("this filesystem does not make symlinks: %v", err)
+		}
+		got, resolveErr := report.ResolvePath(filepath.Join(link, "never", "created", "runs"))
+		if resolveErr != nil {
+			t.Fatalf("ResolvePath: %v", resolveErr)
+		}
+		want := filepath.Join(resolvedRoot, "real", "never", "created", "runs")
+		if got != want {
+			t.Errorf("ResolvePath = %q, want %q — the link resolved, then the names that are not there",
+				got, want)
 		}
 	})
 

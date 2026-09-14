@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2480 killed, four caught by the timeout, sixty-five declared, 100.00%,
+# race: 2608 killed, six caught by the timeout, sixty-three declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -111,24 +111,32 @@ profile = "balanced"
 #
 # The numbers this gate is sized against, from the run that produced them:
 #
-#   internal/report/*.go         1124 mutants
-#   internal/config/*.go          476
-#   internal/mutation/*.go        450
+#   internal/report/*.go         1224 mutants
+#   internal/config/*.go          485
+#   internal/mutation/*.go        458
 #   internal/coverage/*.go        154
-#   internal/gocmd/*.go           106
+#   internal/gocmd/*.go           111
 #   internal/schemas/*.go          89
 #   internal/glob/*.go             68
-#   internal/interval/*.go         48
+#   internal/interval/*.go         50
 #   internal/operatorselect/*.go   16
-#   internal/drift/*.go            11
+#   internal/drift/*.go            15
 #   internal/testflag/*.go          7
 #
-# catalogues 2549 mutants and detects 2484 of them -- 2480 killed and four
-# caught by the timeout -- leaving the sixty-five rows declared below and a
-# score of 100.00%, in the wall clock recorded under [policy]. The count grew
-# from 2497 when the test-level narrowing feature added its own code to the
-# gated packages (2026-09-08); the score held because every new mutant is
-# killed or declared.
+# catalogues 2677 mutants and detects 2614 of them -- 2608 killed and six caught
+# by the timeout -- leaving the sixty-three rows declared below and a score of
+# 100.00%, in the wall clock recorded under [policy]. The count has grown twice
+# without the score moving, and both times for the same reason: code the gate
+# already covered started producing mutants it had not produced before. 2497 to
+# 2549 was the test-level narrowing feature adding its own code to the gated
+# packages (2026-09-08). 2549 to 2677 was discovery reaching the case labels of
+# a tagless switch, which it had been suppressing before it ever consulted the
+# guard chooser -- 128 mutants in code nobody added, spread across every package
+# here, of which six survived until the tests that kill them were written
+# (2026-09-14). The declared rows went from sixty-five to sixty-three in the
+# same change: seven internal/schemas rows were reissued under new identities
+# when that file gained a schema registration, and two rows at the store's path
+# resolution turned out to describe macOS rather than the code.
 #
 # internal/report is nearly as large as the other ten together, and that is
 # what a lossless document costs: every field of it is checked on the way in,
@@ -153,12 +161,27 @@ profile = "balanced"
 #
 # The other two allocate. lineStarts, negated or with its stride turned into a
 # subtraction, stops making progress through the file and appends to a slice
-# instead, and the memory bound stops each of them at about 1.1 GiB in a second
-# and a half -- once, with no second attempt, because a memory kill is a kill
-# rather than a verdict to confirm. Before there was a bound they were the two
-# most expensive mutants in the run and one of them was fatal to a CI runner;
-# they are now cheaper than the three that spin. See the paired measurements
-# under [policy].
+# instead, and where the memory bound can be enforced it stops each of them at
+# about 1.1 GiB in a second and a half -- once, with no second attempt, because
+# a memory kill is a kill rather than a verdict to confirm. Before there was a
+# bound they were the two most expensive mutants in the run and one of them was
+# fatal to a CI runner; where the bound holds they are now cheaper than the
+# three that spin. See the paired measurements under [policy].
+#
+# "Where the bound can be enforced" is load-bearing and used not to be written
+# down. The bound is derived rather than configured here, and a *derived* bound
+# this platform cannot hold anybody to is dropped and reported as
+# `memory_source: unavailable` -- deliberately without a warning, because a line
+# on every clean run of an unsupported platform is how a warning stops being
+# read (internal/engine's unenforcedMemoryReason argues it in full). macOS is
+# such a platform: it can say what a process cost once it is gone and cannot
+# watch one while it runs. So on a macOS developer's machine these two are not
+# stopped at 1.1 GiB at all. Measured here on 2026-09-14, they reached resident
+# peaks of 19.1 GiB and 10.5 GiB before the 20-second timeout ended them, and
+# the report records those peaks on the mutants. That is not a regression and
+# nothing about the verdict changes -- a timeout is detected exactly as a memory
+# kill is -- but a note claiming the bound stops them is a note that is true on
+# the runner and false on half the machines that read it.
 #
 # Five is also what internal/gocmd did not make six, and that is the one part of
 # this list that a test moved. Negating `timeout <= 0` in LocateContext replaces
@@ -367,31 +390,31 @@ reason = "Equivalent: the same tie-break as the row above -- intervals sharing a
 # payload to produce two violations at one location.
 
 [[mutation.expect]]
-id = "4316f032816f9b8bea32fd9582296b74674df9d53de742511356db366a4e68d9"
+id = "0a3d3f95007106459a795656a654361eae02402d127598bfc45450a820e66088"
 reason = "Unreachable: compileErr is set only when an embedded schema cannot be read, parsed, registered or compiled, and TestEveryRegisteredSchemaCompiles asserts that none of that happens in this build, so this branch is never taken."
 
 [[mutation.expect]]
-id = "d8c4cff8932d9455d3ef8e81586b06ca622755ecb2f56c108a98ca56b40b25d7"
+id = "5cb664d2e809adfdd4470fbf6a7fd7ddb7068ce09deb658ed6e2b9c7b182c62e"
 reason = "Unreachable: the return the row above guards, reported `survived (uncovered)` because no suite reaches a line that needs compileErr to be non-nil."
 
 [[mutation.expect]]
-id = "dc8a00968d7b71abe998d1d562013904cb4b84f09b97ee2bfd3e6827bbb3abe9"
+id = "ab3fe9b967a8ff13873ee2ac368189faebbcd4e54a46a38347e224104df93328"
 reason = "Unreachable: compileAll compiles every type in the registry and schemaFor looks up that same registry, so the lookup cannot miss; TestEveryRegisteredSchemaCompiles asserts it for every registered type."
 
 [[mutation.expect]]
-id = "cc88bfab205c63ce546f8c6c20a8481ea065cb270f5c6027731c5a2e4186cfc1"
+id = "2dea908d1035bc8e2d08838ce8574d3283fd9fc4b27e9f9db81ef8662bbe64d8"
 reason = "Unreachable: the file is read out of an embed.FS fixed at build time, and TestEverySchemaIsRegistered plus TestEveryRegisteredSchemaCompiles assert that every registered name is a file in it, so ReadFile has no failure left to return."
 
 [[mutation.expect]]
-id = "5b74b4c090cbff9cd61dc5bc551946c41f0275647a1e79d8c1eb541859d83890"
+id = "feb98c2f936af4a140bb1fa463fe2561e91c54bb6098869283b331a374b0be0b"
 reason = "Unreachable: the bytes are an embedded schema this repository's own tests parse and compile, so they are JSON in every build TestEveryRegisteredSchemaCompiles passes on."
 
 [[mutation.expect]]
-id = "cbed187653982db4970d6f42da553e14e2ef7d932e05de603de728450c5bf382"
+id = "7b868ba58784a852adbe02c46d0a393354732780f63f12311749a97cccfec421"
 reason = "Unreachable: AddResource fails on a resource identity it cannot parse, and TestSchemaIDsMatchTheirFilenames pins every embedded schema's `$id` to `baseURL + <file>`, which is a URL by construction."
 
 [[mutation.expect]]
-id = "939b4163d07d97de0f882ab4af250a72f14eaea40a377cff94f7aeab16b01b42"
+id = "d0b0a81899127a807a74ff16e4c1107fe0abda0cc1ec46a3091806d3cef0a886"
 reason = "Unreachable: every registered schema compiles, which is exactly what TestEveryRegisteredSchemaCompiles asserts by requiring an invalid document to come back GOM5003 rather than GOM5004."
 
 # internal/config, whose 461 mutants brought four rows, and all four are one
@@ -615,7 +638,19 @@ reason = "Unreachable: pointerOf answers `the document root` for an empty instan
 # only ever asked about a store root and a workspace directory whose marker has
 # just been read, so filepath.EvalSymlinks is asked about names the operating
 # system has just resolved; a test can reach the failures through the exported
-# seam and does, in storewalk_test.go, but these three shapes it cannot.
+# seam and does, in storewalk_test.go, but these two shapes it cannot.
+#
+# There were three shapes, and the third is worth recording rather than quietly
+# deleting. Two rows here used to declare the walk's `parent == path` guard
+# equivalent. They were wrong, and the way they were wrong is the interesting
+# part: the guard is only equivalent on a machine where nothing in the path
+# resolves to anywhere else, and the test that covers it was resolving a
+# temporary directory the operating system had chosen. macOS puts /var behind a
+# link to /private/var and Linux does not, so the same two mutants died on one
+# platform and lived on the other, and the ledger recorded the half it had last
+# measured. storewalk_test.go now makes its own symlink, which gives every
+# platform something to resolve, and both mutants die everywhere. A row that
+# describes a platform is a row that is wrong somewhere else.
 
 [[mutation.expect]]
 id = "3190c37f7f6fc15fd4d516a8beb3f098a6a4aaaff0930c9dc3026d81b859d7f8"
@@ -626,16 +661,8 @@ id = "ace7fb73f25d06b183db8d38fe3fdafb0cea0462c99c02b82b6ca9863d399164"
 reason = "Unkillable: the same failure as the row above, on the line that would forward it."
 
 [[mutation.expect]]
-id = "8471bd3d5848c7aa2d0afe09b8e7ffd1621d7312c1bbe299ea97f184a0438797"
-reason = "Unreachable: the walk climbs to the parent only while the filesystem says a name is not there, and it stops at a path that is its own parent -- the volume root. Every path it is given is under a store root a file has just been read from, so it meets a name that resolves before it reaches one that has no parent."
-
-[[mutation.expect]]
-id = "ec5aae2cd6b5938eab74dd4e90b24ceac892c9fdcf0ed2f0d17a05257ac87b8e"
-reason = "Unreachable: the same guard as the row above, spelled the other way."
-
-[[mutation.expect]]
 id = "700cbc056f3fb82558d41158da5f717ce1041698df05826787554562ba3c2a3b"
-reason = "Unreachable: the branch the two rows above guard, which is the answer for a volume root that does not resolve."
+reason = "Unreachable: the answer for a volume root that does not resolve, which needs a path none of whose ancestors exist -- and the root itself always does."
 
 [[mutation.expect]]
 id = "2380340d24fe192076857b8148ca285ed7c8a60f2ef97ca79ae09c272d76d540"
@@ -763,11 +790,11 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2549 mutants. Two thousand
-# four hundred and eighty-four are detected -- 2480 killed and four caught by
-# the timeout -- and the other sixty-five are the rows declared above, which
+# Measured, not wished for. The scope catalogues 2677 mutants. Two thousand
+# six hundred and fourteen are detected -- 2608 killed and six caught by
+# the timeout -- and the other sixty-three are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
-# is 100.00%, with all sixty-five expectations fulfilled and none stale. Every
+# is 100.00%, with all sixty-three expectations fulfilled and none stale. Every
 # one of those numbers
 # was the same on four of the five runs that measured this scope, the
 # killed/timeout split included; the fifth, taken while the machine picked up
@@ -966,12 +993,12 @@ strict = false
 #                         dogfood task and for CI. There is no headroom on that
 #                         gate at all, and none is wanted.
 #   minimum_score = 99.5  compared against the measured score whether or not
-#                         --strict was passed. Two thousand four hundred and
-#                         eighty-four scored mutants are worth 0.040 points
-#                         each, so 2472/2484 = 99.52% clears 99.5 and
-#                         2471/2484 = 99.48% does not: an ungated
-#                         `go-mutants run` reports up to twelve survivors and
-#                         exits 0, and fails at thirteen.
+#                         --strict was passed. Two thousand six hundred and
+#                         fourteen scored mutants are worth 0.038 points
+#                         each, so 2601/2614 = 99.50% clears 99.5 and
+#                         2600/2614 = 99.46% does not: an ungated
+#                         `go-mutants run` reports up to thirteen survivors and
+#                         exits 0, and fails at fourteen.
 #
 # Ninety-six is what stood here while 120 mutants were scored, where it bought
 # four survivors of slack. At 544 the same number would buy twenty-one, which is
@@ -984,10 +1011,13 @@ strict = false
 #
 # One percent of 2484 is 24.84, which is not short of it. Twenty-four survivors
 # is more slack than the twenty-one that was judged too much at 544, so the same
-# rule that kept the number at 99 through five widenings is the rule that moves
-# it now, and it moves to the value that leaves the backstop where it has
-# actually been: 99.5 buys twelve survivors, where 99 bought thirteen before
-# this widening. The floor is a fixed number of survivors rather than a fixed
+# rule that kept the number at 99 through five widenings is the rule that moved
+# it then, and it moved to the value that left the backstop where it had
+# actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
+# that widening. The scope has since grown to 2614 scored mutants without the
+# floor moving, and that is the same arithmetic reaching the same answer: half a
+# percent of 2614 is 13.07, so the slack went from twelve survivors to
+# thirteen -- still far short of the twenty-one that moves this number. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
 # grows enough to make that count material" meant.
 #
