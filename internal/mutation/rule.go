@@ -85,6 +85,7 @@ const (
 	FamilyFloatArithmetic   Family = "float-arithmetic"
 	FamilyReturnReplacement Family = "return-replacement"
 	FamilyErrorSwallowing   Family = "error-swallowing"
+	FamilyNeutralValue      Family = "neutral-value"
 	FamilyBitwise           Family = "bitwise"
 	FamilyArithmeticAssign  Family = "arithmetic-assignment"
 	FamilyStatementDeletion Family = "statement-deletion"
@@ -132,16 +133,17 @@ func (r Rule) Validate() error {
 	return nil
 }
 
-// Counts of the canonical v1 catalogue, asserted by the registry tests.
+// Counts of the canonical catalogue, asserted by the registry tests.
 //
-// The design plan's headline says "11 family / 43 rule" while the table in
-// the same plan enumerates 42 named rules. The enumeration is authoritative
-// here: a rule name is part of a mutant ID, so no rule may exist without a
-// deliberately chosen name. See docs/operators.md, which records the same
-// discrepancy and hands the reconciliation to this registry.
+// The enumeration below is authoritative: a rule name is part of a mutant ID,
+// so no rule may exist without a deliberately chosen name. The design plan's
+// headline said "11 family / 43 rule" while its own table enumerated 42, and
+// the table won; the counts have moved since as families landed, and
+// internal/mutation/docs_test.go keeps docs/operators.md equal to them in both
+// directions, so neither number can drift without the other.
 const (
-	CanonicalFamilyCount = 11
-	CanonicalRuleCount   = 42
+	CanonicalFamilyCount = 12
+	CanonicalRuleCount   = 44
 )
 
 // familyDef is one row of the canonical operator table.
@@ -205,6 +207,16 @@ var canonicalTable = []familyDef{
 		"return-err-to-nil",
 		"nil-error-branch",
 	}},
+	// Inserted between error-swallowing and bitwise, which is where the tiers
+	// change: the table is ordered balanced, then strong, then all, and a family
+	// out of tier order is one NewRegistry refuses. The *position* matters for
+	// one other reason -- it is the tiebreak when two rules propose the same
+	// bytes at one span -- and putting a new family after every balanced one
+	// leaves every existing tie resolving exactly as it did.
+	{FamilyNeutralValue, TierStrong, []string{
+		"return-empty-slice",
+		"return-empty-map",
+	}},
 	{FamilyBitwise, TierStrong, []string{
 		"band-to-bor",
 		"bor-to-band",
@@ -258,8 +270,8 @@ type Registry struct {
 // every accessor returns copies of its slices.
 var canonical = mustRegistry(canonicalTable)
 
-// CanonicalRegistry returns the frozen v1 operator registry: 11 families and
-// 42 rules in the order of the design plan's table.
+// CanonicalRegistry returns the frozen v1 operator registry: 12 families and
+// 44 rules in the order of the design plan's table.
 func CanonicalRegistry() *Registry { return canonical }
 
 // CanonicalRules returns the v1 rules in table order.

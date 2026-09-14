@@ -14,6 +14,31 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A slice or a map returned as `nil` where it meant to be empty is now a
+  mutant.** The new `neutral-value` family holds `return-empty-slice` and
+  `return-empty-map`, which write `[]T{}` and `map[K]V{}` at a return the
+  `return-replacement` family was already offering `nil` at. The two are
+  different programs and Go makes the difference easy to miss: `len(x) == 0` is
+  true of both, `x == nil` is true of one, and `encoding/json` writes `null` for
+  one and `[]` for the other. A suite that asserts only that a result is not nil
+  cannot tell them apart, which is exactly the survivor this family reports —
+  `fixtures/families` now carries that survivor on purpose, beside two kills, so
+  the argument is a fate rather than a sentence.
+  The tier is `strong`, so a `balanced` run — the default, and the one the
+  dogfood gate uses — catalogues nothing new. The family sits between
+  `error-swallowing` and `bitwise` in the registry, which keeps every existing
+  rule's relative order and therefore every existing mutant's identity and every
+  deduplication tie exactly as they were.
+  The replacement type is spelled by the same resolver Form D declarations go
+  through, so a named slice is written `Lines{}`, an imported element carries the
+  name this file binds it to, and a type the file cannot name records
+  `unnameable-decl-type` rather than being guessed at. Two refusals are silent
+  and neither is a skip: a result already spelled as its own replacement
+  (`return []T{}`, `return make([]T, 0)`) is the same program, and a slice or map
+  returned beside a non-nil error is equivalent by universal Go convention —
+  stated on the operators page as the argument from convention that it is, beside
+  the `panic` refusal. The rules carry no probe hint, because a slice is not
+  comparable and `r0 != []T{}` is not legal Go.
 - **A library consumer can ask which tests cover each mutant.**
   `(*Session).CoveringTests` returns, for every accepted mutant, the tests whose
   own coverage reaches its lines — a `map[mutant-id][]TestRef`, where a `TestRef`

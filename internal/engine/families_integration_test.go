@@ -9,7 +9,7 @@
 // against a fixture built for it: the baseline gate, compile validation,
 // coverage narrowing, the interruption path. This file proves the operators
 // themselves. `fixtures/families` holds at least one live candidate for each of
-// the forty-two rules the frozen registry names, and the run here has to
+// the forty-four rules the frozen registry names, and the run here has to
 // discover, instrument, compile, execute and score every one of them.
 //
 // It lives in its own file rather than at the end of integration_test.go
@@ -48,8 +48,8 @@ type familyTally struct{ killed, survived int }
 //
 // It is aggregated by family rather than written out mutant by mutant because
 // what this fixture exists to prove is a statement about families: that every
-// one of the eleven reaches execution, and that each one both kills and — where
-// the fixture leaves a gap on purpose — survives. Seventy-six per-mutant rows
+// one of the twelve reaches execution, and that each one both kills and — where
+// the fixture leaves a gap on purpose — survives. Eighty-two per-mutant rows
 // would say the same thing in a form nobody reads, and would turn every
 // reformatting of the fixture into a wall of diff. The survivors are then named
 // individually below, because that is the half a count cannot pin.
@@ -67,11 +67,12 @@ var familiesTable = map[string]familyTally{
 	string(mutation.FamilyComparison):        {killed: 8, survived: 0},
 	string(mutation.FamilyIntegerArithmetic): {killed: 9, survived: 2},
 	string(mutation.FamilyFloatArithmetic):   {killed: 4, survived: 0},
-	string(mutation.FamilyReturnReplacement): {killed: 14, survived: 3},
+	string(mutation.FamilyReturnReplacement): {killed: 16, survived: 3},
 	string(mutation.FamilyErrorSwallowing):   {killed: 4, survived: 0},
+	string(mutation.FamilyNeutralValue):      {killed: 2, survived: 1},
 	string(mutation.FamilyBitwise):           {killed: 6, survived: 2},
 	string(mutation.FamilyArithmeticAssign):  {killed: 4, survived: 1},
-	string(mutation.FamilyStatementDeletion): {killed: 4, survived: 0},
+	string(mutation.FamilyStatementDeletion): {killed: 5, survived: 0},
 }
 
 // The families fixture's totals, stated once so that the assertions below read
@@ -79,13 +80,13 @@ var familiesTable = map[string]familyTally{
 // happened to produce. familiesBalanced and familiesStrong are the same
 // catalogue seen from the two narrower tiers.
 const (
-	familiesMutants   = 76
-	familiesKilled    = 63
-	familiesSurvived  = 13
+	familiesMutants   = 82
+	familiesKilled    = 68
+	familiesSurvived  = 14
 	familiesUncovered = 2
 
-	familiesBalanced = 59
-	familiesStrong   = 72
+	familiesBalanced = 61
+	familiesStrong   = 77
 )
 
 // TestFamiliesRunReachesEveryOperatorFamily is the catalogue end to end.
@@ -101,7 +102,7 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	opts.Config.Mutation.Profile = mutation.TierAll
 	// Four workers rather than the harness's one. Everything asserted here is a
 	// tally or a set, so the event *order* is not part of the claim — and this
-	// fixture starts seventy-four processes, which is where the time goes.
+	// fixture starts eighty processes, which is where the time goes.
 	opts.Config.Execution.Jobs = 4
 
 	outcome, events, err := collect(t, t.Context(), opts)
@@ -119,7 +120,7 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	// bool selector, the statement guard, and the declaration rewrite — composes
 	// a compilable program over every family in this fixture, and a rejection
 	// here would mean one of the three stopped being able to express one of the
-	// eleven. fixtures/rejectable is where a rejection is the expected answer.
+	// twelve. fixtures/rejectable is where a rejection is the expected answer.
 	if len(outcome.Report.Rejected) != 0 {
 		t.Errorf("rejected = %+v, want none: every family in this fixture instruments", outcome.Report.Rejected)
 	}
@@ -218,13 +219,13 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	validateDocument(t, document)
 }
 
-// assertFamiliesSurvivors names the thirteen survivors.
+// assertFamiliesSurvivors names the fourteen survivors.
 //
 // The per-family table says how many there are; this says which they are,
 // because a survivor that moved from an under-tested function into a pinned one
 // would leave every count intact. Each line here is a function the fixture's
 // README lists as deliberately under-tested — `Salt`, `Toggle`, `Drift`,
-// `Weigh` — or the one nothing calls at all, `Orphan`.
+// `Weigh`, `Tags` — or the one nothing calls at all, `Orphan`.
 //
 // The line numbers are the fixture's, and a mutant's coordinates come from a
 // byte offset into the file — so editing a *doc comment* in
@@ -248,6 +249,7 @@ func assertFamiliesSurvivors(t *testing.T, events []Event) {
 		"survived numbers.go:35 return-zero-numeric",
 		"survived numbers.go:46 add-to-sub",
 		"survived numbers.go:46 return-zero-numeric",
+		"survived results.go:90 return-empty-slice",
 	}
 	var got []string
 	for _, line := range results(events) {
@@ -430,13 +432,16 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 		}
 	}
 
-	// What each tier adds, by family. These three names are the whole meaning of
+	// What each tier adds, by family. These four names are the whole meaning of
 	// the profile setting, and they are the reason `balanced` is the default:
-	// bit manipulation and statement deletion are where an equivalent mutant is
-	// likeliest, so they are opt-in.
+	// bit manipulation, the second neutral value of a slice or a map, and
+	// statement deletion are where an equivalent mutant is likeliest -- or, for
+	// the neutral values, where a survivor is likeliest against a suite that
+	// only ever asks `len` -- so they are opt-in.
 	wantStrongAdds := []string{
 		string(mutation.FamilyArithmeticAssign),
 		string(mutation.FamilyBitwise),
+		string(mutation.FamilyNeutralValue),
 	}
 	if got := addedFamilies(balanced, strong); !slices.Equal(got, wantStrongAdds) {
 		t.Errorf("strong adds the families %v to balanced, want %v", got, wantStrongAdds)
@@ -447,7 +452,8 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 	}
 	// And balanced really is the other eight, whole: a tier that dropped a
 	// family it is supposed to hold would leave both differences above looking
-	// exactly right.
+	// exactly right. The count is derived rather than written, so a family
+	// landing in a tier is one edit and not two.
 	if got, want := len(balanced.families), mutation.CanonicalFamilyCount-len(wantStrongAdds)-len(wantAllAdds); got != want {
 		t.Errorf("balanced selected %d families, want %d", got, want)
 	}

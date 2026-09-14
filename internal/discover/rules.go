@@ -124,6 +124,9 @@ const (
 	ruleReturnErrToNil = "return-err-to-nil"
 	ruleNilErrorBranch = "nil-error-branch"
 
+	ruleReturnEmptySlice = "return-empty-slice"
+	ruleReturnEmptyMap   = "return-empty-map"
+
 	ruleDeleteCallStatement = "delete-call-statement"
 	ruleDeleteAssignment    = "delete-assignment"
 	ruleDeleteIncDec        = "delete-incdec"
@@ -141,6 +144,8 @@ var positionalRules = []string{
 	ruleReturnNil,
 	ruleReturnErrToNil,
 	ruleNilErrorBranch,
+	ruleReturnEmptySlice,
+	ruleReturnEmptyMap,
 	ruleDeleteCallStatement,
 	ruleDeleteAssignment,
 	ruleDeleteIncDec,

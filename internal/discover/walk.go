@@ -5,6 +5,7 @@ package discover
 
 import (
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
 	"math"
@@ -593,7 +594,10 @@ func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *Return
 		return s.replaceReturn(value, ruleReturnFalse, "false", site)
 	case isNillable(declared):
 		// Not an error-typed value: that was settled above.
-		return s.replaceReturn(value, ruleReturnNil, "nil", site)
+		if err := s.replaceReturn(value, ruleReturnNil, "nil", site); err != nil {
+			return err
+		}
+		return s.replaceEmptyNeutral(value, declared, site)
 	default:
 		return nil
 	}
@@ -836,6 +840,120 @@ func (s *fileScan) emitAt(
 		Termination: s.terminationProof(rule, anchor),
 	})
 	return nil
+}
+
+// replaceEmptyNeutral offers the neutral value that is not nil: `[]T{}` for a
+// slice result and `map[K]V{}` for a map one.
+//
+// `len(x) == 0` is true of both nil and empty, and it is the assertion a suite
+// routinely makes -- so a function that returns nil where it meant to return an
+// empty slice passes every `len` check, and `encoding/json` writes `null` where
+// the caller expected `[]`. That is the difference this rule is about, and
+// `return-nil` beside it cannot express it.
+//
+// The type has to be *spelled*, which is what makes this a rule rather than a
+// constant: `[]T{}` needs T rendered against the file's own imports.
+// [guardResolver.typeString] is the machinery -- the same one Form D's
+// declarations go through, so a type this file cannot name is refused here
+// exactly as it is there.
+//
+// Two refusals, both silent for [fileScan.replaceReturn]'s reason:
+//
+//   - a result already spelled as its own replacement. `return []T{}` and
+//     `return make([]T, 0)` are the program the mutant would be, and
+//     replaceReturn's own check only catches the first spelling.
+//   - a result returned beside a non-nil error. `if err != nil { return nil,
+//     err }` is the commonest `return nil` for a slice in Go, and a caller that
+//     sees an error does not look at the other results -- so the mutant is
+//     equivalent by universal convention. That is an argument from convention
+//     rather than a proof, and docs/operators.md says so where the gate is
+//     documented. `return xs, nil` -- the success path, where the rule is worth
+//     the most -- is not gated.
+func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site *ReturnSite) error {
+	slice, mapped := isEmptiable(declared)
+	if !slice && !mapped {
+		return nil
+	}
+	if s.returnsBesideAnError(value) || s.alreadyEmpty(value) {
+		return nil
+	}
+	if s.guard == nil {
+		return nil
+	}
+	spelled, ok := s.guard.typeString(declared)
+	if !ok {
+		// The same fact Form D records when it cannot spell a declared type:
+		// go-mutants knows what it would like to write here and cannot say it
+		// in Go. A dot import and an unsafe.Pointer element are the two ways
+		// to reach this.
+		s.recordAt(s.rel, SkipUnnameableDeclType, value.Pos())
+		return nil
+	}
+	rule := ruleReturnEmptySlice
+	if mapped {
+		rule = ruleReturnEmptyMap
+	}
+	// No probe hint. A slice is not comparable, so `r0 != []T{}` is not legal
+	// Go and the return form's `!=` cannot be written for it; the `return-nil`
+	// beside this one keeps its own, because `r0 != nil` is legal for both.
+	return s.replaceReturn(value, rule, spelled+"{}", nil)
+}
+
+// returnsBesideAnError reports whether the statement this value belongs to also
+// returns a non-nil error.
+func (s *fileScan) returnsBesideAnError(value ast.Expr) bool {
+	if s.guard == nil {
+		return false
+	}
+	stmt, ok := s.guard.parent[ast.Node(value)].(*ast.ReturnStmt)
+	if !ok {
+		return false
+	}
+	for _, result := range stmt.Results {
+		if result == value {
+			continue
+		}
+		if isExactlyError(s.typeOf(result)) && !s.isNilLiteral(result) {
+			return true
+		}
+	}
+	return false
+}
+
+// alreadyEmpty reports whether a result is already the empty value this rule
+// would write: a composite literal with no elements, or a `make` with a zero
+// length and no capacity.
+func (s *fileScan) alreadyEmpty(value ast.Expr) bool {
+	switch expr := value.(type) {
+	case *ast.CompositeLit:
+		return len(expr.Elts) == 0
+	case *ast.CallExpr:
+		ident, ok := expr.Fun.(*ast.Ident)
+		if !ok || ident.Name != "make" || len(expr.Args) < 2 {
+			return false
+		}
+		for _, arg := range expr.Args[1:] {
+			if !s.isZeroConstant(arg) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// isZeroConstant reports whether an expression is the constant zero.
+func (s *fileScan) isZeroConstant(expr ast.Expr) bool {
+	if s.info == nil {
+		return false
+	}
+	value := s.info.Types[expr].Value
+	if value == nil {
+		return false
+	}
+	n, ok := constant.Int64Val(value)
+	return ok && n == 0
 }
 
 // recordAt records one suppression at the position the edit would have sat at.

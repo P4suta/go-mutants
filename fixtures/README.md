@@ -43,7 +43,7 @@ at.
 | `coverage/` | `fixture.example/coverage` | Coverage-guided selection. Two packages, two test binaries, and three functions in one file with three different coverage fates, eleven mutants between them: `AboveZero` is reached only by its own package's tests, `Differs` only by the caller package's, and `Orphan` by nothing at all. It is the one fixture where the *right* answer and the *fast* answer differ, so a mutant measured against the wrong binary would survive rather than merely cost time. |
 | `vetsuspect/` | `fixture.example/vetsuspect` | The toolchain's opinion of the rewrite. Two functions, ten mutants, all killed — and two of the ten are the point: a Form C guard renders each alternative from the pristine bytes with one edit applied, so `or-to-and` writes `s == "." && s == ".."` into the snapshot and `and-to-or` writes `s != "." || s != ".."`. Both are legal Go and both are what vet's `bools` analyzer reports, and `go test` and `go test -c` run it by default. It is the only fixture whose subject is a command line rather than a program. |
 | `probeable/` | `fixture.example/probeable` | The probe session. Three mutants and no other mutable expression: two return-value ones a probe tree has a form for and one boolean literal it has none for, so both directions of the layer can be stated — a probed mutant whose absence from a measurement is a fact, and an unprobed one whose absence means nothing at all and which a consumer has to treat as infected by every test. Every probed function returns a value differing from its mutant's constant on every call, so a test that does not name it is a test that never reached it. Its `isolated/` package holds nothing to mutate and imports nothing that does, so its binary links no runtime and writes no log — the one absence a probe pass must read as the empty set rather than as a failure. |
-| `families/` | `fixture.example/families` | The whole operator catalogue. Twenty small functions in one package holding at least one live candidate for each of the 42 rules the frozen registry names — 76 mutants at profile `all`, 72 at `strong`, 59 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
+| `families/` | `fixture.example/families` | The whole operator catalogue. Twenty-two small functions in one package holding at least one live candidate for each of the 44 rules the frozen registry names — 82 mutants at profile `all`, 77 at `strong`, 61 at `balanced`. Every other fixture proves one mechanism against a handful of operators; this one proves the operators, and a family that stopped being discovered, instrumentable, or compilable shows up as a missing row rather than as a smaller number. |
 | `workspace/` | `fixture.example/workspace/app`, `fixture.example/workspace/lib` | A `go.work` joining two modules. Pointed at `app/` it is a scope test: the snapshot is that module alone, six mutants, all killed. Pointed at its own root it is a refusal — a workspace has no single module path, no single set of identities and no single baseline, so the run stops with GOM4102 before anything is copied. `app` deliberately imports nothing from `lib`; see below. |
 | `tagged/` | `fixture.example/tagged` | Build constraints as an input to the catalogue. Two boolean literals, one of them in a file under `//go:build special`, so a run under `GOFLAGS=-tags=special` catalogues two mutants where a run without it catalogues one — and the two runs key their cached outcomes differently, because GOFLAGS is in the cache context. |
 | `untested/` | `fixture.example/untested` | A package with tests beside one without. `lib/`'s two mutants are killed; `orphan/`'s two are settled as uncovered survivors without being executed, because no test binary reaches the line. It is also the specimen for the one test command that names real packages and still builds nothing: `go test ./orphan/...` is refused with GOM4022 rather than reported as a score of zero. |
@@ -94,7 +94,7 @@ integration test waiting for a failure that can no longer happen.
 ## What the families fixture deliberately misses
 
 `families/` is the one fixture whose *tests* are part of the specimen. Most of
-its functions are pinned by a test that fails for every mutant of them; four are
+its functions are pinned by a test that fails for every mutant of them; five are
 under-tested on purpose, and one is not called at all. Without both fates the
 fixture would prove very little — a run in which everything died is
 indistinguishable from a suite that is simply strong, and one in which
@@ -108,9 +108,10 @@ The gaps, and what each leaves out:
 | `Weigh` | `TestWeigh` | Only the zero row. At zero the multiplication, the addition, and the whole returned expression all agree with the `0` that `return-zero-numeric` puts there; one non-zero row would kill all three. | 3 |
 | `Salt` | `TestSalt` | Calls it and throws the result away, the same shape as `TestToggle` in a different family. | 3 |
 | `Drift` | `TestDrift` | Accumulates a slice of *zeros*, so the loop body really runs — these are survivors the run measured, not ones coverage inferred — but adding zero and subtracting zero come to the same thing. | 2 |
+| `Tags` | `TestTags` | Everything except that the result is not nil, which is the check a great many Go tests actually make. It kills `return-nil` outright and cannot touch `return-empty-slice`: `[]string{}` is not nil either. That asymmetry is the whole argument for the `neutral-value` family, stated here as a fate rather than as a sentence. | 1 |
 | `Orphan` | none | Nothing calls it, from a test or from anywhere else. No test binary reaches the line, so coverage settles both of its mutants without executing either. | 2 |
 
-Four under-tested functions rather than one is deliberate: a table with a
+Five under-tested functions rather than one is deliberate: a table with a
 single survivor row could not tell "the run reports survivors" from "the run
 reports this one". `Orphan` is the fixture's only *uncovered* pair and is the
 reason the run's coverage narrowing is observable here at all; calling it from a
@@ -137,8 +138,8 @@ gate, the coverage pass, execution, and the report — against `simple/`,
 numbers in those tests are the fixtures' documented claims about themselves
 stated as data: `killable/` is 10 killed and 3 survived, `rejectable/` is 16
 accepted and 3 rejected, `coverage/` is 8 killed and 3 uncovered survivors
-across 2 test binaries, `families/` is 63 killed and 13 survived over all
-eleven families, `vetsuspect/` is 10 killed and nothing left unexecuted, and
+across 2 test binaries, `families/` is 68 killed and 14 survived over all
+twelve families, `vetsuspect/` is 10 killed and nothing left unexecuted, and
 `simple/` is a green run whose event sequence is pinned whole. A fixture
 edited without its test is a fixture whose claim quietly stopped being true.
 
@@ -174,12 +175,12 @@ proving nothing.
 `families/` is driven twice. `TestFamiliesRunReachesEveryOperatorFamily` runs it
 at profile `all` and holds it against a per-family table of kills and survivors,
 the exact list of survivors by file and line, and the requirement that every one
-of the 42 catalogued rules produced a mutant.
+of the 44 catalogued rules produced a mutant.
 `TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue` runs it three more
 times, once per tier, and asserts not only that the counts differ but that the
 mutant *identities* nest — `balanced ⊂ strong ⊂ all` — and that the families
-each tier adds are exactly `bitwise` and `arithmetic-assignment`, then
-`statement-deletion`.
+each tier adds are exactly `arithmetic-assignment`, `bitwise` and
+`neutral-value`, then `statement-deletion`.
 
 The coverage fixture's *absences* are load-bearing in the way the killable
 fixture's bounds are. Nothing may call `Orphan`, and nothing in package `core`

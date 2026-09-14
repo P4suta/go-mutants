@@ -52,3 +52,26 @@ func TestLabel(t *testing.T) {
 		t.Errorf("Label(1) = %q, want %q", got, "error")
 	}
 }
+
+// TestIndex compares the map rather than its size.
+//
+// Size alone would pass against a function that indexed the wrong names, and
+// against `return-empty-map` only because the empty map and a wrong-sized one
+// differ — comparing contents is what makes the kill about the answer.
+func TestIndex(t *testing.T) {
+	got := Index([]string{"a", "b"})
+	if len(got) != 2 || got["a"] != 0 || got["b"] != 1 {
+		t.Errorf("Index([a b]) = %v, want map[a:0 b:1]", got)
+	}
+}
+
+// TestTags asserts only that something came back.
+//
+// That is the gap, and it is deliberate: see [Tags]. A nil check cannot tell a
+// function that returns its input from one that returns an empty slice, so the
+// neutral-value mutant lives here while the nil one dies.
+func TestTags(t *testing.T) {
+	if got := Tags([]string{"x"}); got == nil {
+		t.Errorf("Tags([x]) = nil, want a slice")
+	}
+}

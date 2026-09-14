@@ -70,7 +70,7 @@ func TestTheOperatorsPageNamesEveryRuleAndEveryFamily(t *testing.T) {
 // TestTheOperatorsPageCountsWhatItLists keeps the sentence under the table
 // equal to the table above it and to the registry beside it.
 //
-// The page spells the two numbers out in prose -- "That is 11 families and 42
+// The page spells the two numbers out in prose -- "That is 12 families and 44
 // enumerated rules" -- and a spelled number is the first thing to go stale when
 // a row is added, because adding the row feels like the whole change.
 func TestTheOperatorsPageCountsWhatItLists(t *testing.T) {
@@ -186,4 +186,63 @@ func operatorsPage(t *testing.T) string {
 		t.Fatalf("reading %s: %v", operatorsDoc, err)
 	}
 	return string(source)
+}
+
+// roadmapDoc is the page whose every row is work nobody has done yet.
+const roadmapDoc = "docs/roadmap.md"
+
+// TestNoRoadmapRowNamesARuleOrFamilyTheRegistryHolds makes the roadmap's own
+// promise true for the half of it this package can check.
+//
+// The page opens with "every row below is work, and every row states what
+// finishing it looks like", and says of the reserved skip reasons that "a row
+// that lands is a test failure telling you to delete it". That guarantee came
+// from internal/testkit/roadmap_test.go and covered only the reasons -- the
+// operator rows, which are the largest section of the page, had nothing. A
+// family could land, its row could stay, and the page would describe something
+// already done for as long as nobody happened to read it.
+//
+// The check is deliberately one-directional. A roadmap row naming a rule the
+// registry holds is a finished row, and that is a failure. A registry rule no
+// roadmap row names is the ordinary case -- forty-four of them -- and says
+// nothing.
+//
+// It lives here rather than beside the reserved-reason ledger because it needs
+// the registry, and internal/testkit may import nothing from this module.
+func TestNoRoadmapRowNamesARuleOrFamilyTheRegistryHolds(t *testing.T) {
+	t.Parallel()
+
+	registry := mutation.CanonicalRegistry()
+	landed := map[string]string{}
+	for _, rule := range registry.Rules() {
+		landed[rule.Name] = "a rule"
+	}
+	for _, family := range registry.Families() {
+		landed[string(family)] = "a family"
+	}
+
+	source, err := os.ReadFile(filepath.Join(testkit.Root(t), filepath.FromSlash(roadmapDoc)))
+	if err != nil {
+		t.Fatalf("reading %s: %v", roadmapDoc, err)
+	}
+	rows := 0
+	for _, line := range strings.Split(string(source), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "| ") {
+			continue
+		}
+		rows++
+		for _, token := range backtickedIn(trimmed) {
+			kind, ok := landed[token]
+			if !ok {
+				continue
+			}
+			t.Errorf("%s names %q, which is %s the registry already holds;\n"+
+				"\tdelete the row -- a roadmap entry that has landed is a page describing\n"+
+				"\tsomething already done:\n\t%s", roadmapDoc, token, kind, trimmed)
+		}
+	}
+	if rows == 0 {
+		t.Fatalf("%s has no table rows; the scan has stopped seeing them", roadmapDoc)
+	}
 }

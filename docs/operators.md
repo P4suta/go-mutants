@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Mutation operators
 
-**Status: every family is executed.** All eleven families and all forty-two
+**Status: every family is executed.** All twelve families and all forty-four
 rules are found by `go-mutants list` with stable IDs, coordinates, and the
 guard-site hint the instrumentation phase consumes, and `go-mutants run`
 instruments, compile-validates, executes, and scores every one of them through
@@ -37,13 +37,14 @@ of the selected profile.
 | `float-arithmetic` | `fadd-to-fsub`, `fsub-to-fadd`, `fmul-to-fdiv`, `fdiv-to-fmul` | balanced |
 | `return-replacement` | `return-zero-numeric`, `return-empty-string`, `return-true`, `return-false`, `return-nil` | balanced |
 | `error-swallowing` | `return-err-to-nil`, `nil-error-branch` | balanced |
+| `neutral-value` | `return-empty-slice`, `return-empty-map` | strong |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl`, `andnot-to-band` | strong |
 | `arithmetic-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `incr-to-decr`, `decr-to-incr` | strong |
 | `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-incdec` | all |
 
-That is 11 families and 42 enumerated rules. The design plan's headline said
+That is 12 families and 44 enumerated rules. The design plan's headline said
 43 while its own table listed 42; the registry has settled it in favour of the
-table. `mutation.CanonicalRuleCount` is 42 and the canonical registry tests
+table. `mutation.CanonicalRuleCount` is 44 and the canonical registry tests
 assert it, so the count cannot drift again without a test failing.
 
 ## Type conditions
@@ -85,6 +86,19 @@ the source:
   `error`. This is the Go-specific family with the highest expected yield:
   `return err` becoming `return nil`, and an `if err != nil` branch that no
   longer fires, are the two failure modes Go test suites most often miss.
+- `neutral-value` requires the declared result type to be a slice or a map,
+  and writes the *other* empty value for it: `[]T{}` and `map[K]V{}`. The line
+  is drawn at types that have two distinct neutral values the standard library
+  treats differently and `len()` cannot separate, which is these two and
+  nothing else. A `string` has no nil; an array or a struct has `T{}` as its
+  zero value rather than as a second neutral; a channel's non-nil empty blocks
+  rather than being empty; a pointer's `new(T)` hides a nil dereference instead
+  of exposing one; a function type would need its whole signature rendered. A
+  bare type parameter is refused for `return-replacement`'s reason, while `[]T`
+  is a slice whatever `T` is and is accepted. The type is *spelled* against the
+  file's own imports by the same machinery Form D declarations go through, so a
+  type this file cannot name is refused here exactly as it is there and
+  recorded as [`unnameable-decl-type`](limitations.md).
 - `statement-deletion` deletes an expression statement that is a call, a plain
   `=` assignment (`x = append(x, e)` included), and an `++`/`--`. It never
   deletes a `:=`, which would make every later use of the name a compile error,
@@ -240,7 +254,10 @@ balanced  ⊂  strong  ⊂  all
 `balanced` is the default and holds the eight families whose survivors almost
 always indicate a real testing gap. `strong` adds `bitwise` and
 `arithmetic-assignment`, which are valuable but noisier in code that does bit
-manipulation for performance rather than for semantics. `all` adds
+manipulation for performance rather than for semantics, and `neutral-value`,
+which is noisy for a different reason: every function returning a slice or a map
+gains a mutant, and a suite that only ever asserts `len` leaves most of them
+alive. `all` adds
 `statement-deletion`, including `append` removal, which is the classic source
 of equivalent mutants in logging and metrics code.
 
@@ -340,11 +357,39 @@ Reserved reasons that later phases emit: `struct-tag` and `label-or-goto`.
 recorded skip, and neither is a `panic` call the deletion family declines nor a
 return value already spelled as its own replacement.
 
+### The refusals that are not skips
+
+Three places in the catalogue produce neither a candidate nor a skip, and they
+are listed together because each one is an argument rather than a mechanism. A
+skip says *go-mutants declined to mutate a site*; these say *there is no mutant
+here to decline*.
+
+| Refusal | The argument |
+| --- | --- |
+| A `panic` call, for `delete-call-statement` | Removing a terminating `panic` leaves a path that reaches the closing brace without returning. The mutant would not compile, and manufacturing a missing-return error wholesale in defensive code is not a measurement |
+| A value already spelled as its own replacement — `return 0`, `return nil`, and for `neutral-value` also `return []T{}` and `return make([]T, 0)` | The mutation and the source are the same program |
+| A slice or a map returned beside a non-nil `error`, for `neutral-value` | By universal Go convention a caller that sees an error does not look at the other results, so `if err != nil { return nil, err }` mutated to `return []T{}, err` is equivalent. **This is an argument from convention, not a proof** — the same honesty the `panic` refusal above is stated with. It is gated per statement, so `return xs, nil` on the success path, where the rule is worth the most, is not touched. Without the gate most of the family's output would be this one shape |
+
+`neutral-value` also carries no [probe hint](#guard-site-hints), deliberately.
+The return probe compares the returned value against the replacement, and a
+slice is not comparable: `r0 != []string{}` is not legal Go. The `return-nil`
+beside it keeps its hint, because `r0 != nil` is legal for both. A sound
+predicate can be written — `r == nil || len(r) != 0 || cap(r) != 0` — and is
+recorded here so that nobody has to re-derive it; what stops it today is that
+the probe form is one shape for every rule and this would be a second.
+
 ## Planned for v2
 
-`if`-branch replacement and map/slice neutral values; each needs either a new
-guard form or a type-directed neutral-value model the instrumentation phase does
-not build yet. See [the roadmap](roadmap.md).
+`if`-branch replacement; it needs a rule that replaces an arbitrary condition
+with a constant, which the catalogue does not have yet. See
+[the roadmap](roadmap.md).
+
+Map and slice neutral values used to be on this list and are not any more. What
+they were waiting on was thought to be "a type-directed neutral-value model the
+instrumentation phase does not build yet", and that model turned out to already
+exist: `guardResolver.typeString` is the speller Form D's declarations go
+through, and the `neutral-value` family calls it. Nothing was built for the
+instrumenter at all.
 
 A tagless `switch`'s case labels used to be on this list and are not any more:
 they are exactly `bool`, so Form C expresses them and nothing had to be built.

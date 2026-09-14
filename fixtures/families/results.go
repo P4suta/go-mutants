@@ -56,3 +56,36 @@ func Label(code int) string {
 	}
 	return "error"
 }
+
+// Index maps each name to the position it was given in.
+//
+// KILLED. The map that comes back is two candidates, not one: `return-nil` from
+// the return-replacement family and `return-empty-map` from the neutral-value
+// family, which is the whole point of that family existing. `nil` and
+// `map[string]int{}` are different programs — one panics on write and reads as
+// `null` in JSON, the other does neither — and no amount of `len()` tells them
+// apart. Comparing the map's contents kills both, and the deleted assignment
+// in the loop with them.
+func Index(names []string) map[string]int {
+	out := map[string]int{}
+	for i, name := range names {
+		out[name] = i
+	}
+	return out
+}
+
+// Tags returns the tags it was handed.
+//
+// SURVIVED, one of its two mutants, and it is the fixture's demonstration of
+// why the neutral-value family is worth its noise. [TestTags] asserts only that
+// the result is not nil — the check a great many Go tests actually make.
+// `return-nil` dies to it instantly. `return-empty-slice` does not: `[]string{}`
+// is not nil, so the assertion holds while the function has stopped returning
+// anything at all.
+//
+// That asymmetry is the family's entire argument, and it is stated here as a
+// fate rather than as a sentence in a document. A test added here that compared
+// the contents would kill the survivor and leave the argument unmade.
+func Tags(tags []string) []string {
+	return tags
+}
