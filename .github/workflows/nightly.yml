@@ -50,6 +50,25 @@ jobs:
           # thing as its input.
           - target: FuzzFlatten
             package: ./internal/instrument
+          # The four readers of somebody else's bytes. Each parses output from a
+          # program go-mutants does not control and cannot pin -- a git release,
+          # a toolchain release, a file a user passed on the command line -- so
+          # each has to refuse rather than crash on anything it does not
+          # recognise.
+          - target: FuzzParseTextfmt
+            package: ./internal/coverage
+          - target: FuzzParseDiff
+            package: ./internal/gitdiff
+          - target: FuzzValidate
+            package: ./internal/schemas
+          # And the two invariants nothing writes down: that a mutant identity
+          # is injective, which every cache key and every expectation row rests
+          # on, and that the interval forest accounts for every site exactly
+          # once, which is what stops a mutant being silently never written.
+          - target: FuzzMutantIdentity
+            package: ./internal/mutation
+          - target: FuzzBuild
+            package: ./internal/interval
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

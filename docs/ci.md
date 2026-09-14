@@ -46,7 +46,7 @@ decision.
 
 | Job | Runs | Why it is nightly |
 | --- | --- | --- |
-| `fuzz` | `go test -fuzz` over each target in turn | A fuzz run has no natural end. On a pull request it would either be too short to find anything or too long to wait for |
+| `fuzz` | `go test -fuzz` over each of the eight targets, one job each | A fuzz run has no natural end. On a pull request it would either be too short to find anything or too long to wait for |
 | `property` | the property suites at `RAPID_CHECKS=2000`, `-count=5` | Each rerun draws a fresh seed, which is the opposite of what a gate wants: the gate pins `RAPID_SEED=1` so a score cannot be a coin flip, and the exploration happens here |
 | `race-integration` | `mise run test-integration-race` | Both tiers under the detector is an hour and a half |
 | `bench` | `mise run bench` | Numbers, never a gate |
