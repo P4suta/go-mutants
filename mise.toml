@@ -366,7 +366,7 @@ run = "go run ./internal/devtools/testcache clean"
 # with two arguments it ignores — silently, and with every golden left alone.
 description = "Rewrite the committed golden files, to be read before committing"
 run = [
-  "go test ./internal/cli ./internal/console ./internal/instrument ./internal/report ./trace -update",
+  "go test ./internal/cli ./internal/console ./internal/instrument ./internal/report ./internal/tui ./trace -update",
   "go test -tags integration ./internal/engine -update",
 ]
 

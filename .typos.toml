@@ -7,6 +7,12 @@ extend-exclude = [
   "dist",
   "fixtures",
   "go.sum",
+  # A recording of what the dashboard draws, and the dashboard truncates to the
+  # terminal's width -- so it holds half-words on purpose. "validatin" in a
+  # frame eighty columns wide is the layout working, not a misspelling, and a
+  # spell checker cannot be told the difference. The words themselves are
+  # checked where they are written, in internal/engine's event details.
+  "internal/tui/testdata/frames.golden.txt",
   "LICENSE-*",
   "LICENSES",
   "reports/mutation",
