@@ -217,15 +217,20 @@ type Result struct {
 // permission problem would be the wrong trade — and every such failure is
 // joined into the returned error after the loop.
 func Sweep(parent string, prefixes []string, now time.Time) (Result, error) {
-	return sweeper{now: now, remove: os.RemoveAll}.sweep(parent, prefixes)
+	return sweeper{now: now, remove: os.RemoveAll, acquire: Acquire}.sweep(parent, prefixes)
 }
 
-// A sweeper is [Sweep] with its removal seam exposed, so that the "one
-// directory refuses to go" case can be tested without a filesystem that has to
-// be persuaded into failing.
+// A sweeper is [Sweep] with its two seams exposed, so that "one directory
+// refuses to go" and "one lock refuses to come back" can be tested without a
+// filesystem that has to be persuaded into failing.
+//
+// Both are held in fields rather than in package variables so that a test
+// refusing a syscall does not reach every other test running beside it, which
+// is the same reason [acquire] takes its two syscalls as arguments.
 type sweeper struct {
-	now    time.Time
-	remove func(string) error
+	now     time.Time
+	remove  func(string) error
+	acquire func(string) (*Lock, bool, error)
 }
 
 func (s sweeper) sweep(parent string, prefixes []string) (Result, error) {
@@ -275,17 +280,21 @@ func (s sweeper) sweep(parent string, prefixes []string) (Result, error) {
 type verdict int
 
 const (
-	// verdictAbandoned is the only one that removes anything.
-	verdictAbandoned verdict = iota
-	// verdictLive is a directory whose lock somebody holds.
-	verdictLive
-	// verdictKept is a directory whose marker says it was preserved.
-	verdictKept
 	// verdictSpared is left alone without being counted as either: an unowned
 	// directory too young to judge, and the directory a failure was reported
 	// about. Neither is a fact about a live owner, and reporting one as though
 	// it were would put a number in Result that nothing on disk backs up.
-	verdictSpared
+	//
+	// It is first, and therefore the zero value, because a verdict nobody set
+	// has to be the harmless one. The only alternative is a bug that deletes a
+	// directory nothing decided about.
+	verdictSpared verdict = iota
+	// verdictAbandoned is the only one that removes anything.
+	verdictAbandoned
+	// verdictLive is a directory whose lock somebody holds.
+	verdictLive
+	// verdictKept is a directory whose marker says it was preserved.
+	verdictKept
 )
 
 // abandoned decides whether one directory is the sweep's to remove.
@@ -302,7 +311,7 @@ func (s sweeper) abandoned(dir string, entry fs.DirEntry) (verdict, error) {
 		return s.legacy(dir, entry)
 	}
 
-	lock, held, lockErr := Acquire(LockPath(dir))
+	lock, held, lockErr := s.acquire(LockPath(dir))
 	if lockErr != nil {
 		return verdictSpared, fmt.Errorf("locking %s: %w", dir, lockErr)
 	}

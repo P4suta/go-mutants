@@ -405,7 +405,7 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # things that cannot be expressed in that file live here.
 #
 # The budget this job is sized against, in counted quantities rather than in
-# seconds: 2885 mutants catalogued at profile balanced, 2822 of them scored,
+# seconds: 3006 mutants catalogued at profile balanced, 2943 of them scored,
 # six that provably never return and are settled by the per-mutant timeout, two
 # that allocate without bound and are settled by the memory bound, 63 declared
 # rows, and no recorded refusal at all. Those are the numbers that decide what this job costs, and
