@@ -4,6 +4,7 @@
 package discover
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -233,6 +234,89 @@ func moduleAt(dir string) (string, error) {
 		return "", errors.New(path + " declares no module path")
 	}
 	return module, nil
+}
+
+// WorkspaceResult is one module's discovery inside a workspace.
+//
+// It is a [Result] and the module it belongs to, and the [Result] is exactly
+// the one a run over that module alone would produce -- same shape, same
+// fields, same module-relative paths -- with one difference: every candidate
+// carries the module's path, so the catalogue can tell two modules' `app.go`
+// apart. That sameness is the design. A workspace run is N module runs under
+// one run id, each publishing an unmodified run report of its own, and a
+// per-module result that had a different shape would be a second document type
+// arriving through the back door.
+type WorkspaceResult struct {
+	// Module is which module this is, and where.
+	Module WorkspaceModule
+	// Result is what discovery found in it.
+	Result Result
+}
+
+// DiscoverWorkspace discovers every module of a workspace, in module order.
+//
+// Each module is discovered on its own, rooted at its own directory, so
+// everything a [Result] carries is relative to the module it belongs to. What
+// differs from N separate runs is three things, and each of them is a thing a
+// workspace makes true:
+//
+//   - The loader obeys the snapshot's own workspace file rather than running
+//     with GOWORK=off, because a module of a workspace resolves its siblings
+//     through it and would not load without it. Every workspace file outside
+//     the snapshot stays ignored. See [Options.WorkFile].
+//   - Every candidate carries its module's path, which is the coordinate that
+//     keeps two modules' identically named files apart. See
+//     [mutation.Identity.ModulePath].
+//   - The include and exclude patterns are matched against workspace-relative
+//     paths, because that is the tree the person writing them is looking at.
+//     See [Options.PathPrefix].
+//
+// A directory that is not a workspace is refused rather than discovered as the
+// module it is: a caller that asked for a workspace and was handed one module's
+// candidates with no module path on them would have a single-module catalogue
+// wearing a workspace run's name.
+func DiscoverWorkspace(ctx context.Context, opts Options) ([]WorkspaceResult, error) {
+	root, err := resolveRoot(opts.SnapshotRoot)
+	if err != nil {
+		return nil, err
+	}
+	workspace, err := DetectWorkspace(root)
+	if err != nil {
+		return nil, err
+	}
+	if workspace == nil {
+		return nil, &Error{
+			Code: CodeSnapshotRoot,
+			Message: "there is no " + WorkspaceFile + " at " + root +
+				", so it is a module rather than a workspace",
+		}
+	}
+	workFile := filepath.Join(root, WorkspaceFile)
+	results := make([]WorkspaceResult, 0, len(workspace.Modules))
+	for _, module := range workspace.Modules {
+		moduleOpts := opts
+		moduleOpts.SnapshotRoot = filepath.Join(root, filepath.FromSlash(module.Dir))
+		moduleOpts.WorkFile = workFile
+		if module.Dir != "." {
+			moduleOpts.PathPrefix = module.Dir
+		}
+		result, err := Discover(ctx, moduleOpts)
+		if err != nil {
+			return nil, err
+		}
+		if result.ModulePath != module.Path {
+			return nil, &Error{
+				Code: CodeWorkspace,
+				Message: workFile + " uses " + module.Dir + " as " + module.Path +
+					", and the go command loaded " + result.ModulePath + " there",
+			}
+		}
+		for i := range result.Candidates {
+			result.Candidates[i].Candidate.ModulePath = module.Path
+		}
+		results = append(results, WorkspaceResult{Module: module, Result: result})
+	}
+	return results, nil
 }
 
 // CheckWorkspace reports a directory holding a [WorkspaceFile] as

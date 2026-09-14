@@ -4,10 +4,13 @@
 package discover
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
 // TestDetectWorkspaceReadsTheModulesAWorkspaceJoins is the success path, and
@@ -335,5 +338,131 @@ func writeModuleAt(t *testing.T, dir, path string) {
 	body := "module " + path + "\n\ngo 1.26\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(body), 0o644); err != nil {
 		t.Fatalf("writing go.mod: %v", err)
+	}
+}
+
+// TestDiscoverWorkspaceMeasuresEveryModuleUnderItsOwnPath is the workspace
+// counterpart of [TestDiscoverRefusesAWorkspace], and it asks for the two
+// things a workspace run needs that a single-module run does not.
+//
+// The first is that every module is discovered, each with its own module path
+// stamped on its candidates. Without the stamp the two modules' files are one
+// file to the catalogue, because a module-relative path is all a candidate has.
+//
+// The second is that the workspace file is *obeyed*, and testdata/workspace is
+// the fixture that can tell. `first` imports example.com/second and requires it
+// nowhere, so it loads if and only if the `use` lines are in effect: candidates
+// in `first` are not a count, they are the observation.
+func TestDiscoverWorkspaceMeasuresEveryModuleUnderItsOwnPath(t *testing.T) {
+	root := fixture(t, "workspace")
+	results, err := DiscoverWorkspace(context.Background(), Options{
+		SnapshotRoot: root,
+		Toolchain:    toolchain(t),
+	})
+	if err != nil {
+		t.Fatalf("DiscoverWorkspace: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("DiscoverWorkspace returned %d modules, want the two the go.work uses", len(results))
+	}
+	want := []WorkspaceModule{
+		{Dir: "first", Path: "example.com/first"},
+		{Dir: "second", Path: "example.com/second"},
+	}
+	for i, got := range results {
+		if got.Module != want[i] {
+			t.Errorf("module %d is %+v, want %+v", i, got.Module, want[i])
+		}
+		if got.Result.ModulePath != want[i].Path {
+			t.Errorf("module %d discovered %q, want %q", i, got.Result.ModulePath, want[i].Path)
+		}
+		if len(got.Result.Candidates) == 0 {
+			t.Errorf("%s produced no candidate; for `first` that means the workspace file was not obeyed",
+				want[i].Path)
+		}
+		for _, candidate := range got.Result.Candidates {
+			if candidate.ModulePath != want[i].Path {
+				t.Errorf("a candidate of %s is stamped %q", want[i].Path, candidate.ModulePath)
+			}
+			if strings.HasPrefix(candidate.Path, want[i].Dir+"/") {
+				t.Errorf("%s is workspace-relative; a candidate's path is relative to its own module",
+					candidate.Path)
+			}
+		}
+	}
+	// The two modules each hold a file the other does not, so nothing here is
+	// a collision -- but the catalogue is what would find out, and it is the
+	// reason the stamp exists. Building one is the cheapest proof that the
+	// two discoveries produce a set the catalogue accepts.
+	builder := mutation.NewBuilder()
+	for _, result := range results {
+		for _, located := range result.Result.Candidates {
+			if err := builder.Add(located.Candidate); err != nil {
+				t.Fatalf("cataloguing %s: %v", located.Candidate.Where(), err)
+			}
+		}
+	}
+	catalog, err := builder.Build()
+	if err != nil {
+		t.Fatalf("building a catalogue of both modules: %v", err)
+	}
+	if catalog.Empty() {
+		t.Fatal("the catalogue of both modules is empty")
+	}
+}
+
+// TestDiscoverWorkspaceRefusesADirectoryThatIsNotOne is the fail-closed half.
+//
+// A caller that asked for a workspace and was handed a module would otherwise
+// get one module's worth of candidates with no module path on them, which is a
+// single-module catalogue wearing a workspace run's name.
+func TestDiscoverWorkspaceRefusesADirectoryThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
+	results, err := DiscoverWorkspace(context.Background(), Options{
+		SnapshotRoot: fixture(t, "mainmod"),
+		Toolchain:    toolchain(t),
+	})
+	if err == nil {
+		t.Fatalf("DiscoverWorkspace on a module returned %d results", len(results))
+	}
+	if CodeOf(err) != CodeSnapshotRoot {
+		t.Errorf("code = %q, want %s (err %v)", CodeOf(err), CodeSnapshotRoot, err)
+	}
+	if !strings.Contains(err.Error(), WorkspaceFile) {
+		t.Errorf("the message does not name %s: %v", WorkspaceFile, err)
+	}
+}
+
+// TestAWorkspacePatternIsWrittenAgainstTheWorkspaceRoot decides the one thing
+// a user has to be able to predict about `mutation.include` in a workspace.
+//
+// A pattern is written by somebody looking at their tree, and in a workspace
+// what they are looking at is the workspace: `first/*.go` is the module's
+// files, and `*.go` at the root is nothing. Matching module-relative paths
+// instead would make one pattern mean a different set in every module, and
+// `*.go` would quietly mean "every module's top-level files".
+func TestAWorkspacePatternIsWrittenAgainstTheWorkspaceRoot(t *testing.T) {
+	root := fixture(t, "workspace")
+	results, err := DiscoverWorkspace(context.Background(), Options{
+		SnapshotRoot: root,
+		Toolchain:    toolchain(t),
+		Include:      patterns(t, "second/*.go"),
+	})
+	if err != nil {
+		t.Fatalf("DiscoverWorkspace: %v", err)
+	}
+	for _, result := range results {
+		switch result.Module.Dir {
+		case "second":
+			if len(result.Result.Candidates) == 0 {
+				t.Errorf("`second/*.go` selected nothing in %s", result.Module.Path)
+			}
+		default:
+			if len(result.Result.Candidates) != 0 {
+				t.Errorf("`second/*.go` selected %d candidates in %s",
+					len(result.Result.Candidates), result.Module.Path)
+			}
+		}
 	}
 }

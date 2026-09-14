@@ -35,11 +35,41 @@ type Options struct {
 	Toolchain gocmd.Toolchain
 
 	// Env is the complete base environment used by the package loader. Nil
-	// inherits the current process environment. Discovery still forces
-	// GOWORK=off and prepends the located toolchain's directory to PATH. The
-	// field allows a long-lived public workspace to freeze all other build
-	// inputs at Open time instead of observing later process-global changes.
+	// inherits the current process environment. Discovery still decides GOWORK
+	// -- off, or [Options.WorkFile] -- and prepends the located toolchain's
+	// directory to PATH. The field allows a long-lived public workspace to
+	// freeze all other build inputs at Open time instead of observing later
+	// process-global changes.
 	Env []string
+
+	// WorkFile is the workspace file the loader must obey, and is empty for
+	// every run that is not a workspace run.
+	//
+	// GOWORK is off by default, and that default is what turns the refusal of
+	// a snapshot-root `go.work` into a guarantee -- see [environment]. A
+	// workspace run inverts exactly one half of it: the workspace file *in the
+	// snapshot* is named here and obeyed, because a module of a workspace
+	// resolves its siblings through it and would not load without it. Every
+	// other workspace file stays ignored, the parent directories' and $GOWORK's
+	// alike, because they are still files the snapshot does not contain.
+	//
+	// [DiscoverWorkspace] sets it. A caller setting it by hand is naming a file
+	// the loader will read, so it has to be one inside the snapshot.
+	WorkFile string
+
+	// PathPrefix is what [Options.Include] and [Options.Exclude] are written
+	// against, relative to the module root, and is empty outside a workspace.
+	//
+	// A pattern is written by somebody looking at their tree, and in a
+	// workspace what they are looking at is the workspace: `app/*.go` is one
+	// module's files. Matching a module-relative path instead would make one
+	// pattern mean a different set in every module, and `*.go` would quietly
+	// mean "every module's top-level files". This is the module's own directory
+	// within the workspace, prepended before a path is matched -- and nothing
+	// else sees it: the paths candidates, skips and digests carry stay relative
+	// to the module they belong to, because that is what the identity and the
+	// module's own report are keyed on.
+	PathPrefix string
 
 	// Rules selects the operators to apply. Empty means every rule this phase
 	// implements, which is what [SupportedRules] returns. Rules the canonical
@@ -778,7 +808,7 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	loaded, err := load(ctx, root, opts.Toolchain, opts.Env, opts.Packages)
+	loaded, err := load(ctx, root, opts.Toolchain, opts.Env, opts.WorkFile, opts.Packages)
 	if err != nil {
 		return Result{}, err
 	}
@@ -802,6 +832,7 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 	d := &discovery{
 		root:     moduleRoot,
 		matchers: matchers,
+		prefix:   opts.PathPrefix,
 		include:  opts.Include,
 		exclude:  opts.Exclude,
 		cgo:      cgoPackages,
@@ -855,8 +886,11 @@ func resolveRoot(root string) (string, error) {
 type discovery struct {
 	root     string
 	matchers matchers
-	include  []glob.Pattern
-	exclude  []glob.Pattern
+	// prefix is [Options.PathPrefix]: what a module-relative path is joined to
+	// before the include and exclude patterns see it.
+	prefix  string
+	include []glob.Pattern
+	exclude []glob.Pattern
 	// cgo names the packages whose files are excluded wholesale.
 	cgo cgoExemption
 
