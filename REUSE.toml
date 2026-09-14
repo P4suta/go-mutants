@@ -75,6 +75,7 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 [[annotations]]
 path = [
   "internal/console/testdata/verbose-one.golden.txt",
+  "internal/tui/testdata/frames.golden.txt",
   "internal/console/testdata/verbose-two.golden.txt",
   "internal/engine/testdata/killable.report.golden.json",
   "internal/engine/testdata/work-ceiling.golden.txt",

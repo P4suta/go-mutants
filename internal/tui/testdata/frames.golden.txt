@@ -1,0 +1,192 @@
+== before-anything-happens (100x24)
+|go-mutants 0.1.0-dev                                                                   elapsed 00:00
+|score n/a  0 done
+|killed 0  survived 0  timeout 0  inconcl 0  errored 0  not-run 0
+|
+|survivors none yet
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|ctrl+c: stop, publish partial report
+
+== baseline (100x24)
+|go-mutants 0.1.0-dev  run 20260819T101112Z-a1b2                                        elapsed 00:00
+|phase baseline: building the snapshot, then 3 timed runs of go test ./...
+|baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)
+|score n/a  0 done
+|killed 0  survived 0  timeout 0  inconcl 0  errored 0  not-run 0
+|
+|workers
+|  0  idle
+|  1  idle
+|  2  idle
+|
+|survivors none yet
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|ctrl+c: stop, publish partial report
+
+== in-flight (100x24)
+|go-mutants 0.1.0-dev  run 20260819T101112Z-a1b2                                        elapsed 00:42
+|phase mutate: discovering candidates, validating them, then executing the mutants
+|baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)
+|validated 47 mutants, 2 rejections
+|score 50.00%  [##################################----------------------------------] 2/47  eta 00:03
+|killed 1  survived 1  timeout 0  inconcl 0  errored 0  not-run 0
+|
+|workers
+|  0  abcdef01  internal/instrument/flatten.go:1204                                    add-to-sub  2s
+|  1  idle
+|  2  idle
+|
+|survivors 1
+|SURVIVED   9f8e7d6c  internal/report/untested.go:9:12  neq-to-eq
+|    - !=
+|    + ==
+|
+|
+|
+|
+|
+|
+|
+|ctrl+c: stop, publish partial report
+
+== with-coverage (100x24)
+|go-mutants 0.1.0-dev  run 20260819T101112Z-a1b2                                        elapsed 00:42
+|phase mutate: discovering candidates, validating them, then executing the mutants
+|baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)
+|validated 47 mutants, 2 rejections
+|coverage: 3 test binaries, 40 of 47 mutants covered, 7 uncovered
+|score 33.33%  [#######################---------------------------------------------] 3/47  eta 00:03
+|killed 1  survived 2  timeout 0  inconcl 0  errored 0  not-run 0
+|
+|workers
+|  0  abcdef01  internal/instrument/flatten.go:1204                                    add-to-sub  2s
+|  1  idle
+|  2  idle
+|
+|survivors 2
+|SURVIVED   9f8e7d6c  internal/report/untested.go:9:12  neq-to-eq
+|    - !=
+|    + ==
+|
+|SURVIVED (uncovered)  5c5c5c5c  internal/glob/glob.go:88:3  true-to-false
+|    - true
+|    + false
+|
+|
+|ctrl+c: stop, publish partial report
+
+== narrow (50x20)
+|go-mutants 0.1.0-dev                 elapsed 00:42
+|phase mutate: discovering candidates, validatin...
+|baseline ok: avg 170ms, slowest 210ms, timeout ...
+|validated 47 mutants, 2 rejections
+|score 50.00%  2/47  eta 00:03
+|k 1  s 1  t 0  i 0  e 0  n 0
+|
+|workers
+|  0  abcdef01  internal/i...nt/flatten.go:1204  2s
+|  1  idle
+|  2  idle
+|
+|survivors 1
+|SURVIVED   9f8e7d6c  internal/.../untested.go:9:12
+|    - !=
+|    + ==
+|
+|
+|
+|ctrl+c: stop, publish partial report
+
+== wide-and-short (200x12)
+|go-mutants 0.1.0-dev  run 20260819T101112Z-a1b2                                                                                                                                            elapsed 00:42
+|phase mutate: discovering candidates, validating them, then executing the mutants
+|baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)
+|validated 47 mutants, 2 rejections
+|score 50.00%  [####################################################################################------------------------------------------------------------------------------------] 2/47  eta 00:03
+|killed 1  survived 1  timeout 0  inconcl 0  errored 0  not-run 0
+|
+|survivors 1
+|    - !=
+|    + ==
+|
+|ctrl+c: stop, publish partial report
+
+== after-one-interrupt (100x24)
+|go-mutants 0.1.0-dev  run 20260819T101112Z-a1b2                                        elapsed 00:42
+|phase mutate: discovering candidates, validating them, then executing the mutants
+|baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)
+|validated 47 mutants, 2 rejections
+|score 50.00%  [###################################----------------------------------] 2/47  stopping
+|killed 1  survived 1  timeout 0  inconcl 0  errored 0  not-run 0
+|
+|workers
+|  0  abcdef01  internal/instrument/flatten.go:1204                                    add-to-sub  2s
+|  1  idle
+|  2  idle
+|
+|survivors 1
+|SURVIVED   9f8e7d6c  internal/report/untested.go:9:12  neq-to-eq
+|    - !=
+|    + ==
+|
+|
+|
+|
+|
+|
+|
+|stopping: publishing the partial report; ctrl+c again to leave now
+
+== completed (100x24)
+|go-mutants 0.1.0-dev  run 20260819T101112Z-a1b2                                        elapsed 00:53
+|phase mutate: discovering candidates, validating them, then executing the mutants
+|baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)
+|validated 47 mutants, 2 rejections
+|score 89.13%  [##############################################################-------] 2/47  finished
+|killed 40  survived 5  timeout 1  inconcl 0  errored 1  not-run 0
+|
+|workers
+|  0  idle
+|  1  idle
+|  2  idle
+|
+|survivors 1
+|SURVIVED   9f8e7d6c  internal/report/untested.go:9:12  neq-to-eq
+|    - !=
+|    + ==
+|
+|
+|
+|
+|
+|
+|
+|run ok: writing the summary
+
