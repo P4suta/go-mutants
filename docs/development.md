@@ -323,20 +323,13 @@ test's output rather than only a failure's.
 
 ### The CI jobs
 
-`.github/workflows/ci.yml`, on every push and pull request:
+[Continuous integration](ci.md) is the page for what runs where: the six gates
+of `ci.yml`, the four nightly searches, and the one aggregate job branch
+protection names. `internal/testkit/cidoc_test.go` keeps it equal to the
+workflows, so it is the one to read rather than this one.
 
-| Job | What it runs |
-| --- | --- |
-| `quality` | `mise run check`, the corpus gate, `committed` over the range |
-| `platform-tests` | `mise run test-cost` and `test-cost-integration` on ubuntu, windows and macos |
-| `race` | `mise run test-race`, ubuntu |
-| `coverage` | `mise run cover-integration`, ubuntu, not on pull requests |
-| `dogfood` | `mise run dogfood` |
-| `artifacts` | `mise run package`, and the snapshot archives |
-
-`.github/workflows/nightly.yml`, at 02:17 UTC: `fuzz` (five minutes per target),
-`property` (the `rapid` suites deepened and repeated with random seeds),
-`race-integration` (`mise run test-integration-race`) and `bench`.
+Two conventions belong here as well as there, because they are about the
+harness rather than about the jobs.
 
 Both workflows set `GO_MUTANTS_TEST_REQUIRE_TOOLS: "1"` at the workflow level, so
 a missing `go` or `git` fails a job rather than silently narrowing it to the

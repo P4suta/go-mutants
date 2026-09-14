@@ -46,6 +46,8 @@ What go-mutants is, what it produces, and what it will refuse to do.
 
 - [Development](development.md) — the test harness, the two tiers, where a test
   writes, what a failure leaves behind, and how to read it
+- [Continuous integration](ci.md) — what runs on every push, what runs nightly,
+  and how to run any of it yourself
 - [Architecture decision records](adr/README.md) — the decisions that constrain
   code nobody has written yet
 - [Release checklist](release-checklist.md) — what has to be true, and proven by
