@@ -134,7 +134,7 @@ func probeFor(m mutation.Mutant, guard discover.Guard) *probeEdit {
 			return nil
 		}
 		return &probeEdit{index: m.Index, result: site.Index, constant: m.Replacement}
-	case discover.ProbeFormBool, discover.ProbeFormValue:
+	case discover.ProbeFormBool, discover.ProbeFormValue, discover.ProbeFormReach:
 		// Every mutant of such a site is probeable, whatever its rule. The
 		// return form needs a constant because it compares a temporary against
 		// one; these two compare the site's two *readings*, and the mutated
@@ -201,8 +201,11 @@ type probeSite struct {
 // inside the result the hint says it does — because the whole meaning of the
 // rewrite is that this temporary holds that value.
 func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
-	if hint.Form == discover.ProbeFormBool || hint.Form == discover.ProbeFormValue {
+	switch hint.Form {
+	case discover.ProbeFormBool, discover.ProbeFormValue:
 		return x.expressionSiteFor(m, hint, srcPath)
+	case discover.ProbeFormReach:
+		return x.reachSiteFor(m, hint, srcPath)
 	}
 	stmt, ok := x.stmts[hint.Span]
 	if !ok {
@@ -259,6 +262,24 @@ func (x *siteIndex) expressionSiteFor(
 			fmt.Sprintf("a value probe hint spells %d types and its closure writes exactly one", len(hint.Types)))
 	}
 	return probeSite{form: hint.Form, span: hint.Span, types: hint.Types}, nil
+}
+
+// reachSiteFor resolves a reachability hint against the file.
+//
+// The bytes have to be a statement, because the rewrite puts a block where they
+// stood and a block is a statement; and the edit has to be the statement
+// itself, because what is recorded is that *this* statement ran. Nothing else
+// is asked: the statement is copied through untouched.
+func (x *siteIndex) reachSiteFor(
+	m mutation.Mutant, hint *discover.ProbeSite, srcPath string,
+) (probeSite, error) {
+	if _, ok := x.stmts[hint.Span]; !ok {
+		return probeSite{}, x.notFound(m, srcPath, hint.Span, "no statement covers these bytes")
+	}
+	if !hint.Span.Contains(m.Span) {
+		return probeSite{}, x.notFound(m, srcPath, hint.Span, "the edit is not inside it")
+	}
+	return probeSite{form: hint.Form, span: hint.Span}, nil
 }
 
 // buildProbeSites arranges one file's probed mutants into the forest of `return`
@@ -469,6 +490,8 @@ func (r *probeRenderer) compose(node *siteNode, rendered map[*siteNode][]byte) (
 		return r.composeBool(node, s, rendered)
 	case discover.ProbeFormValue:
 		return r.composeValue(node, s, rendered)
+	case discover.ProbeFormReach:
+		return r.composeReach(node, s, rendered)
 	}
 	operands, err := r.operands(node, s, rendered)
 	if err != nil {
@@ -641,6 +664,56 @@ func (r *probeRenderer) composeValue(
 		fmt.Fprintf(&b, ") { %s.Infect(%d) };", r.alias, edit.index)
 	}
 	fmt.Fprintf(&b, " return %s }()", temp)
+
+	if got, want := CountLines(b.Bytes()), CountLines(r.original(s.span)); got != want {
+		return nil, &Error{
+			Code: CodeLineDrift,
+			Message: fmt.Sprintf(
+				"internal error: instrumenting %s would move a line: the probe at %s spans %d lines, its site spans %d",
+				strconv.Quote(r.path), node.Span, got+1, want+1),
+		}
+	}
+	return b.Bytes(), nil
+}
+
+// composeReach renders one statement as its reachability probe.
+//
+// The shape, for alternatives m1..mn and the statement's current text ORIG, is
+//
+//	{ A.Infect(i1); … ; A.Infect(in); ORIG }
+//
+// where A is this file's alias for the runtime package. Nothing is evaluated
+// twice and nothing is compared: the statement runs as it always did, and what
+// is recorded is that it ran.
+//
+// ORIG carries the probes of any nested sites, so an expression inside the
+// statement is still measured by its own form — a deletion and an arithmetic
+// swap on one statement are two sites, one inside the other, and each records
+// what it can.
+func (r *probeRenderer) composeReach(
+	node *siteNode, s probeSite, rendered map[*siteNode][]byte,
+) ([]byte, error) {
+	orig, err := r.withChildren(node, rendered)
+	if err != nil {
+		return nil, err
+	}
+
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for _, m := range node.Alternatives {
+		edit, known := r.edits[m.ID]
+		if !known {
+			return nil, &Error{
+				Code: CodeSiteConflict,
+				Message: fmt.Sprintf("internal error: %s: mutant %s was placed at the probe site %s without an edit",
+					r.path, m.DisplayID, node.Span),
+			}
+		}
+		fmt.Fprintf(&b, " %s.Infect(%d);", r.alias, edit.index)
+	}
+	b.WriteByte(' ')
+	b.Write(orig)
+	b.WriteString(" }")
 
 	if got, want := CountLines(b.Bytes()), CountLines(r.original(s.span)); got != want {
 		return nil, &Error{

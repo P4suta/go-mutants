@@ -351,11 +351,12 @@ dispatch is a plain array load and the race detector stays quiet.
 
 ## Probe runtime and the infection log
 
-Status: the runtime, its log format and three probe forms — the return-value
-one, the boolean one and the value one — are implemented in
+Status: the runtime, its log format and all four probe forms are implemented in
 `internal/instrument`, and the pass that drives these processes is implemented
-in `internal/execute` and reachable through the engine API's `Session.Probe`;
-the reachability form is not.
+in `internal/execute` and reachable through the engine API's `Session.Probe`.
+What is not implemented is a `run` that uses any of it: the engine builds no
+probe tree and reads no infection log, so nothing on the command line asks these
+questions yet.
 
 The next proof a consumer can act on is **infection**: if the site of mutant
 `m` never evaluated to a value different from the original's during test `t`,
@@ -616,12 +617,40 @@ Its own statement, and only the expressions that statement evaluates itself: an
 evaluated with its condition. Asking about those would refuse nearly every site
 for a hazard that cannot arise.
 
-Everything else is simply unprobed for now. A deleted statement has no form —
-its mutant differs by the *absence* of an effect, which no comparison can see —
-so a file holding only those comes out of `ModeProbe` byte for byte as its
-author wrote it, with no runtime import at all; a run then learns nothing about
-which tests could observe those mutants and runs them all, which is the safe
-direction.
+### The reachability probe
+
+The fourth form is the weakest, and it is why the invariant at the top of this
+section is worded the way it is. A deleted statement's mutant differs from the
+original by the **absence** of an effect, and a probe tree runs effects: there
+is no value to compare, and no rewrite of the original program could make one
+appear. What there is instead is the fact that the statement ran:
+
+```go
+{ __gm.Infect(i); <original statement> }
+```
+
+and a pass that never ran it cannot have observed its removal. The same licence,
+from different evidence. It needs none of the other forms' conditions and that
+is not an oversight: nothing is evaluated twice, so there is nothing to be
+effect-free about, and the call is a statement of its own, so the ordering rule
+above does not reach it. What it needs is a statement a block may be wrapped
+around, which is Form S's list.
+
+Two costs, and both are real. It over-approximates badly — a deletion on a hot
+path is "infected" by nearly every test that touches the package, which licenses
+nothing — and reaching a statement is not observing its removal, so deleting
+`x = x` is reported infected by every test that runs it. Neither costs
+correctness: both make the answer *more* conservative, which is the direction
+this layer is allowed to be wrong in.
+
+A statement whose expression has a form of its own carries both, one inside the
+other: the deletion records that the statement ran, the operand records whether
+its value differed.
+
+Everything else is simply unprobed. A file holding only such mutants comes out
+of `ModeProbe` byte for byte as its author wrote it, with no runtime import at
+all; a run then learns nothing about which tests could observe them and runs
+them all, which is the safe direction.
 A probe site that turns out not to compile is dropped the same way, by the
 bisection in `internal/validate`: the mutant loses its probe and keeps
 everything else.

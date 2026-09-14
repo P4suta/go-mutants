@@ -95,6 +95,22 @@ type probeCase struct {
 // temporaries want.
 func probeCases() []probeCase {
 	return []probeCase{{
+		name:       "probe-reach",
+		input:      "reach.input",
+		candidates: probeReachEdits,
+		hints:      hintOptions{valueTypes: map[string]string{"total + i": "int"}},
+		sites:      3,
+		extra: func(t *testing.T, _, out []byte) {
+			// Nothing is evaluated twice and nothing is compared: the statement
+			// runs as it always did, with the call in front of it.
+			assertContains(t, out, "{ __gm.Infect(0); note(i) }")
+			// And a statement whose expression has a form of its own carries
+			// both, one inside the other: the deletion records that the
+			// statement ran, the operand records whether its value differed.
+			assertContains(t, out, "{ __gm.Infect(1); total = func() int { var __gm_r0 int = (total + i);"+
+				" if __gm_r0 != (total-i) { __gm.Infect(2) }; return __gm_r0 }() }")
+		},
+	}, {
 		name:       "probe-value",
 		input:      "value.input",
 		candidates: probeValueEdits,
@@ -710,6 +726,17 @@ func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catal
 // The catalogues of the probe fixtures. Each states the rule, the bytes it
 // replaces located by a snippet that holds them, and what it writes — exactly
 // as internal/discover's return-value family would have proposed them.
+
+// probeReachEdits catalogues the reachability fixture: two deleted statements,
+// one of them also holding an operand a stronger form measures.
+func probeReachEdits(t *testing.T, src []byte) []mutation.Candidate {
+	t.Helper()
+	return editsIn(t, src,
+		editSpec{rule: "delete-call-statement", in: "note(i)", with: ""},
+		editSpec{rule: "delete-assignment", in: "total = total + i", with: ""},
+		editSpec{rule: "add-to-sub", in: "total = total + i", find: "+", with: "-"},
+	)
+}
 
 // probeValueEdits catalogues the value fixture: an operand of a named type, and
 // one expression carrying two mutants at once.

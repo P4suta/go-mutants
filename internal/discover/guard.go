@@ -318,6 +318,28 @@ func (g *guardResolver) valueProbe(anchor ast.Node) *ProbeSite {
 	return nil
 }
 
+// reachProbe is the fallback for a site with no value at all: the statement is
+// left exactly as it is and the call goes in front of it.
+//
+// It needs none of the other forms' conditions and that is not an oversight.
+// Those forms evaluate a second reading of something, which is why they ask
+// about effects, about panics and about ordering; this evaluates nothing extra.
+// The call is a statement of its own and statements are already sequenced, so
+// nothing in the language's ordering rules applies to it.
+//
+// What it does need is somewhere to put the block, and the guard has already
+// found one. The shape is Form S's -- a block where a statement stood -- so a
+// Form S guard is exactly the condition: [statementGuard] hands that form out
+// only for a statement [FormSStatement] accepts, which is the list of
+// statements a block may be wrapped around without scoping a declaration away
+// or moving a `fallthrough` off the end of its clause.
+func (g *guardResolver) reachProbe(guard Guard) *ProbeSite {
+	if guard.Form != GuardFormS {
+		return nil
+	}
+	return &ProbeSite{Form: ProbeFormReach, Span: guard.SiteSpan}
+}
+
 // wrappableValue reports whether an expression is a value of a type a closure
 // could return, and sits where a call of that type is legal Go.
 //

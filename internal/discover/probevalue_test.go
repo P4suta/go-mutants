@@ -243,3 +243,76 @@ func TestTheOrderingRuleNamesEveryStatementKind(t *testing.T) {
 		}
 	}
 }
+
+// TestADeletedStatementRecordsThatItRan is the weakest form and the one that
+// completes the table.
+//
+// A deletion's mutant differs from the original by the *absence* of an effect,
+// and a probe tree runs effects: there is no value to compare and no rewrite
+// could make one appear. What there is is the fact that the statement ran, and
+// a pass that never ran it cannot have observed its removal.
+func TestADeletedStatementRecordsThatItRan(t *testing.T) {
+	t.Parallel()
+
+	got := scanSource(t, `package pkg
+
+// log is the call that gets deleted.
+func log(n int) {}
+
+// Walk calls out once per step.
+func Walk(limit int) {
+	for i := 0; i < limit; i++ {
+		log(i)
+	}
+}
+`)
+	site := valueProbeOf(t, got, "delete-call-statement")
+	if site == nil {
+		t.Fatal("a deleted call statement is not probed, though reachability is evidence")
+	}
+	if site.Form != ProbeFormReach {
+		t.Errorf("form = %q, want %q", site.Form, ProbeFormReach)
+	}
+	if len(site.Types) != 0 {
+		t.Errorf("Types = %q, and a reachability probe writes no type", site.Types)
+	}
+}
+
+// TestAStrongerFormWinsOverReachability keeps the fallback a fallback.
+//
+// Reachability licenses less than a comparison does: it says the statement ran,
+// where the other forms say the mutant would have changed something. So it is
+// only ever chosen where nothing else can be, and an edit that has a value is
+// measured by its value.
+func TestAStrongerFormWinsOverReachability(t *testing.T) {
+	t.Parallel()
+
+	got := scanSource(t, `package pkg
+
+// Walk sums to the limit.
+func Walk(limit int) int {
+	total := 0
+	for i := 0; i < limit; i++ {
+		total = total + i
+	}
+	return total
+}
+`)
+	for _, c := range []struct {
+		rule string
+		want ProbeForm
+	}{
+		{"add-to-sub", ProbeFormValue},
+		{"lt-to-le", ProbeFormBool},
+		{"delete-assignment", ProbeFormReach},
+	} {
+		site := valueProbeOf(t, got, c.rule)
+		if site == nil {
+			t.Errorf("%s is not probed at all", c.rule)
+			continue
+		}
+		if site.Form != c.want {
+			t.Errorf("%s uses %q, want %q", c.rule, site.Form, c.want)
+		}
+	}
+}

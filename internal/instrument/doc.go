@@ -205,6 +205,20 @@
 // site is measured only where everything its own statement evaluates beside it
 // is inert. internal/discover's effects.go carries the program that shows why.
 //
+// The fourth form is the weakest, and it is why the invariant this package
+// works to is worded as "the pass could not rule the mutant out" rather than as
+// "the value differed". A deleted statement's mutant differs by the *absence*
+// of an effect, and a probe tree runs effects: there is nothing to compare. So
+// what is recorded is that the statement ran —
+//
+//	{ __gm.Infect(i); <original statement> }
+//
+// — and a pass that never ran it cannot have observed its removal. It needs
+// none of the other conditions: nothing is evaluated twice, and the call is a
+// statement of its own, so the ordering rule does not reach it. It
+// over-approximates badly and says nothing about equivalence, both of which
+// make it *more* conservative rather than less.
+//
 // Everything else is unprobed. A mutant of another family is catalogued and
 // mutated exactly as before and simply not measured, so a file holding only
 // such mutants comes out of [ModeProbe] byte for byte as its author wrote it —
