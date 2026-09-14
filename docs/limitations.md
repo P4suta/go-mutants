@@ -43,7 +43,7 @@ into the catalogue and report JSON, and `list --explain` names the site as
 | `package-var-init` | The expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1 |
 | `type-param` | The expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values |
 | `label-or-goto` | The statement is a `goto`. Its target cannot be moved without risking a jump over a declaration or into a block, which Go forbids, and removing it would leave a function reaching its closing brace without returning — the same argument the deletion family makes about `panic`. Dropping a *label* from the `break` or `continue` that carries it is a different edit and is a rule, not a refusal |
-| `unnameable-decl-type` | None of the three guard forms can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports |
+| `unnameable-decl-type` | None of the guard forms can express a rewrite here. Usually a type with no source form outside its own package: a missing *name* is supplied by [import completion](operators.md#import-completion), so what is left is a type that cannot be written anywhere |
 
 Three things are **not** recorded skips, because nothing was declined:
 `_test.go` files are built and run and never mutated, which is inherent rather

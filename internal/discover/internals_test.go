@@ -446,7 +446,7 @@ func scanFor(t *testing.T, src string) (*fileScan, *ast.File) {
 		src:       []byte(src),
 		digest:    mutation.DigestString(src),
 		tokFile:   tokFile,
-		guard:     newGuardResolver(file, nil, nil, tokFile),
+		guard:     newGuardResolver(file, nil, nil, tokFile, nil),
 	}, file
 }
 
@@ -870,7 +870,7 @@ func typedFixture(t *testing.T, src string) (*guardResolver, *ast.File) {
 	if tokFile == nil {
 		t.Fatal("the parsed fixture has no position information")
 	}
-	return newGuardResolver(file, info, pkg, tokFile), file
+	return newGuardResolver(file, info, pkg, tokFile, nil), file
 }
 
 // lastDeclaringStmt returns the last `:=` or `var` statement in a file.

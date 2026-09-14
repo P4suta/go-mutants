@@ -506,6 +506,116 @@ func TestImportInjectionForms(t *testing.T) {
 	}
 }
 
+// TestCompletedImportsAreSplicedBesideTheRuntime is the rewriter's half of
+// import completion.
+//
+// Discovery decides that a guard's spelling needs a package and what to call
+// it; this is where the file gains it. Every shape gets the same treatment the
+// runtime import gets -- one insertion holding no line break -- and the one
+// shape that changes is the file with no imports at all, which needs
+// parentheses once there is more than one spec to write.
+func TestCompletedImportsAreSplicedBesideTheRuntime(t *testing.T) {
+	t.Parallel()
+
+	runtimePath := testModule + "/gomutants_rt"
+	completions := []discover.Completion{
+		{Path: "time", Local: "time"},
+		{Path: "example.com/mini/carrier", Local: "carrier"},
+	}
+	const added = `time "time";carrier "example.com/mini/carrier"`
+	const spaced = `time "time"; carrier "example.com/mini/carrier"`
+	for _, c := range []struct {
+		name string
+		src  string
+		want string
+	}{{
+		name: "a parenthesized list",
+		src:  "package sample\n\nimport (\n\t\"fmt\"\n)\n",
+		want: "package sample\n\nimport (__gm \"" + runtimePath + "\";" + added + ";\n\t\"fmt\"\n)\n",
+	}, {
+		name: "a single unparenthesized import",
+		src:  "package sample\n\nimport \"fmt\"\n",
+		want: "package sample\n\nimport (\"fmt\"; __gm \"" + runtimePath + "\"; " + spaced + ")\n",
+	}, {
+		name: "no imports at all",
+		src:  "package sample\n\nfunc F() {}\n",
+		want: "package sample; import (__gm \"" + runtimePath + "\"; " + spaced + ")\n\nfunc F() {}\n",
+	}} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			file, tok, err := instrument.ParseSnapshot(sampleFile, []byte(c.src))
+			if err != nil {
+				t.Fatalf("parsing: %v", err)
+			}
+			splices, err := instrument.ImportSplices(
+				file, tok, sampleFile, "__gm", runtimePath, completions...)
+			if err != nil {
+				t.Fatalf("ImportSplices: %v", err)
+			}
+			if !instrument.LinePreserving(splices) {
+				t.Error("the completed imports are not line-preserving")
+			}
+			out, _, err := instrument.Apply([]byte(c.src), splices)
+			if err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if string(out) != c.want {
+				t.Errorf("injected imports:\n got %q\nwant %q", out, c.want)
+			}
+			if _, _, err := instrument.ParseSnapshot(sampleFile, out); err != nil {
+				t.Errorf("the file no longer parses: %v", err)
+			}
+			if got, want := instrument.CountLines(out), instrument.CountLines([]byte(c.src)); got != want {
+				t.Errorf("the file holds %d line breaks, it held %d", got, want)
+			}
+		})
+	}
+}
+
+// TestACompletionThatCollidesWithTheRuntimeAliasIsRefused is a fail-closed
+// check on two phases that choose names independently.
+//
+// Discovery picks a completion's name against the file's identifiers and the
+// package block; internal/instrument picks the runtime alias against the same
+// two scopes. Neither can see the other's answer, so a collision means the two
+// have come to disagree -- and the last place to notice is before writing a
+// file that declares one name twice.
+func TestACompletionThatCollidesWithTheRuntimeAliasIsRefused(t *testing.T) {
+	t.Parallel()
+
+	src := "package sample\n\nfunc F() {}\n"
+	file, tok, err := instrument.ParseSnapshot(sampleFile, []byte(src))
+	if err != nil {
+		t.Fatalf("parsing: %v", err)
+	}
+	for _, c := range []struct {
+		name        string
+		completions []discover.Completion
+	}{
+		{"the runtime alias", []discover.Completion{{Path: "time", Local: "__gm"}}},
+		{"another completion", []discover.Completion{
+			{Path: "time", Local: "clock"},
+			{Path: "example.com/mini/carrier", Local: "clock"},
+		}},
+		{"a completion with no name", []discover.Completion{{Path: "time"}}},
+		{"a completion with no path", []discover.Completion{{Local: "time"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := instrument.ImportSplices(
+				file, tok, sampleFile, "__gm", testModule+"/gomutants_rt", c.completions...)
+			if err == nil {
+				t.Fatal("the injection was accepted, so the file would declare one name twice")
+			}
+			if got := instrument.CodeOf(err); got != instrument.CodeImportInjection {
+				t.Errorf("code = %q, want %q", got, instrument.CodeImportInjection)
+			}
+		})
+	}
+}
+
 // TestImportGoesOnlyToInstrumentedFiles keeps the rewrite honest about which
 // files it touched: a file whose mutants all live elsewhere must not gain an
 // import it does not use, because an unused import does not compile.

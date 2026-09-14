@@ -6,6 +6,7 @@ package discover
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -205,11 +206,15 @@ func returnSiteInside(t *testing.T, candidates []Located, src, snippet string) *
 // keeps the hint honest.
 //
 // The rewrite writes the result types into the file it rewrites, so a type that
-// file cannot name is a probe that cannot be written. Both halves of the
-// existing spelling machinery are exercised, because they fail for unrelated
-// reasons: a dot import binds a package's contents rather than the package, so
-// the qualifier has no name for it, and `unsafe.Pointer` is a basic type that
-// still needs an import, which is why it is refused whatever the file imports.
+// file cannot name is a probe that cannot be written. What is left of that
+// refusal is `unsafe.Pointer`: a basic type that still needs an import, and one
+// no import makes writable, so it is refused whatever the file holds.
+//
+// A dot-imported type used to be here beside it and is not any more. It was the
+// *qualifier* half of the refusal — a dot import binds a package's contents
+// rather than the package, so there was no name to write — and that is exactly
+// what import completion supplies; [TestADotImportedResultTypeIsNowSpellable]
+// is the same fixture asserting the other answer.
 //
 // A refused hint costs the probe and never the mutant: every candidate here is
 // still catalogued, still mutated, and still guarded in the mutant tree.
@@ -221,22 +226,6 @@ func TestReturnSiteIsNilWhenAResultTypeCannotBeSpelled(t *testing.T) {
 		rule   string
 		bytes  string
 	}{{
-		name: "a dot-imported result type",
-		source: `package sample
-
-import . "example.com/probe/kinds"
-
-// Pair returns a value of a type this file imports without naming.
-func Pair(a int) (int, Kind) { return a, Zero }
-`,
-		extra: map[string]string{
-			"kinds/kinds.go": "// Package kinds holds the type sample cannot name.\npackage kinds\n\n" +
-				"// Kind is a named integer type.\ntype Kind int\n\n" +
-				"// Zero is the kind that is nothing.\nconst Zero Kind = 0\n",
-		},
-		rule:  ruleReturnZeroNumeric,
-		bytes: "a",
-	}, {
 		name: "an unsafe pointer result",
 		source: `package sample
 
@@ -259,6 +248,46 @@ func Ptr(p unsafe.Pointer) (int, unsafe.Pointer) { return 1, p }
 				t.Error("the candidate lost its guard form as well, so the refusal cost the mutant and not only the probe")
 			}
 		})
+	}
+}
+
+// TestADotImportedResultTypeIsNowSpellable is the other half of the refusal
+// above, and the smallest observable consequence of import completion.
+//
+// A dot import brings a package's contents into the file's own scope and binds
+// no name for the package itself, so there was nothing to qualify `Kind` with
+// and the probe could not be written. The package is imported all the same —
+// the edge is in the graph — so a completion may give this file a name for it,
+// and the hint that was refused is now a hint that names the import it needs.
+func TestADotImportedResultTypeIsNowSpellable(t *testing.T) {
+	candidates, _ := discoverProbeModule(t, `package sample
+
+import . "example.com/probe/kinds"
+
+// Pair returns a value of a type this file imports without naming.
+func Pair(a int) (int, Kind) { return a, Zero }
+`, map[string]string{
+		"kinds/kinds.go": "// Package kinds holds the type sample could not name.\npackage kinds\n\n" +
+			"// Kind is a named integer type.\ntype Kind int\n\n" +
+			"// Zero is the kind that is nothing.\nconst Zero Kind = 0\n",
+	})
+	got := candidateWithOriginal(t, candidates, ruleReturnZeroNumeric, "a")
+	site := got.Guard.Return
+	if site == nil {
+		t.Fatal("the return site is still refused, so the dot import was not completed")
+	}
+	if len(site.Types) != 2 || site.Types[1] != "kinds.Kind" {
+		t.Errorf("Types = %q, want the second result spelled against the completed import", site.Types)
+	}
+	want := []Completion{{Path: "example.com/probe/kinds", Local: "kinds"}}
+	if !slices.Equal(site.Imports, want) {
+		t.Errorf("Imports = %+v, want %+v", site.Imports, want)
+	}
+	// The import belongs to the probe tree and not to the mutant tree: the
+	// guard here is a statement form, which writes no type at all, and an
+	// import the mutant tree carried unused would not compile.
+	if len(got.Guard.Imports) != 0 {
+		t.Errorf("Guard.Imports = %+v, and the mutant tree's rewrite spells no type", got.Guard.Imports)
 	}
 }
 

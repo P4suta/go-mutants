@@ -224,14 +224,21 @@ func buildProbeSites(
 	srcPath string,
 	mutants []mutation.Mutant,
 	hints Hints,
-) (interval.Forest[mutation.Mutant], map[mutation.Span]probeSite, map[string]probeEdit, int, error) {
+) (
+	interval.Forest[mutation.Mutant], map[mutation.Span]probeSite, map[string]probeEdit,
+	int, []discover.Completion, error,
+) {
 	items := make([]interval.Item[mutation.Mutant], 0, len(mutants))
 	sites := make(map[mutation.Span]probeSite, len(mutants))
 	edits := make(map[string]probeEdit, len(mutants))
 	widest := 0
+	var completions []discover.Completion
 
-	fail := func(err error) (interval.Forest[mutation.Mutant], map[mutation.Span]probeSite, map[string]probeEdit, int, error) {
-		return interval.Forest[mutation.Mutant]{}, nil, nil, 0, err
+	fail := func(err error) (
+		interval.Forest[mutation.Mutant], map[mutation.Span]probeSite, map[string]probeEdit,
+		int, []discover.Completion, error,
+	) {
+		return interval.Forest[mutation.Mutant]{}, nil, nil, 0, nil, err
 	}
 	for _, m := range mutants {
 		guard, err := hints.guardFor(m, srcPath)
@@ -253,6 +260,10 @@ func buildProbeSites(
 		}
 		sites[resolved.span] = resolved
 		edits[m.ID] = *edit
+		// The probe tree's own imports, kept apart from the mutant tree's: the
+		// temporaries a probe declares spell the *result* types, and an import
+		// only they need would sit unused in the tree beside it.
+		completions = discover.MergeCompletions(completions, guard.Return.Imports)
 		items = append(items, interval.Item[mutation.Mutant]{Span: resolved.span, Payload: m})
 		widest = max(widest, len(resolved.operands))
 	}
@@ -261,7 +272,7 @@ func buildProbeSites(
 	if err != nil {
 		return fail(err)
 	}
-	return forest, sites, edits, widest, nil
+	return forest, sites, edits, widest, completions, nil
 }
 
 // probesAgree refuses two hints that name one statement and disagree about what

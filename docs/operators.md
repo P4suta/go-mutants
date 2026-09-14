@@ -154,6 +154,39 @@ that form — which means a new form adds sites and moves none, and no existing
 mutant's bytes or identity changed when one landed. Form C′ is not a loosened
 Form C for that reason, and Form E is not a loosened anything.
 
+### Import completion
+
+A guard spells a type with the name its package has **in the file being
+rewritten**, and a file can perfectly well hold an expression whose type belongs
+to a package it does not import: a helper in a sibling file returns one. That
+was a refusal until discovery could supply the name.
+
+The rule is one line, and it is what makes the addition safe: **a completion may
+only add a path some file of the same package already imports.** Everything an
+import injector normally has to prove follows from it by construction rather
+than by analysis — no cycle is possible, because the package compiles today with
+that edge in its graph and moving it between files does not change the graph;
+visibility is unchanged, because `internal/`, module boundaries and vendoring
+all judge the importing *package*, which is the same package; and `go.mod` needs
+nothing, because the requirement that resolves the path is already there.
+
+Three details follow:
+
+- **The name is chosen at discovery**, beside the type it appears in, because
+  the rendered type string already contains it. A name the file binds — a local
+  variable called `time`, a package-level `carrier` — is bumped rather than
+  refused, exactly as the generated runtime's own alias is.
+- **A blank or dot import of the file's own is completed.** Both import the
+  package and bind no name for it, which is the condition a completion exists
+  for.
+- **Each guard declares its own imports.** Validation bisects, so any subset of
+  a file's mutants may be instrumented alone, and an import declared by a guard
+  that was left out would be one the file does not have.
+
+What it does not fix is reach rather than spelling: a type whose package *no*
+file of this one imports stays a refusal, and so does one naming something
+unexported elsewhere. `fixtures/unnameable/` holds one of each, side by side.
+
 ### What is refused
 
 Everything else, and a refused candidate is never catalogued. Every refusal is
@@ -161,14 +194,18 @@ recorded as `unnameable-decl-type`, which reads as "no guard form can express
 this site". After Form E there are three shapes left, and only the first is
 about types at all:
 
-- **an expression whose type cannot be spelled with the imports the file already
-  has.** Form E writes the closure's result type out, and Form C′ writes a
-  conversion, so both need a name; a dot import binds a package's names without
-  binding a name for the package, and an unexported type from another package
-  has no name outside it. The search walks outward past one — an expression
-  *around* it may have a type the file can name — and refuses only when nothing
-  on the way out can be named. Arithmetic over an unexported numeric type from
-  another package, in a `switch` tag, is the smallest shape that reaches it;
+- **an expression whose type cannot be spelled with the imports the file, or one
+  of its siblings, has.** Form E writes the closure's result type out, and Form
+  C′ writes a conversion, so both need a name. A missing *name* is no longer a
+  refusal: where the type belongs to a package some file of the same package
+  imports, discovery adds that import to the file being rewritten, under a name
+  nothing there binds. See **Import completion** below for the rule and why it
+  is safe. What is left is a missing *type*: an unexported name from another
+  package has no source form anywhere outside it, and no import supplies one.
+  The search walks outward past one — an expression *around* it may have a type
+  the file can name — and refuses only when nothing on the way out can be named.
+  Arithmetic over an unexported numeric type from another package, in a `switch`
+  tag, is the smallest shape that reaches it;
 - **an expression that is not a value.** `case int:` in a type switch records a
   type, `fmt` in `fmt.Println` records a package, `len` records a builtin. All
   three are expressions to `go/ast`, none is something a closure can return;
@@ -405,7 +442,7 @@ The reason strings below are the exact identifiers `internal/discover` emits
 | `generated` | Matches `^// Code generated .* DO NOT EDIT\.$` |
 | `excluded` | The file matched a configured `mutation.exclude` pattern |
 | `label-or-goto` | A `goto`, whose target cannot be moved without jumping over a declaration or into a block, and whose removal would leave a function reaching its closing brace without returning |
-| `unnameable-decl-type` | No guard form can express the rewrite site; see **Guard site hints** above for the three shapes that reach it |
+| `unnameable-decl-type` | No guard form can express the rewrite site; see **Guard site hints** above for the three shapes that reach it, and **Import completion** for the one that used to and no longer does |
 
 One reason remains reserved in the run-report schema and emitted by nothing:
 `struct-tag`. Nothing will ever emit it — a tag is part of a *type*, so there is

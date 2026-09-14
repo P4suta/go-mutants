@@ -345,6 +345,18 @@ type Guard struct {
 	// the two statement forms produce statements rather than values.
 	SiteType string
 
+	// Imports are the packages this guard's spelling needs the file to import
+	// and does not already, each with the name the spelling binds it to. It is
+	// empty for almost every guard: a completion only happens where a type
+	// belongs to a package a *sibling* file of the same package imports, which
+	// is the one addition that cannot change the import graph. See imports.go.
+	//
+	// It belongs to the guard rather than to the file because a rewrite may
+	// instrument any subset of a file's mutants — validation bisects — so a
+	// guard has to declare everything its own bytes need, whether or not
+	// another guard in the same file happens to need it too.
+	Imports []Completion
+
 	// Return is the probe hint of a return-value mutant: the statement it sits
 	// in, the type every result of that statement must be declared as, and the
 	// position of the result the mutation replaces. It is nil when the probe
@@ -425,6 +437,12 @@ type ReturnSite struct {
 	// Index is the position, in that list, of the result the candidate's span
 	// replaces.
 	Index int
+	// Imports are the packages the spellings in Types need the file to import
+	// and does not already. It is [Guard.Imports] for the probe tree, and is
+	// kept apart from it because the two are different trees: an import the
+	// probe's temporaries need is one the mutant tree would carry unused, which
+	// does not compile.
+	Imports []Completion
 }
 
 // at returns the hint for one result position of the same statement, or nil for
@@ -793,6 +811,11 @@ type discovery struct {
 	// digests is the digest of every file whose bytes this pass read, keyed by
 	// module-relative path. It becomes [Result.SourceDigests].
 	digests map[string]string
+	// siblings caches one import index per package, keyed by import path. It is
+	// a cache rather than a field of the walk because the index is a fact about
+	// a package while the walk is per file: computing it per file would read
+	// every file of a package once for every file of that package.
+	siblings map[string]map[string]string
 }
 
 // skipKey is the aggregation key of [Skip].

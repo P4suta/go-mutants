@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
@@ -460,7 +461,7 @@ func instrumentSource(
 	taken := takenNames(file, bound)
 	alias := aliasIn(taken)
 
-	splices, guards, err := composeSites(
+	splices, guards, completions, err := composeSites(
 		newSiteIndex(tok, file, src), srcPath, src, mutants, hints, alias, taken, mode)
 	if err != nil {
 		return nil, 0, err
@@ -468,7 +469,7 @@ func instrumentSource(
 	if guards == 0 {
 		return src, 0, nil
 	}
-	imports, err := importSplices(file, tok, srcPath, alias, importPath)
+	imports, err := importSplices(file, tok, srcPath, alias, importPath, completions)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -516,11 +517,11 @@ func composeSites(
 	alias string,
 	taken map[string]bool,
 	mode Mode,
-) ([]Splice, int, error) {
+) ([]Splice, int, []discover.Completion, error) {
 	if mode == ModeProbe {
-		forest, sites, edits, widest, err := buildProbeSites(index, srcPath, mutants, hints)
+		forest, sites, edits, widest, completions, err := buildProbeSites(index, srcPath, mutants, hints)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		renderer := &probeRenderer{
 			path:  srcPath,
@@ -530,15 +531,17 @@ func composeSites(
 			sites: sites,
 			edits: edits,
 		}
-		return renderer.render(forest)
+		splices, guards, err := renderer.render(forest)
+		return splices, guards, completions, err
 	}
 
-	forest, sites, err := buildSites(index, srcPath, mutants, hints)
+	forest, sites, completions, err := buildSites(index, srcPath, mutants, hints)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	renderer := &guardRenderer{path: srcPath, src: src, alias: alias, sites: sites}
-	return renderer.render(forest)
+	splices, guards, err := renderer.render(forest)
+	return splices, guards, completions, err
 }
 
 // checkLineCount is the file-level half of the line-preservation invariant:

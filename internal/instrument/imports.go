@@ -8,7 +8,9 @@ import (
 	"go/token"
 	"path"
 	"strconv"
+	"strings"
 
+	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
@@ -120,8 +122,21 @@ func aliasIn(taken map[string]bool) string {
 // Only the first import declaration is considered. A file may hold several, and
 // picking the first one keeps the choice a function of the file rather than of
 // anything this package remembers between runs.
-func importSplices(file *ast.File, tok *token.File, srcPath, alias, importPath string) ([]Splice, error) {
-	spec := strconv.Quote(importPath)
+//
+// More than one import may be written, and the extra ones are not the runtime's:
+// a guard that spells a type belonging to a package the file does not import
+// carries the import it needs (see [discover.Completion]), and they arrive here
+// as `completions`. Nothing about the shapes changes — every form is still an
+// insertion of text holding no line break, whether it writes one spec or six —
+// which is why the line-preservation argument above is written about the
+// insertion rather than about the import.
+func importSplices(
+	file *ast.File, tok *token.File, srcPath, alias, importPath string, completions []discover.Completion,
+) ([]Splice, error) {
+	specs, err := importSpecs(srcPath, alias, importPath, completions)
+	if err != nil {
+		return nil, err
+	}
 	offset := func(pos token.Pos) uint32 { return uint32(tok.Offset(pos)) }
 	insertion := func(at uint32, text string) Splice {
 		return Splice{
@@ -139,11 +154,18 @@ func importSplices(file *ast.File, tok *token.File, srcPath, alias, importPath s
 				Message: "internal error: " + strconv.Quote(srcPath) + " parsed without a package clause to import from",
 			}
 		}
-		return []Splice{insertion(offset(file.Name.End()), "; import "+alias+" "+spec)}, nil
+		if len(specs) == 1 {
+			// The parenthesised form would be equally legal and would move
+			// every existing instrumented file's bytes, for nothing: a file
+			// that needs no completion is the ordinary case, and its rewrite
+			// should be the same rewrite it was.
+			return []Splice{insertion(offset(file.Name.End()), "; import "+specs[0])}, nil
+		}
+		return []Splice{insertion(offset(file.Name.End()), "; import ("+strings.Join(specs, "; ")+")")}, nil
 	}
 
 	if decl.Lparen.IsValid() {
-		return []Splice{insertion(offset(decl.Lparen)+1, alias+" "+spec+";")}, nil
+		return []Splice{insertion(offset(decl.Lparen)+1, strings.Join(specs, ";")+";")}, nil
 	}
 
 	if len(decl.Specs) != 1 {
@@ -158,8 +180,50 @@ func importSplices(file *ast.File, tok *token.File, srcPath, alias, importPath s
 	only := decl.Specs[0]
 	return []Splice{
 		insertion(offset(only.Pos()), "("),
-		insertion(offset(only.End()), "; "+alias+" "+spec+")"),
+		insertion(offset(only.End()), "; "+strings.Join(specs, "; ")+")"),
 	}, nil
+}
+
+// importSpecs renders the specs one file gains: the generated runtime, and
+// whatever a guard's spelling needs the file to import and it does not.
+//
+// Every name is checked against every other, and a collision is refused rather
+// than resolved. Discovery chose the completion names against the file's own
+// identifiers and the package block, and internal/instrument chose the alias
+// against the same two scopes, so two of them colliding is not a source the
+// user wrote — it is the two phases having come to disagree, and the last place
+// to notice that is before writing a file that does not compile.
+func importSpecs(srcPath, alias, importPath string, completions []discover.Completion) ([]string, error) {
+	specs := []string{alias + " " + strconv.Quote(importPath)}
+	bound := map[string]string{alias: importPath}
+	for _, completion := range completions {
+		if completion.Local == "" || completion.Path == "" {
+			return nil, &Error{
+				Code: CodeImportInjection,
+				Message: "internal error: instrumenting " + strconv.Quote(srcPath) +
+					" was given a completion with no " + either(completion.Local == "", "name", "path"),
+			}
+		}
+		if taken, clash := bound[completion.Local]; clash {
+			return nil, &Error{
+				Code: CodeImportInjection,
+				Message: "internal error: instrumenting " + strconv.Quote(srcPath) + " would bind " +
+					strconv.Quote(completion.Local) + " to both " + strconv.Quote(taken) + " and " +
+					strconv.Quote(completion.Path),
+			}
+		}
+		bound[completion.Local] = completion.Path
+		specs = append(specs, completion.Local+" "+strconv.Quote(completion.Path))
+	}
+	return specs, nil
+}
+
+// either is the two-way choice a message needs and Go has no operator for.
+func either(cond bool, yes, no string) string {
+	if cond {
+		return yes
+	}
+	return no
 }
 
 // firstImportDecl returns the file's first import declaration, or nil when it
