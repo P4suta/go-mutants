@@ -61,7 +61,7 @@ var repositoryExpectations = []Expectation{
 			"colon-or-letter predicates.",
 	},
 	{
-		ID: "ab63a5a3e327b7db2bbe97d3267ca840cebf9cf54a899f10cdc52a111a398548",
+		ID: "5ab87ae91e8e36e223776f77bc7073cf78024a5c0ee5c2f8c68ca40e54b0ce2c",
 		Reason: "Equivalent: the comparison sits inside " +
 			"`if x.position != y.position`, where the two registry positions are " +
 			"already known to differ, so `<` and `<=` are the same test.",
@@ -80,33 +80,33 @@ var repositoryExpectations = []Expectation{
 			"Detected count, which Score.Validate reports as incoherent.",
 	},
 	{
-		ID: "71a2e9ed6670de5c01f1c29c061ab45b9a5b6000d754250758601e204f997e68",
+		ID: "8b92325aaa44b1850003c67eba45d5cc8f5bf919ed7c78dfeadabb6c1ccda7a6",
 		Reason: "Unreachable: Build only ever sees candidates Add accepted, and " +
 			"Add calls Registry.Verify, which refuses exactly the names " +
 			"Registry.Position cannot find -- both read one immutable map -- so " +
 			"nothing a caller can build reaches this return.",
 	},
 	{
-		ID: "e997446d6c157c03f5403f1ea5ae0a63a7b20fab96a4ccafa604197d2c44e929",
+		ID: "9bc7cd149597bf890755c4774c0f74a728d91e0367f0deed2aaa6e029963843a",
 		Reason: "Unkillable: `>` and `>=` pick different catalogues only at " +
 			"exactly math.MaxUint32 queued candidates, which is 4,294,967,295 " +
 			"Candidate values in one builder.",
 	},
 	{
-		ID: "a94a2c50fc8b33c7f5ea10f9f5cea1e05eb85138b54119cf80383a8eac4b5c01",
+		ID: "5787a1dbed1334bd7ae10267e4a44fa05c0b26f6eba202194db08bdf2f17958f",
 		Reason: "Unkillable: this return is reached only past math.MaxUint32 " +
 			"queued candidates, so killing it means holding more than " +
 			"4,294,967,295 Candidate values in memory.",
 	},
 	{
-		ID: "0879ed736b35300ea72bf867721591ee218f02a21a7d1fdc5d1a8a89df20a718",
+		ID: "cb8fd2b2364bab9b19cf007c167a5f1ba7d7c2efba55e35d1c80e54a7aea36d7",
 		Reason: "Unkillable: Build only sees candidates Add validated and " +
 			"Candidate.ID re-runs that same validation, so the only error left " +
 			"for this branch to catch is WriteLengthPrefixed's 4 GiB field guard " +
 			"-- see the id.go rows below.",
 	},
 	{
-		ID: "85dc0334ed347973ea6af195207e0cd262ca6a2bfc9c7a710bda312262b5aad7",
+		ID: "17ee3178f2ecd2292dd028daced5dd0ce3550ba32f604880f417ae71927eb122",
 		Reason: "Unkillable: the same branch as the row above -- the error this " +
 			"forwards can only come from WriteLengthPrefixed's 4 GiB field guard.",
 	},
@@ -553,9 +553,9 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
 		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2659 scored mutants half a
-		// percent buys thirteen survivors (2646/2659 = 99.51% clears,
-		// 2645/2659 = 99.47% does not), where it bought twelve when it was
+		// same arithmetic rather than inertia: at 2673 scored mutants half a
+		// percent buys thirteen survivors (2660/2673 = 99.51% clears,
+		// 2659/2673 = 99.48% does not), where it bought twelve when it was
 		// set -- still far short of the twenty-one that moves this number.
 		// The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},
