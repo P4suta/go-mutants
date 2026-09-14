@@ -548,3 +548,43 @@ jobs:
           path: reports/mutation/
           retention-days: 14
           if-no-files-found: warn
+
+  # One required check instead of six.
+  #
+  # Branch protection names its required checks by hand, in a repository setting
+  # nothing in this tree can see -- so a job added to this file is a job nobody
+  # waits for until somebody remembers to go and add it. This job needs every
+  # other one, so the setting names this and the list lives here, beside the
+  # jobs, where a pull request that adds one shows the reviewer both halves.
+  #
+  # `if: always()` and the explicit result check rather than a bare `needs:`,
+  # because a needed job that is *skipped* does not fail its dependants: the
+  # `coverage` job is skipped on every pull request by design, and a plain
+  # `needs:` would let a cancelled or skipped gate pass for the same reason.
+  # Skipped is accepted and anything that is not success or skipped is not.
+  #
+  # internal/testkit's TestTheAggregateJobWaitsForEveryOtherJob compares the
+  # list below with the jobs this file defines, which is the half that would
+  # otherwise go stale in exactly the way the setting does.
+  ci-success:
+    needs: [quality, platform-tests, race, coverage, artifacts, dogfood]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every gate succeeded or was skipped by design
+        shell: bash
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          passed='.value.result == "success" or .value.result == "skipped"'
+          report='to_entries | .[] | "\(.key): \(.value.result)"'
+          failed=$(printf '%s' "$RESULTS" |
+            jq -r "to_entries | map(select($passed | not)) | $report")
+          if [ -n "$failed" ]; then
+            echo "::error::gates that did not pass:"
+            printf '%s\n' "$failed"
+            exit 1
+          fi
+          printf '%s' "$RESULTS" | jq -r "$report"

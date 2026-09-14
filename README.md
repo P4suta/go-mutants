@@ -616,6 +616,7 @@ results, and not-run mutants are excluded from the score denominator.
 - [Stryker report ecosystem compatibility](docs/stryker-compatibility.md)
 - [Architecture decision records](docs/adr/README.md)
 - [Development guide](docs/development.md)
+- [Continuous integration](docs/ci.md)
 - [Release checklist](docs/release-checklist.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
