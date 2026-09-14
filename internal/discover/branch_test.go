@@ -432,12 +432,14 @@ func TestBranchProofRefusesAnEditOutsideACondition(t *testing.T) {
 			candidates: 1,
 		},
 		{
-			// A case label is suppressed before a candidate is ever proposed,
-			// so this case asserts that there is nothing here to prove and no
-			// proof either.
-			name:       "a switch case label",
+			// A *tagged* switch's label is compared against the tag, where no
+			// guard form can stand, so it is suppressed before a candidate is
+			// proposed: nothing here to prove and no proof either. Its tagless
+			// counterpart is the opposite case and is proved, in
+			// TestATaglessSwitchCaseIsProvedLikeAnIf.
+			name:       "a tagged switch case label",
 			rule:       "le-to-lt",
-			lines:      []string{"\tswitch {", "\tcase a <= b:", "\t\treturn 1", "\t}"},
+			lines:      []string{"\tswitch a {", "\tcase b:", "\t\treturn 1", "\t}"},
 			candidates: 0,
 		},
 		{

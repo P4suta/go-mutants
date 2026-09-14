@@ -69,8 +69,13 @@ func Local(a int) int {
 	return 0
 }
 
-// Switch keeps its case labels off limits and its bodies fair game, in an
-// expression switch and in a type switch.
+// Switch is the three shapes a case label comes in, and they are not one rule.
+//
+// A tagless switch's labels are exactly `bool` -- the implicit tag is the typed
+// constant `true` -- so they are ordinary boolean contexts and are mutated like
+// any other. A tagged switch compares each label against its tag, where no
+// guard form can stand, and a type switch's labels hold types rather than
+// values; both are recorded skips.
 func Switch(a, b int, ok bool) string {
 	switch {
 	case a == b:
@@ -79,6 +84,12 @@ func Switch(a, b int, ok bool) string {
 		}
 	case ok == false:
 		return "not ok"
+	}
+	switch a {
+	case b + 1:
+		return "one more"
+	case b * 2:
+		return "twice"
 	}
 	switch v := any(a).(type) {
 	case int:
@@ -91,7 +102,13 @@ func Switch(a, b int, ok bool) string {
 	return "none"
 }
 
-// Select keeps its communication clause off limits and its body fair game.
+// Select holds a boolean expression inside a communication clause.
+//
+// A comm clause's *statement* is neither a Form S site nor a Form C one -- a
+// `case` there must be a send or a receive, and a guard is neither -- but the
+// value being sent is an ordinary expression, and a boolean one inside it is an
+// ordinary Form C site. So the `a < b` is mutated and the clause around it is
+// not.
 func Select(ch chan bool, a, b int) string {
 	select {
 	case ch <- (a < b):

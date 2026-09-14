@@ -420,7 +420,7 @@ var explanations = map[SkipReason]string{
 	SkipExcluded:           "mutation.include and mutation.exclude removed the file",
 	SkipConstDecl:          "the expression is inside a const declaration, where a constant has to stay constant and one edit can renumber a whole iota block",
 	SkipArrayLength:        "the expression is an array length, which is part of a type and is evaluated by the compiler rather than at run time",
-	SkipCaseLabel:          "the expression labels a switch case or a select clause, which v1 leaves alone; the bodies underneath them are mutated",
+	SkipCaseLabel:          "the expression labels a tagged switch case, whose label is compared against the tag, or a type switch case, whose labels name types; a tagless switch's labels are ordinary boolean contexts and are mutated",
 	SkipPackageVarInit:     "the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1",
 	SkipTypeParam:          "the expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values",
 	SkipUnnameableDeclType: "none of the three guard forms can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports",

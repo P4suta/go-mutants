@@ -81,13 +81,16 @@ is the table.
 
 The honest limits:
 
-- **No `switch`/`select` case mutation, and no `if`-branch replacement.** They
-  are v2: each needs a guard form or a neutral-value model the instrumenter
-  does not build. Package-level `var` initialisers, `const` declarations, array
-  lengths, and generic type parameter lists are excluded for reasons that are
-  not going to change, and cgo packages and generated files are excluded
-  wholesale. Every one of those is a recorded skip with a reason rather than a
-  silent omission.
+- **A tagged switch's case labels are not mutated, and neither are a type
+  switch's, and there is no `if`-branch replacement.** A label of `switch x` is
+  compared against the tag, where no guard form can stand; a type switch's
+  labels hold types rather than values. A **tagless** `switch { case a > b: }`
+  is the opposite case and *is* mutated — its labels are exactly `bool`, so
+  they are ordinary conditions. Package-level `var` initialisers, `const`
+  declarations, array lengths, and generic type parameter lists are excluded
+  for reasons that are not going to change, and cgo packages and generated
+  files are excluded wholesale. Every one of those is a recorded skip with a
+  reason rather than a silent omission.
 - **A rewrite site none of the three guard forms can express is skipped**, with
   the reason `unnameable-decl-type`. The commonest are a `:=` that redeclares
   rather than declares, a declared type the file cannot spell with the imports

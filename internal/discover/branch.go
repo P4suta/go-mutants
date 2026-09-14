@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
@@ -161,14 +162,14 @@ func (s *fileScan) branchProof(rule mutation.Rule, anchor ast.Node) *BranchProof
 		return nil
 	}
 	cond, body, ok := s.gatedBody(anchor)
-	if !ok || len(body.List) == 0 || !s.inert(cond) {
+	if !ok || !s.inert(cond) {
 		return nil
 	}
-	start, ok := s.undirectedPosition(body.Lbrace)
+	start, ok := s.undirectedPosition(body.start)
 	if !ok {
 		return nil
 	}
-	end, ok := s.undirectedPosition(body.Rbrace)
+	end, ok := s.undirectedPosition(body.end)
 	if !ok {
 		return nil
 	}
@@ -193,34 +194,80 @@ func (s *fileScan) branchProof(rule mutation.Rule, anchor ast.Node) *BranchProof
 //
 // An `if`'s init statement is not part of its condition and is never inspected:
 // it runs before the condition is evaluated, and the mutant runs it too.
-func (s *fileScan) gatedBody(anchor ast.Node) (ast.Expr, *ast.BlockStmt, bool) {
+func (s *fileScan) gatedBody(anchor ast.Node) (ast.Expr, gatedSpan, bool) {
 	for node := anchor; node != nil; {
 		switch parent := s.guard.parent[node].(type) {
 		case *ast.ParenExpr:
 			node = parent
 		case *ast.BinaryExpr:
 			if parent.Op != token.LAND && parent.Op != token.LOR {
-				return nil, nil, false
+				return nil, gatedSpan{}, false
 			}
 			node = parent
 		case *ast.IfStmt:
-			if parent.Cond != node || parent.Body == nil {
-				return nil, nil, false
+			if parent.Cond != node || parent.Body == nil || len(parent.Body.List) == 0 {
+				return nil, gatedSpan{}, false
 			}
-			return parent.Cond, parent.Body, true
+			return parent.Cond, blockSpan(parent.Body), true
 		case *ast.ForStmt:
-			if parent.Cond != node || parent.Body == nil {
-				return nil, nil, false
+			if parent.Cond != node || parent.Body == nil || len(parent.Body.List) == 0 {
+				return nil, gatedSpan{}, false
 			}
-			return parent.Cond, parent.Body, true
+			return parent.Cond, blockSpan(parent.Body), true
+		case *ast.CaseClause:
+			// A clause of a *tagless* switch. Its label is exactly `bool` --
+			// the implicit tag is the typed constant `true` -- so the label is
+			// a condition in the same sense an `if`'s is, and the same lemma
+			// holds over the statements it guards: a narrowing edit can only
+			// make the clause fire less often, so a test during which none of
+			// its statements ran could not have told the two programs apart.
+			//
+			// The clause of a *tagged* switch never reaches here: its label is
+			// suppressed before a candidate is proposed, so there is nothing
+			// under it to walk up from.
+			if !slices.Contains(parent.List, exprOf(node)) || len(parent.Body) == 0 {
+				return nil, gatedSpan{}, false
+			}
+			return exprOf(node), clauseSpan(parent), true
 		default:
 			// Including the nil parent of the file itself, which is how the
-			// walk terminates when the edit is not under an `if` or a `for` at
-			// all.
-			return nil, nil, false
+			// walk terminates when the edit is not under a condition at all.
+			return nil, gatedSpan{}, false
 		}
 	}
-	return nil, nil, false
+	return nil, gatedSpan{}, false
+}
+
+// A gatedSpan is the body a condition guards, as the two positions the proof
+// publishes.
+//
+// A block's are its braces. A case clause has none, so its are the first
+// statement's first byte and the last statement's last -- which is the same
+// promise, because what a consumer does with the span is ask whether any
+// statement inside it ran.
+type gatedSpan struct {
+	start token.Pos
+	end   token.Pos
+}
+
+// blockSpan is a braced body's span.
+func blockSpan(block *ast.BlockStmt) gatedSpan {
+	return gatedSpan{start: block.Lbrace, end: block.Rbrace}
+}
+
+// clauseSpan is a case clause's body span.
+func clauseSpan(clause *ast.CaseClause) gatedSpan {
+	first := clause.Body[0]
+	last := clause.Body[len(clause.Body)-1]
+	// End is one past the last byte; the proof addresses the last byte itself,
+	// as a block's does with its closing brace.
+	return gatedSpan{start: first.Pos(), end: last.End() - 1}
+}
+
+// exprOf reads a node as the expression it is, or nil.
+func exprOf(node ast.Node) ast.Expr {
+	expr, _ := node.(ast.Expr)
+	return expr
 }
 
 // undirectedPosition is the position of one brace, and the refusal of a file

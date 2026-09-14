@@ -40,7 +40,7 @@ into the catalogue and report JSON, and `list --explain` names the site as
 | `excluded` | `mutation.include` and `mutation.exclude` removed the file |
 | `const-decl` | The expression is inside a `const` declaration, where a constant has to stay constant and one edit can renumber a whole `iota` block |
 | `array-length` | The expression is an array length, which is part of a type and is evaluated by the compiler rather than at run time |
-| `case-label` | The expression labels a `switch` case or a `select` clause, which v1 leaves alone; the bodies underneath them are mutated |
+| `case-label` | The label of a *tagged* switch case, compared against the tag where no guard form can stand, or of a *type* switch case, which names a type rather than a value. A **tagless** switch's labels are exactly `bool` and are mutated like any other condition |
 | `package-var-init` | The expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1 |
 | `type-param` | The expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values |
 | `unnameable-decl-type` | None of the three guard forms can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports |

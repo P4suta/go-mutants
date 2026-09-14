@@ -404,3 +404,77 @@ func TestANegationAndAMirrorAreEachOthersInverse(t *testing.T) {
 		}
 	}
 }
+
+// TestATaglessSwitchCaseIsProvedLikeAnIf is the other half of the case-label
+// change.
+//
+// A tagless switch's label is exactly `bool` -- the implicit tag is the typed
+// constant `true` -- so it is a condition in the same sense an `if`'s is, and
+// the branch proof's lemma holds over it unchanged: a narrowing edit makes the
+// clause fire less often, so a test during which none of its statements ran
+// could not have told the two programs apart.
+//
+// The span is the clause's statements rather than a pair of braces, because a
+// case clause has none. That is the same promise -- what a consumer does with
+// the span is ask whether anything inside it ran.
+func TestATaglessSwitchCaseIsProvedLikeAnIf(t *testing.T) {
+	t.Parallel()
+
+	found := scanSource(t, `package pkg
+
+func Pick(a, b int) int {
+	switch {
+	case a <= b:
+		return 1
+	}
+	return 0
+}
+`)
+	var proved int
+	for _, candidate := range found.candidates {
+		if candidate.Rule.Name != "le-to-lt" {
+			continue
+		}
+		proved++
+		proof := candidate.Branch
+		if proof == nil {
+			t.Fatalf("a narrowing edit on a tagless switch label carries no branch proof")
+		}
+		// `return 1` is on line 6 and is the whole of the clause's body.
+		if proof.BodyStartLine != 6 || proof.BodyEndLine != 6 {
+			t.Errorf("the proof spans lines %d..%d, and the clause's body is line 6 alone",
+				proof.BodyStartLine, proof.BodyEndLine)
+		}
+		if proof.BodyStartColumn >= proof.BodyEndColumn {
+			t.Errorf("the proof spans columns %d..%d, which covers nothing",
+				proof.BodyStartColumn, proof.BodyEndColumn)
+		}
+	}
+	if proved == 0 {
+		t.Fatalf("the scan found no le-to-lt candidate in a tagless switch label; it found %v", found.rules())
+	}
+}
+
+// TestACaseClauseWithNoBodyIsNotProved keeps the empty-body refusal at the
+// clause too.
+//
+// An empty clause gates nothing, so there is no body a test could have failed
+// to enter and nothing the lemma can say.
+func TestACaseClauseWithNoBodyIsNotProved(t *testing.T) {
+	t.Parallel()
+
+	found := scanSource(t, `package pkg
+
+func Pick(a, b int) int {
+	switch {
+	case a <= b:
+	}
+	return 0
+}
+`)
+	for _, candidate := range found.candidates {
+		if candidate.Rule.Name == "le-to-lt" && candidate.Branch != nil {
+			t.Errorf("an empty clause was proved: %+v", candidate.Branch)
+		}
+	}
+}
