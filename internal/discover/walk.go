@@ -11,6 +11,7 @@ import (
 	"go/types"
 	"math"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -157,11 +158,21 @@ func (d *discovery) scanParsed(
 // selection applies the include and exclude patterns to a module-relative
 // path. Excludes are applied after includes, so an exclude always wins, and an
 // empty include set includes everything.
+//
+// The path is matched under [discovery.prefix], which is empty outside a
+// workspace and the module's own directory inside one: the patterns are
+// written against the tree the user is looking at, and in a workspace that is
+// the workspace. Only the matching sees the prefix -- what the path is
+// *recorded* as stays relative to the module it belongs to.
 func (d *discovery) selection(rel string) (SkipReason, bool) {
+	subject := rel
+	if d.prefix != "" {
+		subject = path.Join(d.prefix, rel)
+	}
 	if len(d.include) > 0 {
 		included := false
 		for _, pattern := range d.include {
-			if pattern.Match(rel) {
+			if pattern.Match(subject) {
 				included = true
 				break
 			}
@@ -171,7 +182,7 @@ func (d *discovery) selection(rel string) (SkipReason, bool) {
 		}
 	}
 	for _, pattern := range d.exclude {
-		if pattern.Match(rel) {
+		if pattern.Match(subject) {
 			return SkipExcluded, true
 		}
 	}

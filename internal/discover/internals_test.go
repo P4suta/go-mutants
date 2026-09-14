@@ -90,7 +90,7 @@ func TestEnvironmentFromUsesTheFrozenBase(t *testing.T) {
 	t.Setenv("FROZEN", "ambient")
 	t.Setenv("AMBIENT_ONLY", "must-not-appear")
 
-	env := environmentFrom(base, gocmd.Toolchain{GoBin: filepath.Join(dir, "go")})
+	env := environmentFrom(base, gocmd.Toolchain{GoBin: filepath.Join(dir, "go")}, "")
 	if got := lookupEnv(env, "FROZEN"); len(got) != 1 || got[0] != "value" {
 		t.Errorf("FROZEN = %v, want the captured value", got)
 	}
@@ -146,6 +146,17 @@ func TestEnvironmentSwitchesWorkspaceModeOff(t *testing.T) {
 				got := lookupEnv(environment(tc), "GOWORK")
 				if len(got) != 1 || got[0] != "off" {
 					t.Errorf("GOWORK = %v, want exactly one entry set to off", got)
+				}
+				// A workspace run names the snapshot's own workspace file and
+				// nothing else changes: the ambient GOWORK is replaced exactly
+				// as it is when the answer is off, because what makes the
+				// guarantee hold is that the caller's environment never
+				// decides this.
+				inside := filepath.Join("snapshot", "go.work")
+				named := lookupEnv(environmentFrom(nil, tc, inside), "GOWORK")
+				if len(named) != 1 || named[0] != inside {
+					t.Errorf("GOWORK with a work file = %v, want exactly one entry set to %s",
+						named, inside)
 				}
 			})
 		}

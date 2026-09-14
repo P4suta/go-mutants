@@ -62,7 +62,7 @@ type loadResult struct {
 }
 
 // load runs the package loader over the whole snapshot.
-func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv, patterns []string) (*loadResult, error) {
+func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv []string, workFile string, patterns []string) (*loadResult, error) {
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
@@ -71,7 +71,7 @@ func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv, 
 		Context: ctx,
 		Mode:    loadMode,
 		Dir:     root,
-		Env:     environmentFrom(baseEnv, toolchain),
+		Env:     environmentFrom(baseEnv, toolchain, workFile),
 		Fset:    fset,
 		// Test files are loaded and type-checked but never mutated. They are
 		// here because a tree whose tests do not compile is not a tree that can
@@ -126,22 +126,34 @@ func toolchainHint(toolchain gocmd.Toolchain) string {
 // is the whole truth. Pinning it also means one snapshot discovers the same way
 // whatever environment the run was started from.
 //
+// A workspace run inverts one half of that and no more. [Options.WorkFile]
+// names a workspace file *inside the snapshot*, and GOWORK is set to it rather
+// than off, because a module of a workspace resolves its siblings through that
+// file and does not load without it. The file is still one the snapshot
+// contains, so the sentence above holds word for word; what stops being true is
+// only "there is no such file". Every workspace file outside the snapshot stays
+// ignored, the parent directories' and the caller's $GOWORK alike.
+//
 // Prepending the toolchain directory matters even though it does not decide
 // which `go` binary runs — os/exec resolved that from this process's PATH
 // before the environment was ever consulted. What it decides is what that
 // binary sees: a `go` that finds a different `go` ahead of it on PATH can hand
 // work to it, and the toolchain line in a go.mod is resolved the same way.
 func environment(toolchain gocmd.Toolchain) []string {
-	return environmentFrom(nil, toolchain)
+	return environmentFrom(nil, toolchain, "")
 }
 
-func environmentFrom(base []string, toolchain gocmd.Toolchain) []string {
+func environmentFrom(base []string, toolchain gocmd.Toolchain, workFile string) []string {
 	if base == nil {
 		base = os.Environ()
 	} else {
 		base = slices.Clone(base)
 	}
-	env := setEnv(base, "GOWORK", "off")
+	gowork := "off"
+	if workFile != "" {
+		gowork = workFile
+	}
+	env := setEnv(base, "GOWORK", gowork)
 	if toolchain.GoBin == "" {
 		return env
 	}

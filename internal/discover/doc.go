@@ -144,9 +144,16 @@
 //
 // The child also runs with GOWORK=off. A snapshot is meant to be the whole
 // truth about what is being tested, and a `go.work` in one of its parent
-// directories or named by $GOWORK is a file the snapshot does not contain; a
-// workspace at the snapshot root itself is a different matter: it is read by
-// [DetectWorkspace] and then refused with [CodeWorkspace], so that a workspace
-// file which is malformed says so rather than being told only that workspaces
-// are unsupported.
+// directories or named by $GOWORK is a file the snapshot does not contain.
+//
+// A workspace at the snapshot root itself is a different matter, because that
+// file *is* in the snapshot. [DetectWorkspace] reads it, and what happens next
+// depends on which question was asked. [Discover] refuses it with
+// [CodeWorkspace] -- everything below that phase assumes one module path, one
+// set of module-relative identities, one baseline -- and refuses it having read
+// it, so a workspace file that is itself malformed says which line is wrong.
+// [DiscoverWorkspace] names it in GOWORK and discovers each of its modules,
+// because a module of a workspace resolves its siblings through that file and
+// does not load without it. The sentence above is unchanged by either: the only
+// workspace file anything here obeys is the one the snapshot carries.
 package discover
