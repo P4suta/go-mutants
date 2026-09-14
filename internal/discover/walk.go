@@ -664,7 +664,7 @@ func (s *fileScan) settleCondition(cond ast.Expr, name, replacement string) erro
 		return nil
 	}
 	original, ok := s.text(cond)
-	if !ok || original == replacement || s.isConstantBool(cond, replacement == "true") {
+	if !ok || original == replacement || s.spellsTheSameConstant(cond, replacement) {
 		// A condition already spelled as its own replacement is not a place
 		// go-mutants declined to mutate; it is a place where the mutation and
 		// the source are the same program. [fileScan.replaceReturn] makes the
@@ -773,14 +773,24 @@ func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ProbeS
 	}
 }
 
-// replaceReturn emits one return-value replacement, unless the value is already
-// spelled exactly that way.
+// replaceReturn emits one return-value replacement, unless the value already
+// *is* the replacement -- spelled that way, or folded to it.
 //
 // The catalogue would refuse a replacement equal to its original anyway, and
 // refusing it loudly there would turn every `return nil` in the tree into a
 // failed run. It is not a skip either: `return 0` is not a place go-mutants
 // declined to mutate, it is a place where the mutation and the source are the
 // same program.
+//
+// The constant check is the same refusal one level down, and it is the one that
+// earns its keep. `return Disjoint`, where `Disjoint` is the first name of an
+// iota block, writes different bytes for the same constant: go/types folds both
+// readings to 0, the `return` converts both by the same rule, and the two trees
+// compile to one program. This repository found that survivor twice by running
+// its own gate against itself and declared it twice, which is two ledger rows
+// arguing about a mutant that was never a question. [fileScan.settleCondition]
+// makes the same refusal for conditions, and has since the branch-replacement
+// family arrived.
 func (s *fileScan) replaceReturn(
 	value ast.Expr, name, replacement string, site *ProbeSite, needs []Completion,
 ) error {
@@ -789,7 +799,7 @@ func (s *fileScan) replaceReturn(
 		return nil
 	}
 	original, ok := s.text(value)
-	if !ok || original == replacement {
+	if !ok || original == replacement || s.spellsTheSameConstant(value, replacement) {
 		return nil
 	}
 	return s.emitProbed(rule, value, replacement, site, needs)
@@ -1140,7 +1150,7 @@ func (s *fileScan) alreadyEmpty(value ast.Expr) bool {
 			return false
 		}
 		for _, arg := range expr.Args[1:] {
-			if !s.isZeroConstant(arg) {
+			if !s.spellsTheSameConstant(arg, "0") {
 				return false
 			}
 		}
@@ -1150,30 +1160,66 @@ func (s *fileScan) alreadyEmpty(value ast.Expr) bool {
 	}
 }
 
-// isConstantBool reports whether an expression is a constant of the given
-// boolean value, as go/types folded it.
-func (s *fileScan) isConstantBool(expr ast.Expr, want bool) bool {
-	if s.info == nil {
-		return false
-	}
-	value := s.info.Types[expr].Value
-	if value == nil || value.Kind() != constant.Bool {
-		return false
-	}
-	return constant.BoolVal(value) == want
+// constantReplacements is the value each replacement text in this registry
+// denotes, for the rules whose replacement is a constant at all.
+//
+// `nil` is deliberately absent rather than mapped to something: it is not a
+// constant, go/types folds no value for it, and the two rules that write it
+// have no constant to be equal to. So is every replacement that spells a type
+// (`[]T{}`, `map[K]V{}`) or a whole expression (`!(…)`, a negation's operand,
+// an empty statement) -- [fileScan.alreadyEmpty] is what settles the first pair,
+// and the rest are edits no folding can make into their own originals.
+//
+// A replacement this map does not hold is never refused on these grounds, which
+// is the fail-open direction: the catalogue's own textual check still stands
+// behind it, and a mutant catalogued in error is a survivor somebody reads
+// rather than a killed mutant nobody does.
+var constantReplacements = map[string]constant.Value{
+	"0":     constant.MakeInt64(0),
+	`""`:    constant.MakeString(""),
+	"true":  constant.MakeBool(true),
+	"false": constant.MakeBool(false),
 }
 
-// isZeroConstant reports whether an expression is the constant zero.
-func (s *fileScan) isZeroConstant(expr ast.Expr) bool {
-	if s.info == nil {
+// spellsTheSameConstant reports whether go/types folded an expression to
+// exactly the constant a replacement text denotes.
+//
+// It is the one question behind three refusals -- a settled condition, a
+// replaced result, and a `make` whose length is already zero -- and the answer
+// is the checker's, not this package's: a constant expression has one value,
+// the compiler computed it, and two spellings of it are one program.
+func (s *fileScan) spellsTheSameConstant(expr ast.Expr, replacement string) bool {
+	want, ok := constantReplacements[replacement]
+	if !ok || s.info == nil || expr == nil {
 		return false
 	}
-	value := s.info.Types[expr].Value
-	if value == nil {
+	got := s.info.Types[expr].Value
+	if got == nil || !comparableConstants(got, want) {
 		return false
 	}
-	n, ok := constant.Int64Val(value)
-	return ok && n == 0
+	return constant.Compare(got, token.EQL, want)
+}
+
+// comparableConstants reports whether two folded constants are of kinds
+// [constant.Compare] can put side by side.
+//
+// The numeric kinds are one class: go/constant promotes an integer and a
+// complex to the wider of the two before comparing them, which is the same
+// promotion the compiler performs, so `complex(0, 0)` and `0` are one value.
+// Bool and String are each their own class, and a pair drawn from two classes
+// is not equal rather than a panic -- Compare asserts on the kind it was handed
+// and there is no answer to give for `"" == 0` anyway, since no Go program can
+// write the comparison.
+func comparableConstants(a, b constant.Value) bool {
+	class := func(v constant.Value) constant.Kind {
+		switch v.Kind() {
+		case constant.Int, constant.Float, constant.Complex:
+			return constant.Complex
+		default:
+			return v.Kind()
+		}
+	}
+	return class(a) == class(b) && a.Kind() != constant.Unknown
 }
 
 // recordAt records one suppression at the position the edit would have sat at,

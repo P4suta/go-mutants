@@ -49,9 +49,11 @@ Three things are **not** recorded skips, because nothing was declined:
 `_test.go` files are built and run and never mutated, which is inherent rather
 than a decision; the deletion family does not offer a `panic` call, because
 removing a terminating panic manufactures a missing-return error wholesale in
-exactly the defensive code the mutant would have been interesting in; and a
-return value already spelled as its own replacement produces no candidate,
-because the mutation and the source would be the same program.
+exactly the defensive code the mutant would have been interesting in; and a site
+that already holds the value its replacement would write produces no candidate,
+because the mutation and the source would be the same program. The last is
+asked of the constant go/types folded rather than of the bytes, so `return
+Disjoint` from the head of an `iota` block is refused exactly as `return 0` is.
 
 `struct-tag` is reserved in the run-report schema and emitted by nothing, and
 nothing will ever emit it: a tag is part of a *type*, so there is no run-time
