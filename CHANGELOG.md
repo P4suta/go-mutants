@@ -14,6 +14,32 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A deleted statement records that it ran.** The fourth and weakest probe
+  form, and the one that says why the layer's invariant is worded as "this pass
+  could not rule the mutant out" rather than as "the value differed". A
+  deletion's mutant differs from the original by the *absence* of an effect, and
+  a probe tree runs effects: there is no value to compare, and no rewrite could
+  make one appear. What there is is the fact that the statement ran —
+
+  ```go
+  { __gm.Infect(i); <original statement> }
+  ```
+
+  — and a pass that never ran it cannot have observed its removal. The same
+  licence, from different evidence.
+  It needs none of the other forms' conditions, and that is not an oversight:
+  nothing is evaluated twice, so there is nothing to be effect-free about, and
+  the call is a statement of its own, so the ordering rule does not reach it.
+  What it needs is a statement a block may be wrapped around, which the guard
+  has already found.
+  Two costs, stated where the form is: it over-approximates badly — a deletion
+  on a hot path is "infected" by nearly every test that touches the package —
+  and reaching a statement is not observing its removal, so deleting `x = x` is
+  reported infected by every test that runs it. Neither costs correctness; both
+  make the answer more conservative, which is the direction this layer is
+  allowed to be wrong in.
+  A statement whose expression has a form of its own carries both, one inside
+  the other.
 - **A typed operand is measured where it stands too.** The boolean form reaches
   every Form C site; the value form is the same idea for everything that is not
   a boolean — the arithmetic, the bitwise and the comparison families, which is

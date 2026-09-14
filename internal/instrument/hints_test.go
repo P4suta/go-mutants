@@ -229,6 +229,9 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 	if guard.Probe == nil {
 		guard.Probe = d.valueSite(anchor)
 	}
+	if guard.Probe == nil && deletionRules[rule] {
+		guard.Probe = d.reachSite(guard)
+	}
 	// The return form replaces whatever the guard chose and never the other way
 	// round, exactly as it does in discovery: it compares the value the
 	// function would really have returned, which is the stronger evidence.
@@ -236,6 +239,26 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 		guard.Probe = site
 	}
 	return guard
+}
+
+// deletionRules are the rules whose candidates fall back to reachability. They
+// are restated here for [returnValueRules]'s reason: this file is the fixtures'
+// own statement of what discovery produces.
+var deletionRules = map[string]bool{
+	"delete-call-statement": true,
+	"delete-assignment":     true,
+	"delete-incdec":         true,
+}
+
+// reachSite derives the probe hint of a deleted statement, which is the guard's
+// own site and nothing else.
+func (d *hintDeriver) reachSite(guard discover.Guard) *discover.ProbeSite {
+	d.t.Helper()
+
+	if guard.Form != discover.GuardFormS {
+		return nil
+	}
+	return &discover.ProbeSite{Form: discover.ProbeFormReach, Span: guard.SiteSpan}
 }
 
 // valueSite derives the probe hint of the nearest expression around the edit

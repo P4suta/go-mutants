@@ -992,6 +992,13 @@ func (s *fileScan) emitAt(
 	if site != nil {
 		guard.Probe = site
 	}
+	// And the weakest form last, for the family that can have no other. A
+	// deleted statement's mutant differs by the *absence* of an effect, which
+	// nothing a probe tree evaluates can see; what it can record is that the
+	// statement ran at all. See [ProbeFormReach].
+	if guard.Probe == nil && rule.Family == mutation.FamilyStatementDeletion {
+		guard.Probe = s.guard.reachProbe(guard)
+	}
 
 	candidate := mutation.Candidate{
 		Path:         s.rel,

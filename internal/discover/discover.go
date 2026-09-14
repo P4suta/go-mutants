@@ -431,6 +431,28 @@ const (
 	// be floating-point or complex, since `-0.0 != 0` is false while the two
 	// are distinguishable. [ProbeSite] states all of them.
 	ProbeFormValue ProbeForm = "value"
+
+	// ProbeFormReach is the reachability form: the statement is prefixed with
+	// the call and otherwise left exactly as it was.
+	//
+	//	{ __gm.Infect(i); <original statement> }
+	//
+	// It is what a deleted statement gets, and the reason the invariant on
+	// [ProbeForm] is written the way it is. A deletion's mutant differs from
+	// the original by the *absence* of an effect, and a probe tree runs
+	// effects: there is no value to compare, and no rewrite of the original
+	// program could make one appear. What there is instead is the fact that the
+	// statement ran, and a pass that never ran it cannot have observed its
+	// removal — the same licence, from different evidence.
+	//
+	// Two costs, and both are real. It over-approximates badly: a deletion on a
+	// hot path is "infected" by nearly every test that touches the package,
+	// which licenses nothing. And reaching a statement is not observing its
+	// removal — deleting `x = x` changes nothing, and this form will report it
+	// infected by every test that runs it. Neither costs correctness: both make
+	// the answer *more* conservative, which is the direction this layer is
+	// allowed to be wrong in.
+	ProbeFormReach ProbeForm = "reach"
 )
 
 // A ProbeSite is what the probe tree needs to know about one candidate.
