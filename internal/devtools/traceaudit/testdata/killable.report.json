@@ -1,0 +1,847 @@
+{
+  "document_type": "go-mutants/run-report",
+  "schema_version": 1,
+  "tool_version": "0.0.0-20260914002646-fdd5e5b28a9c+dirty",
+  "run_id": "20260914T002752Z-1131",
+  "status": "completed",
+  "started_at": "2026-09-14T00:27:52Z",
+  "finished_at": "2026-09-14T00:27:54Z",
+  "duration_ms": 2336,
+  "workspace": {
+    "module_path": "fixture.example/killable",
+    "go_version": "1.26",
+    "workspace_digest": "58fa5215197ba893006ada12c4941c70bbd00efc46b8eb9a45cc40d3f38984a8",
+    "platform": {
+      "os": "darwin",
+      "arch": "arm64"
+    },
+    "snapshot": {
+      "stable_dir": true,
+      "files": 6
+    }
+  },
+  "selection": {
+    "mode": "all",
+    "changed_ref": null,
+    "profile": "balanced",
+    "operators": [],
+    "include": [
+      "**/*.go"
+    ],
+    "exclude": [],
+    "candidates": 13,
+    "rejected": 0,
+    "selected": 13
+  },
+  "shard": null,
+  "test": {
+    "command": [
+      "go",
+      "test",
+      "./..."
+    ],
+    "baseline": {
+      "runs": 3,
+      "durations_ms": [
+        485,
+        85,
+        71
+      ],
+      "slowest_ms": 485
+    },
+    "timeout_ms": 10000,
+    "timeout_source": "derived",
+    "memory_source": "unavailable",
+    "toolchain": {
+      "go_bin": "/Users/yasunobu/.local/share/mise/installs/go/1.26.6/bin/go",
+      "version": "go version go1.26.6 darwin/arm64"
+    },
+    "resolved_command": [
+      "/Users/yasunobu/.local/share/mise/installs/go/1.26.6/bin/go",
+      "test",
+      "./..."
+    ]
+  },
+  "coverage": {
+    "mode": "test",
+    "binaries": 1,
+    "tests": 2,
+    "mutants_uncovered": 3
+  },
+  "cache": {
+    "mode": "on",
+    "hits": 0,
+    "misses": 10,
+    "writes": 10
+  },
+  "summary": {
+    "total": 13,
+    "killed": 10,
+    "survived": 3,
+    "timed_out": 0,
+    "inconclusive": 0,
+    "errored": 0,
+    "not_run": 0,
+    "score_percent": 76.92307692307693,
+    "policy": {
+      "strict": false,
+      "minimum_score": 0,
+      "require_mutants": true,
+      "failure": null
+    }
+  },
+  "mutants": [
+    {
+      "id": "5d500fbf4b54f993d1081344b8f3fc7a7238b2096d62cf6c834af04e0515b029",
+      "display_id": "5d500fbf4b54f993d108",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "rule_version": 1,
+      "line": 41,
+      "column": 5,
+      "start_byte": 2330,
+      "end_byte": 2336,
+      "original": "v < hi",
+      "replacement": "!(v < hi)",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 18,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 7,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 18,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6455296
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = 9, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 9, want 1\n    --- FAIL: TestClamp/just_inside_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(1, 0, 10) = 9, want 1\n    --- FAIL: TestClamp/inside (0.00s)\n        clamp_test.go:34: Clamp(5, 0, 10) = 9, want 5\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 10, want 9\n    --- FAIL: TestClamp/above_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(40, 0, 10) = 40, want 9\nFAIL\ncoverage: 48.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6455296
+    },
+    {
+      "id": "14bc79fba00d7fcc123f4cb1c20899bd6116dfe4d6e64e6719361004a07dbe72",
+      "display_id": "14bc79fba00d7fcc123f",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "comparison",
+      "rule": "lt-to-le",
+      "rule_version": 1,
+      "line": 41,
+      "column": 7,
+      "start_byte": 2332,
+      "end_byte": 2333,
+      "original": "<",
+      "replacement": "<=",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 14,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 3,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 14,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6373376
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 10, want 9\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6373376
+    },
+    {
+      "id": "8a16587ddf7a2de745207c1a87f119001272d96162fcf672ec83491d3e531e96",
+      "display_id": "8a16587ddf7a2de74520",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "condition-negation",
+      "rule": "negate-condition",
+      "rule_version": 1,
+      "line": 42,
+      "column": 6,
+      "start_byte": 2344,
+      "end_byte": 2350,
+      "original": "v > lo",
+      "replacement": "!(v > lo)",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 7,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 5,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 7,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6291456
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = -5, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 0, want 1\n    --- FAIL: TestClamp/inside (0.00s)\n        clamp_test.go:34: Clamp(5, 0, 10) = 1, want 5\n    --- FAIL: TestClamp/just_inside_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(9, 0, 10) = 1, want 9\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6291456
+    },
+    {
+      "id": "4fcc205c46d32acb2185051a6d80fc54d360bf9581ba82d831953e4066a30eb7",
+      "display_id": "4fcc205c46d32acb2185",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "comparison",
+      "rule": "gt-to-ge",
+      "rule_version": 1,
+      "line": 42,
+      "column": 8,
+      "start_byte": 2346,
+      "end_byte": 2347,
+      "original": ">",
+      "replacement": ">=",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 12,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 4,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 12,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6291456
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 0, want 1\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6291456
+    },
+    {
+      "id": "99c70ed119c81b55ce697be34bf5cc610415eaa29c75c4e3af4b55051392e64a",
+      "display_id": "99c70ed119c81b55ce69",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "return-replacement",
+      "rule": "return-zero-numeric",
+      "rule_version": 1,
+      "line": 43,
+      "column": 11,
+      "start_byte": 2363,
+      "end_byte": 2364,
+      "original": "v",
+      "replacement": "0",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 12,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 0,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 12,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6258688
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/just_inside_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(1, 0, 10) = 0, want 1\n    --- FAIL: TestClamp/inside (0.00s)\n        clamp_test.go:34: Clamp(5, 0, 10) = 0, want 5\n    --- FAIL: TestClamp/just_inside_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(9, 0, 10) = 0, want 9\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6258688
+    },
+    {
+      "id": "4fd6f01b0a6c90c0f2846d55d7f245becbfe9cc865ccc6cdd44b80630043b74c",
+      "display_id": "4fd6f01b0a6c90c0f284",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "return-replacement",
+      "rule": "return-zero-numeric",
+      "rule_version": 1,
+      "line": 45,
+      "column": 10,
+      "start_byte": 2378,
+      "end_byte": 2384,
+      "original": "lo + 1",
+      "replacement": "0",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 8,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 1,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 8,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6537216
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = 0, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = 0, want 1\nFAIL\ncoverage: 56.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6537216
+    },
+    {
+      "id": "098da1913af326ffb4e6f69e6ad4203d925bf694544fcd81aaaef876f6eb3a3a",
+      "display_id": "098da1913af326ffb4e6",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "integer-arithmetic",
+      "rule": "add-to-sub",
+      "rule_version": 1,
+      "line": 45,
+      "column": 13,
+      "start_byte": 2381,
+      "end_byte": 2382,
+      "original": "+",
+      "replacement": "-",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 9,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 6,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 9,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6455296
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/below_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(-5, 0, 10) = -1, want 1\n    --- FAIL: TestClamp/at_the_low_bound (0.00s)\n        clamp_test.go:34: Clamp(0, 0, 10) = -1, want 1\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6455296
+    },
+    {
+      "id": "4adfbd5c12fd7c77b02d95238e10ddc2d32a405c1c4a4959d40617c35a26978c",
+      "display_id": "4adfbd5c12fd7c77b02d",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "return-replacement",
+      "rule": "return-zero-numeric",
+      "rule_version": 1,
+      "line": 47,
+      "column": 9,
+      "start_byte": 2396,
+      "end_byte": 2402,
+      "original": "hi - 1",
+      "replacement": "0",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 16,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 2,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 16,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6291456
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 0, want 9\n    --- FAIL: TestClamp/above_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(40, 0, 10) = 0, want 9\nFAIL\ncoverage: 56.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6291456
+    },
+    {
+      "id": "9cc871eecdf2e562ef893783c64b406cf9364683511da201d34236a3ab88b506",
+      "display_id": "9cc871eecdf2e562ef89",
+      "path": "clamp.go",
+      "package": "fixture.example/killable",
+      "family": "integer-arithmetic",
+      "rule": "sub-to-add",
+      "rule_version": 1,
+      "line": 47,
+      "column": 12,
+      "start_byte": 2399,
+      "end_byte": 2400,
+      "original": "-",
+      "replacement": "+",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 10,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 7,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 10,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestClamp"
+            }
+          ],
+          "peak_memory_bytes": 6586368
+        }
+      ],
+      "output_tail": "--- FAIL: TestClamp (0.00s)\n    --- FAIL: TestClamp/at_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(10, 0, 10) = 11, want 9\n    --- FAIL: TestClamp/above_the_high_bound (0.00s)\n        clamp_test.go:34: Clamp(40, 0, 10) = 11, want 9\nFAIL\ncoverage: 60.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestClamp"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6586368
+    },
+    {
+      "id": "761b636cb94c48f630dd8a9070796bed520d766ea374199590a49c7bc79ec867",
+      "display_id": "761b636cb94c48f630dd",
+      "path": "ready.go",
+      "package": "fixture.example/killable",
+      "family": "boolean-literal",
+      "rule": "true-to-false",
+      "rule_version": 1,
+      "line": 14,
+      "column": 9,
+      "start_byte": 577,
+      "end_byte": 581,
+      "original": "true",
+      "replacement": "false",
+      "outcome": "killed",
+      "not_run_reason": null,
+      "duration_ms": 10,
+      "killed_by": "fixture.example/killable",
+      "attempts": 1,
+      "executions": [
+        {
+          "attempt": 1,
+          "worker": 5,
+          "outcome": "killed",
+          "killed_by": "fixture.example/killable",
+          "duration_ms": 10,
+          "binaries": [
+            "fixture.example/killable"
+          ],
+          "tests": [
+            {
+              "package": "fixture.example/killable",
+              "name": "TestIsReady"
+            }
+          ],
+          "peak_memory_bytes": 6553600
+        }
+      ],
+      "output_tail": "--- FAIL: TestIsReady (0.00s)\n    ready_test.go:15: IsReady() = false, want true\nFAIL\ncoverage: 24.0% of statements in fixture.example/killable/...",
+      "covering_test_packages": [
+        "fixture.example/killable"
+      ],
+      "covering_tests": [
+        {
+          "package": "fixture.example/killable",
+          "name": "TestIsReady"
+        }
+      ],
+      "uncovered": false,
+      "cached": false,
+      "peak_memory_bytes": 6553600
+    },
+    {
+      "id": "279d417d6ada25e73c55f16c78b889e8b5760298c4a9dc8f5d0d5abce3be7f24",
+      "display_id": "279d417d6ada25e73c55",
+      "path": "untested.go",
+      "package": "fixture.example/killable",
+      "family": "return-replacement",
+      "rule": "return-true",
+      "rule_version": 1,
+      "line": 14,
+      "column": 9,
+      "start_byte": 611,
+      "end_byte": 617,
+      "original": "a != b",
+      "replacement": "true",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "executions": [],
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": true,
+      "cached": false
+    },
+    {
+      "id": "07a4df19ee3c53a1e25da591a8754a17774fdbd08a6e391ed029fddf6c309518",
+      "display_id": "07a4df19ee3c53a1e25d",
+      "path": "untested.go",
+      "package": "fixture.example/killable",
+      "family": "return-replacement",
+      "rule": "return-false",
+      "rule_version": 1,
+      "line": 14,
+      "column": 9,
+      "start_byte": 611,
+      "end_byte": 617,
+      "original": "a != b",
+      "replacement": "false",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "executions": [],
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": true,
+      "cached": false
+    },
+    {
+      "id": "bf513c0da9f54e3c33ea6367aa80d897e38e5805df0a6eb4e5d16037f4ff50f3",
+      "display_id": "bf513c0da9f54e3c33ea",
+      "path": "untested.go",
+      "package": "fixture.example/killable",
+      "family": "comparison",
+      "rule": "neq-to-eq",
+      "rule_version": 1,
+      "line": 14,
+      "column": 11,
+      "start_byte": 613,
+      "end_byte": 615,
+      "original": "!=",
+      "replacement": "==",
+      "outcome": "survived",
+      "not_run_reason": null,
+      "duration_ms": 0,
+      "killed_by": null,
+      "attempts": 0,
+      "executions": [],
+      "output_tail": null,
+      "covering_test_packages": [],
+      "uncovered": true,
+      "cached": false
+    }
+  ],
+  "rejected": [],
+  "skips": [],
+  "expectations": [],
+  "warnings": [],
+  "timing": {
+    "phases": [
+      {
+        "name": "discover",
+        "duration_ms": 40
+      },
+      {
+        "name": "baseline",
+        "duration_ms": 688
+      },
+      {
+        "name": "mutate",
+        "duration_ms": 1607
+      }
+    ],
+    "stages": [
+      {
+        "phase": "discover",
+        "name": "toolchain",
+        "duration_ms": 6,
+        "result": "succeeded"
+      },
+      {
+        "phase": "discover",
+        "name": "sweep",
+        "duration_ms": 22,
+        "result": "succeeded"
+      },
+      {
+        "phase": "discover",
+        "name": "snapshot",
+        "duration_ms": 1,
+        "result": "succeeded"
+      },
+      {
+        "phase": "discover",
+        "name": "scope",
+        "duration_ms": 9,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "build",
+        "duration_ms": 44,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "test",
+        "duration_ms": 485,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "test",
+        "duration_ms": 86,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "test",
+        "duration_ms": 71,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "timeout",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "baseline",
+        "name": "memory",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "discover",
+        "duration_ms": 126,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "catalog",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "validate",
+        "duration_ms": 83,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "instrumented-baseline",
+        "duration_ms": 483,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "drift",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "selection",
+        "duration_ms": 0,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "build-binaries",
+        "duration_ms": 296,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "coverage-profile",
+        "duration_ms": 311,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "coverage-narrow",
+        "duration_ms": 179,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "cache-lookup",
+        "duration_ms": 26,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "execute",
+        "duration_ms": 30,
+        "result": "succeeded"
+      },
+      {
+        "phase": "mutate",
+        "name": "cache-store",
+        "duration_ms": 69,
+        "result": "succeeded"
+      }
+    ]
+  },
+  "validation": {
+    "builds": 1
+  }
+}

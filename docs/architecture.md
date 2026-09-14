@@ -1042,6 +1042,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording, a scripted `go` command | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `internal/devtools/testcost` | Turns `go test -json` into a per-package cost and skip table | developer tool |
+| `internal/devtools/traceaudit` | Re-derives a run's conclusions from the recording beside it, with code that never calls the engine's | developer tool |
 | `trace` | Public: the event contract, the recorder, the reader, and the sink | implemented |
 | `schema` | Public: the JSON Schema documents go-mutants publishes, embedded | implemented |
 | `schema/stryker` | The vendored mutation-testing-report schema and its provenance | vendored |
