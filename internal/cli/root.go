@@ -228,6 +228,17 @@ func Execute() int {
 // future embedding.
 func ExecuteContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	root := NewRootCommand()
+	// A nil slice means "no arguments", not "read the process's own".
+	//
+	// cobra falls back to os.Args[1:] when SetArgs has never been called, and
+	// passing nil is indistinguishable from not calling it -- so a caller with
+	// nothing to pass would silently run against whatever the surrounding
+	// program was invoked with. For a test binary that is its own flags, which
+	// is how `go test -update` came to be reported as `unknown shorthand flag:
+	// 'u' in -update` by a command nobody had passed a flag to.
+	if args == nil {
+		args = []string{}
+	}
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)

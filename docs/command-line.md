@@ -66,6 +66,7 @@ The flags that change a verdict rather than a rendering:
 | `--shard K/N` | One share of the catalogue, for CI fan-out; `report merge` puts the parts back together |
 | `--timeout`, `--memory` | Override the per-mutant bounds the run would derive from its own baseline |
 | `--strict` | Fail on an undeclared survivor. It defaults to off: go-mutants does not fail your build unless you ask it to |
+| `--isolate` | A copy of the instrumented tree per worker, put back between mutants. The escape hatch from the drift gate, and the only way to measure a suite that writes into the package directory it runs in |
 
 Everything after `--` replaces `test.command` verbatim, and is never
 shell-split.

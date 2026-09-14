@@ -782,10 +782,29 @@ the outcome cache.
   prints `command:`, `dir:` and the output tail under the coded message. A nil
   recorder records nothing and costs a zero `TraceSeq`, so the traced and the
   untraced paths are one path.
-- **One shared snapshot.** Activation is per-process, so N workers share it. A
-  test that writes into its package directory is caught by re-digesting the
-  manifest after the instrumented baseline; drift is exit 2 with the offending
-  files listed. `--isolate` is reserved as the per-worker escape hatch.
+- **One shared snapshot, unless a suite makes that impossible.** Activation is
+  per-process, so N workers share it. A test that writes into its package
+  directory is caught by re-digesting the manifest after the instrumented
+  baseline; drift is exit 2 with the offending files listed, and the message
+  names the way through.
+- **`--isolate`, the per-worker copy.** It is that way through, and the only
+  way to measure a project whose tests legitimately write into the package
+  directory they run in. Every worker gets a copy of the instrumented tree —
+  each a snapshot in its own right, made *of* that tree, so asking it what
+  drifted is asking exactly "what did the tests write" — and the copy is put
+  back after every *pass*, not every mutant. The distinction is the one thing
+  here that is easy to get wrong: a survivor is measured twice, once against
+  its covering tests and once against the whole binary, and a restore that only
+  happened between mutants would leave the second measuring a tree the first
+  had edited.
+
+  Two other things move with it. The baseline runs the suite in the shared
+  snapshot *before* anything is instrumented, so an isolating run restores the
+  shared snapshot after the baseline as well; without that, the baseline's own
+  writes would be copied into every worker and reported by the drift gate — the
+  refusal the flag exists to get past. And the gate keeps its full meaning
+  rather than being skipped: nothing executes in the shared tree, so what it
+  reports is go-mutants having changed something it did not mean to.
 - **Timeouts.** Explicit, or `max(10s, slowest baseline × 5)` over the baseline
   runs after the first, which is the one that compiles — or over the only run
   when there is one. A first timeout

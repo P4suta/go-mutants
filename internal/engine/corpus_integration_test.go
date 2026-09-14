@@ -37,6 +37,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/internal/testkit"
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt is the scope of a
@@ -497,4 +498,99 @@ func discoveredOf(t *testing.T, events []Event) Discovered {
 	}
 	t.Fatal("the run published no Discovered event")
 	return Discovered{}
+}
+
+// TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants is the escape
+// hatch from the gate above, and the one test that can tell a working
+// restoration from a missing one.
+//
+// The fixture's suite writes into the package directory it runs in, which is
+// what stops an ordinary run at the drift gate. With `--isolate` every worker
+// has its own copy of the instrumented tree, so the write lands in a directory
+// only that worker can see — and the copy is put back after every mutant, so
+// the next one finds the tree as the run left it.
+//
+// The proof is a *survivor*, not a count. The fixture's suite asserts, at the
+// top, that no earlier mutant's witness is there, and Nudge's mutants survive a
+// passing binary. Drop the restore and the second mutant onwards fail that
+// assertion, so they are reported as killed — a difference no number of drifted
+// files would show, because with a copy per worker the shared tree does not
+// drift at all.
+//
+// One worker on purpose: the shape this is about is two mutants in a row on the
+// same tree, and several workers would let two mutants be the first on theirs.
+func TestIsolateGivesEveryWorkerATreeAndPutsItBackBetweenMutants(t *testing.T) {
+	t.Parallel()
+
+	opts, sink := tracedOptions(t, "selfwriting")
+	opts.Config.Execution.Isolate = true
+	opts.Config.Execution.Jobs = 1
+
+	outcome, events, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("an isolating run of a self-writing suite: %v", err)
+	}
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
+	}
+
+	// Every mutant of Nudge survives, and that is the whole assertion. The
+	// function is called and never checked, so nothing in a passing binary can
+	// kill one; a kill here means the binary stopped passing, and the only way
+	// it does that is the witness check at the top of the suite.
+	survivors, kills := 0, 0
+	for _, m := range outcome.Report.Mutants {
+		switch m.Outcome {
+		case report.OutcomeSurvived:
+			survivors++
+		case report.OutcomeKilled:
+			kills++
+		default:
+			t.Errorf("mutant %s (%s) settled as %s", m.DisplayID, m.Rule, m.Outcome)
+		}
+	}
+	if survivors == 0 {
+		t.Errorf("no mutant survived, so either the worker's tree is not being put back between "+
+			"mutants or the fixture stopped having a survivor:\n\t%s", strings.Join(results(events), "\n\t"))
+	}
+	if kills == 0 {
+		t.Errorf("nothing was killed, so the suite is not measuring anything:\n\t%s",
+			strings.Join(results(events), "\n\t"))
+	}
+
+	// And the run reported putting the copy back, which is the mechanism
+	// rather than its consequence. It is a note rather than a warning because
+	// for this fixture drifting after every mutant is the ordinary case.
+	restored, copies := 0, 0
+	for _, event := range sink.Events() {
+		switch {
+		case event.Type == trace.TypeNote && event.Note != nil &&
+			event.Note.Kind == trace.NoteWorkerRestored:
+			restored++
+		case event.Type == trace.TypeSnapshot && event.Snapshot != nil &&
+			event.Snapshot.Kind == trace.SnapshotKindWorker:
+			copies++
+		}
+	}
+	if copies != 1 {
+		t.Errorf("the run recorded %d worker copies, want the one worker it was given", copies)
+	}
+	if restored == 0 {
+		t.Error("the run restored no worker copy, so nothing was put back between mutants")
+	}
+}
+
+// TestIsolateIsOffByDefault is the other half: the gate above still stops a
+// run that did not ask for a copy per worker.
+//
+// It is stated here rather than left to the gate's own test because a default
+// that quietly flipped would make that test pass for the wrong reason — the
+// run would complete, and a reader would have to notice that the refusal it
+// was about had stopped happening.
+func TestIsolateIsOffByDefault(t *testing.T) {
+	t.Parallel()
+
+	if opts := options(t, "selfwriting"); opts.Config.Execution.Isolate {
+		t.Error("execution.isolate defaults to true, so the drift gate can never be reached")
+	}
 }

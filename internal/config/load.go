@@ -328,8 +328,9 @@ var expectedTypes = map[string]string{
 	"test.baseline_runs": "an integer",
 	"test.narrowing":     "a string",
 
-	"execution":      "a table",
-	"execution.jobs": "an integer",
+	"execution":         "a table",
+	"execution.jobs":    "an integer",
+	"execution.isolate": "a boolean",
 
 	"cache":           "a table",
 	"cache.mode":      "a string",
@@ -417,7 +418,8 @@ type documentTest struct {
 }
 
 type documentExecution struct {
-	Jobs *int64 `toml:"jobs"`
+	Jobs    *int64 `toml:"jobs"`
+	Isolate *bool  `toml:"isolate"`
 }
 
 type documentCache struct {
@@ -518,6 +520,9 @@ func (d *document) overlay(report reporter) (Overlay, []error) {
 	if e := d.Execution; e != nil {
 		if e.Jobs != nil {
 			overlay.Jobs = Explicit(toInt(*e.Jobs))
+		}
+		if e.Isolate != nil {
+			overlay.Isolate = Explicit(*e.Isolate)
 		}
 	}
 

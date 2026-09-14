@@ -43,6 +43,7 @@ narrowing = "test"
 
 [execution]
 jobs = 8
+isolate = false
 
 [cache]
 mode = "auto"
@@ -182,6 +183,27 @@ low = 60
 ### `[execution]`
 
 - `jobs`: positive worker count. Defaults to `min(NumCPU, 8)`.
+- `isolate`: give every worker its own copy of the instrumented tree, and put
+  that copy back between mutants. Defaults to `false`; `--isolate` overrides it.
+
+  It is the escape hatch from the drift gate, and the only way to measure a
+  project whose tests legitimately write into the package directory they run
+  in — a golden file they update, a database they create in `testdata`, a test
+  that changes directory and writes relative. Those projects cannot run at all
+  without it: the gate stops the run, correctly, because every mutant after the
+  first would be measured against a tree the one before it edited.
+
+  What it costs is the instrumented tree's size times the worker count on disk,
+  and a walk of one copy after every *pass* — which is after every mutant, and
+  again after the whole-binary confirmation a survivor is measured with. What it
+  buys, beyond running at all, is a verdict that is about the mutation: in the
+  corpus fixture written for this, one mutant is reported as killed without it
+  and as survived with it, and the survival is the true answer.
+
+  It is a key as well as a flag, unlike most of what a flag can override. A
+  project whose suite always writes needs the answer written down; a user who
+  has just met the drift gate once wants to get past it without editing a
+  file.
 
 ### `[cache]`
 

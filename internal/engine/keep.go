@@ -114,6 +114,12 @@ type temporaries struct {
 	// scratch is empty, because a directory is only recorded here once it has
 	// been claimed.
 	scratchOwner *tempowner.Owner
+	// workers are the per-worker copies of the instrumented tree an isolating
+	// run made, in worker order, or nil. Each is a snapshot in its own right --
+	// its own directory, its own lock, its own manifest of the instrumented
+	// tree -- which is what lets a worker be put back between mutants by asking
+	// it what drifted.
+	workers []*snapshot.Snapshot
 }
 
 // keepsTemporaries decides whether one run's directories survive it.
@@ -160,6 +166,19 @@ func (s *session) release(temps *temporaries, keep KeepTemp, out *RunOutcome, er
 		remove := func() error { return errors.Join(owner.Release(), os.RemoveAll(scratch)) }
 		if s.settle(keeping, "per-run temporary directory", CodeScratchNotRemoved, owner.Keep, remove) {
 			preserved = append(preserved, PreservedDir{Kind: KeptScratch, Path: scratch})
+		}
+	}
+	// Before the snapshot they were copied from, so that a keep preserves the
+	// worker copies beside it rather than under a directory already reported.
+	// They are reported under the same kind, because that is what they are: a
+	// worker copy is a snapshot of the instrumented tree, made by the same
+	// package and removed by the same call.
+	for _, worker := range temps.workers {
+		if worker == nil {
+			continue
+		}
+		if s.settle(keeping, "worker snapshot directory", CodeSnapshotNotRemoved, worker.Keep, worker.Cleanup) {
+			preserved = append(preserved, PreservedDir{Kind: KeptSnapshot, Path: worker.Dir()})
 		}
 	}
 	if snap := temps.snapshot; snap != nil {

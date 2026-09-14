@@ -86,6 +86,7 @@ Flags:
       --explain                           after the summary, print every rejected mutant with the compiler's own words, and the suppressed sites by reason
   -h, --help                              help for run
       --include GLOB                      GLOB a file must match to be mutated; repeat for more (default: mutation.include, or **/*.go)
+      --isolate                           give every worker its own copy of the instrumented tree (default: execution.isolate)
   -j, --jobs int                          mutants to execute concurrently (default: execution.jobs, or min(CPUs, 8))
       --json                              write the run-report-v1 document to standard output and nothing else
       --keep-temp MODE[="always"]         leave the run's snapshot and scratch directory on disk instead of removing them: MODE is always or on-failure, a bare --keep-temp is always, and the value takes an equals sign (also GO_MUTANTS_KEEP_TEMP)

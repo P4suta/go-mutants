@@ -133,6 +133,19 @@ func precedenceCases() []precedenceCase {
 			fromFlag:    16,
 		},
 		{
+			// The one execution key that is a boolean, and therefore the one
+			// whose file value and flag value have to be different words for
+			// the precedence to be visible at all: `isolate = true` in the file
+			// and `--isolate=false` on the command line.
+			name:        "execution.isolate",
+			document:    "version = 1\n[execution]\nisolate = true\n",
+			flags:       Overlay{Isolate: Explicit(false)},
+			read:        func(c Config) any { return c.Execution.Isolate },
+			fromDefault: false,
+			fromFile:    true,
+			fromFlag:    false,
+		},
+		{
 			name:        "cache.mode",
 			document:    "version = 1\n[cache]\nmode = \"on\"\n",
 			flags:       Overlay{CacheMode: Explicit(CacheOff)},
@@ -277,7 +290,7 @@ func TestPrecedenceCoversEveryOverridableSetting(t *testing.T) {
 	want := []string{
 		"mutation.include", "mutation.exclude", "mutation.operators", "mutation.profile", "mutation.expect",
 		"test.command", "test.timeout", "test.memory", "test.baseline_runs", "test.narrowing",
-		"execution.jobs",
+		"execution.jobs", "execution.isolate",
 		"cache.mode", "cache.directory",
 		"policy.strict", "policy.minimum_score", "policy.require_mutants",
 		"report.directory", "report.formats", "report.high", "report.low",

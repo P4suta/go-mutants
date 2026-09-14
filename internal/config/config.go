@@ -228,6 +228,26 @@ type Test struct {
 type Execution struct {
 	// Jobs is the number of mutants executed concurrently.
 	Jobs int
+
+	// Isolate gives every worker its own copy of the instrumented tree, and
+	// puts that copy back between mutants.
+	//
+	// It is off by default, and the default is the right one: a copy per
+	// worker is the tree's size times the worker count on disk, and a walk of
+	// that copy after every mutant. What it buys is the only way to measure a
+	// project whose tests legitimately write into the package directory they
+	// run in -- a golden file they update, a database they create in testdata,
+	// a test that chdirs and writes relative. Those projects cannot run at all
+	// without it: the drift gate stops the run, correctly, because every
+	// mutant after the first would be measured against a tree the one before
+	// it edited.
+	//
+	// It is a key as well as a flag, unlike most of what a flag can override,
+	// and for the reason `execution.jobs` is both: a project whose suite always
+	// writes needs the answer written down rather than remembered, while a user
+	// who has just met the drift gate once wants to get past it without editing
+	// a file.
+	Isolate bool
 }
 
 // Cache is the `[cache]` section.
@@ -335,7 +355,7 @@ func Defaults() Config {
 			BaselineRuns: DefaultBaselineRuns,
 			Narrowing:    NarrowingTest,
 		},
-		Execution: Execution{Jobs: DefaultJobs()},
+		Execution: Execution{Jobs: DefaultJobs(), Isolate: false},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
 		Policy:    mutation.DefaultPolicy(),
 		Report: Report{

@@ -201,7 +201,7 @@ var repositoryExpectations = []Expectation{
 	// build and are the reason the rows say "on a 64-bit build" rather than
 	// "unkillable".
 	{
-		ID: "da6962bfd6364a6dc88c69bf087dbfe0b3c656a06792a122f081f69a7585703e",
+		ID: "81aa43f0f98d8a9ce447032f97f9433fd105da1a44cd8c8409a3656e2abf01ee",
 		Reason: "Equivalent on every platform: `v > int64(maxInt)` and " +
 			"`v >= int64(maxInt)` select different branches only at exactly " +
 			"int64(maxInt), where the guard returns maxInt and falling " +
@@ -209,21 +209,21 @@ var repositoryExpectations = []Expectation{
 			"both spellings narrow every int64 to the same int.",
 	},
 	{
-		ID: "5fb5f529dd138bc5a91fa7542bc406dbfdf12b0ff8ad63536a41c029d745b9e6",
+		ID: "8d2903054b69f85b0ce324b1eef21641d6915506643de2bfaac1fb4c03898249",
 		Reason: "Unreachable on a 64-bit build, which is every platform this " +
 			"gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is " +
 			"math.MaxInt64 and no int64 is greater than it. Killing it means " +
 			"running this package's suite on a 32-bit GOARCH.",
 	},
 	{
-		ID: "7df627f07c3e78285bf6602785c6e0f5d8f117af4018505748e9e23d42e2618d",
+		ID: "b46ac300167a9342891250e7d7aa9f1cd2aa045337aeaa07fa42ed330164963b",
 		Reason: "Equivalent on every platform: the same argument as the `>` " +
 			"row above, at the other end -- `<` and `<=` disagree only at " +
 			"exactly int64(minInt), where the guard returns minInt and " +
 			"falling through returns int(v), which is minInt.",
 	},
 	{
-		ID: "0609825e5d771c579eb7e2335afa6d224c3005ea2eb50eb82ff5e09fec76dcdd",
+		ID: "aeb06e51f9c0498640b35324a54268ddb0043161508e7a4542149a8bb9b66f65",
 		Reason: "Unreachable on a 64-bit build: minInt is -maxInt - 1, so " +
 			"int64(minInt) is math.MinInt64 and no int64 is less than it -- " +
 			"the mirror of the maxInt row above, and reachable on the same " +
@@ -552,9 +552,9 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
 		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2621 scored mutants half a
-		// percent buys thirteen survivors (2608/2621 = 99.50% clears,
-		// 2607/2621 = 99.46% does not), where it bought twelve when it was
+		// same arithmetic rather than inertia: at 2626 scored mutants half a
+		// percent buys thirteen survivors (2613/2626 = 99.50% clears,
+		// 2612/2626 = 99.46% does not), where it bought twelve when it was
 		// set -- still far short of the twenty-one that moves this number.
 		// The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},

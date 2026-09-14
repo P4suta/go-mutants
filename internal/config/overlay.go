@@ -54,6 +54,8 @@ type Overlay struct {
 
 	// Jobs is `execution.jobs`, overridden by -j/--jobs.
 	Jobs Set[int]
+	// Isolate is `execution.isolate`, overridden by --isolate.
+	Isolate Set[bool]
 
 	// CacheMode is `cache.mode`, overridden by --cache.
 	CacheMode Set[CacheMode]
@@ -100,6 +102,7 @@ func (o Overlay) setsAnything() bool {
 		o.BaselineRuns.IsSet() ||
 		o.Narrowing.IsSet() ||
 		o.Jobs.IsSet() ||
+		o.Isolate.IsSet() ||
 		o.CacheMode.IsSet() ||
 		o.CacheDirectory.IsSet() ||
 		o.Strict.IsSet() ||
@@ -185,6 +188,9 @@ func apply(c *Config, o Overlay) {
 
 	if v, ok := o.Jobs.Get(); ok {
 		c.Execution.Jobs = v
+	}
+	if v, ok := o.Isolate.Get(); ok {
+		c.Execution.Isolate = v
 	}
 
 	if v, ok := o.CacheMode.Get(); ok {

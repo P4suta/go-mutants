@@ -895,6 +895,34 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	if err := s.baseline(ctx, cfg, command, toolchain, snap.Root, env, out); err != nil {
 		return err
 	}
+	// Under isolation, sweep the baseline's own leavings out of the shared tree
+	// before anything is instrumented or copied.
+	//
+	// The baseline runs the suite in the shared snapshot, so a suite that writes
+	// into the package directory it runs in has already written there. Left
+	// alone, that write would be copied into every worker and the drift gate
+	// below would report it -- which is exactly the refusal `--isolate` exists
+	// to get past, so the user would be stopped by the thing they had opted out
+	// of. Restoring here is what keeps the shared snapshot a pure instrumented
+	// tree afterwards, and therefore what keeps the gate's meaning: go-mutants
+	// changed nothing it did not mean to.
+	//
+	// It is the snapshot's own manifest that is restored from, which is the
+	// pristine source tree's, so this can only run before the instrumenter
+	// rewrites anything.
+	if cfg.Execution.Isolate {
+		endSweep := s.stage("isolate-sweep", "")
+		_, sweepErr := snap.Restore()
+		endSweep(sweepErr)
+		if sweepErr != nil {
+			return &Error{
+				Code: CodeWorkspaceDrift,
+				Message: "the snapshot could not be put back after the baseline, so --isolate cannot " +
+					"give the workers a tree the baseline's own writes are not already in",
+				Err: sweepErr,
+			}
+		}
+	}
 
 	// The selection is described before it is made, so that a run interrupted
 	// half way through still files a document saying how it had narrowed itself.
@@ -908,7 +936,7 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 		display: make(map[string]MutantResult),
 		notRun:  make(map[string]report.NotRunReason),
 	}
-	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, out, st)
+	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, out, st, &temps)
 	if mutateErr != nil {
 		// An interruption after the catalogue exists still has something true
 		// to say: which mutants there were, which of them were measured, and
@@ -1080,6 +1108,7 @@ func (s *session) mutate(
 	env []string,
 	out *RunOutcome,
 	st *state,
+	temps *temporaries,
 ) error {
 	cfg := opts.Config
 	s.enterPhase(PhaseMutate, "discovering candidates, validating them, then executing the mutants")
@@ -1158,11 +1187,37 @@ func (s *session) mutate(
 	}
 	s.emit(Validated{Accepted: len(validated.AcceptedIDs), Rejected: len(validated.Rejected)})
 
+	// The worker copies, before anything runs in the tree. The instrumented
+	// baseline runs in the first of them, which is what turns the drift gate
+	// below from a gate on the whole run into a gate on the one tree that must
+	// never drift: nothing executes in the shared snapshot at all.
+	var trees []string
+	if cfg.Execution.Isolate {
+		endIsolate := s.stage("isolate", countNoun(cfg.Execution.Jobs, "worker"))
+		trees, err = s.isolate(snap, cfg.Execution.Jobs, temps)
+		endIsolate(err)
+		if err != nil {
+			return err
+		}
+	}
+
+	baselineRoot := snap.Root
+	if len(trees) > 0 {
+		baselineRoot = trees[0]
+	}
 	endInstrumented := s.stage("instrumented-baseline", "")
-	err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, snap.Root, env)
+	err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, baselineRoot, env)
 	endInstrumented(err)
 	if err != nil {
 		return err
+	}
+	if len(trees) > 0 {
+		// The baseline just ran a whole suite in the first worker's copy, so
+		// that copy has to be put back before the first mutant reaches it --
+		// exactly as it is between every pair of mutants afterwards.
+		if err = s.restoreWorker(temps, 0); err != nil {
+			return err
+		}
 	}
 
 	endDrift := s.stage("drift", "")
@@ -1185,7 +1240,13 @@ func (s *session) mutate(
 		BinDir:       filepath.Join(scratch, binDirName),
 		ScratchDir:   filepath.Join(scratch, workerDirName),
 		Jobs:         cfg.Execution.Jobs,
-		Timeout:      BaselineCap,
+		Trees:        trees,
+		// Nil unless the run is isolating, which is what tells internal/execute
+		// there is nothing to put back. A closure that always ran and did
+		// nothing would be a walk of the tree after every pass of every mutant
+		// on every run.
+		Restores: restoresOf(s, temps, trees),
+		Timeout:  BaselineCap,
 		// The coverage profiling runs start the same binaries the mutants are
 		// measured against, so they are measured under the same budget; the
 		// toolchain commands this bounds nothing for are documented on the
@@ -1510,9 +1571,14 @@ func driftGate(snap *snapshot.Snapshot, instrumented instrument.Result) error {
 	}
 	return &Error{
 		Code: CodeWorkspaceDrift,
+		// The remedy is named in the message rather than left to be discovered,
+		// because a project whose suite legitimately writes into its own
+		// package directory cannot run at all without it, and nothing in the
+		// list of files below says that there is a way through.
 		Message: countNoun(len(unexpected), "file") + " in the snapshot changed while the tests ran, " +
 			"so every mutant after the first would be measured against a different tree; " +
-			"the tests write into the package directory they run in",
+			"the tests write into the package directory they run in. Re-run with --isolate, or set " +
+			"execution.isolate, to give every worker its own copy of the tree and put it back between mutants",
 		Output: strings.Join(unexpected, "\n"),
 	}
 }
@@ -1706,6 +1772,100 @@ func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 			s.emit(MutantFinished{Result: shown.clone()})
 		},
 	}
+}
+
+// restoresOf is one restore per worker, which internal/execute calls after
+// every pass, or nil for a run that shares one tree.
+//
+// One closure per worker rather than one taking a worker number, because
+// [execute.RunOne] is where the call has to happen and it does not know which
+// worker it is -- [execute.Schedule] hands each worker its own, exactly as it
+// hands each one its own tree.
+func restoresOf(s *session, temps *temporaries, trees []string) []func() error {
+	if len(trees) == 0 {
+		return nil
+	}
+	out := make([]func() error, 0, len(trees))
+	for worker := range trees {
+		out = append(out, func() error { return s.restoreWorker(temps, worker) })
+	}
+	return out
+}
+
+// isolate makes one copy of the instrumented tree per worker.
+//
+// Each copy is a [snapshot.Snapshot] in its own right, made *of the
+// instrumented tree*, and that is the whole trick: a snapshot's manifest
+// records the digests of what it was copied from, so asking a worker copy what
+// drifted is asking exactly "what did the tests write", with no reconciliation
+// against the instrumentation and no second digest machinery. Putting it back
+// is [snapshot.Restore].
+//
+// The copies are registered for cleanup as they are made rather than after the
+// last one, so a failure half way through leaves nothing behind: the ones
+// already created are in temps and the deferred release removes them.
+//
+// What this costs is stated rather than hidden: the instrumented tree's size
+// times the worker count on disk, and one walk of one copy after every mutant.
+// It buys the only way to measure a project whose tests legitimately write into
+// the package directory they run in, which today cannot run at all.
+func (s *session) isolate(snap *snapshot.Snapshot, jobs int, temps *temporaries) ([]string, error) {
+	if jobs < 1 {
+		jobs = 1
+	}
+	trees := make([]string, 0, jobs)
+	for worker := range jobs {
+		copied, err := snapshot.Create(snap.Root, snapshot.Options{DestParent: snap.Parent()})
+		if err != nil {
+			return nil, &Error{
+				Code: CodeWorkspaceDrift,
+				Message: "worker " + strconv.Itoa(worker) + "'s copy of the instrumented tree could not " +
+					"be made, so --isolate cannot give it one",
+				Err: err,
+			}
+		}
+		temps.workers = append(temps.workers, copied)
+		s.trace.Snapshot(trace.SnapshotRecord{
+			Kind:   trace.SnapshotKindWorker,
+			Source: snap.Root,
+			Dir:    copied.Root,
+			Stable: copied.StableDir,
+			Files:  len(copied.Manifest),
+		})
+		trees = append(trees, copied.Root)
+	}
+	return trees, nil
+}
+
+// restoreWorker puts one worker's copy back the way the instrumented tree left
+// it, and reports what it undid.
+//
+// A drift here is not a failure and is not warned about. It is the ordinary
+// case for the suites this feature exists for -- a golden file updated, a
+// database written into testdata -- and a line per mutant saying so would be a
+// line per mutant. What the run says instead is the count, once, in the trace.
+func (s *session) restoreWorker(temps *temporaries, worker int) error {
+	if worker < 0 || worker >= len(temps.workers) {
+		return nil
+	}
+	copied := temps.workers[worker]
+	if copied == nil {
+		return nil
+	}
+	drifts, err := copied.Restore()
+	if err != nil {
+		return &Error{
+			Code: CodeWorkspaceDrift,
+			Message: "worker " + strconv.Itoa(worker) + "'s copy of the instrumented tree could not be " +
+				"put back, so every mutant after this one would be measured against a tree nobody can describe",
+			Err: err,
+		}
+	}
+	if len(drifts) > 0 {
+		s.trace.Note(trace.NoteWorkerRestored, "",
+			"worker "+strconv.Itoa(worker)+": "+countNoun(len(drifts), "file")+" restored")
+	}
+	return nil
 }
 
 // publish builds the run report, files it in the history, and composes the

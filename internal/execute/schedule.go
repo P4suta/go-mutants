@@ -169,6 +169,11 @@ func Schedule(
 	// the one worker that claimed that index and read only after the join.
 	pending := make([]bool, len(mutants))
 
+	// The first restore failure, which stops the run. It is a pointer to an
+	// error rather than an error so that CompareAndSwap can tell "none yet"
+	// from "one that happens to be nil", which no error value can.
+	var failed atomic.Pointer[error]
+
 	workers := min(opts.workers(), len(mutants))
 	var next atomic.Int64
 	var wg sync.WaitGroup
@@ -178,6 +183,8 @@ func Schedule(
 			defer wg.Done()
 			workerOpts := opts
 			workerOpts.ScratchDir = workerScratchDir(opts.ScratchDir, worker)
+			workerOpts.Tree = treeFor(opts.Trees, worker)
+			workerOpts.Restore = restoreFor(opts.Restores, worker)
 			for {
 				// Checked before claiming rather than after, so a cancelled run
 				// stops taking work instead of draining the queue one wasted
@@ -195,6 +202,14 @@ func Schedule(
 				attempt.Worker = worker
 				record(&results[i], attempt)
 				opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, mainAttempt))
+				// [RunOne] puts this worker's tree back after every pass, so
+				// the tree is already clean here. What is left to do is stop:
+				// a restore that failed is not a mutant that could not be
+				// measured, it is a tree the run can no longer describe.
+				if treeErr := treeFailure(attempt); treeErr != nil {
+					failed.CompareAndSwap(nil, &treeErr)
+					return
+				}
 
 				if attempt.Outcome == mutation.OutcomeTimedOut {
 					// Not a result. The retry pass decides.
@@ -208,8 +223,14 @@ func Schedule(
 	}
 	wg.Wait()
 
+	if broken := failed.Load(); broken != nil {
+		return results, *broken
+	}
+
 	retryOpts := opts
 	retryOpts.ScratchDir = workerScratchDir(opts.ScratchDir, retryWorker)
+	retryOpts.Tree = treeFor(opts.Trees, retryWorker)
+	retryOpts.Restore = restoreFor(opts.Restores, retryWorker)
 	// Timed once it has something to do. The retry is the one part of an
 	// execution phase that is deliberately serial, so on a queue full of
 	// timeouts it is where the wall-clock time of a run goes — and a stage in
@@ -245,6 +266,9 @@ func Schedule(
 		attempt.Worker = retryWorker
 		record(&results[i], attempt)
 		opts.Trace.MutantExec(AttemptRecord(mutants[i], attempt, retryAttempt))
+		if treeErr := treeFailure(attempt); treeErr != nil {
+			return results, treeErr
+		}
 		if attempt.Outcome == mutation.OutcomeNotRun {
 			// Started and killed. Nothing else produces this outcome here: a
 			// retry that ran is killed, survived or timed out, and a failure of
@@ -449,4 +473,41 @@ func countNoun(n int, noun string) string {
 		return "1 " + noun
 	}
 	return strconv.Itoa(n) + " " + noun + "s"
+}
+
+// treeFor is the copy of the instrumented tree one worker owns, or empty when
+// the run is not isolating.
+//
+// A worker number past the end answers empty rather than panicking, which is
+// the fail-safe direction: the shared tree is what every run used before
+// isolation existed, and a short slice is a caller's mistake to find in a test
+// rather than a crash in somebody's run.
+func treeFor(trees []string, worker int) string {
+	if worker < 0 || worker >= len(trees) {
+		return ""
+	}
+	return trees[worker]
+}
+
+// treeFailure is the restore failure an attempt is carrying, or nil.
+//
+// A restore is [Options.Restore] and happens inside [RunOne], so what reaches
+// here is an attempt that errored with [ErrTreeNotRestored] wrapped in it. It
+// is recognised rather than assumed because every other errored attempt is a
+// mutant this run could not measure, which is a row in a report; this one is a
+// tree the run can no longer describe, which is the end of the run.
+func treeFailure(attempt Attempt) error {
+	if attempt.Err != nil && errors.Is(attempt.Err, ErrTreeNotRestored) {
+		return attempt.Err
+	}
+	return nil
+}
+
+// restoreFor is the restore one worker owns, or nil when the run is not
+// isolating. A worker number past the end answers nil for [treeFor]'s reason.
+func restoreFor(restores []func() error, worker int) func() error {
+	if worker < 0 || worker >= len(restores) {
+		return nil
+	}
+	return restores[worker]
 }

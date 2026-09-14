@@ -259,6 +259,7 @@ copied faithfully.
 | `GOM7009` | A failure while copying the tree into the snapshot. | check that the temporary directory has room |
 | `GOM7010` | A [Snapshot.Cleanup] call that was refused because the recorded root does not look like a directory this package created. | file a bug and attach the recording from `go-mutants run --trace` |
 | `GOM7011` | A snapshot directory that survived every removal attempt, usually a file still locked by a test binary on Windows. | delete the directory the message names |
+| `GOM7012` | A file a worker copy could not be put back: the tree the copy was made of no longer holds it, the destination cannot be removed, or the restored bytes do not digest to what the manifest recorded. | the last of those means the instrumented tree changed under the run; re-run without `--isolate` to see whether the shared tree drifts too |
 
 ## `GOM720x` -- one supervised process
 

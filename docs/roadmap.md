@@ -27,14 +27,13 @@ whose Done when reads "it works well" is a row that cannot be finished.
 | 1 | Probe forms beyond the return-value one. `internal/instrument`'s dispatch returns nil for a boolean site, an arithmetic operand and a deleted statement, and its own comment calls that "the dispatch point for every form still to come" | Each form has a golden and a compile test, and a deleted statement's log records reachability with the honest note that infection cannot be observed where there is no value |
 | 2 | Probing in the `run` pipeline. `Session.Probe` exists and `internal/engine` has no reference to it, so a run pays for executions a probe could have proven unnecessary | A run with probing on reaches the same verdict for every mutant as one with it off, and the work ceiling records fewer `mutant-run` children |
 | 3 | Multi-module `go.work`. Refused today with `GOM4102` | `fixtures/workspace` measures both modules from its root, and the mutant identities of a module measured alone and measured in the workspace are told apart deliberately rather than by accident |
-| 4 | `--isolate`, the per-worker snapshot copy. Reserved in [the architecture](architecture.md) and absent from the command line. It is the escape hatch for a suite that legitimately writes into its own package directory, which today cannot run at all | `fixtures/selfwriting` completes with a real tally under `--isolate`, a worker's copy is restored between mutants, and the drift gate still stops the same run without it |
 
 ## Documents
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 5 | `explain --json`. Refused today on the argument that everything it prints is already in the report and the recording — which is true of the facts and not of the joins: the reproduction command, the rebuild line, this mutant's share of each stage, and the preserved output tail exist in neither document | A `go-mutants/explain` document answers a published schema, the prose and the JSON come from one gatherer, and the `reproduce.command` in it is pasted and run by a test that asserts it reproduces the verdict |
-| 6 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
+| 4 | `explain --json`. Refused today on the argument that everything it prints is already in the report and the recording — which is true of the facts and not of the joins: the reproduction command, the rebuild line, this mutant's share of each stage, and the preserved output tail exist in neither document | A `go-mutants/explain` document answers a published schema, the prose and the JSON come from one gatherer, and the `reproduce.command` in it is pasted and run by a test that asserts it reproduces the verdict |
+| 5 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
 
 ## Reserved and unemitted
 
