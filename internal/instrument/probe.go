@@ -115,14 +115,17 @@ type probeEdit struct {
 // probeFor returns what one mutant contributes to a probe tree, or nil when
 // this version has no probe form for it.
 //
-// The nil is the dispatch point for every form still to come. A bool-valued
-// site, an arithmetic operand, a deleted statement: each will need a shape of
-// its own, and until it has one the honest answer is that the mutant is not
-// probed — which costs a run the executions it could have skipped and costs it
-// nothing else.
+// The form is read rather than assumed, and the nil is the dispatch point for
+// every form still to come. A bool-valued site, an arithmetic operand, a
+// deleted statement: each needs a shape of its own, and until it has one the
+// honest answer is that the mutant is not probed — which costs a run the
+// executions it could have skipped and costs it nothing else. A hint carrying a
+// form this build has no renderer for falls here too, which is the fail-closed
+// direction: a newer discovery's site is left unprobed rather than rendered by
+// the wrong shape.
 func probeFor(m mutation.Mutant, guard discover.Guard) *probeEdit {
-	site := guard.Return
-	if site == nil || !probeConstants[m.Replacement] {
+	site := guard.Probe
+	if site == nil || site.Form != discover.ProbeFormReturn || !probeConstants[m.Replacement] {
 		return nil
 	}
 	return &probeEdit{index: m.Index, result: site.Index, constant: m.Replacement}
@@ -176,7 +179,7 @@ type probeSite struct {
 // return as many values as the hint spelled types for, and the edit has to sit
 // inside the result the hint says it does — because the whole meaning of the
 // rewrite is that this temporary holds that value.
-func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ReturnSite, srcPath string) (probeSite, error) {
+func (x *siteIndex) probeSiteFor(m mutation.Mutant, hint *discover.ProbeSite, srcPath string) (probeSite, error) {
 	stmt, ok := x.stmts[hint.Span]
 	if !ok {
 		return probeSite{}, x.notFound(m, srcPath, hint.Span, "no statement covers these bytes")
@@ -249,7 +252,7 @@ func buildProbeSites(
 		if edit == nil {
 			continue
 		}
-		resolved, err := index.probeSiteFor(m, guard.Return, srcPath)
+		resolved, err := index.probeSiteFor(m, guard.Probe, srcPath)
 		if err != nil {
 			return fail(err)
 		}
@@ -263,7 +266,7 @@ func buildProbeSites(
 		// The probe tree's own imports, kept apart from the mutant tree's: the
 		// temporaries a probe declares spell the *result* types, and an import
 		// only they need would sit unused in the tree beside it.
-		completions = discover.MergeCompletions(completions, guard.Return.Imports)
+		completions = discover.MergeCompletions(completions, guard.Probe.Imports)
 		items = append(items, interval.Item[mutation.Mutant]{Span: resolved.span, Payload: m})
 		widest = max(widest, len(resolved.operands))
 	}

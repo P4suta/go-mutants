@@ -695,7 +695,7 @@ func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
 	//
 	// The per-result conditions are asked after it, and each of them refuses one
 	// result while leaving the others probed.
-	site := s.returnSite(n, results)
+	site := s.probeSite(n, results)
 	for i, value := range n.Results {
 		declared := results.At(i).Type()
 		hint := site.at(i)
@@ -711,11 +711,11 @@ func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
 
 // returnSite computes the probe hint of one `return`, or nil when this phase
 // holds no resolver to compute it with.
-func (s *fileScan) returnSite(n *ast.ReturnStmt, results *types.Tuple) *ReturnSite {
+func (s *fileScan) probeSite(n *ast.ReturnStmt, results *types.Tuple) *ProbeSite {
 	if s.guard == nil {
 		return nil
 	}
-	return s.guard.returnSite(n, results)
+	return s.guard.probeSite(n, results)
 }
 
 // probesResult reports whether one result of a `return` may carry the site
@@ -737,7 +737,7 @@ func (s *fileScan) probesResult(value ast.Expr, declared types.Type) bool {
 // function returning `error` is therefore a `return-nil` candidate — the value
 // is a concrete pointer, not an error interface value — while `return err` is
 // the `return-err-to-nil` the family exists for.
-func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ReturnSite) error {
+func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ProbeSite) error {
 	if isExactlyError(s.typeOf(value)) {
 		return s.replaceReturn(value, ruleReturnErrToNil, "nil", site, nil)
 	}
@@ -771,7 +771,7 @@ func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *Return
 // declined to mutate, it is a place where the mutation and the source are the
 // same program.
 func (s *fileScan) replaceReturn(
-	value ast.Expr, name, replacement string, site *ReturnSite, needs []Completion,
+	value ast.Expr, name, replacement string, site *ProbeSite, needs []Completion,
 ) error {
 	rule, ok := s.matchers.rule(name)
 	if !ok {
@@ -899,7 +899,7 @@ func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement strin
 // hint. The hint is a fact about the rewrite site of a *different* tree, so it
 // travels beside the candidate rather than changing anything about it.
 func (s *fileScan) emitProbed(
-	rule mutation.Rule, node ast.Node, replacement string, site *ReturnSite, needs []Completion,
+	rule mutation.Rule, node ast.Node, replacement string, site *ProbeSite, needs []Completion,
 ) error {
 	original, ok := s.text(node)
 	if !ok {
@@ -945,7 +945,7 @@ func (s *fileScan) emitAt(
 	anchor ast.Node,
 	pos token.Pos,
 	original, replacement string,
-	site *ReturnSite,
+	site *ProbeSite,
 	needs []Completion,
 ) error {
 	if reason, ok := s.suppressed(pos); ok {
@@ -982,7 +982,7 @@ func (s *fileScan) emitAt(
 	// The probe hint is attached after the guard and never instead of it: a
 	// site the probe tree cannot express is still a site the mutant tree does,
 	// so a nil hint is not a skip and removes no candidate.
-	guard.Return = site
+	guard.Probe = site
 
 	candidate := mutation.Candidate{
 		Path:         s.rel,
@@ -1039,7 +1039,7 @@ func (s *fileScan) emitAt(
 //     rather than a proof, and docs/operators.md says so where the gate is
 //     documented. `return xs, nil` -- the success path, where the rule is worth
 //     the most -- is not gated.
-func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site *ReturnSite) error {
+func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site *ProbeSite) error {
 	slice, mapped := isEmptiable(declared)
 	if !slice && !mapped {
 		return nil

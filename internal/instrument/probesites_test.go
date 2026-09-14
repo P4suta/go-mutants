@@ -281,7 +281,7 @@ func probeWrittenLines(
 
 	written := make(map[int]bool)
 	for _, m := range catalog.Mutants() {
-		site := hints[m.ID].Return
+		site := hints[m.ID].Probe
 		if site == nil {
 			continue
 		}
@@ -361,7 +361,7 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 	}
 }
 
-// TestProbeSkipsAMutantWithoutAReturnSite pins what a probe tree does with the
+// TestProbeSkipsAMutantWithoutAProbeSite pins what a probe tree does with the
 // families whose probe form is not written yet.
 //
 // It does not probe them, and it does not touch the file they are in. A file
@@ -369,7 +369,7 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 // compile; a file rewritten with a guard would be a mutant tree pretending to
 // be a probe one. Doing nothing is the only answer that is honest about the
 // mutant simply not being measured.
-func TestProbeSkipsAMutantWithoutAReturnSite(t *testing.T) {
+func TestProbeSkipsAMutantWithoutAProbeSite(t *testing.T) {
 	t.Parallel()
 
 	in := testkit.ReadFile(t, filepath.Join("testdata", "comparison.input"))

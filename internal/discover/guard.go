@@ -863,7 +863,7 @@ func (g *guardResolver) fieldKeyed(lit *ast.CompositeLit) bool {
 // the probe may stand in for.
 //
 // The result types come from the enclosing function's signature rather than
-// from the operands, for the reason [ReturnSite] gives: the declared type is the
+// from the operands, for the reason [ProbeSite] gives: the declared type is the
 // conversion the `return` performs, and it is the conversion the mutant's
 // constant would have gone through too. [guardResolver.typeString] is what
 // spells them — the same machinery Form D's declarations go through, so a type
@@ -876,9 +876,9 @@ func (g *guardResolver) fieldKeyed(lit *ast.CompositeLit) bool {
 // the compiler does not use. effects.go argues both. The per-result conditions
 // are [guardResolver.probesResult]'s.
 //
-// [ReturnSite.Index] is left at zero: the caller fills it in per result through
-// [ReturnSite.at], so that every candidate of one statement shares one site.
-func (g *guardResolver) returnSite(stmt *ast.ReturnStmt, results *types.Tuple) *ReturnSite {
+// [ProbeSite.Index] is left at zero: the caller fills it in per result through
+// [ProbeSite.at], so that every candidate of one statement shares one site.
+func (g *guardResolver) probeSite(stmt *ast.ReturnStmt, results *types.Tuple) *ProbeSite {
 	if stmt == nil || results == nil || results.Len() != len(stmt.Results) {
 		return nil
 	}
@@ -905,7 +905,7 @@ func (g *guardResolver) returnSite(stmt *ast.ReturnStmt, results *types.Tuple) *
 		spelled = append(spelled, rendered)
 		needs = MergeCompletions(needs, completed)
 	}
-	return &ReturnSite{Span: span, Types: spelled, Imports: needs}
+	return &ProbeSite{Form: ProbeFormReturn, Span: span, Types: spelled, Imports: needs}
 }
 
 // probesResult reports whether the probe may stand in for the mutant at one

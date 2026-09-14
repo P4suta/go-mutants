@@ -12,7 +12,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// TestReturnSiteSurvivesHintsOf is the other end of the hint's journey.
+// TestProbeSiteSurvivesHintsOf is the other end of the hint's journey.
 //
 // The return probe hint is computed where the type checker is and consumed
 // where the byte rewriter is, and the only thing between them is this index. It
@@ -20,7 +20,7 @@ import (
 // about, so a hint that grew a field arrives without anything here being
 // changed — which is worth one test, because the failure mode is a probe tree
 // that silently rewrites nothing rather than an error anybody would see.
-func TestReturnSiteSurvivesHintsOf(t *testing.T) {
+func TestProbeSiteSurvivesHintsOf(t *testing.T) {
 	t.Parallel()
 
 	const src = "package sample\n\nfunc Measure() int { return 1 }\n"
@@ -36,7 +36,8 @@ func TestReturnSiteSurvivesHintsOf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identifying the candidate: %v", err)
 	}
-	site := &discover.ReturnSite{
+	site := &discover.ProbeSite{
+		Form:  discover.ProbeFormReturn,
 		Span:  mutation.Span{StartByte: 37, EndByte: 45},
 		Types: []string{"int"},
 		Index: 0,
@@ -49,7 +50,7 @@ func TestReturnSiteSurvivesHintsOf(t *testing.T) {
 		Guard: discover.Guard{
 			Form:     discover.GuardFormS,
 			SiteSpan: site.Span,
-			Return:   site,
+			Probe:    site,
 		},
 	}}
 
@@ -61,8 +62,8 @@ func TestReturnSiteSurvivesHintsOf(t *testing.T) {
 	if !ok {
 		t.Fatalf("HintsOf did not index the candidate under %s", id)
 	}
-	if !reflect.DeepEqual(got.Return, site) {
-		t.Errorf("the indexed hint's return site = %+v, want %+v", got.Return, site)
+	if !reflect.DeepEqual(got.Probe, site) {
+		t.Errorf("the indexed hint's return site = %+v, want %+v", got.Probe, site)
 	}
 }
 
@@ -81,7 +82,8 @@ func TestProbesAnswersWhichMutantsAProbeTreeSpeaksFor(t *testing.T) {
 
 	const src = "package sample\n\nfunc Measure() int { return 1 }\n"
 	span := mutation.Span{StartByte: 44, EndByte: 45}
-	site := &discover.ReturnSite{
+	site := &discover.ProbeSite{
+		Form:  discover.ProbeFormReturn,
 		Span:  mutation.Span{StartByte: 37, EndByte: 45},
 		Types: []string{"int"},
 		Index: 0,
@@ -103,7 +105,7 @@ func TestProbesAnswersWhichMutantsAProbeTreeSpeaksFor(t *testing.T) {
 		}
 		return mutation.Mutant{Index: 0, ID: id, DisplayID: id[:8], Candidate: candidate}
 	}
-	hintOf := func(t *testing.T, m mutation.Mutant, returnSite *discover.ReturnSite) instrument.Hints {
+	hintOf := func(t *testing.T, m mutation.Mutant, returnSite *discover.ProbeSite) instrument.Hints {
 		t.Helper()
 		hints, err := instrument.HintsOf([]discover.Located{{
 			Candidate: m.Candidate,
@@ -113,7 +115,7 @@ func TestProbesAnswersWhichMutantsAProbeTreeSpeaksFor(t *testing.T) {
 			Guard: discover.Guard{
 				Form:     discover.GuardFormS,
 				SiteSpan: site.Span,
-				Return:   returnSite,
+				Probe:    returnSite,
 			},
 		}})
 		if err != nil {
@@ -143,5 +145,16 @@ func TestProbesAnswersWhichMutantsAProbeTreeSpeaksFor(t *testing.T) {
 	// about a tree that was built from a different discovery pass.
 	if (instrument.Hints{}).Probes(probed) {
 		t.Error("a mutant with no hint at all is reported as probed")
+	}
+	// A site whose form this build has no renderer for. It is the case a
+	// *newer* discovery produces, and the one where a wrong answer is worst: a
+	// hint read by the return renderer because nothing checked its form would
+	// compare an operand against a constant that belongs to some other shape,
+	// and report an infection for a mutant nobody asked about. Unprobed is the
+	// fail-closed answer, and the run simply executes the mutant.
+	unknown := *site
+	unknown.Form = "a-form-from-a-later-release"
+	if hintOf(t, probed, &unknown).Probes(probed) {
+		t.Error("a site whose form this build cannot render is reported as probed")
 	}
 }

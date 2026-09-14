@@ -321,12 +321,11 @@ type DeclType struct {
 //
 // # The probe hint rides beside it
 //
-// [Guard.Return] answers a question about a different tree and does not touch
+// [Guard.Probe] answers a question about a different tree and does not touch
 // any of the above. The guard forms are how a mutant is written into the mutant
-// tree; the return site is how the same candidate is *measured* in the probe
-// tree, where no mutant is ever active. It is present only for the return-value
-// rules, it may be absent for those, and its absence changes nothing about the
-// guard — see [ReturnSite].
+// tree; the probe site is how the same candidate is *measured* in the probe
+// tree, where no mutant is ever active. It may be absent, and its absence
+// changes nothing about the guard — see [ProbeSite].
 type Guard struct {
 	// Form is the rewrite shape to use.
 	Form GuardForm
@@ -357,23 +356,57 @@ type Guard struct {
 	// another guard in the same file happens to need it too.
 	Imports []Completion
 
-	// Return is the probe hint of a return-value mutant: the statement it sits
-	// in, the type every result of that statement must be declared as, and the
-	// position of the result the mutation replaces. It is nil when the probe
-	// cannot be written for the statement or cannot stand in for this result —
-	// [ReturnSite] gives the five reasons — and always nil for other rules; a
-	// nil Return means the mutant is not probed, never that it is not mutated.
-	Return *ReturnSite
+	// Probe is what the probe tree needs in order to measure this candidate,
+	// and nil when no form can. A nil Probe means the mutant is not probed,
+	// never that it is not mutated: the candidate is catalogued, guarded and
+	// executed exactly as any other. See [ProbeSite].
+	Probe *ProbeSite
 }
 
-// A ReturnSite is what the probe tree needs to know about one `return`.
+// A ProbeForm names the shape a probe tree takes for one candidate.
+//
+// # The invariant every form shares
+//
+// A probe tree runs the *original* program with a report attached, and what it
+// reports is one bit per mutant: `Infect(i)` means **this pass could not rule
+// mutant i out**, and the absence of i from every log of every covering binary
+// means **it could**. Nothing else is claimed, and nothing else is needed: the
+// second reading is the one that licenses skipping an execution, and it is the
+// one that has to be conservative.
+//
+// Writing the invariant in those words rather than as "the value differed" is
+// what lets a form exist for a site that has no value. A deleted statement's
+// mutant differs from the original by the *absence* of an effect, which no
+// expression can compare; what a probe can say there is that the statement ran
+// at all, and a pass that never ran it is a pass that cannot have observed its
+// removal. Same licence, different evidence.
+type ProbeForm string
+
+// The probe forms.
+const (
+	// ProbeFormReturn is the return-value form: the whole `return` statement is
+	// rewritten so that each result is named, and the probed one is compared
+	// with the constant the mutant would have returned.
+	//
+	//	{ var r0 T0 = E0; …; if rj != K { __gm.Infect(i) }; return r0, …, rn }
+	//
+	// It is the form with the strongest evidence — the comparison is exactly
+	// the question "would the two programs have returned different values" —
+	// and the narrowest conditions, which [ProbeSite] states in full.
+	ProbeFormReturn ProbeForm = "return"
+)
+
+// A ProbeSite is what the probe tree needs to know about one candidate.
 //
 // # What it describes
 //
-// The probe tree runs the original program and reports, per mutant, whether the
-// value at its site ever differed from the constant the mutant would have
-// returned. For a return-value mutant at result position j of
-// `return E0, E1, …` the rewrite is
+// The probe tree runs the original program and reports, per mutant, whether
+// this pass could rule that mutant out. [ProbeForm] says in what shape; this
+// says over which bytes, and with which types and position where the shape
+// needs them.
+//
+// For [ProbeFormReturn] at result position j of `return E0, E1, …` the rewrite
+// is
 //
 //	{ var r0 T0 = E0; var r1 T1 = E1; …; if rj != K { __gm.Infect(i) }; return r0, r1, … }
 //
@@ -427,14 +460,17 @@ type Guard struct {
 // still catalogued, still mutated and still guarded, which is why it is not a
 // [Skip]: nothing was declined, and a skip counted here would tell a user that
 // go-mutants had passed over an edit it in fact makes.
-type ReturnSite struct {
-	// Span is the byte range of the whole `return` statement, which is what the
-	// probe rewrite replaces.
+type ProbeSite struct {
+	// Form is the shape the probe rewrite takes. It decides which of the fields
+	// below carry anything, and a consumer branches on it before reading them.
+	Form ProbeForm
+	// Span is the byte range the probe rewrite replaces: the whole `return`
+	// statement for [ProbeFormReturn].
 	Span mutation.Span
-	// Types is one spelled type per result of that statement, in order, as this
-	// file may write them.
+	// Types is one spelled type per operand the rewrite has to declare, in
+	// order, as this file may write them.
 	Types []string
-	// Index is the position, in that list, of the result the candidate's span
+	// Index is the position, in that list, of the operand the candidate's span
 	// replaces.
 	Index int
 	// Imports are the packages the spellings in Types need the file to import
@@ -445,11 +481,11 @@ type ReturnSite struct {
 	Imports []Completion
 }
 
-// at returns the hint for one result position of the same statement, or nil for
-// a statement that has none. The statement-level part is computed once per
-// `return` and every candidate in it takes a copy with its own position, which
-// is what keeps two candidates of one statement agreeing about the site.
-func (r *ReturnSite) at(index int) *ReturnSite {
+// at returns the hint for one operand position of the same site, or nil for a
+// site that has none. The statement-level part is computed once per statement
+// and every candidate in it takes a copy with its own position, which is what
+// keeps two candidates of one statement agreeing about the site.
+func (r *ProbeSite) at(index int) *ProbeSite {
 	if r == nil {
 		return nil
 	}

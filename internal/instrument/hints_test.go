@@ -204,7 +204,7 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 			d.t.Fatalf("%s: no guard form covers the edit at %s (%q)", d.path, span, d.text(anchor))
 		}
 	}
-	guard.Return = d.returnSite(anchor, span, rule)
+	guard.Probe = d.returnSite(anchor, span, rule)
 	return guard
 }
 
@@ -217,7 +217,7 @@ func (d *hintDeriver) guardFor(span mutation.Span, rule string) discover.Guard {
 // spelled in the file that declares it, so the bytes of the signature *are* the
 // spelling. What syntax cannot show is a refusal, and [hintOptions.unprobed] is
 // how a fixture states one.
-func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule string) *discover.ReturnSite {
+func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule string) *discover.ProbeSite {
 	d.t.Helper()
 
 	if !returnValueRules[rule] {
@@ -239,7 +239,7 @@ func (d *hintDeriver) returnSite(anchor ast.Node, span mutation.Span, rule strin
 	}
 	for i, value := range stmt.Results {
 		if d.span(value).Contains(span) {
-			return &discover.ReturnSite{Span: d.span(stmt), Types: results, Index: i}
+			return &discover.ProbeSite{Form: discover.ProbeFormReturn, Span: d.span(stmt), Types: results, Index: i}
 		}
 	}
 	d.t.Fatalf("%s: the %s candidate at %s is in no result of %q", d.path, rule, span, d.text(stmt))

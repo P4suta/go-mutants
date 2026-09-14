@@ -170,7 +170,11 @@ func modeCatalog(t *testing.T, rel string) (*mutation.Catalog, instrument.Hints)
 	return catalog, instrument.Hints{id: discover.Guard{
 		Form:     discover.GuardFormS,
 		SiteSpan: statement,
-		Return: &discover.ReturnSite{
+		Probe: &discover.ProbeSite{
+			// The form is stated rather than left zero: the rewriter branches
+			// on it before reading anything else, so a hand-built hint that
+			// omitted it would be one no renderer claims.
+			Form:  discover.ProbeFormReturn,
 			Span:  statement,
 			Types: []string{"int", "error"},
 			Index: 0,
