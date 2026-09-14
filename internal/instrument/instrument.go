@@ -77,6 +77,26 @@ type Options struct {
 	// why the choice is not this package's to make.
 	Hints Hints
 
+	// Module is the module whose files this pass rewrites, and is empty for a
+	// catalogue that names no module -- which is every run that is not a
+	// workspace run.
+	//
+	// A workspace is instrumented one module at a time because a module's files
+	// can only import a runtime its own module declares: a generated package
+	// under `first/` is not on `second/`'s import path without a `require`, and
+	// editing a go.mod inside the snapshot is editing the tree under test. So
+	// each module gets a pass, a runtime, and a rewrite of its own files.
+	//
+	// What each module's runtime gets is the *whole* catalogue, not this
+	// module's share of it, and that is not an accident of passing
+	// [Options.Catalog] through unchanged. A mutant of one module can be
+	// activated while another module's tests are running -- that is
+	// cross-module coverage, and it is why a workspace is one run rather than
+	// N. A runtime knowing only its own module's indices would meet an id it
+	// had never heard of and exit as if the snapshot were stale, turning every
+	// cross-module mutant into an infrastructure error.
+	Module string
+
 	// Mode selects which tree this pass produces. The zero value is
 	// [ModeMutant], so a caller written before the probe tree existed keeps
 	// producing exactly what it always did.
@@ -161,7 +181,7 @@ func Instrument(opts Options) (Result, error) {
 	// once per package rather than once per file is the difference between a
 	// directory read and a quadratic one.
 	names := newPackageNames()
-	for _, group := range groupByPath(opts.Catalog) {
+	for _, group := range groupByPath(opts.Catalog, opts.Module) {
 		guards, err := instrumentFile(
 			opts.SnapshotRoot, group.path, group.mutants, opts.Hints, importPath, names, opts.Mode)
 		if err != nil {
@@ -220,6 +240,27 @@ func (o Options) validate() error {
 	}
 	if o.Catalog == nil {
 		return &Error{Code: CodeOptions, Message: "no catalogue was given"}
+	}
+	// The catalogue and the module have to be the same kind of thing, and a
+	// disagreement is refused rather than resolved. Either way round it would
+	// select no mutant at all, rewrite no file, and hand back a Result saying
+	// so in a field nobody reads as an error -- and the tree that came out of
+	// it compiles, passes validation, and reports every mutant as a survivor.
+	if first, ok := o.Catalog.At(0); ok {
+		switch {
+		case first.ModulePath != "" && o.Module == "":
+			return &Error{
+				Code: CodeOptions,
+				Message: "the catalogue names the module " + strconv.Quote(first.ModulePath) +
+					" and no module was given to instrument",
+			}
+		case first.ModulePath == "" && o.Module != "":
+			return &Error{
+				Code: CodeOptions,
+				Message: "the module " + strconv.Quote(o.Module) +
+					" was given and the catalogue names no module",
+			}
+		}
 	}
 	// A mode this package does not know is refused rather than treated as the
 	// zero value: silently instrumenting a mutant tree for a caller that asked
@@ -284,11 +325,19 @@ type fileGroup struct {
 //
 // Paths are sorted so the result stays a pure function of the catalogue, which
 // is also what makes [Result.FilesInstrumented] deterministic.
-func groupByPath(catalog *mutation.Catalog) []fileGroup {
+// The module is what selects the mutants: every one of them when it is empty,
+// and one module's share when it is not. A path is only a file's name within
+// the module it belongs to, so grouping a workspace catalogue by path alone
+// would put two modules' `app.go` into one group and rewrite one of them with
+// the other's spans.
+func groupByPath(catalog *mutation.Catalog, module string) []fileGroup {
 	mutants := catalog.Mutants()
 	byPath := make(map[string][]mutation.Mutant, len(mutants))
 	paths := make([]string, 0, len(mutants))
 	for _, m := range mutants {
+		if m.ModulePath != module {
+			continue
+		}
 		if _, seen := byPath[m.Path]; !seen {
 			paths = append(paths, m.Path)
 		}

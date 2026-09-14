@@ -77,7 +77,7 @@ func TestPristineBuildFailureIsNotMutantInducedAndKeepsTheCompilersWords(t *test
 	_, err = validate.Validate(t.Context(), validate.Options{
 		Snap:         snap,
 		Catalog:      emptyCatalog(t),
-		ModulePath:   modulePath,
+		Modules:      []validate.Module{{Dir: ".", Path: modulePath}},
 		Toolchain:    gocmd.Toolchain{GoBin: f.Bin()},
 		Env:          f.Env(testkit.Compose(t, testkit.Scratch(t))),
 		BuildTimeout: time.Minute,

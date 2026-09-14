@@ -190,7 +190,7 @@ func (s *session) probeTree(
 		Snap:         snap,
 		Catalog:      opts.catalog,
 		Hints:        opts.hints,
-		ModulePath:   opts.modulePath,
+		Modules:      []validate.Module{{Dir: ".", Path: opts.modulePath}},
 		Toolchain:    opts.toolchain,
 		Jobs:         opts.jobs,
 		BuildTimeout: BaselineCap,

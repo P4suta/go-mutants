@@ -108,14 +108,16 @@ func validateModeFixture(t *testing.T, mode instrument.Mode) []byte {
 		catalog:  catalog,
 		hints:    hints,
 		mode:     mode,
+		modules:  []Module{{Dir: ".", Path: "example.com/mini"}},
 		byPath:   make(map[string][]mutation.Mutant),
 		pristine: make(map[string][]byte),
 		guards:   make(map[string]int),
+		files:    make(map[string]fileRef),
 	}
 	v.apply = v.instrumentFile
 	v.build = func(context.Context) (verdict, error) { return verdict{}, nil }
 
-	result, err := v.run(context.Background(), "example.com/mini")
+	result, err := v.run(context.Background())
 	if err != nil {
 		t.Fatalf("validating in mode %d: %v", mode, err)
 	}
