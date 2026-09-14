@@ -14,6 +14,15 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`internal/testlog` joined the dogfood gate.** Fifteen more mutants, one
+  declared row, and the widening cost a test for the read failure that is not
+  about the bytes and a case for the blank line between two actions. The
+  declared row is the one guard in the parse loop that does the same job as the
+  `break` under it, and it stays rather than becoming `for {}` for a reason the
+  row states: dropping it makes two of that package's mutants never return,
+  which is a per-mutant timeout paid twice for each of them on every run of the
+  gate. That is the trade this project sizes on counted quantities rather than
+  on how a line reads.
 - **A `go.work` workspace is measured, as one run over every module it joins.**
   It was refused with `GOM4102`, and the refusal was honest about its price: a
   workspace has no single module path, no single set of module-relative

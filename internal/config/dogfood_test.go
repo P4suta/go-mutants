@@ -148,6 +148,14 @@ var repositoryExpectations = []Expectation{
 			"primary key still decides every pair whose start lines differ.",
 	},
 	{
+		ID: "a7353f2073cb5e21aa44235cf31014b9efb6f153afbfba57b110741e38c34ca7",
+		Reason: "Equivalent: the loop ends at the first unterminated line, and " +
+			"an empty body is that case -- bytes.Cut finds no separator and " +
+			"reports none -- so the extra pass `>=` admits breaks before it " +
+			"reads anything. The condition is kept over `for {}` because " +
+			"dropping it makes two mutants of this package never return.",
+	},
+	{
 		ID: "00110ba284fd3da4b8408c57a7bfa66a2187047ede44d2adb78d948757c8ac4d",
 		Reason: "Unreachable: compileErr is set only when an embedded schema " +
 			"cannot be read, parsed, registered or compiled, and " +
@@ -517,6 +525,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/config/*.go",
 				"internal/gocmd/*.go",
 				"internal/report/*.go",
+				"internal/testlog/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -542,6 +551,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/coverage/...", "./internal/schemas/...", "./internal/config/...",
 				"./internal/gocmd/...",
 				"./internal/report/...",
+				"./internal/testlog/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
@@ -566,9 +576,9 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// it went to 99: one percent of 2432 scored mutants was twenty-four
 		// survivors of slack, which is more than the twenty-one that was
 		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2808 scored mutants half a
-		// percent buys fourteen survivors (2794/2808 = 99.50% clears,
-		// 2793/2808 = 99.47% does not), where it bought twelve when it was
+		// same arithmetic rather than inertia: at 2822 scored mutants half a
+		// percent buys fourteen survivors (2808/2822 = 99.50% clears,
+		// 2807/2822 = 99.47% does not), where it bought twelve when it was
 		// set -- still far short of the twenty-one that moves this number.
 		// The arithmetic is written out in the file.
 		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},

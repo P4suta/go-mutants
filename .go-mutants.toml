@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2802 killed, six caught by the timeout, sixty-five declared, 100.00%,
+# race: 2816 killed, six caught by the timeout, sixty-six declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -123,8 +123,8 @@ profile = "balanced"
 #   internal/drift/*.go            15
 #   internal/testflag/*.go          7
 #
-# catalogues 2873 mutants and detects 2808 of them -- 2802 killed and six caught
-# by the timeout -- leaving the sixty-five rows declared below and a score of
+# catalogues 2888 mutants and detects 2822 of them -- 2816 killed and six caught
+# by the timeout -- leaving the sixty-six rows declared below and a score of
 # 100.00%, in the wall clock recorded under [policy]. The count has grown eight
 # times without the score moving, and every time for the same reason: code the
 # gate already covered started producing mutants it had not produced before.
@@ -272,6 +272,7 @@ include = [
   "internal/config/*.go",
   "internal/gocmd/*.go",
   "internal/report/*.go",
+  "internal/testlog/*.go",
 ]
 exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # `operators` is intentionally omitted: the profile decides the families, which
@@ -417,6 +418,19 @@ reason = "Equivalent: this is the tie-break of a sort whose primary key is the s
 [[mutation.expect]]
 id = "d0c24e273d49ff84d81e3b6e9f100c753eeb97c9a819c862c313ef3e44714e21"
 reason = "Equivalent: the same tie-break as the row above -- intervals sharing a start line all overlap, so merge folds them into [start, max end] however the sort arranges them, and the primary key still decides every pair whose start lines differ."
+
+# internal/testlog brought one row, and it is a guard that does one job with
+# the `break` under it. The parse loop ends at the first line the binary did not
+# terminate, and an empty body is that case too -- a cut that finds no separator
+# reports none -- so `> 0` and `>= 0` differ only in an extra pass that breaks
+# immediately. The guard stays rather than the loop becoming `for {}`, and that
+# is a measured trade rather than a preference: without it two of this package's
+# mutants never return, and the gate pays a per-mutant timeout twice for each of
+# them, where today none of them does.
+
+[[mutation.expect]]
+id = "a7353f2073cb5e21aa44235cf31014b9efb6f153afbfba57b110741e38c34ca7"
+reason = "Equivalent: the loop ends at the first unterminated line, and an empty body is that case -- bytes.Cut finds no separator and reports none -- so the extra pass `>=` admits breaks before it reads anything. The condition is kept over `for {}` because dropping it makes two mutants of this package never return."
 
 # internal/schemas, whose 89 mutants brought seven rows, and all seven are one
 # claim: an embedded schema that cannot be used. `schema.FS` is an embed.FS
@@ -807,6 +821,7 @@ command = [
   "./internal/config/...",
   "./internal/gocmd/...",
   "./internal/report/...",
+  "./internal/testlog/...",
 ]
 # Deliberately omitted, where this file used to pin 180s. The old number was
 # derived from a fact that scoping has deleted: the timeout had to clear
@@ -856,11 +871,11 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2873 mutants. Two thousand
-# eight hundred and eight are detected -- 2802 killed and six caught by
-# the timeout -- and the other sixty-five are the rows declared above, which
+# Measured, not wished for. The scope catalogues 2888 mutants. Two thousand
+# eight hundred and twenty-two are detected -- 2816 killed and six caught by
+# the timeout -- and the other sixty-six are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
-# is 100.00%, with all sixty-five expectations fulfilled and none stale. Every
+# is 100.00%, with all sixty-six expectations fulfilled and none stale. Every
 # one of those numbers
 # was the same on four of the five runs that measured this scope, the
 # killed/timeout split included; the fifth, taken while the machine picked up
@@ -1061,8 +1076,8 @@ strict = false
 #   minimum_score = 99.5  compared against the measured score whether or not
 #                         --strict was passed. Two thousand six hundred and
 #                         fourteen scored mutants are worth 0.038 points
-#                         each, so 2794/2808 = 99.50% clears 99.5 and
-#                         2793/2808 = 99.47% does not: an ungated
+#                         each, so 2808/2822 = 99.50% clears 99.5 and
+#                         2807/2822 = 99.47% does not: an ungated
 #                         `go-mutants run` reports up to fourteen survivors and
 #                         exits 0, and fails at fifteen.
 #
@@ -1080,9 +1095,9 @@ strict = false
 # rule that kept the number at 99 through five widenings is the rule that moved
 # it then, and it moved to the value that left the backstop where it had
 # actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
-# that widening. The scope has since grown to 2808 scored mutants without the
+# that widening. The scope has since grown to 2822 scored mutants without the
 # floor moving, and that is the same arithmetic reaching the same answer: half a
-# percent of 2808 is 14.04, so the slack went from twelve survivors to
+# percent of 2822 is 14.11, so the slack went from twelve survivors to
 # fourteen -- still far short of the twenty-one that moves this number. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
 # grows enough to make that count material" meant.

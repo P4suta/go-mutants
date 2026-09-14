@@ -490,13 +490,14 @@ jobs:
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
   #
-  # It is now 2873, and no package was added to get there. Discovery started
-  # reaching the case labels of a tagless switch, which it had been suppressing
-  # before it ever consulted the guard chooser, and that is 128 more mutants
-  # spread across the same eleven packages. Two of them never return -- the
-  # count of those went from four to six -- which is the part of the growth
-  # this job's budget feels, because a mutant that hangs costs a whole derived
-  # timeout and every other mutant costs a fraction of a second.
+  # It is now 2888 over twelve packages, and only the last fifteen of those came
+  # from adding one: internal/testlog. The rest grew where the gate already
+  # looked -- discovery reaching the case labels of a tagless switch, the
+  # workspace coordinate a mutant is catalogued under -- which is the ordinary
+  # way this number moves. Six of them never return, and that count has not
+  # changed; it is the part of the growth this job's budget feels, because a
+  # mutant that hangs costs a whole derived timeout and every other mutant costs
+  # a fraction of a second.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25

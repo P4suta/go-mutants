@@ -1236,7 +1236,7 @@ undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
-the settings they justify. It covers eleven whole packages:
+the settings they justify. It covers twelve whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
@@ -1251,9 +1251,10 @@ the settings they justify. It covers eleven whole packages:
 | `internal/operatorselect` | 16 | which rules a profile or an `--operator` name selects |
 | `internal/drift` | 11 | which change to an instrumented snapshot the instrumentation did not make |
 | `internal/testflag` | 7 | which argument names a test-binary flag |
+| `internal/testlog` | 15 | the reader of the action log a test binary writes under `-test.testlogfile` |
 
-Nine of the ten are pure arithmetic, pure text matching, a pure filter over a
-digest table, or a pure decision over values handed in, with no clock and no
+Eleven of the twelve are pure arithmetic, pure text matching, a pure filter over
+a digest table, or a pure decision over values handed in, with no clock and no
 network, so a mutant either changes an answer or it does not. `internal/config`
 reaches the filesystem in exactly one place — `os.ReadFile` in `LoadFile` — and
 everything under it takes bytes and returns an answer.
@@ -1296,9 +1297,9 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 2873 mutants catalogued, 2808 detected —
-2802 killed, two of them by the memory bound, and six caught by the per-mutant
-timeout — sixty-five declared expectations, **a score of 100.00%**, at
+The numbers the gate is sized against: 2888 mutants catalogued, 2822 detected —
+2816 killed, two of them by the memory bound, and six caught by the per-mutant
+timeout — sixty-six declared expectations, **a score of 100.00%**, at
 `--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
 is compared on every run, `--strict` or not, and at this size it does not fail
 until the fourteenth unexpected survivor — so `--strict` is the thing that
@@ -1389,7 +1390,7 @@ the larger of the two. `-v` also names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 2873 / 2802 / 6 / 65 on
+With that in place the whole summary is stable: the same 2888 / 2816 / 6 / 66 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.
@@ -1436,8 +1437,8 @@ with the eleventh package the same rule moved the number again, to 99.5: twelve
 survivors of slack (2420/2432 clears, 2419/2432 does not) where 99 bought
 thirteen before the widening. It has stayed at 99.5 since, through a catalogue
 that grew to 2614 scored mutants without a package being added, and that is the
-same arithmetic once more: half a percent of 2808 is fourteen survivors
-(2794/2808 clears, 2793/2808 does not), two more than when the number was set
+same arithmetic once more: half a percent of 2822 is fourteen survivors
+(2808/2822 clears, 2807/2822 does not), two more than when the number was set
 and still far short of twenty-one. The floor is a fixed number of survivors rather
 than a fixed percentage of a growing catalogue. Do the arithmetic, write the
 answer next to the number, and only then decide whether it moves.
