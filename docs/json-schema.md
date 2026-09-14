@@ -14,8 +14,8 @@ Stryker projection is validated too, against the vendored third-party schema in
 `schema/stryker/` — which is deliberately kept out of that registry, for the
 reasons given below.
 
-go-mutants publishes four native document types and one lossy projection for
-the Stryker report ecosystem. The three that describe *results* are
+go-mutants publishes five native document types and one lossy projection for
+the Stryker report ecosystem. The four that are whole documents are
 discriminated by two fields that a consumer must check before decoding:
 
 ```json
