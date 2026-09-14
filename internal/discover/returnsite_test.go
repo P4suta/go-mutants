@@ -368,7 +368,7 @@ func Take(n int, ch chan int) (int, int) { return n, <-ch }
 func Grow(s []int, x int) []int { return append(s, x) }
 `,
 		stmt: "return append(s, x)",
-		want: []string{"return-nil append(s, x)"},
+		want: []string{"return-nil append(s, x)", "return-empty-slice append(s, x)"},
 	}, {
 		name: "a call beside the mutated operand",
 		source: `package sample

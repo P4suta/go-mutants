@@ -9,7 +9,10 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strconv"
 	"testing"
+
+	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
 // scanned is what a fast scan produced: the candidates and the skip sites, the
@@ -37,6 +40,17 @@ type scanned struct {
 func scanSource(t *testing.T, src string) scanned {
 	t.Helper()
 
+	return scanWith(t, src, func(mutation.Rule) bool { return true })
+}
+
+// scanWith is [scanSource] over a narrowed selection: only the rules the
+// predicate accepts are given to the matchers, which is how a test drives the
+// walk the way a profile does. A profile is a tier filter and nothing else
+// (internal/mutation/profile.go), so a predicate over [mutation.Rule] says
+// everything a profile can say and a little more.
+func scanWith(t *testing.T, src string, want func(mutation.Rule) bool) scanned {
+	t.Helper()
+
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "scan.go", src, parser.ParseComments)
 	if err != nil {
@@ -59,7 +73,13 @@ func scanSource(t *testing.T, src string) scanned {
 		t.Fatalf("the fixture does not type-check (a scan fixture must):\n%s\n%v", src, typeErrs)
 	}
 
-	matchers, err := newMatchers(SupportedRules())
+	var selected []mutation.Rule
+	for _, rule := range SupportedRules() {
+		if want(rule) {
+			selected = append(selected, rule)
+		}
+	}
+	matchers, err := newMatchers(selected)
 	if err != nil {
 		t.Fatalf("building the matchers: %v", err)
 	}
@@ -92,6 +112,27 @@ func (s scanned) rules() []string {
 func (s scanned) has(rule, original, replacement string) bool {
 	for _, c := range s.candidates {
 		if c.Rule.Name == rule && c.Original == original && c.Replacement == replacement {
+			return true
+		}
+	}
+	return false
+}
+
+// skips returns the sorted "reason line:column" strings of the skip sites,
+// which is how a fast test names what a scan passed over.
+func (s scanned) skips() []string {
+	out := make([]string, 0, len(s.sites))
+	for _, site := range s.sites {
+		out = append(out, string(site.Reason)+" "+
+			strconv.Itoa(site.Line)+":"+strconv.Itoa(site.Column))
+	}
+	return out
+}
+
+// hasSkip reports whether the scan recorded a site of the given reason.
+func (s scanned) hasSkip(reason SkipReason) bool {
+	for _, site := range s.sites {
+		if site.Reason == reason {
 			return true
 		}
 	}

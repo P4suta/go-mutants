@@ -185,7 +185,7 @@ func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
 // families and the rule names come out of the frozen v1 catalogue, and the
 // counts move with it. So it is asserted against the catalogue rather than
 // against a transcription of it — every family by name, and both counts —
-// which is what makes "expected one of the 11 families ()" a failure.
+// which is what makes "expected one of the 12 families ()" a failure.
 func TestUnknownOperatorNamesEveryFamilyInTheCatalogue(t *testing.T) {
 	err := (Overlay{Operators: Explicit([]string{"telepathy"})}).Validate()
 	if err == nil {

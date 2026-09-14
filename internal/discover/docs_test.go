@@ -136,6 +136,15 @@ func reasonRows(t *testing.T, page, heading string) map[string]string {
 			inTable = strings.TrimRight(line, " ") == heading
 			continue
 		}
+		// A subsection under the heading is a different table about a related
+		// subject, and the operators page has one: the refusals that produce
+		// neither a candidate nor a skip. Reading its rows as skip reasons
+		// would make this ledger fail on a page that is correct, which is the
+		// one failure a ledger must not have.
+		if strings.HasPrefix(line, "### ") {
+			inTable = false
+			continue
+		}
 		trimmed := strings.TrimSpace(line)
 		if !inTable || !strings.HasPrefix(trimmed, "|") {
 			continue
