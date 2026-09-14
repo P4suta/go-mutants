@@ -263,7 +263,7 @@ type WorkspaceResult struct {
 //   - The loader obeys the snapshot's own workspace file rather than running
 //     with GOWORK=off, because a module of a workspace resolves its siblings
 //     through it and would not load without it. Every workspace file outside
-//     the snapshot stays ignored. See [Options.WorkFile].
+//     the snapshot stays ignored. See [Options.Workspace].
 //   - Every candidate carries its module's path, which is the coordinate that
 //     keeps two modules' identically named files apart. See
 //     [mutation.Identity.ModulePath].
@@ -291,12 +291,11 @@ func DiscoverWorkspace(ctx context.Context, opts Options) ([]WorkspaceResult, er
 				", so it is a module rather than a workspace",
 		}
 	}
-	workFile := filepath.Join(root, WorkspaceFile)
 	results := make([]WorkspaceResult, 0, len(workspace.Modules))
 	for _, module := range workspace.Modules {
 		moduleOpts := opts
 		moduleOpts.SnapshotRoot = filepath.Join(root, filepath.FromSlash(module.Dir))
-		moduleOpts.WorkFile = workFile
+		moduleOpts.Workspace = true
 		if module.Dir != "." {
 			moduleOpts.PathPrefix = module.Dir
 		}
@@ -307,12 +306,13 @@ func DiscoverWorkspace(ctx context.Context, opts Options) ([]WorkspaceResult, er
 		if result.ModulePath != module.Path {
 			return nil, &Error{
 				Code: CodeWorkspace,
-				Message: workFile + " uses " + module.Dir + " as " + module.Path +
-					", and the go command loaded " + result.ModulePath + " there",
+				Message: filepath.Join(root, WorkspaceFile) + " uses " + module.Dir +
+					" as " + module.Path + ", and the go command loaded " +
+					result.ModulePath + " there",
 			}
 		}
 		for i := range result.Candidates {
-			result.Candidates[i].Candidate.ModulePath = module.Path
+			result.Candidates[i].ModulePath = module.Path
 		}
 		results = append(results, WorkspaceResult{Module: module, Result: result})
 	}
@@ -323,20 +323,19 @@ func DiscoverWorkspace(ctx context.Context, opts Options) ([]WorkspaceResult, er
 // [CodeWorkspace], and nil for one that is a module rather than a workspace.
 //
 // [Discover] calls it on the snapshot, which is where the refusal has to be
-// final: everything below this phase — the identities, the digests, the single
-// baseline — assumes one module path. It is exported so that a caller can ask
-// the question *before* paying for the answer. An engine run pointed at a
-// workspace root would otherwise copy the tree, resolve a test scope against
-// it and measure a baseline before arriving here, and the first thing to go
-// wrong on that route is not this refusal at all: `go list ./...` in a
-// workspace directory places no package, so the run reported a test command
-// whose pattern "matches no package" — a true sentence about the wrong
-// subject, and a diagnosis that sends the reader to their `test.command`.
+// final: everything [Discover] does — the identities it mints, the digests, the
+// one module path it reports — assumes one module, and a workspace is measured
+// by [DiscoverWorkspace] instead. It is exported so that a caller can ask the
+// question *before* paying for the answer: a pass pointed at a workspace root
+// would otherwise load the tree before arriving here, and the first thing to go
+// wrong on that route is not this refusal at all — `go list ./...` at a
+// workspace root places no package, so the caller is told that their package
+// pattern matches nothing, which is a true sentence about the wrong subject.
 //
-// It is [DetectWorkspace] with the answer thrown away, and a workspace this
-// build cannot yet measure is refused *after* it has been read rather than
-// before: a malformed workspace file says what is wrong with it here, where
-// before it said only that workspaces were unsupported.
+// It is [DetectWorkspace] with the answer thrown away, and a workspace is
+// refused *after* it has been read rather than before: a malformed workspace
+// file says what is wrong with it here, rather than saying only that this is
+// not the entry point for one.
 func CheckWorkspace(dir string) error {
 	workspace, err := DetectWorkspace(dir)
 	if err != nil {
@@ -347,8 +346,10 @@ func CheckWorkspace(dir string) error {
 	}
 	return &Error{
 		Code: CodeWorkspace,
-		Message: "multi-module workspaces are not yet supported: " +
-			filepath.Join(dir, WorkspaceFile) + " makes this a workspace; " +
-			"run go-mutants inside one of its modules instead",
+		Message: filepath.Join(dir, WorkspaceFile) + " makes this a multi-module " +
+			"workspace, and a single-module discovery cannot measure one: its " +
+			"mutants have no module to be relative to and its modules have no " +
+			"one baseline. Point this at one of the workspace's modules, or " +
+			"discover the workspace itself",
 	}
 }

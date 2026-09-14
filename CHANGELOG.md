@@ -14,6 +14,42 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A `go.work` workspace is measured, as one run over every module it joins.**
+  It was refused with `GOM4102`, and the refusal was honest about its price: a
+  workspace has no single module path, no single set of module-relative
+  identities and no single baseline. Two readings of "support it" were
+  available, and one of them is wrong. N runs that happen to share a directory
+  would report a mutant of `lib` that only `app`'s tests can kill as a survivor
+  — the suite catches it, and the run would say it does not — because a module's
+  tests routinely cover a sibling module's code, which is what a workspace is
+  for. So it is one run: one snapshot, one catalogue spanning the modules, one
+  validation, one baseline, one execution.
+  Six things make that work, and each is a decision recorded in
+  [ADR 0012](docs/adr/0012-a-workspace-is-one-run-of-many-modules.md). A mutant
+  carries its module path as a tenth identity field under a domain of its own,
+  because two modules can each hold an `app.go` and a module-relative path is
+  all a mutant has — the frozen nine-field recipe is byte for byte what it was,
+  and the cost is stated rather than hidden: a module measured alone and the
+  same module measured in its workspace mint different ids, so neither the
+  cache, nor a stored report, nor an expectation crosses between the two. The
+  catalogue keys on the module in all four places a path was a coordinate on its
+  own. Instrumentation runs a module at a time, because a module's files can
+  only import a runtime its own module declares — and every one of those
+  runtimes carries the *whole* catalogue, because a mutant of one module is
+  activated while another module's tests are running. `GOWORK` is removed rather
+  than pinned, so the go command finds the workspace file of the tree it is
+  running in by walking up from its own directory; a named path has a spelling
+  and a working directory has another, which on a symlinked temporary directory
+  is the difference between a module that resolves and one that does not.
+  `./...` is expanded into one `./<dir>/...` per module, because the go command
+  does not accept `./...` at a workspace root. And the document is a new type,
+  `go-mutants/workspace-report`, holding each module's own run report: a run
+  report requires `workspace.module_path` and a workspace has no single answer
+  for it, while N documents sharing a run id would name one file in a history
+  store.
+  `fixtures/workspace` gained a third module whose tests are the only thing that
+  kills the second module's mutants, so "a workspace is one run" is a number the
+  corpus can state rather than a claim about intent.
 - **`test.probing = "on"` proves which executions a run does not have to make.**
   The probe layer existed end to end and nothing on the command line reached it:
   `Session.Probe` was a library call, and a `run` paid for every execution a

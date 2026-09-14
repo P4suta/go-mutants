@@ -1169,7 +1169,7 @@ func TestDiscoverRefusesAWorkspace(t *testing.T) {
 	if CodeOf(err) != CodeWorkspace {
 		t.Fatalf("code = %q, want %s (err %v)", CodeOf(err), CodeWorkspace, err)
 	}
-	if !strings.Contains(err.Error(), "multi-module workspaces are not yet supported") {
+	if !strings.Contains(err.Error(), "a single-module discovery cannot measure one") {
 		t.Errorf("message does not say what is unsupported: %v", err)
 	}
 }

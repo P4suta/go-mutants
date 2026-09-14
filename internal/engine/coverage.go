@@ -411,11 +411,22 @@ func coverageMutants(runs []execute.MutantRun, st *state) []coverage.Mutant {
 		if shown.Line < 1 || shown.Path == "" {
 			continue
 		}
+		// The module comes off the catalogue rather than off the display
+		// index, because it is the coordinate the *profile* is spelled under
+		// and not one a console line shows. In a workspace two modules can each
+		// hold an `app.go`, and a mapping that knew only the path would take
+		// one module's coverage for the other's.
+		// The module comes off the catalogue rather than off the display index,
+		// because it is the coordinate the *profile* is spelled under and not
+		// one a console line shows. In a workspace two modules can each hold an
+		// `app.go`, and a mapping that knew only the path would take one
+		// module's coverage for the other's.
 		mutants = append(mutants, coverage.Mutant{
-			ID:        run.ID,
-			Path:      shown.Path,
-			StartLine: shown.Line,
-			EndLine:   coverage.EndLine(shown.Line, shown.Original),
+			ID:         run.ID,
+			Path:       shown.Path,
+			ModulePath: st.moduleOf(run.ID),
+			StartLine:  shown.Line,
+			EndLine:    coverage.EndLine(shown.Line, shown.Original),
 		})
 	}
 	return mutants

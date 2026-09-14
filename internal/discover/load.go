@@ -62,7 +62,14 @@ type loadResult struct {
 }
 
 // load runs the package loader over the whole snapshot.
-func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv []string, workFile string, patterns []string) (*loadResult, error) {
+func load(
+	ctx context.Context,
+	root string,
+	toolchain gocmd.Toolchain,
+	baseEnv []string,
+	workspace bool,
+	patterns []string,
+) (*loadResult, error) {
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
@@ -71,7 +78,7 @@ func load(ctx context.Context, root string, toolchain gocmd.Toolchain, baseEnv [
 		Context: ctx,
 		Mode:    loadMode,
 		Dir:     root,
-		Env:     environmentFrom(baseEnv, toolchain, workFile),
+		Env:     environmentFrom(baseEnv, toolchain, workspace),
 		Fset:    fset,
 		// Test files are loaded and type-checked but never mutated. They are
 		// here because a tree whose tests do not compile is not a tree that can
@@ -126,13 +133,14 @@ func toolchainHint(toolchain gocmd.Toolchain) string {
 // is the whole truth. Pinning it also means one snapshot discovers the same way
 // whatever environment the run was started from.
 //
-// A workspace run inverts one half of that and no more. [Options.WorkFile]
-// names a workspace file *inside the snapshot*, and GOWORK is set to it rather
-// than off, because a module of a workspace resolves its siblings through that
-// file and does not load without it. The file is still one the snapshot
-// contains, so the sentence above holds word for word; what stops being true is
-// only "there is no such file". Every workspace file outside the snapshot stays
-// ignored, the parent directories' and the caller's $GOWORK alike.
+// A workspace run inverts one half of that and no more. [Options.Workspace]
+// *removes* GOWORK instead of pinning it, because a module of a workspace
+// resolves its siblings through the workspace file and does not load without
+// it; the go command then finds that file by walking up from the directory it
+// is running in, which is inside the snapshot, so the file it finds is the
+// snapshot's own. The sentence above holds word for word; what stops being true
+// is only "there is no such file". The caller's own $GOWORK is still removed
+// either way, so it decides nothing.
 //
 // Prepending the toolchain directory matters even though it does not decide
 // which `go` binary runs — os/exec resolved that from this process's PATH
@@ -140,20 +148,19 @@ func toolchainHint(toolchain gocmd.Toolchain) string {
 // binary sees: a `go` that finds a different `go` ahead of it on PATH can hand
 // work to it, and the toolchain line in a go.mod is resolved the same way.
 func environment(toolchain gocmd.Toolchain) []string {
-	return environmentFrom(nil, toolchain, "")
+	return environmentFrom(nil, toolchain, false)
 }
 
-func environmentFrom(base []string, toolchain gocmd.Toolchain, workFile string) []string {
+func environmentFrom(base []string, toolchain gocmd.Toolchain, workspace bool) []string {
 	if base == nil {
 		base = os.Environ()
 	} else {
 		base = slices.Clone(base)
 	}
-	gowork := "off"
-	if workFile != "" {
-		gowork = workFile
+	env := setEnv(base, "GOWORK", "off")
+	if workspace {
+		env = unsetEnv(base, "GOWORK")
 	}
-	env := setEnv(base, "GOWORK", gowork)
 	if toolchain.GoBin == "" {
 		return env
 	}
@@ -197,6 +204,20 @@ func setEnv(env []string, name, value string) []string {
 	}
 	if !set {
 		out = append(out, entry)
+	}
+	return out
+}
+
+// unsetEnv removes every entry naming a variable, which is not the same as
+// setting it to the empty string: an empty value is a value, and the go command
+// reads an empty GOWORK as "no workspace" rather than as "decide for yourself".
+func unsetEnv(env []string, name string) []string {
+	out := make([]string, 0, len(env))
+	for _, existing := range env {
+		if key, _, ok := strings.Cut(existing, "="); ok && sameEnvKey(key, name) {
+			continue
+		}
+		out = append(out, existing)
 	}
 	return out
 }

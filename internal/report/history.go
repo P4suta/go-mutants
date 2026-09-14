@@ -190,11 +190,20 @@ func (h History) Write(r *Report) (runPath, latestPath string, err error) {
 	if err != nil {
 		return "", "", err
 	}
+	return h.store(r.Workspace.WorkspaceDigest, r.RunID, data)
+}
 
+// store files one run's bytes under a workspace digest, as both the per-run
+// document and the latest pointer.
+//
+// It is the half of [History.Write] that does not care which document type it
+// is writing, which is what lets a workspace run be filed the same way without
+// a second copy of the crash contract.
+func (h History) store(workspaceDigest, runID string, data []byte) (runPath, latestPath string, err error) {
 	// Claimed before anything below it is created: a directory that turns out
 	// to belong to something else must be left exactly as it was found, and a
 	// stray empty `runs/` in somebody's cache is still a change to it.
-	dir, err := h.Claim(r.Workspace.WorkspaceDigest)
+	dir, err := h.Claim(workspaceDigest)
 	if err != nil {
 		return "", "", err
 	}
@@ -207,7 +216,7 @@ func (h History) Write(r *Report) (runPath, latestPath string, err error) {
 		}
 	}
 
-	runPath = filepath.Join(runs, r.RunID+".json")
+	runPath = filepath.Join(runs, runID+".json")
 	if writeErr := writeAtomic(runPath, data); writeErr != nil {
 		return "", "", writeErr
 	}
@@ -219,6 +228,42 @@ func (h History) Write(r *Report) (runPath, latestPath string, err error) {
 		return runPath, "", writeErr
 	}
 	return runPath, latestPath, nil
+}
+
+// WriteWorkspace stores one workspace run.
+//
+// It is [History.Write] over the other document type, and deliberately the same
+// two files under the same names: a history store names a run's document by its
+// run id, and what a reader of `latest.json` wants is the newest run whatever
+// kind it was. Which kind it is, is in the document -- `document_type` is the
+// discriminator every consumer of these files checks before decoding, and a
+// workspace run's is `go-mutants/workspace-report`.
+//
+// The order and the atomicity are [History.Write]'s, for its reasons.
+func (h History) WriteWorkspace(w *WorkspaceReport) (runPath, latestPath string, err error) {
+	if w == nil {
+		return "", "", &Error{
+			Code:    CodeNoReport,
+			Message: "there is no workspace report to write",
+		}
+	}
+	if !runIDPattern.MatchString(w.RunID) {
+		return "", "", &Error{
+			Code:    CodeInvalidRunID,
+			Message: "the report's run id " + quote(w.RunID) + " cannot be used as a file name",
+		}
+	}
+	if !digestPattern.MatchString(w.Workspace.WorkspaceDigest) {
+		return "", "", &Error{
+			Code:    CodeInvalidWorkspaceDigest,
+			Message: "the report's workspace digest " + quote(w.Workspace.WorkspaceDigest) + " cannot name a history directory",
+		}
+	}
+	data, err := w.Marshal()
+	if err != nil {
+		return "", "", err
+	}
+	return h.store(w.Workspace.WorkspaceDigest, w.RunID, data)
 }
 
 // WriteFile writes a report to a path of the caller's choosing, atomically.
@@ -239,6 +284,17 @@ func WriteFile(path string, r *Report) error {
 	if err != nil {
 		return err
 	}
+	return WriteBytes(path, data)
+}
+
+// WriteBytes writes an already-encoded document to a path of the caller's
+// choosing, atomically.
+//
+// It is [WriteFile] for a caller that has the bytes rather than the value --
+// `report merge`, which encodes once and validates what it encoded before
+// writing it, so that what is checked and what lands are the same bytes rather
+// than two encodings of one document.
+func WriteBytes(path string, data []byte) error {
 	return writeAtomic(path, data)
 }
 

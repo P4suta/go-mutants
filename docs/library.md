@@ -1004,6 +1004,23 @@ packages a consumer cannot import. `DiagnosticCode` reaches through every
 wrapper to the innermost error that carries one, so a report can quote a code
 instead of four characters lifted out of a sentence.
 
+## One module, and what a workspace does instead
+
+`Open` and `Prepare` measure **one module**. Pointed at a `go.work` root they
+refuse with `GOM4102`, naming the workspace file and saying which of its modules
+to point at instead — because everything this API hands back assumes one module:
+a mutant's path is relative to it, its identity is minted under it, and
+`Catalog.Digest` covers one tree's worth of them.
+
+`go-mutants run` and `go-mutants list` do measure a workspace, as one run over
+one catalogue that spans its modules; see
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) for what that
+costs and why. The identities it mints are *not* the identities of the same
+module opened on its own — they carry the module path as a tenth field, under a
+domain of its own — so a consumer of this API and a `run` over the workspace the
+module belongs to are talking about different mutants, deliberately and
+visibly rather than by accident.
+
 ## Guarantees
 
 ### A private temporary directory per call

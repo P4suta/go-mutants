@@ -174,7 +174,7 @@ func TestNotableIsWorstFirstAndTotallyOrdered(t *testing.T) {
 	}
 
 	got := make([]string, 0, len(rows))
-	for _, m := range notable(st, rep) {
+	for _, m := range notable(st, rep.Mutants) {
 		got = append(got, fmt.Sprintf("%s %s", m.Outcome, m.ID))
 	}
 	want := []string{

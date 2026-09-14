@@ -5,25 +5,26 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON contracts
 
-**Status: six schemas shipped, plus one vendored.**
+**Status: seven schemas shipped, plus one vendored.**
 `schema/catalog-v1.schema.json`, `schema/run-report-v1.schema.json`,
-`schema/doctor-v1.schema.json`, `schema/trace-v1.schema.json`,
-`schema/diagnostics-v1.schema.json` and `schema/explain-v1.schema.json` exist,
+`schema/workspace-report-v1.schema.json`, `schema/doctor-v1.schema.json`,
+`schema/trace-v1.schema.json`, `schema/diagnostics-v1.schema.json` and
+`schema/explain-v1.schema.json` exist,
 are embedded in `internal/schemas`,
 and every document the CLI writes is validated against them in the tests. The
 Stryker projection is validated too, against the vendored third-party schema in
 `schema/stryker/` — which is deliberately kept out of that registry, for the
 reasons given below.
 
-go-mutants publishes six native document types and one lossy projection for
-the Stryker report ecosystem. The five that are whole documents are
+go-mutants publishes seven native document types and one lossy projection for
+the Stryker report ecosystem. The six that are whole documents are
 discriminated by two fields that a consumer must check before decoding:
 
 ```json
 { "document_type": "go-mutants/run-report", "schema_version": 1 }
 ```
 
-The fifth, `go-mutants/trace-event`, is not: a trace is a stream of lines
+The seventh, `go-mutants/trace-event`, is not: a trace is a stream of lines
 rather than a document, and it states its format once on its first line. See
 [below](#go-mutantstrace-event-v1).
 
@@ -507,6 +508,40 @@ projects' records quietly interleaving. It is also what makes `cache gc` and
 `cache clean` safe to delete anything at all in a directory the whole machine
 shares.
 
+## `go-mutants/workspace-report` v1
+
+`schema/workspace-report-v1.schema.json` — what a run over a `go.work`
+publishes instead of a run report.
+
+A workspace is measured as **one run** over one catalogue that spans its
+modules, so that a mutant is executed against every test that covers it
+whichever module compiled that test, and **reported one module at a time**:
+`workspace.module_path` is required of a run report, and a workspace has no
+single answer for it. See
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) for why those two
+sentences belong together.
+
+The module documents are **embedded** rather than filed beside this one, and
+that is what keeps one run to one file: a history store names a run's document
+by its run id, and N documents sharing a run id would name one file. Each
+`modules[].report` is a complete, schema-valid run report, so anything that
+reads a run report reads one of these:
+
+```console
+jq '.modules[] | select(.module_path == "example.com/ws/app") | .report'
+```
+
+| Field | What it holds |
+| --- | --- |
+| `workspace` | What every module's report says about the tree, said once: the digest, the platform, the snapshot and the `go` directive. It carries no module path, which is the whole reason this type exists |
+| `summary` | The run's counts added up across the modules, and the policy verdict that decided the exit code. A module's own summary is in its own report, and the two answer different questions: whether this project passed, and which part of it did not |
+| `expectations` | The ledger rows that name no mutant of any module. A row naming another module's mutant is reported in that module's document, where it can be evaluated against the mutants it is about; a row naming nothing is nobody's, and this is the one place it can be called stale |
+| `modules[]` | The workspace's modules in `use` order — `dir`, `module_path`, and the module's own `report` |
+
+A module with no mutants is still one of them. Leaving it out would make "which
+modules does this workspace hold" a question answered by the catalogue, which is
+a different question.
+
 ## `go-mutants/catalog` v1
 
 Produced only by `list --json`, and validated against
@@ -516,9 +551,9 @@ Produced only by `list --json`, and validated against
 | --- | --- |
 | `document_type`, `schema_version` | `go-mutants/catalog`, `1` |
 | `tool_version` | The build that wrote the document |
-| `workspace` | Same shape as the run report's |
+| `workspace` | The run report's shape, with one difference: exactly one of `module_path` and `modules` is present |
 | `selection` | `profile`, `operators`, `include`, `exclude` |
-| `mutants[]` | Identity and coordinates only — no outcome — plus the optional [`branch`](#branch) |
+| `mutants[]` | Identity and coordinates only — no outcome — plus the optional [`branch`](#branch) and, in a workspace, `module_path` |
 | `skips[]` | The same `path`/`reason`/`count` shape |
 
 A catalog is not a run report: it has no outcomes, no summary, no test output,
@@ -527,6 +562,14 @@ entries stop at `replacement` — plus the optional [`branch`](#branch), which i
 a fact about the source and not about a run — and it records the profile
 separately from the selection patterns so that two catalogs from the same tree
 can be compared byte-for-byte as a determinism gate.
+
+A listing of a `go.work` says so where a run report would say which module it
+was about: `workspace.modules` is the modules in `use` order and
+`workspace.module_path` is absent, and every mutant carries the `module_path`
+its own `path` is relative to. Two modules of one workspace can each hold an
+`app.go`, and the path alone would not say which — the same reason the identity
+carries the module. See
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md).
 
 Two optional properties carry what discovery could prove about a mutant before
 anything ran. `branch` is the body a narrowing edit's condition gates; see

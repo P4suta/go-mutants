@@ -6,6 +6,8 @@ package execute_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/execute"
@@ -20,12 +22,22 @@ import (
 // type-checked: the go command searches every parent directory for a `go.work`
 // and obeys $GOWORK, so a snapshot placed one level below somebody's workspace
 // would otherwise resolve against a file the snapshot does not contain. A
-// workspace run names a workspace file that *is* in the snapshot, because a
-// module of a workspace resolves its siblings through it and a `go list` that
-// ignored it would enumerate packages that do not build.
+// workspace run *removes* it, so the go command finds the workspace file of the
+// tree it is running in by walking up from its own working directory -- because
+// a module of a workspace resolves its siblings through that file and a `go
+// list` that ignored it would enumerate packages that do not build.
 //
-// Every other workspace file stays ignored either way, which is the half that
-// does not change: nothing here ever consults the caller's own $GOWORK.
+// Removed rather than named, and the difference is not cosmetic. A named path
+// has a spelling and a working directory has another: a temporary directory
+// reached through a symlink -- which is every one of them on macOS -- gives the
+// go command a resolved cwd and an unresolved GOWORK, and it compares the two
+// as text. "directory prefix app does not contain modules listed in go.work",
+// about a module that is right there, is what that looks like.
+//
+// Removed rather than emptied, too: an empty value is a value, and the go
+// command reads an empty GOWORK as "no workspace" rather than as "decide for
+// yourself". The caller's own $GOWORK is gone either way, which is the half of
+// the rule that does not change.
 func TestAWorkspaceRunObeysTheWorkspaceFileTheSnapshotCarries(t *testing.T) {
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if isList(c) {
@@ -36,8 +48,7 @@ func TestAWorkspaceRunObeysTheWorkspaceFileTheSnapshotCarries(t *testing.T) {
 		return runner.Result{}
 	}}
 	opts, _ := buildOptions(t, f, 1)
-	workFile := filepath.Join(opts.SnapshotRoot, "go.work")
-	opts.WorkFile = workFile
+	opts.Workspace = true
 	t.Setenv("GOWORK", filepath.Join("somebody", "elses", "go.work"))
 
 	if _, err := execute.BuildTestBinaries(t.Context(), opts); err != nil {
@@ -48,8 +59,13 @@ func TestAWorkspaceRunObeysTheWorkspaceFileTheSnapshotCarries(t *testing.T) {
 		t.Fatalf("issued %d commands, want a listing and one compile", len(seen))
 	}
 	for _, c := range seen {
-		if got := envValue(c.Env, "GOWORK"); got != workFile {
-			t.Errorf("%v ran with GOWORK %q, want the snapshot's own %q", c.Argv[1], got, workFile)
+		if got := envValue(c.Env, "GOWORK"); got != "" {
+			t.Errorf("%v ran with GOWORK %q, want none at all", c.Argv[1], got)
+		}
+		if slices.ContainsFunc(c.Env, func(entry string) bool {
+			return strings.HasPrefix(entry, "GOWORK=")
+		}) {
+			t.Errorf("%v ran with a GOWORK entry; an empty value is a value", c.Argv[1])
 		}
 	}
 }

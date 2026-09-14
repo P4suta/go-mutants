@@ -243,7 +243,8 @@ func TestADamagedDocumentIsARowSayingWhatIsWrongWithIt(t *testing.T) {
 		},
 		"another tool's document": {
 			content: `{"document_type":"go-mutants/catalog","schema_version":1}`,
-			says:    `it is "go-mutants/catalog", not a go-mutants/run-report document`,
+			says: `it is "go-mutants/catalog", not a go-mutants/run-report or a ` +
+				`go-mutants/workspace-report document`,
 		},
 		"a version this build does not read": {
 			content: `{"document_type":"go-mutants/run-report","schema_version":7}`,

@@ -1370,10 +1370,10 @@ ledger: every fixture, what it is for, and the tests that drive it.
 
 Most fixtures are about the operators or about one phase. Five are about the
 edges of a workspace, and are what the instrumentation and the run have to get
-right around an ordinary module: `workspace/` is a `go.work` over two modules —
-measured one module at a time when pointed inside it, refused by `run` and by
-`list` at its root before anything is copied, so that the `go.work` the refusal
-names is the user's own rather than a snapshot's; `tagged/` puts one of its two
+right around an ordinary module: `workspace/` is a `go.work` over three modules
+— measured one module at a time when pointed inside it, and as one run over all
+three when pointed at its root, where the third module's tests are the only
+thing that kills the second's mutants; `tagged/` puts one of its two
 candidates behind `//go:build special`, so `GOFLAGS` changes both the catalogue
 and the outcome cache's context; `untested/` is a package with tests beside one
 without; `selfwriting/`'s suite writes into the package directory it runs in,
@@ -1392,6 +1392,42 @@ nothing under `fixtures/` that is a report, a `.go-mutants*` state file or a
 compiled binary. Every CI job that runs a suite then ends with
 `git status --porcelain --ignored -- fixtures`, because the corpus is an input
 and a suite that wrote where it reads cannot be trusted to have noticed.
+
+## A workspace is one run over many modules
+
+A `go.work` at the root is measured as **one run** over one catalogue that spans
+its modules, because a module's tests routinely cover a sibling module's code —
+that is what a workspace is for — and three separate runs would report a mutant
+as surviving that the suite catches.
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) is the argument;
+what the pipeline does differently is six things:
+
+1. **Discovery runs per module**, each rooted at its own directory, and stamps
+   every candidate with its module path. That path is a tenth identity field,
+   hashed under a domain of its own, because two modules can each hold an
+   `app.go` and a module-relative path is all a candidate has.
+2. **The catalogue spans the modules**, keyed on the module in all four places a
+   path was a coordinate on its own: the source-digest and original-text
+   conflicts, the canonical order, and the deduplication key. A module's mutants
+   are contiguous in it, and so are their dense indices.
+3. **Instrumentation runs per module, and every runtime carries the whole
+   catalogue.** A module's files can only import a runtime its own module
+   declares, so each gets a pass and a package of its own — and each of those
+   packages is generated from the whole catalogue, because a mutant of one
+   module is activated while another module's tests are running.
+4. **GOWORK is removed rather than pinned to `off`**, so the go command finds
+   the workspace file of the tree it is running in by walking up from its own
+   working directory. That is the snapshot's own, or a worker's copy of it under
+   `--isolate`; a named path could not promise it, because a path has a spelling
+   and a working directory has another.
+5. **`./...` is expanded** into one `./<dir>/...` per module. The go command
+   does not accept `./...` at a workspace root — the root is not itself a module
+   — and every module's own `./...` is what the user meant by it.
+6. **The document is a workspace report.** `workspace.module_path` is required
+   of a run report and a workspace has no single answer for it, so the run
+   publishes `go-mutants/workspace-report` with each module's own run report
+   embedded. The modules' documents are embedded rather than filed beside it
+   because a history store names a run's document by its run id.
 
 ## Documented v1 limitations
 

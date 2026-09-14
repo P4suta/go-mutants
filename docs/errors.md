@@ -165,7 +165,7 @@ Loading the packages, walking the types, and building the catalogue.
 | Code | Meaning | Remedy |
 | --- | --- | --- |
 | `GOM4101` | A snapshot root that is empty, cannot be resolved, or is not a directory. | pass a snapshot root that exists and is a directory |
-| `GOM4102` | A `go.work` at the snapshot root this run cannot proceed on: any workspace, and separately one that does not parse, uses no module, names a directory that is not a module, joins two modules spelling one module path, or reaches outside the snapshot. | point the run at one module of the workspace rather than at its root; for the others, the message names the line |
+| `GOM4102` | A `go.work` this run cannot proceed on: one that does not parse, uses no module, names a directory that is not a module, joins two modules spelling one module path, or reaches outside the snapshot — or any workspace at all, when a single-module entry point was pointed at it. | the message names the line, or the module to point at |
 | `GOM4103` | An include or exclude pattern that does not compile. | see `docs/configuration.md` for the `**` semantics this build accepts |
 | `GOM4110` | That the package loader itself could not run: no `go` command reachable, a driver that failed, a cancelled context. | `go-mutants doctor` says whether this machine has a toolchain go-mutants can reach |
 | `GOM4111` | Packages that failed to load or type-check. | `go build ./...` in your own tree and fix what it reports |

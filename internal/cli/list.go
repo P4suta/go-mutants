@@ -205,7 +205,7 @@ func (o *listOptions) execute(cmd *cobra.Command, args []string) error {
 	// The sites travel beside the document rather than in it: the catalogue is
 	// a published schema carrying the aggregate, and `--explain` is the human
 	// half, which is the half with room for a row per suppressed site.
-	return o.writeListing(out, doc, found.result.SkipSites)
+	return o.writeListing(out, doc, found.skipSites())
 }
 
 // listOverlay turns the flags the user actually typed into a configuration
@@ -274,8 +274,16 @@ func isLowerHex(s string) bool {
 // A discovered is one discovery pass: what was found, and what it was found
 // against.
 type discovered struct {
-	// result is discovery's own output, candidates and skips alike.
-	result discover.Result
+	// modules are the modules listed, in order. A tree of one module is one
+	// entry rooted at ".", so nothing below has to ask which kind it is.
+	modules []discover.WorkspaceModule
+	// results are their discoveries, in the same order: candidates and skips
+	// alike.
+	results []discover.Result
+	// workspace is whether the tree is a `go.work`, which is not the same as
+	// holding more than one module: a workspace may `use` exactly one, and its
+	// mutants still carry a module path.
+	workspace bool
 	// catalog is the identified, deduplicated set built from result.
 	catalog *mutation.Catalog
 	// toolchain is the Go toolchain the loader ran with.
@@ -293,20 +301,22 @@ type discovered struct {
 // hold a path into a directory that is about to disappear. Everything the
 // listing needs is read out before the cleanup runs.
 func discoverCatalog(ctx context.Context, root string, cfg config.Config, stderr io.Writer) (discovered, error) {
-	// A workspace is refused before the copy, for the reason
-	// [discover.CheckWorkspace] gives and with one addition that belongs to this
-	// command. Discovery would refuse the tree a moment later with the same code
-	// and the same sentence, but by then the path in the message is the
-	// *snapshot's* — a `go-mutants-snap-…` directory in the temporary area that
-	// the deferred cleanup below has removed by the time anybody reads about it,
-	// so the one actionable thing the message carries names nothing. Asked here,
-	// it names the `go.work` in the user's own tree.
-	if workspaceErr := discover.CheckWorkspace(root); workspaceErr != nil {
-		return discovered{}, workspaceErr
-	}
-	rules, err := selectRules(cfg)
+	// Whether this tree is a workspace is settled before the copy, for the
+	// reason [discover.DetectWorkspace] gives and with one addition that
+	// belongs to this command. A workspace that cannot be measured is refused
+	// either way, but discovery would refuse it a moment later with the path in
+	// the message being the *snapshot's* — a `go-mutants-snap-…` directory in
+	// the temporary area that the deferred cleanup below has removed by the
+	// time anybody reads about it, so the one actionable thing the message
+	// carries would name nothing. Asked here, it names the `go.work` in the
+	// user's own tree.
+	workspace, err := discover.DetectWorkspace(root)
 	if err != nil {
 		return discovered{}, err
+	}
+	rules, selectErr := selectRules(cfg)
+	if selectErr != nil {
+		return discovered{}, selectErr
 	}
 	warnUnimplemented(stderr, cfg, rules)
 	include, err := discover.CompilePatterns(cfg.Mutation.Include)
@@ -351,26 +361,42 @@ func discoverCatalog(ctx context.Context, root string, cfg config.Config, stderr
 		}
 	}()
 
-	result, err := discover.Discover(ctx, discover.Options{
+	opts := discover.Options{
 		SnapshotRoot: snap.Root,
 		Toolchain:    toolchain,
 		Rules:        rules,
 		Include:      include,
 		Exclude:      exclude,
-	})
-	if err != nil {
-		return discovered{}, err
+		Workspace:    workspace != nil,
 	}
-	catalog, err := discover.BuildCatalog(result)
-	if err != nil {
-		return discovered{}, err
-	}
-	return discovered{
-		result:          result,
-		catalog:         catalog,
+	found := discovered{
+		workspace:       workspace != nil,
 		toolchain:       toolchain,
 		workspaceDigest: snap.WorkspaceDigest,
-	}, nil
+	}
+	if workspace == nil {
+		result, discoverErr := discover.Discover(ctx, opts)
+		if discoverErr != nil {
+			return discovered{}, discoverErr
+		}
+		found.modules = []discover.WorkspaceModule{{Dir: ".", Path: result.ModulePath}}
+		found.results = []discover.Result{result}
+	} else {
+		modules, discoverErr := discover.DiscoverWorkspace(ctx, opts)
+		if discoverErr != nil {
+			return discovered{}, discoverErr
+		}
+		for _, module := range modules {
+			found.modules = append(found.modules, module.Module)
+			found.results = append(found.results, module.Result)
+		}
+	}
+	catalog, catalogErr := discover.BuildCatalogOf(found.results)
+	if catalogErr != nil {
+		return discovered{}, catalogErr
+	}
+	found.catalog = catalog
+	return found, nil
 }
 
 // selectRules resolves the configured selection into the rules discovery runs.
@@ -509,11 +535,24 @@ type catalogDocument struct {
 }
 
 // catalogWorkspace names the tree the ids were minted from.
+//
+// One of ModulePath and Modules is set and never both. A tree of one module has
+// a module path; a `go.work` has a list of them and no single answer, which is
+// the same reason a workspace run publishes a workspace report rather than a
+// run report. See ADR 0012.
 type catalogWorkspace struct {
-	ModulePath      string          `json:"module_path"`
+	ModulePath      string          `json:"module_path,omitempty"`
+	Modules         []catalogModule `json:"modules,omitempty"`
 	GoVersion       string          `json:"go_version"`
 	WorkspaceDigest string          `json:"workspace_digest"`
 	Platform        catalogPlatform `json:"platform"`
+}
+
+// A catalogModule is one module of a workspace: where it is, and what it is
+// called.
+type catalogModule struct {
+	Dir        string `json:"dir"`
+	ModulePath string `json:"module_path"`
 }
 
 // catalogPlatform is the host this listing was produced on. It is the running
@@ -534,9 +573,14 @@ type catalogSelection struct {
 
 // A catalogMutant is one listed mutant.
 type catalogMutant struct {
-	ID          string `json:"id"`
-	DisplayID   string `json:"display_id"`
-	Path        string `json:"path"`
+	ID        string `json:"id"`
+	DisplayID string `json:"display_id"`
+	Path      string `json:"path"`
+	// ModulePath is the module Path is relative to, and is absent outside a
+	// workspace, where the one in the workspace block is the answer for every
+	// mutant. Two modules of one workspace can each hold an `app.go`, and the
+	// path alone would not say which.
+	ModulePath  string `json:"module_path,omitempty"`
 	Package     string `json:"package"`
 	Family      string `json:"family"`
 	Rule        string `json:"rule"`
@@ -617,17 +661,27 @@ type catalogSkip struct {
 // is what lets a catalogued mutant be joined back to the coordinates discovery
 // found it at.
 type locationKey struct {
-	path string
-	span mutation.Span
-	rule string
+	// module is the module the path is relative to, and is empty outside a
+	// workspace. Two modules of one workspace can each hold an `app.go`, and a
+	// key without it would join one module's mutant to the other's coordinates.
+	module string
+	path   string
+	span   mutation.Span
+	rule   string
 }
 
 // document builds the catalog-v1 document, keeping only the mutants whose id
 // starts with prefix. An empty prefix keeps everything.
 func (d discovered) document(cfg config.Config, prefix string) (catalogDocument, error) {
-	located := make(map[locationKey]discover.Located, len(d.result.Candidates))
-	for _, candidate := range d.result.Candidates {
-		key := locationKey{path: candidate.Path, span: candidate.Span, rule: candidate.Rule.Name}
+	candidates := d.candidates()
+	located := make(map[locationKey]discover.Located, len(candidates))
+	for _, candidate := range candidates {
+		key := locationKey{
+			module: candidate.ModulePath,
+			path:   candidate.Path,
+			span:   candidate.Span,
+			rule:   candidate.Rule.Name,
+		}
 		if _, seen := located[key]; !seen {
 			located[key] = candidate
 		}
@@ -640,7 +694,12 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 		if prefix != "" && !strings.HasPrefix(m.ID, prefix) {
 			continue
 		}
-		where, ok := located[locationKey{path: m.Path, span: m.Span, rule: m.Rule.Name}]
+		where, ok := located[locationKey{
+			module: m.ModulePath,
+			path:   m.Path,
+			span:   m.Span,
+			rule:   m.Rule.Name,
+		}]
 		if !ok {
 			// Unreachable: every catalogued mutant is one of the candidates the
 			// same pass produced. Reported rather than papered over with a zero
@@ -655,6 +714,7 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 			ID:          m.ID,
 			DisplayID:   m.DisplayID,
 			Path:        m.Path,
+			ModulePath:  m.ModulePath,
 			Package:     where.Package,
 			Family:      string(m.Rule.Family),
 			Rule:        m.Rule.Name,
@@ -670,8 +730,8 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 		})
 	}
 
-	skips := make([]catalogSkip, 0, len(d.result.Skips))
-	for _, skip := range d.result.Skips {
+	skips := make([]catalogSkip, 0, len(d.skips()))
+	for _, skip := range d.skips() {
 		skips = append(skips, catalogSkip{Path: skip.Path, Reason: string(skip.Reason), Count: skip.Count})
 	}
 
@@ -680,8 +740,9 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 		SchemaVersion: catalogSchemaVersion,
 		ToolVersion:   Version,
 		Workspace: catalogWorkspace{
-			ModulePath:      d.result.ModulePath,
-			GoVersion:       goVersion(d.result.GoVersion, d.toolchain.Version.Release),
+			ModulePath:      d.modulePath(),
+			Modules:         d.catalogModules(),
+			GoVersion:       goVersion(d.goVersion(), d.toolchain.Version.Release),
 			WorkspaceDigest: d.workspaceDigest,
 			Platform:        catalogPlatform{OS: runtime.GOOS, Arch: runtime.GOARCH},
 		},
@@ -791,12 +852,21 @@ func (r *listRenderer) render(doc catalogDocument) {
 	if !r.quiet {
 		r.printf("%s\n", r.paint(styleListHeader, "go-mutants "+doc.ToolVersion+" (list)"))
 	}
+	// Where each module of a workspace sits, so that what a reader sees is a
+	// path they can open. The document's paths stay relative to the module they
+	// belong to -- that is what the identity is keyed on -- and `app.go` on its
+	// own is a sentence about two files when two modules hold one.
+	dirs := make(map[string]string, len(doc.Workspace.Modules))
+	for _, module := range doc.Workspace.Modules {
+		dirs[module.ModulePath] = module.Dir
+	}
 	files := make([]string, 0, len(doc.Mutants))
 	for _, m := range doc.Mutants {
-		if !slices.Contains(files, m.Path) {
-			files = append(files, m.Path)
+		where := engine.WorkspaceLocation(dirs[m.ModulePath], m.Path)
+		if !slices.Contains(files, where) {
+			files = append(files, where)
 		}
-		r.printf("%s\n", r.mutantLine(m))
+		r.printf("%s\n", r.mutantLine(m, where))
 	}
 	r.printf("mutants %d  files %d  skips %d\n", len(doc.Mutants), len(files), skipTotal(doc.Skips))
 	// The skip breakdown survives --quiet, and so do the counts. Quiet drops
@@ -808,10 +878,11 @@ func (r *listRenderer) render(doc catalogDocument) {
 }
 
 // mutantLine renders one mutant as
-// "ID8  path:line:col  family/rule  original -> replacement".
-func (r *listRenderer) mutantLine(m catalogMutant) string {
+// "ID8  path:line:col  family/rule  original -> replacement", where the path is
+// the one a reader can open -- see [engine.WorkspaceLocation].
+func (r *listRenderer) mutantLine(m catalogMutant, where string) string {
 	return shortID(m.DisplayID) + "  " +
-		m.Path + ":" + strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
+		where + ":" + strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
 		r.paint(styleListRule, m.Family+"/"+m.Rule) + "  " +
 		console.FormatText(m.Original) + " -> " + console.FormatText(m.Replacement)
 }
@@ -879,4 +950,72 @@ func skipTotal(skips []catalogSkip) int {
 		total += skip.Count
 	}
 	return total
+}
+
+// candidates is every module's candidates, in module order.
+func (d discovered) candidates() []discover.Located {
+	if len(d.results) == 1 {
+		return d.results[0].Candidates
+	}
+	var all []discover.Located
+	for _, result := range d.results {
+		all = append(all, result.Candidates...)
+	}
+	return all
+}
+
+// skips is every module's skips, in module order.
+func (d discovered) skips() []discover.Skip {
+	if len(d.results) == 1 {
+		return d.results[0].Skips
+	}
+	var all []discover.Skip
+	for _, result := range d.results {
+		all = append(all, result.Skips...)
+	}
+	return all
+}
+
+// skipSites is every module's suppressed sites, in module order.
+func (d discovered) skipSites() []discover.SkipSite {
+	if len(d.results) == 1 {
+		return d.results[0].SkipSites
+	}
+	var all []discover.SkipSite
+	for _, result := range d.results {
+		all = append(all, result.SkipSites...)
+	}
+	return all
+}
+
+// modulePath is the module path of a tree of one module, and empty for a
+// workspace -- which has no single answer, and says so with its module list.
+func (d discovered) modulePath() string {
+	if d.workspace || len(d.modules) != 1 {
+		return ""
+	}
+	return d.modules[0].Path
+}
+
+// catalogModules is a workspace's modules as the document names them, and
+// nothing at all for a tree of one module.
+func (d discovered) catalogModules() []catalogModule {
+	if !d.workspace {
+		return nil
+	}
+	modules := make([]catalogModule, 0, len(d.modules))
+	for _, module := range d.modules {
+		modules = append(modules, catalogModule{Dir: module.Dir, ModulePath: module.Path})
+	}
+	return modules
+}
+
+// goVersion is the `go` directive the tree declares, which for a workspace is
+// the first module's: the workspace builds with one toolchain, and what this
+// feeds is the document's account of which one.
+func (d discovered) goVersion() string {
+	if len(d.results) == 0 {
+		return ""
+	}
+	return d.results[0].GoVersion
 }

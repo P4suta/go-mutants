@@ -36,26 +36,32 @@ type Options struct {
 
 	// Env is the complete base environment used by the package loader. Nil
 	// inherits the current process environment. Discovery still decides GOWORK
-	// -- off, or [Options.WorkFile] -- and prepends the located toolchain's
+	// -- off, or removed -- and prepends the located toolchain's
 	// directory to PATH. The field allows a long-lived public workspace to
 	// freeze all other build inputs at Open time instead of observing later
 	// process-global changes.
 	Env []string
 
-	// WorkFile is the workspace file the loader must obey, and is empty for
-	// every run that is not a workspace run.
+	// Workspace says that the snapshot is a `go.work` and its modules are to be
+	// resolved through it. It is false for every run that is not a workspace
+	// run.
 	//
 	// GOWORK is off by default, and that default is what turns the refusal of
 	// a snapshot-root `go.work` into a guarantee -- see [environment]. A
-	// workspace run inverts exactly one half of it: the workspace file *in the
-	// snapshot* is named here and obeyed, because a module of a workspace
-	// resolves its siblings through it and would not load without it. Every
-	// other workspace file stays ignored, the parent directories' and $GOWORK's
-	// alike, because they are still files the snapshot does not contain.
+	// workspace run inverts exactly one half of it: GOWORK is *removed* rather
+	// than pinned, so the go command finds the workspace file of the tree it is
+	// running in by walking up from its own working directory. That file is the
+	// snapshot's own and cannot be another: the loader runs inside a copy that
+	// carries one, and it is at or above every directory the loader looks in.
 	//
-	// [DiscoverWorkspace] sets it. A caller setting it by hand is naming a file
-	// the loader will read, so it has to be one inside the snapshot.
-	WorkFile string
+	// Removed rather than named, because a named path has a spelling and a
+	// working directory has another. A temporary directory reached through a
+	// symlink -- which is every one of them on macOS -- gives the go command a
+	// resolved cwd and an unresolved GOWORK, and it compares the two as text:
+	// "directory prefix app does not contain modules listed in go.work", about
+	// a module that is right there. Letting it find the file relative to the
+	// directory it is already in is the only spelling that cannot disagree.
+	Workspace bool
 
 	// PathPrefix is what [Options.Include] and [Options.Exclude] are written
 	// against, relative to the module root, and is empty outside a workspace.
@@ -808,7 +814,7 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	loaded, err := load(ctx, root, opts.Toolchain, opts.Env, opts.WorkFile, opts.Packages)
+	loaded, err := load(ctx, root, opts.Toolchain, opts.Env, opts.Workspace, opts.Packages)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1059,10 +1065,28 @@ func compareSkipSites(x, y SkipSite) int {
 // bearing here. Rule selection has already happened — it is [Options.Rules] —
 // which is why this takes no selection argument.
 func BuildCatalog(result Result) (*mutation.Catalog, error) {
+	return BuildCatalogOf([]Result{result})
+}
+
+// BuildCatalogOf builds one catalogue out of several discoveries, which is what
+// a workspace produces: one catalogue spanning its modules, so that a mutant of
+// one is measured against every test that covers it whichever module compiled
+// that test. See ADR 0012.
+//
+// The candidates are added in the order the results are given, and the
+// catalogue's own canonical order is what decides everything downstream, so
+// which module was discovered first changes nothing about the answer.
+func BuildCatalogOf(results []Result) (*mutation.Catalog, error) {
 	builder := mutation.NewBuilder()
-	for _, located := range result.Candidates {
-		if err := builder.Add(located.Candidate); err != nil {
-			return nil, &Error{Code: CodeInvalidCandidate, Message: "cataloguing " + located.Path, Err: err}
+	for _, result := range results {
+		for _, located := range result.Candidates {
+			if err := builder.Add(located.Candidate); err != nil {
+				return nil, &Error{
+					Code:    CodeInvalidCandidate,
+					Message: "cataloguing " + located.Where(),
+					Err:     err,
+				}
+			}
 		}
 	}
 	return builder.Build()

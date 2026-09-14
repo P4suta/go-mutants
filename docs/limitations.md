@@ -86,7 +86,7 @@ question.
 | `GOM4013` | The instrumented snapshot, with no mutant active, no longer passes what the pristine one passed. Instrumentation is supposed to be meaning-preserving, and this is the gate that says so |
 | `GOM4014` | The snapshot stopped matching its manifest in a way instrumentation did not cause — a suite that writes into the package directory it runs in. Every mutant would be measured against a different program from the baseline's |
 | `GOM4022` | A `test.command` whose package patterns describe a scope no mutant can be measured in. A scope that resolves to nothing is a refusal rather than a silent widening |
-| `GOM4102` | A `go.work` at the snapshot root. A workspace has no single module path, no single set of module-relative identities and no single baseline. The file is read before it is refused, so one that is itself malformed says which line is wrong |
+| `GOM4102` | A `go.work` this run cannot proceed on: one that does not parse, uses no module, names a directory that is not a module, joins two modules spelling one module path, or reaches outside the snapshot with a `use` or a filesystem `replace`. A workspace that *can* be measured is measured — see [ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) — and this is what is left |
 | `GOM7711`, `GOM7712` | `--changed` outside a repository, or with no upstream to compare against. A narrowing that silently fell back to everything, or to nothing, would be worse than not running at all |
 | `GOM7812`, `GOM7813` | `report merge` given documents that are not every part of exactly one run |
 
@@ -121,6 +121,33 @@ were — and the expectations ledger, the cache accounting and coverage do not
 survive the trip. `run-report-v1` is the document to diagnose, resume or audit
 from. [Stryker report ecosystem compatibility](stryker-compatibility.md) states
 the whole mapping.
+
+## What a workspace costs
+
+A `go.work` is measured as **one run** over one catalogue that spans its
+modules, so that a mutant is executed against every test that covers it,
+whichever module compiled that test. Three things follow, and all three are
+decisions rather than gaps:
+
+- **A workspace mutant's identity is not a single-module mutant's.** A mutant
+  carries the module it belongs to as a tenth identity field, under a domain of
+  its own, because two modules can each hold an `app.go` and a module-relative
+  path is all a mutant has. So a module measured alone and the same module
+  measured in its workspace mint different ids, and neither the cache, nor a
+  stored report, nor a `[[mutation.expect]]` row crosses between the two. A
+  project that measures both ways keeps two ledgers.
+- **The per-mutant timeout is sized on the whole workspace.** One baseline, one
+  derived budget: a fast module's mutants get a budget a fast module would not
+  have needed. Nothing is reported differently because of it.
+- **The document is a workspace report, not a run report.**
+  `workspace.module_path` is required of a run report and a workspace has no
+  single answer for it, so the run publishes
+  `go-mutants/workspace-report` with every module's run report inside it. A
+  consumer that decodes without checking `document_type` sees a document it
+  does not recognise, which is what the discriminator is for.
+
+[ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) is the argument
+for all three.
 
 ## What is not here
 

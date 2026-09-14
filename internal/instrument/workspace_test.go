@@ -204,7 +204,7 @@ func workspaceCatalogOf(t *testing.T, located ...discover.Located) (*mutation.Ca
 	builder := mutation.NewBuilder()
 	for _, l := range located {
 		if err := builder.Add(l.Candidate); err != nil {
-			t.Fatalf("cataloguing %s: %v", l.Candidate.Where(), err)
+			t.Fatalf("cataloguing %s: %v", l.Where(), err)
 		}
 	}
 	catalog, err := builder.Build()

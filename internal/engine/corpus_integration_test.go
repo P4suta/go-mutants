@@ -48,11 +48,12 @@ import (
 // module's three files and not the workspace file one directory above it, the
 // catalogue holds that module's six mutants, and one test binary is built.
 //
-// The sibling module's fate is what makes the absence checkable rather than
-// merely plausible. All three of `lib`'s mutants survive on purpose — its test
-// exercises the function and asserts nothing about the answer — so a run that
-// reached across the workspace would still be green and would differ from this
-// one in exactly the assertion below: every mutant killed, and six of them.
+// The sibling modules' fate is what makes the absence checkable rather than
+// merely plausible. `lib`'s own test exercises its function and asserts nothing
+// about the answer, so all three of its mutants survive anything but `cross`'s
+// tests — and `cross` is not in this snapshot either. A run that reached across
+// the workspace would still be green and would differ from this one in exactly
+// the assertion below: every mutant killed, and six of them.
 func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 	t.Parallel()
 
@@ -99,49 +100,72 @@ func TestRunInsideAGoWorkspaceSeesOnlyTheModuleItWasPointedAt(t *testing.T) {
 	}
 }
 
-// TestRunAtTheWorkspaceRootIsRefused is the other direction, and the one that
-// used to give the wrong answer.
+// TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce is the other direction,
+// and the claim that a workspace is one run rather than three.
 //
-// A workspace has no single module path, no single set of module-relative
-// identities and no single baseline, so v1 refuses it. Discovery has always
-// said so — GOM4102, with the workspace file named — but discovery runs after
-// the copy, the scope resolution and a full baseline, and the scope resolution
-// got there first with a different story: `go list ./...` in a workspace
-// directory places no package, so the run reported the *user's test command* as
-// matching nothing. That is a true sentence about the wrong subject, and it
-// sends a reader to their `test.command`.
+// The three modules are measured together, under one run id, and the document
+// is a workspace report with each module's own run report inside it — because
+// `workspace.module_path` is required of a run report and a workspace has no
+// single answer for it. See ADR 0012.
 //
-// So the question is asked before anything is copied, and the two halves of
-// this assertion are what that buys: the code is the one a user can search for,
-// and the path in the message is the `go.work` in their own tree rather than
-// one in a temporary directory that no longer exists.
-func TestRunAtTheWorkspaceRootIsRefused(t *testing.T) {
+// `lib` is what makes the point checkable. Its own test exercises [Differs] and
+// asserts nothing about the answer, so its three mutants are killed here or not
+// at all; `cross` is the module whose tests kill them. Three separate runs
+// would report those three as survivors in a module whose tests are green,
+// which is the wrong answer rather than a missing feature — so "every mutant
+// killed" is the whole of what this run has to say.
+func TestRunAtTheWorkspaceRootMeasuresEveryModuleAtOnce(t *testing.T) {
 	t.Parallel()
 
 	workspace := testkit.Copy(t, "workspace")
-	_, _, err := collect(t, t.Context(), optionsAt(t, workspace))
-	if err == nil {
-		t.Fatal("a run at the root of a go.work workspace completed")
+	outcome, _, err := collect(t, t.Context(), optionsAt(t, workspace))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if code := discover.CodeOf(err); code != discover.CodeWorkspace {
-		t.Errorf("code = %q, want %q: %v", code, discover.CodeWorkspace, err)
+	if outcome.Status != StatusOK {
+		t.Fatalf("status = %s, want %s", outcome.Status, StatusOK)
 	}
-	for _, phrase := range []string{
-		"multi-module workspaces are not yet supported",
-		"makes this a workspace",
-		"run go-mutants inside one of its modules instead",
-		filepath.Join(workspace, discover.WorkspaceFile),
-	} {
-		if !strings.Contains(err.Error(), phrase) {
-			t.Errorf("the refusal does not say %q:\n%v", phrase, err)
+	if outcome.Report != nil {
+		t.Errorf("a workspace run published a run report; the module path it would need has no answer")
+	}
+	doc := outcome.WorkspaceReport
+	if doc == nil {
+		t.Fatal("a workspace run published no workspace report")
+	}
+	if doc.DocumentType != report.WorkspaceDocumentType {
+		t.Errorf("document_type = %q, want %q", doc.DocumentType, report.WorkspaceDocumentType)
+	}
+	if doc.Summary.Survived != 0 || doc.Summary.Total != 11 {
+		t.Errorf("summary = %d of %d killed; every mutant of this workspace is killed, and three of "+
+			"them only by another module's tests", doc.Summary.Killed, doc.Summary.Total)
+	}
+
+	// The modules, in `use` order, each with its own report and its own module
+	// path -- and `lib`'s three mutants killed, which is the cross-module claim
+	// stated as a number.
+	want := map[string]int{
+		"fixture.example/workspace/app":   6,
+		"fixture.example/workspace/cross": 2,
+		"fixture.example/workspace/lib":   3,
+	}
+	if len(doc.Modules) != len(want) {
+		t.Fatalf("the document holds %d modules, want the workspace's %d", len(doc.Modules), len(want))
+	}
+	for _, module := range doc.Modules {
+		if module.Report.Workspace.ModulePath != module.ModulePath {
+			t.Errorf("module %s carries a report of %s",
+				module.ModulePath, module.Report.Workspace.ModulePath)
 		}
-	}
-	// Nothing was copied and nothing was published, so the engine left the
-	// workspace exactly as it found it. (internal/cli files a diagnostics
-	// bundle for a failed run, which is its own decision and its own tests'
-	// business; this is the engine, and it wrote nothing at all.)
-	if _, statErr := os.Stat(filepath.Join(workspace, "reports")); statErr == nil {
-		t.Error("the refused run wrote a report directory into the workspace it refused")
+		if got := module.Report.Summary.Killed; got != want[module.ModulePath] {
+			t.Errorf("%s killed %d of its mutants, want %d",
+				module.ModulePath, got, want[module.ModulePath])
+		}
+		for _, m := range module.Report.Mutants {
+			if m.Outcome != report.OutcomeKilled {
+				t.Errorf("mutant %s in %s %s settled as %s",
+					m.DisplayID, module.ModulePath, m.Path, m.Outcome)
+			}
+		}
 	}
 }
 

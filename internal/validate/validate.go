@@ -193,12 +193,33 @@ type Result struct {
 	// Runtimes are the generated runtime packages this pass wrote, one per
 	// module, in [Options.Modules] order. Their RuntimeDir is relative to the
 	// snapshot root, as everything else here is.
+	//
+	// Their FilesInstrumented and GuardsByFile are the state *before* the
+	// search, which is what makes [Result.Instrumented] the field to read for
+	// what is in the tree now: a file whose every candidate was rejected is
+	// named here and absent there. Only the runtime directories are the same
+	// either way, because a runtime is written once and never regenerated.
 	Runtimes []instrument.Result
 
 	// Builds is how many `go build` invocations the phase spent. One means the
 	// whole catalogue compiled on the first try, which is the ordinary case and
 	// the one the schemata design exists to make ordinary.
 	Builds int
+}
+
+// RuntimeDirs is where every generated runtime package sits, relative to the
+// snapshot root, in module order.
+//
+// It is what the drift gate needs and the one thing [Result.Runtimes] carries
+// that is true after the search as well as before it.
+func (r Result) RuntimeDirs() []string {
+	dirs := make([]string, 0, len(r.Runtimes))
+	for _, runtime := range r.Runtimes {
+		if runtime.RuntimeDir != "" {
+			dirs = append(dirs, runtime.RuntimeDir)
+		}
+	}
+	return dirs
 }
 
 // Validate instruments the snapshot with the whole catalogue and establishes,
@@ -751,10 +772,11 @@ type fileRef struct {
 
 // snapshotPath joins a module's directory to a module-relative path, which is
 // where that file sits in the snapshot.
+//
+// No guard on the empty directory or on ".", because path.Join already answers
+// both with the path itself -- and a guard that only ever agreed with the line
+// below it would be a branch no test could tell from its absence.
 func snapshotPath(dir, rel string) string {
-	if dir == "" || dir == "." {
-		return rel
-	}
 	return path.Join(dir, rel)
 }
 

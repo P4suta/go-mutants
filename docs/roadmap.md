@@ -20,17 +20,18 @@ back — `struct-tag` did.
 Every **Done when** is an observation somebody can make, not a feeling. A row
 whose Done when reads "it works well" is a row that cannot be finished.
 
-## The engine
-
-| # | What | Done when |
-| ---: | --- | --- |
-| 1 | Multi-module `go.work`. Refused today with `GOM4102` | `fixtures/workspace` measures both modules from its root, and the mutant identities of a module measured alone and measured in the workspace are told apart deliberately rather than by accident |
-
 ## Documents
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 2 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
+| 1 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
+| 2 | A `run-report` v2 that carries a workspace in one flat document, instead of the workspace report that holds one run report per module | `internal/schemas`' registry is keyed on (type, version) and `Validate` reads `schema_version` out of the instance before choosing a schema — which is the cost the current design avoids, and the reason it was chosen. See [ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) |
+
+## The engine
+
+| # | What | Done when |
+| ---: | --- | --- |
+| 3 | Probing at test granularity rather than binary granularity. A probe pass records, per *binary*, whether it could rule a mutant out; a pass that recorded it per test would narrow a mutant to the tests that could observe it rather than to the binaries | A second soundness argument is written as an ADR and survives review. The current design rejects this on purpose, and the argument to beat is stated in [ADR 0011](adr/0011-an-unobservable-mutant-need-not-be-executed.md): a test profiled on its own is a different execution from the same test inside its set, so "this test could not observe it" is a weaker licence than "this binary could not" |
 
 ## Reserved and unemitted
 

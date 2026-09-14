@@ -51,26 +51,30 @@ func TestNewFileIndexRecordsAFileItNeverReached(t *testing.T) {
 			{File: indexProfiled, StartLine: 3, StartCol: 1, EndLine: 5, EndCol: 1, NumStmt: 1, Count: 0},
 			{File: indexProfiled, StartLine: 8, StartCol: 1, EndLine: 9, EndCol: 1, NumStmt: 1, Count: 0},
 		},
-	}, indexModule, matched)
+	}, []string{indexModule}, matched)
 
-	if !matched[indexFile] {
-		t.Errorf("matched = %v, want the profiled file recorded as %q", matched, indexFile)
+	if !matched[indexProfiled] {
+		t.Errorf("matched = %v, want the profiled file recorded as %q", matched, indexProfiled)
 	}
-	intervals, present := index[indexFile]
+	intervals, present := index[indexProfiled]
 	if !present {
 		t.Fatalf("index = %v, want an entry for the file the profile named", index)
 	}
 	if len(intervals) != 0 {
-		t.Errorf("index[%q] = %v, want no covered interval", indexFile, intervals)
+		t.Errorf("index[%q] = %v, want no covered interval", indexProfiled, intervals)
 	}
-	if index.covers(indexFile, 4, 4) {
-		t.Errorf("covers(%q, 4, 4) = true for a file whose every block has a count of zero", indexFile)
+	if index.covers(indexProfiled, 4, 4) {
+		t.Errorf("covers(%q, 4, 4) = true for a file whose every block has a count of zero", indexProfiled)
 	}
 }
 
 // TestNewFileIndexKeepsACoveredFileApartFromAnUnreachedOne is the other half:
 // a file with one covered block indexes to that block, and a name from outside
-// the module is recorded nowhere at all.
+// the modules is recorded nowhere at all.
+//
+// Both are keyed on the profile's own spelling, which is what lets two modules
+// of a workspace each hold an `app.go`: two files there are two keys here,
+// where stripping a module prefix would have made them one.
 func TestNewFileIndexKeepsACoveredFileApartFromAnUnreachedOne(t *testing.T) {
 	t.Parallel()
 
@@ -81,13 +85,13 @@ func TestNewFileIndexKeepsACoveredFileApartFromAnUnreachedOne(t *testing.T) {
 			{File: indexProfiled, StartLine: 3, StartCol: 1, EndLine: 5, EndCol: 1, NumStmt: 1, Count: 1},
 			{File: "other.example/pkg/a.go", StartLine: 1, StartCol: 1, EndLine: 9, EndCol: 1, NumStmt: 1, Count: 1},
 		},
-	}, indexModule, matched)
+	}, []string{indexModule}, matched)
 
-	if len(matched) != 1 || !matched[indexFile] {
+	if len(matched) != 1 || !matched[indexProfiled] {
 		t.Errorf("matched = %v, want only the file inside the module", matched)
 	}
-	if got, want := index[indexFile], []interval{{start: 3, end: 5}}; !slices.Equal(got, want) {
-		t.Errorf("index[%q] = %v, want %v", indexFile, got, want)
+	if got, want := index[indexProfiled], []interval{{start: 3, end: 5}}; !slices.Equal(got, want) {
+		t.Errorf("index[%q] = %v, want %v", indexProfiled, got, want)
 	}
 }
 
@@ -177,61 +181,44 @@ func TestMergeJoinsWhatCoversAnswersIdenticallyAbout(t *testing.T) {
 	}
 }
 
-// TestRelativeTo pins the one place a profile's spelling is turned into a
-// mutant's.
+// TestProfilePath pins the one place a mutant's spelling is turned into a
+// profile's.
 //
-// The empty module path is the hand-written fixture case, where a profile
-// already spells its files module-relatively — and the empty *file* is not a
-// path in either spelling, so it is refused rather than passed through as one.
-func TestRelativeTo(t *testing.T) {
+// A mutant names its own module in a workspace and does not outside one, where
+// the run's module is the one answer for every mutant. Neither, and the path is
+// taken as it stands, which is the hand-written fixture case: a profile written
+// by hand already spells its files module-relatively.
+func TestProfilePath(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		modulePath string
-		file       string
-		want       string
-		wantOK     bool
+		name      string
+		runModule string
+		mutant    Mutant
+		want      string
 	}{
 		{
-			name:       "a file inside the module",
-			modulePath: indexModule,
-			file:       indexProfiled,
-			want:       indexFile,
-			wantOK:     true,
+			name:      "the run's module",
+			runModule: indexModule,
+			mutant:    Mutant{Path: indexFile},
+			want:      indexProfiled,
 		},
 		{
-			name:       "a file outside the module",
-			modulePath: indexModule,
-			file:       "other.example/pkg/a.go",
-			wantOK:     false,
+			name:      "a mutant of a workspace names its own",
+			runModule: "",
+			mutant:    Mutant{Path: indexFile, ModulePath: indexModule},
+			want:      indexProfiled,
 		},
 		{
-			// The prefix has to be a whole path element: "example.com/mine" is
-			// not inside "example.com/m".
-			name:       "a module whose path is a prefix of another",
-			modulePath: indexModule,
-			file:       "example.com/mine/a.go",
-			wantOK:     false,
+			name:      "a mutant's own module wins over the run's",
+			runModule: "other.example/m",
+			mutant:    Mutant{Path: indexFile, ModulePath: indexModule},
+			want:      indexProfiled,
 		},
 		{
-			name:       "the module path with nothing after it",
-			modulePath: indexModule,
-			file:       indexModule + "/",
-			wantOK:     false,
-		},
-		{
-			name:       "no module path takes the name at face value",
-			modulePath: "",
-			file:       indexFile,
-			want:       indexFile,
-			wantOK:     true,
-		},
-		{
-			name:       "no module path still refuses an unnamed file",
-			modulePath: "",
-			file:       "",
-			wantOK:     false,
+			name:   "neither, and the path stands",
+			mutant: Mutant{Path: indexFile},
+			want:   indexFile,
 		},
 	}
 
@@ -239,12 +226,9 @@ func TestRelativeTo(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, ok := relativeTo(test.modulePath, test.file)
-			if ok != test.wantOK {
-				t.Fatalf("relativeTo(%q, %q) ok = %t, want %t", test.modulePath, test.file, ok, test.wantOK)
-			}
-			if ok && got != test.want {
-				t.Errorf("relativeTo(%q, %q) = %q, want %q", test.modulePath, test.file, got, test.want)
+			if got := profilePath(test.runModule, test.mutant); got != test.want {
+				t.Errorf("profilePath(%q, %+v) = %q, want %q",
+					test.runModule, test.mutant, got, test.want)
 			}
 		})
 	}
@@ -291,6 +275,106 @@ func TestCompareTestKeysOrdersByImportPathThenName(t *testing.T) {
 			}
 			if got := compareTestKeys(test.b, test.a); got != -test.want {
 				t.Errorf("compareTestKeys(%v, %v) = %d, want %d: the order is not antisymmetric", test.b, test.a, got, -test.want)
+			}
+		})
+	}
+}
+
+// TestModulesOfIsEveryModuleTheMutantsAreIn pins the list [Result.Matched] is
+// counted against, which is the one thing standing between a profile that lines
+// up and a run that believes nothing is covered.
+//
+// The list is exact rather than merely sufficient: a module named twice would
+// make the answer depend on how many mutants a module has, and a module the
+// mutants do not name would count a profile file that no mutant is in. Both are
+// invisible from the outside, which is why this asks the function.
+func TestModulesOfIsEveryModuleTheMutantsAreIn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		runModule string
+		mutants   []Mutant
+		want      []string
+	}{
+		{
+			name:      "a run over one module names it once",
+			runModule: indexModule,
+			mutants:   []Mutant{{Path: indexFile}, {Path: "other.go"}},
+			want:      []string{indexModule},
+		},
+		{
+			name: "a workspace names each module once, in the order it meets them",
+			mutants: []Mutant{
+				{Path: indexFile, ModulePath: "example.com/b"},
+				{Path: indexFile, ModulePath: "example.com/a"},
+				{Path: "other.go", ModulePath: "example.com/b"},
+			},
+			want: []string{"example.com/b", "example.com/a"},
+		},
+		{
+			name:      "the run's module and the mutants' together",
+			runModule: indexModule,
+			mutants:   []Mutant{{Path: indexFile, ModulePath: "example.com/a"}},
+			want:      []string{indexModule, "example.com/a"},
+		},
+		{
+			// The hand-written fixture case: a profile already spells its files
+			// module-relatively, so there is no module to be under.
+			name:    "neither",
+			mutants: []Mutant{{Path: indexFile}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := modulesOf(test.runModule, test.mutants); !slices.Equal(got, test.want) {
+				t.Errorf("modulesOf(%q, %+v) = %v, want %v",
+					test.runModule, test.mutants, got, test.want)
+			}
+		})
+	}
+}
+
+// TestUnderModuleIsTheRuleMatchedCounts is the other half of the same answer.
+//
+// A profile names files from outside the modules under test — the standard
+// library, a dependency — and counting those would make [Result.Matched] say a
+// run lined up when nothing of the module's did. No modules at all is the
+// hand-written fixture case, where every file the profile names is one of
+// theirs.
+func TestUnderModuleIsTheRuleMatchedCounts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		file    string
+		modules []string
+		want    bool
+	}{
+		{name: "inside the one module", file: indexProfiled, modules: []string{indexModule}, want: true},
+		{name: "inside the second of two", file: indexProfiled,
+			modules: []string{"other.example/m", indexModule}, want: true},
+		{name: "outside every module", file: "other.example/pkg/a.go",
+			modules: []string{indexModule}},
+		{
+			// A prefix that is not a path boundary: a module named
+			// "example.com/m" does not hold "example.com/mm/a.go".
+			name: "a module whose name is a prefix of another's",
+			file: indexModule + "m/a.go", modules: []string{indexModule},
+		},
+		{name: "no modules at all", file: "anything.go", want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := underModule(test.file, test.modules); got != test.want {
+				t.Errorf("underModule(%q, %v) = %t, want %t",
+					test.file, test.modules, got, test.want)
 			}
 		})
 	}

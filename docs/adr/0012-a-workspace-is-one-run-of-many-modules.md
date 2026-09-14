@@ -9,8 +9,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-14. Implemented by `internal/discover`'s `DetectWorkspace` and
 `DiscoverWorkspace`, by `mutation.Identity.ModulePath` and its second domain, by
-`instrument.Options.Module`, by `validate.Options.Modules`, and by
-`execute.Options.WorkFile`.
+`instrument.Options.Module`, by `validate.Options.Modules`, by
+`execute.Options.Workspace`, and by `report.WorkspaceReport` and the
+`go-mutants/workspace-report` schema it publishes.
 [ADR 0010](0010-narrowing-to-tests-is-sound.md) is the reason the modules cannot
 be measured separately: a mutant's verdict is a statement about every test that
 covers it, and in a workspace those tests need not be in its own module.
@@ -83,15 +84,32 @@ otherwise.
    heard of and exit as if the snapshot were stale, turning every cross-module
    mutant into an infrastructure error.
 
-4. **The one workspace file the snapshot carries is obeyed, and no other.**
+4. **The one workspace file the tree carries is obeyed, and no other.**
    Everything that reaches for a `go` command runs with `GOWORK` pinned, and
    until now it was pinned to `off`: the go command searches every parent
    directory and obeys `$GOWORK`, so a snapshot placed below somebody's
    workspace would resolve against a file the snapshot does not contain. A
-   workspace run pins it to the snapshot's own `go.work` instead. The sentence
-   the pin exists for is unchanged — the snapshot is the whole truth — and what
-   stops being true is only "there is no such file". The caller's own `$GOWORK`
-   still decides nothing.
+   workspace run *removes* it instead, and lets the go command find the
+   workspace file by walking up from the directory it is running in. That is
+   the snapshot's own, or a worker's copy of it under `--isolate`, and in both
+   cases it is the file beside the code being built.
+
+   Removed rather than named, and the difference is not cosmetic. A named path
+   has a spelling and a working directory has another: a temporary directory
+   reached through a symlink — which is every one of them on macOS — gives the
+   go command a resolved working directory and an unresolved `GOWORK`, and it
+   compares the two as text. `directory prefix app does not contain modules
+   listed in go.work`, about a module that is right there, is what that looks
+   like. Removed rather than emptied, too: the go command reads an empty
+   `GOWORK` as "no workspace" rather than as "decide for yourself". The
+   sentence the pin exists for is unchanged — the snapshot is the whole truth,
+   and the caller's own `$GOWORK` still decides nothing — and what stops being
+   true is only "there is no such file".
+
+   `./...` is expanded into one `./<dir>/...` per module for the same kind of
+   reason: the go command does not accept `./...` at a workspace root, because
+   the root is not itself a module, and every module's own `./...` is what the
+   user meant by it.
 
 5. **A workspace file that cannot be measured is refused before anything is
    copied.** `GOM4102` named exactly one condition before this record and names

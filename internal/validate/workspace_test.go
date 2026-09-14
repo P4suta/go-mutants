@@ -188,7 +188,7 @@ func workspaceCatalogAndHints(t *testing.T) (*mutation.Catalog, instrument.Hints
 	builder := mutation.NewBuilder()
 	for _, l := range located {
 		if err := builder.Add(l.Candidate); err != nil {
-			t.Fatalf("cataloguing %s: %v", l.Candidate.Where(), err)
+			t.Fatalf("cataloguing %s: %v", l.Where(), err)
 		}
 	}
 	catalog, err := builder.Build()

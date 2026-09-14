@@ -19,6 +19,7 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/console"
+	"github.com/P4suta/go-mutants/internal/engine"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/trace"
 )
@@ -299,11 +300,74 @@ func parseReport(path string) (*report.Report, error) {
 	if err != nil {
 		return nil, err
 	}
+	documentType, err := report.DocumentTypeOf(data)
+	if err != nil {
+		return nil, notAReport(path, "read", err)
+	}
+	// A workspace run publishes one document holding one run report per module,
+	// and what this command explains is a mutant or a place -- both of which
+	// belong to exactly one of those modules. Merging the modules' reports is
+	// how the rest of the command goes on asking one document a question: their
+	// mutants, rejections and skips are disjoint by construction, because a
+	// mutant belongs to one module and a module's paths are its own.
+	if documentType == report.WorkspaceDocumentType {
+		workspace, parseErr := report.ParseWorkspace(data)
+		if parseErr != nil {
+			return nil, notAReport(path, "read", parseErr)
+		}
+		return flattenWorkspace(workspace), nil
+	}
 	document, err := report.Parse(data)
 	if err != nil {
 		return nil, notAReport(path, "read", err)
 	}
 	return document, nil
+}
+
+// flattenWorkspace is a workspace run as one document to explain.
+//
+// The run's own facts -- its id, its status, its clock, the tree it measured --
+// are the same in every module's report, so the first is taken whole and the
+// rest are folded into it: the mutants, the rejections, the skips and the
+// ledger rows of every module, each of which belongs to one module and cannot
+// collide with another's. What it is *not* is a run report anybody publishes:
+// `workspace.module_path` names the first module and would be a lie about the
+// rest, so this value never leaves the command.
+//
+// The paths are lifted to the workspace root on the way, which is the one thing
+// a reader has to be able to act on: `app.go` names two files in a workspace
+// and `app/app.go` names one.
+func flattenWorkspace(workspace *report.WorkspaceReport) *report.Report {
+	if len(workspace.Modules) == 0 {
+		return &report.Report{
+			DocumentType:  report.DocumentType,
+			SchemaVersion: report.SchemaVersion,
+			RunID:         workspace.RunID,
+			Status:        report.Status(workspace.Status),
+		}
+	}
+	flat := *workspace.Modules[0].Report
+	flat.Mutants = nil
+	flat.Rejected = nil
+	flat.Skips = nil
+	flat.Expectations = append([]report.Expectation(nil), workspace.Expectations...)
+	for _, module := range workspace.Modules {
+		for _, m := range module.Report.Mutants {
+			m.Path = engine.WorkspaceLocation(module.Dir, m.Path)
+			flat.Mutants = append(flat.Mutants, m)
+		}
+		for _, r := range module.Report.Rejected {
+			r.Path = engine.WorkspaceLocation(module.Dir, r.Path)
+			flat.Rejected = append(flat.Rejected, r)
+		}
+		for _, skip := range module.Report.Skips {
+			skip.Path = engine.WorkspaceLocation(module.Dir, skip.Path)
+			flat.Skips = append(flat.Skips, skip)
+		}
+		flat.Expectations = append(flat.Expectations, module.Report.Expectations...)
+	}
+	flat.Summary = workspace.Summary
+	return &flat
 }
 
 // A position is a `path[:line]` target: which file, and which line of it when
@@ -640,7 +704,7 @@ func (o *explainOptions) explainAt(
 	}
 
 	out := cmd.OutOrStdout()
-	document := gatherPosition(r, source, where, found.result.SkipSites, catalogue.Mutants, outcomesOf(r))
+	document := gatherPosition(r, source, where, found.skipSites(), catalogue.Mutants, outcomesOf(r))
 	if o.json {
 		return writeExplainJSON(out, document)
 	}

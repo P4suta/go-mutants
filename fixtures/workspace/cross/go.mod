@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-go 1.26
+module fixture.example/workspace/cross
 
-use (
-	./app
-	./cross
-	./lib
-)
+go 1.26

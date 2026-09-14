@@ -17,14 +17,38 @@
   "$defs": {
     "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "workspace": {
+      "description": "What the ids were minted from. Exactly one of `module_path` and `modules` is present: a tree of one module has a module path, and a `go.work` has a list of them and no single answer -- which is the same reason a workspace run publishes a workspace report rather than a run report. See ADR 0012.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["module_path", "go_version", "workspace_digest", "platform"],
+      "required": ["go_version", "workspace_digest", "platform"],
+      "oneOf": [
+        { "required": ["module_path"], "not": { "required": ["modules"] } },
+        { "required": ["modules"], "not": { "required": ["module_path"] } }
+      ],
       "properties": {
         "module_path": { "type": "string", "minLength": 1 },
+        "modules": {
+          "description": "The workspace's modules in `use` order, for a listing of a `go.work`.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/module" }
+        },
         "go_version": { "type": "string", "minLength": 1 },
         "workspace_digest": { "$ref": "#/$defs/digest" },
         "platform": { "$ref": "#/$defs/platform" }
+      }
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir", "module_path"],
+      "properties": {
+        "dir": {
+          "description": "The module root relative to the workspace root, slash-separated, and \".\" for a workspace that uses its own root.",
+          "type": "string",
+          "minLength": 1
+        },
+        "module_path": { "type": "string", "minLength": 1 }
       }
     },
     "platform": {
@@ -54,6 +78,11 @@
       "properties": {
         "id": { "$ref": "#/$defs/digest" },
         "display_id": { "type": "string", "pattern": "^[0-9a-f]{20}$" },
+        "module_path": {
+          "description": "The module `path` is relative to, present only in a listing of a workspace. Two modules of one workspace can each hold an `app.go`, and the path alone would not say which.",
+          "type": "string",
+          "minLength": 1
+        },
         "path": { "type": "string", "minLength": 1 },
         "package": { "type": "string", "minLength": 1 },
         "family": { "type": "string", "minLength": 1 },

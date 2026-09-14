@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://go-mutants.invalid/schema/workspace-report-v1.schema.json",
+  "title": "go-mutants workspace report v1",
+  "description": "One run over a `go.work`, and every module's run report inside it. A workspace is measured as one run over one catalogue that spans its modules — so that a mutant is executed against every test that covers it, whichever module compiled that test — and reported one module at a time, because `workspace.module_path` is required of a run report and a workspace has no single answer for it. The module documents are embedded rather than filed beside this one because a history store names a run's document by its run id, and N documents sharing a run id would name one file. See ADR 0012.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document_type", "schema_version", "tool_version", "run_id", "status", "started_at", "finished_at", "duration_ms", "workspace", "summary", "expectations", "modules"],
+  "properties": {
+    "document_type": { "const": "go-mutants/workspace-report" },
+    "schema_version": { "const": 1 },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "run_id": {
+      "description": "The run this document and every report inside it belong to. One workspace run is one run id, which is what makes the modules' reports comparable with each other and with nothing else.",
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "description": "completed: the run did everything it set out to do. interrupted: a signal ended it early and this is the partial record. failed: it stopped on an error, and the counts describe only what was established first.",
+      "enum": ["completed", "interrupted", "failed"]
+    },
+    "started_at": { "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/timestamp" },
+    "finished_at": { "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/timestamp" },
+    "duration_ms": { "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/milliseconds" },
+    "workspace": { "$ref": "#/$defs/workspace" },
+    "summary": {
+      "description": "The run's counts, added up across the modules, and the policy verdict that decided the exit code. A module's own summary is in its own report, and the two answer different questions: whether this project passed, and which part of it did not.",
+      "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/summary"
+    },
+    "expectations": {
+      "description": "The ledger rows that name no mutant of any module. A row naming another module's mutant is reported in that module's document, where it can be evaluated against the mutants it is about; a row naming nothing is nobody's, and this is the one place it can be called stale.",
+      "type": "array",
+      "items": { "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/expectation" }
+    },
+    "modules": {
+      "description": "The workspace's modules in `use` order, each with its own run report. A module with no mutants is still one of them: leaving it out would make \"which modules does this workspace hold\" a question answered by the catalogue, which is a different question.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/module" }
+    }
+  },
+  "$defs": {
+    "workspace": {
+      "description": "What every module's report says about the tree, said once. What it does not carry is a module path, which is the whole reason this document type exists.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["go_version", "workspace_digest", "platform"],
+      "properties": {
+        "go_version": { "type": "string", "minLength": 1 },
+        "workspace_digest": { "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/digest" },
+        "platform": { "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/platform" },
+        "snapshot": { "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json#/$defs/snapshot" }
+      }
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dir", "module_path", "report"],
+      "properties": {
+        "dir": {
+          "description": "The module root relative to the workspace root, slash-separated, and \".\" for a workspace that uses its own root.",
+          "type": "string",
+          "minLength": 1
+        },
+        "module_path": {
+          "description": "The module's import path, which is also its report's `workspace.module_path`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "report": {
+          "description": "The module's own run report: complete, and valid on its own, so that anything which reads a run report reads one of these.",
+          "$ref": "https://go-mutants.invalid/schema/run-report-v1.schema.json"
+        }
+      }
+    }
+  }
+}
