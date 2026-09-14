@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/instrument"
@@ -17,17 +16,14 @@ import (
 
 // StepTimeout bounds every child a test starts through this package.
 //
-// Each step is a build or a run of a fixture module of a few dozen lines, so a
-// minute is a very long time — and far shorter than the per-package alarm `go
-// test` fires, which is the point: a step that hangs should fail as a named step
-// with its output quoted, not as a ten-minute panic with every goroutine in the
-// binary dumped after it.
-//
-// It is the same number [testkit.DefaultTimeout] uses, for the same reason, and
-// it is stated separately because the children here go through internal/runner
-// rather than through the harness's own [testkit.Exec]: these are the commands a
-// real run issues, supervised by the package that supervises them in a real run.
-const StepTimeout = 60 * time.Second
+// It *is* [testkit.DefaultTimeout] rather than a second constant equal to it.
+// The two used to be separate numbers with a comment saying they agreed, which
+// is a claim nothing checked; the children here go through internal/runner
+// rather than through the harness's own [testkit.Exec], and that is a
+// difference in who supervises the child, not in how long a hung one may take
+// to be named. See [testkit.DefaultTimeout] for why the number is an alarm and
+// not a budget.
+const StepTimeout = testkit.DefaultTimeout
 
 // Toolchain locates the Go toolchain a test's children will run.
 //

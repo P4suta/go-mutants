@@ -18,12 +18,23 @@ import (
 
 // DefaultTimeout bounds every child a test starts through this package.
 //
-// Sixty seconds is far longer than any single step a test drives — a fixture's
-// whole suite, a `go test -c`, a `git commit` — and far shorter than the
-// per-package alarm `go test` fires, which is the point: a step that hangs
-// should fail as a named step with its output quoted, not as a ten-minute panic
-// with every goroutine in the binary dumped after it.
-const DefaultTimeout = 60 * time.Second
+// It is an alarm and not a budget, and the distinction is the whole reason the
+// number is what it is. What this bound has to do is turn a *hang* into a named
+// step with its output quoted, instead of the ten-minute panic with every
+// goroutine in the binary dumped after it that `go test`'s own alarm produces.
+// What it must never do is decide whether a step was fast enough, because how
+// long a step takes is a fact about the machine — its cores, its load, its
+// filesystem, and on macOS the kernel hashing a freshly written forty-megabyte
+// Mach-O image the first time anything execs it.
+//
+// Sixty seconds was that number for a while and was a budget in disguise: the
+// suite went red under `go test ./...` on a loaded laptop and green on the same
+// commit a minute later, which is a gate measuring the machine. Five minutes is
+// beyond the reach of a slow machine running a step of a few dozen lines, and
+// still well inside the per-task budgets mise sets, so a step that really hangs
+// is still reported as a step. TestTheStepAlarmFiresBeforeEveryTaskBudget holds
+// that second half.
+const DefaultTimeout = 5 * time.Minute
 
 // ExitCodeUnavailable is the status of a child that never ran or was killed.
 //

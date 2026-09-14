@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/internal/testkit"
+	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
 // timeoutSubjects are the tests whose subject is the bound itself, and which
@@ -25,15 +28,33 @@ var timeoutSubjects = map[string]string{
 	"TestFakeGoSleepIsCutOffByTheCallersTimeout": "its subject is the deadline, so the deadline has to be short enough to wait for",
 }
 
+// TestTheStepAlarmIsOneNumber keeps the two names for it from drifting.
+//
+// They were two constants with a comment asserting they were equal, which is
+// the shape a documentation ledger exists to replace: a claim in prose that
+// nothing reads. They are now one constant under two names, and this says so,
+// so that splitting them again is a visible decision rather than an edit to one
+// of them.
+func TestTheStepAlarmIsOneNumber(t *testing.T) {
+	t.Parallel()
+
+	if mutantkit.StepTimeout != testkit.DefaultTimeout {
+		t.Errorf("mutantkit.StepTimeout is %s and testkit.DefaultTimeout is %s, want one number",
+			mutantkit.StepTimeout, testkit.DefaultTimeout)
+	}
+}
+
 // TestEveryChildThisPackageStartsIsBoundedByStepTimeout holds this package to
 // the claim its own documentation makes.
 //
 // [mutantkit.StepTimeout]'s doc comment says it "bounds every child a test
 // starts through this package", and until this test existed nothing checked it.
-// Seven literals in fakego_test.go carried a hand-written thirty seconds instead —
-// half the stated bound, and enough that copying a forty-megabyte Mach-O and
-// exec'ing it, which makes the macOS kernel hash the whole image, timed out on a
-// loaded machine while passing in ten seconds on an idle one.
+// Seven literals in fakego_test.go carried a hand-written thirty seconds instead
+// — well under the stated bound, and enough that copying a forty-megabyte Mach-O
+// and exec'ing it, which makes the macOS kernel hash the whole image, timed out
+// on a loaded machine while passing in ten seconds on an idle one. The stated
+// bound has since stopped being a number of its own: see
+// [testkit.DefaultTimeout] for why it is an alarm rather than a budget.
 //
 // The rule is about the number rather than about the duration: a bound written
 // twice is a bound that can disagree with itself, and which of the two a
