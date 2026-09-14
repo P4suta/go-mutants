@@ -75,7 +75,7 @@ func Tiers() []Tier { return []Tier{TierBalanced, TierStrong, TierAll} }
 // edit.
 type Family string
 
-// The eleven v1 operator families, in canonical table order.
+// The twelve v1 operator families, in canonical table order.
 const (
 	FamilyBooleanLiteral    Family = "boolean-literal"
 	FamilyConditionNegation Family = "condition-negation"
@@ -86,6 +86,7 @@ const (
 	FamilyReturnReplacement Family = "return-replacement"
 	FamilyErrorSwallowing   Family = "error-swallowing"
 	FamilyNeutralValue      Family = "neutral-value"
+	FamilyBranchReplacement Family = "branch-replacement"
 	FamilyBitwise           Family = "bitwise"
 	FamilyArithmeticAssign  Family = "arithmetic-assignment"
 	FamilyStatementDeletion Family = "statement-deletion"
@@ -142,8 +143,8 @@ func (r Rule) Validate() error {
 // internal/mutation/docs_test.go keeps docs/operators.md equal to them in both
 // directions, so neither number can drift without the other.
 const (
-	CanonicalFamilyCount = 12
-	CanonicalRuleCount   = 44
+	CanonicalFamilyCount = 13
+	CanonicalRuleCount   = 47
 )
 
 // familyDef is one row of the canonical operator table.
@@ -217,6 +218,11 @@ var canonicalTable = []familyDef{
 		"return-empty-slice",
 		"return-empty-map",
 	}},
+	{FamilyBranchReplacement, TierStrong, []string{
+		"condition-to-true",
+		"condition-to-false",
+		"loop-condition-to-false",
+	}},
 	{FamilyBitwise, TierStrong, []string{
 		"band-to-bor",
 		"bor-to-band",
@@ -270,8 +276,8 @@ type Registry struct {
 // every accessor returns copies of its slices.
 var canonical = mustRegistry(canonicalTable)
 
-// CanonicalRegistry returns the frozen v1 operator registry: 12 families and
-// 44 rules in the order of the design plan's table.
+// CanonicalRegistry returns the frozen v1 operator registry: 13 families and
+// 47 rules in the order of the design plan's table.
 func CanonicalRegistry() *Registry { return canonical }
 
 // CanonicalRules returns the v1 rules in table order.

@@ -127,12 +127,16 @@ type BranchProof struct {
 // `true-to-false` narrows a literal but is not tied to any condition's shape;
 // `eq-to-neq` and `neq-to-eq` move a condition in neither direction, because
 // the two comparisons are true of disjoint sets of inputs rather than nested
-// ones.
+// ones. `condition-to-true` is the widest edit in the catalogue and is
+// likewise absent: its own family's other two rules are here and it is not,
+// which is the asymmetry the lemma is about.
 var decreasingRules = map[string]string{
-	"le-to-lt":         BranchDecreasing,
-	"ge-to-gt":         BranchDecreasing,
-	"or-to-and":        BranchDecreasing,
-	ruleNilErrorBranch: BranchDecreasing,
+	"le-to-lt":               BranchDecreasing,
+	"ge-to-gt":               BranchDecreasing,
+	"or-to-and":              BranchDecreasing,
+	ruleNilErrorBranch:       BranchDecreasing,
+	ruleConditionToFalse:     BranchDecreasing,
+	ruleLoopConditionToFalse: BranchDecreasing,
 }
 
 // inertBuiltins are the predeclared functions a condition may call. None of

@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Mutation operators
 
-**Status: every family is executed.** All twelve families and all forty-four
+**Status: every family is executed.** All thirteen families and all forty-seven
 rules are found by `go-mutants list` with stable IDs, coordinates, and the
 guard-site hint the instrumentation phase consumes, and `go-mutants run`
 instruments, compile-validates, executes, and scores every one of them through
@@ -38,13 +38,14 @@ of the selected profile.
 | `return-replacement` | `return-zero-numeric`, `return-empty-string`, `return-true`, `return-false`, `return-nil` | balanced |
 | `error-swallowing` | `return-err-to-nil`, `nil-error-branch` | balanced |
 | `neutral-value` | `return-empty-slice`, `return-empty-map` | strong |
+| `branch-replacement` | `condition-to-true`, `condition-to-false`, `loop-condition-to-false` | strong |
 | `bitwise` | `band-to-bor`, `bor-to-band`, `xor-to-band`, `shl-to-shr`, `shr-to-shl`, `andnot-to-band` | strong |
 | `arithmetic-assignment` | `add-assign-to-sub-assign`, `sub-assign-to-add-assign`, `incr-to-decr`, `decr-to-incr` | strong |
 | `statement-deletion` | `delete-call-statement`, `delete-assignment`, `delete-incdec` | all |
 
-That is 12 families and 44 enumerated rules. The design plan's headline said
+That is 13 families and 47 enumerated rules. The design plan's headline said
 43 while its own table listed 42; the registry has settled it in favour of the
-table. `mutation.CanonicalRuleCount` is 44 and the canonical registry tests
+table. `mutation.CanonicalRuleCount` is 47 and the canonical registry tests
 assert it, so the count cannot drift again without a test failing.
 
 ## Type conditions
@@ -99,6 +100,19 @@ the source:
   file's own imports by the same machinery Form D declarations go through, so a
   type this file cannot name is refused here exactly as it is there and
   recorded as [`unnameable-decl-type`](limitations.md).
+- `branch-replacement` requires the condition to be boolean underneath, and
+  writes the untyped constant `true` or `false` over the whole of it. The type
+  gate is the guard's rather than the rule's: an untyped constant is assignable
+  to any boolean type, so the *edit* is fine at a condition of a named boolean
+  type, and what refuses one is Form C's requirement of a site that is exactly
+  the universe `bool` — the same refusal, from the same place, that a negation
+  at that site already gets. A `for` with no condition and a `range` clause
+  have nothing to settle and are passed over. A condition go/types has already
+  folded to a constant is refused in the matching direction only: settling a
+  constantly-true guard *true* writes different bytes for the same program,
+  while settling it *false* is a branch that stops firing, which is exactly the
+  mutant somebody wants when a build tag has quietly made a guard
+  unconditional.
 - `statement-deletion` deletes an expression statement that is a call, a plain
   `=` assignment (`x = append(x, e)` included), and an `++`/`--`. It never
   deletes a `:=`, which would make every later use of the name a compile error,
@@ -152,7 +166,7 @@ guard forms cannot express this site":
 
 ## Branch proof
 
-Four edits can only make a condition *less* often true. When one of them lands
+Six edits can only make a condition *less* often true. When one of them lands
 in the condition of an `if` or a `for`, discovery records the span of the body
 that condition gates, and publishes it as the mutant's `branch` in
 [both JSON documents](json-schema.md#branch).
@@ -163,6 +177,8 @@ that condition gates, and publishes it as the mutant's `branch` in
 | `ge-to-gt` | `>=` → `>` | Drops the equal case |
 | `or-to-and` | `\|\|` → `&&` | Requires both operands where one sufficed |
 | `nil-error-branch` | `X != nil` → `false` | True of nothing |
+| `condition-to-false` | `C` → `false` | True of nothing, whatever C was |
+| `loop-condition-to-false` | `C` → `false` | The same, in a `for` |
 
 Write C for the original condition and C′ for the mutant's. In each row
 C′ ⟹ C, and that is the whole lemma:
@@ -176,11 +192,14 @@ A consumer holding per-test coverage can therefore discharge every such test
 without executing it. Nothing else may be inferred from `branch`: it is a
 one-way statement about a body nobody entered, never about one they did.
 
-The increasing edits are deliberately absent. `lt-to-le`, `gt-to-ge` and
-`and-to-or` widen a condition, so the mutant may enter a body the original never
-did — exactly the case coverage cannot rule out. `eq-to-neq` and `neq-to-eq`
-move it in neither direction, because the two comparisons are true of disjoint
-sets of inputs rather than nested ones.
+The increasing edits are deliberately absent. `lt-to-le`, `gt-to-ge`,
+`and-to-or` and `condition-to-true` widen a condition, so the mutant may enter a
+body the original never did — exactly the case coverage cannot rule out.
+`eq-to-neq` and `neq-to-eq` move it in neither direction, because the two
+comparisons are true of disjoint sets of inputs rather than nested ones. The
+`branch-replacement` family is the clearest case of the asymmetry: two of its
+three rules carry the proof and the third, which is the same edit pointed the
+other way, cannot.
 
 ### The conditions a proof has to satisfy
 
@@ -254,10 +273,15 @@ balanced  ⊂  strong  ⊂  all
 `balanced` is the default and holds the eight families whose survivors almost
 always indicate a real testing gap. `strong` adds `bitwise` and
 `arithmetic-assignment`, which are valuable but noisier in code that does bit
-manipulation for performance rather than for semantics, and `neutral-value`,
-which is noisy for a different reason: every function returning a slice or a map
+manipulation for performance rather than for semantics, `neutral-value`, which
+is noisy for a different reason — every function returning a slice or a map
 gains a mutant, and a suite that only ever asserts `len` leaves most of them
-alive. `all` adds
+alive — and `branch-replacement`, which is noisy for two reasons at once: a
+defensive check that cannot actually fail survives `condition-to-false` in every
+suite, and a test that kills `condition-to-true` almost always kills
+`negate-condition` at the same span, so in `balanced` the family would mostly
+inflate the denominator with near duplicates of a rule already there. `all`
+adds
 `statement-deletion`, including `append` removal, which is the classic source
 of equivalent mutants in logging and metrics code.
 
@@ -359,7 +383,7 @@ return value already spelled as its own replacement.
 
 ### The refusals that are not skips
 
-Three places in the catalogue produce neither a candidate nor a skip, and they
+Five places in the catalogue produce neither a candidate nor a skip, and they
 are listed together because each one is an argument rather than a mechanism. A
 skip says *go-mutants declined to mutate a site*; these say *there is no mutant
 here to decline*.
@@ -369,6 +393,8 @@ here to decline*.
 | A `panic` call, for `delete-call-statement` | Removing a terminating `panic` leaves a path that reaches the closing brace without returning. The mutant would not compile, and manufacturing a missing-return error wholesale in defensive code is not a measurement |
 | A value already spelled as its own replacement — `return 0`, `return nil`, and for `neutral-value` also `return []T{}` and `return make([]T, 0)` | The mutation and the source are the same program |
 | A slice or a map returned beside a non-nil `error`, for `neutral-value` | By universal Go convention a caller that sees an error does not look at the other results, so `if err != nil { return nil, err }` mutated to `return []T{}, err` is equivalent. **This is an argument from convention, not a proof** — the same honesty the `panic` refusal above is stated with. It is gated per statement, so `return xs, nil` on the success path, where the rule is worth the most, is not touched. Without the gate most of the family's output would be this one shape |
+| A condition go/types folded to a constant, settled the way it already is, for `branch-replacement` | `const enabled = 3 > 2` used as a condition is spelled `enabled` and *is* `true`, so `condition-to-true` there writes different bytes for the same program. Only the matching direction goes; the other is a branch that stops firing |
+| `loop-condition-to-true`, everywhere | Not a refusal of a site but of a rule: it is the one edit whose every instance would cost a whole per-mutant timeout — twice, since a timeout is measured again before it is believed — to teach a reader what the source already says. `false` is the safe direction, and it is in the catalogue |
 
 `neutral-value` also carries no [probe hint](#guard-site-hints), deliberately.
 The return probe compares the returned value against the replacement, and a
@@ -378,18 +404,25 @@ predicate can be written — `r == nil || len(r) != 0 || cap(r) != 0` — and is
 recorded here so that nobody has to re-derive it; what stops it today is that
 the probe form is one shape for every rule and this would be a second.
 
-## Planned for v2
+## What used to be planned for v2
 
-`if`-branch replacement; it needs a rule that replaces an arbitrary condition
-with a constant, which the catalogue does not have yet. See
-[the roadmap](roadmap.md).
+Nothing is. This section used to hold three entries and now holds their
+epitaphs, which is worth keeping because each one was waiting on less than it
+looked like.
 
-Map and slice neutral values used to be on this list and are not any more. What
-they were waiting on was thought to be "a type-directed neutral-value model the
-instrumentation phase does not build yet", and that model turned out to already
-exist: `guardResolver.typeString` is the speller Form D's declarations go
+**Map and slice neutral values** were waiting on "a type-directed neutral-value
+model the instrumentation phase does not build yet". That model already
+existed: `guardResolver.typeString` is the speller Form D's declarations go
 through, and the `neutral-value` family calls it. Nothing was built for the
 instrumenter at all.
+
+**`if`-branch replacement** was waiting on a new guard form. It needed none:
+settling a condition writes a constant at exactly the anchor `negate-condition`
+already uses, and Form C takes it. What it needed was a decision about which
+three of four candidate rules to write — swapping an `if`'s arms is
+`negate-condition` spelled differently, emptying a body is the conjunction of
+two `statement-deletion` mutants, and `loop-condition-to-true` is a timeout per
+counted loop — so the family has three rules and not four.
 
 A tagless `switch`'s case labels used to be on this list and are not any more:
 they are exactly `bool`, so Form C expresses them and nothing had to be built.

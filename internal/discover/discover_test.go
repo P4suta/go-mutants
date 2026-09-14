@@ -142,8 +142,6 @@ func equalStrings(t *testing.T, got, want []string) {
 // results to zero. That is the point of an exact table — a rule that starts
 // firing somewhere new shows up here rather than in a count.
 var wantCandidates = []string{
-	// arith: every arithmetic rule, and the two operand types that keep them
-	// away from operators they must not claim.
 	"arith/arith.go delete-assignment out[0] = a + b->",
 	"arith/arith.go add-to-sub +->-",
 	"arith/arith.go delete-assignment out[1] = a - b->",
@@ -166,13 +164,9 @@ var wantCandidates = []string{
 	"arith/arith.go add-to-sub +->-",
 	"arith/arith.go delete-assignment temps[0] = c * d->",
 	"arith/arith.go fmul-to-fdiv *->/",
-	// The three statements below hold a `+` and a `*` each and no arithmetic
-	// rule claims either: their operands are strings and complex numbers.
-	// Only the assignment deletion remains.
 	"arith/arith.go delete-assignment out[0] = a + b->",
 	"arith/arith.go delete-assignment out[0] = a + b->",
 	"arith/arith.go delete-assignment out[1] = a * b->",
-	// assign: the arithmetic-assignment family, and `s += "!"` excluded.
 	"assign/assign.go add-assign-to-sub-assign +=->-=",
 	"assign/assign.go sub-assign-to-add-assign -=->+=",
 	"assign/assign.go delete-incdec n++->",
@@ -183,8 +177,6 @@ var wantCandidates = []string{
 	"assign/assign.go delete-assignment out[0] = n->",
 	"assign/assign.go delete-assignment out[1] = int(f)->",
 	"assign/assign.go delete-assignment out[0] = s->",
-	// bits: the bitwise family. The shift rules move the operator and leave
-	// the count alone, which is why `n` never appears as an edit here.
 	"bits/bits.go delete-assignment out[0] = a & b->",
 	"bits/bits.go band-to-bor &->|",
 	"bits/bits.go delete-assignment out[1] = a | b->",
@@ -199,24 +191,34 @@ var wantCandidates = []string{
 	"bits/bits.go shr-to-shl >>-><<",
 	"bits/bits.go delete-assignment out[0] = a & b->",
 	"bits/bits.go band-to-bor &->|",
-	// compare: the comparison family, now with the condition negation that
-	// sits on the same conditions and the empty strings the returns admit.
 	"compare/compare.go negate-condition a == b->!(a == b)",
+	"compare/compare.go condition-to-true a == b->true",
+	"compare/compare.go condition-to-false a == b->false",
 	"compare/compare.go eq-to-neq ==->!=",
 	"compare/compare.go return-empty-string \"eq\"->\"\"",
 	"compare/compare.go negate-condition a != b->!(a != b)",
+	"compare/compare.go condition-to-true a != b->true",
+	"compare/compare.go condition-to-false a != b->false",
 	"compare/compare.go neq-to-eq !=->==",
 	"compare/compare.go return-empty-string \"ne\"->\"\"",
 	"compare/compare.go negate-condition a < b->!(a < b)",
+	"compare/compare.go condition-to-true a < b->true",
+	"compare/compare.go condition-to-false a < b->false",
 	"compare/compare.go lt-to-le <-><=",
 	"compare/compare.go return-empty-string \"lt\"->\"\"",
 	"compare/compare.go negate-condition a <= b->!(a <= b)",
+	"compare/compare.go condition-to-true a <= b->true",
+	"compare/compare.go condition-to-false a <= b->false",
 	"compare/compare.go le-to-lt <=-><",
 	"compare/compare.go return-empty-string \"le\"->\"\"",
 	"compare/compare.go negate-condition a > b->!(a > b)",
+	"compare/compare.go condition-to-true a > b->true",
+	"compare/compare.go condition-to-false a > b->false",
 	"compare/compare.go gt-to-ge >->>=",
 	"compare/compare.go return-empty-string \"gt\"->\"\"",
 	"compare/compare.go negate-condition a >= b->!(a >= b)",
+	"compare/compare.go condition-to-true a >= b->true",
+	"compare/compare.go condition-to-false a >= b->false",
 	"compare/compare.go ge-to-gt >=->>",
 	"compare/compare.go return-empty-string \"ge\"->\"\"",
 	"compare/compare.go return-empty-string \"none\"->\"\"",
@@ -228,9 +230,6 @@ var wantCandidates = []string{
 	"compare/compare.go return-false off->false",
 	"compare/compare.go return-zero-numeric m[true]->0",
 	"compare/compare.go true-to-false true->false",
-	// deletion: the statement-deletion family. `panic("negative")` is absent
-	// and is the one call this family refuses, and `(panic)(reason)` is absent
-	// for the same reason written the one way a parenthesis hides.
 	"deletion/deletion.go delete-call-statement Log(\"start\")->",
 	"deletion/deletion.go delete-assignment total = total + n->",
 	"deletion/deletion.go add-to-sub +->-",
@@ -242,43 +241,50 @@ var wantCandidates = []string{
 	"deletion/deletion.go return-nil xs->nil",
 	"deletion/deletion.go return-empty-slice xs->[]int{}",
 	"deletion/deletion.go negate-condition n < 0->!(n < 0)",
+	"deletion/deletion.go condition-to-true n < 0->true",
+	"deletion/deletion.go condition-to-false n < 0->false",
 	"deletion/deletion.go lt-to-le <-><=",
 	"deletion/deletion.go return-zero-numeric n->0",
-	// errs: the error-swallowing family, and the line it draws. `err` is an
-	// error value and goes to return-err-to-nil; `&Wrapped{Op: op}` is a
-	// concrete pointer and goes to return-nil; `p != nil` is not an error
-	// comparison and gets no nil-error-branch.
 	"errs/errs.go return-empty-string w.Op->\"\"",
 	"errs/errs.go return-err-to-nil err->nil",
 	"errs/errs.go return-nil &Wrapped{Op: op}->nil",
 	"errs/errs.go negate-condition err != nil->!(err != nil)",
 	"errs/errs.go nil-error-branch err != nil->false",
+	"errs/errs.go condition-to-true err != nil->true",
+	"errs/errs.go condition-to-false err != nil->false",
 	"errs/errs.go neq-to-eq !=->==",
 	"errs/errs.go delete-assignment out[0] = 1->",
 	"errs/errs.go negate-condition nil != err->!(nil != err)",
 	"errs/errs.go nil-error-branch nil != err->false",
+	"errs/errs.go condition-to-true nil != err->true",
+	"errs/errs.go condition-to-false nil != err->false",
 	"errs/errs.go neq-to-eq !=->==",
 	"errs/errs.go delete-assignment out[1] = 2->",
 	"errs/errs.go negate-condition p != nil->!(p != nil)",
+	"errs/errs.go condition-to-true p != nil->true",
+	"errs/errs.go condition-to-false p != nil->false",
 	"errs/errs.go neq-to-eq !=->==",
 	"errs/errs.go delete-assignment out[0] = 1->",
-	// forms: the guard-form fixture. Four of its edits are refused outright
-	// and appear in wantSkips instead — see the package's own documentation.
 	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric sum->0",
 	"forms/forms.go mul-to-div *->/",
 	"forms/forms.go return-zero-numeric product->0",
 	"forms/forms.go negate-condition err != nil->!(err != nil)",
 	"forms/forms.go nil-error-branch err != nil->false",
+	"forms/forms.go condition-to-true err != nil->true",
+	"forms/forms.go condition-to-false err != nil->false",
 	"forms/forms.go neq-to-eq !=->==",
 	"forms/forms.go return-err-to-nil err->nil",
 	"forms/forms.go return-zero-numeric second->0",
 	"forms/forms.go return-err-to-nil err->nil",
 	"forms/forms.go return-zero-numeric a->0",
 	"forms/forms.go negate-loop-condition i < n->!(i < n)",
+	"forms/forms.go loop-condition-to-false i < n->false",
 	"forms/forms.go lt-to-le <-><=",
 	"forms/forms.go add-assign-to-sub-assign +=->-=",
 	"forms/forms.go negate-condition half > 0->!(half > 0)",
+	"forms/forms.go condition-to-true half > 0->true",
+	"forms/forms.go condition-to-false half > 0->false",
 	"forms/forms.go gt-to-ge >->>=",
 	"forms/forms.go return-zero-numeric half->0",
 	"forms/forms.go return-empty-string \"zero\"->\"\"",
@@ -286,9 +292,6 @@ var wantCandidates = []string{
 	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go sub-to-add -->+",
 	"forms/forms.go mul-to-div *->/",
-	// The same three statements again, around a call whose result is the
-	// universe bool. The edits are the same edits; only the guard form the
-	// next table pins is different.
 	"forms/forms.go delete-call-statement ok(a + b)->",
 	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go sub-to-add -->+",
@@ -296,10 +299,6 @@ var wantCandidates = []string{
 	"forms/forms.go return-true n > 0->true",
 	"forms/forms.go return-false n > 0->false",
 	"forms/forms.go gt-to-ge >->>=",
-	// The five Form D refusals at the end of the file. Every edit inside one of
-	// those declarations is a skip; what is left here is the ordinary code
-	// around them, which is still mutated — a refused site removes its own
-	// candidates and nothing else in the function.
 	"forms/forms.go delete-assignment n = total->",
 	"forms/forms.go return-zero-numeric n->0",
 	"forms/forms.go return-zero-numeric Limit->0",
@@ -308,10 +307,9 @@ var wantCandidates = []string{
 	"forms/forms.go return-zero-numeric scale(n)->0",
 	"forms/forms.go delete-assignment total.hi = start->",
 	"forms/forms.go return-zero-numeric total.hi->0",
-	// generics: neither `return a` nor `return b` in Max is a candidate. A
-	// type parameter's underlying type is its constraint, which is an
-	// interface, and `return nil` would not compile for it.
 	"generics/generics.go negate-condition a > b->!(a > b)",
+	"generics/generics.go condition-to-true a > b->true",
+	"generics/generics.go condition-to-false a > b->false",
 	"generics/generics.go gt-to-ge >->>=",
 	"generics/generics.go return-zero-numeric sized[[len([1]bool{false})]byte](v)[0]->0",
 	"generics/generics.go return-zero-numeric b.v[0]->0",
@@ -322,20 +320,25 @@ var wantCandidates = []string{
 	"legacy/legacy.go return-true a == b->true",
 	"legacy/legacy.go return-false a == b->false",
 	"legacy/legacy.go eq-to-neq ==->!=",
-	// negate: the condition-negation and boolean-connective families. `if f`
-	// is missing because a named boolean condition has no guard form.
 	"negate/negate.go negate-condition ok && a > b->!(ok && a > b)",
+	"negate/negate.go condition-to-true ok && a > b->true",
+	"negate/negate.go condition-to-false ok && a > b->false",
 	"negate/negate.go and-to-or &&->||",
 	"negate/negate.go gt-to-ge >->>=",
 	"negate/negate.go delete-assignment out[0] = 1->",
 	"negate/negate.go negate-condition ok || a < b->!(ok || a < b)",
+	"negate/negate.go condition-to-true ok || a < b->true",
+	"negate/negate.go condition-to-false ok || a < b->false",
 	"negate/negate.go or-to-and ||->&&",
 	"negate/negate.go lt-to-le <-><=",
 	"negate/negate.go delete-assignment out[1] = 2->",
 	"negate/negate.go negate-condition !ok->!(!ok)",
 	"negate/negate.go remove-negation !ok->ok",
+	"negate/negate.go condition-to-true !ok->true",
+	"negate/negate.go condition-to-false !ok->false",
 	"negate/negate.go delete-assignment out[0] = 1->",
 	"negate/negate.go negate-loop-condition a < b->!(a < b)",
+	"negate/negate.go loop-condition-to-false a < b->false",
 	"negate/negate.go lt-to-le <-><=",
 	"negate/negate.go delete-incdec a++->",
 	"negate/negate.go incr-to-decr ++->--",
@@ -344,8 +347,6 @@ var wantCandidates = []string{
 	"negate/negate.go ge-to-gt >=->>",
 	"negate/negate.go return-true f->true",
 	"negate/negate.go return-false f->false",
-	// returns: the return-replacement family. Zero, None, Bare, and Multi
-	// contribute no return candidate at all, each for its own reason.
 	"returns/returns.go return-zero-numeric a->0",
 	"returns/returns.go return-zero-numeric a->0",
 	"returns/returns.go return-empty-string a->\"\"",
@@ -365,17 +366,16 @@ var wantCandidates = []string{
 	"returns/returns.go return-zero-numeric 1->0",
 	"returns/returns.go return-zero-numeric 2->0",
 	"runes/runes.go negate-condition a > b->!(a > b)",
+	"runes/runes.go condition-to-true a > b->true",
+	"runes/runes.go condition-to-false a > b->false",
 	"runes/runes.go gt-to-ge >->>=",
 	"runes/runes.go return-empty-string label->\"\"",
 	"runes/runes.go negate-condition a < b->!(a < b)",
+	"runes/runes.go condition-to-true a < b->true",
+	"runes/runes.go condition-to-false a < b->false",
 	"runes/runes.go lt-to-le <-><=",
 	"runes/runes.go return-empty-string label->\"\"",
 	"runes/runes.go return-empty-string \"…\"->\"\"",
-	// The two shadowed `true`s in this file are absent as boolean literals on
-	// purpose: one is a package-level constant of the package's own, the other
-	// a local variable, and neither is the universe constant the rule is
-	// about. Both are still integers being returned, and the return family
-	// reads the declared result rather than the spelling.
 	"shadow/shadow.go return-zero-numeric true->0",
 	"shadow/shadow.go add-to-sub +->-",
 	"shadow/shadow.go return-zero-numeric true->0",
@@ -383,9 +383,12 @@ var wantCandidates = []string{
 	"shadow/shadow.go return-true false->true",
 	"suppressed/suppressed.go return-zero-numeric len(Buffer{})->0",
 	"suppressed/suppressed.go negate-condition limit->!(limit)",
+	"suppressed/suppressed.go condition-to-false limit->false",
 	"suppressed/suppressed.go return-zero-numeric a->0",
 	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go negate-condition ok == true->!(ok == true)",
+	"suppressed/suppressed.go condition-to-true ok == true->true",
+	"suppressed/suppressed.go condition-to-false ok == true->false",
 	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go true-to-false true->false",
 	"suppressed/suppressed.go return-empty-string \"equal and ok\"->\"\"",
@@ -395,6 +398,8 @@ var wantCandidates = []string{
 	"suppressed/suppressed.go return-empty-string \"one more\"->\"\"",
 	"suppressed/suppressed.go return-empty-string \"twice\"->\"\"",
 	"suppressed/suppressed.go negate-condition v > b->!(v > b)",
+	"suppressed/suppressed.go condition-to-true v > b->true",
+	"suppressed/suppressed.go condition-to-false v > b->false",
 	"suppressed/suppressed.go gt-to-ge >->>=",
 	"suppressed/suppressed.go return-empty-string \"greater\"->\"\"",
 	"suppressed/suppressed.go return-empty-string v->\"\"",
@@ -402,6 +407,8 @@ var wantCandidates = []string{
 	"suppressed/suppressed.go lt-to-le <-><=",
 	"suppressed/suppressed.go return-empty-string \"sent\"->\"\"",
 	"suppressed/suppressed.go negate-condition v == true->!(v == true)",
+	"suppressed/suppressed.go condition-to-true v == true->true",
+	"suppressed/suppressed.go condition-to-false v == true->false",
 	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go true-to-false true->false",
 	"suppressed/suppressed.go return-empty-string \"received\"->\"\"",
@@ -425,7 +432,7 @@ var wantSkips = []string{
 	// one for the single explicit type argument, and two for the list form.
 	"generics/generics.go type-param 5",
 	// The condition of a named boolean type: negatable Go, and no guard form.
-	"negate/negate.go unnameable-decl-type 1",
+	"negate/negate.go unnameable-decl-type 3",
 	"suppressed/suppressed.go array-length 2",
 	"suppressed/suppressed.go case-label 2",
 	"suppressed/suppressed.go const-decl 4",
@@ -632,15 +639,20 @@ var wantFormsGuards = []string{
 	"return-zero-numeric product | S return product []",
 	"negate-condition err != nil | C err != nil []",
 	"nil-error-branch err != nil | C err != nil []",
+	"condition-to-true err != nil | C err != nil []",
+	"condition-to-false err != nil | C err != nil []",
 	"neq-to-eq != | C err != nil []",
 	"return-err-to-nil err | S return 0, err []",
 	"return-zero-numeric second | S return second, err []",
 	"return-err-to-nil err | S return second, err []",
 	"return-zero-numeric a | S return a, nil []",
 	"negate-loop-condition i < n | C i < n []",
+	"loop-condition-to-false i < n | C i < n []",
 	"lt-to-le < | C i < n []",
 	"add-assign-to-sub-assign += | S out[0] += i []",
 	"negate-condition half > 0 | C half > 0 []",
+	"condition-to-true half > 0 | C half > 0 []",
+	"condition-to-false half > 0 | C half > 0 []",
 	"gt-to-ge > | C half > 0 []",
 	"return-zero-numeric half | S return half []",
 	"return-empty-string \"zero\" | S return \"zero\" []",
@@ -655,14 +667,6 @@ var wantFormsGuards = []string{
 	"return-true n > 0 | C n > 0 []",
 	"return-false n > 0 | C n > 0 []",
 	"gt-to-ge > | C n > 0 []",
-	// The tail of the file is five declarations Form D refuses, and not one of
-	// their sites is here: every hint below belongs to the ordinary code beside
-	// them. That is the claim those functions exist to make — a refusal removes
-	// its own candidates and leaves the rest of the function mutable — and it is
-	// only visible as an absence, so the entries that would be here if a
-	// refusal stopped working are `mul-to-div * | D total := total * 2`,
-	// `add-to-sub + | D var Limit = Limit + n*2`, the `var` block of CrossSpec,
-	// and the two multi-line cuts in Widen and Widest.
 	"delete-assignment n = total | S n = total []",
 	"return-zero-numeric n | S return n []",
 	"return-zero-numeric Limit | S return Limit []",
@@ -958,8 +962,8 @@ func TestDiscoverIncludeNarrowsToOnePackage(t *testing.T) {
 			t.Errorf("candidate outside the include set: %s", c.Path)
 		}
 	}
-	if len(result.Candidates) != 27 {
-		t.Errorf("got %d candidates, want the 27 in compare: %v", len(result.Candidates), summarize(result.Candidates))
+	if len(result.Candidates) != 39 {
+		t.Errorf("got %d candidates, want the 39 in compare: %v", len(result.Candidates), summarize(result.Candidates))
 	}
 	// Everything else becomes an excluded skip rather than disappearing.
 	for _, path := range []string{

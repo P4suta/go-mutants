@@ -4,7 +4,7 @@
 // Package families holds one live candidate for every rule in the v1 catalogue.
 //
 // One module, one package, and twenty-two very small functions. Between them
-// they carry at least one mutant for each of the forty-four rules the canonical
+// they carry at least one mutant for each of the forty-seven rules the canonical
 // registry names, which is what makes this the fixture an end-to-end run of the
 // whole catalogue is judged against: the other corpus modules each prove one
 // mechanism, and this one proves that every operator family reaches execution.

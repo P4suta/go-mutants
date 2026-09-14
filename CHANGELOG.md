@@ -14,6 +14,50 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A guard that always fires, and one that never does, are now mutants.** The
+  new `branch-replacement` family settles a whole condition at a constant:
+  `condition-to-true` and `condition-to-false` on an `if`, and
+  `loop-condition-to-false` on a `for`. Nothing in the catalogue could say that
+  before. `negate-condition` writes `!(C)`, which is a different condition
+  rather than a settled one; `true-to-false` fires only where the condition *is*
+  a literal; `nil-error-branch` is the one special case of "this branch stops
+  firing", written for `err != nil` alone. "What if this guard always ran" and
+  "what if it never did" are the two questions a reader asks about a branch, and
+  neither had a rule.
+  There is deliberately no `loop-condition-to-true`. It would turn every counted
+  loop in a tree into one that never ends, each costing a whole per-mutant
+  timeout — twice, since a timeout is measured again before it is believed — to
+  teach a reader nothing the source does not already say. Two other candidate
+  rules were rejected as redundant rather than deferred: swapping an `if`'s arms
+  is `negate-condition` spelled differently, and emptying a body is the
+  conjunction of two `statement-deletion` mutants, which is easier to kill than
+  either term.
+  The tier is `strong`, for two independent reasons — a defensive check that
+  cannot fail survives `condition-to-false` in every suite, and a test that
+  kills `condition-to-true` almost always kills `negate-condition` at the same
+  span — so a `balanced` run catalogues nothing new. The family sits after every
+  family it can tie with, which is what keeps deduplication resolving as it did:
+  `condition-to-false` at `if err != nil` is byte-identical to what
+  `nil-error-branch` writes, and the more local rule still wins.
+  Two of its three rules carry a [branch proof](docs/operators.md#branch-proof)
+  — `false` implies every condition — and the third, which is the same edit
+  pointed the other way, cannot. `loop-condition-to-false` also carries a
+  termination proof of `bounded`, and it is the one rule in the catalogue whose
+  answer does not come from the loop's measure at all: a loop whose condition is
+  settled false runs zero times.
+  A condition go/types has already folded to a constant is refused in the
+  matching direction: `const enabled = 3 > 2` used as a guard is spelled
+  `enabled` and *is* `true`, so settling it true would write different bytes for
+  the same program. Settling it false is a branch that stops firing, which is
+  exactly the mutant somebody wants when a build tag has quietly made a guard
+  unconditional.
+- **A skip site now names the rule that was declined.** `list --explain` prints
+  one line per suppressed candidate, and two rules proposing an edit at one
+  position printed two identical lines — which reads as a counting bug rather
+  than as two refusals. A condition of a named boolean type is now declined by
+  three rules at one coordinate, which made the ambiguity impossible to ignore.
+  The count is unchanged and still per candidate; what changed is that the
+  repetition is legible.
 - **A slice or a map returned as `nil` where it meant to be empty is now a
   mutant.** The new `neutral-value` family holds `return-empty-slice` and
   `return-empty-map`, which write `[]T{}` and `map[K]V{}` at a return the

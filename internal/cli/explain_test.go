@@ -99,26 +99,31 @@ func TestListExplainPrintsAWholeFileSkipWithoutACoordinate(t *testing.T) {
 // length, line 49 holds three inside one package-level initialiser — a
 // comparison and the two constants a return could be rewritten to — and the
 // generated file has no coordinate at all, because it was never opened.
+//
+// Each row names the rule that was declined, which is what makes line 49's two
+// rows at column 33 readable: they are the same expression refused twice, once
+// for each constant a return could become, and two identical lines would read
+// as a counting bug instead.
 const wantSkipDetail = `
 suppressed sites (19)
 discovery passed these over; they are never candidates, so they are in no score
 
 array-length 2 sites
   the expression is an array length, which is part of a type and is evaluated by the compiler rather than at run time
-  suppressed/suppressed.go:33:28
-  suppressed/suppressed.go:33:33
+  suppressed/suppressed.go:33:28 lt-to-le
+  suppressed/suppressed.go:33:33 true-to-false
 
 case-label 2 sites
   the expression labels a tagged switch case, whose label is compared against the tag, or a type switch case, whose labels name types; a tagless switch's labels are ordinary boolean contexts and are mutated
-  suppressed/suppressed.go:89:9
-  suppressed/suppressed.go:91:9
+  suppressed/suppressed.go:89:9 add-to-sub
+  suppressed/suppressed.go:91:9 mul-to-div
 
 const-decl 4 sites
   the expression is inside a const declaration, where a constant has to stay constant and one edit can renumber a whole iota block
-  suppressed/suppressed.go:18:12
-  suppressed/suppressed.go:20:13
-  suppressed/suppressed.go:27:18
-  suppressed/suppressed.go:65:18
+  suppressed/suppressed.go:18:12 true-to-false
+  suppressed/suppressed.go:20:13 gt-to-ge
+  suppressed/suppressed.go:27:18 le-to-lt
+  suppressed/suppressed.go:65:18 gt-to-ge
 
 generated 1 site
   the file says it is generated, so an edit here would measure the generator's tests and be overwritten by its next run
@@ -126,19 +131,19 @@ generated 1 site
 
 package-var-init 5 sites
   the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1
-  suppressed/suppressed.go:41:19
-  suppressed/suppressed.go:44:15
-  suppressed/suppressed.go:49:33
-  suppressed/suppressed.go:49:33
-  suppressed/suppressed.go:49:35
+  suppressed/suppressed.go:41:19 lt-to-le
+  suppressed/suppressed.go:44:15 true-to-false
+  suppressed/suppressed.go:49:33 return-false
+  suppressed/suppressed.go:49:33 return-true
+  suppressed/suppressed.go:49:35 eq-to-neq
 
 type-param 5 sites
   the expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values
-  generics/generics.go:24:27
-  generics/generics.go:31:28
-  generics/generics.go:38:27
-  generics/generics.go:55:25
-  generics/generics.go:55:51
+  generics/generics.go:24:27 true-to-false
+  generics/generics.go:31:28 false-to-true
+  generics/generics.go:38:27 true-to-false
+  generics/generics.go:55:25 true-to-false
+  generics/generics.go:55:51 false-to-true
 `
 
 // TestListExplainCoordinatesLandOnTheirOwnFixtureLines reads the fixture back
@@ -170,10 +175,17 @@ func TestListExplainCoordinatesLandOnTheirOwnFixtureLines(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading the fixture file %q names: %v", row, err)
 		}
-		lineNumber, column, _ := strings.Cut(position, ":")
+		lineNumber, rest, _ := strings.Cut(position, ":")
 		at, err := strconv.Atoi(lineNumber)
 		if err != nil {
 			t.Fatalf("%q does not carry a line number: %v", row, err)
+		}
+		// A row is `path:line:col rule`, so the column runs to the space.
+		// Splitting rather than parsing the whole tail keeps this test about
+		// coordinates: the rule name is checked by the ledger that produced it.
+		column, rule, hasRule := strings.Cut(rest, " ")
+		if !hasRule || rule == "" {
+			t.Errorf("%q names no rule, so a reader cannot tell it from the row beside it", row)
 		}
 		col, err := strconv.Atoi(column)
 		if err != nil {

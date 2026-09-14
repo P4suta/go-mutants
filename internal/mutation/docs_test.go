@@ -70,7 +70,7 @@ func TestTheOperatorsPageNamesEveryRuleAndEveryFamily(t *testing.T) {
 // TestTheOperatorsPageCountsWhatItLists keeps the sentence under the table
 // equal to the table above it and to the registry beside it.
 //
-// The page spells the two numbers out in prose -- "That is 12 families and 44
+// The page spells the two numbers out in prose -- "That is 13 families and 47
 // enumerated rules" -- and a spelled number is the first thing to go stale when
 // a row is added, because adding the row feels like the whole change.
 func TestTheOperatorsPageCountsWhatItLists(t *testing.T) {
@@ -204,7 +204,7 @@ const roadmapDoc = "docs/roadmap.md"
 //
 // The check is deliberately one-directional. A roadmap row naming a rule the
 // registry holds is a finished row, and that is a failure. A registry rule no
-// roadmap row names is the ordinary case -- forty-four of them -- and says
+// roadmap row names is the ordinary case -- forty-seven of them -- and says
 // nothing.
 //
 // It lives here rather than beside the reserved-reason ledger because it needs
