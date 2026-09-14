@@ -46,6 +46,7 @@ path = [
   "schema/catalog-v1.schema.json",
   "schema/diagnostics-v1.schema.json",
   "schema/doctor-v1.schema.json",
+  "schema/explain-v1.schema.json",
   "schema/run-report-v1.schema.json",
   "schema/trace-v1.schema.json",
 ]

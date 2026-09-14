@@ -203,6 +203,26 @@ func siteLocation(site discover.SkipSite) string {
 	return where + " " + site.Rule
 }
 
+// siteLocationOf is the same coordinate, read back out of a gathered account.
+//
+// Two spellings of one rule, and the duplication is deliberate: the listing
+// under `list --explain` renders discovery's own sites, and `explain` renders a
+// document that has already been built — so one of them takes a
+// [discover.SkipSite] and the other takes what was gathered from it. What they
+// must not do is disagree, which is why they are written beside each other.
+func siteLocationOf(site accountSkipSite) string {
+	if site.Line == nil {
+		// A whole-file reason, which no rule proposed anything under: the bare
+		// path, and no rule name to append.
+		return site.Path
+	}
+	where := site.Path + ":" + strconv.Itoa(*site.Line) + ":" + strconv.Itoa(*site.Column)
+	if site.Rule == nil {
+		return where
+	}
+	return where + " " + *site.Rule
+}
+
 // skipSection writes the heading and one block per reason, with the rows of a
 // block written by the caller.
 //

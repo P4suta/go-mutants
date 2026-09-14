@@ -41,7 +41,7 @@ Usage:
 
 Flags:
   -h, --help          help for explain
-      --json          refused: the report and the recording are the machine-readable forms
+      --json          print a go-mutants/explain v1 document instead of the account in prose
       --no-color      never colourise output, even on a terminal
       --report FILE   read the run report at FILE instead of this module's latest run
       --run RUN_ID    read the stored report of RUN_ID, or of the one run whose id starts with it, instead of this module's latest run

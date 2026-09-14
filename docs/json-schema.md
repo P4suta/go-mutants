@@ -5,17 +5,18 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # JSON contracts
 
-**Status: five schemas shipped, plus one vendored.**
+**Status: six schemas shipped, plus one vendored.**
 `schema/catalog-v1.schema.json`, `schema/run-report-v1.schema.json`,
-`schema/doctor-v1.schema.json`, `schema/trace-v1.schema.json` and
-`schema/diagnostics-v1.schema.json` exist, are embedded in `internal/schemas`,
+`schema/doctor-v1.schema.json`, `schema/trace-v1.schema.json`,
+`schema/diagnostics-v1.schema.json` and `schema/explain-v1.schema.json` exist,
+are embedded in `internal/schemas`,
 and every document the CLI writes is validated against them in the tests. The
 Stryker projection is validated too, against the vendored third-party schema in
 `schema/stryker/` — which is deliberately kept out of that registry, for the
 reasons given below.
 
-go-mutants publishes five native document types and one lossy projection for
-the Stryker report ecosystem. The four that are whole documents are
+go-mutants publishes six native document types and one lossy projection for
+the Stryker report ecosystem. The five that are whole documents are
 discriminated by two fields that a consumer must check before decoding:
 
 ```json
@@ -597,6 +598,65 @@ is written second to last, after everything it names except itself and
 `preserved-paths.txt` — the completion marker stays the completion marker, and a
 bundle with no `preserved-paths.txt` is one the writer did not finish, whose
 manifest is a statement of what it was going to hold.
+
+## `go-mutants/explain` v1
+
+Produced only by `explain --json`. It is the account of one mutant, or of one
+place in the source, joined from a run report and the recording beside it.
+
+**It is the one document here that is derived, and the only one that names its
+sources.** Everything else is written by the thing that measured it; this is
+read out of two documents that already exist, so it carries a `source` block
+saying which — and a consumer that wants the lossless claim about a run is being
+pointed at the report rather than at a third encoding of it.
+
+It exists because five of the things the account holds are in *neither* source:
+
+| What | Why neither document has it |
+| --- | --- |
+| `reproduce.command` | The recording holds an argument vector and a directory; the line that runs that vector again with this mutant activated is composed here |
+| `reproduce.rebuild` | Composed from two artifact events and the mutant's package, for a library session whose tree is compiled through an overlay |
+| `timeline[].share_ms` | The report's `timing` is the whole run's, so its stage durations are the same figures on every mutant's account; this is the mutant's own part of each |
+| `executions[].commands[].output_tail` | The recording holds a path and a digest, and the bytes are a third file beside both documents |
+| `reproduce.temporaries_kept`, `source.trace.describes_the_report` | Judgements about whether the first of these can be trusted at all |
+
+The document takes one of two shapes, and `subject.kind` says which:
+
+| Field | Contents |
+| --- | --- |
+| `document_type`, `schema_version` | `go-mutants/explain`, `1` |
+| `tool_version` | The build that wrote it |
+| `source` | `report` and `trace`, each null when there is none, and `warnings[]` |
+| `subject` | `kind` is `mutant` or `position`; the rest is what it names |
+| `verdict` | *mutant only.* `outcome`, `summary`, `attempts`, `cached`, `killed_by`, `memory`, `diagnostic`, `not_run_reason` |
+| `coverage` | *mutant only.* `mode`, `summary`, `uncovered`, `packages[]`, `tests[]` |
+| `executions[]` | *mutant only.* One row per pass, with `commands[]` from the recording underneath each |
+| `timeline[]` | *mutant only.* The stages the mutant took part in, with its share of each |
+| `reproduce` | *mutant only.* `available`, and either the command or the reason there is none |
+| `skip_sites[]` | *position only.* Every site discovery declined there |
+| `mutants[]` | *position only.* Every mutant catalogued there, with what the report says became of it |
+
+**Absence is stated, never omitted.** A run that recorded nothing has
+`source.trace: null`, an empty `timeline[]`, and a `reproduce` whose `available`
+is `false` with the reason in `unavailable_reason` — because the command's own
+principle is that a section whose document is missing says so rather than
+composing a plausible command, and in a document that has to be a field a
+consumer can branch on. Every array is written as `[]` and never as `null`, so a
+consumer may iterate without checking first.
+
+`mutants[].outcome` is `null` in two different cases, and `source.report` tells
+them apart: a null outcome with a report present is a mutant that report does
+not name — the workspace has been edited since the run, or a later build
+catalogues differently — and a null `source.report` says every outcome here is
+unknown because nothing has been measured.
+
+The schema declares every field of both shapes once, at the top level, and its
+branch carries key sets alone. That is a diagnostic decision rather than a
+stylistic one: under a `oneOf` over two whole objects, one field of the wrong
+type makes both branches fail and a validator can only report that neither
+matched — so the one field actually at fault is never named.
+`internal/cli/explainjson_test.go` pins that, by breaking a field and requiring
+the failure to point at it.
 
 ## Stryker projection
 
