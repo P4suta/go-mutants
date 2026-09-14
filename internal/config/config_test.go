@@ -80,6 +80,7 @@ func TestDefaults(t *testing.T) {
 			Timeout:      0,
 			BaselineRuns: 3,
 			Narrowing:    NarrowingTest,
+			Probing:      ProbingOff,
 		},
 		// The default worker count is a property of the machine, so it is
 		// derived here the way the documentation states it rather than pinned

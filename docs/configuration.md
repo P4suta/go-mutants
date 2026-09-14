@@ -40,6 +40,7 @@ timeout = "60s"
 memory = "2GiB"
 baseline_runs = 3
 narrowing = "test"
+probing = "off"
 
 [execution]
 jobs = 8
@@ -179,6 +180,27 @@ low = 60
   are one binary. There is no flag: it is a choice about how a project's suite
   behaves rather than about one run. Neither turns coverage off — a custom
   `test.command` is what does that.
+- `probing`: `"off"` (default) or `"on"`. Whether the run proves, before
+  executing anything, which executions it does not have to make. `"on"` builds a
+  second copy of the module — the **probe tree** — in which nothing is activated
+  and every site records whether each test binary could have ruled each mutant
+  out, runs one pass per binary, and then reports as survivors the mutants no
+  covering binary could observe and narrows the rest to the binaries that could.
+  Both settings reach the same verdicts; the difference is cost, and unlike
+  `narrowing` the arithmetic can come out either way. A probing run pays a
+  second snapshot, a second instrumentation, a second validation, a second build
+  of every test binary, and one suite run per binary. What it buys is every
+  execution it can prove unnecessary — thousands on a module whose tests are
+  quick and whose mutants are thinly covered, nothing on one whose every test
+  touches everything — which is why it is off by default.
+  A mutant it settles is reported as a survivor with `unobserved` set and no
+  executions, which is never the same thing as `uncovered`: an uncovered
+  mutant's lines are never run, and an unobserved one's are run while nothing
+  asserts anything about what they produce. Nothing here can fail a run: a tree
+  that will not build, a pass that fails, a log that cannot be read is a
+  `GOM7101` warning and a run that measures everything.
+  There is no flag, for `narrowing`'s reason. See
+  [ADR 0011](adr/0011-an-unobservable-mutant-need-not-be-executed.md).
 
 ### `[execution]`
 

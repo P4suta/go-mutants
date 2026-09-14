@@ -327,6 +327,7 @@ var expectedTypes = map[string]string{
 	"test.memory":        "a string",
 	"test.baseline_runs": "an integer",
 	"test.narrowing":     "a string",
+	"test.probing":       "a string",
 
 	"execution":         "a table",
 	"execution.jobs":    "an integer",
@@ -415,6 +416,7 @@ type documentTest struct {
 	Memory       *string   `toml:"memory"`
 	BaselineRuns *int64    `toml:"baseline_runs"`
 	Narrowing    *string   `toml:"narrowing"`
+	Probing      *string   `toml:"probing"`
 }
 
 type documentExecution struct {
@@ -514,6 +516,9 @@ func (d *document) overlay(report reporter) (Overlay, []error) {
 		}
 		if t.Narrowing != nil {
 			overlay.Narrowing = Explicit(Narrowing(*t.Narrowing))
+		}
+		if t.Probing != nil {
+			overlay.Probing = Explicit(Probing(*t.Probing))
 		}
 	}
 

@@ -898,6 +898,19 @@ type Mutant struct {
 	// mutant's lines and therefore did not execute it. Such a mutant is a
 	// survivor — no test could have caught it — with zero attempts.
 	Uncovered bool `json:"uncovered"`
+	// Unobserved says the run established that no test binary could *observe*
+	// this mutant and therefore did not execute it. Such a mutant is a survivor
+	// with zero attempts, exactly as an uncovered one is.
+	//
+	// The two are the pair a reader has to tell apart, and the field exists to
+	// let them. An uncovered mutant's lines are never run; an unobserved one's
+	// are run, and running them changes nothing any test looks at — so the
+	// remedy for the first is a test that reaches the line, and the remedy for
+	// the second is an assertion in a test that already does.
+	//
+	// It is omitted when false, which is every mutant of a run that did not
+	// probe. See internal/probe for the rule that establishes it.
+	Unobserved bool `json:"unobserved,omitzero"`
 	// Cached says this outcome was adopted from the outcome cache rather than
 	// measured by this run. The duration, the attempts, the killed_by and the
 	// output tail are then the ones the run that first measured it recorded, and

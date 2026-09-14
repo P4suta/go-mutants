@@ -316,3 +316,75 @@ func Walk(limit int) int {
 		}
 	}
 }
+
+// TestAnEditThatIntroducesADivisionIsNotProbed is a soundness rule the site's
+// own bytes cannot supply.
+//
+// The in-place forms evaluate the *mutated* reading as well as the original, so
+// what has to be free of panics is both — and `mul-to-div` puts a division
+// where the user wrote a multiplication. A probe tree that divided by zero
+// where the original multiplied is not the original program, and the mutant it
+// stands in for would have been caught by running it.
+func TestAnEditThatIntroducesADivisionIsNotProbed(t *testing.T) {
+	t.Parallel()
+
+	got := scanSource(t, `package pkg
+
+// Scale multiplies by a number that may be zero.
+func Scale(a, b int) int {
+	n := a * b
+	return n
+}
+`)
+	if site := valueProbeOf(t, got, "mul-to-div"); site != nil {
+		t.Errorf("probe site = %+v, and the mutated reading divides by a value that may be zero", site)
+	}
+}
+
+// TestADivisionByANonZeroConstantIsProbed is the other half, and it is the rule
+// the phase already applies to a division the user wrote.
+//
+// A constant divisor the compiler evaluated and found non-zero cannot panic, so
+// the mutated reading is exactly as safe as the original and the site is
+// measured.
+func TestADivisionByANonZeroConstantIsProbed(t *testing.T) {
+	t.Parallel()
+
+	got := scanSource(t, `package pkg
+
+// Double multiplies by two.
+func Double(a int) int {
+	n := a * 2
+	return n
+}
+`)
+	if site := valueProbeOf(t, got, "mul-to-div"); site == nil {
+		t.Error("a multiplication by a non-zero constant is not probed, though dividing by it cannot panic")
+	}
+}
+
+// TestAFloatMultiplicationIsProbedWhateverItsDivisor is the exception the rule
+// needs, because Go's float division does not panic.
+//
+// Dividing a float by zero yields an infinity, which is a value like any other:
+// the comparison sees it, the mutant would have produced it, and nothing
+// diverges. Refusing these would cost every floating mutant its probe for a
+// hazard that is not there -- and the floating rule above already refuses the
+// ones whose *values* `!=` cannot separate.
+func TestAFloatMultiplicationIsProbedWhateverItsDivisor(t *testing.T) {
+	t.Parallel()
+
+	got := scanSource(t, `package pkg
+
+// Ratio multiplies two numbers and hands back an integer.
+func Ratio(a, b float64) int {
+	if a*b > 0 {
+		return 1
+	}
+	return 0
+}
+`)
+	if site := valueProbeOf(t, got, "fmul-to-fdiv"); site == nil {
+		t.Error("a float multiplication is not probed, though float division yields an infinity")
+	}
+}

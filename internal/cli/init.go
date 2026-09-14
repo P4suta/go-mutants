@@ -236,6 +236,17 @@ baseline_runs = ` + strconv.Itoa(c.Test.BaselineRuns) + `
 # selected, "package" runs every binary that reaches it whole. Both reach the
 # same verdicts; "test" is faster wherever a package's tests are one binary.
 narrowing = "` + c.Test.Narrowing.String() + `"
+# Whether the run proves, before executing anything, which executions it does
+# not have to make. "on" builds a second copy of the module that records what
+# each test binary could have observed, and skips every mutant no covering
+# binary could see; "off" measures them all. Both reach the same verdicts.
+#
+# It is off because the arithmetic can come out either way: a probing run pays a
+# second snapshot, a second build and one suite run per binary, and buys every
+# execution it can prove unnecessary. That is thousands of executions on a
+# module whose tests are quick and whose mutants are thinly covered, and nothing
+# at all on one whose every test touches everything.
+probing = "` + c.Test.Probing.String() + `"
 # Left out, and therefore derived as max(10s, slowest baseline × 5). Write a Go
 # duration to fix it instead; there is no flag that puts derivation back, so
 # removing this line again is how a project returns to it.

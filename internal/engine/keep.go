@@ -114,6 +114,11 @@ type temporaries struct {
 	// scratch is empty, because a directory is only recorded here once it has
 	// been claimed.
 	scratchOwner *tempowner.Owner
+	// probe is the second snapshot a probing run instruments as its probe
+	// tree, or nil. It is a tree of its own rather than a copy of the mutant
+	// one: the mutant tree is instrumented in place by the time the probe phase
+	// runs, and a probe tree has to be the *original* program.
+	probe *snapshot.Snapshot
 	// workers are the per-worker copies of the instrumented tree an isolating
 	// run made, in worker order, or nil. Each is a snapshot in its own right --
 	// its own directory, its own lock, its own manifest of the instrumented
@@ -179,6 +184,14 @@ func (s *session) release(temps *temporaries, keep KeepTemp, out *RunOutcome, er
 		}
 		if s.settle(keeping, "worker snapshot directory", CodeSnapshotNotRemoved, worker.Keep, worker.Cleanup) {
 			preserved = append(preserved, PreservedDir{Kind: KeptSnapshot, Path: worker.Dir()})
+		}
+	}
+	// And the probe tree before the mutant one, for the worker copies' reason:
+	// it is a snapshot in its own right, made by the same package and removed
+	// by the same call, and it lives beside the tree it was taken from.
+	if tree := temps.probe; tree != nil {
+		if s.settle(keeping, "probe snapshot directory", CodeSnapshotNotRemoved, tree.Keep, tree.Cleanup) {
+			preserved = append(preserved, PreservedDir{Kind: KeptSnapshot, Path: tree.Dir()})
 		}
 	}
 	if snap := temps.snapshot; snap != nil {

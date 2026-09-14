@@ -51,6 +51,7 @@ for one condition means a user searching for the wrong one.
 | `GOM51xx` | `internal/report` | The run report and its store |
 | `GOM52xx` | `internal/report` | The artefacts a run publishes |
 | `GOM70xx` | `internal/snapshot` | The frozen copy |
+| `GOM71xx` | `internal/probe` | What a run may skip |
 | `GOM720x` | `internal/runner` | One supervised process |
 | `GOM721x` | `internal/gocmd` | The toolchain |
 | `GOM73xx` | `internal/instrument` | The rewrite |
@@ -114,6 +115,7 @@ and column where it was found, never a silently ignored typo.
 | `GOM3025` | A memory bound that is not a byte size: a spelling the units do not cover, a value that is not a number, or one larger than any machine has. | a byte size such as `512MiB` or `2GiB` |
 | `GOM3026` | A memory bound of zero or less. | a positive size, or delete the key to take the derived bound |
 | `GOM3027` | A narrowing that is not test or package. | one of `test`, `package` |
+| `GOM3028` | A probing mode that is not off or on. | one of `off`, `on` |
 | `GOM3030` | A worker count outside its range. | the message names the range; delete the key to take `min(CPUs, 8)` |
 | `GOM3040` | A cache mode that is not auto, on, or off. | one of `auto`, `on`, `off` |
 | `GOM3041` | A cache directory that is absolute or escapes the workspace. | a relative path inside the workspace |
@@ -260,6 +262,18 @@ copied faithfully.
 | `GOM7010` | A [Snapshot.Cleanup] call that was refused because the recorded root does not look like a directory this package created. | file a bug and attach the recording from `go-mutants run --trace` |
 | `GOM7011` | A snapshot directory that survived every removal attempt, usually a file still locked by a test binary on Windows. | delete the directory the message names |
 | `GOM7012` | A file a worker copy could not be put back: the tree the copy was made of no longer holds it, the destination cannot be removed, or the restored bytes do not digest to what the manifest recorded. | the last of those means the instrumented tree changed under the run; re-run without `--isolate` to see whether the shared tree drifts too |
+
+## `GOM71xx` -- what a run may skip
+
+Deciding, from an infection log, which executions a run has already proven
+unnecessary. Every code here is a reason the run learned nothing and measured
+everything, which is what it would have done without probing at all.
+
+| Code | Meaning | Remedy |
+| --- | --- | --- |
+| `GOM7101` | A probe pass could not be made: the tree would not build, a pass failed or timed out, or the runtime could not write its log. Always a warning, never a failure. | none needed; the run measured every mutant against every covering binary, as a run without probing does |
+| `GOM7102` | A probe was asked for over no mutants or no test binaries, so there was nothing for it to say. Not a failure. | none needed |
+| `GOM7103` | An infection log names a mutant index the catalogue cannot explain, so the catalogue and the probe tree were built from different discovery passes. Every fact of the run is discarded. | file a bug and attach the recording from `go-mutants run --trace` |
 
 ## `GOM720x` -- one supervised process
 

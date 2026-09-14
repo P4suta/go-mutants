@@ -126,6 +126,7 @@ var mergedFields = map[string]string{
 	"Mutants[].CoveringTests[].Package": sameAsTheWholeRun,
 	"Mutants[].CoveringTests[].Name":    sameAsTheWholeRun,
 	"Mutants[].Uncovered":               sameAsTheWholeRun,
+	"Mutants[].Unobserved":              sameAsTheWholeRun,
 	"Mutants[].Cached":                  sameAsTheWholeRun,
 	"Rejected[].ID":                     sameAsTheWholeRun,
 	"Rejected[].DisplayID":              sameAsTheWholeRun,

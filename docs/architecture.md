@@ -351,12 +351,13 @@ dispatch is a plain array load and the race detector stays quiet.
 
 ## Probe runtime and the infection log
 
-Status: the runtime, its log format and all four probe forms are implemented in
-`internal/instrument`, and the pass that drives these processes is implemented
-in `internal/execute` and reachable through the engine API's `Session.Probe`.
-What is not implemented is a `run` that uses any of it: the engine builds no
-probe tree and reads no infection log, so nothing on the command line asks these
-questions yet.
+Status: implemented end to end. The runtime, its log format and all four probe
+forms are in `internal/instrument`; the pass that drives these processes is in
+`internal/execute` and reachable through the engine API's `Session.Probe`; the
+rule that turns a log into executions a run need not make is `internal/probe`;
+and `internal/engine`'s probe phase is what a `run` reaches it through, selected
+by `test.probing = "on"` and off by default. See
+[ADR 0011](adr/0011-an-unobservable-mutant-need-not-be-executed.md).
 
 The next proof a consumer can act on is **infection**: if the site of mutant
 `m` never evaluated to a value different from the original's during test `t`,
@@ -1231,6 +1232,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/gitdiff` | Which lines of the workspace changed since a ref, for `--changed` | implemented |
 | `internal/runner` | One process, timed, supervised and recorded; tree kill | implemented |
 | `internal/coverage` | covdata textfmt parsing, line overlap mapping per binary and per test | implemented |
+| `internal/probe` | the rule that turns an infection log into executions a run need not make | implemented |
 | `internal/cache` | Outcome cache: key, store, mode, `gc` | implemented |
 | `internal/validate` | One build, then bisection; rejections with diagnostics | implemented |
 | `internal/execute` | Test-binary build, profiling per binary and per test, scheduling, timeout retry | implemented |

@@ -407,6 +407,21 @@ type RunOutcome struct {
 	// somebody asking why, and the two are deliberately different lengths: a run
 	// that is about to succeed does not print a compiler blob at the user.
 	CoverageFallback string
+	// Probe is what the probe phase established, and the zero value on every
+	// run that did not probe -- which is every run by default. See [Probed].
+	Probe ProbeFacts
+}
+
+// ProbeFacts is what the probe phase proved a run did not have to do.
+type ProbeFacts struct {
+	// Binaries is how many test binaries were probed.
+	Binaries int
+	// Settled is how many mutants no covering binary could observe. They are
+	// survivors the run did not execute.
+	Settled int
+	// Narrowed is how many mutants the run measured against fewer binaries than
+	// coverage gave them.
+	Narrowed int
 }
 
 // ValidationFacts is what the validation phase spent.
@@ -1302,6 +1317,30 @@ func (s *session) mutate(
 		}
 	}
 	out.CoverageFallback = st.coverage.coverageFallback
+
+	// The second narrowing, between coverage and the cache. Both halves of that
+	// position are forced, and probe.go argues each: it needs coverage's answer
+	// to have a covering set to narrow, and cache.go's correctness argument
+	// needs every mutant this run will not execute settled before the cache is
+	// asked about it.
+	if probingEnabled(&cfg) {
+		runs, out.Probe, err = s.probePhase(ctx, probeOptions{
+			root:       snap.SourceRoot,
+			catalog:    catalog,
+			hints:      hints,
+			modulePath: found.ModulePath,
+			toolchain:  toolchain,
+			env:        env,
+			jobs:       cfg.Execution.Jobs,
+			scratch:    scratch,
+			exec:       execOpts,
+			bins:       bins,
+		}, runs, st, temps)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Last of the narrowing stages and after coverage, which is the order the
 	// correctness argument in cache.go depends on: an uncovered mutant is
 	// settled before the cache is ever asked about it.

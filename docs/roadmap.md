@@ -24,14 +24,13 @@ whose Done when reads "it works well" is a row that cannot be finished.
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 1 | Probing in the `run` pipeline. `Session.Probe` exists and `internal/engine` has no reference to it, so a run pays for executions a probe could have proven unnecessary | A run with probing on reaches the same verdict for every mutant as one with it off, and the work ceiling records fewer `mutant-run` children |
-| 2 | Multi-module `go.work`. Refused today with `GOM4102` | `fixtures/workspace` measures both modules from its root, and the mutant identities of a module measured alone and measured in the workspace are told apart deliberately rather than by accident |
+| 1 | Multi-module `go.work`. Refused today with `GOM4102` | `fixtures/workspace` measures both modules from its root, and the mutant identities of a module measured alone and measured in the workspace are told apart deliberately rather than by accident |
 
 ## Documents
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 3 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
+| 2 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
 
 ## Reserved and unemitted
 
