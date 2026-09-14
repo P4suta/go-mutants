@@ -115,9 +115,10 @@ func (c Changed) Lines(path string) []Range { return c.Files[path] }
 // is selected even if the touched part was a comment at the end of it —
 // selecting one mutant too many costs time, and missing one costs a finding.
 func (c Changed) Touches(path string, first, last int) bool {
-	if first > last {
-		first, last = last, first
-	}
+	// Normalised rather than compared-and-swapped: a caller naming one line
+	// passes the same number twice, and `>` and `>=` over a pair that is
+	// already in order are the same swap of nothing at all.
+	first, last = min(first, last), max(first, last)
 	for _, r := range c.Files[path] {
 		if r.First <= last && first <= r.Last {
 			return true
@@ -143,12 +144,19 @@ func Resolve(ctx context.Context, opts Options) (Changed, error) {
 	if g.timeout <= 0 {
 		g.timeout = DefaultTimeout
 	}
+	// The seam is closed here and nowhere else: a real run starts real git
+	// commands, and the value is taken after every field it reads is set.
+	g.run = g.command
+	return g.resolve(ctx, opts.Ref)
+}
 
+// resolve is [Resolve] once the commands have a way to be run.
+func (g git) resolve(ctx context.Context, wanted string) (Changed, error) {
 	prefix, err := g.prefix(ctx)
 	if err != nil {
 		return Changed{}, err
 	}
-	ref, err := g.resolveRef(ctx, opts.Ref)
+	ref, err := g.resolveRef(ctx, wanted)
 	if err != nil {
 		return Changed{}, err
 	}
@@ -176,6 +184,21 @@ type git struct {
 	dir     string
 	env     []string
 	timeout time.Duration
+	// run is how a command is run, and it is a field so that the failures git
+	// will not produce on demand can be produced anyway.
+	//
+	// The tests of this package drive a real git, because every interesting
+	// thing about *reading* git is what git actually prints and a stand-in
+	// would be a second implementation of the thing under test. That argument
+	// does not reach the other half of this package: which diagnostic a user
+	// sees when `git ls-files` exits non-zero, when the diff command fails
+	// after the merge base succeeded, or when one sub-command is missing while
+	// the rest answer, is a fact about go-mutants' own code, and there is no
+	// repository state that produces some of those at all. Scripting them is
+	// the same trade internal/gocmd made when it left the toolchain allowlist.
+	//
+	// [Resolve] sets it to [git.command] and nothing else in a real run does.
+	run func(ctx context.Context, args ...string) (string, error)
 }
 
 // prefix returns the workspace's path within the repository, '/'-separated and
@@ -406,10 +429,6 @@ func (g git) untracked(ctx context.Context) ([]string, error) {
 	return slices.DeleteFunc(paths, func(path string) bool { return path == "" }), nil
 }
 
-// lineCountBuffer is how much of a file [lineCount] reads at a time. Nothing is
-// kept, so it is a syscall-size choice rather than a memory budget.
-const lineCountBuffer = 64 * 1024
-
 // lineCount counts the lines of one file under root, which for an untracked
 // file is how many of its lines are new.
 //
@@ -447,29 +466,62 @@ func lineCount(root, rel string) (int, error) {
 	// Nothing was written, so there is nothing a close can fail to flush.
 	defer func() { _ = file.Close() }()
 
-	var (
-		buf   = make([]byte, lineCountBuffer)
-		lines int
-		last  byte
-		read  bool
-	)
-	for {
-		n, readErr := file.Read(buf)
-		if n > 0 {
-			lines += bytes.Count(buf[:n], []byte{'\n'})
-			last, read = buf[n-1], true
-		}
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
-			}
-			return 0, unreadable(rel, readErr)
-		}
+	return countLines(rel, file)
+}
+
+// countLines counts the lines a reader carries, naming the file in the failure
+// so that a user reads the path git gave rather than a descriptor.
+//
+// io.Copy owns the loop, and that is the point of writing it this way. A
+// hand-rolled read loop has to decide for itself when to stop, which makes its
+// stopping condition an edit away from a program that never returns -- and a
+// mutant that never returns costs this repository's own gate a whole per-mutant
+// timeout, twice, to say what the loop's shape already says. What is left is
+// the counting, which is a pure function of the bytes and is tested as one.
+// The buffer goes with the loop: its size was a syscall-size choice, and the
+// standard library makes the same kind of choice.
+func countLines(rel string, r io.Reader) (int, error) {
+	var counter lineCounter
+	if _, err := io.Copy(&counter, r); err != nil {
+		return 0, unreadable(rel, err)
 	}
-	if read && last != '\n' {
-		lines++
+	return counter.total(), nil
+}
+
+// A lineCounter counts newlines as bytes go past, and remembers whether the
+// last byte it saw was one.
+//
+// It is a writer rather than a loop so that [io.Copy] can own the reading; see
+// [lineCount]. Nothing is kept but the tally, so a file of any size costs the
+// same.
+type lineCounter struct {
+	lines int
+	last  byte
+	read  bool
+}
+
+// Write counts one chunk. It never fails and never reports a short write,
+// because there is nothing here for either to mean.
+func (c *lineCounter) Write(p []byte) (int, error) {
+	if len(p) > 0 {
+		c.lines += bytes.Count(p, []byte{'\n'})
+		c.last, c.read = p[len(p)-1], true
 	}
-	return lines, nil
+	return len(p), nil
+}
+
+// total is the line count, which is the newline count plus a last line that
+// nobody terminated.
+//
+// A file with no bytes at all has no lines, which is the difference this
+// distinguishes from a file holding one unterminated line: the first is a file
+// with nothing in it to mutate and the second is a file with one line in it.
+// git counts the same text the same way.
+func (c *lineCounter) total() int {
+	if c.read && c.last != '\n' {
+		return c.lines + 1
+	}
+	return c.lines
 }
 
 // unreadable reports a file git named and this process could not read.
@@ -486,7 +538,7 @@ func unreadable(rel string, err error) error {
 	}
 }
 
-// run executes one git command and returns its standard output.
+// command executes one git command and returns its standard output.
 //
 // The streams are kept apart rather than combined, which is why this does not
 // go through internal/runner: that package supervises a process tree and
@@ -498,7 +550,7 @@ func unreadable(rel string, err error) error {
 // travels unchanged through every caller. A git that ran and refused is
 // reported by the caller instead, which is the only place that knows what the
 // question was.
-func (g git) run(ctx context.Context, args ...string) (string, error) {
+func (g git) command(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, g.timeout)
 	defer cancel()
 
@@ -520,25 +572,33 @@ func (g git) run(ctx context.Context, args ...string) (string, error) {
 	if err == nil {
 		return stdout.String(), nil
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && ctx.Err() == nil {
-		// git ran and said no. What that means is the caller's to name.
-		return "", &Error{
-			Code:    CodeDiffFailed,
-			Message: "`git " + strings.Join(args, " ") + "` exited with status " + strconv.Itoa(exitErr.ExitCode()),
-			Output:  trimOutput(stderr.String()),
-			Err:     err,
+	// Whose answer this is comes before what the answer was, and the two
+	// questions are nested rather than joined: a child the context killed
+	// reports an exit status exactly as a child that refused does, so reading
+	// the status first would call an interrupted run a broken repository. Asked
+	// this way round there is one reading of each question -- a conjunction of
+	// them has a second that no input can tell from the one that is meant.
+	if ctx.Err() == nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// git ran and said no. What that means is the caller's to name.
+			return "", &Error{
+				Code:    CodeDiffFailed,
+				Message: "`git " + strings.Join(args, " ") + "` exited with status " + strconv.Itoa(exitErr.ExitCode()),
+				Output:  trimOutput(stderr.String()),
+				Err:     err,
+			}
 		}
 	}
-	if parent := context.Cause(ctx); parent != nil && ctx.Err() != nil {
-		// A cancelled run is the caller's cancellation, not a broken git.
-		if errors.Is(parent, context.Canceled) {
-			return "", &Error{
-				Code:    CodeGitUnavailable,
-				Message: "`git " + strings.Join(args, " ") + "` was interrupted",
-				Output:  trimOutput(stderr.String()),
-				Err:     parent,
-			}
+	// A cancelled run is the caller's cancellation, not a broken git. Cause is
+	// nil for a context that is not done, so this asks nothing of a run that
+	// simply failed.
+	if cause := context.Cause(ctx); errors.Is(cause, context.Canceled) {
+		return "", &Error{
+			Code:    CodeGitUnavailable,
+			Message: "`git " + strings.Join(args, " ") + "` was interrupted",
+			Output:  trimOutput(stderr.String()),
+			Err:     cause,
 		}
 	}
 	return "", &Error{
@@ -561,9 +621,12 @@ func trimOutput(s string) string {
 		return ""
 	}
 	lines := strings.Split(text, "\n")
-	if len(lines) > outputLines {
-		lines = lines[len(lines)-outputLines:]
-	}
+	// The last lines, and all of them when there are fewer: a command that
+	// failed says why on its way out. Written as one slice rather than as a
+	// guarded one because `>` and `>=` pick the same lines at exactly the
+	// limit -- `lines[0:]` is the whole of it either way -- so the guard would
+	// have a second reading no output could tell from the first.
+	lines = lines[max(0, len(lines)-outputLines):]
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], "\r")
 	}
@@ -572,12 +635,13 @@ func trimOutput(s string) string {
 
 // shortHash abbreviates a commit for a message, and leaves anything that is not
 // one alone rather than slicing past its end.
+//
+// One slice rather than a guard and a slice, for [trimOutput]'s reason: a hash
+// of exactly the width is the same string cut or uncut, so the comparison that
+// chose between them had two readings and one answer.
 func shortHash(hash string) string {
 	const width = 12
-	if len(hash) <= width {
-		return hash
-	}
-	return hash[:width]
+	return hash[:min(len(hash), width)]
 }
 
 // or returns value, or fallback when value is empty.
