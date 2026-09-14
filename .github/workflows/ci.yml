@@ -545,7 +545,86 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-  # One required check instead of six.
+  # The composite action, measured against the corpus.
+  #
+  # An action is a file of YAML that nothing compiles, and the half of it that
+  # can be wrong -- the outputs -- is invisible until something reads them. A
+  # caller finds out by putting it in their own pipeline, which is the worst
+  # place to find out.
+  #
+  # `version: skip` is what makes this a test of *this* checkout rather than of
+  # whatever `go install ...@latest` would fetch: the binary is built from the
+  # source under test and put on PATH first, so a change to the report's shape
+  # fails here rather than after a release.
+  #
+  # killable is the fixture because its fates are fixed and documented, and the
+  # assertions below are about the plumbing -- that every output arrived and
+  # that they agree with each other -- rather than about the numbers, which
+  # internal/engine's own suite pins and which would make this job a second
+  # place to edit when a fixture changes.
+  action-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518
+        with:
+          install: true
+          cache: true
+      - name: Build the go-mutants under test and put it on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          go build -o "$RUNNER_TEMP/bin/go-mutants" ./cmd/go-mutants
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - id: measured
+        uses: ./.github/actions/go-mutants
+        with:
+          version: skip
+          working-directory: fixtures/killable
+          report: ${{ runner.temp }}/killable-report.json
+          # The fixture has a survivor by design, so a gate here would fail
+          # every time. What is under test is the reporting, not the score.
+          fail: "false"
+      - name: The outputs are there and agree with each other
+        shell: bash
+        env:
+          STATUS: ${{ steps.measured.outputs.status }}
+          TOTAL: ${{ steps.measured.outputs.total }}
+          KILLED: ${{ steps.measured.outputs.killed }}
+          SURVIVED: ${{ steps.measured.outputs.survived }}
+          TIMED_OUT: ${{ steps.measured.outputs.timed-out }}
+          SCORE: ${{ steps.measured.outputs.score }}
+          EXIT_CODE: ${{ steps.measured.outputs.exit-code }}
+          REPORT: ${{ steps.measured.outputs.report }}
+        run: |
+          set -euo pipefail
+          test "$STATUS" = completed
+          test -s "$REPORT"
+          test "$TOTAL" -gt 0
+          test "$SURVIVED" -gt 0
+          # The total the action reported is the total the document holds,
+          # which is the one number that proves the outputs were read from the
+          # report rather than scraped off the console.
+          jq -e --argjson t "$TOTAL" \
+            '.summary.total == $t' "$REPORT" > /dev/null
+          test $((KILLED + SURVIVED + TIMED_OUT)) -le "$TOTAL"
+          # A score is a number. An empty one means the run scored nothing,
+          # which a fixture with ten mutants did not do.
+          case "$SCORE" in
+            '' | *[!0-9.]*)
+              echo "::error::score is not a number: $SCORE"
+              exit 1
+              ;;
+          esac
+          # The exit code is an output whatever `fail` was set to, and a run
+          # with an unexpected survivor is a policy failure rather than a
+          # broken run.
+          test "$EXIT_CODE" = 0 || test "$EXIT_CODE" = 1
+          echo "action outputs: $STATUS $TOTAL/$KILLED/$SURVIVED score $SCORE"
+
+  # One required check instead of seven.
   #
   # Branch protection names its required checks by hand, in a repository setting
   # nothing in this tree can see -- so a job added to this file is a job nobody
@@ -561,9 +640,18 @@ jobs:
   #
   # internal/testkit's TestTheAggregateJobWaitsForEveryOtherJob compares the
   # list below with the jobs this file defines, which is the half that would
-  # otherwise go stale in exactly the way the setting does.
+  # otherwise go stale in exactly the way the setting does. One name per line
+  # because the list only grows, and a diff that adds a job should be a diff
+  # that adds a line.
   ci-success:
-    needs: [quality, platform-tests, race, coverage, artifacts, dogfood]
+    needs:
+      - quality
+      - platform-tests
+      - race
+      - coverage
+      - artifacts
+      - dogfood
+      - action-smoke
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -5,10 +5,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Continuous integration
 
-**Status: implemented, and checked.** Every workflow, every job and every task
-named below exists; `internal/testkit/cidoc_test.go` fails when one stops
-existing, when a new one is not named here, or when the aggregate job stops
-waiting for one of the others.
+**Status: implemented, and checked.** Every workflow, every job, every task and
+every input and output of the composite action named below exists;
+`internal/testkit/cidoc_test.go` fails when one stops existing, when a new one
+is not named here, or when the aggregate job stops waiting for one of the
+others.
 
 Everything CI runs is a `mise` task, and every one of them is a task a
 contributor can run. That is the rule this page exists to make usable: **a red
@@ -40,7 +41,8 @@ decision.
 | `coverage` | `mise run cover-integration` | **Not a gate.** `continue-on-error`, and skipped on pull requests entirely. See below |
 | `artifacts` | `mise run package` | Exercises the packaging path on every run rather than for the first time on a tag, and smoke-tests that the version stamp reached its target |
 | `dogfood` | `mise run dogfood` — go-mutants against go-mutants | The gate on whether the tests *catch* anything. `--strict`, so one undeclared survivor fails it |
-| `ci-success` | nothing | Needs every job above, so branch protection names one check instead of six |
+| `action-smoke` | the composite action, over `fixtures/killable` | Builds this checkout onto `PATH` and passes `version: skip`, so what is measured is this source and not the last release. Asserts that every output arrived and that they agree with the report |
+| `ci-success` | nothing | Needs every job above, so branch protection names one check instead of seven |
 
 ## The nightly searches
 
@@ -150,3 +152,50 @@ that is not every part of exactly one run.
 network unplugged, and a failed run also writes a diagnostics bundle whose
 `manifest.json` a job can read to say which failure it uploaded. See
 [Diagnostic codes](errors.md) for what the code in it means.
+
+## The composite action
+
+`.github/actions/go-mutants/action.yml` is the six steps above written once. On
+GitHub Actions:
+
+```yaml
+- id: mutants
+  uses: P4suta/go-mutants/.github/actions/go-mutants@main
+  with:
+    version: v0.1.0
+- run: echo "score ${{ steps.mutants.outputs.score }}"
+```
+
+Everything it does is something you could write yourself. What it adds is that
+the numbers come back as step outputs, **read from the run report rather than
+scraped off the console**, so a later step can comment them on a pull request or
+compare them with a previous run without parsing prose.
+
+It does not add a threshold of its own. The run's own policy decides the exit
+code — `policy.strict` and `policy.minimum_score` in your `.go-mutants.toml`, or
+the flags you pass through `args` — because a second place to configure "how
+good is good enough" is a second answer to a question the configuration file
+already answers, and the two disagree the first time somebody changes one.
+
+| Input | Default | What it is |
+| --- | --- | --- |
+| `version` | `latest` | The version to `go install`, as a module version. The literal `skip` installs nothing and expects `go-mutants` on `PATH` already, which is what `action-smoke` uses to measure the checkout it is testing |
+| `working-directory` | `.` | The module root to run in |
+| `args` | empty | Extra arguments for `go-mutants run`, as one shell word list. `--json` is supplied by the action and must not be repeated: it is how the outputs are read |
+| `report` | `go-mutants-report.json` | Where to write the run report, relative to the working directory unless absolute |
+| `fail` | `true` | Whether a non-zero run fails the step. `true` is what a gate wants; `false` reports the numbers and leaves the decision to a later step, which is what a pull-request comment wants |
+
+| Output | What it is |
+| --- | --- |
+| `score` | The mutation score as a percentage, or empty for a run that scored nothing |
+| `total` | How many mutants the run catalogued |
+| `killed` | How many mutants a test caught |
+| `survived` | How many mutants no test caught |
+| `timed-out` | How many a timeout settled, which the score counts as detected |
+| `status` | The run's own status — `completed`, `interrupted`, or `failed` |
+| `exit-code` | What `go-mutants run` exited with, whatever `fail` was set to |
+| `report` | The path the run report was written to |
+
+A run that fails before it can publish leaves no document, and the action says
+so — a warning annotation and the exit code — rather than reporting zeroes. "0
+mutants, 0 killed" is a number a job would compare against last week's.
