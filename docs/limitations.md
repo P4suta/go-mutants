@@ -86,7 +86,7 @@ question.
 | `GOM4013` | The instrumented snapshot, with no mutant active, no longer passes what the pristine one passed. Instrumentation is supposed to be meaning-preserving, and this is the gate that says so |
 | `GOM4014` | The snapshot stopped matching its manifest in a way instrumentation did not cause — a suite that writes into the package directory it runs in. Every mutant would be measured against a different program from the baseline's |
 | `GOM4022` | A `test.command` whose package patterns describe a scope no mutant can be measured in. A scope that resolves to nothing is a refusal rather than a silent widening |
-| `GOM4102` | A `go.work` at the snapshot root. A workspace has no single module path, no single set of module-relative identities and no single baseline |
+| `GOM4102` | A `go.work` at the snapshot root. A workspace has no single module path, no single set of module-relative identities and no single baseline. The file is read before it is refused, so one that is itself malformed says which line is wrong |
 | `GOM7711`, `GOM7712` | `--changed` outside a repository, or with no upstream to compare against. A narrowing that silently fell back to everything, or to nothing, would be worse than not running at all |
 | `GOM7812`, `GOM7813` | `report merge` given documents that are not every part of exactly one run |
 
