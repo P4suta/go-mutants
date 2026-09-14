@@ -999,6 +999,16 @@ func (s *fileScan) emitAt(
 	if guard.Probe == nil && rule.Family == mutation.FamilyStatementDeletion {
 		guard.Probe = s.guard.reachProbe(guard)
 	}
+	// And the one question a probe hint cannot be computed without the *rule*.
+	// The two in-place forms evaluate the mutated reading as well as the
+	// original, so an edit that puts a division where a multiplication was can
+	// panic in a tree that is meant to be the original program. See
+	// [guardResolver.introducesPanic]; the reachability form is unaffected,
+	// since it evaluates nothing extra.
+	if guard.Probe != nil && guard.Probe.Form != ProbeFormReach &&
+		s.guard.introducesPanic(anchor, replacement) {
+		guard.Probe = nil
+	}
 
 	candidate := mutation.Candidate{
 		Path:         s.rel,

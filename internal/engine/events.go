@@ -418,6 +418,29 @@ type CoverageMapped struct {
 	Widened int
 }
 
+// Probed reports what the probe pass established, and is published only by a
+// run that made one: a run with probing off publishes nothing at all, and a run
+// whose probe was unavailable publishes a [Warning] saying why.
+//
+// It arrives after the coverage mapping and before the first mutant is
+// executed, in the same place and for the same reason [CoverageMapped] does:
+// the two narrowings compose, and this is the number that says how much of what
+// coverage left is about to be skipped as well.
+type Probed struct {
+	// Binaries is how many test binaries were probed.
+	Binaries int
+	// Settled is how many mutants no covering binary could observe. They are
+	// reported as survivors without being executed, and unlike an uncovered
+	// mutant they are survivors a test binary really did run the lines of.
+	Settled int
+	// Narrowed is how many mutants kept fewer covering binaries than coverage
+	// gave them, because the ones dropped had established they could not see
+	// the mutant. It is the second saving and usually the larger one.
+	Narrowed int
+	// Remaining is how many mutants the run will execute after both.
+	Remaining int
+}
+
 // A MutantResult is one mutant's settled outcome, with everything a renderer
 // needs in order to describe it without holding the catalogue.
 //
@@ -823,6 +846,7 @@ func (Discovered) event()        {}
 func (Validated) event()         {}
 func (SelectionNarrowed) event() {}
 func (CoverageMapped) event()    {}
+func (Probed) event()            {}
 func (MutantStarted) event()     {}
 func (MutantFinished) event()    {}
 func (CacheHit) event()          {}

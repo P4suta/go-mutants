@@ -14,6 +14,56 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`test.probing = "on"` proves which executions a run does not have to make.**
+  The probe layer existed end to end and nothing on the command line reached it:
+  `Session.Probe` was a library call, and a `run` paid for every execution a
+  probe could have proven unnecessary. It is wired in now, off by default.
+  A probing run builds a second copy of the module — the probe tree, in which
+  nothing is activated and every site records whether each test binary could
+  have ruled each mutant out — runs one pass per binary, then reports as
+  survivors the mutants no covering binary could observe and narrows the rest to
+  the binaries that could. Both savings are real and the second is usually the
+  larger: a mutant covered by three binaries and named by one is measured
+  against one.
+  The phase sits between coverage and the cache, and both halves of that
+  position are forced. It needs coverage's answer to have a covering set to
+  narrow — a mutant nothing covers would find the empty intersection, which is
+  vacuously "no binary named it" — and `internal/cache`'s correctness argument
+  needs every mutant a run will not execute settled before the cache is asked
+  about it.
+  [ADR 0011](docs/adr/0011-an-unobservable-mutant-need-not-be-executed.md) is
+  the soundness record. Its point (3) is the one worth reading twice: a probe
+  pass *is* the whole binary, so where it proves a binary could not observe a
+  mutant it has proved it for every test in that binary — which makes ADR 0010's
+  whole-binary confirmation of a narrowed survivor unnecessary rather than
+  skipped.
+  Everything fails open. A tree that will not build, a pass that fails, a log
+  that cannot be read: each is a `GOM7101` warning and a run that measures
+  exactly what it would have measured without probing. An optimisation that can
+  fail a run is not one anybody can leave switched on.
+  The report gained `mutants[].unobserved`, which is a survivor the run did not
+  execute because nothing could see it, and is never true beside `uncovered`.
+  The pair is what tells two remedies apart: an uncovered mutant's lines are
+  never run, and an unobserved one's are run while nothing asserts anything
+  about what they produce.
+  `internal/probe` is the rule itself, in a package of its own for
+  `internal/coverage`'s reason: it is pure, so every shape of evidence a run
+  could produce is reachable in a test rather than only the shapes a fixture
+  happens to make. It owns the `GOM71xx` block.
+  `fixtures/unobserved` is the standing proof, and it holds one mutant of each
+  answer a probe can give: a comparison two binaries read differently, and an
+  `n * 1` no execution can tell from `n / 1`.
+- **A probe form refuses an edit that introduces a division.** A soundness fix
+  to the two in-place forms. They evaluate the *mutated* reading as well as the
+  original, and `mul-to-div` puts a `/` where the user wrote a `*` — so a probe
+  tree meant to be the original program would divide by zero where the original
+  multiplied, and the mutant it stands in for is one running it would have
+  caught. The whole registry reduces to that one shape: `and-to-or` changes
+  which operands are evaluated rather than what is done to them and is settled
+  by asking the panic grammar of the whole site, a shift's count is untouched,
+  `div-to-mul` removes the hazard, and float division yields an infinity. What
+  is left is `/` and `%` arriving where they were not, and the test is the one
+  the phase already applies to a division the user wrote.
 - **A deleted statement records that it ran.** The fourth and weakest probe
   form, and the one that says why the layer's invariant is worded as "this pass
   could not rule the mutant out" rather than as "the value differed". A

@@ -91,6 +91,17 @@ type MutantResult struct {
 	// a document that recorded a killed mutant as uncovered would be describing
 	// a detection nothing performed.
 	Uncovered bool
+	// Unobserved says the run established that no test binary *could observe*
+	// this mutant and therefore did not execute it. Such a result is a survivor
+	// with no attempts, exactly as an uncovered one is, and [Build] refuses any
+	// other combination for the same reason.
+	//
+	// It is the other half of a pair a reader has to be able to tell apart. An
+	// uncovered mutant's lines are never run; an unobserved one's are run, and
+	// running them changes nothing any test looks at. "Uncovered" for the
+	// second would send somebody to write a test for a line that is already
+	// tested.
+	Unobserved bool
 	// Cached says the outcome was adopted from the outcome cache rather than
 	// measured by this run. The rest of the fields are then the ones the run
 	// that measured it recorded. See [Mutant.Cached] for what [Build] refuses.
@@ -574,6 +585,7 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			CoveringTestPackages: stringList(result.CoveringTestPackages),
 			CoveringTests:        testRefs(result.CoveringTests),
 			Uncovered:            result.Uncovered,
+			Unobserved:           result.Unobserved,
 			Cached:               result.Cached,
 			MemoryExceeded:       result.MemoryExceeded || anyExecutionExceeded(result.Executions),
 			PeakMemoryBytes:      max(result.PeakMemory, highestExecutionPeak(result.Executions)),
@@ -651,6 +663,12 @@ func checkExecutions(m mutation.Mutant, result MutantResult, outcome Outcome) er
 		return &Error{
 			Code: CodeInvalidExecutions,
 			Message: fmt.Sprintf("mutant %s is marked uncovered and carries %s: coverage settles a mutant without starting a process",
+				m.DisplayID, countNoun(len(result.Executions), "execution")),
+		}
+	case result.Unobserved:
+		return &Error{
+			Code: CodeInvalidExecutions,
+			Message: fmt.Sprintf("mutant %s is marked unobserved and carries %s: a probe settles a mutant without starting a process",
 				m.DisplayID, countNoun(len(result.Executions), "execution")),
 		}
 	case outcome == OutcomeNotRun:
@@ -1027,6 +1045,11 @@ func coverageBlock(mode CoverageMode, binaryCount, testCount int, mutants []Muta
 		}
 		uncovered++
 	}
+	for _, m := range mutants {
+		if err := checkUnobserved(m); err != nil {
+			return Coverage{}, err
+		}
+	}
 
 	coverage := Coverage{Mode: mode}
 	if !mode.Narrowed() {
@@ -1053,6 +1076,35 @@ func coverageBlock(mode CoverageMode, binaryCount, testCount int, mutants []Muta
 	tests := testCount
 	coverage.Tests = &tests
 	return coverage, nil
+}
+
+// checkUnobserved refuses the combinations an unobserved mutant cannot be in.
+//
+// The same two the uncovered check makes, for the same reason -- a mutant the
+// run did not execute is a survivor with no attempts -- and one more that is
+// this pair's own: a mutant cannot be both. Coverage settles what nothing
+// reaches before a probe is asked about it, so a mutant marked both would be
+// one two phases each claim to have settled, and a reader could not tell which
+// remedy to reach for.
+func checkUnobserved(m Mutant) error {
+	if !m.Unobserved {
+		return nil
+	}
+	switch {
+	case m.Uncovered:
+		return &Error{
+			Code: CodeInvalidCoverage,
+			Message: fmt.Sprintf("mutant %s is marked both uncovered and unobserved: coverage settles a mutant "+
+				"nothing reaches before a probe is asked whether anything could see it", m.DisplayID),
+		}
+	case m.Outcome != OutcomeSurvived || m.Attempts != 0:
+		return &Error{
+			Code: CodeInvalidCoverage,
+			Message: fmt.Sprintf("mutant %s is marked unobserved but is %s after %s: an unobserved mutant is a "+
+				"survivor the run never executed", m.DisplayID, m.Outcome, countNoun(m.Attempts, "attempt")),
+		}
+	}
+	return nil
 }
 
 // checkCoverageFacts refuses a row that names tests in a run that never

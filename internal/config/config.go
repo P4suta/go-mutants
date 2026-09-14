@@ -122,6 +122,44 @@ func (n Narrowing) Valid() bool {
 // String returns the narrowing as it is written in TOML.
 func (n Narrowing) String() string { return string(n) }
 
+// A Probing says whether a run proves, before executing anything, which
+// executions it does not have to make.
+//
+// It is a choice about cost, not about meaning, exactly as [Narrowing] is:
+// whichever is chosen, a run reaches the same verdicts. What differs is the
+// arithmetic, and unlike narrowing the arithmetic can come out either way. A
+// probing run pays a second snapshot of the module, a second instrumentation, a
+// second validation, a second build of every test binary, and one suite run per
+// binary; what it buys is every execution it can prove unnecessary. On a module
+// whose tests are quick and whose mutants are thinly covered that is thousands
+// of executions for a handful of suite runs; on one whose every test touches
+// everything it is a handful of suite runs for nothing.
+//
+// So it is off by default, and off is the honest default: an optimisation
+// nobody can predict the sign of is one the project has to choose. It has no
+// flag for [Test.Narrowing]'s reason -- it is a decision about how a project is
+// measured rather than about one invocation.
+type Probing string
+
+// The probing modes.
+const (
+	// ProbingOff makes no probe tree and measures every selected mutant. It is
+	// the default.
+	ProbingOff Probing = "off"
+	// ProbingOn builds a probe tree, runs one pass over each test binary, and
+	// settles every mutant no covering binary could observe.
+	ProbingOn Probing = "on"
+)
+
+// Probings returns the probing modes in the order they are documented.
+func Probings() []Probing { return []Probing{ProbingOff, ProbingOn} }
+
+// Valid reports whether p is one of the defined probing modes.
+func (p Probing) Valid() bool { return p == ProbingOff || p == ProbingOn }
+
+// String returns the probing mode as it is written in TOML.
+func (p Probing) String() string { return string(p) }
+
 // A ReportFormat is one project report artefact.
 type ReportFormat string
 
@@ -222,6 +260,10 @@ type Test struct {
 	// reach it or to the test binaries that do. It has no flag: it is a
 	// choice about how a project's suite behaves, not about one run.
 	Narrowing Narrowing
+	// Probing says whether the run proves which executions it can skip before
+	// making any of them. It has no flag, for Narrowing's reason, and it is off
+	// by default because the saving it buys can be smaller than what it costs.
+	Probing Probing
 }
 
 // Execution is the `[execution]` section.
@@ -354,6 +396,7 @@ func Defaults() Config {
 			Memory:       0,
 			BaselineRuns: DefaultBaselineRuns,
 			Narrowing:    NarrowingTest,
+			Probing:      ProbingOff,
 		},
 		Execution: Execution{Jobs: DefaultJobs(), Isolate: false},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},

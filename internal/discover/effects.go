@@ -448,6 +448,44 @@ func (g *guardResolver) constantValue(expr ast.Expr) constant.Value {
 	return tv.Value
 }
 
+// introducesPanic reports whether applying one edit to an expression would put
+// an operation there that can panic where the original had none.
+//
+// It is the question the probe forms have to ask and cannot ask of the original
+// bytes, and the reason they have to ask it is that they evaluate *both*
+// readings. [guardResolver.panicFree] walks the expression the user wrote; the
+// mutated reading is a different expression, and an edit that swaps `*` for `/`
+// is the one in this registry that makes it a more dangerous one.
+//
+// The whole registry reduces to that one shape. `and-to-or` and `or-to-and`
+// change which operands are evaluated rather than what is done to them, which
+// is why panicFree is asked of the *whole* site and settles them. A shift's
+// count is untouched. `div-to-mul` and `rem-to-mul` remove the hazard rather
+// than add it. Float division yields an infinity rather than panicking, so only
+// the integer form matters. What is left is `/` and `%` arriving where they
+// were not, and the test is the one panicFreeBinary already applies to a
+// division the user wrote: the divisor has to be a constant the compiler
+// evaluated and found non-zero.
+//
+// An anchor that is not the binary expression the edit names is refused, which
+// costs a probe and never a mutant. It cannot happen for the rules that produce
+// these replacements, and "cannot happen" is the wrong thing to spell as "carry
+// on" in a function whose answer licenses skipping a test.
+func (g *guardResolver) introducesPanic(anchor ast.Node, replacement string) bool {
+	if replacement != "/" && replacement != "%" {
+		return false
+	}
+	binary, ok := anchor.(*ast.BinaryExpr)
+	if !ok {
+		return true
+	}
+	if floatingResult(g.typeOf(binary)) {
+		return false
+	}
+	divisor := g.constantValue(binary.Y)
+	return divisor == nil || constant.Sign(divisor) == 0
+}
+
 // comparesWithoutPanic reports whether `==` over a type is decided by the bits
 // of the values rather than by a dynamic type that may not be comparable.
 //
