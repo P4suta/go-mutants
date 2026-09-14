@@ -189,10 +189,18 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
       third thing outside the denominator, an expected survivor, is deliberate
       everywhere — the `[[mutation.expect]]` ledger accounts for it, and an
       unfulfilled or stale expectation is exit 2 already
-- [ ] README, `docs/`, and `--help` agree on flags, exit codes, and defaults;
-      the README exit-code table matches `internal/cli`'s `exitCodeHelp`
-      verbatim
-- [ ] Every **Status** line in `docs/` is accurate for this commit
+- [ ] README, `docs/`, and `--help` agree on flags, exit codes, and defaults.
+      The exit codes are checked rather than read:
+      `internal/cli.TestEveryExitCodeTableSaysWhatTheHelpSays` compares the
+      README's table with `exitCodeHelp` and both with the codes
+      `internal/mutation` declares, so this box is "the test is green" and not
+      "somebody diffed two differently-shaped tables by eye"
+- [ ] Every page under `docs/` carries a **Status** line and is named by
+      `docs/README.md` —
+      `internal/testkit.TestEveryDocumentationPageDeclaresItsStatus` and
+      `TestDocsIndexLinksEveryPage` refuse a page that does not — and every one
+      of those lines is accurate for this commit, which is the half no test can
+      check
 - [ ] `CHANGELOG.md`'s `[Unreleased]` section promoted to `[0.1.0]` with a
       date and a comparison link **in a pull request of its own, merged before
       the Release PR**, and `RELEASE_NOTES.md` reviewed against it

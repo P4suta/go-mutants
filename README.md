@@ -580,11 +580,21 @@ validate and promote a killing input without retaining session scratch.
 
 | Code | Meaning |
 | ---: | --- |
-| 0 | Run completed; no policy failure |
-| 1 | Opt-in gate failure only (`--strict`, `policy.minimum_score`, `init --check`) |
-| 2 | Infrastructure, configuration, baseline, or expectation failure |
-| 130 | Interrupted (Ctrl-C); a partial report is published first |
-| 143 | Terminated (SIGTERM); a partial report is published first |
+| `0` | the run completed and no policy gate failed |
+| `1` | an opt-in gate failed (`--strict`, `policy.minimum_score`, `init --check`) |
+| `2` | an infrastructure, configuration, baseline, or expectation failure |
+| `130` | interrupted (Ctrl-C) |
+| `143` | terminated (SIGTERM) |
+
+These are the words `--help` prints, and they are the same words because
+`internal/cli`'s `TestEveryExitCodeTableSaysWhatTheHelpSays` compares this table
+with the constant the help is built from — and compares both against the exit
+codes `internal/mutation` declares, so a code that exists is one this table
+names.
+
+**130 and 143 publish a partial report first.** A run that is interrupted or
+terminated writes what it had measured before it exits, so the id of every
+mutant already settled is on disk rather than lost.
 
 `strict` defaults to **false**: go-mutants does not fail your build unless you
 ask it to, in a terminal, a pipe, and CI alike. A confirmed timeout counts as
