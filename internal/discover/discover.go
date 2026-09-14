@@ -506,7 +506,10 @@ type Skip struct {
 // One site is one *candidate*, not one expression: two rules proposing an edit
 // at the same position in a suppressed context are two sites at one coordinate,
 // because two edits really were declined there. That is what keeps the sites
-// summing to the counts.
+// summing to the counts, and it is why each site names the rule that was
+// declined -- otherwise the same coordinate repeated three times is three lines
+// carrying one line's worth of information, and the reader cannot tell whether
+// they are looking at three refusals or at a bug in the counting.
 type SkipSite struct {
 	// Path is the '/'-normalized module-relative path of the file.
 	Path string
@@ -523,6 +526,15 @@ type SkipSite struct {
 	// diagnostic, and this coordinate has to name the byte in the file the
 	// snapshot holds.
 	Column int
+	// Rule is the name of the rule whose edit was declined, or empty for a
+	// whole-file reason -- such a file is never opened, so no rule ever
+	// proposed anything in it.
+	//
+	// It is the rule's name rather than the [mutation.Rule] so that a site
+	// stays a coordinate and a label: nothing downstream needs the version or
+	// the tier of a rule that produced no mutant, and carrying them would
+	// invite a consumer to treat a refusal as a catalogue entry.
+	Rule string
 }
 
 // A Result is everything one discovery pass learned.
@@ -533,7 +545,7 @@ type Result struct {
 	// Skips are the recorded reasons, in (path, reason) order.
 	Skips []Skip
 	// SkipSites are the same suppressions one candidate at a time, in
-	// (path, line, column, reason) order. See [SkipSite].
+	// (path, line, column, reason, rule) order. See [SkipSite].
 	SkipSites []SkipSite
 	// ModulePath is the module path of the main module at the snapshot root.
 	ModulePath string
@@ -701,9 +713,15 @@ func (d *discovery) record(path string, reason SkipReason, n int) {
 // add to one without the other is a call site where they can drift. Every
 // suppression goes through here, and [SkipSite] carries the invariant that
 // falls out of it.
-func (d *discovery) recordSite(path string, reason SkipReason, line, column int) {
+func (d *discovery) recordSite(path string, reason SkipReason, rule string, line, column int) {
 	d.record(path, reason, 1)
-	d.sites = append(d.sites, SkipSite{Path: path, Reason: reason, Line: line, Column: column})
+	d.sites = append(d.sites, SkipSite{
+		Path:   path,
+		Reason: reason,
+		Line:   line,
+		Column: column,
+		Rule:   rule,
+	})
 }
 
 // recordFile records a whole-file suppression, which has no coordinates.
@@ -712,7 +730,7 @@ func (d *discovery) recordSite(path string, reason SkipReason, line, column int)
 // nothing here knows where in it a candidate would have been, and line 0 says
 // exactly that rather than pointing at the package clause.
 func (d *discovery) recordFile(path string, reason SkipReason) {
-	d.recordSite(path, reason, 0, 0)
+	d.recordSite(path, reason, "", 0, 0)
 }
 
 // run walks every package the main module owns, in a fixed order.
@@ -777,14 +795,18 @@ func (d *discovery) sortedSkips() []Skip {
 	return out
 }
 
-// sortedSkipSites returns the sites in (path, line, column, reason) order.
+// sortedSkipSites returns the sites in (path, line, column, reason, rule) order.
 //
 // Reading order, and for the same reason `list --explain` prints them: a user
 // who has just been told a file holds four suppressed const expressions wants
 // them in the order they would scroll past, not grouped by a reason they have
 // already been given. The reason is the last key rather than an absent one so
 // that the comparison is total — two rules can propose an edit at one position
-// and be declined for one reason each — and so two passes over the same bytes
+// and be declined for one reason each — and the rule name is the last key after
+// it, for the case that makes the reason insufficient: three rules declined at
+// one coordinate for one reason, which is what a named boolean condition
+// produces. Without it the order between those three would be the order the
+// walk happened to reach them in, and two passes over the same bytes have to
 // produce the same bytes here.
 func (d *discovery) sortedSkipSites() []SkipSite {
 	out := slices.Clone(d.sites)
@@ -803,7 +825,10 @@ func compareSkipSites(x, y SkipSite) int {
 	if c := x.Column - y.Column; c != 0 {
 		return c
 	}
-	return strings.Compare(string(x.Reason), string(y.Reason))
+	if c := strings.Compare(string(x.Reason), string(y.Reason)); c != 0 {
+		return c
+	}
+	return strings.Compare(x.Rule, y.Rule)
 }
 
 // BuildCatalog feeds a result into the catalogue builder.

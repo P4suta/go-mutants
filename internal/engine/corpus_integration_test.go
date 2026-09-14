@@ -467,6 +467,10 @@ func TestAnUnnameableDeclarationIsSkippedWithItsReasonAndTheRunStaysGreen(t *tes
 		Reason: discover.SkipUnnameableDeclType,
 		Line:   20,
 		Column: 20,
+		// The rule is part of the site because one coordinate can carry
+		// several refusals, and here it also says which edit the fixture is
+		// about: the addition inside the call, not the declaration around it.
+		Rule: "add-to-sub",
 	}}
 	if !slices.Equal(sites, wantSites) {
 		t.Errorf("skip sites = %+v, want %+v", sites, wantSites)

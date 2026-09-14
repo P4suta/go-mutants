@@ -79,6 +79,9 @@ func describeSite(t *testing.T, root string, site SkipSite) string {
 	t.Helper()
 	where := site.Path + ":" + strconv.Itoa(site.Line) + ":" + strconv.Itoa(site.Column) +
 		" " + string(site.Reason)
+	if site.Rule != "" {
+		where += " " + site.Rule
+	}
 	if site.Line == 0 && site.Column == 0 {
 		return where
 	}
@@ -142,19 +145,22 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			// three sites on one line — and the four case labels.
 			path: "suppressed/suppressed.go",
 			sites: []string{
-				`suppressed/suppressed.go:18:12 const-decl "true"`,
-				`suppressed/suppressed.go:20:13 const-decl "> 1"`,
-				`suppressed/suppressed.go:27:18 const-decl "<= 4"`,
-				`suppressed/suppressed.go:33:28 array-length "< 2, t"`,
-				`suppressed/suppressed.go:33:33 array-length "true})"`,
-				`suppressed/suppressed.go:36:19 package-var-init "< 5"`,
-				`suppressed/suppressed.go:39:15 package-var-init "true"`,
-				`suppressed/suppressed.go:50:33 package-var-init "1 == 2"`,
-				`suppressed/suppressed.go:50:33 package-var-init "1 == 2"`,
-				`suppressed/suppressed.go:50:35 package-var-init "== 2 }"`,
-				`suppressed/suppressed.go:58:18 const-decl "> 2"`,
-				`suppressed/suppressed.go:82:9 case-label "+ 1:"`,
-				`suppressed/suppressed.go:84:9 case-label "* 2:"`,
+				`suppressed/suppressed.go:18:12 const-decl true-to-false "true"`,
+				`suppressed/suppressed.go:20:13 const-decl gt-to-ge "> 1"`,
+				`suppressed/suppressed.go:27:18 const-decl le-to-lt "<= 4"`,
+				`suppressed/suppressed.go:33:28 array-length lt-to-le "< 2, t"`,
+				`suppressed/suppressed.go:33:33 array-length true-to-false "true})"`,
+				`suppressed/suppressed.go:36:19 package-var-init lt-to-le "< 5"`,
+				`suppressed/suppressed.go:39:15 package-var-init true-to-false "true"`,
+				// One coordinate, two rules, and the rule names are what make
+				// the repetition readable: the literal's two return
+				// replacements were both declined there.
+				`suppressed/suppressed.go:50:33 package-var-init return-false "1 == 2"`,
+				`suppressed/suppressed.go:50:33 package-var-init return-true "1 == 2"`,
+				`suppressed/suppressed.go:50:35 package-var-init eq-to-neq "== 2 }"`,
+				`suppressed/suppressed.go:58:18 const-decl gt-to-ge "> 2"`,
+				`suppressed/suppressed.go:82:9 case-label add-to-sub "+ 1:"`,
+				`suppressed/suppressed.go:84:9 case-label mul-to-div "* 2:"`,
 			},
 		},
 		{
@@ -163,18 +169,25 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			// type argument list.
 			path: "generics/generics.go",
 			sites: []string{
-				`generics/generics.go:29:27 type-param "true})"`,
-				`generics/generics.go:36:28 type-param "false}"`,
-				`generics/generics.go:43:27 type-param "true})"`,
-				`generics/generics.go:60:25 type-param "true})"`,
-				`generics/generics.go:60:51 type-param "false}"`,
+				`generics/generics.go:29:27 type-param true-to-false "true})"`,
+				`generics/generics.go:36:28 type-param false-to-true "false}"`,
+				`generics/generics.go:43:27 type-param true-to-false "true})"`,
+				`generics/generics.go:60:25 type-param true-to-false "true})"`,
+				`generics/generics.go:60:51 type-param false-to-true "false}"`,
 			},
 		},
 		{
 			// The condition of a named boolean type, which is negatable Go and
-			// no guard form's site.
-			path:  "negate/negate.go",
-			sites: []string{`negate/negate.go:48:5 unnameable-decl-type "f {"`},
+			// no guard form's site. Three rules want it -- the negation and
+			// both settlements -- and each is declined separately, which is
+			// what the rule names in these rows are for: three identical lines
+			// would read as a counting bug rather than as three refusals.
+			path: "negate/negate.go",
+			sites: []string{
+				`negate/negate.go:48:5 unnameable-decl-type condition-to-false "f {"`,
+				`negate/negate.go:48:5 unnameable-decl-type condition-to-true "f {"`,
+				`negate/negate.go:48:5 unnameable-decl-type negate-condition "f {"`,
+			},
 		},
 		{
 			// The addition inside the call on the `:=` line, which is the edit
@@ -183,7 +196,7 @@ func TestSuppressedSitesCarryTheirCoordinates(t *testing.T) {
 			// what makes it findable: the refusal is about the statement, and
 			// the statement is where the reader has to look.
 			path:  "unnameable/unnameable.go",
-			sites: []string{`unnameable/unnameable.go:19:20 unnameable-decl-type "+ b)"`},
+			sites: []string{`unnameable/unnameable.go:19:20 unnameable-decl-type add-to-sub "+ b)"`},
 		},
 	} {
 		equalStrings(t, describeSitesIn(t, root, result.SkipSites, want.path), want.sites)

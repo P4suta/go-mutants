@@ -962,7 +962,7 @@ command can be pointed at.
 conventions in prose and carries one table row per fixture saying what that
 fixture is *for* — `simple/` is the happy path, `killable/` is the end-to-end
 kill with thirteen predetermined fates, `families/` holds at least one live
-candidate for each of the 44 rules, `selfwriting/` is the suite that writes into
+candidate for each of the 47 rules, `selfwriting/` is the suite that writes into
 the tree it runs in, and so on.
 
 The conventions, each of which is a rule somebody would otherwise break

@@ -25,30 +25,29 @@ whose Done when reads "it works well" is a row that cannot be finished.
 | # | What | Done when |
 | ---: | --- | --- |
 | 1 | **Tagged** `switch` case mutation. The tagless form landed: its labels are exactly `bool`, so Form C expressed them and what was missing was asking the guard chooser rather than suppressing them before it. A tagged label is compared against the tag, and needs the case expression selected at the point it is evaluated | `case-label` no longer appears in `go-mutants list` over `fixtures/discovery` except for the type switch, and `fixtures/families` holds a live candidate in a tagged `switch` |
-| 2 | `if`-branch replacement: replacing a whole condition with a constant. Negating one and replacing a literal are already rules; replacing an arbitrary condition is not | The registry holds the new family, `fixtures/families` kills a candidate of every rule in it, and the dogfood gate's balanced catalogue is unchanged because the family is not balanced |
-| 3 | `label-or-goto`: dropping the label from a `break L` or a `continue L`. The reserved skip reason belongs to `goto`, which has no expressible mutation | The reason is emitted for a `goto`, the two rules are in the registry, and `fixtures/families` holds a labelled loop whose every mutant still terminates |
+| 2 | `label-or-goto`: dropping the label from a `break L` or a `continue L`. The reserved skip reason belongs to `goto`, which has no expressible mutation | The reason is emitted for a `goto`, the two rules are in the registry, and `fixtures/families` holds a labelled loop whose every mutant still terminates |
 
 ## Guard forms
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 4 | Shrink `unnameable-decl-type`. Six shapes are refused today, and the [operators page](operators.md#guard-site-hints) lists them. A named boolean condition, a `for` post statement, an `if` initialiser and a `:=` that redeclares are each a form away from being expressible | `go-mutants list` over this repository reports fewer `unnameable-decl-type` skips than it did before the change, and the number is written into the commit that changes it |
+| 3 | Shrink `unnameable-decl-type`. Six shapes are refused today, and the [operators page](operators.md#guard-site-hints) lists them. A named boolean condition, a `for` post statement, an `if` initialiser and a `:=` that redeclares are each a form away from being expressible | `go-mutants list` over this repository reports fewer `unnameable-decl-type` skips than it did before the change, and the number is written into the commit that changes it |
 
 ## The engine
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 5 | Probe forms beyond the return-value one. `internal/instrument`'s dispatch returns nil for a boolean site, an arithmetic operand and a deleted statement, and its own comment calls that "the dispatch point for every form still to come" | Each form has a golden and a compile test, and a deleted statement's log records reachability with the honest note that infection cannot be observed where there is no value |
-| 6 | Probing in the `run` pipeline. `Session.Probe` exists and `internal/engine` has no reference to it, so a run pays for executions a probe could have proven unnecessary | A run with probing on reaches the same verdict for every mutant as one with it off, and the work ceiling records fewer `mutant-run` children |
-| 7 | Multi-module `go.work`. Refused today with `GOM4102` | `fixtures/workspace` measures both modules from its root, and the mutant identities of a module measured alone and measured in the workspace are told apart deliberately rather than by accident |
-| 8 | `--isolate`, the per-worker snapshot copy. Reserved in [the architecture](architecture.md) and absent from the command line. It is the escape hatch for a suite that legitimately writes into its own package directory, which today cannot run at all | `fixtures/selfwriting` completes with a real tally under `--isolate`, a worker's copy is restored between mutants, and the drift gate still stops the same run without it |
+| 4 | Probe forms beyond the return-value one. `internal/instrument`'s dispatch returns nil for a boolean site, an arithmetic operand and a deleted statement, and its own comment calls that "the dispatch point for every form still to come" | Each form has a golden and a compile test, and a deleted statement's log records reachability with the honest note that infection cannot be observed where there is no value |
+| 5 | Probing in the `run` pipeline. `Session.Probe` exists and `internal/engine` has no reference to it, so a run pays for executions a probe could have proven unnecessary | A run with probing on reaches the same verdict for every mutant as one with it off, and the work ceiling records fewer `mutant-run` children |
+| 6 | Multi-module `go.work`. Refused today with `GOM4102` | `fixtures/workspace` measures both modules from its root, and the mutant identities of a module measured alone and measured in the workspace are told apart deliberately rather than by accident |
+| 7 | `--isolate`, the per-worker snapshot copy. Reserved in [the architecture](architecture.md) and absent from the command line. It is the escape hatch for a suite that legitimately writes into its own package directory, which today cannot run at all | `fixtures/selfwriting` completes with a real tally under `--isolate`, a worker's copy is restored between mutants, and the drift gate still stops the same run without it |
 
 ## Documents
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 9 | `explain --json`. Refused today on the argument that everything it prints is already in the report and the recording — which is true of the facts and not of the joins: the reproduction command, the rebuild line, this mutant's share of each stage, and the preserved output tail exist in neither document | A `go-mutants/explain` document answers a published schema, the prose and the JSON come from one gatherer, and the `reproduce.command` in it is pasted and run by a test that asserts it reproduces the verdict |
-| 10 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
+| 8 | `explain --json`. Refused today on the argument that everything it prints is already in the report and the recording — which is true of the facts and not of the joins: the reproduction command, the rebuild line, this mutant's share of each stage, and the preserved output tail exist in neither document | A `go-mutants/explain` document answers a published schema, the prose and the JSON come from one gatherer, and the `reproduce.command` in it is pasted and run by a test that asserts it reproduces the verdict |
+| 9 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
 
 ## Reserved and unemitted
 

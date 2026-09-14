@@ -127,6 +127,10 @@ const (
 	ruleReturnEmptySlice = "return-empty-slice"
 	ruleReturnEmptyMap   = "return-empty-map"
 
+	ruleConditionToTrue      = "condition-to-true"
+	ruleConditionToFalse     = "condition-to-false"
+	ruleLoopConditionToFalse = "loop-condition-to-false"
+
 	ruleDeleteCallStatement = "delete-call-statement"
 	ruleDeleteAssignment    = "delete-assignment"
 	ruleDeleteIncDec        = "delete-incdec"
@@ -146,6 +150,9 @@ var positionalRules = []string{
 	ruleNilErrorBranch,
 	ruleReturnEmptySlice,
 	ruleReturnEmptyMap,
+	ruleConditionToTrue,
+	ruleConditionToFalse,
+	ruleLoopConditionToFalse,
 	ruleDeleteCallStatement,
 	ruleDeleteAssignment,
 	ruleDeleteIncDec,

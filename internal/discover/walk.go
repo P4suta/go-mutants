@@ -4,6 +4,7 @@
 package discover
 
 import (
+	"errors"
 	"go/ast"
 	"go/constant"
 	"go/token"
@@ -371,9 +372,16 @@ func (s *fileScan) walk(file *ast.File) error {
 		case *ast.Ident:
 			failure = s.booleanLiteral(n)
 		case *ast.IfStmt:
-			failure = s.negateCondition(n.Cond, ruleNegateCondition)
+			failure = errors.Join(
+				s.negateCondition(n.Cond, ruleNegateCondition),
+				s.settleCondition(n.Cond, ruleConditionToTrue, "true"),
+				s.settleCondition(n.Cond, ruleConditionToFalse, "false"),
+			)
 		case *ast.ForStmt:
-			failure = s.negateCondition(n.Cond, ruleNegateLoopCondition)
+			failure = errors.Join(
+				s.negateCondition(n.Cond, ruleNegateLoopCondition),
+				s.settleCondition(n.Cond, ruleLoopConditionToFalse, "false"),
+			)
 		case *ast.ReturnStmt:
 			failure = s.returnStmt(n)
 		case *ast.AssignStmt:
@@ -511,6 +519,60 @@ func (s *fileScan) negateCondition(cond ast.Expr, name string) error {
 		return nil
 	}
 	return s.emitNode(rule, cond, "!("+original+")")
+}
+
+// settleCondition replaces a whole condition with a constant.
+//
+// The catalogue could not say this before. `negate-condition` writes `!(C)`,
+// which is a different condition rather than a settled one; `true-to-false`
+// fires only where the condition *is* a literal; `nil-error-branch` is the one
+// special case of "this branch stops firing", written for `err != nil` alone.
+// A guard that always fires and a guard that never does are the two questions a
+// reader asks about a branch, and neither had a rule.
+//
+// No new guard form is needed: this is the anchor [fileScan.negateCondition]
+// already uses, and `true` is an untyped constant that Form C writes into the
+// same selector any other boolean expression goes into.
+//
+// The type gate is the one difference from negation, and it is the guard's
+// rather than this rule's. `!` applies to any boolean type, so a condition of a
+// named boolean type is negatable; Form C requires a site of *exactly* the
+// universe `bool`, so such a condition is refused as [SkipUnnameableDeclType]
+// by [fileScan.emitAt] -- the same answer the negation at that site already
+// gets, from the same place, rather than a silence this rule invented.
+//
+// A `for` with no condition and a `range` clause both arrive here with a nil
+// Cond and are passed over: there is nothing to settle, and inventing a
+// condition would be a different edit than this rule describes.
+//
+// There is deliberately no `loop-condition-to-true`. It would turn every
+// counted loop in a tree into one that never ends, each costing a whole
+// per-mutant timeout -- twice, since a timeout is measured again before it is
+// believed -- to teach a reader nothing the source does not already say. False
+// is the safe direction: the loop runs zero times.
+func (s *fileScan) settleCondition(cond ast.Expr, name, replacement string) error {
+	rule, ok := s.matchers.rule(name)
+	if !ok || cond == nil || !isBoolClassed(s.typeOf(cond)) {
+		return nil
+	}
+	original, ok := s.text(cond)
+	if !ok || original == replacement || s.isConstantBool(cond, replacement == "true") {
+		// A condition already spelled as its own replacement is not a place
+		// go-mutants declined to mutate; it is a place where the mutation and
+		// the source are the same program. [fileScan.replaceReturn] makes the
+		// same refusal for the same reason.
+		//
+		// The constant check is the same refusal one level down, and it is the
+		// one that earns its keep: `const limit = 3 > 2` used in an `if` is
+		// spelled `limit` and *is* `true`, so settling it true writes different
+		// bytes for the same program. go/types has already folded it, so this
+		// costs a map lookup and removes a mutant that could never die. Only
+		// the matching direction is refused -- settling a constantly-true
+		// condition *false* is a branch that stops firing, which is a real and
+		// useful mutant.
+		return nil
+	}
+	return s.emitNode(rule, cond, replacement)
 }
 
 // returnStmt emits the return-replacement and error-swallowing rules for every
@@ -785,7 +847,7 @@ func (s *fileScan) emitAt(
 	site *ReturnSite,
 ) error {
 	if reason, ok := s.suppressed(pos); ok {
-		s.recordAt(s.rel, reason, pos)
+		s.recordAt(s.rel, reason, rule.Name, pos)
 		return nil
 	}
 	offset := s.tokFile.Offset(pos)
@@ -806,7 +868,7 @@ func (s *fileScan) emitAt(
 	}
 	guard, ok := s.guardFor(anchor, span)
 	if !ok {
-		s.recordAt(s.rel, SkipUnnameableDeclType, pos)
+		s.recordAt(s.rel, SkipUnnameableDeclType, rule.Name, pos)
 		return nil
 	}
 	// The probe hint is attached after the guard and never instead of it: a
@@ -880,18 +942,18 @@ func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site
 	if s.guard == nil {
 		return nil
 	}
+	rule := ruleReturnEmptySlice
+	if mapped {
+		rule = ruleReturnEmptyMap
+	}
 	spelled, ok := s.guard.typeString(declared)
 	if !ok {
 		// The same fact Form D records when it cannot spell a declared type:
 		// go-mutants knows what it would like to write here and cannot say it
 		// in Go. A dot import and an unsafe.Pointer element are the two ways
 		// to reach this.
-		s.recordAt(s.rel, SkipUnnameableDeclType, value.Pos())
+		s.recordAt(s.rel, SkipUnnameableDeclType, rule, value.Pos())
 		return nil
-	}
-	rule := ruleReturnEmptySlice
-	if mapped {
-		rule = ruleReturnEmptyMap
 	}
 	// No probe hint. A slice is not comparable, so `r0 != []T{}` is not legal
 	// Go and the return form's `!=` cannot be written for it; the `return-nil`
@@ -943,6 +1005,19 @@ func (s *fileScan) alreadyEmpty(value ast.Expr) bool {
 	}
 }
 
+// isConstantBool reports whether an expression is a constant of the given
+// boolean value, as go/types folded it.
+func (s *fileScan) isConstantBool(expr ast.Expr, want bool) bool {
+	if s.info == nil {
+		return false
+	}
+	value := s.info.Types[expr].Value
+	if value == nil || value.Kind() != constant.Bool {
+		return false
+	}
+	return constant.BoolVal(value) == want
+}
+
 // isZeroConstant reports whether an expression is the constant zero.
 func (s *fileScan) isZeroConstant(expr ast.Expr) bool {
 	if s.info == nil {
@@ -956,7 +1031,8 @@ func (s *fileScan) isZeroConstant(expr ast.Expr) bool {
 	return ok && n == 0
 }
 
-// recordAt records one suppression at the position the edit would have sat at.
+// recordAt records one suppression at the position the edit would have sat at,
+// naming the rule whose edit it was.
 //
 // The coordinates cost one [token.File.PositionFor] call, made where the
 // [token.Pos] is already in hand, and they are what turns "four const-decl
@@ -965,9 +1041,9 @@ func (s *fileScan) isZeroConstant(expr ast.Expr) bool {
 // byte in the snapshot's own copy of the file, and a `//line` directive that
 // relocated a skip while leaving the mutants beside it alone would make the two
 // halves of one listing disagree about where they are.
-func (s *fileScan) recordAt(rel string, reason SkipReason, pos token.Pos) {
+func (s *fileScan) recordAt(rel string, reason SkipReason, rule string, pos token.Pos) {
 	position := s.tokFile.PositionFor(pos, false)
-	s.recordSite(rel, reason, position.Line, position.Column)
+	s.recordSite(rel, reason, rule, position.Line, position.Column)
 }
 
 // guardFor resolves the rewrite site of one candidate, checking the one

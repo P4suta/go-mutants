@@ -155,6 +155,15 @@ func (s *fileScan) applyToLoop(loop inductionLoop, rule mutation.Rule, anchor as
 		case "lt-to-le", "le-to-lt", "gt-to-ge", "ge-to-gt":
 			mutated.comparison = movedComparison(rule.Name)
 			return mutated, "the comparison moves by one, which changes how many iterations run and not whether they end", true
+		case ruleLoopConditionToFalse:
+			// The one edit here whose answer does not come from the measure at
+			// all. A condition settled false is a loop that runs zero times, so
+			// it stops for every input, and the measure it leaves behind is
+			// beside the point. The loop is returned unchanged because the
+			// caller reads `bounded` off a measure that still decreases, and
+			// that reading happens to be right -- but the reason says what is
+			// actually true, which is stronger.
+			return mutated, "the condition is settled false, so the loop runs zero times", true
 		default:
 			// eq-to-neq and its neighbours turn a counted comparison into one
 			// that is true of a disjoint set rather than a nested one, and

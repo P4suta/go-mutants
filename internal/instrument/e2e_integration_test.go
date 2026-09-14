@@ -102,7 +102,7 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 		t.Fatalf("discovered module path = %q, want %q", found.ModulePath, killableModule)
 	}
 
-	// The catalogue, pinned whole. Thirteen mutants is still small enough to
+	// The catalogue, pinned whole. Seventeen mutants is still small enough to
 	// write down, and writing it down is what earns the lookups below: one
 	// mutant per (path, rule) is a property of how the fixture is laid out —
 	// one function per file and no repeated operator — not a coincidence, and
@@ -111,8 +111,12 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	catalog := mutantkit.Catalog(t, found)
 	wantCatalog := []string{
 		"clamp.go negate-condition v < hi -> !(v < hi)",
+		"clamp.go condition-to-true v < hi -> true",
+		"clamp.go condition-to-false v < hi -> false",
 		"clamp.go lt-to-le < -> <=",
 		"clamp.go negate-condition v > lo -> !(v > lo)",
+		"clamp.go condition-to-true v > lo -> true",
+		"clamp.go condition-to-false v > lo -> false",
 		"clamp.go gt-to-ge > -> >=",
 		"clamp.go return-zero-numeric v -> 0",
 		"clamp.go return-zero-numeric lo + 1 -> 0",
@@ -144,12 +148,13 @@ func TestVerticalSliceKillsTheCoveredMutantsAndSparesTheUncoveredOne(t *testing.
 	if want := []string{"clamp.go", "ready.go", "untested.go"}; !slices.Equal(instrumented.FilesInstrumented, want) {
 		t.Errorf("instrumented %q, want %q", instrumented.FilesInstrumented, want)
 	}
-	// Nine mutants in clamp.go are five guards, not nine: a guard is a rewrite
-	// site, and the mutants of one expression or one statement share it. Both
-	// halves matter — the two conditions are two guards because they are two
-	// expressions, and `return lo + 1` is one guard for both the addition and
-	// the whole returned value — which is the distinction this line is here to
-	// keep visible.
+	// Thirteen mutants in clamp.go are five guards, not thirteen: a guard is a
+	// rewrite site, and the mutants of one expression or one statement share it.
+	// Both halves matter — the two conditions are two guards because they are
+	// two expressions, and each carries three mutants now that a condition can
+	// be settled as well as negated, and `return lo + 1` is one guard for both
+	// the addition and the whole returned value — which is the distinction this
+	// line is here to keep visible.
 	if want := map[string]int{"clamp.go": 5, "ready.go": 1, "untested.go": 1}; !maps.Equal(instrumented.GuardsByFile, want) {
 		t.Errorf("guards by file = %v, want %v", instrumented.GuardsByFile, want)
 	}
@@ -491,6 +496,7 @@ func TestDeclarationsNoFormCanRewriteAreSkippedRatherThanFatal(t *testing.T) {
 		"refused.go return-zero-numeric n -> 0",
 		"refused.go negate-condition err != nil -> !(err != nil)",
 		"refused.go nil-error-branch err != nil -> false",
+		"refused.go condition-to-true err != nil -> true",
 		"refused.go neq-to-eq != -> ==",
 		"refused.go return-err-to-nil err -> nil",
 		// Kept, whose `var` block holds the one spec-with-no-initialiser this

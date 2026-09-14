@@ -48,18 +48,29 @@ const rejectableModule = "fixture.example/rejectable"
 // wantCatalog is the fixture's whole catalogue, in catalogue order.
 //
 // It is written out rather than derived because every assertion below names a
-// mutant by its position in it. Nineteen candidates is small enough to read, and
-// pinning it means a change to the fixture that adds or moves a candidate fails
-// here — where the answer is "update the fixture's expectations" — instead of
-// silently shifting which mutant a later assertion is about.
+// mutant by its position in it. Twenty-three candidates is small enough to read,
+// and pinning it means a change to the fixture that adds or moves a candidate
+// fails here — where the answer is "update the fixture's expectations" —
+// instead of silently shifting which mutant a later assertion is about.
+//
+// The positions themselves are looked up by name below rather than written as
+// numbers. A rule landing in the catalogue inserts candidates into the middle of
+// this list — `branch-replacement` put four into compare.go — and renumbering
+// two tables by hand after every such landing is the kind of arithmetic that is
+// wrong once and silently tests the wrong mutant afterwards. The list stays
+// verbatim, which is what pins the fixture; only the indices are derived.
 //
 // Catalogue order is by path first, which is why named.go's four sit at the end
 // and the positions [trapped] names are unaffected by them.
 var wantCatalog = []string{
 	"compare.go negate-condition v < lo -> !(v < lo)",
+	"compare.go condition-to-true v < lo -> true",
+	"compare.go condition-to-false v < lo -> false",
 	"compare.go lt-to-le < -> <=",
 	"compare.go false-to-true false -> true",
 	"compare.go negate-condition v > hi -> !(v > hi)",
+	"compare.go condition-to-true v > hi -> true",
+	"compare.go condition-to-false v > hi -> false",
 	"compare.go gt-to-ge > -> >=",
 	"compare.go false-to-true false -> true",
 	"compare.go true-to-false true -> false",
@@ -85,7 +96,12 @@ var wantCatalog = []string{
 // named for rejection at all — they are the control that would fail if the
 // statement form ever stopped carrying an edit whose result type is a named
 // boolean, which is a regression no other fixture in the corpus would notice.
-var namedBool = []int{15, 16, 17, 18}
+var namedBool = catalogPositions(
+	"named.go return-true level >= 3 -> true",
+	"named.go return-false level >= 3 -> false",
+	"named.go ge-to-gt >= -> >",
+	"named.go true-to-false true -> false",
+)
 
 // trapped names the catalogue positions that cannot compile, and the words the
 // compiler has to use about each. Everything else must survive.
@@ -97,9 +113,44 @@ var namedBool = []int{15, 16, 17, 18}
 // than about the guard around it, which is what the fixture's previous traps —
 // a bool selector meeting a named boolean type — turned out not to be.
 var trapped = map[int]string{
-	8:  "division by zero",
-	11: "overflows",
-	12: "division by zero",
+	catalogPosition("compare.go mul-to-div * -> /"): "division by zero",
+	catalogPosition("limits.go sub-to-add - -> +"):  "overflows",
+	catalogPosition("limits.go mul-to-div * -> /"):  "division by zero",
+}
+
+// catalogPosition is the index of one entry of [wantCatalog].
+//
+// It panics on a name that is missing or that appears twice, which is the only
+// honest answer at package initialisation: a table keyed by a position nobody
+// can resolve would test whichever mutant happened to land there. Two of
+// wantCatalog's entries really are identical -- compare.go negates two
+// comparisons against the same literal -- so ambiguity is a condition that
+// exists rather than one this guards against in theory.
+func catalogPosition(entry string) int {
+	found := -1
+	for i, candidate := range wantCatalog {
+		if candidate != entry {
+			continue
+		}
+		if found >= 0 {
+			panic("validate: " + entry + " appears twice in wantCatalog, so its position is ambiguous")
+		}
+		found = i
+	}
+	if found < 0 {
+		panic("validate: " + entry + " is not in wantCatalog")
+	}
+	return found
+}
+
+// catalogPositions is [catalogPosition] over several entries, in the order
+// given.
+func catalogPositions(entries ...string) []int {
+	out := make([]int, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, catalogPosition(entry))
+	}
+	return out
 }
 
 // TestValidateIsolatesTheTrappedCandidates runs discovery, instrumentation and
@@ -322,7 +373,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// activation that turns on the wrong mutant — or none. So one accepted
 		// mutant, in the file that lost a whole rewrite site to a rejection, is
 		// activated and has to kill the test that covers it.
-		mutant := mutants[14]
+		mutant := mutants[catalogPosition("limits.go add-to-sub + -> -")]
 		red := mutantkit.RunSuite(t, toolchain, snap.Root, mutantkit.Activate(env, mutant.ID))
 		what := "the suite with " + mutant.DisplayID + " (" + mutant.Rule.Name + " in " + mutant.Path + ") active"
 		mutantkit.RequireExit(t, red, 1, what)
