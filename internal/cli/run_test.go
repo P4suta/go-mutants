@@ -191,11 +191,22 @@ const (
 func gitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	argv := append([]string{"-C", dir}, args...)
-	out, err := exec.Command("git", argv...).CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	command := exec.Command("git", argv...)
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("git %s: %v\n%s%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return strings.TrimSpace(string(out))
+	// Standard output alone, because the caller uses the answer: `git rev-parse
+	// --abbrev-ref HEAD` names a branch, and that name is passed straight back
+	// to `git branch --set-upstream-to=`. Git writes advice to standard error
+	// as a matter of course -- "hint: Using 'master' as the name for the initial
+	// branch" is the one every fresh `init` prints -- and a wrapper on somebody's
+	// PATH may write more, so folding the two streams together turns any of it
+	// into part of the value. The failure message still carries both, because a
+	// failure is when stderr is the interesting half.
+	return strings.TrimSpace(stdout.String())
 }
 
 // neutralGitEnvironment points git at configuration files that do not exist and
