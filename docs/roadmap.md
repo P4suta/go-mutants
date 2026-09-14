@@ -32,8 +32,7 @@ whose Done when reads "it works well" is a row that cannot be finished.
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 4 | `explain --json`. Refused today on the argument that everything it prints is already in the report and the recording — which is true of the facts and not of the joins: the reproduction command, the rebuild line, this mutant's share of each stage, and the preserved output tail exist in neither document | A `go-mutants/explain` document answers a published schema, the prose and the JSON come from one gatherer, and the `reproduce.command` in it is pasted and run by a test that asserts it reproduces the verdict |
-| 5 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
+| 4 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
 
 ## Reserved and unemitted
 

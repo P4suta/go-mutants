@@ -41,6 +41,17 @@ const (
 	// that is never evidence. See docs/trace-v1.md.
 	TraceEventV1 = "go-mutants/trace-event"
 
+	// ExplainV1 is `explain --json`: the account of one mutant, or of one
+	// place in the source, joined from a run report and the recording beside
+	// it. It is the one document type here that is *derived* rather than
+	// recorded, and the only one that names its sources, because a consumer
+	// that wants the lossless claim should be reading the report instead. What
+	// it holds that neither source does is the join: the command to paste, the
+	// command to rebuild with, one mutant's share of each stage, the tail of
+	// what its last pass printed, and the judgements about whether either can
+	// be trusted.
+	ExplainV1 = "go-mutants/explain"
+
 	// DiagnosticsV1 is the manifest of a failed run's diagnostics bundle: what
 	// the directory holds and which failure it explains. The bundle is text a
 	// person reads; this is the one file in it a program reads, so that a CI
@@ -70,6 +81,7 @@ const (
 var registry = map[string]string{
 	CatalogV1:     "catalog-v1.schema.json",
 	DiagnosticsV1: "diagnostics-v1.schema.json",
+	ExplainV1:     "explain-v1.schema.json",
 	DoctorV1:      "doctor-v1.schema.json",
 	RunReportV1:   "run-report-v1.schema.json",
 	TraceEventV1:  "trace-v1.schema.json",

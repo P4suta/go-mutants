@@ -148,27 +148,27 @@ var repositoryExpectations = []Expectation{
 			"primary key still decides every pair whose start lines differ.",
 	},
 	{
-		ID: "0a3d3f95007106459a795656a654361eae02402d127598bfc45450a820e66088",
+		ID: "a8237c43e03fd9e633b7dd558bad7ba180328124c3de5ff86e5998ee19124a4c",
 		Reason: "Unreachable: compileErr is set only when an embedded schema " +
 			"cannot be read, parsed, registered or compiled, and " +
 			"TestEveryRegisteredSchemaCompiles asserts that none of that " +
 			"happens in this build, so this branch is never taken.",
 	},
 	{
-		ID: "5cb664d2e809adfdd4470fbf6a7fd7ddb7068ce09deb658ed6e2b9c7b182c62e",
+		ID: "5dfdfc895fcd322e018ef0cafb3bfc69511729b08a2ce86b8db6e4d837c07702",
 		Reason: "Unreachable: the return the row above guards, reported " +
 			"`survived (uncovered)` because no suite reaches a line that " +
 			"needs compileErr to be non-nil.",
 	},
 	{
-		ID: "ab3fe9b967a8ff13873ee2ac368189faebbcd4e54a46a38347e224104df93328",
+		ID: "f15a9180a3334747013cda29e7839d0f3074d6eddf6ca6bd59083b2dbefa179f",
 		Reason: "Unreachable: compileAll compiles every type in the registry " +
 			"and schemaFor looks up that same registry, so the lookup " +
 			"cannot miss; TestEveryRegisteredSchemaCompiles asserts it for " +
 			"every registered type.",
 	},
 	{
-		ID: "2dea908d1035bc8e2d08838ce8574d3283fd9fc4b27e9f9db81ef8662bbe64d8",
+		ID: "983f4838a49d37538553dd88db49af35189dd436620d65a5585875d241839a21",
 		Reason: "Unreachable: the file is read out of an embed.FS fixed at " +
 			"build time, and TestEverySchemaIsRegistered plus " +
 			"TestEveryRegisteredSchemaCompiles assert that every registered " +
@@ -176,20 +176,20 @@ var repositoryExpectations = []Expectation{
 			"return.",
 	},
 	{
-		ID: "feb98c2f936af4a140bb1fa463fe2561e91c54bb6098869283b331a374b0be0b",
+		ID: "240b83cf253c8a0be78af6a577fa1e5aac790e91f17aa0b3fad28c8ea9592f56",
 		Reason: "Unreachable: the bytes are an embedded schema this " +
 			"repository's own tests parse and compile, so they are JSON in " +
 			"every build TestEveryRegisteredSchemaCompiles passes on.",
 	},
 	{
-		ID: "7b868ba58784a852adbe02c46d0a393354732780f63f12311749a97cccfec421",
+		ID: "4e5e675648a454570b0e5ebdc67c29add60e07e077bfc20bb0d2130559b2fc99",
 		Reason: "Unreachable: AddResource fails on a resource identity it " +
 			"cannot parse, and TestSchemaIDsMatchTheirFilenames pins every " +
 			"embedded schema's `$id` to `baseURL + <file>`, which is a URL " +
 			"by construction.",
 	},
 	{
-		ID: "d0b0a81899127a807a74ff16e4c1107fe0abda0cc1ec46a3091806d3cef0a886",
+		ID: "1563c960a9b93088c64e78f07be618e1354cf4027bc2a51a967fa2cfa5af673b",
 		Reason: "Unreachable: every registered schema compiles, which is " +
 			"exactly what TestEveryRegisteredSchemaCompiles asserts by " +
 			"requiring an invalid document to come back GOM5003 rather than " +

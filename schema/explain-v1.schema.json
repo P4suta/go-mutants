@@ -1,0 +1,909 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://go-mutants.invalid/schema/explain-v1.schema.json",
+  "title": "go-mutants explanation v1",
+  "description": "The account of one mutant, or of one place in the source, joined from a run report and the recording beside it. It is a *derived* document and says so: `source` names the two documents it was read out of, so a consumer that wants the lossless claim is pointed at the report rather than at a third encoding of it. What is here and in neither of those is the reason it exists -- the command to paste, the command to rebuild the binary with, this mutant's own share of each stage, the tail of what its last pass printed, and the two judgements the account makes about whether either can be trusted. Absence is stated rather than omitted: a run that recorded nothing has `source.trace` null, an empty `timeline`, and a `reproduce` that is unavailable with the reason in it. The document takes one of two shapes and `subject.kind` says which. Every field of both is declared and validated once at the top level, and the branch below carries key sets alone: under a oneOf over two whole objects, a single field of the wrong type makes both branches fail and a validator can only report that neither matched, so the field actually at fault is never named.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "document_type",
+    "schema_version",
+    "tool_version",
+    "source",
+    "subject"
+  ],
+  "properties": {
+    "document_type": {
+      "const": "go-mutants/explain"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "tool_version": {
+      "description": "The build that wrote the document. A join is only as stable as the build that composed it, and this is what a reader of an old document is told to check first.",
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "verdict": {
+      "$ref": "#/$defs/verdict"
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "executions": {
+      "description": "Every pass this run made over the test binaries, in attempt order, with the commands underneath each of them. The passes come from the report, which is the durable claim; the commands come from the recording, which is opt-in, so a pass with no commands under it is a run nobody asked to record rather than a pass that started nothing.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/execution"
+      }
+    },
+    "timeline": {
+      "description": "The stages this mutant took part in, in recording order, each with the mutant's own share of it. Empty when there is no recording: the report's `timing` is the whole run's, stage by stage, and says nothing about one mutant.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stage"
+      }
+    },
+    "reproduce": {
+      "$ref": "#/$defs/reproduce"
+    },
+    "skip_sites": {
+      "description": "Every site at this position discovery declined, with the reason it gives. A site with no line is a whole-file reason: such a file is never opened, so there is no coordinate in it to name.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/skipSite"
+      }
+    },
+    "mutants": {
+      "description": "Every mutant a discovery pass over this workspace catalogues at this position, with what the report says became of it.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "the account of one mutant",
+      "description": "The account of one mutant: what it is, what became of it, what ran, and how to see it again.",
+      "required": [
+        "verdict",
+        "coverage",
+        "executions",
+        "timeline",
+        "reproduce"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "skip_sites"
+            ]
+          },
+          {
+            "required": [
+              "mutants"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "title": "the account of one place in the source",
+      "description": "The account of one place in the source: every mutant there, and every site discovery passed over. It answers \"there should be a mutant here\" from both ends, which is why both lists are always present and either may be empty.",
+      "required": [
+        "skip_sites",
+        "mutants"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "verdict"
+            ]
+          },
+          {
+            "required": [
+              "coverage"
+            ]
+          },
+          {
+            "required": [
+              "executions"
+            ]
+          },
+          {
+            "required": [
+              "timeline"
+            ]
+          },
+          {
+            "required": [
+              "reproduce"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "subject": {
+      "description": "What this account is about. A consumer branches on `kind` before reading anything below it. Both forms' fields are declared and validated here, and the branch below carries key sets and the discriminator alone -- so a field of the wrong type is reported against itself rather than as \"no branch matched\".",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path",
+        "line"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "mutant",
+            "position"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "description": "The line the subject is at. Null only for a position that named a whole file; a mutant always has one, which the branch below requires.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "family": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "original": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "replacement": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "package": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rejected": {
+          "description": "Whether this is a mutant the compiler refused rather than one a test measured.",
+          "type": "boolean"
+        }
+      },
+      "oneOf": [
+        {
+          "title": "a mutant",
+          "description": "What the mutant is. A mutant validation refused carries no family, no edit and no package -- it was never built, so the document holds only what discovery proposed -- and those fields are null rather than empty.",
+          "required": [
+            "kind",
+            "id",
+            "display_id",
+            "path",
+            "line",
+            "column",
+            "family",
+            "rule",
+            "original",
+            "replacement",
+            "package",
+            "rejected"
+          ],
+          "properties": {
+            "kind": {
+              "const": "mutant"
+            },
+            "line": {
+              "type": "integer"
+            }
+          }
+        },
+        {
+          "title": "a place in the source",
+          "description": "The place asked about: a file, and a line when one was given. A file with no line is the whole file.",
+          "required": [
+            "kind",
+            "path",
+            "line"
+          ],
+          "properties": {
+            "kind": {
+              "const": "position"
+            }
+          },
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "id"
+                ]
+              },
+              {
+                "required": [
+                  "display_id"
+                ]
+              },
+              {
+                "required": [
+                  "column"
+                ]
+              },
+              {
+                "required": [
+                  "family"
+                ]
+              },
+              {
+                "required": [
+                  "rule"
+                ]
+              },
+              {
+                "required": [
+                  "original"
+                ]
+              },
+              {
+                "required": [
+                  "replacement"
+                ]
+              },
+              {
+                "required": [
+                  "package"
+                ]
+              },
+              {
+                "required": [
+                  "rejected"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "source": {
+      "description": "The documents this account was read out of. It is what makes a derived document honest: a consumer that wants the lossless claim about a run is pointed at the report, and one that wants the whole of what happened is pointed at the recording.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report",
+        "trace",
+        "warnings"
+      ],
+      "properties": {
+        "report": {
+          "description": "The run report, or null when there is none -- which only a position query can be, since a mutant is a row of a report and cannot be explained without it.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "run_id",
+            "status"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "run_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "status": {
+              "enum": [
+                "completed",
+                "interrupted",
+                "failed"
+              ]
+            }
+          }
+        },
+        "trace": {
+          "description": "The recording, or null when the run recorded none -- which is the ordinary case, since --trace is opt-in.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "stream",
+            "directory",
+            "run_id",
+            "kind",
+            "describes_the_report"
+          ],
+          "properties": {
+            "stream": {
+              "type": "string",
+              "minLength": 1
+            },
+            "directory": {
+              "type": "string",
+              "minLength": 1
+            },
+            "run_id": {
+              "description": "The run the recording says it is of, and empty for a library session's recording, which has none.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "The recorder's owner: `run` for a CLI run, `workspace` for a library session, whose reproduction needs the overlay manifest a run's own snapshot does not.",
+              "type": "string",
+              "minLength": 1
+            },
+            "describes_the_report": {
+              "description": "Whether the recording is of the run the report describes. A run id is content-derived, so two runs can be filed under one, and false here means everything derived from the recording came out of a different run.",
+              "type": "boolean"
+            }
+          }
+        },
+        "warnings": {
+          "description": "What this account distrusts about its own sources, in the words the console prints. Never null: a document with nothing to warn about carries an empty list rather than omitting the field a reader has to check.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "verdict": {
+      "description": "What became of the mutant. `summary` is the sentence the console prints, and the fields beside it are what that sentence was composed from, so a consumer never has to parse it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "outcome",
+        "summary",
+        "attempts",
+        "cached",
+        "killed_by",
+        "memory",
+        "diagnostic",
+        "not_run_reason"
+      ],
+      "properties": {
+        "outcome": {
+          "description": "The outcome as the report spells it, and `rejected` for a mutant that has none because it never existed.",
+          "enum": [
+            "killed",
+            "survived",
+            "timed-out",
+            "inconclusive",
+            "errored",
+            "not-run",
+            "rejected"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cached": {
+          "description": "Whether the outcome was adopted from the outcome cache rather than measured by this run. When true the duration, the attempts and the killer are the ones the run that did measure it recorded.",
+          "type": "boolean"
+        },
+        "killed_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "memory": {
+          "description": "What the mutant cost the machine, and what it was measured against. Null for a mutant nothing ever ran. Either figure may be null on its own: a platform that cannot say what a process held reports no peak, and a document written before the bound existed carries no bound.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "exceeded",
+            "peak_bytes",
+            "bound_bytes"
+          ],
+          "properties": {
+            "exceeded": {
+              "type": "boolean"
+            },
+            "peak_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "bound_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
+          }
+        },
+        "diagnostic": {
+          "description": "The compiler's own words for a mutant validation refused, and null for every other outcome.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "not_run_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "coverage": {
+      "description": "Which test binaries reach the mutant. An empty list means two different things depending on the mode, which is why the mode is here: a run with coverage off asked nothing and measured every mutant against every binary.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "summary",
+        "uncovered",
+        "packages",
+        "tests"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "off",
+            "package",
+            "test"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uncovered": {
+          "type": "boolean"
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "package",
+              "name"
+            ],
+            "properties": {
+              "package": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt",
+        "worker",
+        "outcome",
+        "duration_ms",
+        "peak_memory_bytes",
+        "killed_by",
+        "binaries",
+        "commands"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "worker": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outcome": {
+          "enum": [
+            "killed",
+            "survived",
+            "timed-out",
+            "inconclusive",
+            "errored",
+            "not-run"
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "peak_memory_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "killed_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "binaries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "commands": {
+          "description": "The child processes this pass started, from the recording. Empty when there is no recording, or when the pass is one the recording does not hold.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/command"
+          }
+        }
+      }
+    },
+    "command": {
+      "description": "One child process, as the recording holds it, with what it printed. A command the recording names and does not hold is reported with `recorded` false rather than dropped: a gap in a stream is a fact about the stream.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seq",
+        "recorded",
+        "kind",
+        "argv",
+        "dir",
+        "duration_ms",
+        "exit_code",
+        "timed_out",
+        "output_path",
+        "output_tail",
+        "output_error"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recorded": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dir": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "timed_out": {
+          "type": "boolean"
+        },
+        "output_path": {
+          "description": "Where the command's output was preserved, as an absolute path on the machine reading this. Empty when the run preserved none.",
+          "type": "string"
+        },
+        "output_tail": {
+          "description": "The end of that file, one string per line, without its line endings. This is the one part of the account that is on disk in neither document: a recording carries the path and the digest, and the bytes are a third file beside them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output_error": {
+          "description": "Why the preserved output could not be read, and empty when it was read or when there was none.",
+          "type": "string"
+        }
+      }
+    },
+    "stage": {
+      "description": "One stage the mutant took part in, with the mutant's own share of it. The share is the number this list is read for: every mutant of a run takes part in the same `mutate/execute` stage, so the stage's own duration is the same figure on every account and says nothing about the mutant beside it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "phase",
+        "stage",
+        "result",
+        "duration_ms",
+        "share_ms",
+        "closed"
+      ],
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "description": "Null for a stage still open at the end of the recording, which is what an interrupted run leaves behind.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "share_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "closed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "reproduce": {
+      "description": "How to see the verdict again. `command` is composed from the recording's own argument vector and directory and from the mutant's identity, and exists in neither document: a recording holds what ran, and this is the line that runs it again.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "available",
+        "unavailable_reason",
+        "command",
+        "dir",
+        "argv",
+        "activation",
+        "temporaries_kept",
+        "note",
+        "rebuild",
+        "test_command",
+        "suggestion"
+      ],
+      "properties": {
+        "available": {
+          "description": "Whether there is a command to paste. False is not a failure: a mutant nothing ever started a process for has no argument vector, and neither has a run that recorded nothing.",
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "The whole line, quoted for a POSIX shell. Null when unavailable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "activation": {
+          "description": "The environment variable that selects the mutant, and the value it takes. Null when there is no command to run.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "variable",
+            "value"
+          ],
+          "properties": {
+            "variable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "temporaries_kept": {
+          "description": "Whether the binary and the directory the command names are still there. Null when there is no recording to say -- which is a different answer from `false`, and the reason this is not a boolean with a default.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rebuild": {
+          "description": "How to compile that test binary again, for a library session whose tree is compiled through an overlay. Null for a CLI run, whose snapshot is instrumented in place and needs nothing added.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "test_command": {
+          "description": "The argument vector the run's own tests were started with, preferring the one that really ran to the one that was configured. Empty when the document carries neither.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "suggestion": {
+          "description": "The invocation that would produce what this account is missing, and empty when it is missing nothing.",
+          "type": "string"
+        }
+      }
+    },
+    "skipSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "line",
+        "column",
+        "reason",
+        "rule"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "column": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "display_id",
+        "path",
+        "line",
+        "column",
+        "family",
+        "rule",
+        "original",
+        "replacement",
+        "outcome"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "display_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "original": {
+          "type": "string"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "outcome": {
+          "description": "What the report says became of it, and null when the report does not name it. A discovery pass and a report can legitimately disagree about which mutants exist -- the workspace has been edited since the run, or a later build catalogues differently -- and `source.report` being null is the other reason, which says every outcome here is unknown rather than this one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

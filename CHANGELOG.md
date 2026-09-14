@@ -14,6 +14,35 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`explain --json` writes a `go-mutants/explain` document.** The flag used to
+  be refused, on the argument that the run report and the recording already are
+  the machine-readable forms and a third encoding of the same facts would be a
+  third thing to hold in step with them. The danger was real; the premise was
+  wrong. Five of the things the account prints are in neither document: the
+  command to paste, the line that rebuilds the binary, this mutant's own share
+  of each stage, the tail of what its last pass printed, and the judgements
+  about whether the first of those can be trusted at all. Each of those is a
+  *join*, which is what this command is.
+  The danger is answered by construction rather than by care. There is one
+  gatherer and two renderers, so the prose and the document are two readings of
+  one value and a fact in one is a fact in the other by build rather than by
+  discipline. And because the document is derived, it says so: a `source` block
+  names the report and the recording it was read out of, so a consumer that
+  wants the lossless claim about a run is pointed at the file that holds it.
+  Absence is stated rather than omitted, which is the command's own principle
+  written as a schema — a run that recorded nothing gets `source.trace: null`,
+  an empty `timeline`, and a `reproduce` that is unavailable with the reason in
+  it, rather than a plausible command nobody ran. Every array is `[]` and never
+  `null`.
+  The schema declares both of the document's shapes at the top level and lets
+  its branch carry key sets alone, which is a decision about diagnostics: under
+  a `oneOf` over two whole objects, one field of the wrong type makes both
+  branches fail and the validator can only say that neither matched — so the
+  field actually at fault is never named. A test breaks a field and requires
+  the failure to point at it.
+  Under `--json` an ambiguous prefix writes its "which did you mean" listing to
+  standard error rather than standard output, because a `--json` stream is a
+  document or nothing.
 - **`--isolate` gives every worker its own copy of the tree.** A project whose
   tests legitimately write into the package directory they run in — a golden
   file they update, a database they create in `testdata`, a test that changes

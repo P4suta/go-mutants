@@ -19,8 +19,6 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/console"
-	"github.com/P4suta/go-mutants/internal/coverage"
-	"github.com/P4suta/go-mutants/internal/discover"
 	"github.com/P4suta/go-mutants/internal/report"
 	"github.com/P4suta/go-mutants/trace"
 )
@@ -41,10 +39,17 @@ import (
 // reproduce is worse than no reproduction, because somebody will paste it and
 // believe what comes back.
 //
-// The output is prose rather than a document, and `--json` is refused rather
-// than implemented, for the reason `list --explain` refuses it: the two
-// documents *are* the machine-readable form, and a third encoding of the same
-// facts would be a third thing to keep in step with them.
+// The output is prose by default and a document under `--json`, and the two are
+// one value read twice. That is what makes the second safe: `--json` used to be
+// refused on the argument that the report and the recording *are* the
+// machine-readable form and a third encoding would be a third thing to keep in
+// step with them — which was right about the danger and wrong about the facts.
+// Five things this command prints are in neither document: the command to
+// paste, the command to rebuild the binary with, this mutant's share of each
+// stage, the tail of what its last pass printed, and the judgements about
+// whether the first of those can be trusted. A reader who wants the lossless
+// claim is pointed at the report by the document's own `source` block, which is
+// what a derived document owes its consumer.
 
 const explainLong = `Say why one mutant got its verdict, and how to reproduce it.
 
@@ -115,7 +120,7 @@ func newExplainCommand() *cobra.Command {
 	flags.StringVar(&o.trace, "trace", "",
 		"read the recording in `DIR` instead of the one filed beside the report")
 	flags.BoolVar(&o.json, "json", false,
-		"refused: the report and the recording are the machine-readable forms")
+		"print a go-mutants/explain v1 document instead of the account in prose")
 	flags.BoolVar(&o.noColor, "no-color", false,
 		"never colourise output, even on a terminal")
 	return cmd
@@ -136,7 +141,7 @@ func (o *explainOptions) execute(cmd *cobra.Command, args []string) error {
 	// cannot be explained without it; a position is a question about the
 	// workspace, and a fresh checkout with no run recorded still has an answer.
 	where, isPosition := parsePosition(args[0])
-	document, source, err := o.readReport(cmd.OutOrStdout(), isPosition)
+	document, source, err := o.readReport(o.listingsTo(cmd), isPosition)
 	if err != nil {
 		return err
 	}
@@ -148,23 +153,26 @@ func (o *explainOptions) execute(cmd *cobra.Command, args []string) error {
 	return o.explainMutant(cmd, document, source, args[0], color)
 }
 
-// checkFlags refuses the two command lines that have no reading.
+// listingsTo is where a "which did you mean" listing goes.
 //
-// Both are worded refusals rather than cobra's flag-group message, for the
-// reason `--explain` with `--json` is one: neither flag is wrong on its own, so
-// the remedy is to drop one rather than to fix a value, and the reason is worth
-// a sentence.
-func (o *explainOptions) checkFlags() error {
+// Standard output, unless a document was asked for. A `--json` stream is a
+// document or nothing: a listing printed into it would leave a consumer with
+// bytes that parse as neither, so under `--json` the matches go to standard
+// error, immediately above the refusal that sent the reader looking for them.
+func (o *explainOptions) listingsTo(cmd *cobra.Command) io.Writer {
 	if o.json {
-		return &Error{
-			Code: CodeConflictingFlags,
-			Message: "explain has no --json: everything it prints is already in the run report and in the " +
-				"recording, which are the machine-readable forms, and a third encoding of the same facts " +
-				"would be a third document to keep in step with them",
-			Hint: "read `mutants[]` and `rejected[]` out of the report and the `mutant-exec` events out of " +
-				"the recording; a v2 with something to say that neither document carries may add a --json",
-		}
+		return cmd.ErrOrStderr()
 	}
+	return cmd.OutOrStdout()
+}
+
+// checkFlags refuses the one command line that has no reading.
+//
+// It is a worded refusal rather than cobra's flag-group message, for the reason
+// `--explain` with `--json` is one: neither flag is wrong on its own, so the
+// remedy is to drop one rather than to fix a value, and the reason is worth a
+// sentence.
+func (o *explainOptions) checkFlags() error {
 	if o.report != "" && o.run != "" {
 		return &Error{
 			Code: CodeConflictingFlags,
@@ -557,7 +565,7 @@ func (o *explainOptions) explainMutant(
 		// folded into an error: one mutant per line is what a reader scans and
 		// what a `grep` finds.
 		if len(matches) > 0 {
-			if writeErr := writeMatches(cmd.OutOrStdout(), color, matches); writeErr != nil {
+			if writeErr := writeMatches(o.listingsTo(cmd), color, matches); writeErr != nil {
 				return writeErr
 			}
 		}
@@ -568,8 +576,15 @@ func (o *explainOptions) explainMutant(
 	if err != nil {
 		return err
 	}
+	// Gathered once, rendered as whichever form was asked for. The prose and
+	// the document are two readings of one value, which is what keeps the
+	// second from becoming a third thing to hold in step with the first.
+	document := gatherAccount(r, source, found, rec)
+	if o.json {
+		return writeExplainJSON(cmd.OutOrStdout(), document)
+	}
 	e := newExplainer(cmd.OutOrStdout(), color)
-	e.mutantAccount(r, source, found, rec)
+	e.account(document)
 	return e.out.Flush()
 }
 
@@ -619,16 +634,20 @@ func (o *explainOptions) explainAt(
 	if err != nil {
 		return interpret(err, watch.Signal())
 	}
-	doc, err := found.document(cfg, "")
+	catalogue, err := found.document(cfg, "")
 	if err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
-	if err = emit(out, sourceHeader(r, source)); err != nil {
+	document := gatherPosition(r, source, where, found.result.SkipSites, catalogue.Mutants, outcomesOf(r))
+	if o.json {
+		return writeExplainJSON(out, document)
+	}
+	if err = emit(out, sourceHeader(document.Source.Report)); err != nil {
 		return err
 	}
-	return explainPosition(out, color, where, found.result.SkipSites, doc.Mutants, outcomesOf(r))
+	return explainPosition(out, color, document)
 }
 
 // selectionOverlay rebuilds the run's own selection as a configuration layer,
@@ -692,65 +711,59 @@ func outcomesOf(r *report.Report) map[string]string {
 // A position query may have neither, and then it opens with nothing rather than
 // with two lines about a run that does not exist. Everything under it is a
 // statement about the workspace, which is there either way.
-func sourceHeader(r *report.Report, source string) string {
-	if r == nil {
+func sourceHeader(source *accountReport) string {
+	if source == nil {
 		return ""
 	}
-	return "run " + r.RunID + "  " + r.Status.String() + "\nreport " + source + "\n"
+	return "run " + source.RunID + "  " + source.Status + "\nreport " + source.Path + "\n"
 }
 
 // explainPosition writes the account of one place in the source: every mutant
 // there, and every candidate discovery declined.
 //
-// Both halves are printed, always, and that is the point of the command in this
-// form. Somebody asking about a line is asking "there should be a mutant here",
-// and the answer is either "there is, and here is what happened to it" or
-// "there is not, and here is the reason discovery gives" — so a listing that
-// showed only the first would read as though the second did not exist.
-func explainPosition(
-	w io.Writer, color bool, where position,
-	sites []discover.SkipSite, mutants []catalogMutant, outcomes map[string]string,
-) error {
+// The document it renders is the one `--json` encodes, so the two forms of the
+// command's answer cannot come apart: a mutant the listing shows and the
+// document omits would be a missing line here rather than a second reading of
+// the workspace.
+func explainPosition(w io.Writer, color bool, doc explainPositionDocument) error {
 	e := newExplainer(w, color)
-	e.printf("position %s\n", where)
+	e.printf("position %s\n", positionOf(doc.Subject))
 
 	e.section("skip sites")
-	rows := 0
-	for _, site := range sites {
-		if !where.holdsSite(site.Path, site.Line) {
-			continue
-		}
-		rows++
-		e.printf("  %s  %s\n", siteLocation(site), e.paint(styleListRule, string(site.Reason)))
+	for _, site := range doc.SkipSites {
+		e.printf("  %s  %s\n", siteLocationOf(site), e.paint(styleListRule, site.Reason))
 	}
-	if rows == 0 {
+	if len(doc.SkipSites) == 0 {
 		e.printf("  %s\n", e.paint(styleExplainDetail, "discovery passed nothing over here"))
 	}
 
 	e.section("mutants")
-	rows = 0
-	for _, m := range mutants {
-		if !where.holdsSpan(m.Path, m.Line, coverage.EndLine(m.Line, m.Original)) {
-			continue
-		}
-		rows++
+	for _, m := range doc.Mutants {
 		e.printf("  %s  %s:%d:%d  %s  %s -> %s  %s\n",
 			m.DisplayID, m.Path, m.Line, m.Column,
 			e.paint(styleListRule, m.Family+"/"+m.Rule),
 			oneLine(m.Original), oneLine(m.Replacement),
-			outcomeIn(outcomes, m.ID))
+			outcomeIn(doc.Source.Report, m.Outcome))
 	}
-	if rows == 0 {
+	if len(doc.Mutants) == 0 {
 		e.printf("  %s\n", e.paint(styleExplainDetail, "this catalogue has no mutant here"))
 	}
 	return e.out.Flush()
 }
 
+// positionOf spells the place a position account is about, as it was named.
+func positionOf(subject accountPosition) string {
+	if subject.Line == nil {
+		return subject.Path
+	}
+	return subject.Path + ":" + strconv.Itoa(*subject.Line)
+}
+
 // oneLine flattens an edit onto the row it belongs to.
 //
-// A mutant's original bytes may span lines — the interval [holdsSpan] matches
-// on is exactly that case — and a row that broke in the middle would put half
-// an edit under the outcome column of the row above it.
+// A mutant's original bytes may span lines — the interval [position.holdsSpan]
+// matches on is exactly that case — and a row that broke in the middle would
+// put half an edit under the outcome column of the row above it.
 func oneLine(text string) string { return strings.Join(strings.Fields(text), " ") }
 
 // outcomeIn is what the report says became of a mutant, or that it says
@@ -760,15 +773,16 @@ func oneLine(text string) string { return strings.Join(strings.Fields(text), " "
 // exist — the workspace has been edited since the run, or a later build
 // catalogues differently — and an identity absent from the document is that,
 // said plainly, rather than a blank column a reader would take for an outcome.
-// A nil map is the third case: there is no document at all.
-func outcomeIn(outcomes map[string]string, id string) string {
-	if outcomes == nil {
+// No report at all is the third case, and it is a different sentence: every row
+// is unknown rather than this one.
+func outcomeIn(source *accountReport, outcome *string) string {
+	if source == nil {
 		return "no report"
 	}
-	if outcome, ok := outcomes[id]; ok {
-		return outcome
+	if outcome == nil {
+		return "not in this run"
 	}
-	return "not in this run"
+	return *outcome
 }
 
 // A recording is the trace one account read, or nothing.
@@ -1076,39 +1090,41 @@ func (rec *recording) shareOf(id string, span stageSpan) int64 {
 	return total
 }
 
-// mutantAccount writes the whole account of one mutant.
-func (e *explainer) mutantAccount(r *report.Report, source string, s subject, rec *recording) {
-	e.printf("%s", sourceHeader(r, source))
-	switch {
-	case !rec.present():
-		e.printf("%s\n", noRecording(r.RunID))
-	case !rec.describes(r.RunID):
-		e.printf("trace %s\n", rec.stream)
-		// Loudly, and before anything derived from it. A run id is
-		// content-derived, so two runs can be filed under one; whatever is
-		// underneath came out of that recording and is that run's, however
-		// convincingly it lines up with this report.
-		e.printf("warning: that recording is of run %s, not %s; everything below it "+
-			"came out of that run\n", rec.runID, r.RunID)
-	default:
-		e.printf("trace %s\n", rec.stream)
+// account writes the whole account of one mutant.
+//
+// It is a transcription of the gathered document and nothing else: every fact
+// below was decided in [gatherAccount], which is also what `--json` encodes, so
+// a sentence here and a field there cannot disagree about what happened.
+func (e *explainer) account(doc explainDocument) {
+	e.printf("%s", sourceHeader(doc.Source.Report))
+	if doc.Source.Trace == nil {
+		e.printf("%s\n", noRecording(doc.Source.Report.RunID))
+	} else {
+		e.printf("trace %s\n", doc.Source.Trace.Stream)
+	}
+	// Loudly, and before anything derived from the recording. A run id is
+	// content-derived, so two runs can be filed under one; whatever is
+	// underneath came out of that recording and is that run's, however
+	// convincingly it lines up with this report.
+	for _, warning := range doc.Source.Warnings {
+		e.printf("warning: %s\n", warning)
 	}
 
-	e.identity(s)
-	e.verdict(r, s)
-	if s.rejected != nil {
+	e.identity(doc.Subject)
+	e.verdict(doc.Verdict)
+	if doc.Subject.Rejected {
 		// A mutant that does not compile has no coverage and no executions:
 		// nothing measured it, because there was nothing to measure. It does
 		// have a timeline — the bisection that refused it — which is often
 		// where a slow run's minutes went.
-		e.timeline(r, s, rec)
-		e.rejectedReproduction(s)
+		e.timeline(doc)
+		e.reproduction(doc.Reproduce)
 		return
 	}
-	e.coverage(r, s.mutant)
-	e.executions(s.mutant, rec)
-	e.timeline(r, s, rec)
-	e.reproduction(r, s, rec)
+	e.coverage(doc.Coverage)
+	e.executions(doc)
+	e.timeline(doc)
+	e.reproduction(doc.Reproduce)
 }
 
 // noRecording is the one line a run with no recording is reported under, and
@@ -1130,29 +1146,34 @@ func (e *explainer) field(label, value string) {
 // identity is what the mutant is, in the order somebody reads it: the id they
 // typed a prefix of, the one activation takes, then where it is and what it
 // changes.
-func (e *explainer) identity(s subject) {
+//
+// The last two rows are absent for a mutant validation refused. It was never
+// built, so the document holds what discovery proposed and nothing about an
+// edit that never existed.
+func (e *explainer) identity(subject accountSubject) {
 	e.section("mutant")
-	e.field("display id", s.displayID())
-	e.field("id", s.id())
-	e.field("rule", e.paint(styleListRule, s.rule()))
-	e.field("position", s.location())
-	if s.mutant != nil {
-		e.field("change", s.mutant.Original+" -> "+s.mutant.Replacement)
-		e.field("package", s.mutant.Package)
+	e.field("display id", subject.DisplayID)
+	e.field("id", subject.ID)
+	e.field("rule", e.paint(styleListRule, subject.Rule))
+	e.field("position", subject.Path+":"+strconv.Itoa(subject.Line)+":"+strconv.Itoa(subject.Column))
+	if subject.Original != nil && subject.Replacement != nil {
+		e.field("change", *subject.Original+" -> "+*subject.Replacement)
+	}
+	if subject.Package != nil {
+		e.field("package", *subject.Package)
 	}
 }
 
 // verdict is the outcome in one sentence, and the compiler's own words when
 // there is no outcome because there was no mutant.
-func (e *explainer) verdict(r *report.Report, s subject) {
+func (e *explainer) verdict(v accountVerdict) {
 	e.section("outcome")
-	if s.rejected != nil {
-		e.printf("  %s\n", "rejected: the instrumented snapshot would not compile with it spliced in")
-		e.printf("%s\n", e.paint(styleExplainDetail, indent(s.rejected.Diagnostic)))
+	e.printf("  %s\n", v.Summary)
+	if v.Diagnostic != nil {
+		e.printf("%s\n", e.paint(styleExplainDetail, indent(*v.Diagnostic)))
 		return
 	}
-	e.printf("  %s\n", verdictSentence(*s.mutant, r.Test.MemoryBytes))
-	if s.mutant.Cached {
+	if v.Cached {
 		e.printf("  %s\n", e.paint(styleExplainDetail,
 			"reused from the outcome cache rather than measured by this run, so the duration, the attempts "+
 				"and the killer above are the ones the run that did measure it recorded"))
@@ -1233,27 +1254,12 @@ func memoryClause(m report.Mutant, memoryBound int64) string {
 	return " (memory bound reached)"
 }
 
-// coverage is which test binaries reach the mutant, or the two other things
-// that can be true.
-//
-// An empty list means two different things depending on the mode, which is why
-// the mode is read rather than the length: a run with coverage off asked
-// nothing and measured every mutant against every binary, and printing "no test
-// binary" for it would be a claim that run never made.
-func (e *explainer) coverage(r *report.Report, m *report.Mutant) {
+// coverage is which test binaries reach the mutant, or the three other things
+// that can be true. Which of the four it is was decided in [gatherCoverage],
+// where the mode is read rather than the length of a list.
+func (e *explainer) coverage(c accountCoverage) {
 	e.section("coverage")
-	switch {
-	case r.Coverage.Mode == report.CoverageOff:
-		e.printf("  %s\n", "coverage off: this run measured every mutant against every test binary")
-	case m.Uncovered:
-		e.printf("  no test binary reaches line %d of %s\n", m.Line, m.Path)
-	case len(m.CoveringTests) > 0:
-		e.printf("  covered by: %s\n", strings.Join(testRefStrings(m.CoveringTests), ", "))
-	case len(m.CoveringTestPackages) > 0:
-		e.printf("  covered by: %s\n", strings.Join(m.CoveringTestPackages, ", "))
-	default:
-		e.printf("  %s\n", "this run recorded no covering test package for it")
-	}
+	e.printf("  %s\n", c.Summary)
 }
 
 // testRefStrings renders test references as `<package> <name>`, the form the
@@ -1273,25 +1279,24 @@ func testRefStrings(refs []report.TestRef) []string {
 // report is the durable claim and the recording is opt-in: a mutant's passes
 // are described the same way whether or not anybody asked for a trace, and what
 // a trace adds is the argument vectors rather than the passes.
-func (e *explainer) executions(m *report.Mutant, rec *recording) {
+func (e *explainer) executions(doc explainDocument) {
 	e.section("executions")
-	if len(m.Executions) == 0 {
-		e.printf("  %s\n", e.paint(styleExplainDetail, notExecuted(m)))
+	if len(doc.Executions) == 0 {
+		e.printf("  %s\n", e.paint(styleExplainDetail, notExecuted(doc)))
 		return
 	}
-	recorded := rec.attempts(m.ID)
-	for _, execution := range m.Executions {
+	for _, execution := range doc.Executions {
 		e.printf("  attempt %d  worker %d  %s  %s%s%s\n",
 			execution.Attempt, execution.Worker, execution.Outcome,
 			console.FormatDuration(milliseconds(execution.DurationMS)),
-			peakClause(execution),
+			peakClause(execution.PeakMemoryBytes),
 			attribution(execution.Outcome, execution.KilledBy))
 		if len(execution.Binaries) > 0 {
 			e.printf("    binaries: %s\n", strings.Join(execution.Binaries, ", "))
 		}
-		e.commands(pass(recorded, execution.Attempt), rec)
+		e.commands(execution.Commands)
 	}
-	if !rec.present() {
+	if doc.Source.Trace == nil {
 		e.printf("  %s\n", e.paint(styleExplainDetail,
 			"no recording, so the commands these passes started are not in this account"))
 	}
@@ -1305,23 +1310,28 @@ func (e *explainer) executions(m *report.Mutant, rec *recording) {
 // bounded ones: "which of my mutants cost the machine most" is a question about
 // a run in which nothing went wrong, and a run that recorded only what it
 // bounded could not answer it.
-func peakClause(execution report.Execution) string {
-	if execution.PeakMemoryBytes <= 0 {
+func peakClause(peak *int64) string {
+	if peak == nil {
 		return ""
 	}
-	return "  peak " + console.FormatBytes(execution.PeakMemoryBytes)
+	return "  peak " + console.FormatBytes(*peak)
 }
 
 // notExecuted says why a mutant has no rows under its attempt count. There are
 // exactly three ways for that to be true, and which one it is decides what to
 // do about it.
-func notExecuted(m *report.Mutant) string {
+//
+// All three are read back out of the account rather than out of the report,
+// which is what makes this sentence one a reader of the document could have
+// reached themselves: `verdict.cached`, `coverage.uncovered` and
+// `verdict.outcome` are the three facts, and they are all in it.
+func notExecuted(doc explainDocument) string {
 	switch {
-	case m.Cached:
+	case doc.Verdict.Cached:
 		return "this run started no process for it: the outcome was reused from the outcome cache"
-	case m.Uncovered:
+	case doc.Coverage.Uncovered:
 		return "this run started no process for it: no test binary reaches its lines"
-	case m.Outcome == report.OutcomeNotRun:
+	case doc.Verdict.Outcome == string(report.OutcomeNotRun):
 		return "this run started no process for it: it was never selected"
 	default:
 		return "this document records no executions for it"
@@ -1330,14 +1340,14 @@ func notExecuted(m *report.Mutant) string {
 
 // attribution is the tail of an execution row: the binary the pass named, in
 // the words its outcome earns. See [verdictSentence].
-func attribution(outcome report.Outcome, killedBy string) string {
-	if killedBy == "" {
+func attribution(outcome string, killedBy *string) string {
+	if killedBy == nil {
 		return ""
 	}
-	if outcome == report.OutcomeTimedOut {
-		return "  hung in " + killedBy
+	if outcome == string(report.OutcomeTimedOut) {
+		return "  hung in " + *killedBy
 	}
-	return "  killed by " + killedBy
+	return "  killed by " + *killedBy
 }
 
 // pass finds the recorded attempt with a given number.
@@ -1357,22 +1367,22 @@ func pass(recorded []*trace.MutantRecord, attempt int) *trace.MutantRecord {
 // what this says about it afterwards is comparing one rendering with itself.
 // What is added under it is what a `-vv` line has no room for — where the
 // command ran, and where its output was kept.
-func (e *explainer) commands(record *trace.MutantRecord, rec *recording) {
-	if record == nil {
-		return
-	}
-	for _, seq := range record.ExecSeqs {
-		event, ok := rec.execEvent(seq)
-		if !ok {
+//
+// A rendering is not a fact, which is why the document carries the event's
+// fields and this carries the event: the encoder has nothing to keep in step
+// with `-vv`, and this has everything.
+func (e *explainer) commands(commands []accountCommand) {
+	for _, command := range commands {
+		if !command.Recorded {
 			e.printf("    %s\n", e.paint(styleExplainDetail,
-				"the command recorded at seq "+strconv.FormatInt(seq, 10)+" is not in this recording"))
+				"the command recorded at seq "+strconv.FormatInt(command.Seq, 10)+" is not in this recording"))
 			continue
 		}
-		e.printf("    %s\n", console.TraceLine(event))
-		if event.Exec.Dir != "" {
-			e.printf("      dir: %s\n", event.Exec.Dir)
+		e.printf("    %s\n", console.TraceLine(command.event))
+		if command.Dir != "" {
+			e.printf("      dir: %s\n", command.Dir)
 		}
-		e.preservedOutput(event.Exec.OutputPath, rec)
+		e.preservedOutput(command)
 	}
 }
 
@@ -1386,18 +1396,16 @@ const outputTailLines = 10
 
 // preservedOutput names the file a command's output was kept in and quotes the
 // end of it.
-func (e *explainer) preservedOutput(path string, rec *recording) {
-	if path == "" {
+func (e *explainer) preservedOutput(command accountCommand) {
+	if command.OutputPath == "" {
 		return
 	}
-	full := filepath.Join(rec.directory, filepath.FromSlash(path))
-	e.printf("      output: %s\n", full)
-	data, err := os.ReadFile(full)
-	if err != nil {
-		e.printf("        %s\n", e.paint(styleExplainDetail, "it could not be read: "+err.Error()))
+	e.printf("      output: %s\n", command.OutputPath)
+	if command.OutputError != "" {
+		e.printf("        %s\n", e.paint(styleExplainDetail, command.OutputError))
 		return
 	}
-	for _, line := range tailLines(string(data), outputTailLines) {
+	for _, line := range command.OutputTail {
 		e.printf("        %s\n", e.paint(styleExplainDetail, line))
 	}
 }
@@ -1420,32 +1428,31 @@ func tailLines(text string, n int) []string {
 
 // timeline is the stages the mutant took part in, which is where a slow run's
 // minutes went.
-func (e *explainer) timeline(r *report.Report, s subject, rec *recording) {
+func (e *explainer) timeline(doc explainDocument) {
 	e.section("timeline")
-	if !rec.present() {
+	if doc.Source.Trace == nil {
 		e.printf("  %s\n", e.paint(styleExplainDetail,
 			"no recording, so the stages this mutant took part in are not in this account"))
-		if r.Timing != nil {
+		if doc.ReportHasTiming {
 			e.printf("  %s\n", e.paint(styleExplainDetail,
 				"`timing` in the report is the whole run's, phase by phase and stage by stage"))
 		}
 		return
 	}
-	spans := rec.stagesOver(s.id(), rec.seqsOf(s.id()))
-	if len(spans) == 0 {
+	if len(doc.Timeline) == 0 {
 		e.printf("  %s\n", e.paint(styleExplainDetail,
 			"the recording holds no stage this mutant was measured inside"))
 		return
 	}
-	for _, span := range spans {
-		if !span.closed {
-			e.printf("  %s  %s\n", qualifiedStage(span.phase, span.name),
+	for _, span := range doc.Timeline {
+		if !span.Closed {
+			e.printf("  %s  %s\n", qualifiedStage(span.Phase, span.Stage),
 				e.paint(styleExplainDetail, "still open at the end of the recording"))
 			continue
 		}
 		e.printf("  %s  %s  %s%s\n",
-			qualifiedStage(span.phase, span.name), span.result,
-			console.FormatDuration(milliseconds(span.durationMS)), share(span.shareMS))
+			qualifiedStage(span.Phase, span.Stage), span.Result,
+			console.FormatDuration(milliseconds(*span.DurationMS)), share(span.ShareMS))
 	}
 }
 
@@ -1472,38 +1479,28 @@ func qualifiedStage(phase, name string) string {
 
 // reproduction is the command to paste, or the reason there is none.
 //
-// It is derived from the recording's own `exec` event and from nothing else.
-// The argument vector is what the child really received — the binary, the
-// paired `-test.timeout` internal/execute derives from the mutant's own budget,
-// and whatever the run's test command added — and the directory is the
-// package's own inside the snapshot, because a Go test resolves testdata
-// relative to where it runs. Composing one out of the report instead would be
-// composing a command that was never run.
-//
-// TMPDIR is deliberately not part of the line. The run points it at a private
-// scratch directory per worker so that two mutants in flight cannot see each
-// other's temporary files, and that path is nowhere in the recording — only the
-// variable's *name* is, because a recording never carries a value. Printing a
-// directory this command had guessed at would be printing a command that is not
-// the one that ran.
-//
-// Neither is GOFLAGS, and that one was a bug rather than a judgement: the
-// argument vector starts a *prebuilt test binary*, which never reads GOFLAGS,
-// so an overlay on the run line was a variable that did nothing standing in
-// front of the one command in this tool that has to be exactly right. The
-// manifest belongs to rebuilding the binary, and that is where it is printed.
-func (e *explainer) reproduction(r *report.Report, s subject, rec *recording) {
+// Everything it prints was composed in [gatherReproduction], which is where the
+// argument on what may appear in the line lives: what the child really
+// received, and neither TMPDIR nor GOFLAGS.
+func (e *explainer) reproduction(reproduce accountReproduction) {
 	e.section("reproduce")
-	recorded := rec.attempts(s.id())
-	event, ok := rec.execEvent(lastExecSeq(recorded))
-	if !ok || len(event.Exec.Argv) == 0 {
-		e.unrecordedReproduction(r, s, rec)
+	if reproduce.Available {
+		e.printf("  %s\n", *reproduce.Command)
+		e.printf("  %s\n", e.paint(styleExplainDetail, *reproduce.Note))
+		if reproduce.Rebuild != nil {
+			e.printf("  to rebuild the binary: %s\n", *reproduce.Rebuild)
+		}
 		return
 	}
-	e.printf("  cd %s && GO_MUTANTS_ACTIVE=%s %s\n",
-		console.QuoteArgv([]string{event.Exec.Dir}), s.id(), console.QuoteArgv(event.Exec.Argv))
-	e.printf("  %s\n", e.paint(styleExplainDetail, temporariesNote(rec)))
-	e.rebuild(s, rec)
+	if reproduce.UnavailableReason != nil {
+		e.printf("  %s\n", e.paint(styleExplainDetail, *reproduce.UnavailableReason))
+	}
+	if len(reproduce.TestCommand) > 0 {
+		e.printf("  the run's tests were: %s\n", console.QuoteArgv(reproduce.TestCommand))
+	}
+	if reproduce.Suggestion != "" {
+		e.printf("  %s\n", reproduce.Suggestion)
+	}
 }
 
 // temporariesNote says whether the binary and the directory the line above
@@ -1520,63 +1517,6 @@ func temporariesNote(rec *recording) string {
 		"exist; re-run with `--trace --keep-temp` to get a command that can be pasted"
 }
 
-// rebuild is the second line a library session's account carries: how to
-// compile that test binary again.
-//
-// A session's instrumented tree is compiled through an overlay whose manifest
-// lives in a scratch directory named when the session was prepared, so it
-// cannot be derived and has to be carried. It is `docs/library.md`'s own recipe
-// — `cd <snapshot> && GOFLAGS=-overlay=<manifest> go test -c …` — printed
-// rather than assembled by hand, and it is the one place GOFLAGS does anything,
-// because here the command really is the `go` command.
-//
-// A CLI run records no manifest and gets no line: its snapshot is instrumented
-// in place, so `go test -c` inside it needs nothing added.
-func (e *explainer) rebuild(s subject, rec *recording) {
-	manifest := rec.artifact(trace.ArtifactOverlayManifest)
-	if manifest == "" {
-		return
-	}
-	line := "GOFLAGS=-overlay=" + console.QuoteArgv([]string{manifest}) + " go test -c -o mutant.test"
-	if s.mutant != nil && s.mutant.Package != "" {
-		line += " " + console.QuoteArgv([]string{s.mutant.Package})
-	}
-	if snapshot := rec.snapshotDir(); snapshot != "" {
-		line = "cd " + console.QuoteArgv([]string{snapshot}) + " && " + line
-	}
-	e.printf("  to rebuild the binary: %s\n", line)
-}
-
-// unrecordedReproduction is what the account says when there is no argument
-// vector to paste: the command the run measured with, and the invocation that
-// would record one.
-//
-// The two ways there can be none are said apart, because they are two different
-// pieces of news. A run that recorded nothing may yet have executed this mutant
-// — run it again with `--trace` and the vector is there. A run that recorded
-// everything and holds no command for this mutant started no process for it at
-// all, which is a fact about the mutant rather than about the recording, and no
-// amount of re-running with `--trace` will produce one.
-func (e *explainer) unrecordedReproduction(r *report.Report, s subject, rec *recording) {
-	switch {
-	case rec.present() && !rec.describes(r.RunID):
-		// A recording of somebody else's run is no evidence about this one:
-		// "this run started no process for it" would be a claim about a run
-		// whose account nobody has read.
-		e.printf("  %s\n", e.paint(styleExplainDetail,
-			"the recording read is of another run, so it holds no command for this mutant"))
-	case rec.present():
-		e.printf("  %s\n", e.paint(styleExplainDetail,
-			"this run started no process for it, so its recording holds no argument vector to paste"))
-	default:
-		e.printf("  %s\n", e.paint(styleExplainDetail, "no recording, so there is no argument vector to paste"))
-	}
-	if command := testCommandOf(r); len(command) > 0 {
-		e.printf("  the run's tests were: %s\n", console.QuoteArgv(command))
-	}
-	e.printf("  go-mutants run --mutant %s --keep-temp -vv --trace\n", shortID(s.displayID()))
-}
-
 // testCommandOf prefers the argv that was really started to the one that was
 // configured. The two differ in exactly one string — the located toolchain in
 // place of a bare `go` — and that string is the answer to "which go ran this?".
@@ -1585,16 +1525,6 @@ func testCommandOf(r *report.Report) []string {
 		return r.Test.ResolvedCommand
 	}
 	return r.Test.Command
-}
-
-// rejectedReproduction is the reproduce block of a mutant that does not
-// compile. There is no binary and there never was one, so what is offered is
-// the way to make the compiler say it again.
-func (e *explainer) rejectedReproduction(s subject) {
-	e.section("reproduce")
-	e.printf("  %s\n", e.paint(styleExplainDetail,
-		"validation refused this mutant, so no test binary was ever built with it in"))
-	e.printf("  go-mutants run --mutant %s --explain\n", shortID(s.displayID()))
 }
 
 // lastExecSeq is the command that decided a mutant's verdict: the last one of

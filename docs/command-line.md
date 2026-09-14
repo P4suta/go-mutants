@@ -108,7 +108,12 @@ test binaries with the commands underneath, and a command to paste that runs it
 again. `go-mutants explain <path>:<line>` asks the same question from the other
 end.
 
-`--report`, `--run` and `--trace` choose which run it reads.
+`--report`, `--run` and `--trace` choose which run it reads. `--json` writes the
+same account as a [`go-mutants/explain`](json-schema.md#go-mutantsexplain-v1)
+document instead of prose — one gatherer, two renderings — which is how a
+program gets at the four things the join composes and neither source document
+holds: the command to paste, the line that rebuilds the binary, this mutant's
+share of each stage, and the tail of what its last pass printed.
 
 ## `go-mutants report`
 
