@@ -26,3 +26,15 @@ func TestAlways(t *testing.T) {
 		t.Error("Always() = false, want true")
 	}
 }
+
+// TestGate pins both branches, which is what kills all three of the condition's
+// mutants: the negation dies to the first row, the settlement to `true` dies to
+// the second, and the settlement to `false` dies to the first again.
+func TestGate(t *testing.T) {
+	if got := Gate(true, 7); got != 7 {
+		t.Errorf("Gate(true, 7) = %d, want 7", got)
+	}
+	if got := Gate(false, 7); got != 0 {
+		t.Errorf("Gate(false, 7) = %d, want 0", got)
+	}
+}

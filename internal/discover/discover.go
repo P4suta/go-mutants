@@ -132,12 +132,12 @@ type Located struct {
 	Termination *TerminationProof
 }
 
-// A GuardForm names one of the three rewrite shapes instrumentation composes a
+// A GuardForm names one of the rewrite shapes instrumentation composes a
 // dormant mutant from. The design plan calls them Form S, Form C, and Form D,
 // and these are those three and no others.
 type GuardForm string
 
-// The three guard forms.
+// The guard forms.
 const (
 	// GuardFormC is the bool selector:
 	//
@@ -167,6 +167,27 @@ const (
 	// types the rewrite needs are in [Guard.DeclTypes]; discovery computes them
 	// because it is the only phase that has the type information.
 	GuardFormD GuardForm = "D"
+	// GuardFormCPrime is the bool selector with a conversion at each end,
+	// for a site whose type is a *named* boolean rather than the universe one:
+	//
+	//	Flag(__gm.M[3] && bool(<mutated>) || !(__gm.M[3]) && bool(<original>))
+	//
+	// It exists because Form C requires the site to be exactly the universe
+	// `bool` -- the selector it writes is an untyped boolean expression, and
+	// putting one where a `Flag` was expected does not compile. Both
+	// conversions are always legal: a defined boolean type's underlying type is
+	// `bool`, so each direction is a conversion between a type and its
+	// underlying type, and for a type parameter whose core type is boolean the
+	// same conversion is valid for every type in the set.
+	//
+	// It is the last form tried rather than a variant of Form C, so that a site
+	// Form C or Form S already covers is covered by exactly what covered it
+	// before: this adds sites and moves none.
+	//
+	// [Guard.SiteType] carries the type to convert to, spelled as this file may
+	// write it. A type the file cannot name is refused, exactly as a Form D
+	// declaration of such a type is.
+	GuardFormCPrime GuardForm = "C'"
 )
 
 // A DeclType is one identifier a Form D site declares, together with the source
@@ -212,13 +233,18 @@ type DeclType struct {
 //     send, a `defer` or a `go` for [GuardFormS], or a `:=` or a `var`
 //     declaration for [GuardFormD]. The search stops at the enclosing function,
 //     for the same reason.
+//  3. Otherwise the nearest enclosing expression whose type is boolean
+//     *underneath* -- a named boolean type, or a type parameter whose core type
+//     is boolean -- and whose type this file can spell, is a
+//     [GuardFormCPrime] site. It is last so that every site the first two
+//     forms covered is covered by the same form it was before.
 //
 // Anything else is refused, and a refused candidate is never emitted. The
 // refusals are all reported as [SkipUnnameableDeclType], which this phase reads
 // as "v1's guard forms cannot express this site":
 //
-//   - the nearest statement is one no form covers — a `switch` tag, a `range`
-//     clause, an `if` whose condition is a named boolean type;
+//   - the nearest statement is one no form covers — a `switch` tag or a `range`
+//     clause;
 //   - the statement sits where a block is not legal Go, which is an `if`,
 //     `switch` or `for` initialiser, a `for` post statement, or a type switch
 //     guard: `for i := 0; i < n; if __gm.M[3] { … }` does not parse;
@@ -241,7 +267,7 @@ type DeclType struct {
 // # The probe hint rides beside it
 //
 // [Guard.Return] answers a question about a different tree and does not touch
-// any of the above. The three forms are how a mutant is written into the mutant
+// any of the above. The guard forms are how a mutant is written into the mutant
 // tree; the return site is how the same candidate is *measured* in the probe
 // tree, where no mutant is ever active. It is present only for the return-value
 // rules, it may be absent for those, and its absence changes nothing about the
@@ -258,6 +284,11 @@ type Guard struct {
 	// Form S, and may be empty for a Form D site whose every name is the blank
 	// identifier, which declares nothing.
 	DeclTypes []DeclType
+	// SiteType is the type the site's own expression has, spelled as this file
+	// may write it. It is set for [GuardFormCPrime] and empty for every other
+	// form, which need no type of their own: Form C's selector is untyped, and
+	// the two statement forms produce statements rather than values.
+	SiteType string
 
 	// Return is the probe hint of a return-value mutant: the statement it sits
 	// in, the type every result of that statement must be declared as, and the
@@ -445,7 +476,7 @@ var explanations = map[SkipReason]string{
 	SkipPackageVarInit:     "the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1",
 	SkipTypeParam:          "the expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values",
 	SkipLabelOrGoto:        "the statement is a goto, whose target cannot be moved without jumping over a declaration or into a block, and whose removal would leave a function reaching its closing brace without returning",
-	SkipUnnameableDeclType: "none of the three guard forms can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports",
+	SkipUnnameableDeclType: "no guard form can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports",
 }
 
 // Explanation is one sentence saying what a reason means, or "" for a reason

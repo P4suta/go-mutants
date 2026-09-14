@@ -48,7 +48,7 @@ const rejectableModule = "fixture.example/rejectable"
 // wantCatalog is the fixture's whole catalogue, in catalogue order.
 //
 // It is written out rather than derived because every assertion below names a
-// mutant by its position in it. Twenty-three candidates is small enough to read,
+// mutant by its position in it. Twenty-seven candidates is small enough to read,
 // and pinning it means a change to the fixture that adds or moves a candidate
 // fails here — where the answer is "update the fixture's expectations" —
 // instead of silently shifting which mutant a later assertion is about.
@@ -86,21 +86,30 @@ var wantCatalog = []string{
 	"named.go return-false level >= 3 -> false",
 	"named.go ge-to-gt >= -> >",
 	"named.go true-to-false true -> false",
+	"named.go negate-condition f -> !(f)",
+	"named.go condition-to-true f -> true",
+	"named.go condition-to-false f -> false",
+	"named.go return-zero-numeric level -> 0",
 }
 
-// namedBool is the range of catalogue positions covering named.go, the file
-// whose candidates this phase used to reject and now accepts.
+// namedBool is the positions in named.go that this phase used to reject and now
+// accepts, which is not all of that file's candidates any more.
 //
-// It is a range rather than a set because what is asserted about them is
-// uniform: all four are healthy. Its own test says why they are in a fixture
-// named for rejection at all — they are the control that would fail if the
-// statement form ever stopped carrying an edit whose result type is a named
-// boolean, which is a regression no other fixture in the corpus would notice.
+// What is asserted about them is uniform: every one is healthy. Its own test
+// says why they are in a fixture named for rejection at all — they are the
+// control that would fail if the statement form ever stopped carrying an edit
+// whose result type is a named boolean, which is a regression no other fixture
+// in the corpus would notice. The three candidates at that file's `if f` are
+// the same control for Form C', which converts a selector back to the named
+// type rather than avoiding one, so they are listed with them.
 var namedBool = catalogPositions(
 	"named.go return-true level >= 3 -> true",
 	"named.go return-false level >= 3 -> false",
 	"named.go ge-to-gt >= -> >",
 	"named.go true-to-false true -> false",
+	"named.go negate-condition f -> !(f)",
+	"named.go condition-to-true f -> true",
+	"named.go condition-to-false f -> false",
 )
 
 // trapped names the catalogue positions that cannot compile, and the words the
@@ -282,7 +291,7 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 	})
 
 	t.Run("the surviving guards are the ones that were accepted", func(t *testing.T) {
-		// Six sites in compare.go, two of three in limits.go, and both of
+		// Six sites in compare.go, two of three in limits.go, and all four of
 		// named.go's: the counts of what is left, per file, which is the tree's
 		// own version of the accepted set. A guard is a site rather than a
 		// mutant, so compare.go keeps all six of its sites — the statement
@@ -292,10 +301,12 @@ func TestValidateIsolatesTheTrappedCandidates(t *testing.T) {
 		// since a pristine file carries no guards at all.
 		//
 		// named.go is the file that would once have been absent for the opposite
-		// reason: its four candidates were all rejected, so this phase restored
-		// it to its pristine bytes and it drifted not at all. Two guards there is
-		// the improvement stated as a count.
-		want := map[string]int{"compare.go": 6, "limits.go": 2, "named.go": 2}
+		// reason: its candidates were all rejected, so this phase restored it to
+		// its pristine bytes and it drifted not at all. Four guards there is the
+		// improvement stated as a count, and the last two are the newer half of
+		// it: the `if f` condition is a Form C' site, and its own `return level`
+		// is a statement one.
+		want := map[string]int{"compare.go": 6, "limits.go": 2, "named.go": 4}
 		if got := result.Instrumented.GuardsByFile; !maps.Equal(got, want) {
 			t.Errorf("guards by file = %v, want %v", got, want)
 		}

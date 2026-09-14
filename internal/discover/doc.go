@@ -46,7 +46,7 @@
 // and exclude patterns removed), individual expressions sitting in a context
 // that instrumentation cannot rewrite — constant declarations, array lengths,
 // case labels, package-level variable initialisers, and type parameter lists
-// or explicit type arguments — and edits whose rewrite site none of the three
+// or explicit type arguments — and edits whose rewrite site none of the
 // guard forms can express, which are [SkipUnnameableDeclType]. The reason
 // reported for an expression is the outermost suppressed region containing it:
 // that is the region a walker would have declined to descend into, so it is
@@ -71,7 +71,7 @@
 //
 // # The guard site hint
 //
-// Every candidate carries a [Guard]: which of the three rewrite forms the
+// Every candidate carries a [Guard]: which rewrite form the
 // instrumentation phase has to use for it, over which bytes, and — for the
 // declaration form — the source spelling of every type the site declares.
 //

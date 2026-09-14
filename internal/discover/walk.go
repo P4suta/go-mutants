@@ -931,7 +931,7 @@ func (s *fileScan) emitProbed(rule mutation.Rule, node ast.Node, replacement str
 // honest answer; splicing a replacement over the wrong bytes is not.
 //
 // The guard hint is resolved here too, and it is the second thing that can
-// remove a candidate: an edit whose rewrite site none of the three guard forms
+// remove a candidate: an edit whose rewrite site none of the guard forms
 // can express is recorded as [SkipUnnameableDeclType] rather than catalogued
 // for an instrumenter that would have to refuse it later. anchor is the node
 // the edit belongs to — the binary expression an operator sits in, the

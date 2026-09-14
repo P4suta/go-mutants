@@ -301,39 +301,6 @@ func Clamp(v, limit int) int {
 	}
 }
 
-// TestANamedBooleanConditionIsRefusedTheWayNegationIsNot draws the line this
-// family shares with its guard rather than with its own type gate.
-//
-// `negate-condition` accepts any boolean type, because `!` does. This family
-// writes the *literal* `true`, which is an untyped constant and assignable to
-// any boolean type -- so the edit itself is fine, and what refuses a named
-// boolean is the guard: Form C requires a site of exactly the universe `bool`.
-// The refusal is therefore recorded as unnameable-decl-type, the same answer a
-// negation at the same site gets, rather than as a silence this family invented.
-func TestANamedBooleanConditionIsRefusedTheWayNegationIsNot(t *testing.T) {
-	t.Parallel()
-
-	got := scanSource(t, `package pkg
-
-type Flag bool
-
-func Use(f Flag) int {
-	if f {
-		return 1
-	}
-	return 0
-}
-`)
-	for _, rule := range got.rules() {
-		if strings.HasPrefix(rule, "condition-to-") {
-			t.Errorf("scan produced %v at a site no guard form can express", got.rules())
-		}
-	}
-	if !got.hasSkip(SkipUnnameableDeclType) {
-		t.Errorf("scan recorded %v, want a %s site", got.skips(), SkipUnnameableDeclType)
-	}
-}
-
 // TestTheMoreLocalRuleStillWinsATie is the reason this family was inserted
 // where it was, and it is the one property a new family can silently break.
 //

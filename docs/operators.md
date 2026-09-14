@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 rules are found by `go-mutants list` with stable IDs, coordinates, and the
 guard-site hint the instrumentation phase consumes, and `go-mutants run`
 instruments, compile-validates, executes, and scores every one of them through
-the three guard forms.
+the four guard forms.
 
 The **Status** column that used to sit in the table below is gone rather than
 filled in with one repeated word: it recorded the gap between "the rule mints
@@ -105,10 +105,9 @@ the source:
   writes the untyped constant `true` or `false` over the whole of it. The type
   gate is the guard's rather than the rule's: an untyped constant is assignable
   to any boolean type, so the *edit* is fine at a condition of a named boolean
-  type, and what refuses one is Form C's requirement of a site that is exactly
-  the universe `bool` — the same refusal, from the same place, that a negation
-  at that site already gets. A `for` with no condition and a `range` clause
-  have nothing to settle and are passed over. A condition go/types has already
+  type, and Form C′ is what carries one: it writes the same selector and
+  converts it back to the named type. A `for` with no condition and a `range`
+  clause have nothing to settle and are passed over. A condition go/types has already
   folded to a constant is refused in the matching direction only: settling a
   constantly-true guard *true* writes different bytes for the same program,
   while settling it *false* is a branch that stops firing, which is exactly the
@@ -125,31 +124,37 @@ the source:
 ## Guard site hints
 
 Discovery is the only phase with type information, so it is the phase that
-decides which of the three rewrite forms the instrumenter has to use, and hands
-that down with every candidate. Walking outward from the edit:
+decides which rewrite form the instrumenter has to use, and hands that down with
+every candidate. Walking outward from the edit:
 
 - the nearest enclosing expression whose static type is **exactly** the
-  universe `bool` — not a named boolean type, whose values a `bool`-valued
-  selector cannot be assigned to — is a **Form C** site;
+  universe `bool` is a **Form C** site;
 - otherwise the nearest enclosing statement, which is a **Form S** site when it
   declares nothing (`ExprStmt`, `return`, an assignment that is not `:=`,
-  `++`/`--`, send, `defer`, `go`) and a **Form D** site when it does (`:=`, or
-  a `var` declaration with an initialiser). A Form D hint carries the source
-  spelling of every type the site declares, rendered against the file's own
-  imports.
+  `++`/`--`, send, `defer`, `go`, `break`, `continue`, `goto`) and a **Form D**
+  site when it does (`:=`, or a `var` declaration with an initialiser). A Form D
+  hint carries the source spelling of every type the site declares, rendered
+  against the file's own imports;
+- otherwise the nearest enclosing expression that is boolean *underneath* — a
+  named boolean type — and whose type the file can spell, is a **Form C′**
+  site. It carries that spelling, and the instrumenter converts the selector
+  back to it at each end.
 
-Both searches stop at the enclosing function, so a site is never chosen from
-outside the function literal an edit sits in.
+Every search stops at the enclosing function, so a site is never chosen from
+outside the function literal an edit sits in. Form C′ is tried last rather than
+folded into Form C, and the order is the guarantee: a site either of the first
+three already covered is covered by exactly the form that covered it, so adding
+this one moved no existing mutant's bytes.
 
 Everything else is refused, and a refused candidate is never catalogued. All
-six refusals are recorded as `unnameable-decl-type`, which reads as "v1's
-guard forms cannot express this site":
+six refusals are recorded as `unnameable-decl-type`, which reads as "no guard
+form can express this site":
 
-- a statement no form covers (a `switch` tag, a `range` clause, an `if` whose
-  condition is a named boolean type);
+- a statement no form covers (a `switch` tag, a `range` clause);
 - a statement in a position where a block is not legal Go (an `if`, `switch`,
   or `for` initialiser, a `for` post statement, a type switch guard);
-- a Form D type that cannot be spelled with the imports the file already has;
+- a Form D type, or a Form C′ site's own type, that cannot be spelled with the
+  imports the file already has;
 - a `:=` that redeclares an existing variable rather than declaring every name
   afresh, which is a v1 restriction rather than a fact about Go;
 - a Form D site whose initialiser mentions a name that same site declares. Go

@@ -34,6 +34,9 @@ type site struct {
 	// with the type each is declared as. Empty for the other two forms, and for
 	// a declaration whose every name is the blank identifier.
 	declare []discover.DeclType
+	// siteType is the type a Form C' guard converts its selector back to,
+	// spelled as the file may write it. Empty for every other form.
+	siteType string
 	// undeclare are the splices that turn a Form D site's own bytes into plain
 	// assignments — the `:=` downgraded to `=`, the `var` keyword, the
 	// parentheses and the declared types cut out — in site-relative
@@ -195,6 +198,20 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
 		}
 		return site{form: discover.GuardFormC, span: span}, nil
+
+	case discover.GuardFormCPrime:
+		if !x.hasExpr(span) {
+			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
+		}
+		if guard.SiteType == "" {
+			// The conversion is the whole of what this form adds, and there is
+			// nothing to convert to. A hint like this is discovery and this
+			// package disagreeing about the form, which is exactly what the
+			// independent check here exists to catch.
+			return site{}, x.unsupported(m, srcPath, span,
+				"a Form C' site carries no type to convert its selector back to")
+		}
+		return site{form: discover.GuardFormCPrime, span: span, siteType: guard.SiteType}, nil
 
 	case discover.GuardFormS:
 		stmt, ok := x.stmts[span]

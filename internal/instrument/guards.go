@@ -92,7 +92,9 @@ func (r *guardRenderer) guard(node *siteNode, s site, orig []byte) ([]byte, erro
 	var err error
 	switch s.form {
 	case discover.GuardFormC:
-		err = r.selector(&b, node, s, orig)
+		err = r.selector(&b, node, s, orig, "")
+	case discover.GuardFormCPrime:
+		err = r.selector(&b, node, s, orig, s.siteType)
 	case discover.GuardFormS:
 		err = r.chain(&b, node, s, orig)
 	case discover.GuardFormD:
@@ -128,17 +130,37 @@ func (r *guardRenderer) guard(node *siteNode, s site, orig []byte) ([]byte, erro
 // typing, evaluation order, and short-circuiting; exactly one of them is ever
 // evaluated, and with every flag false that one is ORIG, byte for byte the
 // source the user wrote.
-func (r *guardRenderer) selector(b *bytes.Buffer, node *siteNode, s site, orig []byte) error {
-	b.WriteByte('(')
+//
+// Form C' is the same selector with a conversion at each end, for a site whose
+// type is a named boolean rather than the universe one:
+//
+//	T(A.M[i1] && bool(m1) || … || !(…) && bool(ORIG))
+//
+// The selector itself is an untyped boolean expression either way; what changes
+// is that where the site's type is not `bool`, the expression has to be
+// converted back to it, and each operand has to be converted *to* `bool` first
+// because `&&` and `||` need operands of one boolean type. Both conversions are
+// between a defined type and its underlying type, which is always legal.
+//
+// Nothing about evaluation changes. A conversion of a boolean expression
+// evaluates that expression and nothing else, so the short-circuiting, the
+// order, and the "exactly one operand is evaluated" property are the selector's
+// as before.
+func (r *guardRenderer) selector(b *bytes.Buffer, node *siteNode, s site, orig []byte, convertTo string) error {
+	opening := "("
+	if convertTo != "" {
+		opening = convertTo + "("
+	}
+	b.WriteString(opening)
 	for _, m := range node.Alternatives {
 		mutated, err := r.mutated(s, m)
 		if err != nil {
 			return err
 		}
 		b.WriteString(r.flag(m))
-		b.WriteString(" && (")
-		b.Write(mutated)
-		b.WriteString(") || ")
+		b.WriteString(" && ")
+		writeOperand(b, mutated, convertTo != "")
+		b.WriteString(" || ")
 	}
 	b.WriteString("!(")
 	for i, m := range node.Alternatives {
@@ -147,10 +169,28 @@ func (r *guardRenderer) selector(b *bytes.Buffer, node *siteNode, s site, orig [
 		}
 		b.WriteString(r.flag(m))
 	}
-	b.WriteString(") && (")
-	b.Write(orig)
-	b.WriteString("))")
+	b.WriteString(") && ")
+	writeOperand(b, orig, convertTo != "")
+	b.WriteByte(')')
 	return nil
+}
+
+// writeOperand writes one operand of a selector, in parentheses, and converted
+// to `bool` when the site's own type is not.
+//
+// `bool(x)` rather than `(x)`: `&&` and `||` require both operands to have one
+// boolean type, and a named boolean and an untyped constant do not mix the way
+// two untyped constants do. Converting each operand rather than relying on
+// assignability is what keeps the shape the same for every alternative,
+// whatever the mutated text turned out to be.
+func writeOperand(b *bytes.Buffer, text []byte, convert bool) {
+	if convert {
+		b.WriteString("bool(")
+	} else {
+		b.WriteByte('(')
+	}
+	b.Write(text)
+	b.WriteByte(')')
 }
 
 // chain renders the branch chain both statement forms share:

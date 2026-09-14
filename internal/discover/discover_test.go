@@ -376,6 +376,9 @@ var wantCandidates = []string{
 	"negate/negate.go delete-incdec a++->",
 	"negate/negate.go incr-to-decr ++->--",
 	"negate/negate.go delete-assignment out[0] = a->",
+	"negate/negate.go negate-condition f->!(f)",
+	"negate/negate.go condition-to-true f->true",
+	"negate/negate.go condition-to-false f->false",
 	"negate/negate.go delete-assignment out[0] = 1->",
 	"negate/negate.go ge-to-gt >=->>",
 	"negate/negate.go return-true f->true",
@@ -466,7 +469,6 @@ var wantSkips = []string{
 	"generics/generics.go type-param 5",
 	"labels/labels.go label-or-goto 1",
 	// The condition of a named boolean type: negatable Go, and no guard form.
-	"negate/negate.go unnameable-decl-type 3",
 	"suppressed/suppressed.go array-length 2",
 	"suppressed/suppressed.go case-label 2",
 	"suppressed/suppressed.go const-decl 4",
@@ -751,11 +753,18 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 	forms := make(map[GuardForm]int)
 	for _, c := range result.Candidates {
 		switch c.Guard.Form {
-		case GuardFormC, GuardFormS, GuardFormD:
+		case GuardFormC, GuardFormS, GuardFormD, GuardFormCPrime:
 			forms[c.Guard.Form]++
 		default:
-			t.Errorf("%s %s: guard form %q is not one of the three", c.Path, c.Span, c.Guard.Form)
+			t.Errorf("%s %s: guard form %q is not one this build emits", c.Path, c.Span, c.Guard.Form)
 			continue
+		}
+		// A site type is Form C''s and nothing else's: the other forms produce
+		// a statement or an untyped expression, and neither has a type of its
+		// own to convert back to.
+		if (c.Guard.SiteType != "") != (c.Guard.Form == GuardFormCPrime) {
+			t.Errorf("%s %s: a Form %s site carries SiteType %q",
+				c.Path, c.Span, c.Guard.Form, c.Guard.SiteType)
 		}
 		if !c.Guard.SiteSpan.Contains(c.Span) {
 			t.Errorf("%s: the guard site %s does not contain the edit %s", c.Path, c.Guard.SiteSpan, c.Span)
