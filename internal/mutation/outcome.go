@@ -129,9 +129,12 @@ func (o *Outcome) UnmarshalText(text []byte) error {
 // rows a report carries. The `reason` enumeration of the run report schema is
 // a superset rather than a copy of that list: internal/report checks every
 // reason discovery emits against the enumeration, and the enumeration reserves
-// two further names — `struct-tag` and `label-or-goto` — that no Go constant
-// in this tree declares, so that landing them is a code change and not a
-// schema change. The type and the canonical list stay in internal/discover
+// two further names — `struct-tag` and `case-label` — that no Go constant in
+// this tree declares, so that landing them is a code change and not a schema
+// change. Neither ever will land: each names a position that holds a *type*
+// rather than a value, and no rule in the registry rewrites a type. The
+// superset has been earned in the other direction as well — `label-or-goto`
+// was reserved here for a year and is emitted now, without the schema moving. The type and the canonical list stay in internal/discover
 // even for a reason another phase emits; whoever lands one adds it there.
 //
 // This package used to carry a second copy of that vocabulary, spelled

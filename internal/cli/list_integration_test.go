@@ -119,8 +119,13 @@ var wantMutants = []listedMutant{
 	{"suppressed/suppressed.go", 85, 10, "comparison", "eq-to-neq", "==", "!="},
 	{"suppressed/suppressed.go", 85, 13, "boolean-literal", "false-to-true", "false", "true"},
 	{"suppressed/suppressed.go", 86, 10, "return-replacement", "return-empty-string", "\"not ok\"", "\"\""},
-	// The tagged switch's bodies, and not its labels.
+	// The tagged switch, labels and bodies alike. The labels are expressions of
+	// the tag's type, and the form that returns a type from a closure stands
+	// exactly where one stood; they used to be suppressed before the guard
+	// chooser was ever asked about them.
+	{"suppressed/suppressed.go", 89, 9, "integer-arithmetic", "add-to-sub", "+", "-"},
 	{"suppressed/suppressed.go", 90, 10, "return-replacement", "return-empty-string", "\"one more\"", "\"\""},
+	{"suppressed/suppressed.go", 91, 9, "integer-arithmetic", "mul-to-div", "*", "/"},
 	{"suppressed/suppressed.go", 92, 10, "return-replacement", "return-empty-string", "\"twice\"", "\"\""},
 	{"suppressed/suppressed.go", 96, 6, "condition-negation", "negate-condition", "v > b", "!(v > b)"},
 	{"suppressed/suppressed.go", 96, 8, "comparison", "gt-to-ge", ">", ">="},
@@ -159,7 +164,6 @@ var wantSkips = []catalogSkip{
 	{Path: "generated/generated.go", Reason: "generated", Count: 1},
 	{Path: "generics/generics.go", Reason: "type-param", Count: 5},
 	{Path: "suppressed/suppressed.go", Reason: "array-length", Count: 2},
-	{Path: "suppressed/suppressed.go", Reason: "case-label", Count: 2},
 	{Path: "suppressed/suppressed.go", Reason: "const-decl", Count: 4},
 	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 5},
 }

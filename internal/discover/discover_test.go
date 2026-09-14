@@ -275,6 +275,7 @@ var wantCandidates = []string{
 	"forms/forms.go condition-to-false err != nil->false",
 	"forms/forms.go neq-to-eq !=->==",
 	"forms/forms.go return-err-to-nil err->nil",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric second->0",
 	"forms/forms.go return-err-to-nil err->nil",
 	"forms/forms.go return-zero-numeric a->0",
@@ -291,11 +292,13 @@ var wantCandidates = []string{
 	"forms/forms.go gt-to-ge >->>=",
 	"forms/forms.go delete-assignment out[0] = half->",
 	"forms/forms.go return-zero-numeric half->0",
+	"forms/forms.go div-to-mul /->*",
 	"forms/forms.go negate-condition half > 0->!(half > 0)",
 	"forms/forms.go condition-to-true half > 0->true",
 	"forms/forms.go condition-to-false half > 0->false",
 	"forms/forms.go gt-to-ge >->>=",
 	"forms/forms.go return-zero-numeric half->0",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-empty-string \"zero\"->\"\"",
 	"forms/forms.go return-empty-string \"other\"->\"\"",
 	"forms/forms.go add-to-sub +->-",
@@ -308,14 +311,26 @@ var wantCandidates = []string{
 	"forms/forms.go return-true n > 0->true",
 	"forms/forms.go return-false n > 0->false",
 	"forms/forms.go gt-to-ge >->>=",
+	"forms/forms.go mul-to-div *->/",
 	"forms/forms.go delete-assignment n = total->",
 	"forms/forms.go return-zero-numeric n->0",
+	"forms/forms.go add-to-sub +->-",
+	"forms/forms.go mul-to-div *->/",
 	"forms/forms.go return-zero-numeric Limit->0",
+	"forms/forms.go add-to-sub +->-",
+	"forms/forms.go mul-to-div *->/",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric a + Limit->0",
 	"forms/forms.go add-to-sub +->-",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go return-zero-numeric scale(n)->0",
+	"forms/forms.go add-to-sub +->-",
 	"forms/forms.go delete-assignment total.hi = start->",
 	"forms/forms.go return-zero-numeric total.hi->0",
+	"forms/forms.go negate-condition f->!(f)",
+	"forms/forms.go condition-to-true f->true",
+	"forms/forms.go condition-to-false f->false",
+	"forms/forms.go return-zero-numeric n->0",
 	"generics/generics.go negate-condition a > b->!(a > b)",
 	"generics/generics.go condition-to-true a > b->true",
 	"generics/generics.go condition-to-false a > b->false",
@@ -326,6 +341,8 @@ var wantCandidates = []string{
 	"generics/generics.go add-to-sub +->-",
 	"hidden/hidden.go return-nil &counter{n: n}->nil",
 	"hidden/hidden.go return-zero-numeric c.n->0",
+	"hidden/hidden.go return-zero-numeric tally(n)->0",
+	"hidden/hidden.go return-zero-numeric int(t)->0",
 	"labels/labels.go negate-condition v == want->!(v == want)",
 	"labels/labels.go condition-to-true v == want->true",
 	"labels/labels.go condition-to-false v == want->false",
@@ -440,7 +457,9 @@ var wantCandidates = []string{
 	"suppressed/suppressed.go eq-to-neq ==->!=",
 	"suppressed/suppressed.go false-to-true false->true",
 	"suppressed/suppressed.go return-empty-string \"not ok\"->\"\"",
+	"suppressed/suppressed.go add-to-sub +->-",
 	"suppressed/suppressed.go return-empty-string \"one more\"->\"\"",
+	"suppressed/suppressed.go mul-to-div *->/",
 	"suppressed/suppressed.go return-empty-string \"twice\"->\"\"",
 	"suppressed/suppressed.go negate-condition v > b->!(v > b)",
 	"suppressed/suppressed.go condition-to-true v > b->true",
@@ -458,7 +477,9 @@ var wantCandidates = []string{
 	"suppressed/suppressed.go true-to-false true->false",
 	"suppressed/suppressed.go return-empty-string \"received\"->\"\"",
 	"suppressed/suppressed.go return-empty-string \"none\"->\"\"",
+	"unnameable/unnameable.go add-to-sub +->-",
 	"unnameable/unnameable.go return-zero-numeric c.Value()->0",
+	"unnameable/unnameable.go return-zero-numeric a->0",
 }
 
 // wantSkips is every recorded reason for the same run.
@@ -471,7 +492,6 @@ var wantSkips = []string{
 	// that shadows and reads what it shadows, two in the `var` that does the
 	// same, three across the `var` block whose specs refer to each other, and
 	// one each for the two multi-line cuts.
-	"forms/forms.go unnameable-decl-type 11",
 	"generated/generated.go generated 1",
 	// One for the generic function's constraint, one for the generic type's,
 	// one for the single explicit type argument, and two for the list form.
@@ -479,7 +499,6 @@ var wantSkips = []string{
 	"labels/labels.go label-or-goto 1",
 	// The condition of a named boolean type: negatable Go, and no guard form.
 	"suppressed/suppressed.go array-length 2",
-	"suppressed/suppressed.go case-label 2",
 	"suppressed/suppressed.go const-decl 4",
 	"suppressed/suppressed.go package-var-init 5",
 	// The reason the reserved name was chosen for: a Form D site whose
@@ -688,6 +707,7 @@ var wantFormsGuards = []string{
 	"condition-to-false err != nil | C err != nil []",
 	"neq-to-eq != | C err != nil []",
 	"return-err-to-nil err | S return 0, err []",
+	"add-to-sub + | E first + 1 []",
 	"return-zero-numeric second | S return second, err []",
 	"return-err-to-nil err | S return second, err []",
 	"return-zero-numeric a | S return a, nil []",
@@ -704,11 +724,13 @@ var wantFormsGuards = []string{
 	"gt-to-ge > | C half > 0 []",
 	"delete-assignment out[0] = half | S out[0] = half []",
 	"return-zero-numeric half | S return half []",
+	"div-to-mul / | E n / 2 []",
 	"negate-condition half > 0 | C half > 0 []",
 	"condition-to-true half > 0 | C half > 0 []",
 	"condition-to-false half > 0 | C half > 0 []",
 	"gt-to-ge > | C half > 0 []",
 	"return-zero-numeric half | S return half []",
+	"add-to-sub + | E a + b []",
 	"return-empty-string \"zero\" | S return \"zero\" []",
 	"return-empty-string \"other\" | S return \"other\" []",
 	"add-to-sub + | S ch <- a + b []",
@@ -721,14 +743,26 @@ var wantFormsGuards = []string{
 	"return-true n > 0 | C n > 0 []",
 	"return-false n > 0 | C n > 0 []",
 	"gt-to-ge > | C n > 0 []",
+	"mul-to-div * | E total * 2 []",
 	"delete-assignment n = total | S n = total []",
 	"return-zero-numeric n | S return n []",
+	"add-to-sub + | E Limit + n*2 []",
+	"mul-to-div * | E n*2 []",
 	"return-zero-numeric Limit | S return Limit []",
+	"add-to-sub + | E Limit + n*2 []",
+	"mul-to-div * | E n*2 []",
+	"add-to-sub + | E a + 1 []",
 	"return-zero-numeric a + Limit | S return a + Limit []",
 	"add-to-sub + | S return a + Limit []",
+	"add-to-sub + | E n + 1 []",
 	"return-zero-numeric scale(n) | S return scale(n) []",
+	"add-to-sub + | E n + 1 []",
 	"delete-assignment total.hi = start | S total.hi = start []",
 	"return-zero-numeric total.hi | S return total.hi []",
+	"negate-condition f | C' f []",
+	"condition-to-true f | C' f []",
+	"condition-to-false f | C' f []",
+	"return-zero-numeric n | S return n []",
 }
 
 // TestDiscoverEmitsTheGuardHints pins the Form D site hint contract on the
@@ -771,16 +805,18 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 	forms := make(map[GuardForm]int)
 	for _, c := range result.Candidates {
 		switch c.Guard.Form {
-		case GuardFormC, GuardFormS, GuardFormD, GuardFormCPrime, GuardFormF:
+		case GuardFormC, GuardFormS, GuardFormD, GuardFormCPrime, GuardFormF, GuardFormE:
 			forms[c.Guard.Form]++
 		default:
 			t.Errorf("%s %s: guard form %q is not one this build emits", c.Path, c.Span, c.Guard.Form)
 			continue
 		}
-		// A site type is Form C''s and nothing else's: the other forms produce
-		// a statement or an untyped expression, and neither has a type of its
-		// own to convert back to.
-		if (c.Guard.SiteType != "") != (c.Guard.Form == GuardFormCPrime) {
+		// A site type belongs to the two forms that write one: Form C' converts
+		// its selector back to it and Form E returns it. The other three
+		// produce a statement or an untyped expression and have no type of
+		// their own.
+		carriesType := c.Guard.Form == GuardFormCPrime || c.Guard.Form == GuardFormE
+		if (c.Guard.SiteType != "") != carriesType {
 			t.Errorf("%s %s: a Form %s site carries SiteType %q",
 				c.Path, c.Span, c.Guard.Form, c.Guard.SiteType)
 		}

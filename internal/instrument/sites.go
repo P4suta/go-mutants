@@ -199,6 +199,20 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 		}
 		return site{form: discover.GuardFormC, span: span}, nil
 
+	case discover.GuardFormE:
+		if !x.hasExpr(span) {
+			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
+		}
+		if guard.SiteType == "" {
+			// The result type is what the closure is written around, and there
+			// is none. A hint like this is discovery and this package
+			// disagreeing about the form, which is what the independent check
+			// here exists to catch.
+			return site{}, x.unsupported(m, srcPath, span,
+				"a Form E site carries no type for its closure to return")
+		}
+		return site{form: discover.GuardFormE, span: span, siteType: guard.SiteType}, nil
+
 	case discover.GuardFormCPrime:
 		if !x.hasExpr(span) {
 			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")

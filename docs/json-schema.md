@@ -450,8 +450,15 @@ aggregated per file: `path`, `reason`, and `count`. The `reason` enum is
 `const-decl`, `array-length`, `type-param`, `case-label`, `package-var-init`,
 `cgo`, `generated`, `excluded`, `struct-tag`, `label-or-goto`, and
 `unnameable-decl-type` — the identifiers documented in
-[Operators](operators.md). `struct-tag` and `label-or-goto` are still reserved
-for instrumentation; everything else is emitted by discovery.
+[Operators](operators.md).
+
+The enum is deliberately a **superset** of what this build emits, so that a
+reason landing is a code change and not a schema change. Two of them are
+emitted by nothing today and never will be, for the same reason: the position
+they name holds a *type* rather than a value, and no rule in the registry
+rewrites a type. `struct-tag` is a struct tag, and `case-label` is the label of
+a type switch case. [Roadmap](roadmap.md) is the index of both. Everything else
+is emitted by discovery.
 
 ### `expectations[]`
 

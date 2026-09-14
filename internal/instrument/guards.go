@@ -97,6 +97,8 @@ func (r *guardRenderer) guard(node *siteNode, s site, orig []byte) ([]byte, erro
 		err = r.selector(&b, node, s, orig, s.siteType)
 	case discover.GuardFormS:
 		err = r.chain(&b, node, s, orig)
+	case discover.GuardFormE:
+		err = r.returningClosure(&b, node, s, orig)
 	case discover.GuardFormF:
 		// The closure and its call are written around exactly the chain Form S
 		// writes, which is what keeps the two forms one renderer: what differs
@@ -232,6 +234,45 @@ func (r *guardRenderer) chain(b *bytes.Buffer, node *siteNode, s site, orig []by
 	}
 	b.WriteString(" else ")
 	writeBranch(b, orig)
+	return nil
+}
+
+// returningClosure renders the Form E guard: a closure that returns the site's
+// own type, called where the expression stood.
+//
+//	func() T { if A.M[i1] { return m1 } else { return ORIG } }()
+//
+// It is the branch chain with every branch returning rather than executing, and
+// the `else` is always written for the reason [guardRenderer.chain] gives: a
+// function whose body is an `if` chain needs every branch to terminate, or the
+// closing brace is reachable without a return.
+//
+// The closure is written *where the expression was*, which is the whole of what
+// makes this form sound. A call is evaluated where it is written, so the
+// expression is evaluated in the same order and the same number of times; every
+// name in scope at the expression is in scope inside the closure; and no
+// identifier is invented, so nothing can collide.
+func (r *guardRenderer) returningClosure(b *bytes.Buffer, node *siteNode, s site, orig []byte) error {
+	b.WriteString("func() ")
+	b.WriteString(s.siteType)
+	b.WriteString(" { ")
+	for i, m := range node.Alternatives {
+		if i > 0 {
+			b.WriteString(" else ")
+		}
+		b.WriteString("if ")
+		b.WriteString(r.flag(m))
+		b.WriteString(" { return ")
+		mutated, err := r.mutated(s, m)
+		if err != nil {
+			return err
+		}
+		b.Write(mutated)
+		b.WriteString(" }")
+	}
+	b.WriteString(" else { return ")
+	b.Write(orig)
+	b.WriteString(" } }()")
 	return nil
 }
 

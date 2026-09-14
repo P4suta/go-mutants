@@ -14,6 +14,48 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A tagged `switch`'s case labels are mutants.** They used to be suppressed
+  before the guard chooser was ever consulted, which made `case-label` a
+  blanket rather than a verdict: nothing had decided they could not be
+  expressed. A label is an expression of the tag's type, and Form E stands
+  exactly where one stood.
+  With the tagless form already landed and the tagged one landing here, the
+  reason has no emitter left. What remains under the name is the label of a
+  *type* switch case, which holds a type rather than a value — and no rule in
+  the registry rewrites a type, so nothing is ever proposed there and there is
+  nothing to decline, the same silence a `fallthrough` gets. `case-label` is
+  therefore retired from the reasons discovery can emit and joins `struct-tag`
+  in the run-report schema's reserved set, where both are for the same reason:
+  the position holds a type.
+- **A `switch` tag, a `range` clause and a type switch guard are mutable, and
+  this repository now records no refusal at all.** Form E is a sixth guard form:
+  the guard inside a closure that returns the site's own type and is called
+  where the expression was, `func() int { if __gm.M[7] { return … } else {
+  return … } }()`. It is the last form tried and needs the least of its site —
+  an expression, in a position where an expression of the same type is legal,
+  whose type the file can spell — and what it buys is every position that holds
+  an expression and no statement a guard can stand in.
+  Measured over this repository at profile `all`, `unnameable-decl-type` goes
+  from **7 refusals to none**. The dogfood gate's catalogue grew from 2677 to
+  2684, and every one of the seven was killed by tests that already existed,
+  which is what a refusal being lifted usually looks like: the code was covered,
+  only the mutant was missing.
+  Three properties follow from the closure being *where the expression was*
+  rather than hoisted in front of it, and each is a refusal some other design
+  would have had to make. The expression is evaluated in the same order and the
+  same number of times. Every name in scope at the expression is in scope inside
+  the closure — including a `:=`'s own declared name, whose scope begins at the
+  *end* of its specification, which is why `total := total * 2` is a site for
+  this form and a refusal for Form D. And no identifier is invented, so nothing
+  can collide.
+  Three shapes left the refusal list with it: a `:=` that redeclares, an
+  initialiser that names a variable its own statement declares, and a `var`
+  whose declaring tokens cannot be cut without moving a line. Form D still
+  refuses all three, for the reasons it always had; Form E takes the initialiser
+  *expression* instead, which declares nothing and moves nothing. What is left
+  is three shapes, and only one is about types: an expression whose type the
+  file cannot spell, one that is not a value at all (`case int:`, a package
+  name, a builtin), and one in a position that needs more than its type.
 - **A `for` post statement and an `if` initialiser are mutable.** Form F is a
   fifth guard form: the statement guard inside a closure that is called where
   the statement stood, `func() { if __gm.M[7] { … } else { … } }()`. Those slots
