@@ -87,6 +87,50 @@ func TestProbingReachesTheSameVerdictsForLessWork(t *testing.T) {
 	}
 }
 
+// TestProbingChangesNoVerdictOverTheWholeOperatorCorpus is the same claim made
+// where it is hardest to hold.
+//
+// `fixtures/unobserved` is two mutants chosen to exercise the two answers a
+// probe can give, which makes the test above precise and makes it narrow. The
+// families fixture is the other kind of evidence: every rule the registry
+// implements, with a live candidate each, so every probe form and every refusal
+// is exercised at once — and the claim is the only one that matters, which is
+// that not one verdict moved.
+//
+// Nothing about the *saving* is asserted here. Whether this fixture has mutants
+// a probe can settle is a fact about the fixture, and a test that required one
+// would fail the day somebody tightened a test in it. What cannot change is the
+// answer.
+func TestProbingChangesNoVerdictOverTheWholeOperatorCorpus(t *testing.T) {
+	t.Parallel()
+
+	verdicts := func(probing config.Probing) []string {
+		t.Helper()
+		opts := options(t, "families")
+		opts.Config.Test.BaselineRuns = 1
+		opts.Config.Test.Probing = probing
+		outcome, events, err := collect(t, t.Context(), opts)
+		if err != nil {
+			t.Fatalf("Run with probing %s: %v", probing, err)
+		}
+		if outcome.Status != StatusOK {
+			t.Fatalf("status = %s with probing %s, want %s", outcome.Status, probing, StatusOK)
+		}
+		settled := slices.Clone(results(events))
+		slices.Sort(settled)
+		return settled
+	}
+
+	quiet := verdicts(config.ProbingOff)
+	if len(quiet) == 0 {
+		t.Fatal("the families fixture settled no mutants at all")
+	}
+	if probed := verdicts(config.ProbingOn); !slices.Equal(quiet, probed) {
+		t.Errorf("probing changed the run's verdicts\n with: %s\nwithout: %s",
+			strings.Join(probed, "\n         "), strings.Join(quiet, "\n         "))
+	}
+}
+
 // TestAProbeSettledSurvivorIsNotAnUncoveredOne keeps the pair of fields a
 // reader tells two remedies apart with.
 //

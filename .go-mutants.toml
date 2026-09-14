@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2620 killed, six caught by the timeout, sixty-three declared, 100.00%,
+# race: 2647 killed, six caught by the timeout, sixty-three declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -123,9 +123,9 @@ profile = "balanced"
 #   internal/drift/*.go            15
 #   internal/testflag/*.go          7
 #
-# catalogues 2689 mutants and detects 2626 of them -- 2620 killed and six caught
+# catalogues 2716 mutants and detects 2653 of them -- 2647 killed and six caught
 # by the timeout -- leaving the sixty-three rows declared below and a score of
-# 100.00%, in the wall clock recorded under [policy]. The count has grown three
+# 100.00%, in the wall clock recorded under [policy]. The count has grown four
 # times without the score moving, and every time for the same reason: code the
 # gate already covered started producing mutants it had not produced before.
 #
@@ -136,6 +136,12 @@ profile = "balanced"
 #                  chooser -- 128 mutants in code nobody added, spread across
 #                  every package here, of which six survived until the tests
 #                  that kill them were written (2026-09-14).
+#   2689 to 2716   `test.probing` and the report field it settles mutants into
+#                  (2026-09-14): twenty-seven new mutants across
+#                  internal/config and internal/report, seventeen of which
+#                  survived until the tests that kill them were written. The
+#                  probe layer's own code is in internal/probe and
+#                  internal/engine, neither of which the gate covers yet.
 #   2684 to 2689   `execution.isolate` and the code that reads it (2026-09-14):
 #                  five new mutants in internal/config, all killed by the
 #                  tests written with the feature. A widening the gate pays
@@ -468,19 +474,19 @@ reason = "Unreachable: every registered schema compiles, which is exactly what T
 # out of the run, never to relax the check that noticed.
 
 [[mutation.expect]]
-id = "81aa43f0f98d8a9ce447032f97f9433fd105da1a44cd8c8409a3656e2abf01ee"
+id = "5bb4a8040f463792d43781d51bd9b6995e38f6a12f6a8580317a3e79cd71a179"
 reason = "Equivalent on every platform: `v > int64(maxInt)` and `v >= int64(maxInt)` select different branches only at exactly int64(maxInt), where the guard returns maxInt and falling through returns int(v) -- and int(int64(maxInt)) is maxInt, so both spellings narrow every int64 to the same int."
 
 [[mutation.expect]]
-id = "8d2903054b69f85b0ce324b1eef21641d6915506643de2bfaac1fb4c03898249"
+id = "7af7a156c75b48f732fb14d52058b69c48c7fec5ffb4e3a438c4e865035db75a"
 reason = "Unreachable on a 64-bit build, which is every platform this gate runs on: maxInt is int(^uint(0) >> 1), so int64(maxInt) is math.MaxInt64 and no int64 is greater than it. Killing it means running this package's suite on a 32-bit GOARCH."
 
 [[mutation.expect]]
-id = "b46ac300167a9342891250e7d7aa9f1cd2aa045337aeaa07fa42ed330164963b"
+id = "985fd8191cfaf201339168e161400c586913136dd6b7ec0d719a1611736b3131"
 reason = "Equivalent on every platform: the same argument as the `>` row above, at the other end -- `<` and `<=` disagree only at exactly int64(minInt), where the guard returns minInt and falling through returns int(v), which is minInt."
 
 [[mutation.expect]]
-id = "aeb06e51f9c0498640b35324a54268ddb0043161508e7a4542149a8bb9b66f65"
+id = "559f0ed09e2f0cbabc410e7beccf4c79b0e365f0daf3e13e2ecfb3e7b0e9d04d"
 reason = "Unreachable on a 64-bit build: minInt is -maxInt - 1, so int64(minInt) is math.MinInt64 and no int64 is less than it -- the mirror of the maxInt row above, and reachable on the same 32-bit GOARCH."
 
 # internal/gocmd, whose 106 mutants brought exactly one row, and it is a
@@ -528,19 +534,19 @@ id = "b961736e4139ecbe97e50f2ded94f653b8e1fe72b7f624db5a725bcf733d540e"
 reason = "Equivalent: strings.Builder.Grow is a capacity hint and the page is the same bytes for every non-negative size, and the vendored viewer is 232 KiB, so len(bundle) + len(document) - 4096 is positive for any document at all."
 
 [[mutation.expect]]
-id = "c3d40ed1a36996a03b454620a03da2ec1cf9cbe070a8e58599e3db30e4fc71c6"
+id = "ed7481e8cd1f94434f5337692cf82a700e764f04ad21539a96dc7ea1d095ed0a"
 reason = "Equivalent: the second argument of make is a capacity hint, the runtime clamps a negative one to zero, and a map holds the same entries whatever it was sized for."
 
 [[mutation.expect]]
-id = "5ac5c99ed973fed0246e266c52f28ae1658ce86971424d583595849871a76af1"
+id = "eebd2dc5a8fd6ecb2591f3a05d97ab23dddaa1ee3810fadeca068fb460c8452e"
 reason = "Equivalent: OutcomeNotRun is the zero value of mutation.Outcome, being first in its iota block, so `return mutation.OutcomeNotRun` and `return 0` are the same constant -- the same argument as the Disjoint and OutcomeNotRun rows above."
 
 [[mutation.expect]]
-id = "4bf4f630bb41121facb1dc4f0cc6b30b4a19f699d17defaaca13dc59e6653813"
+id = "9525f578dd1e2ba9416b5840f04aa29eac46731dfc166d0a1d7bb4d29f9fa7e7"
 reason = "Equivalent: the guard reports 0 for a negative duration and d.Milliseconds() otherwise, and a zero duration is 0 milliseconds through either branch, so `<` and `<=` render every duration the same."
 
 [[mutation.expect]]
-id = "252f817d8fb60f606b7c0c92a3674ade07fff7c7a7e0de9c08dd0872c2e352eb"
+id = "73674bbd5d0ff2893df5f890a642badf7cb4414ab97ea227641f07e2c7d7520b"
 reason = "Equivalent: `<=` and `<` disagree only for an id of exactly DisplayIDLength characters, where returning `id` and returning `id[:DisplayIDLength]` return the same string."
 
 [[mutation.expect]]
@@ -568,7 +574,7 @@ id = "1449b2fcd7b848d1841d473598acb3db148bcf85d40386adffca970929cfc582"
 reason = "Equivalent: the guard clamps an offset past the end of the file to the end, and `>=` also assigns len(src) to an offset that is already len(src) -- the same argument as the position row above."
 
 [[mutation.expect]]
-id = "e1b62d0b86c672b24228a09bbf179c7604acc67aeec244fce260f3c182716b9f"
+id = "bb5d7070cdfcd8f9a300d14e4ac613ef4b5c4696ce6941d6933e76e381862c20"
 reason = "Equivalent: a rejected mutant's disposition carries no outcome, and StateOf answers `unfulfilled` through the Rejected case and through the default alike, because the zero Outcome is not OutcomeSurvived. Nothing else reads the field."
 
 [[mutation.expect]]
@@ -584,31 +590,31 @@ reason = "Equivalent: both callers impose a total order of their own on what thi
 # on the way in, so nothing downstream of that refusal can meet one.
 
 [[mutation.expect]]
-id = "c4740390a45d54b1d38fa58c53c0428f0ea155276dd2a16064fe8a8a100974e5"
+id = "94ebea36dab33b2c9cd25cad0af4cdefce2091feb7f815b069bc5af30558f938"
 reason = "Unreachable: partition has already translated every result's outcome through OutcomeOf, which refuses anything outside the six, and mutation.Tally records all six -- so the count this forwards cannot fail."
 
 [[mutation.expect]]
-id = "999cd4aaba4b5576d06ebdf8e2653913747069fdf735bc0cb88f1fbe7dfae8bd"
+id = "fcbf85329076ce6bddc0f6c222cff55456e4b3449b18881a88bad9ce01b8e52d"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [[mutation.expect]]
-id = "1e020d3ff3ff61130316dcb84a767c777f56238373e596c0cc2b85a9b941a1f4"
+id = "d5aca19227c0b4c0221af1a67665df1f4004d869618127b1aa9ba326ada9d996"
 reason = "Unreachable: the same argument one level in -- tallyOf reads the outcomes partition has already accepted, so mutation.TallyOf cannot refuse one."
 
 [[mutation.expect]]
-id = "46377b3b20a3d917d144c3d08c7d82a298112add1d68716790668110095e8fea"
+id = "6aa0c9767b21b5d04e22f95cdd4e68d034edd744bbe5508cf5436cfb2ee312e4"
 reason = "Unreachable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "b64199f55d4fab06639b68d71bc06fa0d2452976e0db479b11ba7cdfd4a488c9"
+id = "04c726e648dd175f048be9ffe1a6c450accb49564bd2e66d2f08cbd508dafb56"
 reason = "Unreachable: Outcome.Mutation answers with one of the six core outcomes or with an error the line above returns, and mutation.Tally.Record has a case for all six."
 
 [[mutation.expect]]
-id = "c9397f88ba8e506557c65396f13f7dd19a3ca8778188db8b74b2150eb0cb3117"
+id = "4ed85de71aa3f58bfc544352dbc6670620d2a5eb35d71eb7dd90a7a218ab1f0a"
 reason = "Unreachable: the same failure as the row above, on the line that would report it."
 
 [[mutation.expect]]
-id = "b4ed4c56cfeb5cc16f4c388aa005499a8551897c4f262b418f4182455b7a535f"
+id = "7d277185c89cfbde1548bd9ef18ad72e2ab7ef007bc4c3353c5029e6fafbc67e"
 reason = "Unreachable: the counts disagree only when a row was not consumed by the catalogue walk, and a row is consumed exactly when its id is catalogued -- so the loop above always finds the row this line exists to report the absence of."
 
 # The third kind is a value encoding/json has no way to refuse. It refuses a
@@ -805,8 +811,8 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2689 mutants. Two thousand
-# six hundred and twenty-six are detected -- 2620 killed and six caught by
+# Measured, not wished for. The scope catalogues 2716 mutants. Two thousand
+# six hundred and fifty-three are detected -- 2647 killed and six caught by
 # the timeout -- and the other sixty-three are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
 # is 100.00%, with all sixty-three expectations fulfilled and none stale. Every
@@ -1010,8 +1016,8 @@ strict = false
 #   minimum_score = 99.5  compared against the measured score whether or not
 #                         --strict was passed. Two thousand six hundred and
 #                         fourteen scored mutants are worth 0.038 points
-#                         each, so 2613/2626 = 99.50% clears 99.5 and
-#                         2612/2626 = 99.46% does not: an ungated
+#                         each, so 2640/2653 = 99.51% clears 99.5 and
+#                         2639/2653 = 99.47% does not: an ungated
 #                         `go-mutants run` reports up to thirteen survivors and
 #                         exits 0, and fails at fourteen.
 #
@@ -1029,9 +1035,9 @@ strict = false
 # rule that kept the number at 99 through five widenings is the rule that moved
 # it then, and it moved to the value that left the backstop where it had
 # actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
-# that widening. The scope has since grown to 2626 scored mutants without the
+# that widening. The scope has since grown to 2653 scored mutants without the
 # floor moving, and that is the same arithmetic reaching the same answer: half a
-# percent of 2626 is 13.13, so the slack went from twelve survivors to
+# percent of 2653 is 13.27, so the slack went from twelve survivors to
 # thirteen -- still far short of the twenty-one that moves this number. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
 # grows enough to make that count material" meant.
