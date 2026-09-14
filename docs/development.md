@@ -1236,13 +1236,14 @@ undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
-the settings they justify. It covers fourteen whole packages:
+the settings they justify. It covers fifteen whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
 | `internal/report` | 1361 | what a run writes down — the RunReport v1 document, the history store, the projection into the published format, the self-contained page, and the merge that puts a split run back together |
 | `internal/config` | 505 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
 | `internal/mutation` | 477 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
+| `internal/snapshot` | 329 | the disposable copy every run is measured in — the walk, the copy, the ownership of the directory, and the drift report that proves the copy is still what it was |
 | `internal/gitdiff` | 257 | what `--changed` selects by — the git commands, their diagnostics, and the unified-diff reader underneath |
 | `internal/coverage` | 162 | the profile reader, and the mapping that decides which suites a mutant is measured against |
 | `internal/tempowner` | 121 | which temporary directory a run owns, and which a later run may reclaim — the marker, the advisory lock, and the sweep |
@@ -1270,7 +1271,7 @@ variable from every child, which is the rule that stops an exported
 `GO_MUTANTS_ACTIVE` from running a mutant as the baseline. Survivors all in one
 package means a missing tool, not a regression.
 
-Ten of the fourteen are pure arithmetic, pure text matching, a pure filter over
+Ten of the fifteen are pure arithmetic, pure text matching, a pure filter over
 a digest table, or a pure decision over values handed in, with no clock and no
 network, so a mutant either changes an answer or it does not. `internal/config`
 reaches the filesystem in exactly one place — `os.ReadFile` in `LoadFile` — and
@@ -1349,8 +1350,31 @@ ledger too, for the one test in it that still starts a git: what environment a
 command sees is a claim about a child process, and the only way to ask it is to
 start one.
 
-Four boundary comparisons came out of that package rather than being declared,
-and they are worth naming because they are one shape. `len(lines) > outputLines`
+`internal/snapshot` is the fourth that reaches outside itself, and the one that
+is almost nothing else: it walks a tree, copies it, owns a directory while the
+run uses it, and reports whether the copy is still what it was. Almost every
+mutant in it sits on a failure path, and almost every one of those is staged for
+real — a source root that cannot be listed, an entry that cannot be stat-ed
+because its directory is readable and not searchable, a destination parent that
+refuses new directories, a source file that cannot be read, a destination that
+already exists, a directory where a file has to go. What cannot be staged is
+listed in one place, `internal/snapshot/seams.go`: eight operating-system calls,
+each named for what it does, each with the reason a test cannot make it fail.
+Seven of them run inside a directory this process created and locked moments
+before, and the eighth fails only when the process has lost its working
+directory, which is not a thing one test may do to the others beside it. A test
+that replaces a seam is not `t.Parallel`, which is the same rule
+`internal/report`'s seams carry.
+
+Four mutants that never returned went with that widening rather than into it.
+The walk had two path helpers with a guard each — `pathOf` returning the root
+for the empty path, and `walk` joining a name onto an empty parent — and the
+other reading of both walks the root again at every depth. `filepath.Join` and
+`path.Join` already answer the empty case, so the guards were two spellings of
+one answer and one of the spellings was an infinite recursion.
+
+Four boundary comparisons came out of `internal/gitdiff` rather than being
+declared, and they are worth naming because they are one shape. `len(lines) > outputLines`
 before `lines[len(lines)-outputLines:]`, `len(hash) <= width` before
 `hash[:width]`, `first > last` before a swap, and `end < 0` after a
 `strings.Index` all have a second reading — `>=`, `<`, `>=`, `<=` — that no
@@ -1368,12 +1392,12 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 3263 mutants catalogued, 3200 detected —
-3194 killed, two of them by the memory bound, and six caught by the per-mutant
-timeout — sixty-three declared expectations, **a score of 100.00%**, at
+The numbers the gate is sized against: 3592 mutants catalogued, 3527 detected —
+3521 killed, two of them by the memory bound, and six caught by the per-mutant
+timeout — sixty-five declared expectations, **a score of 100.00%**, at
 `--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
 is compared on every run, `--strict` or not, and at this size it does not fail
-until the seventeenth unexpected survivor — so `--strict` is the thing that
+until the eighteenth unexpected survivor — so `--strict` is the thing that
 actually fails this job, on the first.
 
 The wall clock, on the shared machine that widened the scope: warm, with the
@@ -1447,24 +1471,24 @@ The bound is derived from the same baseline runs the timeout is, as
 resolved to:
 
 ```text
-memory: baseline peak 168.5 MiB, bound 1.0 GiB (derived)
+memory: baseline peak 168.7 MiB, bound 1.0 GiB (derived)
 ```
 
-168.5 MiB × 4 is 674 MiB, so the 1 GiB floor still applies and the bound is
+168.7 MiB × 4 is 675 MiB, so the 1 GiB floor still applies and the bound is
 about six times what the unmutated suite needs — far enough above anything
 legitimate that it catches runaways rather than honest tests. The peak itself is
 one reading rather than a constant: the nine-package scope read 125.2 MiB, the
 ten-package one 141.5–147.4 MiB across three runs, the twelve-package one
-157.5 MiB, the thirteen-package one 174.2 MiB and this one 168.5 MiB — a scope
-that grew by a package and a peak that did not, which is what "one reading"
-means. Each suite that starts processes or writes documents moved the number the
-bound is derived from, and none of them moved the bound, because the floor was
-always the larger of the two. `-v` also names the
-bound on each mutant it stops
+157.5 MiB, the thirteen-package one 174.2 MiB, the fourteen-package one
+168.5 MiB and this one 168.7 MiB — three scopes that grew and a peak that did
+not, which is what "one reading" means. Each suite that starts processes or
+writes documents moved the number the bound is derived from, and none of them
+moved the bound, because the floor was always the larger of the two. `-v` also
+names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 3263 / 3194 / 6 / 63 on
+With that in place the whole summary is stable: the same 3592 / 3521 / 6 / 65 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.

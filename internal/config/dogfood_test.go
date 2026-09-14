@@ -144,6 +144,19 @@ var repositoryExpectations = []Expectation{
 			"dropping it makes two mutants of this package never return.",
 	},
 	{
+		ID: "06cabbdf7a94e889df9b5cc94b72e9d07805cf567329afb27da1e0a674dfeae2",
+		Reason: "Unreachable: the pattern compiled here is path.Clean's output " +
+			"over a path NormalizePath already refused as empty, absolute or " +
+			"escaping, which is exactly the set glob.Compile refuses, so the " +
+			"error is never non-nil.",
+	},
+	{
+		ID: "ae90054cf1b9d69d588a9e2e112cbe697fd0ddc72d994fbce9dea744e302f896",
+		Reason: "Unreachable: the other half of the same branch -- the " +
+			"diagnostic returned for a glob.Compile failure that no configured " +
+			"report directory can produce.",
+	},
+	{
 		ID: "00110ba284fd3da4b8408c57a7bfa66a2187047ede44d2adb78d948757c8ac4d",
 		Reason: "Unreachable: compileErr is set only when an embedded schema " +
 			"cannot be read, parsed, registered or compiled, and " +
@@ -507,6 +520,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/testlog/*.go",
 				"internal/tempowner/*.go",
 				"internal/gitdiff/*.go",
+				"internal/snapshot/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -535,6 +549,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/testlog/...",
 				"./internal/tempowner/...",
 				"./internal/gitdiff/...",
+				"./internal/snapshot/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than

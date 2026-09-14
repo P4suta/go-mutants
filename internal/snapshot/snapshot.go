@@ -96,6 +96,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -223,11 +224,18 @@ type Snapshot struct {
 	// cannot talk Cleanup into removing something else.
 	destParent string
 
-	// remove and sleep are the two seams the retry loop in Cleanup is tested
-	// through. They are nil in a Snapshot a caller assembled by hand, which
-	// the accessors below treat as "use the real thing".
-	remove func(string) error
-	sleep  func(time.Duration)
+	// remove, sleep and release are the three seams Cleanup is tested through.
+	// They are nil in a Snapshot a caller assembled by hand, which the
+	// accessors below treat as "use the real thing".
+	//
+	// release is the odd one, and it is here for the reason the other two are:
+	// a lock this process took a moment ago will come back, so "the lock would
+	// not be released" is a state no test can put a filesystem into -- and what
+	// Cleanup does about it decides whether a directory it no longer owns is
+	// removed anyway.
+	remove  func(string) error
+	sleep   func(time.Duration)
+	release func() error
 }
 
 // Dir is the temporary directory this snapshot owns: [Snapshot.Root] and the
@@ -300,7 +308,7 @@ func (s *Snapshot) Parent() string {
 // So two runs of one root end with one stable directory and one random one,
 // each holding its own lock, and never with two runs in one tree.
 func Create(srcRoot string, opts Options) (*Snapshot, error) {
-	absSrc, err := filepath.Abs(srcRoot)
+	absSrc, err := absPath(srcRoot)
 	if err != nil {
 		return nil, &Error{Code: CodeInvalidOptions, Path: srcRoot, Message: "cannot resolve the source root", Err: err}
 	}
@@ -338,7 +346,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	// copy of somebody's module and says nothing about who is using it is
 	// exactly the orphan the sweep exists to collect, and the window in which
 	// it could be one is the window between these two lines.
-	owner, err := claimDestination(dir, time.Now())
+	owner, err := claimDir(dir, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -356,11 +364,12 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 		destParent: filepath.Dir(dir),
 		remove:     os.RemoveAll,
 		sleep:      time.Sleep,
+		release:    owner.Release,
 	}
 	// The tree is created explicitly rather than by the first MkdirAll below,
 	// so that a source tree with no subdirectories at all still produces a Root
 	// that exists.
-	if rootErr := os.Mkdir(ExtendedPath(s.Root), 0o700); rootErr != nil {
+	if rootErr := makeTreeDir(ExtendedPath(s.Root), 0o700); rootErr != nil {
 		return nil, s.abandon(&Error{Code: CodeDestination, Path: s.Root, Message: "cannot create the snapshot tree", Err: rootErr})
 	}
 
@@ -372,7 +381,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	for _, d := range w.dirs {
 		perm := dirPerm(d.mode)
 		path := ExtendedPath(s.pathOf(d.rel))
-		if mkdirErr := os.MkdirAll(path, perm); mkdirErr != nil {
+		if mkdirErr := makeDirTree(path, perm); mkdirErr != nil {
 			return nil, s.abandon(&Error{Code: CodeCopy, Path: d.rel, Message: "cannot create the directory in the snapshot", Err: mkdirErr})
 		}
 		// MkdirAll's mode is a request the kernel filters through the process
@@ -381,7 +390,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 		// chmod that makes it exact, and is a no-op on Windows. Sorted order
 		// means MkdirAll created exactly the leaf, so chmod'ing the leaf is the
 		// whole of it.
-		if permErr := finalizeDirPerm(path, perm); permErr != nil {
+		if permErr := setDirPerm(path, perm); permErr != nil {
 			return nil, s.abandon(&Error{Code: CodeCopy, Path: d.rel, Message: "cannot set the directory's permissions in the snapshot", Err: permErr})
 		}
 	}
@@ -394,7 +403,7 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	// updates it. Deepest first, so that stamping a parent is not undone by
 	// stamping the child inside it. Like the file times, this exists so the go
 	// command sees a tree that looks its age rather than one that looks new.
-	if failedPath, err := stampDirectoryTimes(w.dirs, absSrc, s.Root); err != nil {
+	if failedPath, err := stampDirectoryTimes(w.dirs, info.ModTime(), s.Root); err != nil {
 		return nil, s.abandon(&Error{Code: CodeCopy, Path: failedPath, Message: "cannot set the directory's times in the snapshot", Err: err})
 	}
 	s.Manifest = entries
@@ -402,31 +411,28 @@ func Create(srcRoot string, opts Options) (*Snapshot, error) {
 	return s, nil
 }
 
-func stampDirectoryTimes(dirs []record, sourceRoot, root string) (string, error) {
+func stampDirectoryTimes(dirs []record, rootModified time.Time, root string) (string, error) {
 	for index := len(dirs) - 1; index >= 0; index-- {
-		if err := stampOneDirectory(dirs[index].abs, filepath.Join(root, filepath.FromSlash(dirs[index].rel))); err != nil {
+		target := filepath.Join(root, filepath.FromSlash(dirs[index].rel))
+		if err := stampOneDirectory(dirs[index].modTime, target); err != nil {
 			return dirs[index].rel, err
 		}
 	}
 	// The root is not among the walked directories — the walk starts inside it
 	// — and it holds the top-level packages, so it needs the same stamp last of
-	// all, once everything written into it is done.
-	if err := stampOneDirectory(sourceRoot, root); err != nil {
+	// all, once everything written into it is done. Its time is the one
+	// [Create] already read when it proved the source root is a directory.
+	if err := stampOneDirectory(rootModified, root); err != nil {
 		return ".", err
 	}
 	return "", nil
 }
 
-func stampOneDirectory(source, target string) error {
-	info, err := os.Stat(ExtendedPath(source))
-	if err != nil {
-		return err
-	}
-	modified := info.ModTime()
-	return os.Chtimes(ExtendedPath(target), modified, modified)
+func stampOneDirectory(modified time.Time, target string) error {
+	return setFileTimes(ExtendedPath(target), modified, modified)
 }
 
-type snapshotFileCopy func(string, string, fs.FileMode) (int64, string, error)
+type snapshotFileCopy func(string, string, fs.FileMode, time.Time) (int64, string, error)
 
 func snapshotCopyJobs(files int) int {
 	return min(max(runtime.GOMAXPROCS(0), 1), max(files, 1))
@@ -447,7 +453,8 @@ func copySnapshotFiles(files []record, root string, jobs int, copyFile snapshotF
 			defer workers.Done()
 			for index := range work {
 				file := files[index]
-				size, sum, err := copyFile(file.abs, filepath.Join(root, filepath.FromSlash(file.rel)), file.mode)
+				dst := filepath.Join(root, filepath.FromSlash(file.rel))
+				size, sum, err := copyFile(file.abs, dst, file.mode, file.modTime)
 				if err != nil {
 					errorsByPath[index] = err
 					continue
@@ -556,11 +563,22 @@ func exclusions(opts Options) ([]glob.Pattern, error) {
 	return append(patterns, opts.Exclude...), nil
 }
 
-// A record is one entry the walk decided to keep.
+// A record is one entry the walk decided to keep, with everything the copy
+// needs about it.
+//
+// The modification time is carried rather than read again at copy time, and
+// that is deliberate twice over. It is one Lstat instead of two per file and
+// per directory -- and it is *the* reading: the manifest, the mode the copy is
+// created with and the time it is stamped with all come from one look at the
+// entry, so a tree that changed under the walk cannot produce a snapshot
+// describing two different moments of it. It also leaves nothing here that can
+// fail between opening a file and writing it, which is a failure no test could
+// produce and no reader could check.
 type record struct {
-	rel  string
-	abs  string
-	mode fs.FileMode
+	rel     string
+	abs     string
+	mode    fs.FileMode
+	modTime time.Time
 }
 
 func byRelPath(a, b record) int { return strings.Compare(a.rel, b.rel) }
@@ -586,10 +604,12 @@ func (w *walker) walk(relDir string) error {
 	}
 	for _, de := range entries {
 		name := de.Name()
-		rel := name
-		if relDir != "" {
-			rel = relDir + "/" + name
-		}
+		// path.Join rather than a guarded concatenation: it is the same answer
+		// for an empty parent and it has one spelling. The guard had two, and
+		// the other one walked the root again at every depth -- which is a
+		// mutant that never returns, and a per-mutant timeout paid twice by
+		// this repository's own gate to say what `path.Join` says for free.
+		rel := path.Join(relDir, name)
 		if w.excluded(rel) {
 			continue
 		}
@@ -615,12 +635,12 @@ func (w *walker) walk(relDir string) error {
 			// a name-surrogate reparse point as irregular, not as a link.
 			w.reject(CodeReparsePoint, rel, "refuses to follow a reparse point (junction or mount point)")
 		case mode.IsDir():
-			w.dirs = append(w.dirs, record{rel: rel, abs: abs, mode: mode})
+			w.dirs = append(w.dirs, record{rel: rel, abs: abs, mode: mode, modTime: fi.ModTime()})
 			if err := w.walk(rel); err != nil {
 				return err
 			}
 		case mode.IsRegular():
-			w.files = append(w.files, record{rel: rel, abs: abs, mode: mode})
+			w.files = append(w.files, record{rel: rel, abs: abs, mode: mode, modTime: fi.ModTime()})
 		default:
 			w.reject(CodeIrregular, rel, fmt.Sprintf("refuses a file that is neither a directory nor a regular file (mode %s)", mode.Type()))
 		}
@@ -628,10 +648,14 @@ func (w *walker) walk(relDir string) error {
 	return nil
 }
 
+// pathOf turns a '/'-normalized walk-relative path into a native path under
+// the root. The empty path is the root itself and needs no case of its own:
+// filepath.Join ignores an empty element, and the root is already clean --
+// [Create] takes it from filepath.Abs and [Snapshot.Redigest] from
+// filepath.Join. A guard for it would have a second reading that returns the
+// root for *every* path, which is a walk that never descends and never
+// returns.
 func (w *walker) pathOf(rel string) string {
-	if rel == "" {
-		return w.root
-	}
 	return filepath.Join(w.root, filepath.FromSlash(rel))
 }
 
@@ -680,13 +704,12 @@ func (w *walker) rejection() error {
 	if len(w.rejected) == 0 {
 		return nil
 	}
-	first := w.rejected[0]
-	for _, e := range w.rejected[1:] {
-		if e.Path < first.Path {
-			first = e
-		}
-	}
-	return first
+	// MinFunc rather than a fold with a comparison, because the comparison has
+	// two readings and one answer: no two rejections can carry the same path,
+	// so `<` and `<=` pick the same entry on every tree.
+	return slices.MinFunc(w.rejected, func(a, b *Error) int {
+		return strings.Compare(a.Path, b.Path)
+	})
 }
 
 // unsupportedName names the reason a directory entry cannot be represented as
@@ -718,17 +741,11 @@ func unsupportedName(name string) string {
 // There is no newline translation and no byte order mark handling anywhere in
 // this package. A CRLF file arrives in the snapshot as a CRLF file, because
 // the line ending is part of the source digest that names every mutant in it.
-func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
+func copyFile(src, dst string, mode fs.FileMode, modified time.Time) (int64, string, error) {
 	in, err := os.Open(ExtendedPath(src))
 	if err != nil {
 		return 0, "", err
 	}
-	sourceInfo, err := in.Stat()
-	if err != nil {
-		_ = in.Close()
-		return 0, "", err
-	}
-	modified := sourceInfo.ModTime()
 	// A read handle that fails to close has nothing to report: no data was at
 	// risk, and the copy either produced the right digest or did not.
 	defer func() { _ = in.Close() }()
@@ -763,7 +780,7 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	// with a footnote: a fixture script that lost its executable bit fails
 	// inside the snapshot for a reason that has nothing to do with any mutant.
 	// It is a no-op on Windows; see platform_windows.go.
-	if err := finalizePerm(out, perm); err != nil {
+	if err := finalizeCopyPerm(out, perm); err != nil {
 		_ = out.Close()
 		return 0, "", err
 	}
@@ -771,7 +788,7 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	// buffered filesystem it is where a failed write is finally reported, and
 	// a truncated file whose digest was computed from the bytes we meant to
 	// write would be a snapshot that lies about itself.
-	if err := out.Close(); err != nil {
+	if err := closeCopy(out); err != nil {
 		return 0, "", err
 	}
 	// The copy carries the source's modification time because the go command
@@ -781,7 +798,7 @@ func copyFile(src, dst string, mode fs.FileMode) (int64, string, error) {
 	// build — the snapshot pays for being new rather than for being different.
 	// The digest is taken from the bytes, so nothing about the snapshot's
 	// identity depends on this; only how much work the toolchain repeats does.
-	if err := os.Chtimes(ExtendedPath(dst), modified, modified); err != nil {
+	if err := setFileTimes(ExtendedPath(dst), modified, modified); err != nil {
 		return 0, "", err
 	}
 	return size, hex.EncodeToString(h.Sum(nil)), nil

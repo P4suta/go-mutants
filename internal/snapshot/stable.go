@@ -71,7 +71,7 @@ func destination(destParent, absSrc string) (string, bool, error) {
 		// to MkdirTemp. The Cleanup guard allows this parent in its own right.
 		parent = os.TempDir()
 	}
-	parent, err := filepath.Abs(parent)
+	parent, err := absPath(parent)
 	if err != nil {
 		return "", false, &Error{Code: CodeDestination, Path: destParent, Message: "cannot resolve the destination parent", Err: err}
 	}

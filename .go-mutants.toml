@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 3194 killed, six caught by the timeout, sixty-three declared, 100.00%,
+# race: 3521 killed, six caught by the timeout, sixty-five declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -114,6 +114,7 @@ profile = "balanced"
 #   internal/report/*.go         1361 mutants
 #   internal/config/*.go          505
 #   internal/mutation/*.go        477
+#   internal/snapshot/*.go        329
 #   internal/gitdiff/*.go         257
 #   internal/coverage/*.go        162
 #   internal/tempowner/*.go       121
@@ -126,8 +127,8 @@ profile = "balanced"
 #   internal/testlog/*.go          15
 #   internal/testflag/*.go          7
 #
-# catalogues 3263 mutants and detects 3200 of them -- 3194 killed and six caught
-# by the timeout -- leaving the sixty-three rows declared below and a score of
+# catalogues 3592 mutants and detects 3527 of them -- 3521 killed and six caught
+# by the timeout -- leaving the sixty-five rows declared below and a score of
 # 100.00%, in the wall clock recorded under [policy].
 #
 # Two things the table does not say, and both are worth saying here rather than
@@ -151,6 +152,20 @@ profile = "balanced"
 # times without the score moving, and every time for the same reason: code the
 # gate already covered started producing mutants it had not produced before.
 # Once it has fallen, for the opposite and better reason:
+#
+#   3263 to 3592   internal/snapshot joined the gate (2026-09-15): 329 new
+#                  mutants and two declared rows, both of them one branch that
+#                  no configured value reaches. Most of this package is
+#                  filesystem failure paths, and most of those are staged for
+#                  real -- a source root that cannot be listed, an entry that
+#                  cannot be stat-ed, a destination parent that refuses writes,
+#                  a destination that already exists. The eight that cannot be
+#                  staged are named in internal/snapshot/seams.go, which is the
+#                  whole list of operating-system calls this package cannot be
+#                  made to fail. Four mutants that never returned went with the
+#                  widening rather than into it: the walk's two path helpers had
+#                  a guard each whose other reading walked the root again at
+#                  every depth.
 #
 #   3006 to 3263   internal/gitdiff joined the gate (2026-09-15): 257 new
 #                  mutants, every one of them killed, and not one declared row.
@@ -329,6 +344,7 @@ include = [
   "internal/testlog/*.go",
   "internal/tempowner/*.go",
   "internal/gitdiff/*.go",
+  "internal/snapshot/*.go",
 ]
 exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
 # `operators` is intentionally omitted: the profile decides the families, which
@@ -487,6 +503,31 @@ reason = "Equivalent: the same tie-break as the row above -- intervals sharing a
 [[mutation.expect]]
 id = "a7353f2073cb5e21aa44235cf31014b9efb6f153afbfba57b110741e38c34ca7"
 reason = "Equivalent: the loop ends at the first unterminated line, and an empty body is that case -- bytes.Cut finds no separator and reports none -- so the extra pass `>=` admits breaks before it reads anything. The condition is kept over `for {}` because dropping it makes two mutants of this package never return."
+
+# internal/snapshot brought two rows, and they are one branch: the glob the
+# report directory is compiled into cannot fail to compile.
+#
+# The value reaching glob.Compile is the output of path.Clean over a path
+# mutation.NormalizePath has already refused as empty, absolute, volume-named or
+# escaping -- and empty, a leading '/', a trailing '/' and an empty element
+# between two '/' are exactly the four shapes glob.Compile refuses. There is no
+# ReportDir a caller can configure that reaches this error, so no honest test
+# reaches it either.
+#
+# It is kept rather than written as glob.MustCompile, and that is the whole of
+# the argument for the rows. The guarantee is a promise between two packages
+# rather than an invariant inside one: a future glob that refused a fifth shape
+# would turn a user's configured report directory into a panic in the middle of
+# their run, where today it is a diagnostic with a code. Two packages agreeing
+# today is not a reason to make one of them unable to disagree tomorrow.
+
+[[mutation.expect]]
+id = "06cabbdf7a94e889df9b5cc94b72e9d07805cf567329afb27da1e0a674dfeae2"
+reason = "Unreachable: the pattern compiled here is path.Clean's output over a path NormalizePath already refused as empty, absolute or escaping, which is exactly the set glob.Compile refuses, so the error is never non-nil."
+
+[[mutation.expect]]
+id = "ae90054cf1b9d69d588a9e2e112cbe697fd0ddc72d994fbce9dea744e302f896"
+reason = "Unreachable: the other half of the same branch -- the diagnostic returned for a glob.Compile failure that no configured report directory can produce."
 
 # internal/schemas, whose 89 mutants brought seven rows, and all seven are one
 # claim: an embedded schema that cannot be used. `schema.FS` is an embed.FS
@@ -805,7 +846,7 @@ id = "6234ee76e3bbd193c4afb81a22fcef3027a038ac604c4dda243fff2d30133f7a"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [test]
-# An argv vector, never a shell string. Scoped to the fourteen packages the mutated
+# An argv vector, never a shell string. Scoped to the fifteen packages the mutated
 # files live in, which is what the baseline proves before any mutant runs. The
 # list has to track `include` above line for line: a package whose files are
 # mutated but whose suite is not named here has no binary covering it, so every
@@ -876,6 +917,7 @@ command = [
   "./internal/testlog/...",
   "./internal/tempowner/...",
   "./internal/gitdiff/...",
+  "./internal/snapshot/...",
 ]
 # Deliberately omitted, where this file used to pin 180s. The old number was
 # derived from a fact that scoping has deleted: the timeout had to clear
@@ -925,11 +967,11 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 3263 mutants. Three thousand
-# two hundred are detected -- 3194 killed and six caught by the timeout -- and
-# the other sixty-three are the rows declared above, which
+# Measured, not wished for. The scope catalogues 3592 mutants. Three thousand
+# five hundred and twenty-seven are detected -- 3521 killed and six caught by
+# the timeout -- and the other sixty-five are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
-# is 100.00%, with all sixty-three expectations fulfilled and none stale. Every
+# is 100.00%, with all sixty-five expectations fulfilled and none stale. Every
 # one of those numbers
 # was the same on four of the five runs that measured this scope, the
 # killed/timeout split included; the fifth, taken while the machine picked up
@@ -940,9 +982,9 @@ strict = false
 # here that is a fact about this repository's own suite rather than about the
 # catalogue -- `go-mutants run -v` prints it:
 #
-#   memory: baseline peak 168.5 MiB, bound 1.0 GiB (derived)
+#   memory: baseline peak 168.7 MiB, bound 1.0 GiB (derived)
 #
-# 168.5 MiB x 4 is 674 MiB, so the 1 GiB floor is still what applies and the
+# 168.7 MiB x 4 is 675 MiB, so the 1 GiB floor is still what applies and the
 # bound is about six times what the unmutated suite needs. The peak moved with
 # the eleventh package -- internal/report's suite writes and reads whole
 # documents -- and again with the thirteenth, and the bound did not either
@@ -955,8 +997,9 @@ strict = false
 # as one reading rather than as a constant: three -v runs of the ten-package
 # scope read 141.5, 141.9 and 147.4 MiB, where the nine-package scope beside
 # them read 125.2 MiB, the twelve-package scope read 157.5 MiB, the
-# thirteen-package one 174.2 MiB and this one 168.5 MiB -- a scope that grew by
-# a package and a peak that did not, which is what "one reading" means. Adding a suite that starts processes is what moved it. It moves the
+# thirteen-package one 174.2 MiB, the fourteen-package one 168.5 MiB and this
+# one 168.7 MiB -- three scopes that grew and a peak that did not, which is what
+# "one reading" means. Adding a suite that starts processes is what moved it. It moves the
 # bound not at all -- four times any of those is still under the 1 GiB floor --
 # which is exactly what a floor is for, and why the tally stayed identical while
 # the number the bound is derived from did not.
@@ -1130,12 +1173,12 @@ strict = false
 #                         dogfood task and for CI. There is no headroom on that
 #                         gate at all, and none is wanted.
 #   minimum_score = 99.5  compared against the measured score whether or not
-#                         --strict was passed. Three thousand two hundred scored
-#                         mutants are worth 0.031 points each, so
-#                         3184/3200 = 99.50% clears 99.5 and
-#                         3183/3200 = 99.47% does not: an ungated
-#                         `go-mutants run` reports up to sixteen survivors and
-#                         exits 0, and fails at seventeen.
+#                         --strict was passed. Three thousand five hundred and
+#                         twenty-seven scored mutants are worth 0.028 points
+#                         each, so 3510/3527 = 99.52% clears 99.5 and
+#                         3509/3527 = 99.49% does not: an ungated
+#                         `go-mutants run` reports up to seventeen survivors and
+#                         exits 0, and fails at eighteen.
 #
 # Ninety-six is what stood here while 120 mutants were scored, where it bought
 # four survivors of slack. At 544 the same number would buy twenty-one, which is
@@ -1151,11 +1194,11 @@ strict = false
 # rule that kept the number at 99 through five widenings is the rule that moved
 # it then, and it moved to the value that left the backstop where it had
 # actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
-# that widening. The scope has since grown to 3200 scored mutants without the
+# that widening. The scope has since grown to 3527 scored mutants without the
 # floor moving, and that is the same arithmetic reaching the same answer: half a
-# percent of 2822 was 14.11, of 2943 is 14.71 and of 3200 is 16.00, so the slack
-# went twelve, fourteen, fourteen, sixteen across three more widenings -- still
-# short of the twenty-one that moves this number. The floor is a fixed number of survivors rather than a fixed
+# percent of 2822 was 14.11, of 2943 is 14.71, of 3200 is 16.00 and of 3527 is
+# 17.64, so the slack went twelve, fourteen, fourteen, sixteen, seventeen across
+# four more widenings -- still short of the twenty-one that moves this number. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
 # grows enough to make that count material" meant.
 #

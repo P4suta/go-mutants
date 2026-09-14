@@ -93,7 +93,11 @@ func (s *Snapshot) Cleanup() error {
 	// one. On Windows an open handle inside a directory is exactly what makes
 	// RemoveAll fail, so a Cleanup that held its own lock open would spend the
 	// whole retry ladder losing to itself.
-	if err := s.owner.Release(); err != nil {
+	release := s.release
+	if release == nil {
+		release = s.owner.Release
+	}
+	if err := release(); err != nil {
 		return &Error{Code: CodeCleanupFailed, Path: s.dir, Message: "cannot release the snapshot directory's lock", Err: err}
 	}
 	remove, sleep := s.remove, s.sleep
