@@ -756,14 +756,19 @@ func Wave(n int, z complex128) (int, complex128) { return n, z }
 	})
 }
 
-// TestProbeSiteIsAbsentForOtherRules keeps the hint to the family it describes.
+// TestTheReturnFormIsKeptToTheFamilyItDescribes is what the form field is for.
 //
-// The rewrite it drives replaces a returned value with a constant and tests
+// The return rewrite replaces a returned value with a constant and tests
 // whether the value differs. That is a statement about the return-value rules
 // and about nothing else: an operator swap inside the same statement changes a
-// value the hint says nothing about, and a probe built from this hint for it
-// would report an infection for the wrong mutant.
-func TestProbeSiteIsAbsentForOtherRules(t *testing.T) {
+// value that hint says nothing about, and a probe built from it for that mutant
+// would report an infection for the wrong one.
+//
+// The swap is not unprobed, and that is the point of asserting all three
+// together: it gets the *boolean* form, which measures the comparison where it
+// stands rather than the value the function returns. One statement, two forms,
+// and each candidate carries the one that speaks for it.
+func TestTheReturnFormIsKeptToTheFamilyItDescribes(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
 // Above reports whether a exceeds b.
@@ -777,7 +782,7 @@ func Above(a, b int) bool { return a > b }
 	}{
 		{ruleReturnTrue, &ProbeSite{Form: ProbeFormReturn, Span: stmt, Types: []string{"bool"}, Index: 0}},
 		{ruleReturnFalse, &ProbeSite{Form: ProbeFormReturn, Span: stmt, Types: []string{"bool"}, Index: 0}},
-		{"gt-to-ge", nil},
+		{"gt-to-ge", &ProbeSite{Form: ProbeFormBool, Span: spanOf(t, src, "a > b")}},
 	} {
 		t.Run(c.rule, func(t *testing.T) {
 			var got Located
@@ -788,7 +793,7 @@ func Above(a, b int) bool { return a > b }
 				got = candidateWithOriginal(t, candidates, c.rule, "a > b")
 			}
 			if !reflect.DeepEqual(got.Guard.Probe, c.want) {
-				t.Errorf("return site = %+v, want %+v", got.Guard.Probe, c.want)
+				t.Errorf("probe site = %+v, want %+v", got.Guard.Probe, c.want)
 			}
 		})
 	}

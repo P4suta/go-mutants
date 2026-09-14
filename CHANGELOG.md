@@ -14,6 +14,46 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A boolean site is measured where it stands.** The probe layer had one form,
+  for the return-value rules, and every other mutant was unprobed — so a run
+  learned nothing about which tests could observe a comparison, a boolean
+  operator or an `if` condition, which is most of what it catalogues. The second
+  form measures a Form C site in place:
+
+  ```go
+  __gm.Differs(i, (<original>), (<mutated>))
+  ```
+
+  `Differs` is the probe runtime's second export, and the first time that
+  package has had two. It evaluates nothing itself — the compiler has both
+  readings in hand by the time it is called, in the site's own context — and
+  what it adds is one comparison and, the first time the two disagree, one line
+  in the log. It yields the original's reading, so the program the call is
+  spliced into is the program without it; and because each call yields its
+  second argument, several mutants of one site chain rather than compete for the
+  slot.
+  A helper call is exactly what the guard forms avoid, and for good reasons —
+  `__gm.Cmp(3, a, b)` breaks on untyped constants, on shifts and on named types
+  — but none of those reaches a helper whose parameters are the universe `bool`,
+  which is precisely and only what a Form C site is. A named boolean type is a
+  Form C′ site and is not probed by this form.
+  Its conditions are about the *whole* site rather than about one operand, and
+  that is what separates it from the return form. Both readings are evaluated,
+  so an effect anywhere in the expression would happen twice; and the mutated
+  reading may evaluate operands the original short-circuited past —
+  `x != nil && x.n > 0` under `and-to-or` reads `x.n` exactly when `x` is nil.
+  Asking the panic grammar of the whole expression settles both at once, because
+  it walks every operand and refuses a field reached through a pointer. The nil
+  check on its own is still probed, which is the contrast worth having: both
+  readings of `x != nil` compare a pointer with nil and neither touches what it
+  points at.
+  A probe hint now names the form it is for, and the renderer reads it before
+  rendering — so a hint a build has no shape for is left unprobed rather than
+  read by the wrong renderer, which would report an infection for a mutant
+  nobody asked about.
+  `fixtures/probeable/` needed a new unprobed specimen, and has a better one:
+  its boolean literal is now measured, and `Doubled` is unprobed because its
+  operands are calls, which is a reason no later form can lift.
 - **A guard may now add the import its spelling needs.** Every form but the
   plain boolean selector writes a type down, and a type is written with the name
   its package has *in the file being rewritten* — so a file holding an

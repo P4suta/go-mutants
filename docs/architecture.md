@@ -351,10 +351,10 @@ dispatch is a plain array load and the race detector stays quiet.
 
 ## Probe runtime and the infection log
 
-Status: the runtime, its log format and the first probe form — the return-value
-one — are implemented in `internal/instrument`, and the pass that drives these
-processes is implemented in `internal/execute` and reachable through the engine
-API's `Session.Probe`; the other probe forms are not.
+Status: the runtime, its log format and two probe forms — the return-value one
+and the boolean one — are implemented in `internal/instrument`, and the pass
+that drives these processes is implemented in `internal/execute` and reachable
+through the engine API's `Session.Probe`; the remaining forms are not.
 
 The next proof a consumer can act on is **infection**: if the site of mutant
 `m` never evaluated to a value different from the original's during test `t`,
@@ -513,10 +513,55 @@ literal, a field, a composite — almost all sit in statements whose other
 operands are pure too, because `return 0, err` and `return report{}, err` are
 what such a statement looks like.
 
-Everything else is simply unprobed for now. Only this family has a form, so a
-file of comparisons comes out of `ModeProbe` byte for byte as its author wrote
-it, with no runtime import at all; a run then learns nothing about which tests
-could observe those mutants and runs them all, which is the safe direction.
+### The boolean probe
+
+The second form covers every **Form C site** — a comparison, a boolean operator,
+an `if` or `for` condition — which is most of what a run catalogues, and it
+measures the site where it stands:
+
+```go
+__gm.Differs(i, (<original>), (<mutated>))
+```
+
+`Differs` is the probe runtime's second export. It evaluates nothing itself: the
+compiler has both readings in hand by the time it is called, in the site's own
+context, and what the helper adds is one comparison and, the first time the two
+disagree, one line in the log. It yields the *original's* reading, so the
+program the call is spliced into is the program without it — and because each
+call yields its second argument, several mutants of one site chain rather than
+compete for the slot:
+
+```go
+__gm.Differs(4, __gm.Differs(3, (a == b), (!(a==b))), (a!=b))
+```
+
+A helper call is what the guard forms deliberately avoid — `__gm.Cmp(3, a, b)`
+breaks on untyped constants, on shifts and on named types — and none of that
+reaches a helper whose parameters are the universe `bool`, which is exactly and
+only what a Form C site is. A named boolean type is a Form C′ site instead and
+is not probed by this form.
+
+**The conditions are about the whole site rather than about one operand**, and
+that is the difference from the return form. Both readings are evaluated, so an
+effect anywhere in the expression would happen twice; and the mutated reading
+may evaluate operands the original short-circuited past — `x != nil && x.n > 0`
+under `and-to-or` reads `x.n` exactly when `x` is nil. Asking the panic grammar
+of the whole expression settles both at once, because it walks every operand and
+refuses a field reached through a pointer. The nil check on its own is still
+probed: both readings of `x != nil` compare a pointer with nil and neither
+touches what it points at.
+
+Nesting composes children first, as everywhere else: the *original* reading of
+an enclosing site is its bytes with the inner sites' calls already folded in, so
+an inner mutant is recorded once, from the reading the program really evaluates.
+Each mutated reading is rendered from the pristine bytes with one edit, so it
+carries no inner call at all.
+
+Everything else is simply unprobed for now. An arithmetic operand and a deleted
+statement have no form, so a file holding only those comes out of `ModeProbe`
+byte for byte as its author wrote it, with no runtime import at all; a run then
+learns nothing about which tests could observe those mutants and runs them all,
+which is the safe direction.
 A probe site that turns out not to compile is dropped the same way, by the
 bisection in `internal/validate`: the mutant loses its probe and keeps
 everything else.

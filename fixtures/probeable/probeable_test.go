@@ -38,11 +38,19 @@ func TestLabel(t *testing.T) {
 	}
 }
 
-// TestReady pins the unprobed mutant's function, so that a run has a kill no
-// probe pass can account for.
+// TestReady pins the boolean literal's function, which the boolean probe form
+// measures where it stands.
 func TestReady(t *testing.T) {
 	if !Ready() {
 		t.Error("Ready() = false, want true")
+	}
+}
+
+// TestDoubled pins the unprobed pair's function, so that a run has kills no
+// probe pass can account for.
+func TestDoubled(t *testing.T) {
+	if got := Doubled(); got.W != 6 {
+		t.Errorf("Doubled().W = %d, want 6", got.W)
 	}
 }
 

@@ -67,6 +67,21 @@ func Infect(i uint32) {
 	}
 }
 
+// Differs yields v, having recorded through Infect that mutant i's site would
+// have read as m instead wherever the two disagree.
+//
+// It is what the boolean probe form is written as. Both readings are
+// evaluated before the call, by the compiler, in the site's own context; what
+// this adds is one comparison and, the first time it fails, one line in the
+// log. The value returned is the original's, so the program this is spliced
+// into is the program without it.
+func Differs(i uint32, v, m bool) bool {
+	if v != m {
+		Infect(i)
+	}
+	return v
+}
+
 // init opens the log the environment names and writes this process's header,
 // or leaves probing off when it names none.
 func init() {

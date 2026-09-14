@@ -334,9 +334,41 @@ func (g *guardResolver) formCSite(anchor ast.Node) (Guard, bool) {
 		if !ok {
 			return Guard{}, false
 		}
-		return Guard{Form: GuardFormC, SiteSpan: span}, true
+		return Guard{Form: GuardFormC, SiteSpan: span, Probe: g.boolProbe(expr, span)}, true
 	}
 	return Guard{}, false
+}
+
+// boolProbe decides whether a Form C site may also be measured in place, and
+// returns the hint when it may.
+//
+// The rewrite is `__gm.Differs(i, (ORIG), (MUT))`: both sides are evaluated,
+// the original's value is what the expression yields, and the call records
+// whether the two ever disagreed. What that costs is a second evaluation of the
+// site, so the conditions are asked of the **whole expression** rather than of
+// the operand the mutant replaces — and that is the difference from
+// [ProbeFormReturn], where the mutant *skips* an operand and only that operand
+// has to be inert.
+//
+// Two reasons the whole of it, and the second is the one that would be missed.
+// An effect anywhere in the site would happen twice, so the probe tree would
+// not be the original program. And the mutant may evaluate operands the
+// original short-circuits past: `x != nil && x.ok` under `and-to-or` becomes
+// `x != nil || x.ok`, which reads through a nil pointer the original never
+// touched. Asking [guardResolver.panicFree] of the whole expression settles
+// both, because it walks every operand — and refuses that one, since a field
+// reached through a pointer is a dereference.
+//
+// Exactly the universe bool is what makes the helper possible at all: it takes
+// and returns `bool`, so it is one non-generic function, and a named boolean
+// type could not be passed to it. That is the shape internal/instrument's own
+// doc.go rejects helper forms for in general — untyped constants, shifts, named
+// types — and none of those reach here.
+func (g *guardResolver) boolProbe(expr ast.Expr, span mutation.Span) *ProbeSite {
+	if !g.effectFree(expr) || !g.panicFree(expr) {
+		return nil
+	}
+	return &ProbeSite{Form: ProbeFormBool, Span: span}
 }
 
 // wrappableBool reports whether an expression is exactly the universe bool and

@@ -164,6 +164,28 @@
 // argument in full, along with why the comparison is total and why the block is
 // still a terminating statement.
 //
+// The second form covers every Form C site — a comparison, a boolean operator,
+// an `if` or `for` condition — and measures it where it stands:
+//
+//	__gm.Differs(i, (<original>), (<mutated>))
+//
+// The helper evaluates nothing: the compiler has both readings in hand by the
+// time it is called, in the site's own context, and what the call adds is one
+// comparison and, the first time they disagree, one line in the log. It yields
+// the original's reading, so the program it is spliced into is the program
+// without it — and because each call yields its second argument, several
+// mutants of one site chain rather than compete for the slot.
+//
+// A helper call is the thing the guard forms deliberately avoid, for the three
+// reasons above, and none of them reaches a helper whose parameters are the
+// universe `bool` — which is exactly and only what a Form C site is.
+//
+// Its conditions are about the *whole* site rather than about one operand, and
+// that is the difference from the return form. Both readings are evaluated, so
+// an effect anywhere would happen twice, and the mutated reading may evaluate
+// operands the original short-circuited past. internal/discover asks its panic
+// grammar of the whole expression, which settles both at once.
+//
 // Everything else is unprobed. A mutant of another family is catalogued and
 // mutated exactly as before and simply not measured, so a file holding only
 // such mutants comes out of [ModeProbe] byte for byte as its author wrote it —

@@ -982,7 +982,16 @@ func (s *fileScan) emitAt(
 	// The probe hint is attached after the guard and never instead of it: a
 	// site the probe tree cannot express is still a site the mutant tree does,
 	// so a nil hint is not a skip and removes no candidate.
-	guard.Probe = site
+	//
+	// A return hint replaces whatever the guard chose, and never the other way
+	// round. Both can apply to one candidate -- `return a > b` under
+	// `return-true` is a Form C site and a `return` statement at once -- and
+	// the return form is the stronger evidence: it compares the value the
+	// function would really have returned, after the conversion the `return`
+	// itself performs, while the boolean form compares the site's own value.
+	if site != nil {
+		guard.Probe = site
+	}
 
 	candidate := mutation.Candidate{
 		Path:         s.rel,
