@@ -1,0 +1,41 @@
+Read the recordings `run --trace` wrote.
+
+A trace is the diagnostic account of one run: the phases it passed through, the
+steps inside them, every subprocess it started, how coverage placed each mutant,
+what became of every mutant execution, and what it wrote or could not write.
+
+A trace is never evidence. It takes no part in a verdict, in a mutant identity,
+or in the key a cached outcome is stored under, and a recording that could not
+be written costs a note rather than the run. The run report is the durable
+claim; the trace is the account of how the claim was arrived at.
+
+Recordings live in `<report.directory>/trace/<run-id>/`, one directory per run,
+named by the same id the report carries — so a recording and the document it
+explains can always be paired. A run keeps the newest 10 and collects the rest,
+and `trace clean` is the same collector run by hand.
+
+These subcommands read; none of them measures anything. See docs/trace-v1.md
+for the event contract itself.
+
+Usage:
+  go-mutants trace [flags]
+  go-mutants trace [command]
+
+Available Commands:
+  clean       Delete the recordings in this workspace
+  diff        Compare two recordings and print what moved between them
+  list        List the recordings in this workspace, newest first
+  summary     Summarise one recording: where the run went, and what it ran
+  validate    Check a recording against the schema go-mutants publishes
+
+Flags:
+  -h, --help   help for trace
+
+Use "go-mutants trace [command] --help" for more information about a command.
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

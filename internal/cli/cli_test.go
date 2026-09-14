@@ -105,35 +105,6 @@ func TestBareInvocationPrintsHelpAndSucceeds(t *testing.T) {
 	}
 }
 
-func TestHelpCarriesTheExitCodeTable(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"run", "--help"}} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			code, stdout, _ := execute(t, args...)
-			if code != int(mutation.ExitOK) {
-				t.Errorf("exit = %d, want 0", code)
-			}
-			for _, needle := range []string{"Exit codes:", "  0 ", "  1 ", "  2 ", "  130 ", "  143 "} {
-				if !strings.Contains(stdout, needle) {
-					t.Errorf("help does not document %q", needle)
-				}
-			}
-		})
-	}
-}
-
-func TestHelpDoesNotDependOnTheMachine(t *testing.T) {
-	// The worker default is min(NumCPU, 8), so printing it as pflag's default
-	// would make `run --help` say a different number on a laptop and on a CI
-	// runner. Help output has to be diffable between two machines.
-	_, stdout, _ := execute(t, "run", "--help")
-	if strings.Contains(stdout, "(default ") {
-		t.Errorf("run --help prints a pflag default, which may vary by machine:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "min(CPUs, 8)") {
-		t.Errorf("run --help does not describe the worker default:\n%s", stdout)
-	}
-}
-
 func TestOutOfRangeJobsIsRefusedByTheConfiguration(t *testing.T) {
 	t.Chdir(t.TempDir())
 	code, _, stderr := execute(t, "run", "--jobs", "0")

@@ -1,0 +1,40 @@
+Work with the outcomes go-mutants has proven before.
+
+A run may reuse a mutant's outcome when nothing that could change it has moved:
+the go-mutants version and the executable itself, the Go toolchain's own
+release, the workspace digest, the catalogue, the test command, the timeout, and
+CGO_ENABLED, GOARCH, GODEBUG, GOEXPERIMENT, GOFLAGS and GOOS. All of those are
+hashed into one key, and entries are filed under it — so editing a source file
+does not invalidate anything, it simply means the next run looks somewhere else
+and finds nothing.
+
+Nothing here is ever needed for correctness. The cache holds only outcomes a
+later run would have measured identically, and `cache clean` never changes a
+verdict — only how long reaching it takes.
+
+These commands read cache.directory from .go-mutants.toml, so they look where a
+run in this directory would look. They refuse to touch a directory in the
+operating system's cache that does not carry go-mutants' own ownership marker,
+and they never touch the run history filed beside the outcomes: that is
+`report clean`'s.
+
+Usage:
+  go-mutants cache [flags]
+  go-mutants cache [command]
+
+Available Commands:
+  clean       Delete every stored outcome
+  gc          Delete stored outcomes written more than N days ago
+  status      Print where the outcome cache lives and what is in it
+
+Flags:
+  -h, --help   help for cache
+
+Use "go-mutants cache [command] --help" for more information about a command.
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

@@ -92,6 +92,23 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 go-mutants contributors"
 SPDX-License-Identifier = "MIT OR Apache-2.0"
 
+# The recorded `--help` of every command, which is the one set here that is
+# derived rather than written down: `internal/cli`'s
+# TestEveryCommandsHelpMatchesItsGolden walks the cobra tree and records one
+# file per command, and TestCommandLineDocNamesEveryCommand keeps that set equal
+# to the reference page. Enumerating the same twenty-two paths here would be a
+# second ledger to keep in step with the first, and the one that goes stale
+# silently -- so this is the one glob in this file, and the reason it is one.
+#
+# They cannot carry a header for the ordinary reason a golden cannot: they are
+# the exact bytes a user sees, and a licence notice in front of them would make
+# the file a record of output the tool never produces.
+[[annotations]]
+path = ["internal/cli/testdata/help-*.golden.txt"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 go-mutants contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
 # Test inputs whose first bytes are the format under test.
 #
 # The fuzz corpus seed is read by `testing`'s own corpus reader, which requires

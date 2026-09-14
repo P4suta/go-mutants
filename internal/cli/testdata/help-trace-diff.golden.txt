@@ -1,0 +1,23 @@
+Compare two recordings and print what moved between them.
+
+It is the shape of a performance question: two runs of one workspace, and the
+difference in how many commands of each kind they started and how long those
+took. Each side is a run id in this workspace or a path to a recording.
+
+The comparison is diagnostic and never a verdict. A trace takes no part in a
+score, and two recordings differing is a statement about how two runs went, not
+about whether either was right — `go-mutants report` is where run-to-run claims
+are compared.
+
+Usage:
+  go-mutants trace diff BEFORE AFTER [flags]
+
+Flags:
+  -h, --help   help for diff
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

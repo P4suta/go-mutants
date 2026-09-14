@@ -19,6 +19,8 @@ exists or a plan for something that does not.
 
 What go-mutants is, what it produces, and what it will refuse to do.
 
+- [Command line](command-line.md) — every command and the flags that change a
+  verdict rather than a rendering
 - [Architecture](architecture.md) — the phases a run passes through, and the
   decisions that shaped each one
 - [Mutation operators](operators.md) — every family and rule, the type

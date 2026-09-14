@@ -1,0 +1,26 @@
+List the recordings in this workspace, newest first.
+
+One row per recording: the run id, when the run started, how many events the
+recording holds, whether it holds all of them, and what it takes up on disk.
+
+A recording is complete when it ends with its `run-end` event and lost nothing
+on the way. One that was interrupted has no `run-end` and is listed as
+incomplete; one that dropped events — a bounded ring that overflowed, a disk
+that would not take a write — is listed as lossy, which is worth seeing before
+you read a count out of it.
+
+A workspace that has never traced a run is not a failure. It exits 0 with an
+empty listing, because that is a true answer to the question.
+
+Usage:
+  go-mutants trace list [flags]
+
+Flags:
+  -h, --help   help for list
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)
