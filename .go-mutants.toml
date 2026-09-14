@@ -37,7 +37,7 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 2653 killed, six caught by the timeout, sixty-three declared, 100.00%,
+# race: 2667 killed, six caught by the timeout, sixty-three declared, 100.00%,
 # identical on every run measured under [policy]. The two that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
@@ -123,12 +123,20 @@ profile = "balanced"
 #   internal/drift/*.go            15
 #   internal/testflag/*.go          7
 #
-# catalogues 2722 mutants and detects 2659 of them -- 2653 killed and six caught
+# catalogues 2736 mutants and detects 2673 of them -- 2667 killed and six caught
 # by the timeout -- leaving the sixty-three rows declared below and a score of
-# 100.00%, in the wall clock recorded under [policy]. The count has grown four
+# 100.00%, in the wall clock recorded under [policy]. The count has grown seven
 # times without the score moving, and every time for the same reason: code the
 # gate already covered started producing mutants it had not produced before.
 #
+#   2722 to 2736   the module coordinate a workspace mutant is catalogued under
+#                  (2026-09-14): fourteen new mutants in internal/mutation --
+#                  the module in the digest, original-text and deduplication
+#                  keys, in the canonical order, and the refusal of a catalogue
+#                  that mixes the two recipes -- of which five survived until
+#                  the tests that kill them were written. Six rows naming a
+#                  mutant of catalog.go were reissued, because the digest of the
+#                  file changed and no existing identity did.
 #   2497 to 2549   the test-level narrowing feature added its own code to the
 #                  gated packages (2026-09-08).
 #   2549 to 2677   discovery reached the case labels of a tagless switch, which
@@ -311,7 +319,7 @@ id = "565a13327c3aeca8d6b512fc779934904a161a98911a06d6580a48d96a8f27d8"
 reason = "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; a letter plus colon is rejected by the identical post-clean volume guard immediately below, and every other two-byte path fails the colon-or-letter predicates."
 
 [[mutation.expect]]
-id = "ab63a5a3e327b7db2bbe97d3267ca840cebf9cf54a899f10cdc52a111a398548"
+id = "5ab87ae91e8e36e223776f77bc7073cf78024a5c0ee5c2f8c68ca40e54b0ce2c"
 reason = "Equivalent: the comparison sits inside `if x.position != y.position`, where the two registry positions are already known to differ, so `<` and `<=` are the same test."
 
 [[mutation.expect]]
@@ -331,7 +339,7 @@ reason = "Equivalent for every coherent tally: `p.MinimumScore > 0` and `>= 0` s
 # order in Build's comment true rather than merely intended.
 
 [[mutation.expect]]
-id = "71a2e9ed6670de5c01f1c29c061ab45b9a5b6000d754250758601e204f997e68"
+id = "8b92325aaa44b1850003c67eba45d5cc8f5bf919ed7c78dfeadabb6c1ccda7a6"
 reason = "Unreachable: Build only ever sees candidates Add accepted, and Add calls Registry.Verify, which refuses exactly the names Registry.Position cannot find -- both read one immutable map -- so nothing a caller can build reaches this return."
 
 # Guards on the 32-bit length prefix of the identity encoding and on the uint32
@@ -340,19 +348,19 @@ reason = "Unreachable: Build only ever sees candidates Add accepted, and Add cal
 # gigabytes; the guards stay because the encoding they protect is frozen.
 
 [[mutation.expect]]
-id = "e997446d6c157c03f5403f1ea5ae0a63a7b20fab96a4ccafa604197d2c44e929"
+id = "9bc7cd149597bf890755c4774c0f74a728d91e0367f0deed2aaa6e029963843a"
 reason = "Unkillable: `>` and `>=` pick different catalogues only at exactly math.MaxUint32 queued candidates, which is 4,294,967,295 Candidate values in one builder."
 
 [[mutation.expect]]
-id = "a94a2c50fc8b33c7f5ea10f9f5cea1e05eb85138b54119cf80383a8eac4b5c01"
+id = "5787a1dbed1334bd7ae10267e4a44fa05c0b26f6eba202194db08bdf2f17958f"
 reason = "Unkillable: this return is reached only past math.MaxUint32 queued candidates, so killing it means holding more than 4,294,967,295 Candidate values in memory."
 
 [[mutation.expect]]
-id = "0879ed736b35300ea72bf867721591ee218f02a21a7d1fdc5d1a8a89df20a718"
+id = "cb8fd2b2364bab9b19cf007c167a5f1ba7d7c2efba55e35d1c80e54a7aea36d7"
 reason = "Unkillable: Build only sees candidates Add validated and Candidate.ID re-runs that same validation, so the only error left for this branch to catch is WriteLengthPrefixed's 4 GiB field guard -- see the id.go rows below."
 
 [[mutation.expect]]
-id = "85dc0334ed347973ea6af195207e0cd262ca6a2bfc9c7a710bda312262b5aad7"
+id = "17ee3178f2ecd2292dd028daced5dd0ce3550ba32f604880f417ae71927eb122"
 reason = "Unkillable: the same branch as the row above -- the error this forwards can only come from WriteLengthPrefixed's 4 GiB field guard."
 
 [[mutation.expect]]
@@ -818,8 +826,8 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 2722 mutants. Two thousand
-# six hundred and fifty-nine are detected -- 2653 killed and six caught by
+# Measured, not wished for. The scope catalogues 2736 mutants. Two thousand
+# six hundred and seventy-three are detected -- 2667 killed and six caught by
 # the timeout -- and the other sixty-three are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
 # is 100.00%, with all sixty-three expectations fulfilled and none stale. Every
@@ -1023,8 +1031,8 @@ strict = false
 #   minimum_score = 99.5  compared against the measured score whether or not
 #                         --strict was passed. Two thousand six hundred and
 #                         fourteen scored mutants are worth 0.038 points
-#                         each, so 2646/2659 = 99.51% clears 99.5 and
-#                         2645/2659 = 99.47% does not: an ungated
+#                         each, so 2660/2673 = 99.51% clears 99.5 and
+#                         2659/2673 = 99.48% does not: an ungated
 #                         `go-mutants run` reports up to thirteen survivors and
 #                         exits 0, and fails at fourteen.
 #
@@ -1042,9 +1050,9 @@ strict = false
 # rule that kept the number at 99 through five widenings is the rule that moved
 # it then, and it moved to the value that left the backstop where it had
 # actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
-# that widening. The scope has since grown to 2659 scored mutants without the
+# that widening. The scope has since grown to 2673 scored mutants without the
 # floor moving, and that is the same arithmetic reaching the same answer: half a
-# percent of 2659 is 13.30, so the slack went from twelve survivors to
+# percent of 2673 is 13.37, so the slack went from twelve survivors to
 # thirteen -- still far short of the twenty-one that moves this number. The floor is a fixed number of survivors rather than a fixed
 # percentage of a growing catalogue, which is what "raise it when the scope
 # grows enough to make that count material" meant.

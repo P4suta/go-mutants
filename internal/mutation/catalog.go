@@ -34,6 +34,14 @@ var (
 	// ErrOriginalConflict reports two candidates that claim different
 	// original text for the same span of one file.
 	ErrOriginalConflict = errors.New("mutation: conflicting original text for one span")
+	// ErrModulePathMixed reports a catalogue holding both candidates that name
+	// a module and candidates that do not.
+	//
+	// The module path is what decides which recipe mints a mutant's identity,
+	// so a mix is a catalogue whose mutants were minted under two different
+	// domains. No run produces one: a workspace run gives every module a path
+	// and a single-module run gives none. See [Identity.ModulePath].
+	ErrModulePathMixed = errors.New("mutation: some candidates name a module and some do not")
 	// ErrCatalogTooLarge reports a catalogue that cannot be addressed by the
 	// uint32 runtime index.
 	ErrCatalogTooLarge = errors.New("mutation: catalogue exceeds the uint32 index space")
@@ -53,6 +61,16 @@ var (
 // spliced verbatim, so the original keeps whatever whitespace, comments, and
 // line endings the file had.
 type Candidate struct {
+	// ModulePath is the import path of the module [Candidate.Path] is relative
+	// to, and is empty for every run that is not a workspace run.
+	//
+	// It is a coordinate rather than a label. Two modules of one workspace can
+	// each hold an `app.go`, and nothing says they may not: without this, one
+	// path names two files, and the catalogue would report them as
+	// contradicting each other about the digest, deduplicate one edit away as
+	// a repeat of the other, and mint one identity for both. See
+	// [Identity.ModulePath] for what it does to the identity.
+	ModulePath string
 	// Path is the module-relative source path with forward slashes.
 	Path string
 	// Rule is the operator that proposed the edit.
@@ -109,6 +127,7 @@ func (c Candidate) Validate() error {
 // original and replacement text.
 func (c Candidate) Identity() Identity {
 	return Identity{
+		ModulePath:        c.ModulePath,
 		Path:              c.Path,
 		RuleName:          c.Rule.Name,
 		RuleVersion:       c.Rule.Version,
@@ -121,6 +140,19 @@ func (c Candidate) Identity() Identity {
 
 // ID computes the candidate's stable mutant ID.
 func (c Candidate) ID() (string, error) { return c.Identity().ID() }
+
+// Where names the file this candidate edits, the way a reader can find it.
+//
+// Outside a workspace that is the module-relative path and nothing else, which
+// is what every message said before workspaces existed. Inside one the path is
+// relative to a module that is not the only module, so the module is named
+// too: "app.go" in a message about a workspace is a sentence about two files.
+func (c Candidate) Where() string {
+	if c.ModulePath == "" {
+		return c.Path
+	}
+	return c.ModulePath + " " + c.Path
+}
 
 // Mutant is a catalogued candidate: identified, deduplicated, and assigned
 // its dense runtime index.
@@ -212,12 +244,19 @@ type Builder struct {
 	// digests remembers one source digest per path, and originals remembers
 	// one original text per (path, span), so contradictions are caught where
 	// they are introduced instead of surfacing as an unexplainable ID.
-	digests   map[string]string
+	digests   map[fileKey]string
 	originals map[originalKey]string
 }
 
+// fileKey is what makes two candidates talk about one file: the path, under
+// the module it is relative to.
+type fileKey struct {
+	module string
+	path   string
+}
+
 type originalKey struct {
-	path string
+	file fileKey
 	span Span
 }
 
@@ -233,7 +272,7 @@ func NewBuilderWithRegistry(r *Registry) *Builder {
 	return &Builder{
 		registry:   r,
 		displayLen: DisplayIDLength,
-		digests:    make(map[string]string),
+		digests:    make(map[fileKey]string),
 		originals:  make(map[originalKey]string),
 	}
 }
@@ -258,14 +297,26 @@ func (b *Builder) Add(c Candidate) error {
 	if err := b.registry.Verify(c.Rule); err != nil {
 		return err
 	}
-	if prev, ok := b.digests[c.Path]; ok && prev != c.SourceDigest {
-		return fmt.Errorf("%w: %s has %s and %s", ErrSourceDigestConflict, c.Path, prev, c.SourceDigest)
+	// Whether a candidate names a module is compared against the first one
+	// accepted, rather than against a bool remembered on the side. A remembered
+	// bool would be derived here and compared only with itself, so inverting
+	// how it is derived would change nothing anybody could observe -- an
+	// equivalent mutant, manufactured by the code rather than found in it.
+	if len(b.candidates) > 0 && (b.candidates[0].ModulePath == "") != (c.ModulePath == "") {
+		first := b.candidates[0]
+		return fmt.Errorf("%w: %s names %q and %s names %q",
+			ErrModulePathMixed, c.Where(), c.ModulePath, first.Where(), first.ModulePath)
 	}
-	b.digests[c.Path] = c.SourceDigest
 
-	key := originalKey{path: c.Path, span: c.Span}
+	file := fileKey{module: c.ModulePath, path: c.Path}
+	if prev, ok := b.digests[file]; ok && prev != c.SourceDigest {
+		return fmt.Errorf("%w: %s has %s and %s", ErrSourceDigestConflict, c.Where(), prev, c.SourceDigest)
+	}
+	b.digests[file] = c.SourceDigest
+
+	key := originalKey{file: file, span: c.Span}
 	if prev, ok := b.originals[key]; ok && prev != c.Original {
-		return fmt.Errorf("%w: %s %s is both %q and %q", ErrOriginalConflict, c.Path, c.Span, prev, c.Original)
+		return fmt.Errorf("%w: %s %s is both %q and %q", ErrOriginalConflict, c.Where(), c.Span, prev, c.Original)
 	}
 	b.originals[key] = c.Original
 
@@ -343,11 +394,22 @@ func (b *Builder) Build() (*Catalog, error) {
 	return c, nil
 }
 
-// compareEntries is the canonical catalogue order: by path, then by span,
-// then by registry position, then by replacement, then by ID. Paths are
-// compared byte-wise; no locale or Unicode collation is involved anywhere,
-// because the order has to be identical on every machine that runs a shard.
+// compareEntries is the canonical catalogue order: by module, then by path,
+// then by span, then by registry position, then by replacement, then by ID.
+// Paths are compared byte-wise; no locale or Unicode collation is involved
+// anywhere, because the order has to be identical on every machine that runs a
+// shard.
+//
+// The module comes first so that a module's mutants are contiguous, in the
+// catalogue and in the dense index assigned from it. A workspace run is N
+// module runs under one run id, and a run that had to scan the whole catalogue
+// to find its own would be a run whose indices say nothing about who they
+// belong to. Outside a workspace every module path is empty and the comparison
+// is the one it always was.
 func compareEntries(x, y entry) int {
+	if c := strings.Compare(x.candidate.ModulePath, y.candidate.ModulePath); c != 0 {
+		return c
+	}
 	if c := strings.Compare(x.candidate.Path, y.candidate.Path); c != 0 {
 		return c
 	}
@@ -370,7 +432,7 @@ func compareEntries(x, y entry) int {
 // replaced by the same bytes in the same file. The rule that proposed the
 // edit is deliberately not part of the key.
 type dedupKey struct {
-	path        string
+	file        fileKey
 	span        Span
 	replacement string
 }
@@ -389,7 +451,7 @@ func dedup(sorted []entry) ([]entry, []Duplicate) {
 	var duplicates []Duplicate
 	for _, e := range sorted {
 		key := dedupKey{
-			path:        e.candidate.Path,
+			file:        fileKey{module: e.candidate.ModulePath, path: e.candidate.Path},
 			span:        e.candidate.Span,
 			replacement: e.candidate.Replacement,
 		}
