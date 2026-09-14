@@ -121,50 +121,64 @@ func TestDevelopmentDocNamesEveryMiseTestTask(t *testing.T) {
 	}
 }
 
-// TestEveryDevelopmentDocCommandIsAMiseTaskOrAGoCommand reads the page's own
+// commandPages are the pages whose `console` blocks are read back.
+//
+// A page that tells a contributor what to type is a page whose commands have to
+// exist. There are three, and they are named rather than globbed so that adding
+// one is a decision: the development guide, the CI page, and the working
+// protocol at the repository root.
+var commandPages = []string{developmentDoc, "docs/ci.md", "CLAUDE.md"}
+
+// documentedPrograms are the programs a reader of those pages is told to run.
+//
+// `go-mutants` is the tool itself, reached through `go run ./cmd/go-mutants` or
+// from a build; `git` is how a contributor inspects what a run left and what CI
+// refuses to let them commit; `du` reads the size of a directory the harness
+// owns.
+var documentedPrograms = []string{"mise", "go", "go-mutants", "git", "du"}
+
+// TestEveryDocumentedCommandIsAMiseTaskOrAGoCommand reads the pages' own
 // command blocks back.
 //
 // A documented command that does not exist is worse than no command: it costs
 // the reader the time to type it, the time to read the error, and the trust
 // they had in the rest of the page. Every `mise run` in a `console` block has
-// to name a real task, and every other command has to be one of the four
-// programs this repository documents — so a task renamed in mise.toml, or a
-// paste from somebody's shell history, fails here.
-func TestEveryDevelopmentDocCommandIsAMiseTaskOrAGoCommand(t *testing.T) {
+// to name a real task, and every other command has to be one of the programs
+// this repository documents — so a task renamed in mise.toml, or a paste from
+// somebody's shell history, fails here.
+func TestEveryDocumentedCommandIsAMiseTaskOrAGoCommand(t *testing.T) {
 	t.Parallel()
 
 	root := Root(t)
-	page := readDoc(t, filepath.Join(root, developmentDoc))
 	tasks := miseTasks(t, root)
 
-	commands := consoleCommands(page)
-	if len(commands) == 0 {
-		t.Fatalf("%s holds no ```console block, so this test is pinning nothing", developmentDoc)
-	}
-	// The programs a developer is told to run here. `go-mutants` is the tool
-	// itself, reached through `go run ./cmd/go-mutants` or from a build; `git`
-	// is how a contributor inspects what a run left; `du` reads the size of a
-	// directory the harness owns.
-	programs := []string{"mise", "go", "go-mutants", "git", "du"}
-	for _, command := range commands {
-		fields := strings.Fields(command)
-		program := fields[0]
-		if !slices.Contains(programs, program) {
-			t.Errorf("%s documents a command starting with %q, which is none of %v:\n\t%s",
-				developmentDoc, program, programs, command)
+	for _, doc := range commandPages {
+		page := readDoc(t, filepath.Join(root, filepath.FromSlash(doc)))
+		commands := consoleCommands(page)
+		if len(commands) == 0 {
+			t.Errorf("%s holds no ```console block, so it is pinning nothing", doc)
 			continue
 		}
-		if program != "mise" {
-			continue
-		}
-		if len(fields) < 3 || fields[1] != "run" {
-			t.Errorf("%s documents %q; the only mise invocation this repository uses is `mise run <task>`",
-				developmentDoc, command)
-			continue
-		}
-		if !slices.Contains(tasks, fields[2]) {
-			t.Errorf("%s documents `mise run %s`, which is not a task in %s: %v",
-				developmentDoc, fields[2], miseFile, tasks)
+		for _, command := range commands {
+			fields := strings.Fields(command)
+			program := fields[0]
+			if !slices.Contains(documentedPrograms, program) {
+				t.Errorf("%s documents a command starting with %q, which is none of %v:\n\t%s",
+					doc, program, documentedPrograms, command)
+				continue
+			}
+			if program != "mise" {
+				continue
+			}
+			if len(fields) < 3 || fields[1] != "run" {
+				t.Errorf("%s documents %q; the only mise invocation this repository uses is `mise run <task>`",
+					doc, command)
+				continue
+			}
+			if !slices.Contains(tasks, fields[2]) {
+				t.Errorf("%s documents `mise run %s`, which is not a task in %s: %v",
+					doc, fields[2], miseFile, tasks)
+			}
 		}
 	}
 }
@@ -447,4 +461,58 @@ func readDoc(t *testing.T, path string) string {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	return string(data)
+}
+
+// claudeDoc is the working protocol at the repository root.
+const claudeDoc = "CLAUDE.md"
+
+// ledgerHeading opens its table of which test pins which page.
+const ledgerHeading = "## The documentation ledger"
+
+// TestTheDocumentationLedgerNamesFilesThatExist keeps the index of ledgers from
+// becoming one more thing to go stale.
+//
+// The table in CLAUDE.md is what makes the discipline transmissible: it is
+// where somebody learns that a page which enumerates something gets a test in
+// the same change. A table naming a test file that has been renamed teaches the
+// opposite, and does it to the reader most likely to believe it.
+//
+// The check is that every file it names is there -- both columns, the pages and
+// the tests. What it cannot check is the other direction, because "this test
+// pins a page" is not a property a scan can see; that half is what the rule in
+// the paragraph under the table is for.
+func TestTheDocumentationLedgerNamesFilesThatExist(t *testing.T) {
+	t.Parallel()
+
+	root := Root(t)
+	page := readDoc(t, filepath.Join(root, claudeDoc))
+	start := strings.Index(page, ledgerHeading)
+	if start < 0 {
+		t.Fatalf("%s has no %q section", claudeDoc, ledgerHeading)
+	}
+	section := page[start:]
+	if end := strings.Index(section[len(ledgerHeading):], "\n## "); end >= 0 {
+		section = section[:len(ledgerHeading)+end]
+	}
+
+	named := 0
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		for _, token := range backtickedTokens(trimmed) {
+			if !strings.HasSuffix(token, ".go") && !strings.HasSuffix(token, ".md") &&
+				!strings.HasSuffix(token, ".toml") {
+				continue
+			}
+			named++
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(token))); err != nil {
+				t.Errorf("%s's ledger names %s, which is not there: %v", claudeDoc, token, err)
+			}
+		}
+	}
+	if named < 20 {
+		t.Fatalf("the ledger names %d files, which is too few to be the table; the parser has stopped seeing it", named)
+	}
 }
