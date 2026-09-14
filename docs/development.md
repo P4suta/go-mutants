@@ -1053,6 +1053,33 @@ recording are already the machine-readable forms.
 `trace/docs_test.go` fails when an `ExecKind` exists in the code and nowhere on
 that page.
 
+### Auditing a run against its own recording
+
+A run publishes two documents about itself: the report is the claim and the
+recording is the account. `internal/devtools/traceaudit` reads both and asks
+whether they agree, with code that never calls the engine's — the shapes it
+decodes are declared in the package rather than reused from `internal/report`,
+because a re-derivation that shared the code would agree for the same reasons
+rather than for independent ones.
+
+```console
+go run ./internal/devtools/traceaudit REPORT TRACE
+```
+
+It exits 0 when they agree and 1 when they do not. Findings the recording
+cannot settle — a mutant it holds no events for, a stream that dropped events, a
+run that was interrupted — are printed as `unaudited` and do not change the exit
+code, because turning "I cannot check this" into "this is fine" and into "this
+is broken" are both wrong, and the second is what makes a gate get switched off.
+
+Two runs are committed under the package's `testdata/`, so a change that makes
+the two documents disagree fails in `mise run test` rather than in a job nobody
+is watching. Regenerate them from a copy of the fixture when the documents
+change shape, and note that a trace is still not evidence
+([ADR 0001](adr/0001-trace-is-not-evidence.md)): the question here is whether
+the two agree, and a disagreement is a bug in go-mutants rather than a verdict
+about anybody's code.
+
 ### Tracing from a test
 
 `mutantkit.Trace(t)` returns a recorder and `mutantkit.TraceSink(t)` the sink
