@@ -506,6 +506,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/report/*.go",
 				"internal/testlog/*.go",
 				"internal/tempowner/*.go",
+				"internal/gitdiff/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -533,6 +534,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/report/...",
 				"./internal/testlog/...",
 				"./internal/tempowner/...",
+				"./internal/gitdiff/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than

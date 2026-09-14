@@ -59,6 +59,13 @@ internal/discover/skipsites_test.go
 # exec.LookPath("git") is a needle like exec.LookPath("go") beside it.
 internal/gitdiff/gitdiff_test.go
 
+# internals_test.go is the same argument for the half of the package that is
+# unexported. Almost all of it is scripted -- the failures a repository cannot
+# be put into are driven through a seam rather than through git -- and one test
+# is not: what environment a git command sees is a claim about a child process,
+# and the only way to ask it is to start one and read what it answered.
+internal/gitdiff/internals_test.go
+
 # internal/cli has one test that has to be inside a repository: the sentence
 # `--changed` prints when the branch it is on has no upstream. That sentence is
 # go-mutants' own output rather than git's, but there is no way to reach it

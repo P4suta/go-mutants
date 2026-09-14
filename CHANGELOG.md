@@ -14,6 +14,35 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`internal/gitdiff` joined the dogfood gate, with no declared row.** 257 more
+  mutants, every one of them killed, and the gate is now fourteen packages and
+  3263 mutants at 100.00%. It was the widening this project's own notes called
+  the hard one: the first measurement reported seventy-four survivors, thirty-two
+  of them uncovered, and three mutants that never return. All three numbers are
+  now zero, and most of the work was in two places rather than in the count.
+  The command runner became a field on the `git` value, because the failures
+  this package has to report are ones no repository can be put into: `git
+  ls-files` exiting non-zero while the diff succeeded, a diff that parsed and a
+  file it named that cannot be read, a merge base that came back empty. The
+  tests that read git still drive a real one — everything about reading git is
+  what git actually prints, and a stand-in would be a second implementation of
+  the thing under test — and the tests that read *go-mutants* script the answers
+  instead, which is the trade `internal/gocmd` made when it left the toolchain
+  allowlist. The read loop in the line counter became an `io.Copy` into a
+  counting writer: a hand-rolled loop decides for itself when to stop, which
+  makes its stopping condition one edit away from a program that never returns,
+  and those were the three mutants that never returned.
+  Four boundary comparisons came out rather than being declared, and they are
+  one shape. `len(lines) > outputLines` before `lines[len(lines)-outputLines:]`,
+  `len(hash) <= width` before `hash[:width]`, `first > last` before a swap, and
+  `end < 0` after a `strings.Index` each have a second reading that no input can
+  tell from the first, because at the boundary the two branches do the same
+  thing. Each is now the answer without the branch: `max`, `min`, `min`/`max`,
+  and a `strings.Cut`. Three more came out of the parser the same way — a
+  redundant empty-prefix guard, a sort tie-break the merge cannot observe, and
+  an octal-digit check in front of a `strconv.ParseUint` that applies the same
+  rule — leaving `cmp.Compare` where a subtraction of two `int`s stood in the
+  one function whose own comment is about a `Last` of `math.MaxInt`.
 - **`internal/tempowner` joined the dogfood gate, with no declared row.** 121
   more mutants, every one of them killed, and the gate is now thirteen packages
   and 3006 mutants at 100.00%. It is the second package in the scope that writes
