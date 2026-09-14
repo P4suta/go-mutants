@@ -91,7 +91,7 @@ func TestValidateProbeTreeRejectsOnlyTheSiteThatCannotCompile(t *testing.T) {
 				Snap:         snap,
 				Catalog:      catalog,
 				Hints:        mutantkit.Hints(t, found),
-				ModulePath:   found.ModulePath,
+				Modules:      []validate.Module{{Dir: ".", Path: found.ModulePath}},
 				Toolchain:    toolchain,
 				BuildTimeout: mutantkit.StepTimeout,
 				Env:          env,

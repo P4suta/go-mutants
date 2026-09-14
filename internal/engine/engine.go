@@ -1183,7 +1183,7 @@ func (s *session) mutate(
 		Snap:         snap,
 		Catalog:      catalog,
 		Hints:        hints,
-		ModulePath:   found.ModulePath,
+		Modules:      []validate.Module{{Dir: ".", Path: found.ModulePath}},
 		Toolchain:    toolchain,
 		Jobs:         cfg.Execution.Jobs,
 		BuildTimeout: BaselineCap,

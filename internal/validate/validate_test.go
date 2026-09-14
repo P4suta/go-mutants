@@ -67,18 +67,27 @@ func TestValidateRefusesBadOptions(t *testing.T) {
 	snap := &snapshot.Snapshot{Root: root}
 	catalog := emptyCatalog(t)
 	toolchain := gocmd.Toolchain{GoBin: "/usr/bin/go"}
+	oneModule := []validate.Module{{Dir: ".", Path: "m"}}
 
 	cases := []struct {
 		name string
 		opts validate.Options
 	}{
-		{"no snapshot", validate.Options{Catalog: catalog, ModulePath: "m", Toolchain: toolchain}},
+		{"no snapshot", validate.Options{Catalog: catalog, Modules: oneModule, Toolchain: toolchain}},
 		{"a snapshot with no root", validate.Options{
-			Snap: &snapshot.Snapshot{}, Catalog: catalog, ModulePath: "m", Toolchain: toolchain,
+			Snap: &snapshot.Snapshot{}, Catalog: catalog, Modules: oneModule, Toolchain: toolchain,
 		}},
-		{"no catalogue", validate.Options{Snap: snap, ModulePath: "m", Toolchain: toolchain}},
-		{"no module path", validate.Options{Snap: snap, Catalog: catalog, Toolchain: toolchain}},
-		{"no toolchain", validate.Options{Snap: snap, Catalog: catalog, ModulePath: "m"}},
+		{"no catalogue", validate.Options{Snap: snap, Modules: oneModule, Toolchain: toolchain}},
+		{"no module", validate.Options{Snap: snap, Catalog: catalog, Toolchain: toolchain}},
+		{"a module with no directory", validate.Options{
+			Snap: snap, Catalog: catalog, Toolchain: toolchain,
+			Modules: []validate.Module{{Path: "m"}},
+		}},
+		{"a module with no import path", validate.Options{
+			Snap: snap, Catalog: catalog, Toolchain: toolchain,
+			Modules: []validate.Module{{Dir: "."}},
+		}},
+		{"no toolchain", validate.Options{Snap: snap, Catalog: catalog, Modules: oneModule}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
