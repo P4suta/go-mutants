@@ -397,6 +397,27 @@ const (
 	// value.
 	SkipTypeParam SkipReason = "type-param"
 
+	// SkipLabelOrGoto marks a `goto`, whose jump this phase will not move.
+	//
+	// The name covers both halves of one decision, and only one half of it is
+	// still a refusal. A *label* cannot be removed, because an unused label is
+	// a compile error and a used one leaves its references dangling -- so no
+	// rule proposes removing one, and nothing is declined. Dropping a label
+	// from the `break` or `continue` that carries it is a different edit, and
+	// it is the `labeled-branch` family rather than a refusal.
+	//
+	// A `goto` is what is left. It is mutable in principle -- retarget it, or
+	// remove it -- and both are refused with a reason rather than passed over.
+	// Retargeting is not stable: Go forbids jumping over a declaration or into
+	// a block, so a great many retargets do not compile, and every one of them
+	// costs a whole rejection pass to find out. Removing is legal Go and still
+	// wrong: `goto` is a terminating statement, so `if __gm.M[3] { } else {
+	// goto L }` is not one, and a function that ended with the `goto` now
+	// reaches its closing brace without returning. That is the argument the
+	// deletion family already makes about `panic`, and it reaches the same
+	// answer.
+	SkipLabelOrGoto SkipReason = "label-or-goto"
+
 	// SkipUnnameableDeclType marks a candidate whose rewrite site none of the
 	// three guard forms can express. The name comes from the case the design
 	// plan called out — a Form D declaration whose type cannot be spelled with
@@ -423,6 +444,7 @@ var explanations = map[SkipReason]string{
 	SkipCaseLabel:          "the expression labels a tagged switch case, whose label is compared against the tag, or a type switch case, whose labels name types; a tagless switch's labels are ordinary boolean contexts and are mutated",
 	SkipPackageVarInit:     "the expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1",
 	SkipTypeParam:          "the expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values",
+	SkipLabelOrGoto:        "the statement is a goto, whose target cannot be moved without jumping over a declaration or into a block, and whose removal would leave a function reaching its closing brace without returning",
 	SkipUnnameableDeclType: "none of the three guard forms can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports",
 }
 
@@ -454,6 +476,7 @@ func AllSkipReasons() []SkipReason {
 		SkipCaseLabel,
 		SkipPackageVarInit,
 		SkipTypeParam,
+		SkipLabelOrGoto,
 		SkipUnnameableDeclType,
 	}
 }

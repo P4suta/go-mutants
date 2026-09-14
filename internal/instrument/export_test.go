@@ -113,3 +113,8 @@ func PackageNames(dir, pkg string) ([]string, error) {
 func WriteRuntime(root, dir string, catalog *mutation.Catalog) error {
 	return writeRuntime(root, dir, catalog)
 }
+
+// WrappableStatement runs this package's own answer to "may this statement be
+// buried in a block", which internal/discover answers separately for the same
+// statements. See TestBothPhasesAgreeOnWhatFormSCanWrap.
+func WrappableStatement(stmt ast.Stmt) bool { return wrappableStatement(stmt) }

@@ -70,13 +70,13 @@ file, on a dumb terminal, under `--no-tui`, `--json`, `--quiet`, or
 byte-identical either way, because a dashboard run replays it through the plain
 renderer rather than formatting its own.
 
-All thirteen operator families and all forty-seven rules are discovered,
+All fourteen operator families and all forty-nine rules are discovered,
 instrumented, compile-validated, executed, and scored. A score from go-mutants
 is a score against the whole v1 catalogue, narrowed only by the profile you
 chose. The tiers are monotonically inclusive: `balanced` is the default and
-leaves out `bitwise`, `arithmetic-assignment`, `neutral-value`,
-`branch-replacement`, and `statement-deletion`; `strong` adds the first four;
-`all` adds the fifth, statement deletion being the classic source of equivalent
+holds eight families; `strong` adds `arithmetic-assignment`, `bitwise`,
+`branch-replacement` and `neutral-value`; `all` adds `labeled-branch` and
+`statement-deletion`, statement deletion being the classic source of equivalent
 mutants. [`docs/operators.md`](docs/operators.md)
 is the table.
 

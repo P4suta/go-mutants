@@ -43,6 +43,7 @@ into the catalogue and report JSON, and `list --explain` names the site as
 | `case-label` | The label of a *tagged* switch case, compared against the tag where no guard form can stand, or of a *type* switch case, which names a type rather than a value. A **tagless** switch's labels are exactly `bool` and are mutated like any other condition |
 | `package-var-init` | The expression initialises a package-level variable, where initialisation order is a global property a per-mutant guard cannot express in v1 |
 | `type-param` | The expression is inside a type parameter list, a constraint, or a type argument, which hold types rather than values |
+| `label-or-goto` | The statement is a `goto`. Its target cannot be moved without risking a jump over a declaration or into a block, which Go forbids, and removing it would leave a function reaching its closing brace without returning — the same argument the deletion family makes about `panic`. Dropping a *label* from the `break` or `continue` that carries it is a different edit and is a rule, not a refusal |
 | `unnameable-decl-type` | None of the three guard forms can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports |
 
 Three things are **not** recorded skips, because nothing was declined:
@@ -53,8 +54,10 @@ exactly the defensive code the mutant would have been interesting in; and a
 return value already spelled as its own replacement produces no candidate,
 because the mutation and the source would be the same program.
 
-`struct-tag` and `label-or-goto` are reserved in the run-report schema and
-emitted by nothing. See [Roadmap](roadmap.md).
+`struct-tag` is reserved in the run-report schema and emitted by nothing, and
+nothing will ever emit it: a tag is part of a *type*, so there is no run-time
+value for a guard to select between. The argument is below, under boundaries
+that are facts about Go.
 
 ## Warnings that never change a verdict
 

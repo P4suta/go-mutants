@@ -265,6 +265,45 @@ func (g *guardResolver) blockIsLegalFor(stmt ast.Stmt) bool {
 	}
 }
 
+// FormSStatement reports whether a statement is one Form S may bury in a block.
+//
+// The list is short for one reason: every statement here declares nothing, so
+// wrapping it in `if … { … } else { … }` changes no scope and the code after it
+// goes on compiling. A `:=` and a `var` do declare, which is what Form D exists
+// for.
+//
+// `defer` and `go` are in the list and are wrapped whole, statement and all,
+// rather than having their call rewritten in place. Both are function-scoped
+// rather than block-scoped: a `defer` inside the guard's block still runs when
+// the enclosing *function* returns, and a `go` still starts its goroutine, so
+// the block the guard adds changes nothing about when either fires.
+//
+// It is exported because internal/instrument asks the same question of the same
+// statement and must go on asking it independently — a hint naming a statement
+// that package cannot wrap has to be refused there rather than trusted — and
+// two implementations of one list can disagree. They are held to each other by
+// a test in that package, over a table of every statement kind Go has. Sharing
+// the *answer* would be the wrong fix: the second check is the fail-closed one,
+// and a check that calls the thing it is checking is not a check.
+func FormSStatement(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
+		return true
+	case *ast.AssignStmt:
+		return s.Tok != token.DEFINE
+	case *ast.BranchStmt:
+		// `break`, `continue` and `goto` declare nothing and bind to the
+		// nearest enclosing construct of their own kind, and an `if` is not one
+		// -- so burying any of them in the guard's block changes neither scope
+		// nor target. `fallthrough` is the exception and is a syntactic one: it
+		// has to be the final statement of a case clause, and a statement
+		// inside an `if` block is not that.
+		return s.Tok != token.FALLTHROUGH
+	default:
+		return false
+	}
+}
+
 // statementGuard classifies one statement into Form S or Form D.
 //
 // The division is exactly "does this statement declare anything": Form S buries
@@ -277,13 +316,13 @@ func (g *guardResolver) statementGuard(stmt ast.Stmt) (Guard, bool) {
 	if !ok {
 		return Guard{}, false
 	}
-	switch s := stmt.(type) {
-	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
+	if FormSStatement(stmt) {
 		return Guard{Form: GuardFormS, SiteSpan: span}, true
+	}
+	switch s := stmt.(type) {
 	case *ast.AssignStmt:
-		if s.Tok != token.DEFINE {
-			return Guard{Form: GuardFormS, SiteSpan: span}, true
-		}
+		// Not Form S, so it declares: the only assignment [FormSStatement]
+		// refuses is a `:=`.
 		declared, ok := g.defineTypes(s)
 		if !ok {
 			return Guard{}, false

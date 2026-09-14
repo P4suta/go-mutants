@@ -73,6 +73,8 @@ var canonicalOrder = []string{
 	"incr-to-decr",
 	"decr-to-incr",
 	// statement-deletion
+	"drop-break-label",
+	"drop-continue-label",
 	"delete-call-statement",
 	"delete-assignment",
 	"delete-incdec",
@@ -91,6 +93,7 @@ var canonicalFamilyOrder = []Family{
 	FamilyBranchReplacement,
 	FamilyBitwise,
 	FamilyArithmeticAssign,
+	FamilyLabeledBranch,
 	FamilyStatementDeletion,
 }
 
@@ -166,6 +169,7 @@ func TestFamilyTiers(t *testing.T) {
 		FamilyArithmeticAssign:  TierStrong,
 		FamilyNeutralValue:      TierStrong,
 		FamilyBranchReplacement: TierStrong,
+		FamilyLabeledBranch:     TierAll,
 		FamilyStatementDeletion: TierAll,
 	}
 	for _, rule := range CanonicalRules() {
