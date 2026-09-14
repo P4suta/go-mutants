@@ -136,6 +136,13 @@
 //
 // # The probe forms
 //
+// A hint names the *form* it is for, and this package renders the forms it
+// knows and leaves the rest unprobed. That is the fail-closed direction and it
+// is worth stating, because the failure it rules out is silent: a hint read by
+// the wrong renderer would compare an operand against a constant belonging to
+// some other shape and report an infection for a mutant nobody asked about,
+// while an unrendered hint costs only the executions a probe could have saved.
+//
 // One form is written, for the return-value rules, whose replacement is always
 // a constant K. A `return` carrying such a mutant at result position j becomes
 //

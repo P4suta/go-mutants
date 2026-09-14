@@ -304,12 +304,12 @@ func Names(in []string) []string {
 	for _, candidate := range got.candidates {
 		switch candidate.Rule.Name {
 		case "return-empty-slice", "return-empty-map":
-			if candidate.Guard.Return != nil {
+			if candidate.Guard.Probe != nil {
 				t.Errorf("%s carries a return probe hint, which cannot be written for an "+
 					"incomparable type", candidate.Rule.Name)
 			}
 		case "return-nil":
-			if candidate.Guard.Return == nil {
+			if candidate.Guard.Probe == nil {
 				t.Errorf("return-nil lost its probe hint, which is legal for a slice")
 			}
 		}
