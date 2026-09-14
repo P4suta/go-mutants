@@ -603,6 +603,7 @@ results, and not-run mutants are excluded from the score denominator.
 
 ## Documentation
 
+- [Command line](docs/command-line.md)
 - [Architecture](docs/architecture.md)
 - [Engine API](docs/library.md)
 - [Operators](docs/operators.md)

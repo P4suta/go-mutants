@@ -1,0 +1,32 @@
+Work with the documents a run wrote.
+
+A run report is the source of truth for everything go-mutants says: the console
+summary, the exit status, and every later rendering are derived from it. These
+subcommands read those documents rather than producing new measurements.
+
+`list`, `latest` and `clean` work on the history go-mutants keeps for itself in
+the operating system's cache directory, one document per run. `merge` and
+`validate` work on files you name.
+
+Usage:
+  go-mutants report [flags]
+  go-mutants report [command]
+
+Available Commands:
+  clean       Delete this module's run history
+  latest      Print the newest run this module recorded, and where it is filed
+  list        List the runs this module has recorded, newest first
+  merge       Combine the reports of a sharded run into the whole run's report
+  validate    Check a run report against the schema go-mutants publishes
+
+Flags:
+  -h, --help   help for report
+
+Use "go-mutants report [command] --help" for more information about a command.
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

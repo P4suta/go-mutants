@@ -1,0 +1,22 @@
+Check a run report against the schema go-mutants publishes.
+
+The schema is embedded in this binary, so validation needs no network and no
+files beyond the one named. It is the same check the tests run against every
+document go-mutants writes: a report that passes here is one any consumer of
+run-report v1 can rely on.
+
+Exits 0 when the document is valid, and 2 with the first violation and its JSON
+pointer when it is not.
+
+Usage:
+  go-mutants report validate FILE [flags]
+
+Flags:
+  -h, --help   help for validate
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

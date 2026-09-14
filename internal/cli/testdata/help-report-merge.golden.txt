@@ -1,0 +1,34 @@
+Combine the reports of a sharded run into the whole run's report.
+
+Each `--shard K/N` run discovers, validates and reports the entire catalogue and
+executes only its own share, so the shards are directly comparable documents.
+This proves they describe one run — one tool version, one workspace digest, one
+catalogue, one changed ref, one shard total, and every index from 1 to N exactly
+once with no mutant measured twice — and then writes the document that run would
+have produced unsharded.
+
+Any mismatch is a refusal naming the first discrepancy. A merge of the wrong
+documents would publish a score describing a run that never happened, and the
+whole point of merging is that somebody is going to trust the result.
+
+The merged document reports no shard of its own and carries merge.shards
+instead. Its counts, its score and its expectations are recomputed from the
+merged rows rather than added up from the shards, so the numbers in it are the
+numbers the unsharded run would have reached.
+
+With no --output the document goes to standard output, so it can be piped into
+a validator or into jq.
+
+Usage:
+  go-mutants report merge FILE... [flags]
+
+Flags:
+  -h, --help          help for merge
+      --output PATH   write the merged document to PATH instead of standard output
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

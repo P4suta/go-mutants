@@ -1,0 +1,51 @@
+go-mutants is a mutation testing tool for Go modules.
+
+It copies your workspace into a disposable snapshot, proves the unmutated tests
+pass there, rewrites the copy, and measures how many of those rewrites your
+tests notice. Your own tree is only ever read.
+
+This is a pre-release build, and the v1 feature set is complete: the whole
+operator catalogue is discovered, a run can be narrowed to a git diff
+(--changed) or to one shard of a matrix (--shard), outcomes it has proven are
+reused between runs (--cache), and every run publishes its report into
+reports/mutation/ as JSON and as a self-contained HTML page that opens from
+file:// with the network unplugged.
+
+Every run also keeps a diagnostic account of itself, in memory by default and in
+reports/mutation/trace/ under --trace, which `go-mutants trace` reads. A trace is
+never evidence: it takes no part in a verdict, in a mutant identity, or in a
+cache key.
+
+`go-mutants explain` joins the two per mutant: what one mutant is, what happened
+to it, which suites cover it, every pass the run made over the test binaries
+with the commands underneath, and a command to paste that runs the mutant
+again.
+
+Usage:
+  go-mutants [flags]
+  go-mutants [command]
+
+Available Commands:
+  cache       Work with the outcomes go-mutants has proven before
+  completion  Generate the autocompletion script for the specified shell
+  doctor      Check that this machine can run go-mutants
+  explain     Say why one mutant got its verdict, and how to reproduce it
+  help        Help about any command
+  init        Write a commented .go-mutants.toml with the built-in defaults in it
+  list        List the mutants a run would execute, without executing them
+  report      Work with the documents a run wrote
+  run         Snapshot the workspace, prove the baseline, and run the mutants
+  trace       Read the recordings `run --trace` wrote
+
+Flags:
+  -h, --help      help for go-mutants
+      --version   print the version and exit
+
+Use "go-mutants [command] --help" for more information about a command.
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

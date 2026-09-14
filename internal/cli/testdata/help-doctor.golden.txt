@@ -1,0 +1,29 @@
+Check that this machine can run go-mutants, and say what it found.
+
+One line per check: the Go toolchain and its version, the module this directory
+is the root of, git, whether the cache directory can be written, the platform,
+and whether `.go-mutants.toml` parses. Nothing is measured and nothing is
+executed beyond two version probes, so it is safe to run anywhere and costs a
+second.
+
+A check is ok, warn, or FAIL. A warn is something only an opt-in feature needs
+— git is one, since `run --changed` is the only thing that asks for it — and it
+never fails the command. Any FAIL exits 2, so `go-mutants doctor` is usable as
+the first step of a CI job.
+
+--json prints the same findings as a go-mutants/doctor v1 document, validated
+against the schema this binary carries before it is printed.
+
+Usage:
+  go-mutants doctor [flags]
+
+Flags:
+  -h, --help   help for doctor
+      --json   print a go-mutants/doctor v1 document instead of the table
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)

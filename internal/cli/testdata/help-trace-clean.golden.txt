@@ -1,0 +1,41 @@
+Delete the recordings and the diagnostics bundles in this workspace.
+
+It is the collector a run already runs, invoked by hand: --keep N leaves the
+newest N and removes the rest, and the default removes them all.
+
+Both roots are swept, because both are the exhaust of the same runs and a second
+command would be a second thing to remember and a second place to find a full
+disk. `report.directory/trace/` holds a recording per traced run and
+`report.directory/diagnostics/` holds a bundle per failed one, and the rules
+below apply to each of them. `trace list` is unchanged: a listing answers
+"what recordings are there", and a bundle is not a recording.
+
+Two things are never removed. A file or a directory somebody else keeps in
+either root is left exactly as it was found — only a directory named by a run id
+and holding go-mutants' own files is ever deleted. And one nothing finished
+writing is left alone as well: a recording whose stream does not end with its
+run-end event, or a bundle with no preserved-paths.txt, is a run still in
+progress or one that died, and the second is the account you most want to keep.
+--all says you have read them and removes those too; it takes no --keep, being
+the answer to "remove everything".
+
+An empty directory goes with the last thing in it, so a workspace that has been
+cleaned looks like one that was never traced.
+
+Deleting a recording loses a diagnostic and never a measurement. The reports and
+the outcome cache are untouched; those are `report clean`'s and `cache clean`'s.
+
+Usage:
+  go-mutants trace clean [flags]
+
+Flags:
+      --all      remove the recordings no run finished as well: a run in progress, or one that died
+  -h, --help     help for clean
+      --keep N   keep the newest N recordings and remove the rest
+
+Exit codes:
+  0    the run completed and no policy gate failed
+  1    an opt-in gate failed (--strict, policy.minimum_score, init --check)
+  2    an infrastructure, configuration, baseline, or expectation failure
+  130  interrupted (Ctrl-C)
+  143  terminated (SIGTERM)
