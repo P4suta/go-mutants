@@ -1471,3 +1471,84 @@ func TestResultCarriesTheDigestOfEveryScannedFile(t *testing.T) {
 			" files it read and found nothing in", len(result.SourceDigests), len(catalogued))
 	}
 }
+
+// TestTheLoaderParsesEachSourceFileOnceAndNoTestFile is the counted form of
+// what discovery is for.
+//
+// Discovery walks non-test files, once each. The loader it walks them with
+// decides how much type-checking that costs, and the two are not the same
+// number unless somebody says so: asking go/packages for the test variants of
+// every package makes it parse and type-check each package twice — once as
+// itself and once with its in-package test files — and then again for the
+// external test package and the generated test main. On this module that is
+// three files parsed for every one walked, every one of them type-checked, on
+// the critical path of every run.
+//
+// The two claims below are the whole of that waste, and neither is about the
+// loader's spelling: a file discovery parses twice is a file it type-checked
+// twice, and a test file it parses is one it will not walk. Counting them here
+// rather than timing anything is deliberate — how much work a phase does is a
+// property of the phase, how long that takes is a property of the machine.
+func TestTheLoaderParsesEachSourceFileOnceAndNoTestFile(t *testing.T) {
+	t.Parallel()
+	root := fixture(t, "mainmod")
+	loaded, err := load(context.Background(), root, toolchain(t), nil, false, nil)
+	if err != nil {
+		t.Fatalf("loading the fixture module: %v", err)
+	}
+	seen := make(map[string]string)
+	var tests, twice []string
+	for _, pkg := range loaded.packages {
+		for _, file := range pkg.Syntax {
+			tokFile := loaded.fset.File(file.Package)
+			if tokFile == nil {
+				continue
+			}
+			name := tokFile.Name()
+			if isTestFile(name) {
+				tests = append(tests, pkg.ID+": "+name)
+			}
+			if first, ok := seen[name]; ok {
+				twice = append(twice, name+" in "+first+" and in "+pkg.ID)
+				continue
+			}
+			seen[name] = pkg.ID
+		}
+	}
+	if len(tests) != 0 {
+		t.Errorf("the loader parsed %d test files discovery will not walk:\n\t%s",
+			len(tests), strings.Join(tests, "\n\t"))
+	}
+	if len(twice) != 0 {
+		t.Errorf("the loader parsed %d files more than once:\n\t%s",
+			len(twice), strings.Join(twice, "\n\t"))
+	}
+}
+
+// TestDiscoverReadsATreeWhoseTestFilesDoNotCompile draws the boundary of the
+// compiling-tree precondition where the precondition's own argument puts it.
+//
+// A package that does not type-check is refused because discovery reads its
+// types: a rule that cannot tell the universe's `true` from a shadowed one
+// would produce a smaller catalogue instead of an error. Not one of those reads
+// is of a test file. A test file is built and run and never mutated, so a
+// compiler error in one says nothing about the type information this phase
+// takes its answers from, and refusing the whole tree for it refuses a run the
+// tree can perfectly well support -- one whose test command names other
+// packages entirely.
+//
+// The failure is still reported, by the phase whose business it is: the
+// baseline builds and runs the test command, and a test file inside that scope
+// that does not compile fails there, naming the file, before a mutant exists.
+func TestDiscoverReadsATreeWhoseTestFilesDoNotCompile(t *testing.T) {
+	t.Parallel()
+	result := discoverFixture(t, "brokentests", Options{})
+	if len(result.Candidates) == 0 {
+		t.Fatal("no candidate came out of the package beside the broken test file")
+	}
+	for _, candidate := range result.Candidates {
+		if candidate.Path != "count.go" {
+			t.Errorf("candidate in %q, which is not the file the fixture mutates", candidate.Path)
+		}
+	}
+}

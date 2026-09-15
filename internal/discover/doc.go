@@ -18,12 +18,19 @@
 // type-directed to some degree — a boolean literal is only a candidate when it
 // really is the universe constant, a type argument is only recognisable as a
 // type through [types.Info] — and a partially typed tree would silently
-// produce a different, smaller catalog rather than an error. Since the run
-// would fail at the baseline build minutes later anyway, failing here is both
-// faster and more precise: the message names the first few errors and where
-// they are.
+// produce a different, smaller catalog rather than an error.
 //
-// The single exception is a package that imports "C". Those are excluded from
+// The precondition reaches exactly as far as that argument does: over the
+// packages discovery walks, and not over their test variants. A `_test.go`
+// file is never mutated and its types are never read here, so a compiler error
+// in one says nothing about the type information this phase takes its answers
+// from — and the loader is not asked for the test variants at all, which is
+// what makes a catalogue cost one parse per file walked rather than three.
+// A broken test file inside the test command's scope still stops the run: the
+// baseline builds and runs that command before discovery starts, and names the
+// file when it does.
+//
+// The other exception is a package that imports "C". Those are excluded from
 // mutation wholesale (v1 limitation), so their own build failures are not
 // something the user has to fix before mutation testing can start; whatever
 // depends on them still fails the gate, because that dependency is real.

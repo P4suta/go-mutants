@@ -81,11 +81,29 @@ func load(
 		Dir:     root,
 		Env:     environmentFrom(baseEnv, toolchain, workspace),
 		Fset:    fset,
-		// Test files are loaded and type-checked but never mutated. They are
-		// here because a tree whose tests do not compile is not a tree that can
-		// be mutation tested, and because an external test package is the only
-		// place some packages are used at all.
-		Tests: true,
+		// Tests is off, and its absence is the difference between loading what
+		// discovery walks and loading three times as much of it.
+		//
+		// Asking for the test variants asks the go command for four packages
+		// where there is one: the package itself, the package again with its
+		// in-package test files compiled in, the external test package, and the
+		// generated test main. The second of those re-parses and re-type-checks
+		// every non-test file of the package -- the very files this phase walks,
+		// and the walk already has them from the first. On this repository the
+		// difference is 129 packages type-checked against 39, and 768 files
+		// parsed against 229, for a catalogue that is identical either way.
+		//
+		// Identical because nothing here reads a test variant. A `_test.go` file
+		// is structural: built, run, never mutated, never even recorded as a
+		// skip. The import index a completion is drawn from leaves test files
+		// out by name, because an import only a test file carries is not one the
+		// instrumented build has. What remains of the test variants is their
+		// errors, and refusing the tree for those is refusing it for a file
+		// whose type information discovery never reads -- while the phase whose
+		// business that is, the baseline, builds and runs the test command
+		// before this one starts. See [gate] for where the precondition that is
+		// left stands.
+		Tests: false,
 	}
 	loaded, err := packages.Load(cfg, patterns...)
 	if err != nil {
