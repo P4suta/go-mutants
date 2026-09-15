@@ -4249,6 +4249,20 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **Deciding which tests reach a mutant costs a sum rather than a product.** The
+  narrowing pass asks, for every mutant, which of the suite's tests cover it, so
+  something about it is a product and always will be. What did not have to be
+  was the work of deciding *where a mutant lives*: the innermost loop spelled the
+  mutant's file the way a coverage profile spells it — a string built and thrown
+  away — and then looked that long path up in the test's index, once for every
+  pair. Both are facts that have nothing to do with the pair: the spelling is a
+  fact about the mutant and the lookup is a fact about the file.
+  The mutants are grouped by file once, and each file is found in each test's
+  index once. On this repository's own gate that is four thousand mutants
+  against the suite's tests instead of their product; counted on a 200-mutant,
+  50-test mapping, the allocations go from 10 217 to 426, and a test now holds
+  the mapping to a bound that grows with the mutants rather than with the pairs.
+  The per-binary mapping beside it spells each mutant's path once too.
 - **A mutant run stops at the first test that fails.** The question a mutant run
   asks is one bit — did anything catch this edit — and the first failing test has
   answered it. Everything the binary ran after that was paid for and could not
