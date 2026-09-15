@@ -142,9 +142,12 @@ func Map(opts Options) Result {
 		Matched:   len(matched),
 	}
 	for _, m := range opts.Mutants {
+		// Spelled once and not once per binary: how a profile names a mutant's
+		// file is a fact about the mutant.
+		path := profilePath(opts.ModulePath, m)
 		var covering []string
 		for _, importPath := range binaries {
-			if indexes[importPath].covers(profilePath(opts.ModulePath, m), m.StartLine, m.EndLine) {
+			if indexes[importPath].covers(path, m.StartLine, m.EndLine) {
 				covering = append(covering, importPath)
 			}
 		}
@@ -218,7 +221,17 @@ func newFileIndex(profile Profile, modules []string, matched map[string]bool) fi
 
 // covers reports whether the file's covered intervals overlap [start,end].
 func (f fileIndex) covers(path string, start, end int) bool {
-	intervals := f[path]
+	return overlaps(f[path], start, end)
+}
+
+// overlaps is [fileIndex.covers] with the file already found.
+//
+// The split is what lets a caller placing many mutants of one file find that
+// file once rather than once per mutant: the lookup is a fact about the file
+// and the search is a fact about the span, and only the second of them is a
+// fact about the mutant. See [MapTests], where the difference is the catalogue
+// times the suite.
+func overlaps(intervals []interval, start, end int) bool {
 	if len(intervals) == 0 || start > end {
 		return false
 	}
