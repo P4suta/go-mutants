@@ -4,6 +4,7 @@
 package discover
 
 import (
+	"cmp"
 	"errors"
 	"go/ast"
 	"go/constant"
@@ -201,13 +202,15 @@ func (d *discovery) selection(rel string) (SkipReason, bool) {
 // written down in one place under this package's control, rather than tracking
 // a standard-library helper whose exact semantics are free to shift.
 func isGenerated(file *ast.File) bool {
+	// One loop over the comments in source order rather than a bound on the
+	// groups and another on the comments inside them: both were the same
+	// question -- "is this past the package clause" -- and go/ast places the
+	// groups and their contents in order, so the first comment past it is the
+	// last this has to look at.
 	for _, group := range file.Comments {
-		if group.Pos() > file.Package {
-			break
-		}
 		for _, comment := range group.List {
 			if comment.Pos() > file.Package {
-				break
+				return false
 			}
 			if generatedMarker.MatchString(comment.Text) {
 				return true
@@ -238,10 +241,12 @@ func (s suppression) width() int { return int(s.end - s.start) }
 // silently mutating a case label.
 func collectSuppressions(file *ast.File, info *types.Info) []suppression {
 	var out []suppression
+	// Recorded as it comes. Every region below is bounded by a node the parser
+	// placed, so both ends are positions and the end follows the start; and a
+	// region that covered nothing would be inert anyway, because a position is
+	// inside [start, end) for no position at all when the two are equal.
 	add := func(from, to token.Pos, reason SkipReason) {
-		if from.IsValid() && to.IsValid() && to > from {
-			out = append(out, suppression{start: from, end: to, reason: reason})
-		}
+		out = append(out, suppression{start: from, end: to, reason: reason})
 	}
 
 	// Package-level variable initialisers are read from the declaration list
@@ -316,16 +321,31 @@ func collectSuppressions(file *ast.File, info *types.Info) []suppression {
 		return true
 	})
 
-	slices.SortFunc(out, func(x, y suppression) int {
-		if x.start != y.start {
-			return int(x.start - y.start)
-		}
-		if x.end != y.end {
-			return int(y.end - x.end)
-		}
-		return reasonRank[x.reason] - reasonRank[y.reason]
-	})
+	sortSuppressions(out)
 	return out
+}
+
+// sortSuppressions puts the regions in the order the lookup below reads them:
+// outermost first, which is the start ascending and then the end descending,
+// with the declared rank of the reason as the last key.
+//
+// The order is a decision rather than a convenience. The regions are collected
+// by an `ast.Inspect`, so the order they arrive in is a fact about go/ast; the
+// catalogue that comes out of the walk has to be a fact about the file.
+//
+// Written with cmp.Or rather than a comparison in front of each subtraction:
+// "are these two starts the same" and "is the difference between them zero"
+// are one question asked twice, and the spelling that also produces the answer
+// is the one to keep. It cannot overflow either, which a difference of two
+// token.Pos values in an int can.
+func sortSuppressions(out []suppression) {
+	slices.SortFunc(out, func(x, y suppression) int {
+		return cmp.Or(
+			cmp.Compare(x.start, y.start),
+			cmp.Compare(y.end, x.end),
+			cmp.Compare(reasonRank[x.reason], reasonRank[y.reason]),
+		)
+	})
 }
 
 // isTypeExpr reports whether an expression denotes a type rather than a value.
@@ -1294,12 +1314,14 @@ func (s *fileScan) suppressed(pos token.Pos) (SkipReason, bool) {
 // wider reports whether x is the outer region of two that both contain a
 // position, with a frozen tie-break so that two regions covering exactly the
 // same bytes always resolve the same way.
+// It is the same order [sortSuppressions] imposes, asked as a question about
+// two regions rather than used to arrange a list, and it is written the same
+// way for the same reason: a comparison in front of each key is that key's own
+// question asked twice.
 func wider(x, y suppression) bool {
-	if x.width() != y.width() {
-		return x.width() > y.width()
-	}
-	if x.start != y.start {
-		return x.start < y.start
-	}
-	return reasonRank[x.reason] < reasonRank[y.reason]
+	return cmp.Or(
+		cmp.Compare(y.width(), x.width()),
+		cmp.Compare(x.start, y.start),
+		cmp.Compare(reasonRank[x.reason], reasonRank[y.reason]),
+	) < 0
 }

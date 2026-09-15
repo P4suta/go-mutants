@@ -106,6 +106,15 @@ func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 		{name: "a range loop's desugaring has no post", body: "\tfor ; i < n; {\n\t}"},
 		{name: "a step of zero", body: "\tfor i := 0; i < n; i += 0 {\n\t}"},
 		{name: "a step that is not a literal", body: "\tfor i := 0; i < n; i += k {\n\t}"},
+		{
+			// A literal the parser accepts and strconv will not. This phase
+			// reads syntax before anything has type-checked it, so a step of
+			// more than nine quintillion arrives here as an ordinary
+			// `*ast.BasicLit` rather than as the compile error it would be.
+			name: "a step larger than an int",
+			body: "\tfor i := 0; i < n; i += 99999999999999999999 {\n\t}",
+		},
+		{name: "a step written in hexadecimal", body: "\tfor i := 0; i < n; i += 0x2 {\n\t}", want: true, variable: "i", step: 2, comparison: token.LSS},
 		{name: "a step that multiplies", body: "\tfor i := 1; i < n; i *= 2 {\n\t}"},
 		{name: "a step that assigns rather than moves", body: "\tfor i := 0; i < n; i = f() {\n\t}"},
 		{name: "a step of two variables", body: "\tfor i, j := 0, 0; i < n; i, j = i+1, j+1 {\n\t}"},
@@ -545,5 +554,87 @@ func TestEveryBoundaryMovingRuleNamesTheOperatorItProduces(t *testing.T) {
 		if got := movedComparison(rule); got != want {
 			t.Errorf("movedComparison(%q) = %s, want %s", rule, got, want)
 		}
+	}
+}
+
+// TestNoProofIsMadeAboutALoopThisPhaseCannotRead is
+// [fileScan.terminationProof]'s refusal, from the side that has no loop at all.
+//
+// Every refusal here is silent, which is the whole design: a proof is an
+// optimisation a consumer may use, so its absence is not a decision anybody
+// looks up. What the silence must not be is a proof about a loop that was never
+// read -- an edit outside any loop has no measure, and reasoning about the zero
+// value of one would be reasoning about a loop that does not exist.
+func TestNoProofIsMadeAboutALoopThisPhaseCannotRead(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "an edit in no loop at all",
+			src:  "package pkg\n\nfunc probe(a, b int) int {\n\treturn a * b\n}\n",
+		},
+		{
+			name: "an edit in a loop with no measure",
+			src:  "package pkg\n\nfunc probe(a, b int) {\n\tfor {\n\t\t_ = a * b\n\t}\n}\n",
+		},
+		{
+			name: "an edit in a loop whose variable the body moves",
+			src: "package pkg\n\nfunc probe(n int) {\n\tfor i := 0; i < n; i++ {\n" +
+				"\t\ti = n * 2\n\t}\n}\n",
+		},
+		{
+			name: "an edit in a loop that counts away from its bound",
+			src:  "package pkg\n\nfunc probe(n int) {\n\tfor i := 0; i > n; i++ {\n\t\t_ = n * 2\n\t}\n}\n",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := terminationProbe(t, c.src)
+			anchor := firstNode(t, s, func(n ast.Node) bool {
+				binary, ok := n.(*ast.BinaryExpr)
+				return ok && binary.Op == token.MUL
+			})
+			if got := s.terminationProof(mutation.Rule{Name: "mul-to-div"}, anchor); got != nil {
+				t.Errorf("terminationProof = %+v, want none", got)
+			}
+		})
+	}
+}
+
+// TestAProofNamesTheLoopsOwnCoordinates is the other half of the same call, and
+// the half a `//line` directive can move.
+//
+// The coordinate published is the unadjusted one, exactly as every other
+// coordinate this package reports: a directive relocates a *compiler*
+// diagnostic, and what a consumer of this proof has in front of it is the file
+// the snapshot holds. A proof pointing at the generator's input would name a
+// line nobody can open.
+func TestAProofNamesTheLoopsOwnCoordinates(t *testing.T) {
+	t.Parallel()
+
+	const src = "package pkg\n\n" +
+		"//line generated.go:100\n" +
+		"func probe(n int) {\n\tfor i := 0; i < n; i++ {\n\t\t_ = n * 2\n\t}\n}\n"
+
+	s := terminationProbe(t, src)
+	anchor := firstNode(t, s, func(n ast.Node) bool {
+		binary, ok := n.(*ast.BinaryExpr)
+		return ok && binary.Op == token.MUL
+	})
+	proof := s.terminationProof(mutation.Rule{Name: "mul-to-div"}, anchor)
+	if proof == nil {
+		t.Fatal("terminationProof made no proof about a counted loop")
+	}
+	if proof.Verdict != TerminationBounded {
+		t.Errorf("verdict = %q, want %q", proof.Verdict, TerminationBounded)
+	}
+	// The `for` is the fifth line of the file as it is written, and the
+	// directive claims the file is a different one starting at 100.
+	if proof.LoopLine != 5 {
+		t.Errorf("the proof names line %d, want the line the snapshot holds", proof.LoopLine)
 	}
 }

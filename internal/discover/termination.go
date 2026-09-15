@@ -255,12 +255,12 @@ func readInductionLoop(loop *ast.ForStmt) (inductionLoop, bool) {
 		// `for {}` and `for cond {}` have no step this phase can reason about.
 		return inductionLoop{}, false
 	}
-	variable, step, ok := readStep(loop.Post)
-	if !ok || step == 0 {
+	variable, step := readStep(loop.Post)
+	if step == 0 {
 		return inductionLoop{}, false
 	}
-	comparison, ok := readComparison(loop.Cond, variable)
-	if !ok {
+	comparison := readComparison(loop.Cond, variable)
+	if !isOrdering(comparison) {
 		return inductionLoop{}, false
 	}
 	if assignsWithin(loop.Body, variable) {
@@ -274,67 +274,89 @@ func readInductionLoop(loop *ast.ForStmt) (inductionLoop, bool) {
 	return inductionLoop{stmt: loop, variable: variable, step: step, comparison: comparison}, true
 }
 
-// readStep reads `v++`, `v--`, `v += k` and `v -= k` for a constant k.
-func readStep(post ast.Stmt) (variable string, step int, ok bool) {
+// readStep reads `v++`, `v--`, `v += k` and `v -= k` for a constant k, and
+// answers a step of zero for every other post statement.
+//
+// Zero is the refusal rather than a flag beside it. A step of zero moves the
+// variable nowhere, so a loop carrying one has no measure this phase can
+// follow and the caller refuses it on that ground alone; a second way to say
+// "this is not a step" would be a boundary no statement could put on the wrong
+// side of. `i += 0` is written the same way and means the same thing.
+func readStep(post ast.Stmt) (variable string, step int) {
 	switch statement := post.(type) {
 	case *ast.IncDecStmt:
 		name, named := identName(statement.X)
 		if !named {
-			return "", 0, false
+			return "", 0
 		}
 		if statement.Tok == token.INC {
-			return name, 1, true
+			return name, 1
 		}
-		return name, -1, true
+		return name, -1
 	case *ast.AssignStmt:
 		if len(statement.Lhs) != 1 || len(statement.Rhs) != 1 {
-			return "", 0, false
+			return "", 0
 		}
 		name, named := identName(statement.Lhs[0])
 		if !named {
-			return "", 0, false
+			return "", 0
 		}
-		literal, ok := statement.Rhs[0].(*ast.BasicLit)
-		if !ok || literal.Kind != token.INT {
-			return "", 0, false
+		literal, isLiteral := statement.Rhs[0].(*ast.BasicLit)
+		if !isLiteral || literal.Kind != token.INT {
+			return "", 0
 		}
-		value, err := strconv.Atoi(literal.Value)
+		// Base zero, which is Go's own rule for an integer literal: `0x2`,
+		// `0b10` and `1_000` are steps a person writes, and reading them in
+		// base ten alone would leave the loops they bound unproved for a
+		// reason nobody could see.
+		//
+		// A literal the parser accepted and this will not is one that does not
+		// fit in an int -- a step of more than nine quintillion is a program
+		// the compiler refuses, and this phase reads syntax before anything has
+		// type-checked it.
+		value, err := strconv.ParseInt(literal.Value, 0, 0)
 		if err != nil {
-			return "", 0, false
+			return "", 0
 		}
 		switch statement.Tok {
 		case token.ADD_ASSIGN:
-			return name, value, true
+			return name, int(value)
 		case token.SUB_ASSIGN:
-			return name, -value, true
+			return name, int(-value)
 		default:
-			return "", 0, false
+			return "", 0
 		}
 	default:
-		return "", 0, false
+		return "", 0
 	}
 }
 
 // readComparison reads `v OP bound` or `bound OP v`, normalising so the
-// variable is on the left.
-func readComparison(cond ast.Expr, variable string) (token.Token, bool) {
-	binary, ok := cond.(*ast.BinaryExpr)
-	if !ok {
-		return token.ILLEGAL, false
+// variable is on the left, and answers [token.ILLEGAL] for every other
+// condition.
+//
+// ILLEGAL is the refusal rather than a flag beside it, for [readStep]'s reason:
+// the caller has to ask [isOrdering] of the answer anyway -- a condition that
+// compares the variable with `==` is read here and is still not a measure -- and
+// isOrdering answers no for ILLEGAL like any other token that does not order.
+func readComparison(cond ast.Expr, variable string) token.Token {
+	binary, isBinary := cond.(*ast.BinaryExpr)
+	if !isBinary {
+		return token.ILLEGAL
 	}
 	if name, named := identName(binary.X); named && name == variable {
 		if mentions(binary.Y, variable) {
-			return token.ILLEGAL, false
+			return token.ILLEGAL
 		}
-		return binary.Op, isOrdering(binary.Op)
+		return binary.Op
 	}
 	if name, named := identName(binary.Y); named && name == variable {
 		if mentions(binary.X, variable) {
-			return token.ILLEGAL, false
+			return token.ILLEGAL
 		}
-		return mirrored(binary.Op), isOrdering(mirrored(binary.Op))
+		return mirrored(binary.Op)
 	}
-	return token.ILLEGAL, false
+	return token.ILLEGAL
 }
 
 // isOrdering reports whether an operator orders its operands.
@@ -374,14 +396,12 @@ func identName(expr ast.Expr) (string, bool) {
 
 // mentions reports whether a name appears anywhere in an expression.
 func mentions(expr ast.Expr, name string) bool {
-	found := false
-	ast.Inspect(expr, func(node ast.Node) bool {
+	for node := range ast.Preorder(expr) {
 		if ident, ok := node.(*ast.Ident); ok && ident.Name == name {
-			found = true
+			return true
 		}
-		return !found
-	})
-	return found
+	}
+	return false
 }
 
 // assignsWithin reports whether a block assigns to the named variable.
@@ -392,23 +412,21 @@ func assignsWithin(block *ast.BlockStmt, name string) bool {
 	if block == nil {
 		return false
 	}
-	found := false
-	ast.Inspect(block, func(node ast.Node) bool {
+	for node := range ast.Preorder(block) {
 		switch statement := node.(type) {
 		case *ast.IncDecStmt:
 			if ident, ok := statement.X.(*ast.Ident); ok && ident.Name == name {
-				found = true
+				return true
 			}
 		case *ast.AssignStmt:
 			for _, target := range statement.Lhs {
 				if ident, ok := target.(*ast.Ident); ok && ident.Name == name {
-					found = true
+					return true
 				}
 			}
 		}
-		return !found
-	})
-	return found
+	}
+	return false
 }
 
 // boundMoves reports whether the loop's condition compares against something
@@ -421,15 +439,13 @@ func boundMoves(loop *ast.ForStmt) bool {
 	if !ok {
 		return true
 	}
-	moving := false
 	for _, side := range []ast.Expr{binary.X, binary.Y} {
-		ast.Inspect(side, func(node ast.Node) bool {
+		for node := range ast.Preorder(side) {
 			ident, isIdent := node.(*ast.Ident)
 			if isIdent && assignsWithin(loop.Body, ident.Name) {
-				moving = true
+				return true
 			}
-			return !moving
-		})
+		}
 	}
-	return moving
+	return false
 }

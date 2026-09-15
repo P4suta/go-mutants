@@ -42,6 +42,28 @@ import (
 func walkOne(t *testing.T, d *discovery, name, src string) error {
 	t.Helper()
 
+	loaded, pkg := loadedPackage(t, name, src)
+	return d.file(loaded, pkg, pkg.Syntax[0])
+}
+
+// parsed is one file parsed and type-checked under a file set of its own.
+type parsed struct {
+	fset *token.FileSet
+	file *ast.File
+	info *types.Info
+	pkg  *types.Package
+}
+
+// parsedAt parses and type-checks a source under the file name the loader would
+// have reported for it.
+//
+// The name is the point: every clause of the walk turns on what the file is
+// called and where it is, and a name is a string here rather than a file on
+// disk -- so "a file the process cannot read" is a path that is not there
+// rather than a permission bit, and it is the same test on every platform.
+func parsedAt(t *testing.T, name, src string) parsed {
+	t.Helper()
+
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, name, src, parser.ParseComments)
 	if err != nil {
@@ -58,11 +80,21 @@ func walkOne(t *testing.T, d *discovery, name, src string) error {
 	if err != nil {
 		t.Fatalf("the fixture does not type-check:\n%s\n%v", src, err)
 	}
-	return d.file(
-		&loadResult{fset: fset},
-		&packages.Package{PkgPath: "example.com/m/pkg", Syntax: []*ast.File{file}, TypesInfo: info, Types: pkg},
-		file,
-	)
+	return parsed{fset: fset, file: file, info: info, pkg: pkg}
+}
+
+// loadedPackage is the loader's half of a discovery, for a file whose bytes on
+// disk the caller controls separately.
+func loadedPackage(t *testing.T, name, src string) (*loadResult, *packages.Package) {
+	t.Helper()
+
+	p := parsedAt(t, name, src)
+	return &loadResult{fset: p.fset}, &packages.Package{
+		PkgPath:   "example.com/m/pkg",
+		Syntax:    []*ast.File{p.file},
+		TypesInfo: p.info,
+		Types:     p.pkg,
+	}
 }
 
 // walkFixture is a source file holding one candidate of a rule nothing else
