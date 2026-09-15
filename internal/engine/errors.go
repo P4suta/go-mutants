@@ -229,6 +229,22 @@ const (
 	// run and takes the runner down on an unbounded one, and that is not
 	// something to discover from a job that vanished.
 	CodeMemoryBoundUnavailable Code = "GOM4047"
+	// CodeBaselineFromTestCache reports a run whose every timed baseline run was
+	// answered out of the toolchain's test result cache, which means nothing
+	// measured what the suite costs and the per-mutant budgets are sized on cache
+	// lookups. `go test` without `-count=1` keeps a passing result and reprints
+	// it, and in a fresh snapshot the first run misses that cache and every run
+	// after it hits -- so the pattern is the ordinary one for a `test.command`
+	// that does not ask for `-count=1`, not an unlucky one.
+	//
+	// It is a warning rather than an error because the run is still a run and its
+	// verdicts are still verdicts: a budget that is too small turns work into
+	// timeouts, and a confirmed timeout is counted as a detection, so the score
+	// is not inflated by it. What it costs is diagnosis -- a timeout says "this
+	// mutant did not return" where the truth is "the budget was a cache lookup"
+	// -- and that is exactly the kind of thing to be told about rather than to
+	// deduce from a run that looked slower than it should have.
+	CodeBaselineFromTestCache Code = "GOM4048"
 )
 
 // String returns the code as it is printed.
@@ -260,6 +276,7 @@ var codes = []Code{
 	CodeTemporaryNotKept,
 	CodeDeadlineExceeded,
 	CodeMemoryBoundUnavailable,
+	CodeBaselineFromTestCache,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

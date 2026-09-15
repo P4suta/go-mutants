@@ -146,8 +146,21 @@ low = 60
   `[cache]` below), so set `mode = "on"` if you want it.
 - `timeout`: a duration string such as `"60s"` or `"2m"`. Omitted derives
   `max(10s, slowest baseline × 5)`, where the slowest is taken over the
-  baseline runs after the first — the first run of `go test` compiles, and a
-  mutant run never does — or is the only run when `test.baseline_runs` is 1.
+  baseline runs **that ran the tests**, after the first of them — the first run
+  of `go test` compiles, and a mutant run never does — or is the only such run
+  when there is one.
+
+  "That ran the tests" is not a formality. `go test` without `-count=1` keeps a
+  passing result and reprints it, so a baseline of three runs in a fresh
+  snapshot is one measurement of the suite and two lookups: the first run misses
+  the cache because the copied files carry timestamps it has never seen, and the
+  rest hit. A mutant run always misses — its binary is instrumented and its
+  environment names a mutant — so a budget sized on a lookup is several times
+  smaller than the work it has to cover, and the mutants it cuts short are
+  reported as timeouts rather than as what they are. A run go-mutants recognises
+  as answered from the cache is dropped from the derivation; a baseline in which
+  every run was answered that way says so as `GOM4048` and sizes the budget on
+  the slowest lookup, which is all the evidence there is.
 - `memory`: a byte size such as `"2GiB"` or `"512MiB"`, bounding the resident
   memory of each mutant's whole process tree. Omitted derives
   `max(1GiB, largest baseline peak × 4)`. The units are binary — `B`, `KiB`,
@@ -169,7 +182,13 @@ low = 60
   a run starts, so that is also where a bound set too low announces itself
   first.
 - `baseline_runs`: positive integer, default 3. Every observation is retained
-  in the report, not just the slowest.
+  in the report, not just the slowest. Runs after the first buy a second and a
+  third measurement of the suite only when the command defeats the test cache;
+  with a plain `go test ./...` they are cache lookups, and the derivation above
+  says what becomes of them. Adding `-count=1` to `test.command` makes all of
+  them real measurements, at the price of the outcome cache and of coverage
+  narrowing, neither of which go-mutants offers for a command it cannot
+  attribute to its own per-package binaries.
 - `narrowing`: `"test"` (default) or `"package"`. How far coverage narrows what
   each mutant is measured against. `"test"` profiles every test of every test
   binary on its own and runs each mutant against only the tests whose coverage

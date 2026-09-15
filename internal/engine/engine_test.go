@@ -548,21 +548,112 @@ func TestCoverageBuildFallbackKeepsTheWholeFailure(t *testing.T) {
 func TestTheBudgetIsSizedOnARunThatDidNotCompile(t *testing.T) {
 	t.Parallel()
 
+	ran := func(ds ...time.Duration) []baselineObservation {
+		obs := make([]baselineObservation, 0, len(ds))
+		for _, d := range ds {
+			obs = append(obs, baselineObservation{Duration: d})
+		}
+		return obs
+	}
+
 	for _, c := range []struct {
 		name string
-		runs []time.Duration
+		runs []baselineObservation
 		want time.Duration
 	}{
 		{"no runs", nil, 0},
-		{"one run is taken as it is", []time.Duration{7 * time.Second}, 7 * time.Second},
-		{"the compiling first run is excluded", []time.Duration{7 * time.Second, 2 * time.Second, 1900 * time.Millisecond}, 2 * time.Second},
-		{"a slow later run still counts", []time.Duration{2 * time.Second, 5 * time.Second, 2 * time.Second}, 5 * time.Second},
-		{"two runs size on the second", []time.Duration{4 * time.Second, 3 * time.Second}, 3 * time.Second},
+		{"one run is taken as it is", ran(7 * time.Second), 7 * time.Second},
+		{"the compiling first run is excluded", ran(7*time.Second, 2*time.Second, 1900*time.Millisecond), 2 * time.Second},
+		{"a slow later run still counts", ran(2*time.Second, 5*time.Second, 2*time.Second), 5 * time.Second},
+		{"two runs size on the second", ran(4*time.Second, 3*time.Second), 3 * time.Second},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			if got := budgetBaseline(c.runs); got != c.want {
 				t.Errorf("budgetBaseline(%v) = %s, want %s", c.runs, got, c.want)
+			}
+		})
+	}
+}
+
+// TestARunTheToolchainAnsweredFromItsCacheDoesNotSizeTheBudget is the second
+// half of [budgetBaseline], and the half that decides whether a per-mutant
+// budget is a measurement or a guess.
+//
+// `go test` without `-count=1` caches a passing result. The first baseline run
+// in a fresh snapshot always misses that cache, because the copied files carry
+// new timestamps, and every run after it hits — so the rule above, which takes
+// the runs after the first precisely because they are the shape a mutant run
+// has, takes the runs that did not run the tests at all. A mutant run always
+// misses the cache: its binary is instrumented and its environment names a
+// mutant. Sizing its budget on a cache lookup is sizing it on the wrong
+// measurement, and it is wrong in the direction that reports work as a timeout.
+func TestARunTheToolchainAnsweredFromItsCacheDoesNotSizeTheBudget(t *testing.T) {
+	t.Parallel()
+
+	obs := func(d time.Duration, cached bool) baselineObservation {
+		return baselineObservation{Duration: d, Cached: cached}
+	}
+
+	for _, c := range []struct {
+		name string
+		runs []baselineObservation
+		want time.Duration
+	}{
+		{
+			name: "the cached runs after the first are ignored",
+			runs: []baselineObservation{obs(9*time.Second, false), obs(2*time.Second, true), obs(2*time.Second, true)},
+			want: 9 * time.Second,
+		},
+		{
+			name: "a real run after a cached one is what the budget takes",
+			runs: []baselineObservation{obs(3*time.Second, true), obs(9*time.Second, false), obs(2*time.Second, true)},
+			want: 9 * time.Second,
+		},
+		{
+			name: "the compiling run is still excluded when the rest really ran",
+			runs: []baselineObservation{obs(9*time.Second, false), obs(2*time.Second, false), obs(3*time.Second, false)},
+			want: 3 * time.Second,
+		},
+		{
+			name: "every run cached leaves the slowest of them and a warning to the caller",
+			runs: []baselineObservation{obs(3*time.Second, true), obs(4*time.Second, true)},
+			want: 4 * time.Second,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := budgetBaseline(c.runs); got != c.want {
+				t.Errorf("budgetBaseline(%v) = %s, want %s", c.runs, got, c.want)
+			}
+		})
+	}
+}
+
+// TestACachedGoTestRunSaysSoInItsOwnOutput pins [servedFromTestCache] to the
+// line `go test` prints, which is the only evidence there is: a cached run and
+// a run of a suite that happens to be fast are the same duration, and only the
+// output tells them apart.
+func TestACachedGoTestRunSaysSoInItsOwnOutput(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"a package that really ran", "ok  \tgithub.com/x/y\t9.012s\n", false},
+		{"a package answered from the cache", "ok  \tgithub.com/x/y\t(cached)\n", true},
+		{"one cached package among several", "ok  \tgithub.com/x/y\t9.012s\nok  \tgithub.com/x/z\t(cached)\n", true},
+		{"a package with no test files", "?   \tgithub.com/x/y\t[no test files]\n", false},
+		{"nothing at all", "", false},
+		{"a test that printed the word itself", "    foo_test.go:9: loaded (cached)\nok  \tgithub.com/x/y\t0.4s\n", false},
+		{"a verbose run that was cached", "=== RUN   TestX\n--- PASS: TestX (0.00s)\nPASS\nok  \tgithub.com/x/y\t(cached)\n", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := servedFromTestCache([]byte(c.output)); got != c.want {
+				t.Errorf("servedFromTestCache(%q) = %v, want %v", c.output, got, c.want)
 			}
 		})
 	}

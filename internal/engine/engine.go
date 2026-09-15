@@ -1039,6 +1039,7 @@ func (s *session) baseline(
 	argv := resolveProgram(command, toolchain)
 	out.ResolvedTestCommand = slices.Clone(argv)
 	durations := make([]time.Duration, 0, runs)
+	observed := make([]baselineObservation, 0, runs)
 	// The baseline runs unbounded, which is the one thing the memory bound
 	// cannot be applied to: it is the measurement the bound is derived from,
 	// and a measurement taken under the budget it produces would be a budget
@@ -1065,6 +1066,10 @@ func (s *session) baseline(
 			return runErr
 		}
 		durations = append(durations, result.Duration)
+		observed = append(observed, baselineObservation{
+			Duration: result.Duration,
+			Cached:   servedFromTestCache(result.Output),
+		})
 		// The largest of the runs rather than the mean, for the reason the
 		// timeout takes the slowest: a budget sized on an average is a budget
 		// half the observations already exceed.
@@ -1073,7 +1078,13 @@ func (s *session) baseline(
 	}
 	out.BaselineRuns = durations
 	out.AverageBaseline = mean(durations)
-	out.SlowestBaseline = budgetBaseline(durations)
+	out.SlowestBaseline = budgetBaseline(observed)
+	if everyRunCached(observed) {
+		s.warn(CodeBaselineFromTestCache, fmt.Sprintf(
+			"every one of the %d baseline runs was answered from the go test result cache, "+
+				"so the per-mutant budgets are sized on a cache lookup rather than on the suite; "+
+				"add -count=1 to test.command to time the tests themselves", len(observed)))
+	}
 
 	endTimeout := s.stage("timeout", "")
 	timeout, source, err := deriveTimeout(cfg.Test.Timeout, out.SlowestBaseline)
@@ -2886,7 +2897,8 @@ func interrupted(err error) bool {
 func Interrupted(err error) bool { return interrupted(err) }
 
 // budgetBaseline is the baseline run a budget is sized on: the slowest of the
-// runs after the first, or the first itself when it is the only one.
+// runs that ran the tests after the first of them, or the only such run when
+// there is one.
 //
 // The first run of `go test` is the one that compiles. On a cold build cache —
 // which is what CI measures, its cache being the runner's temporary directory
@@ -2899,14 +2911,105 @@ func Interrupted(err error) bool { return interrupted(err) }
 // the shape a mutant run has, and they are what the budget is for. A single
 // run is still taken as it is, compilation and all, because a budget built
 // from nothing would be worse than a loose one.
-func budgetBaseline(runs []time.Duration) time.Duration {
+//
+// Which is true only of the runs that ran. `go test` without `-count=1` keeps
+// a passing result and answers the next identical invocation out of its cache,
+// and the pattern that produces in a fresh snapshot is exactly the pattern the
+// paragraph above legislates for: the first run misses, because the copied
+// files carry timestamps the cache has never seen, and every run after it
+// hits. So the rule that takes the runs after the first would take the runs
+// that did not run the tests — and a mutant run always misses, its binary
+// being instrumented and its environment naming a mutant. This repository's
+// own suite measured 9.0 s on its first baseline run, 1.9 s on the two cache
+// lookups after it, and 6.4 s per mutant: a budget of 10 s where the work asks
+// for 32, which reports a suite that ran as a suite that hung.
+//
+// So a run the toolchain answered from its cache is not an observation of
+// anything, and is dropped before the rule is applied rather than being
+// averaged into it. When every run was answered that way there is nothing left
+// to size on; the slowest of them is returned so that the run can continue,
+// and [session.baseline] says so with [CodeBaselineFromTestCache] rather than
+// letting a budget built from cache lookups pass for a measurement.
+func budgetBaseline(runs []baselineObservation) time.Duration {
+	ran := make([]baselineObservation, 0, len(runs))
+	for _, run := range runs {
+		if !run.Cached {
+			ran = append(ran, run)
+		}
+	}
+	if len(ran) == 0 {
+		// Every run was a cache lookup, so there is no compiling first run to
+		// exclude and no observation to prefer: the largest of them is the
+		// loosest budget they support, and loose is the direction that does not
+		// report work as a hang. It also covers the empty list, which is zero.
+		return slowest(runs)
+	}
+	// The first of the runs that ran is the one that compiled, and is dropped
+	// unless it is the only one there is. Written with min because the two
+	// readings of the comparison it replaces agree at the boundary: with one
+	// run, "drop the first" and "keep the first" are the same answer only
+	// because the list is short, and a test cannot tell a mutant of that
+	// comparison from the original.
+	return slowest(ran[min(len(ran)-1, 1):])
+}
+
+// everyRunCached reports a baseline in which no run ran the tests, which is the
+// condition [CodeBaselineFromTestCache] is about. An empty list is not that
+// condition: a baseline with no runs is a configuration, not a cache hit.
+func everyRunCached(runs []baselineObservation) bool {
 	if len(runs) == 0 {
-		return 0
+		return false
 	}
-	if len(runs) == 1 {
-		return runs[0]
+	for _, run := range runs {
+		if !run.Cached {
+			return false
+		}
 	}
-	return slices.Max(runs[1:])
+	return true
+}
+
+// slowest is the largest duration among the observations, and zero when there
+// are none.
+func slowest(runs []baselineObservation) time.Duration {
+	var most time.Duration
+	for _, run := range runs {
+		most = max(most, run.Duration)
+	}
+	return most
+}
+
+// baselineObservation is one timed baseline run and whether the toolchain
+// answered it out of its test result cache rather than by running the tests.
+type baselineObservation struct {
+	Duration time.Duration
+	Cached   bool
+}
+
+// cachedMarker is what `go test` prints in place of a duration when it answered
+// a package from its result cache.
+const cachedMarker = "(cached)"
+
+// servedFromTestCache reports whether a baseline run's output says the
+// toolchain answered any package from its test result cache.
+//
+// The line `go test` prints per package is `ok`, the import path, and either a
+// duration or [cachedMarker], separated by tabs; nothing else in the output has
+// that shape at the start of a line, and a test that prints the word itself is
+// indented under its own `--- FAIL` or carries a file and line in front of it.
+// Recognising it by shape rather than by searching for the word is what keeps a
+// suite that logs the word from being mistaken for a cache hit.
+//
+// One cached package is enough. A run that ran three suites and looked up the
+// fourth cost less than a mutant run of the same four will, which is the only
+// property the budget needs from it.
+func servedFromTestCache(output []byte) bool {
+	for line := range strings.Lines(string(output)) {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "ok" && fields[2] == cachedMarker {
+			return true
+		}
+	}
+	return false
 }
 
 // deriveTimeout resolves the per-mutant timeout.
