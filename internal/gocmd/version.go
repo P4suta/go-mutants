@@ -72,8 +72,13 @@ func parseVersion(output string) (Version, error) {
 		}
 	}
 
+	// Cut at the first slash and refuse a second one. A target is two names
+	// from two closed lists and neither holds a slash, so `a/b/c` is not a
+	// target printed by anything -- and splitting it anyway would put an arch
+	// of "b/c" into every document the run writes, where the one field that
+	// cannot be wrong is Raw and the rest are read as facts.
 	goos, goarch, ok := strings.Cut(fields[len(fields)-1], "/")
-	if !ok || goos == "" || goarch == "" {
+	if !ok || goos == "" || goarch == "" || strings.Contains(goarch, "/") {
 		return Version{}, &Error{
 			Code:    CodeVersionUnparsable,
 			Message: "`go version` printed " + quote(line) + ", which does not end in a \"os/arch\" target",

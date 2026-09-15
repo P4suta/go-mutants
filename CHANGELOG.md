@@ -14,6 +14,38 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **Six more fuzz targets, and the two they found.** The eight that existed
+  covered this repository's own rewrites and three readers of somebody else's
+  bytes. Six more finish the set, and each of them reads something no test table
+  can enumerate because nobody here writes it: `FuzzParseVersion`
+  (`internal/gocmd`) reads what `go version` printed, which is the first command
+  every run issues and the one whose output ends up in every document;
+  `FuzzParseDiagnostics` (`internal/validate`) reads what the compiler printed
+  about a snapshot that will not build, which is what decides *which mutant is
+  blamed* and therefore which mutants a run goes on to measure;
+  `FuzzReadRecording` (`trace`) reads a recording this tool wrote and may not
+  have finished writing, which `trace summary`, `trace diff` and `explain` all
+  consume after the fact; `FuzzParseDocument` (`internal/report`) reads a
+  document a CI matrix published, through the strict decoder `report merge`
+  needs; and two more read values a person types — a `--shard 1/4`
+  specification, and a flag in a `test.command` that a safety check has to
+  recognise exactly as the test binary will.
+  Each states properties a table cannot. The diagnostics reader must never
+  report a path as *inside the snapshot* unless it is slash-separated and
+  relative, because a path that is neither is compared against catalogue paths
+  it can never match and the mutant that broke the build goes unblamed. The
+  recording reader's summary must be arithmetic: the gap count it reports is
+  what a consumer uses to say "this recording is incomplete". The report
+  decoder must survive a round trip, because a field it accepts and cannot
+  write back is a field missing from a merged document with nothing to say it
+  was there.
+  Two findings, one in a test and one in the code. `FuzzMatchAgreesWithTheFlagPackage`
+  compares the flag recogniser against `flag` itself rather than against a list
+  of spellings, and held over thirteen million executions. `FuzzParseVersion`
+  found that `go version go1.26.5 a/b/c` was split into an arch of `b/c`: a
+  target is two names from two closed lists and neither holds a slash, so that
+  line is not a target with an unusual arch in it but a line no toolchain
+  printed, and it is now refused like any other malformed one.
 - **`internal/validate` joined the dogfood gate, and the floor moved to 99.75.**
   369 more mutants and four declared rows, and the gate is now seventeen
   packages and 4383 mutants at 100.00%. This is the phase that spawns processes,
