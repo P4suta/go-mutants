@@ -122,20 +122,6 @@ var repositoryExpectations = []Expectation{
 			"four gigabytes in a unit test.",
 	},
 	{
-		ID: "6e4a484ef1b13b165636f2c9e736bba568df0d13df9e42ae85fda86d882d1774",
-		Reason: "Equivalent: this is the tie-break of a sort whose primary key " +
-			"is the start line, so it only orders intervals that share one; " +
-			"merge joins any such run into [start, max end] whatever their " +
-			"order, and nothing downstream reads the order itself.",
-	},
-	{
-		ID: "d0c24e273d49ff84d81e3b6e9f100c753eeb97c9a819c862c313ef3e44714e21",
-		Reason: "Equivalent: the same tie-break as the row above -- intervals " +
-			"sharing a start line all overlap, so merge folds them into " +
-			"[start, max end] however the sort arranges them, and the " +
-			"primary key still decides every pair whose start lines differ.",
-	},
-	{
 		ID: "a7353f2073cb5e21aa44235cf31014b9efb6f153afbfba57b110741e38c34ca7",
 		Reason: "Equivalent: the loop ends at the first unterminated line, and " +
 			"an empty body is that case -- bytes.Cut finds no separator and " +

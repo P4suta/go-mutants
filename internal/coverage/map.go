@@ -4,6 +4,7 @@
 package coverage
 
 import (
+	"cmp"
 	"slices"
 	"sort"
 	"strings"
@@ -248,15 +249,21 @@ func overlaps(intervals []interval, start, end int) bool {
 // become [3,9] — because the answer this structure gives is a yes or no about
 // overlap, and two adjacent ranges answer it identically to one joined range
 // while costing an extra comparison on every lookup.
+//
+// The order is a total one and it is spelled with cmp rather than with
+// subtraction. Two intervals that share a start line all overlap, so the loop
+// below folds any run of them into [start, max end] whichever way the sort
+// leaves them — which made the difference of the end lines a tie-break no
+// answer depends on, and therefore two mutants of it that no honest test could
+// reach. A comparison written as a comparison has no arithmetic in it to
+// rewrite, so the order stays total and the pair of unkillable mutants is gone
+// rather than declared.
 func merge(intervals []interval) []interval {
 	if len(intervals) < 2 {
 		return intervals
 	}
 	slices.SortFunc(intervals, func(x, y interval) int {
-		if c := x.start - y.start; c != 0 {
-			return c
-		}
-		return x.end - y.end
+		return cmp.Or(cmp.Compare(x.start, y.start), cmp.Compare(x.end, y.end))
 	})
 	merged := make([]interval, 0, len(intervals))
 	merged = append(merged, intervals[0])

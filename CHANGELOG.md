@@ -4249,6 +4249,18 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **The interval order is a comparison rather than a subtraction, and two
+  declared rows are gone with it.** `internal/coverage`'s intervals are sorted
+  by start line and then by end line, and the second key was written as the
+  difference of two numbers. That difference was two mutants no honest test
+  could reach — intervals that share a start line all overlap, so the merge
+  below folds any run of them into `[start, max end]` whichever way the sort
+  arranges them — and the ledger carried the proof twice. The order is still
+  total; it is spelled with `cmp.Or` and `cmp.Compare` now, and a comparison
+  written as a comparison has no arithmetic in it for a rule to rewrite. The
+  gate's declared rows go from seventy-seven to seventy-five, which is the
+  preferred way for a row to leave this repository: not by being argued better,
+  but by the code that manufactured it being gone.
 - **Deciding which tests reach a mutant costs a sum rather than a product.** The
   narrowing pass asks, for every mutant, which of the suite's tests cover it, so
   something about it is a product and always will be. What did not have to be
