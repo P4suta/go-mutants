@@ -444,3 +444,162 @@ func TestANameIsBumpedUntilItIsFree(t *testing.T) {
 		t.Errorf("freeName over an exhausted search = %q, want the preferred name back", got)
 	}
 }
+
+// TestHowATypeIsSpelledInThisFile is [guardResolver.typeString] and the
+// qualifier under it, which is what every form that writes a type down goes
+// through.
+//
+// A type is spelled with the name its package has *in the file being
+// rewritten*, and there are four answers: this package's own types render bare,
+// a package the file imports renders under the name that import binds, a
+// package only a *sibling* file imports renders under a name this rewrite will
+// add, and anything else is not spellable here at all.
+func TestHowATypeIsSpelledInThisFile(t *testing.T) {
+	t.Parallel()
+
+	f := newTypeFixture()
+	elsewhere := types.NewPackage("example.com/m/elsewhere", "elsewhere")
+	exported := f.named(elsewhere, "Box", types.NewStruct(nil, nil))
+	ours := f.named(f.here, "Ours", types.NewStruct(nil, nil))
+
+	resolver := func(imports, siblings map[string]string) *guardResolver {
+		return &guardResolver{
+			pkg:      f.here,
+			imports:  imports,
+			added:    map[string]string{},
+			taken:    map[string]bool{},
+			siblings: siblings,
+		}
+	}
+	none := map[string]string{}
+
+	t.Run("this package's own type renders bare", func(t *testing.T) {
+		t.Parallel()
+
+		spelled, needs, ok := resolver(none, none).typeString(ours)
+		if !ok || spelled != "Ours" {
+			t.Fatalf("typeString = (%q, %v)", spelled, ok)
+		}
+		if len(needs) != 0 {
+			t.Errorf("spelling this package's own type needs %v", needs)
+		}
+	})
+
+	t.Run("a type of a package this file imports", func(t *testing.T) {
+		t.Parallel()
+
+		spelled, needs, ok := resolver(map[string]string{"example.com/m/elsewhere": ""}, none).
+			typeString(types.NewSlice(exported))
+		if !ok || spelled != "[]elsewhere.Box" {
+			t.Fatalf("typeString = (%q, %v), want []elsewhere.Box", spelled, ok)
+		}
+		if len(needs) != 0 {
+			t.Errorf("spelling a type this file already imports needs %v", needs)
+		}
+	})
+
+	t.Run("a type under the name the import binds", func(t *testing.T) {
+		t.Parallel()
+
+		spelled, _, ok := resolver(map[string]string{"example.com/m/elsewhere": "alias"}, none).
+			typeString(exported)
+		if !ok || spelled != "alias.Box" {
+			t.Fatalf("typeString = (%q, %v), want alias.Box", spelled, ok)
+		}
+	})
+
+	t.Run("a type of a package only a sibling imports", func(t *testing.T) {
+		t.Parallel()
+
+		g := resolver(none, map[string]string{"example.com/m/elsewhere": "carrier"})
+		spelled, needs, ok := g.typeString(types.NewPointer(exported))
+		if !ok || spelled != "*carrier.Box" {
+			t.Fatalf("typeString = (%q, %v), want *carrier.Box", spelled, ok)
+		}
+		if len(needs) != 1 || needs[0].Path != "example.com/m/elsewhere" || needs[0].Local != "carrier" {
+			t.Fatalf("the completion is %v, want one naming the sibling's import", needs)
+		}
+		// The name is chosen once per path per file and remembered: two names
+		// for one package would be two imports, and the second a redeclaration.
+		again, _, ok := g.typeString(exported)
+		if !ok || again != "carrier.Box" {
+			t.Errorf("the second spelling is %q, want the first's name", again)
+		}
+	})
+
+	t.Run("a name the file already binds is bumped", func(t *testing.T) {
+		t.Parallel()
+
+		g := resolver(none, map[string]string{"example.com/m/elsewhere": "carrier"})
+		g.taken["carrier"] = true
+		spelled, needs, ok := g.typeString(exported)
+		if !ok || spelled != "carrier2.Box" {
+			t.Fatalf("typeString = (%q, %v), want carrier2.Box", spelled, ok)
+		}
+		if len(needs) != 1 || needs[0].Local != "carrier2" {
+			t.Errorf("the completion is %v, want the bumped name", needs)
+		}
+	})
+
+	t.Run("a sibling that named no alias falls back to the package's own name", func(t *testing.T) {
+		t.Parallel()
+
+		g := resolver(none, map[string]string{"example.com/m/elsewhere": ""})
+		spelled, needs, ok := g.typeString(exported)
+		if !ok || spelled != "elsewhere.Box" {
+			t.Fatalf("typeString = (%q, %v), want elsewhere.Box", spelled, ok)
+		}
+		if len(needs) != 1 || needs[0].Local != "elsewhere" {
+			t.Errorf("the completion is %v, want the package's own name", needs)
+		}
+	})
+
+	t.Run("a type of a package nothing imports", func(t *testing.T) {
+		t.Parallel()
+
+		if spelled, _, ok := resolver(none, none).typeString(exported); ok {
+			t.Errorf("typeString = %q, want a refusal for a package nothing reaches", spelled)
+		}
+	})
+
+	t.Run("no type at all", func(t *testing.T) {
+		t.Parallel()
+
+		if spelled, _, ok := resolver(none, none).typeString(nil); ok {
+			t.Errorf("typeString = %q, want a refusal", spelled)
+		}
+	})
+
+	t.Run("a type that renders but cannot be named", func(t *testing.T) {
+		t.Parallel()
+
+		// unsafe.Pointer renders as a perfectly plausible string and is not
+		// something this file can write without an import nothing will add. It
+		// is the shape the two checks are separate for: the qualifier answers
+		// about *packages*, and nameable answers about the type.
+		if spelled, _, ok := resolver(none, none).typeString(types.Typ[types.UnsafePointer]); ok {
+			t.Errorf("typeString = %q, want a refusal for unsafe.Pointer", spelled)
+		}
+	})
+
+	t.Run("the completions come out in one order", func(t *testing.T) {
+		t.Parallel()
+
+		// Two packages in one type, drawn in the order go/types renders them.
+		// The list is sorted so that the imports a rewrite splices in are a
+		// function of the type rather than of the rendering order.
+		second := types.NewPackage("example.com/m/aaa", "aaa")
+		other := f.named(second, "Other", types.NewStruct(nil, nil))
+		g := resolver(none, map[string]string{
+			"example.com/m/elsewhere": "elsewhere",
+			"example.com/m/aaa":       "aaa",
+		})
+		_, needs, ok := g.typeString(types.NewMap(exported, other))
+		if !ok {
+			t.Fatal("typeString refused a map of two reachable types")
+		}
+		if len(needs) != 2 || needs[0].Path != "example.com/m/aaa" {
+			t.Errorf("the completions are %v, want them sorted by path", needs)
+		}
+	})
+}

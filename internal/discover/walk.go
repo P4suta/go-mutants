@@ -919,7 +919,12 @@ func (s *fileScan) swap(table map[token.Token]tokenMatcher, anchor ast.Node, op 
 func (s *fileScan) text(node ast.Node) (string, bool) {
 	start := s.tokFile.Offset(node.Pos())
 	end := s.tokFile.Offset(node.End())
-	if start < 0 || end < start || end > len(s.src) {
+	// One comparison, against the one thing that can be true. Offset clamps a
+	// position into the *token file's* bounds, so a start is never negative and
+	// an end never precedes its start -- but the token file's size is the size
+	// the parser saw, and the bytes below are the ones the caller handed over.
+	// A file that got shorter between the two is what this refuses.
+	if end > len(s.src) {
 		return "", false
 	}
 	return string(s.src[start:end]), true
@@ -995,7 +1000,9 @@ func (s *fileScan) emitAt(
 	}
 	offset := s.tokFile.Offset(pos)
 	end := offset + len(original)
-	if offset < 0 || end > len(s.src) {
+	// Offset never answers below zero; see [fileScan.text] for why, and for what
+	// the one comparison left is about.
+	if end > len(s.src) {
 		return s.spanMismatch(pos, original, "the span reaches past the end of the file")
 	}
 	span, err := mutation.NewSpan(uint32(offset), uint32(end))
