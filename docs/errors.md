@@ -157,7 +157,7 @@ re-coded here.
 | `GOM4045` | A directory [Options.KeepTemp] asked the run to preserve, whose owner marker could not be written — so it was removed instead of being left behind. | check that the temporary area is writable |
 | `GOM4046` | A run whose context ran out of time. | raise the deadline, or narrow the scope with `--include` |
 | `GOM4047` | A run in which no mutant is bounded in memory, and says which of the two reasons applies: nothing measured what the baseline runs cost, or this platform cannot watch a process tree while it runs and therefore cannot enforce a bound at all. | — |
-| `GOM4048` | A run whose every timed baseline run was answered out of the toolchain's test result cache, which means nothing measured what the suite costs and the per-mutant budgets are sized on cache lookups. | add `-count=1` to `test.command` |
+| `GOM4048` | A run whose every timed baseline run was answered out of the toolchain's test result cache, which means nothing measured what the suite costs and the per-mutant budgets are sized on cache lookups. Every run after the first is given `-count=1` through `GOFLAGS`, so this is a `test.command` that does not obey it. | make the command itself run the tests, or set `test.timeout` rather than deriving one |
 
 ## `GOM41xx` -- what is worth mutating
 

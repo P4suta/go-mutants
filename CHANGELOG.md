@@ -4249,6 +4249,30 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **`baseline_runs` buys what it says it buys.** The setting asks for that many
+  timed runs of the test command; a plain `go test` gave one. `go test` keeps a
+  passing result and reprints it, and in a fresh snapshot the first run misses
+  that cache — the copied files carry timestamps it has never seen — while every
+  run after it hits. So three runs were one measurement and two lookups, the
+  lookups are dropped from the derivation, and the per-mutant budget fell back
+  to the one run that was left: **the run that compiled**. A mutant run compiles
+  nothing, so that budget was several times the work it had to cover, and the
+  mutants that pay a whole budget are the ones that never return — each paying
+  it twice.
+  Every baseline run after the first now carries `-count=1` in `GOFLAGS`. The
+  first is the command exactly as written: it is the run that proves the suite
+  green, and it is the compiling one either way. `GOFLAGS` rather than
+  `test.command`, because the scope reader is spelling-strict about flags on
+  purpose — a `-count=1` written into the command would switch off coverage
+  narrowing and the outcome cache to buy a budget, which is the remedy this
+  project used to have to recommend.
+  Measured on this repository's own gate: the baseline reads 8.1s, 4.6s, 4.1s
+  where it read 13.4s, 1.7s, 1.7s, and the derived timeout is 23.1s where it was
+  66.8s. The ratio is what travels — the slowest mutant run of that gate is 1.85
+  times its slowest measured baseline run, against a budget of five times it —
+  and the three mutants that never return pay the difference twice each.
+  `GOM4048` stays, for the command that does not obey `GOFLAGS` at all, and says
+  so rather than recommending a flag the engine has already passed.
 - **The dogfood gate's counted budget, re-measured.** 4386 mutants catalogued
   at profile balanced, 4311 detected, 833 tests profiled across 17 test
   binaries, 75 declared rows of which 27 are uncovered, and a score of 100.00%

@@ -1049,10 +1049,21 @@ func (s *session) baseline(
 	// derived from itself.
 	var peak int64
 	for i := 1; i <= runs; i++ {
+		// Every run after the first is told to run the tests rather than to
+		// reprint what the toolchain remembers of them. The first is the user's
+		// command exactly as written -- it is the run that proves the suite
+		// green, and in a fresh snapshot it is the one that misses the cache
+		// anyway -- and the rest exist to be timed, which a lookup is not. See
+		// [gocmd.CountOnce] for why it is GOFLAGS and not the command, and
+		// [budgetBaseline] for the rule this is what feeds.
+		runEnv := env
+		if i > 1 {
+			runEnv = gocmd.AppendGoflags(env, gocmd.CountOnce)
+		}
 		spec := runner.Spec{
 			Argv:    argv,
 			Dir:     root,
-			Env:     env,
+			Env:     runEnv,
 			Timeout: BaselineCap,
 			Trace:   s.trace,
 			Kind:    trace.ExecKindBaselineTest,
@@ -1083,10 +1094,7 @@ func (s *session) baseline(
 	out.AverageBaseline = mean(durations)
 	out.SlowestBaseline = budgetBaseline(observed)
 	if everyRunCached(observed) {
-		s.warn(CodeBaselineFromTestCache, fmt.Sprintf(
-			"every one of the %d baseline runs was answered from the go test result cache, "+
-				"so the per-mutant budgets are sized on a cache lookup rather than on the suite; "+
-				"add -count=1 to test.command to time the tests themselves", len(observed)))
+		s.warn(CodeBaselineFromTestCache, cachedBaselineWarning(len(observed)))
 	}
 
 	endTimeout := s.stage("timeout", "")
@@ -2912,6 +2920,30 @@ func interrupted(err error) bool {
 // disagree with this one.
 func Interrupted(err error) bool { return interrupted(err) }
 
+// cachedBaselineWarning says what a baseline of nothing but cache lookups
+// leaves the run with, and what to do about it.
+//
+// The two sentences are two different situations and the remedy is the whole
+// difference. A run with more than one baseline gave every run after the first
+// [gocmd.CountOnce] through GOFLAGS, so a cache lookup means a `test.command`
+// that does not obey GOFLAGS — a wrapper script composing its own environment,
+// or a command that is not the go command at all. A run with a single baseline
+// gave it nothing, because the first run is the user's command as written; there
+// the cheapest fix is a second run, which will carry the flag.
+func cachedBaselineWarning(runs int) string {
+	const preamble = " was answered from the go test result cache, so the per-mutant budgets are " +
+		"sized on a cache lookup rather than on the suite; "
+	if runs == 1 {
+		return "the only baseline run" + preamble +
+			"raise test.baseline_runs so that a run after the first times the tests, " +
+			"or set test.timeout rather than deriving one"
+	}
+	return fmt.Sprintf("every one of the %d baseline runs", runs) + preamble +
+		"every run after the first was given " + gocmd.CountOnce + " through GOFLAGS and " +
+		"answered that way anyway, so this test.command does not obey GOFLAGS -- make the " +
+		"command itself run the tests, or set test.timeout rather than deriving one"
+}
+
 // budgetBaseline is the baseline run a budget is sized on: the slowest of the
 // runs that ran the tests after the first of them, or the only such run when
 // there is one.
@@ -2928,17 +2960,24 @@ func Interrupted(err error) bool { return interrupted(err) }
 // run is still taken as it is, compilation and all, because a budget built
 // from nothing would be worse than a loose one.
 //
-// Which is true only of the runs that ran. `go test` without `-count=1` keeps
-// a passing result and answers the next identical invocation out of its cache,
-// and the pattern that produces in a fresh snapshot is exactly the pattern the
-// paragraph above legislates for: the first run misses, because the copied
-// files carry timestamps the cache has never seen, and every run after it
-// hits. So the rule that takes the runs after the first would take the runs
-// that did not run the tests — and a mutant run always misses, its binary
-// being instrumented and its environment naming a mutant. This repository's
-// own suite measured 9.0 s on its first baseline run, 1.9 s on the two cache
-// lookups after it, and 6.4 s per mutant: a budget of 10 s where the work asks
-// for 32, which reports a suite that ran as a suite that hung.
+// Which is true only of the runs that ran. `go test` keeps a passing result and
+// answers the next identical invocation out of its cache, and the pattern that
+// produces in a fresh snapshot is exactly the pattern the paragraph above
+// legislates for, upside down: the first run misses, because the copied files
+// carry timestamps the cache has never seen, and every run after it hits. So
+// the rule that takes the runs after the first would have taken the runs that
+// did not run the tests — and a mutant run always misses, its binary being
+// instrumented and its environment naming a mutant. This repository's own suite
+// measured 9.0 s on its first baseline run, 1.9 s on the two cache lookups
+// after it, and 6.4 s per mutant: a budget of 10 s where the work asks for 32,
+// which reports a suite that ran as a suite that hung.
+//
+// [session.baseline] is what stops that happening rather than this function:
+// every run after the first carries [gocmd.CountOnce], so the runs this rule
+// prefers are runs. The check below stays, because GOFLAGS reaches the go
+// command and a `test.command` need not be one — a wrapper script that composes
+// its own environment answers to nothing here — and a run whose every
+// observation was a lookup is one there is nothing left to size on.
 //
 // So a run the toolchain answered from its cache is not an observation of
 // anything, and is dropped before the rule is applied rather than being
