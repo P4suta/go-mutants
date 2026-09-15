@@ -34,7 +34,7 @@ const envPrefix = "GO_MUTANTS_"
 //
 // The profiling pass is where the leak would hurt most, because it is the one
 // pass that is *about* coverage. [CollectCoverage] gives each binary a
-// directory of its own through [coverDirFlag] and reads back what is in it; an
+// profile of its own through [coverProfileFlag] and reads back what is in it; an
 // inherited GOCOVERDIR beside that flag is a second directory nobody chose,
 // holding data from a different program. go-mutants says where a child's
 // coverage goes and an ambient setting does not get a vote — the same rule the

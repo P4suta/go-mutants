@@ -37,6 +37,9 @@ type verifierSet struct {
 	timeout time.Duration
 	memory  int64
 	args    []string
+	// known marks a set whose control the run has already paid for, and which
+	// therefore starts no process of its own. See [setVerifier.want].
+	known bool
 }
 
 // newSetVerifier returns an empty verifier.
@@ -47,6 +50,21 @@ func newSetVerifier() *setVerifier {
 // want records that some mutant is narrowed to tests, under run's budget. The
 // selection is canonicalised so that the same set from two mutants is checked
 // once.
+//
+// A set of *one* test is recorded as already known, and starts no process. The
+// question a control asks is "do these tests pass together with nothing
+// activated", and for one test "together" is "alone" -- which is exactly what
+// the profiling pass ran: the same binary, in the same directory, with nothing
+// activated. A test that did not pass there makes its whole binary ineligible
+// for narrowing, so every test that reaches this point passed alone and the
+// answer is already in hand. On a suite where most mutants are reached by one
+// test that is most of this phase's process starts, and every one of them would
+// be asking a question the run has already answered.
+//
+// The arguments are why that is not unconditional. A control carries the
+// accepted test flags a mutant run carries and the profiling pass does not, so
+// under `-test.short` the two would be different invocations of one test and
+// only the control would be the right one.
 func (v *setVerifier) want(tests map[string][]string, run execute.MutantRun) {
 	key := setKey(tests)
 	if _, seen := v.sets[key]; seen {
@@ -59,8 +77,18 @@ func (v *setVerifier) want(tests map[string][]string, run execute.MutantRun) {
 		// The same arguments the mutant runs with: an accepted flag such as
 		// -test.short changes what the tests do, so a control without it would
 		// be a control of a different invocation.
-		args: slices.Clone(run.Args),
+		args:  slices.Clone(run.Args),
+		known: len(run.Args) == 0 && countTests(tests) == 1,
 	}
+}
+
+// countTests is how many tests a selection names across every binary in it.
+func countTests(tests map[string][]string) int {
+	total := 0
+	for _, names := range tests {
+		total += len(names)
+	}
+	return total
 }
 
 // run checks every recorded set with a control and returns the verdicts. A set
@@ -77,9 +105,22 @@ func (v *setVerifier) run(ctx context.Context, opts execute.Options, bins []exec
 	if len(v.sets) == 0 {
 		return verdicts
 	}
+
+	// The sets that still need asking, in one order: a control's place in the
+	// recording has to be a function of the sets rather than of a map walk.
+	var keys []string
+	for _, key := range slices.Sorted(maps.Keys(v.sets)) {
+		if v.sets[key].known {
+			verdicts.reliable[key] = true
+			continue
+		}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return verdicts
+	}
 	index := binaryIndex(bins)
 
-	keys := slices.Sorted(maps.Keys(v.sets))
 	controls := make([]execute.ControlRun, 0, len(keys))
 	for _, key := range keys {
 		set := v.sets[key]

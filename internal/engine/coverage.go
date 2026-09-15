@@ -7,7 +7,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/P4suta/go-mutants/internal/config"
@@ -15,7 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/mutation"
 	"github.com/P4suta/go-mutants/internal/report"
-	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/trace"
 )
 
@@ -294,19 +292,9 @@ func (s *session) profile(
 		return nil, err
 	}
 
-	profileDir := filepath.Join(scratch, profileDirName)
-	if err := os.MkdirAll(profileDir, 0o755); err != nil {
-		return nil, &Error{
-			Code:    CodeScratchDir,
-			Message: "the directory for the rendered coverage profiles could not be created",
-			Err:     err,
-		}
-	}
-
 	profiles := make(map[string]coverage.Profile, len(collected))
-	for i, data := range collected {
-		path := filepath.Join(profileDir, strconv.Itoa(i)+".txt")
-		profile, err := s.renderProfile(ctx, opts, scratch, data.Dir, data.ImportPath, path)
+	for _, data := range collected {
+		profile, err := s.readProfile(data.Path, data.ImportPath)
 		if err != nil {
 			return nil, err
 		}
@@ -318,40 +306,26 @@ func (s *session) profile(
 	return profiles, nil
 }
 
-// renderProfile turns one coverage directory into a textfmt document at path
-// and reads it back. subject is what the rendering is about — an import path,
-// or an import path and a test — and is what the recording and every message
-// name it by.
-func (s *session) renderProfile(
-	ctx context.Context,
-	opts execute.Options,
-	scratch string,
-	dir string,
-	subject string,
-	path string,
-) (coverage.Profile, error) {
-	spec := opts.Toolchain.Command("tool", "covdata", "textfmt", "-i="+dir, "-o="+path)
-	spec.Dir = opts.SnapshotRoot
-	spec.Env = childEnv(scratch)
-	spec.Timeout = BaselineCap
-	spec.Trace = s.trace
-	spec.Kind = trace.ExecKindCovdataTextfmt
-	spec.Subject = subject
-
-	if err := check(ctx, spec, runner.Run(ctx, spec), CodeCoverageRender,
-		"`go tool covdata textfmt` over the profile of "+subject+" failed"); err != nil {
-		return coverage.Profile{}, err
-	}
-	// The rendered profile is a file the run wrote and the only readable
-	// form the coverage decision was made from, so a `--keep-temp` run has
-	// something to point somebody at.
+// readProfile reads back the textfmt document one profiling run wrote. subject
+// is what the profile is about -- an import path, or an import path and a test
+// -- and is what every message names it by.
+//
+// There is no child process here, and that is the point. A test binary handed
+// `-test.coverprofile` writes this document itself; the alternative is a
+// coverage directory and one `go tool covdata textfmt` per profile, which on a
+// suite profiled test by test is one more process per test and the largest
+// counted cost in the phase.
+func (s *session) readProfile(path, subject string) (coverage.Profile, error) {
+	// The profile is a file the run wrote and the only readable form the
+	// coverage decision was made from, so a `--keep-temp` run has something to
+	// point somebody at.
 	s.trace.Artifact(trace.ArtifactCoverageProfile, path)
 
 	file, err := os.Open(path)
 	if err != nil {
 		return coverage.Profile{}, &Error{
 			Code:    CodeCoverageRender,
-			Message: "the rendered coverage profile for " + subject + " could not be read",
+			Message: "the coverage profile for " + subject + " could not be read",
 			Err:     err,
 		}
 	}
@@ -363,7 +337,7 @@ func (s *session) renderProfile(
 	if closeErr != nil {
 		return coverage.Profile{}, &Error{
 			Code:    CodeCoverageRender,
-			Message: "the rendered coverage profile for " + subject + " could not be closed",
+			Message: "the coverage profile for " + subject + " could not be closed",
 			Err:     closeErr,
 		}
 	}

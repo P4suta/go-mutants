@@ -144,7 +144,7 @@ re-coded here.
 | `GOM4012` | A baseline command that did not finish inside [BaselineCap]. | raise `test.timeout`, or narrow `test.command` |
 | `GOM4013` | The semantic preservation gate: the instrumented snapshot, with no mutant activated, no longer passes the tests the pristine one passed a moment earlier. | file a bug and attach the recording from `go-mutants run --trace`: the instrumented tree is generated code |
 | `GOM4014` | A snapshot that stopped matching its manifest in a way instrumentation did not cause. | the message lists the files; a suite that writes into its own package directory needs one of them moved to a temporary directory |
-| `GOM4015` | A `go tool covdata textfmt` that would not run, or whose output could not be read back. | — |
+| `GOM4015` | A coverage profile that could not be read back off the disk a profiling run wrote it to. | — |
 | `GOM4020` | An explicit `test.timeout` that is not above the slowest baseline run. | raise `test.timeout` above the slowest baseline the message names, or delete the key |
 | `GOM4021` | A `mutation.operators` entry that names neither an operator family nor a rule in the v1 catalogue. | `go-mutants list --explain` prints every family and rule |
 | `GOM4022` | A `test.command` that go-mutants recognised as `go test` over package patterns, and whose patterns do not describe a scope any mutant can be measured in: one that names no package at all, a `go list` that would not resolve them, or a whole scope in which no package has a test file. | name package patterns that resolve and that have test files |

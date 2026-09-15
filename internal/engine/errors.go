@@ -85,12 +85,17 @@ const (
 	// each later mutant is measured against; the run stops and names the files
 	// rather than reporting outcomes nobody could reproduce.
 	CodeWorkspaceDrift Code = "GOM4014"
-	// CodeCoverageRender reports a `go tool covdata textfmt` that would not run,
-	// or whose output could not be read back. It is the engine's own code
-	// because the engine is what issues the command — internal/coverage is pure
-	// and never starts a process — and it never reaches a user as an error: the
-	// coverage phase turns it into internal/coverage's GOM7602 warning and
-	// measures every mutant against every binary instead.
+	// CodeCoverageRender reports a coverage profile that could not be read back
+	// off the disk a profiling run wrote it to. It is the engine's own code
+	// because the engine is what ran the binary that wrote it — internal/coverage
+	// is pure and reads only what it is handed — and it never reaches a user as
+	// an error: the coverage phase turns it into internal/coverage's GOM7602
+	// warning and measures every mutant against every binary instead.
+	//
+	// It used to name a `go tool covdata textfmt` that would not run, which is a
+	// command no run issues any more: the binary writes the text format itself.
+	// The number stays where it was, because what it reports is the same fact
+	// one process earlier.
 	CodeCoverageRender Code = "GOM4015"
 
 	// CodeTimeoutTooSmall reports an explicit `test.timeout` that is not above

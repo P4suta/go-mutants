@@ -1007,12 +1007,16 @@ the outcome cache.
   rule a run at 256 MiB would cache `killed` and a run at 8 GiB would adopt it.
   See `cache.Entry.UsableWithin`.
 - **Coverage-guided selection.** *Implemented.* The test binaries are built
-  with `-cover -coverpkg=<module>/...` and each is then run once with nothing
-  activated and `-test.gocoverdir` pointed at a directory of its own — the
-  flag, never the `GOCOVERDIR` environment variable, which a *test* binary does
-  not read — and an inherited `GOCOVERDIR` is stripped from every child
-  environment go-mutants composes, so a run started underneath somebody else's
-  coverage collection cannot append into it. `go tool covdata textfmt` blocks
+  with `-cover -coverpkg=<module>/...` and each is then run with nothing
+  activated and `-test.coverprofile` pointed at a file of its own — the flag,
+  never the `GOCOVERDIR` environment variable, which a *test* binary does not
+  read — and an inherited `GOCOVERDIR` is stripped from every child environment
+  go-mutants composes, so a run started underneath somebody else's coverage
+  collection cannot append into it. The profile flag rather than
+  `-test.gocoverdir` because a coverage *directory* holds raw counters that
+  `go tool covdata textfmt` still has to render, which is one more child process
+  per profile — and a run that profiles a suite test by test pays it once per
+  test. The profile's blocks
   are mapped to mutants by
   line-interval overlap only: columns describe the instrumented text while a
   mutant's span was measured against the user's own bytes, and only the lines

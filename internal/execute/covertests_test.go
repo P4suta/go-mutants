@@ -5,9 +5,12 @@ package execute_test
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/runner"
@@ -90,15 +93,15 @@ func TestCollectTestCoverageRunsEachTestAloneIntoItsOwnDirectory(t *testing.T) {
 		if data.ImportPath != want[i].ImportPath || data.Name != want[i].Name || data.Passed != want[i].Passed {
 			t.Errorf("profile %d = %+v, want %+v (directory aside)", i, data, want[i])
 		}
-		if data.Dir == "" || !strings.HasPrefix(data.Dir, coverDir) {
-			t.Errorf("profile %d has directory %q, want one under %s", i, data.Dir, coverDir)
+		if data.Path == "" || !strings.HasPrefix(data.Path, coverDir) {
+			t.Errorf("profile %d is at %q, want a path under %s", i, data.Path, coverDir)
 		}
-		if ok, statErr := statDir(data.Dir); statErr != nil || !ok {
-			t.Errorf("the coverage directory %s was not created: %v", data.Dir, statErr)
+		if ok, statErr := statDir(filepath.Dir(data.Path)); statErr != nil || !ok {
+			t.Errorf("the directory holding %s was not created: %v", data.Path, statErr)
 		}
 	}
-	if collected[0].Dir == collected[1].Dir {
-		t.Errorf("two tests share the coverage directory %s", collected[0].Dir)
+	if collected[0].Path == collected[1].Path {
+		t.Errorf("two tests share the coverage profile %s", collected[0].Path)
 	}
 
 	seen := f.seen()
@@ -113,8 +116,8 @@ func TestCollectTestCoverageRunsEachTestAloneIntoItsOwnDirectory(t *testing.T) {
 		if got := selectedTest(c); got != name {
 			t.Errorf("run %d selected %q, want %q via an anchored -test.run", i, got, name)
 		}
-		if !slices.Contains(c.Argv, "-test.gocoverdir="+collected[i].Dir) {
-			t.Errorf("run %d argv = %v, want it to write into %s", i, c.Argv, collected[i].Dir)
+		if !slices.Contains(c.Argv, "-test.coverprofile="+collected[i].Path) {
+			t.Errorf("run %d argv = %v, want it to write into %s", i, c.Argv, collected[i].Path)
 		}
 		if c.Dir != bins[0].Dir {
 			t.Errorf("run %d ran in %q, want the package directory %q", i, c.Dir, bins[0].Dir)
@@ -178,5 +181,69 @@ func TestCollectTestCoverageReportsAListingThatFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "example.com/m/a") {
 		t.Errorf("the failure does not name the binary: %v", err)
+	}
+}
+
+// TestCollectTestCoverageProfilesTheTestsConcurrently is the pass whose cost
+// grows with the *suite* rather than with the catalogue.
+//
+// There is one process per test here, so a project with four hundred tests pays
+// four hundred process starts before a single mutant is measured -- the one
+// place a run's cost is a function of somebody's test count. Each of those runs
+// is a separate process writing a profile of its own under a scratch directory
+// of its own, and nothing is shared but the package directory the binaries
+// already read from, so serialising them bought only that they did not overlap.
+// Mutant runs of the same binaries already overlap.
+//
+// The proof is a barrier rather than a clock: every run blocks until as many
+// runs as there are jobs have arrived, which a serial pass could never satisfy.
+// A serial implementation does not fail this test slowly, it deadlocks -- and
+// the context the test carries is what turns that into a failure.
+func TestCollectTestCoverageProfilesTheTestsConcurrently(t *testing.T) {
+	t.Parallel()
+
+	const jobs = 4
+	var arrived sync.WaitGroup
+	arrived.Add(jobs)
+	together := make(chan struct{})
+	var once sync.Once
+
+	f := &fake{respond: func(ctx context.Context, c call) runner.Result {
+		if isTestList(c) {
+			return runner.Result{Output: []byte("TestA\nTestB\nTestC\nTestD\n")}
+		}
+		arrived.Done()
+		go once.Do(func() { arrived.Wait(); close(together) })
+		select {
+		case <-together:
+			return passed()
+		case <-ctx.Done():
+			return runner.Result{Err: ctx.Err()}
+		}
+	}}
+	opts, coverDir := coverOptions(t, f)
+	opts.Jobs = jobs
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	collected, err := execute.CollectTestCoverage(ctx, opts, testBins("example.com/m/a"), coverDir)
+	if err != nil {
+		t.Fatalf("CollectTestCoverage: %v", err)
+	}
+
+	// And the order is the plan's rather than the order the workers finished
+	// in: a coverage set that came out differently on two runs of one tree
+	// would make the narrowing depend on scheduling.
+	var names []string
+	for _, data := range collected {
+		names = append(names, data.Name)
+	}
+	if want := "TestA TestB TestC TestD"; strings.Join(names, " ") != want {
+		t.Errorf("the profiles came out as %q, want %q", strings.Join(names, " "), want)
+	}
+	for i, data := range collected {
+		if !data.Passed {
+			t.Errorf("profile %d did not pass: %+v", i, data)
+		}
 	}
 }

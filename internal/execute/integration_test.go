@@ -426,15 +426,16 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 	if len(collected) != len(bins) {
 		t.Fatalf("collected %d profiles for %d binaries", len(collected), len(bins))
 	}
-	// The data really was written, or this would be asserting that a pass which
-	// did nothing left no trace.
+	// The profile really was written, and it is the text format the mapping
+	// reads rather than a directory somebody still has to render.
 	for _, data := range collected {
-		entries, readErr := os.ReadDir(data.Dir)
+		written, readErr := os.ReadFile(data.Path)
 		if readErr != nil {
-			t.Fatalf("reading %s: %v", data.Dir, readErr)
+			t.Fatalf("reading %s: %v", data.Path, readErr)
 		}
-		if len(entries) == 0 {
-			t.Fatalf("the coverage pass over %s wrote nothing into %s", data.ImportPath, data.Dir)
+		if !strings.HasPrefix(string(written), "mode: ") {
+			t.Fatalf("the coverage pass over %s wrote %q into %s, want a textfmt profile",
+				data.ImportPath, first(string(written)), data.Path)
 		}
 	}
 
@@ -464,4 +465,11 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 		t.Errorf("the snapshot drifted as\n\t%s\nwant\n\t%s",
 			strings.Join(got, "\n\t"), strings.Join(want, "\n\t"))
 	}
+}
+
+// first is the first line of a document, for a failure message that should not
+// print a whole coverage profile.
+func first(document string) string {
+	line, _, _ := strings.Cut(document, "\n")
+	return line
 }
