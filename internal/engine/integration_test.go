@@ -317,13 +317,14 @@ func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
 	}
 }
 
-// TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun is the other half of
-// the budget rule, and the half that needs a command the toolchain will not
-// answer from its cache.
+// TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun is the budget rule
+// under a command that asks for `-count=1` itself.
 //
-// With `-count=1` both runs run the tests, so both are observations — and of
-// two observations the first is the one that compiled, which a mutant run never
-// does. The budget takes the slowest of the rest.
+// Both runs run the tests, so both are observations — and of two observations
+// the first is the one that compiled, which a mutant run never does. The budget
+// takes the slowest of the rest. The engine would have arranged the same thing
+// through GOFLAGS; what this pins is that a command already carrying the flag
+// is not a different case.
 func TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun(t *testing.T) {
 	t.Parallel()
 	opts := options(t, "simple")
@@ -378,21 +379,22 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	// number.
 	//
 	// The command is the configured default, `go test ./...`, which keeps a
-	// passing result and reprints it. So in a fresh snapshot the first run
-	// misses that cache — the copied files carry timestamps it has never seen —
-	// and the second is a lookup, which measured nothing and does not size a
-	// budget. The one run that ran is the whole of the evidence. The other rule,
-	// that the first of the runs which ran is the one that compiled, is
-	// TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun below.
-	slowest := outcome.BaselineRuns[0]
+	// passing result and reprints it — and the second run is an observation
+	// anyway, because the engine gives every run after the first `-count=1`
+	// through GOFLAGS. That is what this assertion is: had the second run been
+	// answered out of the cache, budgetBaseline would have dropped it and sized
+	// the budget on the first, which is the run that compiled and the shape no
+	// mutant run has.
+	slowest := outcome.BaselineRuns[1]
 	if outcome.SlowestBaseline != slowest {
-		t.Errorf("SlowestBaseline = %s, want %s, the one run that ran the tests (runs %v)",
+		t.Errorf("SlowestBaseline = %s, want %s, the run after the one that compiled (runs %v); "+
+			"the first is what a cache lookup in the second would have left",
 			outcome.SlowestBaseline, slowest, outcome.BaselineRuns)
 	}
-	// And no warning, because that one run did measure the suite. GOM4048 is
-	// for a baseline in which nothing did.
+	// And no warning, because both runs measured the suite. GOM4048 is for a
+	// baseline in which nothing did.
 	if _, found := warningOf(outcome, CodeBaselineFromTestCache); found {
-		t.Errorf("a baseline with one run that ran published %s", CodeBaselineFromTestCache)
+		t.Errorf("a baseline both of whose runs ran published %s", CodeBaselineFromTestCache)
 	}
 	want := max(MinDerivedTimeout, TimeoutFactor*slowest)
 	if outcome.Timeout != want {

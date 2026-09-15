@@ -237,10 +237,11 @@ const (
 	// CodeBaselineFromTestCache reports a run whose every timed baseline run was
 	// answered out of the toolchain's test result cache, which means nothing
 	// measured what the suite costs and the per-mutant budgets are sized on cache
-	// lookups. `go test` without `-count=1` keeps a passing result and reprints
-	// it, and in a fresh snapshot the first run misses that cache and every run
-	// after it hits -- so the pattern is the ordinary one for a `test.command`
-	// that does not ask for `-count=1`, not an unlucky one.
+	// lookups. `go test` keeps a passing result and reprints it, which is why
+	// every baseline run after the first is given `-count=1` through GOFLAGS --
+	// see [gocmd.CountOnce]. A run that reports this anyway is one whose
+	// `test.command` does not obey GOFLAGS: a wrapper script that composes its
+	// own environment, or a command that is not the go command at all.
 	//
 	// It is a warning rather than an error because the run is still a run and its
 	// verdicts are still verdicts: a budget that is too small turns work into
