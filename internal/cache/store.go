@@ -170,14 +170,14 @@ func Open(opts Options) (*Cache, error) {
 		}
 		root = resolved
 	}
-	context, err := opts.Context.ContextKey()
-	if err != nil {
-		return nil, err
-	}
+	// One key, truncated here rather than asked for twice: [Context.ContextKey]
+	// is [Context.Key] cut to length, so a second call could only fail where
+	// the first already had.
 	key, err := opts.Context.Key()
 	if err != nil {
 		return nil, err
 	}
+	context := key[:ContextKeyLength]
 	// The same claim the run history makes, against the same marker: a
 	// workspace directory belonging to something else is refused before
 	// anything is written into it.
@@ -589,10 +589,10 @@ func writeAtomic(path string, data []byte) error {
 	// against a name that no longer exists.
 	defer func() { _ = os.Remove(name) }()
 
-	if _, err = temp.Write(data); err == nil {
-		err = temp.Sync()
+	if _, err = writeTemp(temp, data); err == nil {
+		err = syncTemp(temp)
 	}
-	if closeErr := temp.Close(); err == nil {
+	if closeErr := closeTemp(temp); err == nil {
 		err = closeErr
 	}
 	if err != nil {
@@ -628,9 +628,8 @@ func rename(from, to string) error {
 
 // display shortens an id for a message, leaving a short or malformed one alone
 // rather than slicing past its end.
-func display(id string) string {
-	if len(id) <= mutation.DisplayIDLength {
-		return id
-	}
-	return id[:mutation.DisplayIDLength]
-}
+//
+// One slice rather than a guard and a slice: an id of exactly the display
+// length is the same string cut or uncut, so the comparison that chose between
+// them had two readings and one answer.
+func display(id string) string { return id[:min(len(id), mutation.DisplayIDLength)] }

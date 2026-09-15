@@ -14,6 +14,36 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`internal/cache` joined the dogfood gate.** 422 more mutants and eight
+  declared rows, and the gate is now sixteen packages and 4014 mutants at
+  100.00%. It is the package that *deletes* — in a directory it shares with
+  every other program on the machine — so every removal goes through a
+  containment check proved against what the filesystem resolves rather than
+  against how a path is spelled, and that check now has tests for both of the
+  answers it refuses on: a path it could not resolve, and a root it could not.
+  The first measurement read 164 survivors, 91 of them uncovered, at 62.12%.
+  Most of what closed that gap is staged for real, because a staged failure is
+  the same failure a user will have: a cache root that cannot be listed, a
+  workspace directory carrying somebody else's marker, an entry file that cannot
+  be read, a context directory that lists its names and refuses to stat them, a
+  rename onto a name a directory already holds.
+  Six calls that cannot be staged are named in `internal/cache/seams.go`: two
+  about the running executable, whose digest is what stops a rebuilt go-mutants
+  from adopting its predecessor's answers; three that put an entry's bytes on
+  disk before the rename that names them, which between them decide whether a
+  half-written entry is renamed into place anyway; and one listing that happens
+  twice in one function, where a failure is another process changing the
+  directory between the two — the race the emptiness check exists inside.
+  Three comparisons came out of the source rather than into the ledger, the same
+  shape as `internal/gitdiff`'s four: a truncation boundary that returns the
+  same string cut or uncut, a clamp written as a guard over a duration that is
+  zero either way, and a pair of sorts restating an ordering `os.ReadDir`
+  already guarantees. So did one double computation of the cache key, which had
+  made a second failure path out of a call that could only fail where the first
+  already had. The eight rows that remain are four claims: the 32-bit length
+  prefix of the hashing encoding, an `encoding/json` failure a struct of strings
+  and integers cannot produce, a `filepath.Rel` refusal that only two different
+  volume names reach, and two guards something else answers for a step later.
 - **`internal/snapshot` joined the dogfood gate.** 329 more mutants and two
   declared rows, and the gate is now fifteen packages and 3592 mutants at
   100.00%. It is the package almost entirely made of failure paths — a walk, a

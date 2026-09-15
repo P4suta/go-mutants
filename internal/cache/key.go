@@ -298,7 +298,7 @@ func invalidContext(what string) error {
 // itself could not be tested: under `go test` the executable is the package's
 // own test binary, so the key would change from one test run to the next.
 func ToolDigest() (string, error) {
-	path, err := os.Executable()
+	path, err := executablePath()
 	if err != nil {
 		return "", &Error{
 			Code:    CodeExecutableUnreadable,
@@ -306,7 +306,7 @@ func ToolDigest() (string, error) {
 			Err:     err,
 		}
 	}
-	data, err := os.ReadFile(path)
+	data, err := readExecutable(path)
 	if err != nil {
 		return "", &Error{
 			Code:    CodeExecutableUnreadable,
@@ -345,9 +345,8 @@ func write(h hash.Hash, s string) error { return mutation.WriteLengthPrefixed(h,
 
 // milliseconds renders a duration the way the key and the entries count one:
 // truncated, and never negative.
-func milliseconds(d time.Duration) int64 {
-	if d < 0 {
-		return 0
-	}
-	return d.Milliseconds()
-}
+//
+// Clamped rather than guarded: a duration of exactly zero is zero milliseconds
+// through either reading, so a comparison here would have a second one that no
+// duration can tell from the first.
+func milliseconds(d time.Duration) int64 { return max(0, d.Milliseconds()) }

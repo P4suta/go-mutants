@@ -294,11 +294,13 @@ func walk(root string) ([]Workspace, []Skipped, error) {
 		}
 		owned = append(owned, Workspace{Key: entry.Name(), Dir: dir, Digest: digest})
 	}
-	// Ordered by the directory name, which is a hash and therefore arbitrary —
-	// but arbitrary and stable, so two runs of `cache status` over an unchanged
-	// cache produce the same output and can be diffed.
-	slices.SortFunc(owned, func(x, y Workspace) int { return strings.Compare(x.Key, y.Key) })
-	slices.SortFunc(skipped, func(x, y Skipped) int { return strings.Compare(x.Name, y.Name) })
+	// Both lists come out ordered by the directory name, which is a hash and
+	// therefore arbitrary — but arbitrary and stable, so two runs of `cache
+	// status` over an unchanged cache produce the same output and can be
+	// diffed. The order is os.ReadDir's, which is documented to sort by
+	// filename, and each row's name *is* the entry's: sorting them again here
+	// would be a second statement of one guarantee, and one no cache could
+	// ever be arranged to tell from the first.
 	return owned, skipped, nil
 }
 
@@ -464,7 +466,7 @@ func entryFiles(context string) ([]fs.DirEntry, error) {
 
 // isEmpty reports whether a directory holds nothing at all.
 func isEmpty(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
+	entries, err := readDir(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return false, nil
@@ -563,7 +565,7 @@ func within(path, root string) (bool, error) {
 // resolveParent resolves the directories leading to path, and leaves path's own
 // last element alone. See [within] for why the leaf is left as it is.
 func resolveParent(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
+	absolute, err := absPath(path)
 	if err != nil {
 		return "", err
 	}
@@ -586,7 +588,7 @@ func resolveParent(path string) (string, error) {
 // land, which is what the caller is deciding. Any other failure is returned,
 // and refuses the deletion.
 func resolvePath(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := evalSymlinks(path)
 	switch {
 	case err == nil:
 		return trimExtendedPrefix(resolved), nil

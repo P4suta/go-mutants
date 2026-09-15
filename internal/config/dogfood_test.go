@@ -144,6 +144,54 @@ var repositoryExpectations = []Expectation{
 			"dropping it makes two mutants of this package never return.",
 	},
 	{
+		ID: "7793f84f81acc0da784e91c4a1320e9c156ca3d0475b3b002a5ef98874c8201e",
+		Reason: "Unkillable: WriteLengthPrefixed fails only on a field longer than " +
+			"math.MaxUint32 bytes, so entering this branch means hashing a " +
+			"cache context with a four-gigabyte field in it.",
+	},
+	{
+		ID: "3d14887a7d333b18f16fb83768515c14163e526a294eb9dc957c1f040d6d15b2",
+		Reason: "Unkillable: the same branch as the row above -- the error this " +
+			"forwards exists only for a field longer than math.MaxUint32 bytes.",
+	},
+	{
+		ID: "bcd244f179ba95adfcd0020401cc298e8d31d2d720f4fa45d243e18c55858d36",
+		Reason: "Equivalent: the listing this guards is of the same directory the " +
+			"emptiness check lists a few lines below, with the same call and " +
+			"the same message, and a context whose files could not be listed " +
+			"always reaches it -- so removing the guard reports the identical " +
+			"failure one step later.",
+	},
+	{
+		ID: "16dc5ab574628847287a82197bd016dc237abcdb4835d77a3fe121818ed1e8f1",
+		Reason: "Equivalent: an entry with no recorded bound falls through to the " +
+			"default case at the same answer, because `limit <= 0 || limit >= 0` " +
+			"is true for every limit -- so `<=` and `<` choose different " +
+			"branches and the same value.",
+	},
+	{
+		ID: "be34a1e2f35ba435b9f31477de1f0f71b484ded67020177e14b028779da76f5f",
+		Reason: "Unreachable: an Entry is strings, integers and booleans, and " +
+			"encoding/json has no failure for any of them.",
+	},
+	{
+		ID: "5a955e26a94e6611e9675d169d6276d5ccb5c72acca52494bfe829a033e7a83d",
+		Reason: "Unreachable: the other half of the same branch -- the diagnostic " +
+			"returned for an encoding failure an Entry cannot produce.",
+	},
+	{
+		ID: "0c61708323241091dc71b704454a4644278eaab1c340cb77ffb76f35539109b7",
+		Reason: "Unreachable where this gate runs: filepath.Rel refuses a pair only " +
+			"when the two carry different volume names, which no POSIX path " +
+			"does, so both paths here are always relatable.",
+	},
+	{
+		ID: "a87698a37045703dda49276056c91ac240a017f41e1c57783c1694ab13d38814",
+		Reason: "Unreachable where this gate runs: the same branch as the row above, " +
+			"and the answer it gives -- not inside -- for a pair of paths POSIX " +
+			"cannot produce.",
+	},
+	{
 		ID: "06cabbdf7a94e889df9b5cc94b72e9d07805cf567329afb27da1e0a674dfeae2",
 		Reason: "Unreachable: the pattern compiled here is path.Clean's output " +
 			"over a path NormalizePath already refused as empty, absolute or " +
@@ -521,6 +569,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/tempowner/*.go",
 				"internal/gitdiff/*.go",
 				"internal/snapshot/*.go",
+				"internal/cache/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -550,6 +599,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/tempowner/...",
 				"./internal/gitdiff/...",
 				"./internal/snapshot/...",
+				"./internal/cache/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
