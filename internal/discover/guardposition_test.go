@@ -564,3 +564,145 @@ func TestThePositionsThatNeedMoreThanAValue(t *testing.T) {
 		})
 	}
 }
+
+// TestWhichStatementsABlockMayBeWrappedAround is [FormSStatement], the list
+// Form S buries its site in a block for.
+//
+// It is exported because internal/instrument asks the same question again,
+// independently, and a test there holds the two implementations to each other
+// over every statement kind Go has. What is asserted here is the list itself,
+// and the one entry in it that is a *syntactic* rather than a semantic
+// exclusion: `fallthrough` has to be the final statement of a case clause, and
+// a statement inside an `if` block is not that.
+func TestWhichStatementsABlockMayBeWrappedAround(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		stmt ast.Stmt
+		want bool
+	}{
+		{name: "a call", stmt: &ast.ExprStmt{X: &ast.CallExpr{Fun: ast.NewIdent("f")}}, want: true},
+		{name: "a send", stmt: &ast.SendStmt{Chan: ast.NewIdent("ch"), Value: ast.NewIdent("n")}, want: true},
+		{name: "an increment", stmt: &ast.IncDecStmt{X: ast.NewIdent("n"), Tok: token.INC}, want: true},
+		{
+			name: "an assignment",
+			stmt: &ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent("n")}, Tok: token.ASSIGN, Rhs: []ast.Expr{ast.NewIdent("m")}},
+			want: true,
+		},
+		{
+			// A short declaration takes the name out of scope for everything
+			// after the block, which is what Form D exists to hoist back out.
+			name: "a short variable declaration",
+			stmt: &ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent("n")}, Tok: token.DEFINE, Rhs: []ast.Expr{ast.NewIdent("m")}},
+		},
+		{name: "a return", stmt: &ast.ReturnStmt{}, want: true},
+		{name: "a deferred call", stmt: &ast.DeferStmt{Call: &ast.CallExpr{Fun: ast.NewIdent("f")}}, want: true},
+		{name: "a goroutine", stmt: &ast.GoStmt{Call: &ast.CallExpr{Fun: ast.NewIdent("f")}}, want: true},
+		{name: "a break", stmt: &ast.BranchStmt{Tok: token.BREAK}, want: true},
+		{name: "a continue", stmt: &ast.BranchStmt{Tok: token.CONTINUE}, want: true},
+		{name: "a goto", stmt: &ast.BranchStmt{Tok: token.GOTO}, want: true},
+		{name: "a fallthrough", stmt: &ast.BranchStmt{Tok: token.FALLTHROUGH}},
+		{name: "a block", stmt: &ast.BlockStmt{}},
+		{name: "an if", stmt: &ast.IfStmt{}},
+		{name: "a declaration", stmt: &ast.DeclStmt{}},
+		{name: "nothing at all", stmt: nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := FormSStatement(c.stmt); got != c.want {
+				t.Errorf("FormSStatement(%s) = %v, want %v", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// TestANameASiblingFileBindsIsTakenToo is the third scope
+// [guardResolver.indexTakenNames] reads, and the only one that is not shadowing
+// at all.
+//
+// Go forbids one name appearing in a file block and in the package block of the
+// same package, so a `var carrier` in a *sibling* file makes `import carrier
+// "…"` here a hard error -- not a shadowed import, a compile error. The name is
+// nowhere in the file being rewritten, so nothing but the checker's package
+// scope can supply it.
+func TestANameASiblingFileBindsIsTakenToo(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	parse := func(name, src string) *ast.File {
+		t.Helper()
+		file, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		return file
+	}
+	rewritten := parse("scan.go", "package pkg\n\nfunc probe() int {\n\treturn 1\n}\n")
+	sibling := parse("sibling.go", "package pkg\n\nvar carrier = 2\n\nfunc helper() {}\n")
+
+	info := &types.Info{
+		Types:      map[ast.Expr]types.TypeAndValue{},
+		Defs:       map[*ast.Ident]types.Object{},
+		Uses:       map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+	}
+	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
+	pkg, err := conf.Check("example.com/m/pkg", fset, []*ast.File{rewritten, sibling}, info)
+	if err != nil {
+		t.Fatalf("the fixture does not type-check: %v", err)
+	}
+
+	g := newGuardResolver(rewritten, info, pkg, fset.File(rewritten.Package), nil)
+	for _, name := range []string{"carrier", "helper"} {
+		if !g.taken[name] {
+			t.Errorf("the index does not hold %q, which a sibling file binds in the package block", name)
+		}
+	}
+
+	// And with no package information there is no package block to read, so the
+	// universe's own names must not be taken either: a completion refused
+	// because something called `int` exists would be a completion nobody could
+	// predict.
+	partial := newGuardResolver(rewritten, nil, nil, nil, nil)
+	// Names the file itself does not spell: `int` is in its signature and
+	// would be taken for that reason alone.
+	for _, name := range []string{"error", "true", "append", "recover"} {
+		if partial.taken[name] {
+			t.Errorf("without package information the index holds the universe name %q", name)
+		}
+	}
+	if !partial.taken["probe"] {
+		t.Error("without package information the index lost the names the file itself binds")
+	}
+}
+
+// TestWhichImportsTheResolverCanReadAtAll is the import index over specs the
+// parser would not produce, which is how its two refusals are reached.
+//
+// A path that will not unquote and an empty one are both bytes an import spec
+// can hold and go/parser will not put there. They are refused for the same
+// reason importsOf refuses them a file away: a name this file cannot resolve is
+// not an edge a completion may draw on, and carrying one into the index would
+// mean rendering a qualifier nothing imports.
+func TestWhichImportsTheResolverCanReadAtAll(t *testing.T) {
+	t.Parallel()
+
+	file := &ast.File{
+		Name: ast.NewIdent("pkg"),
+		Imports: []*ast.ImportSpec{
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `"time"`}},
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: "not a quoted string"}},
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `""`}},
+			{Path: nil},
+		},
+	}
+	g := newGuardResolver(file, nil, nil, nil, nil)
+	if _, indexed := g.imports["time"]; !indexed {
+		t.Errorf("the index does not hold the one path that is one: %v", g.imports)
+	}
+	if len(g.imports) != 1 {
+		t.Errorf("the index holds %v, want only the path that unquotes to something", g.imports)
+	}
+}
