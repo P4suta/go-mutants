@@ -158,6 +158,7 @@ re-coded here.
 | `GOM4046` | A run whose context ran out of time. | raise the deadline, or narrow the scope with `--include` |
 | `GOM4047` | A run in which no mutant is bounded in memory, and says which of the two reasons applies: nothing measured what the baseline runs cost, or this platform cannot watch a process tree while it runs and therefore cannot enforce a bound at all. | — |
 | `GOM4048` | A run whose every timed baseline run was answered out of the toolchain's test result cache, which means nothing measured what the suite costs and the per-mutant budgets are sized on cache lookups. Every run after the first is given `-count=1` through `GOFLAGS`, so this is a `test.command` that does not obey it. | make the command itself run the tests, or set `test.timeout` rather than deriving one |
+| `GOM4049` | A run whose loop census could not be read or whose ceilings could not be written, so its mutants are bounded in time alone — the stopwatch and the second measurement, which is what every run was held to before it could count what a loop does. | nothing: the verdicts are the same, and the run says so rather than settling them silently |
 
 ## `GOM41xx` -- what is worth mutating
 

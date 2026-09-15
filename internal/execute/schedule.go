@@ -212,13 +212,16 @@ func Schedule(
 				}
 
 				if attempt.Outcome == mutation.OutcomeTimedOut {
-					if mutants[i].NeverReturns {
-						// Already answered. The retry exists to tell a mutant
-						// that hangs from a machine that was busy, and
-						// discovery proved which this is before anything ran --
-						// so measuring it again would pay the whole budget a
-						// second time to learn nothing. See
-						// [MutantRun.NeverReturns].
+					if mutants[i].NeverReturns || attempt.Diverged {
+						// Already answered, by one of the two things that can
+						// answer it without a stopwatch. The retry exists to
+						// tell a mutant that hangs from a machine that was busy;
+						// discovery proved the first of these before anything
+						// ran, and the second counted itself past what the
+						// original program did in this very tree. Measuring
+						// either again would pay the whole budget a second time
+						// to learn nothing. See [MutantRun.NeverReturns] and
+						// [Attempt.Diverged].
 						confirm(&results[i], attempt)
 						hooks.finish(results[i])
 						continue

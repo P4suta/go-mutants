@@ -66,6 +66,10 @@ type MutantResult struct {
 	// its rows instead.
 	MemoryExceeded bool
 	PeakMemory     int64
+	// Diverged says a counted loop is what settled this mutant rather than the
+	// deadline. It is here for MemoryExceeded's reason and no other: a cached
+	// mutant has no execution rows to read it off.
+	Diverged bool
 	// Executions are the passes this run made over the test binaries for this
 	// mutant, in attempt order. Nil becomes the empty list, which is what a
 	// mutant nothing executed carries.
@@ -612,6 +616,7 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			Cached:               result.Cached,
 			MemoryExceeded:       result.MemoryExceeded || anyExecutionExceeded(result.Executions),
 			PeakMemoryBytes:      max(result.PeakMemory, highestExecutionPeak(result.Executions)),
+			Diverged:             result.Diverged || anyExecutionDiverged(result.Executions),
 		})
 	}
 	if err := checkAccountedFor(opts, len(mutants), len(rejected)); err != nil {
@@ -1478,6 +1483,18 @@ func joinMemorySources() string {
 // there are no rows to fold and the facts come off the cache entry — so the two
 // sources are combined rather than chosen between, and a caller that supplied
 // both consistently gets the same answer either way.
+// anyExecutionDiverged reports whether a counted loop settled any pass of this
+// mutant, which is [anyExecutionExceeded]'s question about the other thing that
+// ends a target without a test failing.
+func anyExecutionDiverged(executions []Execution) bool {
+	for _, execution := range executions {
+		if execution.Diverged {
+			return true
+		}
+	}
+	return false
+}
+
 func anyExecutionExceeded(executions []Execution) bool {
 	for _, execution := range executions {
 		if execution.MemoryExceeded {

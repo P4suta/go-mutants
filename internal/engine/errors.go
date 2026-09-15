@@ -251,6 +251,17 @@ const (
 	// -- and that is exactly the kind of thing to be told about rather than to
 	// deduce from a run that looked slower than it should have.
 	CodeBaselineFromTestCache Code = "GOM4048"
+	// CodeLoopCensusUnusable reports a run whose loop census could not be read
+	// or whose ceilings could not be written, so its mutants are bounded in
+	// time alone: the stopwatch and the second measurement, which is what every
+	// run was held to before it could count what a loop does.
+	//
+	// It is a warning rather than an error for the reason the coverage pass
+	// fails open. Counting is an optimisation over the stopwatch and not a
+	// second opinion about a verdict — a mutant that does not return is
+	// detected either way — so a census that cannot be read costs the run time
+	// and precision of diagnosis, never a wrong answer. See ADR 0013.
+	CodeLoopCensusUnusable Code = "GOM4049"
 )
 
 // String returns the code as it is printed.
@@ -283,6 +294,7 @@ var codes = []Code{
 	CodeDeadlineExceeded,
 	CodeMemoryBoundUnavailable,
 	CodeBaselineFromTestCache,
+	CodeLoopCensusUnusable,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

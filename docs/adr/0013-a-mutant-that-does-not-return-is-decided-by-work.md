@@ -7,10 +7,11 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 ## Status
 
-Proposed, 2026-09-15. To be implemented by `internal/instrument`'s loop
-counters and the `Limit`/`Diverged` half of the generated runtime, by
-`internal/engine`'s census of the instrumented baseline, and by
-`internal/execute`'s classification of the divergence exit.
+Accepted, 2026-09-15. Implemented by `internal/instrument`'s loop counters and
+the `Limit`/`Over` half of the generated runtime, by `internal/engine`'s census
+of the instrumented baseline and its `DivergenceFactor`/`DivergenceFloor`, and
+by `internal/execute`'s classification of the divergence exit as a non-return
+that needs no second measurement.
 [ADR 0009](0009-a-mutant-is-bounded-in-memory-as-in-time.md) is the record this
 one is the twin of: that one bounds a mutant in memory as it is bounded in time,
 and this one replaces the bound in time with a bound in work wherever the work

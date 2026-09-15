@@ -241,6 +241,17 @@ type Options struct {
 	// depends on being writable.
 	CoverPkg string
 
+	// LoopLimits is the path the generated runtime reads its loop ceilings
+	// from, without the per-module suffix [instrument.LoopFileSuffix] adds.
+	// Empty leaves every ceiling at "no limit", which is the shape every run of
+	// an instrumented tree had before it could count -- bounded in time alone.
+	//
+	// It is set on a mutant run and on nothing else. A control and a probe pass
+	// run the original program, whose own counts are what the ceilings were
+	// derived from, so there is nothing for either of them to diverge from. See
+	// ADR 0013.
+	LoopLimits string
+
 	// Timeout bounds each *toolchain* command — one `go list`, one
 	// `go test -c` — and each [CollectCoverage] profiling run, and nothing
 	// else. A mutant's budget is a different number derived from a different

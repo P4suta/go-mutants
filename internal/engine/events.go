@@ -552,7 +552,17 @@ type MutantResult struct {
 	// MemoryExceeded is only ever set alongside [mutation.OutcomeKilled].
 	PeakMemory     int64
 	MemoryExceeded bool
-	MemoryLimit    int64
+
+	// Diverged reports that a counted loop of this mutant went past the ceiling
+	// the run derived for it from what the original program did, which is how a
+	// mutant that does not return is settled without a stopwatch.
+	//
+	// It is only ever set alongside [mutation.OutcomeTimedOut], and it is what
+	// lets a renderer say "did not return" where it would otherwise have to say
+	// "hung", which is a guess about a machine. The loop and the two counts are
+	// in the retained output. See ADR 0013.
+	Diverged    bool
+	MemoryLimit int64
 }
 
 // clone returns a copy that shares no slice with the receiver, so that a
