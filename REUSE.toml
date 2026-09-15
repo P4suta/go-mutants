@@ -131,6 +131,7 @@ SPDX-License-Identifier = "MIT OR Apache-2.0"
 [[annotations]]
 path = [
   "internal/config/testdata/fuzz/FuzzParse/815f24358e6c0d51",
+  "internal/validate/testdata/fuzz/FuzzParseDiagnostics/a8e9520ed16f68fa",
   "internal/coverage/testdata/textfmt.sample.txt",
 ]
 precedence = "aggregate"

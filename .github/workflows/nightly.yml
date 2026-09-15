@@ -69,6 +69,29 @@ jobs:
             package: ./internal/mutation
           - target: FuzzBuild
             package: ./internal/interval
+          # Four more readers of somebody else's bytes. The first two are the
+          # toolchain's own output -- what `go version` printed before anything
+          # else ran, and what the compiler printed about a snapshot that will
+          # not build, which is what decides who is blamed for it. The third is
+          # a recording this tool wrote and may not have finished writing, read
+          # after the fact by `trace summary`, `trace diff` and `explain`. The
+          # fourth is a document a CI matrix published, read back by
+          # `report merge` with a strict decoder.
+          - target: FuzzParseVersion
+            package: ./internal/gocmd
+          - target: FuzzParseDiagnostics
+            package: ./internal/validate
+          - target: FuzzReadRecording
+            package: ./trace
+          - target: FuzzParseDocument
+            package: ./internal/report
+          # And the two values a person types: a shard specification on a
+          # command line, and a flag in a `test.command` that a safety check has
+          # to recognise exactly as the test binary will.
+          - target: FuzzParseShardSpec
+            package: ./internal/report
+          - target: FuzzMatchAgreesWithTheFlagPackage
+            package: ./internal/testflag
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

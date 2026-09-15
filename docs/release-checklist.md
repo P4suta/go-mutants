@@ -114,11 +114,15 @@ nothing at all — no version bump, and no Release PR. See `CONTRIBUTING.md`.
       whole `-fuzztime`, with no `fuzz-crasher-*` artifact uploaded. Three of
       them rewrite or decide about this repository's own inputs — `FuzzParse`
       (`internal/config`), `FuzzMatch` (`internal/glob`), `FuzzFlatten`
-      (`internal/instrument`) — and five are readers of bytes go-mutants does
-      not control: `FuzzParseTextfmt` (`internal/coverage`), `FuzzParseDiff`
+      (`internal/instrument`). Nine are readers of bytes go-mutants does not
+      control: `FuzzParseTextfmt` (`internal/coverage`), `FuzzParseDiff`
       (`internal/gitdiff`), `FuzzValidate` (`internal/schemas`),
-      `FuzzMutantIdentity` (`internal/mutation`) and `FuzzBuild`
-      (`internal/interval`)
+      `FuzzMutantIdentity` (`internal/mutation`), `FuzzBuild`
+      (`internal/interval`), `FuzzParseVersion` (`internal/gocmd`),
+      `FuzzParseDiagnostics` (`internal/validate`), `FuzzReadRecording`
+      (`trace`) and `FuzzParseDocument` (`internal/report`). Two are values a
+      person types: `FuzzParseShardSpec` (`internal/report`) and
+      `FuzzMatchAgreesWithTheFlagPackage` (`internal/testflag`)
 - [ ] The nightly `property` job green at its deepened budget
       (`RAPID_CHECKS=2000`, `-count=5`, so each rerun draws a fresh seed), with
       no `rapid-failures` artifact uploaded
