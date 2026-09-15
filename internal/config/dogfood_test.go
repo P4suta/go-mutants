@@ -137,21 +137,21 @@ var repositoryExpectations = []Expectation{
 			"anything the first two did not.",
 	},
 	{
-		ID: "f9c4b0ecc2abd4a97dc1a4e56c28a961c7073f72e5dadf2e764c19262643955d",
+		ID: "35946b8e442ed10a434d3078182aea181ac5aa24979997eab3a3411fa4436c25",
 		Reason: "Equivalent: blame over an empty pending set answers an empty list, " +
 			"so `> 0` and `>= 0` set the same blame on every build; the guard " +
 			"is there to skip parsing the compiler's whole output on a trial " +
 			"build, which is a cost and not an answer.",
 	},
 	{
-		ID: "422de23dfd7e9613b11dc0663e7defe76aeac2672fe76510167f6d6f3f44cc3a",
+		ID: "d1903657159d42413034be2bef3bb000812b503fc6a0800a9b7faf61fcb9ee04",
 		Reason: "Unreachable: the loop is bounded at one pass per catalogued file " +
 			"and every pass decides at least one of them, because blame never " +
 			"answers an empty list while anything is pending -- so the search " +
 			"always returns from inside it.",
 	},
 	{
-		ID: "35c5559564979fa6ac1465f4d117c8272d805e92937b994903dff8a5b71893eb",
+		ID: "8b20fcac8336c3eca564c9b065c8867b4addb71d0953f0346f2933954411384c",
 		Reason: "Unreachable: the other half of the same backstop, which exists so " +
 			"that a search wrong about its own bound fails closed rather than " +
 			"falling out of the loop.",
@@ -322,20 +322,20 @@ var repositoryExpectations = []Expectation{
 			"4096 is positive for any document at all.",
 	},
 	{
-		ID: "032117c6b39b2b56b5f93fc691a60108f9c8bfe0f891ab6277841afbfcf16cf1",
+		ID: "3b525cda27c79847b5043b1ed0c5924088f415ecd7d8bdeb256eb642b30c6fa9",
 		Reason: "Equivalent: the second argument of make is a capacity hint, " +
 			"the runtime clamps a negative one to zero, and a map holds the " +
 			"same entries whatever it was sized for.",
 	},
 	{
-		ID: "9525f578dd1e2ba9416b5840f04aa29eac46731dfc166d0a1d7bb4d29f9fa7e7",
+		ID: "e46a140ecb4932fb9454fe6cf44688246bbd11546052e38baf97f199db1330e4",
 		Reason: "Equivalent: the guard reports 0 for a negative duration and " +
 			"d.Milliseconds() otherwise, and a zero duration is 0 " +
 			"milliseconds through either branch, so `<` and `<=` render " +
 			"every duration the same.",
 	},
 	{
-		ID: "2cb2d796d3f68b0d5562e1f541649e595cbad7584f96b480981683a2571a6ea3",
+		ID: "b95cf5f7760ea8444aa2e1512c60daf7060f533a673783cfbb5f736d767e49ed",
 		Reason: "Equivalent: `<=` and `<` disagree only for an id of exactly " +
 			"DisplayIDLength characters, where returning `id` and returning " +
 			"`id[:DisplayIDLength]` return the same string.",
@@ -377,7 +377,7 @@ var repositoryExpectations = []Expectation{
 			"row above.",
 	},
 	{
-		ID: "e8ab25167708cd5aaf7c72f137bf600ea3046c5b2d92512b85b32dadc957de41",
+		ID: "c6b70e0c3efef28723cff7df0ff96d2d60b06d0f458f8838eb2a7f1a7e6cce0a",
 		Reason: "Equivalent: a rejected mutant's disposition carries no " +
 			"outcome, and StateOf answers `unfulfilled` through the " +
 			"Rejected case and through the default alike, because the zero " +
@@ -398,41 +398,41 @@ var repositoryExpectations = []Expectation{
 			"back in is not observable.",
 	},
 	{
-		ID: "29d4bb15990c0c2328ba7c85e0974824de2680ecc5a29664ff93142f705a8a9f",
+		ID: "8ed9bc39d59d913d6c2b7ee942947280bbd2113bfad19981a9672d469b340e3b",
 		Reason: "Unreachable: partition has already translated every result's " +
 			"outcome through OutcomeOf, which refuses anything outside the " +
 			"six, and mutation.Tally records all six -- so the count this " +
 			"forwards cannot fail.",
 	},
 	{
-		ID: "63fba47e46fd2eaf58a388f3833f6fa4ecc1d416235add089d15bb8a9b20366b",
+		ID: "62ec204b2822dd114fab13b2c91171f5217226e7d85c9419777927f35dedefa7",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would forward it.",
 	},
 	{
-		ID: "e6b01720387d77612150d7bd2e4ce18cdcf86f5fa30a6af88e61b55206624c43",
+		ID: "d87840061d0c60bc574e6225141be9691d131a2005be37c1206535d8ca8c43ba",
 		Reason: "Unreachable: the same argument one level in -- tallyOf reads " +
 			"the outcomes partition has already accepted, so " +
 			"mutation.TallyOf cannot refuse one.",
 	},
 	{
-		ID: "c0e882fe05489e4c5f690258cff937433a90569d7dd9c66d29cb87e2fed26b96",
+		ID: "a0e7af3d26a014fd2ca311f3b27858203d6984bdc23f5fba682e8dcd95505182",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "04c726e648dd175f048be9ffe1a6c450accb49564bd2e66d2f08cbd508dafb56",
+		ID: "9ba94e487e2da6ec210920658f492727cf96ac59096361a35bb85e9bffe1efc0",
 		Reason: "Unreachable: Outcome.Mutation answers with one of the six core " +
 			"outcomes or with an error the line above returns, and " +
 			"mutation.Tally.Record has a case for all six.",
 	},
 	{
-		ID: "4ed85de71aa3f58bfc544352dbc6670620d2a5eb35d71eb7dd90a7a218ab1f0a",
+		ID: "8faf6ec6bea019578b545f1a72ee6577fa18c924fe61e734b2f2bc16e6851cf3",
 		Reason: "Unreachable: the same failure as the row above, on the line " +
 			"that would report it.",
 	},
 	{
-		ID: "ba78b2e7e77f5879222b374948ab1f36a6a4e745b3d99729c1a1a9eb708a9f95",
+		ID: "776653c1ef0eef817020ea6bec2d59d21e11f63a4c9127ea7ac5b176faacd64d",
 		Reason: "Unreachable: the counts disagree only when a row was not " +
 			"consumed by the catalogue walk, and a row is consumed exactly " +
 			"when its id is catalogued -- so the loop above always finds " +
