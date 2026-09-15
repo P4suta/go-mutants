@@ -526,11 +526,22 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # the copied files carry timestamps the cache has never seen -- and the rule
 # that takes the runs after the first was taking the lookups. A mutant run never
 # hits that cache, so the budget is now taken from the runs that ran, which here
-# is the first one. The "10s floor" above is therefore history: this gate's
+# was the first one. The "10s floor" above is therefore history: this gate's
 # timeout is now `slowest run that ran x 5`, and the counted quantity that
 # changed is the verdicts, not the clock -- a scoped measurement of four files
 # in internal/discover read eight timeouts and fourteen inconclusive verdicts
 # out of 174 mutants before, and none of either after.
+#
+# "Which here was the first one" is history too, and the fix went the other way:
+# every baseline run after the first is now given `-count=1` through GOFLAGS, so
+# `baseline_runs = 3` buys three measurements rather than one and two lookups,
+# and the rule that prefers the runs after the first has runs to prefer. The
+# first is left as the user wrote it -- it is the run that proves the suite
+# green, and the compiling one either way. Measured here: 8.2s, 4.9s, 6.7s where
+# it read 13.4s, 1.7s, 1.7s, a derived timeout of 33.7s where the same machine
+# derived 66.8s, and the same tally to the mutant. Three mutants never return
+# and each pays that budget twice, so the difference is most of what this gate
+# spends past its executions.
 #
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
