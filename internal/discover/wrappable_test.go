@@ -210,3 +210,126 @@ func TestEveryNameACompletionMayNotBindIsIndexed(t *testing.T) {
 		}
 	}
 }
+
+// TestTheParentIndexIsCompleteAndCorrect pins [guardResolver.indexParents],
+// which every outward walk in this file reads.
+//
+// The index is built with a stack that pushes on each node and pops on the nil
+// visit that closes it, and that is the only shape that stays balanced:
+// ast.Inspect skips the closing visit for a node whose callback returned false,
+// so a walk that pruned anywhere would leave the stack short and give every node
+// after it the wrong parent. A wrong parent is not a wrong verdict -- it is a
+// guard written around the wrong bytes.
+func TestTheParentIndexIsCompleteAndCorrect(t *testing.T) {
+	t.Parallel()
+
+	const src = "package pkg\n\n" +
+		"func probe(a, b int) int {\n" +
+		"\tif a < b {\n\t\treturn a * b\n\t}\n" +
+		"\tfor i := 0; i < b; i++ {\n\t\ta += i\n\t}\n" +
+		"\treturn func() int { return a - b }()\n" +
+		"}\n"
+
+	g := guardOver(t, src)
+
+	// Every node but the file itself has a parent, and every parent really
+	// encloses its child. Walking the tree a second way -- ast.Inspect's own
+	// order -- is what makes this a check rather than a restatement.
+	var counted int
+	for node, parent := range g.parent {
+		counted++
+		if parent == nil {
+			t.Fatalf("%T at %d has a nil parent", node, node.Pos())
+		}
+		if node.Pos() < parent.Pos() || node.End() > parent.End() {
+			t.Errorf("%T [%d,%d) is recorded under %T [%d,%d), which does not contain it",
+				node, node.Pos(), node.End(), parent, parent.Pos(), parent.End())
+		}
+	}
+	if counted == 0 {
+		t.Fatal("the parent index is empty")
+	}
+
+	// And the chain from the deepest leaf reaches the file, which is what
+	// every outward walk in this package relies on to terminate.
+	depth, reachedFile := 0, false
+	for node := ast.Node(deepestLeaf(t, g)); node != nil; node = g.parent[node] {
+		depth++
+		if _, isFile := node.(*ast.File); isFile {
+			reachedFile = true
+		}
+		if depth > counted+1 {
+			t.Fatal("the walk outward from a leaf does not terminate")
+		}
+	}
+	if !reachedFile {
+		t.Errorf("the walk outward visited %d nodes without reaching the file", depth)
+	}
+}
+
+// deepestLeaf is the last identifier of the fixture in source order, which the
+// fixtures here put inside a function literal inside a function body.
+func deepestLeaf(t *testing.T, g *guardResolver) ast.Node {
+	t.Helper()
+
+	var found ast.Node
+	for node := range g.parent {
+		ident, isIdent := node.(*ast.Ident)
+		if !isIdent {
+			continue
+		}
+		if found == nil || ident.Pos() > found.Pos() {
+			found = ident
+		}
+	}
+	if found == nil {
+		t.Fatal("the fixture holds no identifier")
+	}
+	return found
+}
+
+// TestWhichImportsSupplyANameATypeCanBeWrittenWith pins
+// [guardResolver.indexImports].
+//
+// Three import forms supply no name a type can be written with, and the
+// difference between them matters to the answer rather than to the wording: a
+// blank import binds nothing, a dot import binds the package's *contents*
+// rather than the package, and an aliased one binds the alias. A path imported
+// twice keeps the first usable spelling, so that the answer is the file's own
+// source order rather than a map iteration.
+func TestWhichImportsSupplyANameATypeCanBeWrittenWith(t *testing.T) {
+	t.Parallel()
+
+	g := newGuardResolver(parseProbe(t, "package pkg\n\n"+
+		"import (\n"+
+		"\t\"time\"\n"+
+		"\tclock \"sync\"\n"+
+		"\t_ \"embed\"\n"+
+		"\t. \"strings\"\n"+
+		"\tfirst \"os\"\n"+
+		"\tsecond \"os\"\n"+
+		")\n"), nil, nil, nil, nil)
+
+	for path, want := range map[string]string{
+		"time": "",      // no alias: the caller resolves it to the package's own name
+		"sync": "clock", // an alias, which is the name to write
+		"os":   "first", // the first usable spelling, in source order
+	} {
+		got, indexed := g.imports[path]
+		if !indexed {
+			t.Errorf("the index does not hold %q", path)
+			continue
+		}
+		if got != want {
+			t.Errorf("the index holds %q for %q, want %q", got, path, want)
+		}
+	}
+	for _, path := range []string{"embed", "strings"} {
+		if local, indexed := g.imports[path]; indexed {
+			t.Errorf("the index holds %q for %q, which binds no name a type can use", local, path)
+		}
+	}
+	if len(g.imports) != 3 {
+		t.Errorf("the index holds %v, want exactly the three paths that bind a name", g.imports)
+	}
+}
