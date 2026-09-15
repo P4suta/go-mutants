@@ -4249,6 +4249,30 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **Discovery loads what it walks, and stops paying three parses for one.**
+  The package loader was asked for every package's test variants, which is four
+  packages where there is one: the package, the package again with its
+  in-package test files compiled in, the external test package, and the
+  generated test main. The second of those re-parses and re-type-checks exactly
+  the files discovery is about to walk, which the walk already has. Measured on
+  this repository, that was 129 packages type-checked where 39 are walked and
+  768 files parsed where 229 are read — on the critical path of every run,
+  before a single mutant exists.
+  Nothing in the phase ever read a test variant. A `_test.go` file is
+  structural: built, run, never mutated, and not even recorded as a skip; the
+  import index a completion is drawn from leaves test files out by name, because
+  an import only a test file carries is not one the instrumented build has. The
+  catalogue is identical either way, and this change was made against that
+  evidence: 28 193 mutants, 201 files and 164 skips over this repository's own
+  tree, byte for byte the same document as before.
+  One thing does change, and it is the boundary of a precondition rather than an
+  accident. Discovery refuses a tree that does not compile because it reads that
+  tree's types; it reads no test file's, so a test file that does not compile no
+  longer refuses the whole run. The failure is still reported by the phase whose
+  business it is — the baseline builds and runs the test command before
+  discovery starts, and names the file when it does — and a run whose test
+  command names other packages entirely is no longer stopped by a broken test
+  file it was never going to build.
 - **A timeout discovery predicted is believed the first time, and the proof now
   reads the loop shape Go is actually written in.** A timeout is ordinarily
   measured twice before it is believed, because one timeout is as much a fact
