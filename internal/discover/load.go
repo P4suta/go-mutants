@@ -4,6 +4,7 @@
 package discover
 
 import (
+	"cmp"
 	"context"
 	"go/parser"
 	"go/token"
@@ -102,11 +103,11 @@ func load(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, &Error{Code: CodeLoadFailed, Message: "discovery was cancelled", Err: ctxErr}
 	}
+	// cmp.Or rather than a comparison in front of each key: "are these paths
+	// the same" and "is the comparison of them zero" are one question asked
+	// twice, and the second spelling is the one that also produces the answer.
 	slices.SortFunc(loaded, func(x, y *packages.Package) int {
-		if c := strings.Compare(x.PkgPath, y.PkgPath); c != 0 {
-			return c
-		}
-		return strings.Compare(x.ID, y.ID)
+		return cmp.Or(strings.Compare(x.PkgPath, y.PkgPath), strings.Compare(x.ID, y.ID))
 	})
 	return &loadResult{fset: fset, packages: loaded}, nil
 }

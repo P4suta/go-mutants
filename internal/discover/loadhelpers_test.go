@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -278,5 +279,340 @@ func TestTheEnvironmentAChildLoadIsGiven(t *testing.T) {
 				t.Errorf("environmentFrom = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// TestWhichPackagesACgoImportExempts pins [cgoExemption.covers].
+//
+// A cgo package is excluded from mutation wholesale, so whether its C
+// preprocessing step succeeded is not a question discovery has to have an
+// answer to -- and the compile gate has to know that before it refuses the
+// tree. The loader hands the same source over as several packages, though: the
+// package itself, its internal test variant, and the test binary's, each under
+// a decorated path. Missing one of them turns a machine with no C compiler into
+// a refused run.
+func TestWhichPackagesACgoImportExempts(t *testing.T) {
+	t.Parallel()
+
+	exemption := cgoExemption{
+		ids:   map[string]bool{"example.com/m/cgopkg [example.com/m/cgopkg.test]": true},
+		bases: map[string]bool{"example.com/m/cgopkg": true},
+	}
+	for _, c := range []struct {
+		name string
+		pkg  *packages.Package
+		want bool
+	}{
+		{
+			name: "the package itself",
+			pkg:  &packages.Package{ID: "example.com/m/cgopkg", PkgPath: "example.com/m/cgopkg"},
+			want: true,
+		},
+		{
+			name: "a variant the loader named",
+			pkg: &packages.Package{
+				ID:      "example.com/m/cgopkg [example.com/m/cgopkg.test]",
+				PkgPath: "example.com/m/cgopkg [example.com/m/cgopkg.test]",
+			},
+			want: true,
+		},
+		{
+			name: "the external test package",
+			pkg:  &packages.Package{ID: "x", PkgPath: "example.com/m/cgopkg_test"},
+			want: true,
+		},
+		{
+			name: "the test binary's package",
+			pkg:  &packages.Package{ID: "y", PkgPath: "example.com/m/cgopkg.test"},
+			want: true,
+		},
+		{
+			// A package whose name merely ends the same way. The suffix is not
+			// the question; what the suffix is attached to is.
+			name: "another package whose name ends in _test",
+			pkg:  &packages.Package{ID: "z", PkgPath: "example.com/m/other_test"},
+		},
+		{
+			name: "another package whose name ends in .test",
+			pkg:  &packages.Package{ID: "w", PkgPath: "example.com/m/other.test"},
+		},
+		{
+			name: "a package that imports it",
+			pkg:  &packages.Package{ID: "v", PkgPath: "example.com/m/user"},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := exemption.covers(c.pkg); got != c.want {
+				t.Errorf("covers(%s) = %v, want %v", c.pkg.PkgPath, got, c.want)
+			}
+		})
+	}
+
+	// And an exemption that found nothing exempts nothing, which is what every
+	// run on a tree with no cgo in it is.
+	empty := cgoExemption{ids: map[string]bool{}, bases: map[string]bool{}}
+	if empty.covers(&packages.Package{ID: "x", PkgPath: "example.com/m/pkg"}) {
+		t.Error("an empty exemption covers a package")
+	}
+}
+
+// TestACgoImportIsFoundInTheSourceRatherThanInTheGraph pins
+// [findCgoPackages], and the two things it records for each package it finds.
+//
+// The question is asked of the file on disk because that is the only place the
+// truth survives: with cgo enabled the import is rewritten away before the
+// loader produces syntax, and with cgo disabled the file is not part of the
+// package at all. Both the loader's own ID and the undecorated import path are
+// recorded, because the two answer for different variants of the same source --
+// and a package whose path the loader left empty has only the first.
+func TestACgoImportIsFoundInTheSourceRatherThanInTheGraph(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	write := func(name, src string) string {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("making the directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+		return path
+	}
+	cgoFile := write("cgopkg/cgo.go", "package cgopkg\n\nimport \"C\"\n")
+	plainFile := write("plain/plain.go", "package plain\n")
+
+	loaded := &loadResult{packages: []*packages.Package{
+		{ID: "example.com/m/cgopkg", PkgPath: "example.com/m/cgopkg", GoFiles: []string{cgoFile}},
+		{ID: "example.com/m/plain", PkgPath: "example.com/m/plain", GoFiles: []string{plainFile}},
+		// The loader leaves the path empty for a package it could not place,
+		// and the ID is then the only coordinate there is.
+		{ID: "unplaced", PkgPath: "", GoFiles: []string{cgoFile}},
+	}}
+
+	exemption := findCgoPackages(loaded, root)
+	for _, id := range []string{"example.com/m/cgopkg", "unplaced"} {
+		if !exemption.ids[id] {
+			t.Errorf("the exemption does not name the loader ID %q", id)
+		}
+	}
+	if exemption.ids["example.com/m/plain"] {
+		t.Error("the exemption names a package with no cgo file in it")
+	}
+	if !exemption.bases["example.com/m/cgopkg"] {
+		t.Error("the exemption does not name the import path of the cgo package")
+	}
+	if exemption.bases[""] {
+		t.Error("the exemption holds the empty import path, which every unplaced package would match")
+	}
+
+	// And the whole point of recording both: the compile gate asks `covers`,
+	// and a package the loader could only give an ID has to be covered by it.
+	if !exemption.covers(&packages.Package{ID: "unplaced"}) {
+		t.Error("a package named only by its loader ID is not covered")
+	}
+}
+
+// TestTheCompileGateNamesWhatStoppedIt pins [gate] and the sample it quotes.
+//
+// Discovery needs a tree that compiles, because the types it reads are what
+// every rule's applicability is decided by. What makes the refusal usable is
+// the sample: a build with four hundred errors in it is a wall of text nobody
+// reads, so a handful are quoted and the rest are counted -- and the count has
+// to be the arithmetic rather than an impression, because "and 3 more errors"
+// is how somebody decides whether to look.
+func TestTheCompileGateNamesWhatStoppedIt(t *testing.T) {
+	t.Parallel()
+
+	failing := func(path string, n int) *packages.Package {
+		pkg := &packages.Package{ID: path, PkgPath: path}
+		for i := range n {
+			pkg.Errors = append(pkg.Errors, packages.Error{
+				Pos: "a.go:" + strconv.Itoa(i+1) + ":1",
+				Msg: "undefined: x" + strconv.Itoa(i+1),
+			})
+		}
+		return pkg
+	}
+	empty := cgoExemption{ids: map[string]bool{}, bases: map[string]bool{}}
+
+	t.Run("a tree that compiles", func(t *testing.T) {
+		t.Parallel()
+
+		loaded := &loadResult{packages: []*packages.Package{{ID: "a", PkgPath: "example.com/m/a"}}}
+		if err := gate(loaded, empty); err != nil {
+			t.Fatalf("gate over a tree with no errors: %v", err)
+		}
+	})
+
+	t.Run("one error", func(t *testing.T) {
+		t.Parallel()
+
+		loaded := &loadResult{packages: []*packages.Package{failing("example.com/m/a", 1)}}
+		err := gate(loaded, empty)
+		if code := CodeOf(err); code != CodePackageErrors {
+			t.Fatalf("CodeOf(%v) = %q, want %q", err, code, CodePackageErrors)
+		}
+		for _, want := range []string{"1 package error", "undefined: x1"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal %q does not say %q", err, want)
+			}
+		}
+		if strings.Contains(err.Error(), "more error") {
+			t.Errorf("the refusal %q counts errors it already quoted", err)
+		}
+	})
+
+	t.Run("more errors than the sample holds", func(t *testing.T) {
+		t.Parallel()
+
+		loaded := &loadResult{packages: []*packages.Package{failing("example.com/m/a", errorSample+3)}}
+		err := gate(loaded, empty)
+		if err == nil {
+			t.Fatal("gate over a tree that does not compile succeeded")
+		}
+		if want := strconv.Itoa(errorSample+3) + " package errors"; !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+		if want := "and " + plural(3, "more error"); !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+		if got := strings.Count(err.Error(), "undefined: x"); got != errorSample {
+			t.Errorf("the refusal quotes %d errors, want the sample's %d", got, errorSample)
+		}
+	})
+
+	t.Run("exactly as many errors as the sample holds", func(t *testing.T) {
+		t.Parallel()
+
+		// The boundary the count is written across: with nothing left over,
+		// the refusal must not offer to count what it has already quoted.
+		loaded := &loadResult{packages: []*packages.Package{failing("example.com/m/a", errorSample)}}
+		err := gate(loaded, empty)
+		if err == nil {
+			t.Fatal("gate over a tree that does not compile succeeded")
+		}
+		if strings.Contains(err.Error(), "more error") {
+			t.Errorf("the refusal %q counts errors it already quoted", err)
+		}
+	})
+
+	t.Run("errors in an exempt package", func(t *testing.T) {
+		t.Parallel()
+
+		// A cgo package is excluded from mutation wholesale, so whether its C
+		// preprocessing step succeeded is not a question this gate has to have
+		// an answer to. A machine with no C compiler must still be able to run.
+		loaded := &loadResult{packages: []*packages.Package{failing("example.com/m/cgopkg", 4)}}
+		exempt := cgoExemption{
+			ids:   map[string]bool{"example.com/m/cgopkg": true},
+			bases: map[string]bool{"example.com/m/cgopkg": true},
+		}
+		if err := gate(loaded, exempt); err != nil {
+			t.Fatalf("gate over an exempt package's errors: %v", err)
+		}
+	})
+}
+
+// TestTheMainModuleIsTheOneRootedAtTheSnapshot pins [mainModule], whose two
+// refusals are different discoveries about the same tree.
+//
+// Every identity go-mutants mints is module-relative and the snapshot manifest
+// is rooted at the snapshot, so a main module rooted anywhere else would make a
+// candidate's path name a file the snapshot does not hold. "No package here
+// belongs to a module rooted here" and "the module is rooted somewhere else"
+// send a user to two different places, so they are two sentences.
+func TestTheMainModuleIsTheOneRootedAtTheSnapshot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	main := &packages.Module{Path: "example.com/m", Main: true, Dir: root}
+
+	t.Run("the module rooted at the snapshot", func(t *testing.T) {
+		t.Parallel()
+
+		loaded := &loadResult{packages: []*packages.Package{
+			{ID: "dep", Module: &packages.Module{Path: "example.com/dep", Dir: "/elsewhere"}},
+			{ID: "ours", Module: main},
+		}}
+		got, err := mainModule(loaded, root)
+		if err != nil {
+			t.Fatalf("mainModule: %v", err)
+		}
+		if got != main {
+			t.Errorf("mainModule = %+v, want the module rooted at the snapshot", got)
+		}
+	})
+
+	t.Run("a main module rooted elsewhere", func(t *testing.T) {
+		t.Parallel()
+
+		loaded := &loadResult{packages: []*packages.Package{
+			{ID: "ours", Module: &packages.Module{Path: "example.com/m", Main: true, Dir: filepath.Join(root, "sub")}},
+		}}
+		_, err := mainModule(loaded, root)
+		if code := CodeOf(err); code != CodeModuleNotFound {
+			t.Fatalf("CodeOf(%v) = %q, want %q", err, code, CodeModuleNotFound)
+		}
+		if !strings.Contains(err.Error(), "not at the snapshot root") {
+			t.Errorf("the refusal %q does not say where it expected the module", err)
+		}
+	})
+
+	for _, c := range []struct {
+		name string
+		pkgs []*packages.Package
+	}{
+		{name: "no packages at all"},
+		{
+			name: "a package with no module",
+			pkgs: []*packages.Package{{ID: "ours"}},
+		},
+		{
+			name: "a module that is not the main one",
+			pkgs: []*packages.Package{{ID: "dep", Module: &packages.Module{Path: "example.com/dep", Dir: root}}},
+		},
+		{
+			name: "a main module with no directory",
+			pkgs: []*packages.Package{{ID: "ours", Module: &packages.Module{Path: "example.com/m", Main: true}}},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := mainModule(&loadResult{packages: c.pkgs}, root)
+			if code := CodeOf(err); code != CodeModuleNotFound {
+				t.Fatalf("CodeOf(%v) = %q, want %q", err, code, CodeModuleNotFound)
+			}
+			if !strings.Contains(err.Error(), "belongs to a module rooted there") {
+				t.Errorf("the refusal %q is not the one about finding no module at all", err)
+			}
+		})
+	}
+}
+
+// TestAFailedLoadNamesTheToolchainItFound pins [toolchainHint].
+//
+// go/packages runs the `go` command found on the child's PATH, and a load that
+// failed is most often a load that ran a different `go` from the one the run
+// reported. Naming the located toolchain in the refusal is what lets the two be
+// compared at a glance; naming nothing when nothing was located is what keeps
+// the sentence from ending in a dangling parenthesis.
+func TestAFailedLoadNamesTheToolchainItFound(t *testing.T) {
+	t.Parallel()
+
+	located := gocmd.Toolchain{GoBin: filepath.Join("opt", "go", "bin", "go")}
+	hint := toolchainHint(located)
+	if !strings.Contains(hint, located.GoBin) {
+		t.Errorf("the hint %q does not name the toolchain", hint)
+	}
+	if !strings.HasPrefix(hint, " ") {
+		t.Errorf("the hint %q does not join onto the sentence before it", hint)
+	}
+	if got := toolchainHint(gocmd.Toolchain{}); got != "" {
+		t.Errorf("toolchainHint with nothing located = %q, want nothing", got)
 	}
 }

@@ -98,10 +98,14 @@ func inertProbe(t *testing.T, decls, expr string) bool {
 }
 
 // parseProbe parses a probe fixture, which is a whole file the caller wrote.
+//
+// Comments are kept: one of this package's own decisions is read off them, and
+// a fixture parsed without them would be a file that looks handwritten
+// whatever it says at the top.
 func parseProbe(t *testing.T, src string) *ast.File {
 	t.Helper()
 
-	file, err := parser.ParseFile(token.NewFileSet(), "probe.go", src, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "probe.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parsing:\n%s\n%v", src, err)
 	}
