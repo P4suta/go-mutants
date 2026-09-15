@@ -508,7 +508,9 @@ func (s *fileScan) unaryExpr(n *ast.UnaryExpr) error {
 	}
 	operand, ok := s.text(n.X)
 	if !ok {
-		return nil
+		// [fileScan.replaceReturn]'s reason: the text is read to build the
+		// replacement, and the emitter below would refuse the same file.
+		return s.nodeReachesPastTheEnd(n.X)
 	}
 	return s.emitNode(rule, n, operand)
 }
@@ -819,7 +821,16 @@ func (s *fileScan) replaceReturn(
 		return nil
 	}
 	original, ok := s.text(value)
-	if !ok || original == replacement || s.spellsTheSameConstant(value, replacement) {
+	if !ok {
+		// Refused rather than skipped, which is what every other emitter in
+		// this file does with the same discovery. The text is read here only to
+		// compare it against the replacement, and [fileScan.emitProbed] would
+		// have read it a moment later and refused; swallowing it here would
+		// make a file that changed underneath the run into a silent gap in the
+		// catalogue for one family and a refusal for every other.
+		return s.nodeReachesPastTheEnd(value)
+	}
+	if original == replacement || s.spellsTheSameConstant(value, replacement) {
 		return nil
 	}
 	return s.emitProbed(rule, value, replacement, site, needs)
@@ -949,12 +960,7 @@ func (s *fileScan) emitProbed(
 ) error {
 	original, ok := s.text(node)
 	if !ok {
-		position := s.tokFile.PositionFor(node.Pos(), false)
-		return &Error{
-			Code: CodeSpanMismatch,
-			Message: "internal error: " + s.rel + ":" + strconv.Itoa(position.Line) + ":" +
-				strconv.Itoa(position.Column) + " starts a node that reaches past the end of the file",
-		}
+		return s.nodeReachesPastTheEnd(node)
 	}
 	return s.emitAt(rule, node, node.Pos(), original, replacement, site, needs)
 }
@@ -1283,6 +1289,22 @@ func (s *fileScan) guardFor(anchor ast.Node, span mutation.Span) (Guard, bool) {
 
 // spanMismatch builds the internal-invariant error, located the way a user
 // would look for it even though only a maintainer should ever see it.
+// nodeReachesPastTheEnd is the refusal for a node whose end is outside the
+// bytes this scan was handed.
+//
+// One sentence for three callers, because it is one discovery: the file the
+// parser saw and the file this walk was given are not the same file. Two
+// wordings would be two things for a reader to tell apart that are not
+// different.
+func (s *fileScan) nodeReachesPastTheEnd(node ast.Node) error {
+	position := s.tokFile.PositionFor(node.Pos(), false)
+	return &Error{
+		Code: CodeSpanMismatch,
+		Message: "internal error: " + s.rel + ":" + strconv.Itoa(position.Line) + ":" +
+			strconv.Itoa(position.Column) + " starts a node that reaches past the end of the file",
+	}
+}
+
 func (s *fileScan) spanMismatch(pos token.Pos, original, detail string) error {
 	position := s.tokFile.PositionFor(pos, false)
 	return &Error{
