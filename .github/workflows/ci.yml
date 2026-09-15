@@ -490,7 +490,7 @@ jobs:
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
   #
-  # It is now 4383 over seventeen packages, and 1513 of those came from
+  # It is now 4386 over seventeen packages, and 1513 of those came from
   # adding six: internal/testlog, internal/tempowner, internal/gitdiff,
   # internal/snapshot, internal/cache and internal/validate. The rest grew
   # where the gate already looked -- discovery reaching the case labels of a
@@ -498,10 +498,13 @@ jobs:
   # which is the ordinary way this number moves. Three came off again when
   # discovery learned to refuse an edit whose replacement is the constant
   # the source already holds, which is the only way this number has ever
-  # fallen. Six of them never return, and that count has not changed across
-  # any of those widenings: internal/gitdiff brought three,
-  # internal/snapshot four and internal/validate thirteen, and all twenty
-  # were removed rather than measured, because a loop whose stopping
+  # fallen. Three of them never return, where six did until a mutant run
+  # learned to stop at the first test that fails: each of the three that
+  # left fails a test before it reaches the input that hangs it, so the
+  # binary is gone before that test starts and the verdict is a kill.
+  # Twenty never-returning mutants were removed rather than measured over
+  # the widenings -- internal/gitdiff brought three, internal/snapshot four
+  # and internal/validate thirteen -- because a loop whose stopping
   # condition is one edit away from never stopping is a loop with one
   # spelling too many. That is the part of the growth this job's budget
   # feels, because a mutant that hangs costs a whole derived timeout and

@@ -37,8 +37,8 @@
 #
 # That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
 # exist for, and with the bound in place the split is a fact again rather than a
-# race: 4300 killed, six caught by the timeout, seventy-seven declared, 100.00%,
-# identical on every run measured under [policy]. The two that allocate are
+# race: 4308 killed, three caught by the timeout, seventy-five declared, 100.00%,
+# identical on every run measured under [policy]. The mutants that allocate are
 # stopped in about a second and a half each, and the ledger below did not grow a
 # row for them, because a mutant the bound stops is killed rather than excused:
 # the original program was measured under the budget the bound came from, so a
@@ -118,9 +118,9 @@ profile = "balanced"
 #   internal/validate/*.go        369
 #   internal/snapshot/*.go        329
 #   internal/gitdiff/*.go         257
-#   internal/coverage/*.go        162
+#   internal/coverage/*.go        164
 #   internal/tempowner/*.go       121
-#   internal/gocmd/*.go           111
+#   internal/gocmd/*.go           112
 #   internal/schemas/*.go          89
 #   internal/glob/*.go             71
 #   internal/interval/*.go         50
@@ -129,9 +129,9 @@ profile = "balanced"
 #   internal/testlog/*.go          15
 #   internal/testflag/*.go          7
 #
-# catalogues 4383 mutants and detects 4306 of them -- 4300 killed and six caught
-# by the timeout -- leaving the seventy-seven rows declared below and a score of
-# 100.00%, in the wall clock recorded under [policy].
+# catalogues 4386 mutants and detects 4311 of them -- 4308 killed and three
+# caught by the timeout -- leaving the seventy-five rows declared below and a
+# score of 100.00%, in the wall clock recorded under [policy].
 #
 # Two things the table does not say, and both are worth saying here rather than
 # being inferred from a number.
@@ -295,26 +295,34 @@ profile = "balanced"
 # below. A scope that catches what it costs is a scope that then has to be
 # measured again, which is what happened here, twice.
 #
-# The six that never return are worth naming, because they are a real cost
-# rather than a curiosity, and because they are no longer one kind of thing.
-# Four spin: negating ParseTextfmt's scanner loop turns an empty document into
-# an endless one, negating either loop of the position walk does the same to a
-# TOML document, and negating the loop that neutralises a double hyphen inside
-# the HTML report's attribution comment never stops replacing what it has just
-# written. There is no way to catch those but to wait, and to wait
-# twice, since a timeout is not believed the first time -- so each costs two full
-# per-mutant timeouts of worker time while the others finish everything else.
-# That timeout is max(10s, slowest baseline x 5), so what they cost is a fact
-# about the machine as much as about them.
+# The three that never return are worth naming, because they are a real cost
+# rather than a curiosity, and because there used to be six.
 #
-# The other two allocate. lineStarts, negated or with its stride turned into a
-# subtraction, stops making progress through the file and appends to a slice
-# instead, and where the memory bound can be enforced it stops each of them at
-# about 1.1 GiB in a second and a half -- once, with no second attempt, because
-# a memory kill is a kill rather than a verdict to confirm. Before there was a
-# bound they were the two most expensive mutants in the run and one of them was
-# fatal to a CI runner; where the bound holds they are now cheaper than the
-# three that spin. See the paired measurements under [policy].
+# Two spin: negating ParseTextfmt's scanner loop turns an empty document into an
+# endless one, and negating the loop that neutralises a double hyphen inside the
+# HTML report's attribution comment never stops replacing what it has just
+# written. The third allocates: lineStarts with its stride turned into a
+# subtraction stops making progress through the file and appends to a slice
+# instead, and where the memory bound can be enforced it is stopped at about 1.1
+# GiB in a second and a half -- once, with no second attempt, because a memory
+# kill is a kill rather than a verdict to confirm. Where the bound cannot be
+# enforced, which is macOS, it waits out the timeout like the other two. There
+# is no way to catch those but to wait, and to wait twice, since a timeout is
+# not believed the first time -- so each costs two full per-mutant timeouts of
+# worker time while the others finish everything else. That timeout is
+# max(10s, slowest baseline x 5), so what they cost is a fact about the machine
+# as much as about them.
+#
+# The three that stopped being among them are the reason this paragraph was
+# rewritten, and they were not fixed: they were measured differently. A mutant
+# run stops at the first test that fails, because one failure is its whole
+# answer, and each of these three fails a test before it reaches the input that
+# hangs it. Negating lineStarts' own exit condition returns after the first
+# newline, which every test with a newline in it catches in milliseconds; only a
+# document with no newline at all reaches the endless append, and the binary is
+# gone before that test starts. The verdict is a kill instead of a timeout,
+# which is the more precise of the two and is scored the same -- and it is three
+# mutants no longer paying two full budgets each. See CHANGELOG.md.
 #
 # "Where the bound can be enforced" is load-bearing and used not to be written
 # down. The bound is derived rather than configured here, and a *derived* bound
@@ -1084,16 +1092,18 @@ mode = "auto"
 # below is compared on every run, --strict or not, and the note there says
 # where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 4383 mutants. Four thousand
-# three hundred and six are detected -- 4300 killed and six caught by the
-# timeout -- and the other seventy-seven are the rows declared above, which
+# Measured, not wished for. The scope catalogues 4386 mutants. Four thousand
+# three hundred and eleven are detected -- 4308 killed and three caught by the
+# timeout -- and the other seventy-five are the rows declared above, which
 # leave the denominator rather than counting against it, so the measured score
-# is 100.00%, with all seventy-seven expectations fulfilled and none stale. Every
-# one of those numbers
-# was the same on four of the five runs that measured this scope, the
-# killed/timeout split included; the fifth, taken while the machine picked up
-# other work, reported two of the kills as `inconclusive`, and what that means
-# is written under the pairs below.
+# is 100.00%, with all seventy-five expectations fulfilled and none stale.
+# Twenty-seven of those seventy-five are uncovered: the profiling pass reaches
+# 4359 of the 4386, and every one it does not is a row above that says why.
+# Every one of those numbers
+# was the same on four of the five runs that measured the seventy-seven-row
+# ancestor of this scope, the killed/timeout split included; the fifth, taken
+# while the machine picked up other work, reported two of the kills as
+# `inconclusive`, and what that means is written under the pairs below.
 #
 # The bound itself is derived and worth quoting, because it is the one number
 # here that is a fact about this repository's own suite rather than about the
@@ -1291,9 +1301,9 @@ strict = false
 #                         gate at all, and none is wanted.
 #   minimum_score = 99.75 compared against the measured score whether or not
 #                         --strict was passed. Four thousand three hundred and
-#                         six scored mutants are worth 0.023 points each, so
-#                         4296/4306 = 99.77% clears 99.75 and
-#                         4295/4306 = 99.74% does not: an ungated
+#                         eleven scored mutants are worth 0.023 points each, so
+#                         4301/4311 = 99.77% clears 99.75 and
+#                         4300/4311 = 99.74% does not: an ungated
 #                         `go-mutants run` reports up to ten survivors and
 #                         exits 0, and fails at eleven.
 #
@@ -1317,7 +1327,7 @@ strict = false
 # 19.71, so the slack went twelve, fourteen, fourteen, sixteen, seventeen,
 # nineteen while the scope grew by a third.
 #
-# Half a percent of 4306 is 21.53, and twenty-one is the number that was judged
+# Half a percent of 4311 is 21.56, and twenty-one is the number that was judged
 # too much at 544 -- so the same rule moves it a second time, to 99.75, which
 # leaves the backstop at ten survivors where 99.5 had left it at twelve when it
 # was set. The floor is a fixed number of survivors rather than a fixed
