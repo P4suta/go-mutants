@@ -146,8 +146,8 @@ func chooseRuntimeDir(root string) (string, error) {
 }
 
 // writeRuntime generates the activation package into the snapshot.
-func writeRuntime(root, dir string, catalog *mutation.Catalog, loops []loopSite) error {
-	source, err := renderRuntime(dir, catalog, loops)
+func writeRuntime(root, dir, modulePath string, catalog *mutation.Catalog, loops []loopSite) error {
+	source, err := renderRuntime(dir, modulePath, catalog, loops)
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func writeGeneratedPackage(root, dir string, source []byte) error {
 // The array is never zero-length even for an empty catalogue: `var M [0]bool`
 // is legal Go but leaves the package's only export unusable, and a length of
 // one costs a byte and keeps the generated source one shape rather than two.
-func renderRuntime(pkgName string, catalog *mutation.Catalog, loops []loopSite) ([]byte, error) {
+func renderRuntime(pkgName, modulePath string, catalog *mutation.Catalog, loops []loopSite) ([]byte, error) {
 	mutants := catalog.Mutants()
 	size := arraySize(catalog.Len())
 	sites := arraySize(len(loops))
@@ -254,7 +254,7 @@ func renderRuntime(pkgName string, catalog *mutation.Catalog, loops []loopSite) 
 	b.WriteString("\tM[index] = true\n")
 	b.WriteString("}\n\n")
 
-	renderLoopCounting(&b, sites, loops)
+	renderLoopCounting(&b, sites, loops, LoopFileSuffix(modulePath))
 
 	return formatGenerated(&b)
 }
@@ -281,11 +281,14 @@ func renderRuntime(pkgName string, catalog *mutation.Catalog, loops []loopSite) 
 // imports it. The census bookkeeping is atomic because a test suite is
 // concurrent, and it is only ever touched by a process that was asked to take a
 // census.
-func renderLoopCounting(b *strings.Builder, sites int, loops []loopSite) {
+func renderLoopCounting(b *strings.Builder, sites int, loops []loopSite, suffix string) {
 	fmt.Fprintf(b, "// loopCensusEnv names the file this process appends its loop census to.\n")
 	fmt.Fprintf(b, "// Empty or unset records nothing.\nconst loopCensusEnv = %q\n\n", LoopCensusEnv)
 	fmt.Fprintf(b, "// loopLimitsEnv names the file this process reads its ceilings from. Empty or\n")
 	fmt.Fprintf(b, "// unset leaves every ceiling at noLimit, which no loop can reach.\nconst loopLimitsEnv = %q\n\n", LoopLimitsEnv)
+	fmt.Fprintf(b, "// loopFileSuffix is what this module adds to either of those paths. A\n")
+	fmt.Fprintf(b, "// workspace run has one of these packages per module, each numbering its own\n")
+	fmt.Fprintf(b, "// loops, and the two variables name one path.\nconst loopFileSuffix = %q\n\n", suffix)
 	fmt.Fprintf(b, "// divergedExit is the status this process exits with when a loop passes its\n")
 	fmt.Fprintf(b, "// ceiling.\nconst divergedExit = %d\n\n", DivergedExit)
 	fmt.Fprintf(b, "// censusHeader opens the census this process writes.\nconst censusHeader = %q\n\n", censusHeader(len(loops)))
@@ -367,7 +370,8 @@ func renderLoopCounting(b *strings.Builder, sites int, loops []loopSite) {
 	b.WriteString("// run was before it could count.\n")
 	b.WriteString("func init() {\n")
 	b.WriteString("	for i := range Limit {\n\t\tLimit[i] = noLimit\n\t}\n")
-	b.WriteString("	if path := os.Getenv(loopCensusEnv); path != \"\" {\n")
+	b.WriteString("	if named := os.Getenv(loopCensusEnv); named != \"\" {\n")
+	b.WriteString("		path := named + loopFileSuffix\n")
 	b.WriteString("		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)\n")
 	b.WriteString("		if err == nil {\n")
 	b.WriteString("			censusFile = file\n")
@@ -377,8 +381,9 @@ func renderLoopCounting(b *strings.Builder, sites int, loops []loopSite) {
 	b.WriteString("			fmt.Fprintln(os.Stderr, \"go-mutants: cannot open the loop census \"+path+\": \"+err.Error())\n")
 	b.WriteString("		}\n")
 	b.WriteString("	}\n")
-	b.WriteString("	path := os.Getenv(loopLimitsEnv)\n")
-	b.WriteString("	if path == \"\" {\n\t\treturn\n\t}\n")
+	b.WriteString("	named := os.Getenv(loopLimitsEnv)\n")
+	b.WriteString("	if named == \"\" {\n\t\treturn\n\t}\n")
+	b.WriteString("	path := named + loopFileSuffix\n")
 	b.WriteString("	if err := readLimits(path); err != nil {\n")
 	b.WriteString("		for i := range Limit {\n\t\t\tLimit[i] = noLimit\n\t\t}\n")
 	b.WriteString("		fmt.Fprintln(os.Stderr, \"go-mutants: cannot read the loop limits \"+path+\": \"+err.Error()+\n")

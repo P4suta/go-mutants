@@ -82,13 +82,18 @@ func TestACountedLoopStopsTheMutantThatDoesNotReturn(t *testing.T) {
 		})
 	}
 
+	// The path the environment names and the path a module's runtime writes are
+	// not the same: a workspace has one generated package per module, each
+	// numbering its own loops, and the two variables name one path. The suffix
+	// is what keeps them apart, and it is computed the same way at both ends.
+	suffix := instrument.LoopFileSuffix(found.ModulePath)
 	censusPath := filepath.Join(testkit.Scratch(t), "census.txt")
 	t.Run("the original program leaves a census", func(t *testing.T) {
 		census := run(t, append(testkit.Compose(t, testkit.Scratch(t)),
 			instrument.LoopCensusEnv+"="+censusPath))
 		mutantkit.RequireExit(t, census, 0, "the instrumented baseline taking a census")
 
-		file, openErr := os.Open(censusPath)
+		file, openErr := os.Open(censusPath + suffix)
 		if openErr != nil {
 			t.Fatalf("the census was not written: %v", openErr)
 		}
@@ -109,7 +114,7 @@ func TestACountedLoopStopsTheMutantThatDoesNotReturn(t *testing.T) {
 
 	limitsPath := filepath.Join(testkit.Scratch(t), "limits.txt")
 	const ceiling = 1000
-	limits, err := os.Create(limitsPath)
+	limits, err := os.Create(limitsPath + suffix)
 	if err != nil {
 		t.Fatalf("creating the limit table: %v", err)
 	}

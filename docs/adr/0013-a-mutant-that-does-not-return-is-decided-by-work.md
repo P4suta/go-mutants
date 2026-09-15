@@ -94,9 +94,10 @@ one that decides the common case.
    loop at internal/config/position.go:170 ran 1048577 times, past the 1048576
    this run derived for it from what the original program did under the same
    tests; this mutant does not return" — and exits with a status of its own,
-   which `internal/execute` classifies as a confirmed non-return. There is no second measurement, because there is nothing about
-   the machine to control for: the same tree, the same test, the same census
-   produce the same answer on every machine, every time.
+   which `internal/execute` classifies as a confirmed non-return. There is no
+   second measurement, because there is nothing about the machine to control
+   for: the same tree, the same test, the same census produce the same answer
+   on every machine, every time.
 
 4. **The clock stays, as the backstop it should always have been.** Counting
    sees a loop in an instrumented file and nothing else, so three things stay

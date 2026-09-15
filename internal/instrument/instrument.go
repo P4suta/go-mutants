@@ -110,6 +110,11 @@ type Result struct {
 	RuntimeDir string
 	// RuntimeImport is that package's import path.
 	RuntimeImport string
+	// ModulePath is the module this pass rewrote, as [Options.ModulePath] gave
+	// it. It is carried back because the loop census and the limit table are
+	// per-tree files that several modules of one workspace would otherwise
+	// write over each other: see [LoopFileSuffix].
+	ModulePath string
 	// FilesInstrumented lists the module-relative paths that were rewritten, in
 	// catalogue order.
 	FilesInstrumented []string
@@ -184,6 +189,7 @@ func Instrument(opts Options) (Result, error) {
 	result := Result{
 		RuntimeDir:    dir,
 		RuntimeImport: importPath,
+		ModulePath:    opts.ModulePath,
 		GuardsByFile:  make(map[string]int),
 		LoopBase:      make(map[string]uint32),
 	}
@@ -218,7 +224,8 @@ func Instrument(opts Options) (Result, error) {
 	// leaves a snapshot that is obviously half-rewritten rather than one that
 	// looks instrumented and is not. Its directory name was settled first,
 	// because every file that was rewritten imports it by that name.
-	if err := writeTreeRuntime(opts.SnapshotRoot, dir, opts.Catalog, opts.Mode, loops); err != nil {
+	if err := writeTreeRuntime(
+		opts.SnapshotRoot, dir, opts.ModulePath, opts.Catalog, opts.Mode, loops); err != nil {
 		return Result{}, err
 	}
 	return result, nil
@@ -229,11 +236,13 @@ func Instrument(opts Options) (Result, error) {
 // The directory and the import path are settled identically for both, because
 // they are never in one snapshot; which package goes into that directory is the
 // only thing the two trees disagree about here.
-func writeTreeRuntime(root, dir string, catalog *mutation.Catalog, mode Mode, loops []loopSite) error {
+func writeTreeRuntime(
+	root, dir, modulePath string, catalog *mutation.Catalog, mode Mode, loops []loopSite,
+) error {
 	if mode == ModeProbe {
 		return writeProbeRuntime(root, dir, catalog)
 	}
-	return writeRuntime(root, dir, catalog, loops)
+	return writeRuntime(root, dir, modulePath, catalog, loops)
 }
 
 // validate checks the options and the catalogue's paths.
