@@ -118,6 +118,7 @@ func TestRunOnePassesTargetArgumentsAndUsesTheSuppliedEnvironment(t *testing.T) 
 	wantArgs := []string{
 		"example.com/a.test",
 		"-test.timeout=14s",
+		execute.FailFastFlag,
 		"-test.run=^TestRoundTrip$",
 		"-test.count=1",
 	}
@@ -459,7 +460,7 @@ func TestRunOneComposesTheChildInvocation(t *testing.T) {
 	}
 	c := seen[0]
 
-	want := []string{"example.com/a.test", "-test.timeout=14s"}
+	want := []string{"example.com/a.test", "-test.timeout=14s", execute.FailFastFlag}
 	if !slices.Equal(c.Argv, want) {
 		t.Errorf("argv = %q, want %q", c.Argv, want)
 	}
@@ -807,5 +808,71 @@ func TestRunOneReportsNoSequencesWithoutARecorder(t *testing.T) {
 	}
 	if len(attempt.ExecSeqs) != 0 {
 		t.Errorf("ExecSeqs = %v, want none: nothing was recorded", attempt.ExecSeqs)
+	}
+}
+
+// TestAPassStopsAtTheFirstFailureOnlyWhenOneFailureIsTheWholeAnswer sorts the
+// three passes by what each of them has to have seen by the time its binary
+// exits.
+//
+// A mutant run asks one question -- did anything catch this edit -- and the
+// first test that fails has answered it. Everything the binary runs after that
+// is the run paying for tests whose verdict cannot change the mutant's, and on
+// a suite where narrowing leaves a mutant with a dozen covering tests that is
+// most of what the execution phase spends. A control asks the same shape of
+// question about a set of tests with nothing activated, so the same is true of
+// it.
+//
+// A probe pass is the opposite, and it is the one this rule must not reach. Its
+// product is the set of mutants each binary could have ruled out, which is
+// accumulated by *every* test that runs; a pass that stopped early would record
+// a smaller set and license skipping the very executions that would have found
+// the kills. Stopping it at the first failure would turn an optimisation into a
+// wrong answer.
+func TestAPassStopsAtTheFirstFailureOnlyWhenOneFailureIsTheWholeAnswer(t *testing.T) {
+	t.Parallel()
+
+	const flag = "-test.failfast"
+	bins := testBins("example.com/a")
+
+	t.Run("a mutant run", func(t *testing.T) {
+		t.Parallel()
+
+		f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+		opts := execute.WithRunner(execute.Options{ScratchDir: t.TempDir()}, f.run)
+		execute.RunOne(t.Context(), opts,
+			execute.MutantRun{ID: "deadbeef", Timeout: mutantTimeout}, bins)
+		assertFlag(t, f, flag, true)
+	})
+
+	t.Run("a control run", func(t *testing.T) {
+		t.Parallel()
+
+		f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+		opts := execute.WithRunner(execute.Options{ScratchDir: t.TempDir()}, f.run)
+		execute.RunControl(t.Context(), opts, execute.ControlRun{Timeout: mutantTimeout}, bins)
+		assertFlag(t, f, flag, true)
+	})
+
+	t.Run("a probe pass", func(t *testing.T) {
+		t.Parallel()
+
+		f := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
+		opts := execute.WithRunner(execute.Options{ScratchDir: t.TempDir()}, f.run)
+		execute.RunProbe(t.Context(), opts,
+			probeRun(filepath.Join(t.TempDir(), "infections.log")), bins)
+		assertFlag(t, f, flag, false)
+	})
+}
+
+// assertFlag reports whether the one process the fake started carried a flag.
+func assertFlag(t *testing.T, f *fake, flag string, want bool) {
+	t.Helper()
+	seen := f.seen()
+	if len(seen) != 1 {
+		t.Fatalf("started %d processes, want 1", len(seen))
+	}
+	if got := slices.Contains(seen[0].Argv, flag); got != want {
+		t.Errorf("argv %q carries %s = %v, want %v", seen[0].Argv, flag, got, want)
 	}
 }

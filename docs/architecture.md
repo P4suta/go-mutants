@@ -1043,6 +1043,22 @@ the outcome cache.
   measures every mutant, and only how much of the suite each mutant is measured
   against differs.
 
+  **Stopping at the first failure.** A mutant run and a control both carry
+  `-test.failfast`, because the answer each of them produces is one bit: did
+  anything catch this edit, and does this set of tests pass together with
+  nothing activated. The first test that fails has answered either question, and
+  the tests a binary would go on to run after it are paid for and cannot change
+  it — which on a mutant narrowed to a dozen covering tests is most of what the
+  execution phase spends. No verdict moves: a mutant nothing catches runs every
+  selected test either way, and one something catches is killed by the same
+  binary. The single thing that moves is which *kind* of detection is reported
+  when a mutant both fails an early test and hangs a later one, and a kill is
+  the more precise of the two answers. A probe pass never carries the flag: its
+  product is accumulated by every test that runs, so a pass that stopped early
+  would record a smaller set than it measured. A `test.command` — or a library
+  caller's `Args` — that spells `-test.failfast=false` itself is obeyed, since
+  the engine's flag is placed in front of the target's own.
+
   Two rules bound the whole optimisation. Narrowing is auto-on exactly when
   `test.command` is one
   go-mutants can read as a scope — `go test` over package patterns, the built-in

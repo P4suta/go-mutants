@@ -433,9 +433,14 @@ func TestRunProbePassesTheOutputLimit(t *testing.T) {
 
 // TestRunProbeAndRunOneShareTheProcessCore keeps the two passes measuring the
 // same program: a mutant's binary and a probe's are started with the same
-// argument vector but for the activation flag, so a change to one that did not
-// reach the other would silently make the probe a measurement of something
-// else.
+// argument vector, so a change to one that did not reach the other would
+// silently make the probe a measurement of something else.
+//
+// One argument is deliberately not shared and is named here rather than
+// tolerated. A mutant run stops at the first test that fails, because one
+// failure is its whole answer; a probe pass may not, because its answer is
+// accumulated by every test that runs. Naming the exception is what keeps a
+// *second* difference a failure.
 func TestRunProbeAndRunOneShareTheProcessCore(t *testing.T) {
 	args := []string{"-test.run=^TestRoundTrip$", "-test.count=1"}
 
@@ -455,8 +460,19 @@ func TestRunProbeAndRunOneShareTheProcessCore(t *testing.T) {
 	if len(mutantCalls) != 1 || len(probeCalls) != 1 {
 		t.Fatalf("started %d mutant and %d probe processes, want one each", len(mutantCalls), len(probeCalls))
 	}
-	if strings.Join(mutantCalls[0].Argv, " ") != strings.Join(probeCalls[0].Argv, " ") {
-		t.Errorf("mutant argv %q and probe argv %q differ", mutantCalls[0].Argv, probeCalls[0].Argv)
+	withoutFailFast := slices.DeleteFunc(slices.Clone(mutantCalls[0].Argv), func(a string) bool {
+		return a == execute.FailFastFlag
+	})
+	if !slices.Contains(mutantCalls[0].Argv, execute.FailFastFlag) {
+		t.Errorf("the mutant argv %q does not stop at the first failure", mutantCalls[0].Argv)
+	}
+	if slices.Contains(probeCalls[0].Argv, execute.FailFastFlag) {
+		t.Errorf("the probe argv %q stops at the first failure, so it records a smaller set than it ran",
+			probeCalls[0].Argv)
+	}
+	if !slices.Equal(withoutFailFast, probeCalls[0].Argv) {
+		t.Errorf("mutant argv %q and probe argv %q differ by more than that",
+			mutantCalls[0].Argv, probeCalls[0].Argv)
 	}
 	if mutantCalls[0].Dir != probeCalls[0].Dir || mutantCalls[0].Timeout != probeCalls[0].Timeout {
 		t.Errorf("mutant ran in %q for %s and the probe in %q for %s",

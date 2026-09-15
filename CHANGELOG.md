@@ -4249,6 +4249,33 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **A mutant run stops at the first test that fails.** The question a mutant run
+  asks is one bit — did anything catch this edit — and the first failing test has
+  answered it. Everything the binary ran after that was paid for and could not
+  change the answer, and on a mutant that narrowing leaves with a dozen covering
+  tests that is most of what the execution phase spends. Mutant runs and
+  controls now carry `-test.failfast`; a control asks the same shape of question
+  about a set of tests with nothing activated, so the same is true of it.
+  No verdict moves. A mutant nothing catches runs every selected test either
+  way; one something catches is killed, by the same binary, and the report says
+  so. The single thing that moves is which *kind* of detection is reported when
+  a mutant both fails an early test and hangs a later one: that is a kill now
+  rather than a timeout, which is the more precise of the two answers and is
+  scored identically — and it is a mutant whose timeout budget the run no longer
+  pays.
+  A probe pass deliberately does not carry it, and that is the case worth
+  stating. A probe's product is the set of mutants each binary could have ruled
+  out, accumulated by *every* test that runs; a pass that stopped early would
+  record a smaller set than it measured and license skipping the very executions
+  that find the kills. The unit tier pins all three passes against each other,
+  and the integration tier pins the half a fake cannot: that a real compiled
+  test binary accepts the flag — an argument `flag` does not know makes a binary
+  exit 2, which reads here as a failing suite, so a flag that went away in some
+  future Go would be every mutant reported killed by a suite that never ran —
+  and that it stops the binary where it says it does.
+  A `test.command`, or a library caller's `Args`, that spells
+  `-test.failfast=false` itself is obeyed: the engine's flag is placed in front
+  of the target's own, and the standard flag package keeps the last value.
 - **Discovery loads what it walks, and stops paying three parses for one.**
   The package loader was asked for every package's test variants, which is four
   packages where there is one: the package, the package again with its

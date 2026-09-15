@@ -340,9 +340,10 @@ func TestToolchainCommandsPutTheLocatedToolchainFirstOnPath(t *testing.T) {
 // table — so a mutant can be scripted killed or survived by exit status and the
 // whole path from `go test -c` to a verdict runs with no Go installed.
 //
-// The two arguments the scheduler adds are asserted along the way, because they
-// are what the rules have to match: the `-test.timeout` it owns, doubled to the
-// in-process budget, and then the mutant's own arguments.
+// The arguments the scheduler adds are asserted along the way, because they are
+// what the rules have to match: the `-test.timeout` it owns, doubled to the
+// in-process budget, the `-test.failfast` a mutant run carries, and then the
+// mutant's own arguments.
 func TestAScriptedCompileProducesABinaryTheSchedulerRuns(t *testing.T) {
 	t.Parallel()
 
@@ -357,8 +358,9 @@ func TestAScriptedCompileProducesABinaryTheSchedulerRuns(t *testing.T) {
 
 	const budget = 10 * time.Second
 	deadline := "-test.timeout=" + (execute.InProcessTimeoutFactor * budget).String()
-	f.On(deadline, "-test.run=^TestCatchesIt$").Stdout("--- FAIL: TestCatchesIt\nFAIL\n").Exit(1)
-	f.On(deadline, "-test.run=^TestMissesIt$").Stdout("ok\n")
+	f.On(deadline, execute.FailFastFlag, "-test.run=^TestCatchesIt$").
+		Stdout("--- FAIL: TestCatchesIt\nFAIL\n").Exit(1)
+	f.On(deadline, execute.FailFastFlag, "-test.run=^TestMissesIt$").Stdout("ok\n")
 
 	binaries, err := execute.BuildTestBinaries(t.Context(), opts)
 	if err != nil {
