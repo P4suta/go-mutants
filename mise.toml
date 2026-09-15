@@ -520,6 +520,18 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # internal/gocmd's own would-be fourth spinner was turned into a kill rather
 # than accepted -- see .go-mutants.toml under [mutation].
 #
+# Both of those readings are from before the budget learned to tell a baseline
+# run from a cache lookup. `go test` without `-count=1` reprints a passing
+# result, so of three runs in a fresh snapshot only the first runs the tests --
+# the copied files carry timestamps the cache has never seen -- and the rule
+# that takes the runs after the first was taking the lookups. A mutant run never
+# hits that cache, so the budget is now taken from the runs that ran, which here
+# is the first one. The "10s floor" above is therefore history: this gate's
+# timeout is now `slowest run that ran x 5`, and the counted quantity that
+# changed is the verdicts, not the clock -- a scoped measurement of four files
+# in internal/discover read eight timeouts and fourteen inconclusive verdicts
+# out of 174 mutants before, and none of either after.
+#
 # --strict is passed rather than written into the file because the gate belongs
 # to the caller: policy.strict stays false so that `go-mutants run` on a
 # developer's machine reports a survivor instead of failing on it, and this

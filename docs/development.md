@@ -1468,6 +1468,20 @@ records the paired before-and-after that makes them a comparison. Whether this
 scope wants an explicit `test.timeout` was the open question the first two
 runs left; on the floor the tally is exact, so the timeout stays derived.
 
+Every reading above predates one more change to the derivation, and the change
+moves them. `go test` without `-count=1` keeps a passing result and reprints
+it, so of three baseline runs in a fresh snapshot only the first runs the tests:
+the copied files carry timestamps the cache has never seen, and the two after it
+are lookups. The rule that takes the runs after the first was therefore taking
+the lookups, and a mutant run — instrumented binary, environment naming a
+mutant — never hits that cache. The budget is now taken from the runs that ran
+the tests, which for this gate's `test.command` means the first one, and the
+floor readings above are from before that. What it buys is not speed: it is that
+work is reported as work. A scoped measurement of four files in
+`internal/discover` read eight confirmed timeouts and fourteen `inconclusive`
+verdicts out of 174 mutants on the old derivation, and none of either on the
+new. A baseline every run of which was a cache lookup says so as `GOM4048`.
+
 Six of those mutants never return, and they are worth knowing about because
 they, rather than the catalogue, are much of what sets this gate's wall clock.
 **Four spin**: `negate-loop-condition` on `internal/coverage/textfmt.go`'s `for
