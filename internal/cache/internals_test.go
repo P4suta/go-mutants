@@ -252,10 +252,14 @@ func TestUsableWithinIsTheSameArgumentForTheMemoryBound(t *testing.T) {
 func TestAnEntryIsCheckedAgainstTheQuestionItWasAskedFor(t *testing.T) {
 	t.Parallel()
 
-	const (
-		key     = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-		context = "0123456789abcdef"
-		id      = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	// Spelled with Repeat rather than written out: a run of sixty-four hex
+	// characters in a test is indistinguishable from a leaked credential to the
+	// scanner this repository runs over every file, and a digest that is
+	// obviously a pattern says what it is to a reader as well.
+	var (
+		key     = strings.Repeat("ab", 32)
+		context = strings.Repeat("ab", 8)
+		id      = strings.Repeat("cd", 32)
 	)
 	good := func() Entry {
 		return Entry{

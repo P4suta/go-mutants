@@ -317,6 +317,39 @@ func TestTempDirectoryIsWhereTheRunSnapshotsAndSweeps(t *testing.T) {
 	}
 }
 
+// TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun is the other half of
+// the budget rule, and the half that needs a command the toolchain will not
+// answer from its cache.
+//
+// With `-count=1` both runs run the tests, so both are observations — and of
+// two observations the first is the one that compiled, which a mutant run never
+// does. The budget takes the slowest of the rest.
+func TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun(t *testing.T) {
+	t.Parallel()
+	opts := options(t, "simple")
+	opts.Config.Test.BaselineRuns = 2
+	opts.Config.Test.Command = []string{"go", "test", "-count=1", "./..."}
+
+	outcome, _, err := collect(t, t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(outcome.BaselineRuns) != 2 {
+		t.Fatalf("measured %d baseline runs, want 2", len(outcome.BaselineRuns))
+	}
+	if outcome.SlowestBaseline != outcome.BaselineRuns[1] {
+		t.Errorf("SlowestBaseline = %s, want %s, the run after the one that compiled (runs %v)",
+			outcome.SlowestBaseline, outcome.BaselineRuns[1], outcome.BaselineRuns)
+	}
+	if want := max(MinDerivedTimeout, TimeoutFactor*outcome.BaselineRuns[1]); outcome.Timeout != want {
+		t.Errorf("timeout = %s, want max(%s, 5 x %s) = %s",
+			outcome.Timeout, MinDerivedTimeout, outcome.BaselineRuns[1], want)
+	}
+	if _, found := warningOf(outcome, CodeBaselineFromTestCache); found {
+		t.Errorf("a baseline neither run of which was cached published %s", CodeBaselineFromTestCache)
+	}
+}
+
 func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	t.Parallel()
 	opts := options(t, "simple")
@@ -343,12 +376,23 @@ func TestRunMeasuresTheBaselineAndDerivesTheTimeout(t *testing.T) {
 	// a second measurement: runner.Result.Duration is the outer, supervised
 	// time, and anything this test timed independently would be a different
 	// number.
-	// The budget is sized on the runs after the first: the first run of
-	// `go test` compiles, and a mutant run never does.
-	slowest := slices.Max(outcome.BaselineRuns[1:])
+	//
+	// The command is the configured default, `go test ./...`, which keeps a
+	// passing result and reprints it. So in a fresh snapshot the first run
+	// misses that cache — the copied files carry timestamps it has never seen —
+	// and the second is a lookup, which measured nothing and does not size a
+	// budget. The one run that ran is the whole of the evidence. The other rule,
+	// that the first of the runs which ran is the one that compiled, is
+	// TestABaselineThatRanTwiceSizesTheBudgetOnTheSecondRun below.
+	slowest := outcome.BaselineRuns[0]
 	if outcome.SlowestBaseline != slowest {
-		t.Errorf("SlowestBaseline = %s, want %s, the slowest of the runs after the first",
-			outcome.SlowestBaseline, slowest)
+		t.Errorf("SlowestBaseline = %s, want %s, the one run that ran the tests (runs %v)",
+			outcome.SlowestBaseline, slowest, outcome.BaselineRuns)
+	}
+	// And no warning, because that one run did measure the suite. GOM4048 is
+	// for a baseline in which nothing did.
+	if _, found := warningOf(outcome, CodeBaselineFromTestCache); found {
+		t.Errorf("a baseline with one run that ran published %s", CodeBaselineFromTestCache)
 	}
 	want := max(MinDerivedTimeout, TimeoutFactor*slowest)
 	if outcome.Timeout != want {

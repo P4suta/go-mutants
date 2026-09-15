@@ -4643,6 +4643,34 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- **A per-mutant budget sized on a run of `go test` that did not run the
+  tests.** `go test` without `-count=1` keeps a passing result and reprints it,
+  and the pattern that produces in a fresh snapshot is exactly the one the
+  budget's rule legislates for: the first baseline run misses the cache, because
+  the copied files carry timestamps it has never seen, and every run after it
+  hits. The rule takes the runs *after* the first, for the good reason that the
+  first is the one that compiles — so with the ordinary `test.command` it was
+  taking the lookups. A mutant run always misses the cache: its binary is
+  instrumented and its environment names a mutant. This repository's own
+  `internal/discover` suite measured 9.0 s on the run that ran, 1.9 s on the two
+  that did not, and 6.4 s per mutant — a budget of 10 s where the work asks for
+  32, which turns ordinary work into timeouts and single timeouts into
+  `inconclusive`. A scoped measurement of four files reported eight confirmed
+  timeouts and fourteen inconclusive verdicts out of 174 mutants; with the
+  budget derived from the run that ran the tests, the same four files report
+  none of either.
+  A run answered from the cache says so in its own output, so that is what is
+  read: the package line `go test` prints carries `(cached)` in place of a
+  duration, and such a run is dropped from the derivation rather than averaged
+  into it. It is recognised by the shape of the line rather than by searching
+  for the word, so a suite that logs it is not mistaken for one. A baseline
+  *every* run of which was answered that way has nothing left to size on; it
+  keeps the slowest lookup, which is all the evidence there is, and says so as
+  the new `GOM4048` — a warning rather than an error, because the verdicts are
+  still verdicts and what is lost is the diagnosis, not the measurement.
+  `test.baseline_runs` accordingly buys a second and a third measurement only
+  where the command defeats the cache, and `docs/configuration.md` now says so
+  under both keys.
 - **A run's own scratch directory goes even after a killed test left one of its
   directories shut.** Killing test processes is what this tool does — a
   per-mutant timeout kills one, an interrupted run kills every worker at once —
