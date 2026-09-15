@@ -1493,6 +1493,21 @@ written. A spinning mutant holds nothing, so only the clock can catch it, and a
 timeout is measured a second time before it is believed — two ten-second waits
 each, eighty seconds of worker time.
 
+That second wait is now paid only where discovery could not answer the question
+in advance. A loop whose measure an edit removes is decided from the syntax and
+the types before anything runs, and a timeout the proof predicted is believed
+the first time; see [Termination proof](operators.md#termination-proof) for the
+shapes it reads and the ones it refuses.
+
+**None of the four above is one of them**, and it is worth saying which way that
+cuts. `for parser.NextExpression()`, `for pair.Next()` and the replace loop all
+test a *call* rather than a variable against a bound, and `lineStarts` is a
+`for offset := 0; ;` with no condition at all — so this gate still pays the
+second wait for every one of them. What the proof buys is for the shape it
+reads, and `fixtures/runaway` is the fixture that holds one: its
+`negate-loop-condition` mutant is proved `unbounded` and measured once, which
+the work ceiling records as `mutant-run 3` where it was 4.
+
 **Two allocate**, and they are the reason a mutant is now bounded in memory as
 well as in time. `internal/config`'s `lineStarts`, with `i < 0` negated or its
 stride turned into a subtraction, appends to a slice instead of advancing

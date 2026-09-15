@@ -759,6 +759,9 @@ type state struct {
 	// on, and it is absent for a mutant discovery could not place — which
 	// [displayIndex] documents as impossible.
 	packages map[string]string
+	// neverReturns is the mutants discovery proved cannot leave their loop,
+	// which is what lets one timeout be the verdict rather than two.
+	neverReturns map[string]bool
 	// coverage is what the coverage phase decided. The zero value is a run with
 	// coverage off, which is what every path that never reached the phase — an
 	// early failure, a custom test command, nothing to execute — leaves behind.
@@ -1212,7 +1215,7 @@ func (s *session) mutate(
 		return err
 	}
 	st.catalog = catalog
-	st.display, st.packages = displayIndex(catalog, candidates, found.modules)
+	st.display, st.packages, st.neverReturns = displayIndex(catalog, candidates, found.modules)
 
 	// The guard hints travel with the catalogue from here on. They are the one
 	// thing instrumentation cannot work out for itself — which rewrite form an
@@ -1720,7 +1723,13 @@ func (s *session) selection(
 
 	runs := make([]execute.MutantRun, 0, len(ids))
 	for _, id := range ids {
-		run := execute.MutantRun{ID: id, Timeout: timeout, MemoryLimit: memoryLimit, Package: st.packages[id]}
+		run := execute.MutantRun{
+			ID:           id,
+			Timeout:      timeout,
+			MemoryLimit:  memoryLimit,
+			Package:      st.packages[id],
+			NeverReturns: st.neverReturns[id],
+		}
 		// The short form the console and the report already print, carried so
 		// that the account of an attempt reads in the same identities. It is
 		// looked up rather than derived: how much of an id is short enough to
@@ -2379,7 +2388,7 @@ func displayIndex(
 	catalog *mutation.Catalog,
 	candidates []discover.Located,
 	modules []discover.WorkspaceModule,
-) (display map[string]MutantResult, packages map[string]string) {
+) (display map[string]MutantResult, packages map[string]string, neverReturns map[string]bool) {
 	type key struct {
 		// module is part of the key for the reason it is part of the identity:
 		// two modules of one workspace can each hold an `app.go`, and an edit
@@ -2412,6 +2421,10 @@ func displayIndex(
 
 	display = make(map[string]MutantResult, catalog.Len())
 	packages = make(map[string]string, catalog.Len())
+	// The mutants discovery proved cannot leave their loop. It is read off the
+	// same join because it is the same fact about the same candidate, and what
+	// it buys is one measurement rather than two: see [execute.MutantRun.NeverReturns].
+	neverReturns = make(map[string]bool)
 	for _, m := range catalog.Mutants() {
 		where := located[key{module: m.ModulePath, path: m.Path, span: m.Span, rule: m.Rule.Name}]
 		display[m.ID] = MutantResult{
@@ -2428,8 +2441,11 @@ func displayIndex(
 		if where.Package != "" {
 			packages[m.ID] = where.Package
 		}
+		if where.Termination != nil && where.Termination.Verdict == discover.TerminationUnbounded {
+			neverReturns[m.ID] = true
+		}
 	}
-	return display, packages
+	return display, packages, neverReturns
 }
 
 // changedRef is the ref a `--changed` run recorded, or "" for every other run.

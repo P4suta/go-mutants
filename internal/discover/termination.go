@@ -249,29 +249,83 @@ func (s *fileScan) enclosingInductionLoop(anchor ast.Node) (inductionLoop, bool)
 	return inductionLoop{}, false
 }
 
-// readInductionLoop recognises `for …; v OP bound; v STEP` and nothing else.
+// readInductionLoop recognises a counted loop: `for …; v OP bound; v STEP` and
+// `for v OP bound { … v STEP … }`.
+//
+// The second shape is the one most Go loops with a measure are written in --
+// `for remaining > 0 { …; remaining-- }` -- and reading only the first would
+// leave the commonest runaway in the language unproved. What it costs is the
+// conditions in [readBodyStep]: a step in a post slot runs once per iteration
+// by the grammar, and a step in a body only runs once per iteration if nothing
+// can jump past it.
 func readInductionLoop(loop *ast.ForStmt) (inductionLoop, bool) {
-	if loop.Cond == nil || loop.Post == nil {
-		// `for {}` and `for cond {}` have no step this phase can reason about.
+	if loop.Cond == nil {
+		// `for {}` and `for range …` carry no condition to measure against.
 		return inductionLoop{}, false
 	}
 	variable, step := readStep(loop.Post)
+	stepStmt := loop.Post
 	if step == 0 {
-		return inductionLoop{}, false
+		variable, step, stepStmt = readBodyStep(loop.Body)
+		if step == 0 {
+			return inductionLoop{}, false
+		}
 	}
 	comparison := readComparison(loop.Cond, variable)
 	if !isOrdering(comparison) {
 		return inductionLoop{}, false
 	}
-	if assignsWithin(loop.Body, variable) {
-		// A body that moves the variable itself is a loop whose measure is not
-		// the post statement's, and nothing here can say what it is.
+	if assignsWithinExcept(loop.Body, variable, stepStmt) {
+		// A body that moves the variable somewhere other than its step is a
+		// loop whose measure is not the step's, and nothing here can say what
+		// it is.
 		return inductionLoop{}, false
 	}
-	if boundMoves(loop) {
+	if boundMoves(loop, stepStmt) {
 		return inductionLoop{}, false
 	}
 	return inductionLoop{stmt: loop, variable: variable, step: step, comparison: comparison}, true
+}
+
+// readBodyStep reads the step of a `for cond { … }`, whose measure moves in the
+// body rather than in a post slot, and answers a step of zero for every body it
+// cannot follow.
+//
+// Three conditions, and each is about the one thing a post slot gives for free:
+// that the step runs once per iteration.
+//
+//   - The step is a *direct* statement of the body. One inside an `if`, a
+//     nested loop or a clause runs some iterations and not others, and a
+//     measure that sometimes does not move is not a measure.
+//   - There is exactly one of them. Two steps in one body is a measure that
+//     moves by an amount this phase would have to add up, and one of them may
+//     be conditional on something it cannot see.
+//   - No `continue` anywhere under the loop. A `continue` jumps to the end of
+//     the iteration, which in a body-stepped loop is jumping *past* the step --
+//     the same hazard as a conditional step, written the other way round. A
+//     `continue` of an inner loop is harmless and is refused anyway, because
+//     telling the two apart is a label resolution this phase does not do.
+func readBodyStep(body *ast.BlockStmt) (variable string, step int, stmt ast.Stmt) {
+	if body == nil {
+		return "", 0, nil
+	}
+	for node := range ast.Preorder(body) {
+		if branch, isBranch := node.(*ast.BranchStmt); isBranch && branch.Tok == token.CONTINUE {
+			return "", 0, nil
+		}
+	}
+	for _, candidate := range body.List {
+		name, moved := readStep(candidate)
+		if moved == 0 {
+			continue
+		}
+		if step != 0 {
+			// A second step. See the doc comment.
+			return "", 0, nil
+		}
+		variable, step, stmt = name, moved, candidate
+	}
+	return variable, step, stmt
 }
 
 // readStep reads `v++`, `v--`, `v += k` and `v -= k` for a constant k, and
@@ -409,10 +463,20 @@ func mentions(expr ast.Expr, name string) bool {
 // A nested function literal is walked too: a closure that moves the variable
 // moves it, and whether it is called is not something this phase decides.
 func assignsWithin(block *ast.BlockStmt, name string) bool {
+	return assignsWithinExcept(block, name, nil)
+}
+
+// assignsWithinExcept is [assignsWithin] with one statement passed over: the
+// step of a body-stepped loop, which is the one assignment to the variable that
+// *is* the measure rather than something that breaks it.
+func assignsWithinExcept(block *ast.BlockStmt, name string, except ast.Stmt) bool {
 	if block == nil {
 		return false
 	}
 	for node := range ast.Preorder(block) {
+		if except != nil && node == ast.Node(except) {
+			continue
+		}
 		switch statement := node.(type) {
 		case *ast.IncDecStmt:
 			if ident, ok := statement.X.(*ast.Ident); ok && ident.Name == name {
@@ -434,7 +498,7 @@ func assignsWithin(block *ast.BlockStmt, name string) bool {
 //
 // `for i := 0; i < n; i++ { n = f() }` is a loop whose bound is not a bound,
 // and nothing here can say whether an edit to it terminates.
-func boundMoves(loop *ast.ForStmt) bool {
+func boundMoves(loop *ast.ForStmt, step ast.Stmt) bool {
 	binary, ok := loop.Cond.(*ast.BinaryExpr)
 	if !ok {
 		return true
@@ -442,7 +506,7 @@ func boundMoves(loop *ast.ForStmt) bool {
 	for _, side := range []ast.Expr{binary.X, binary.Y} {
 		for node := range ast.Preorder(side) {
 			ident, isIdent := node.(*ast.Ident)
-			if isIdent && assignsWithin(loop.Body, ident.Name) {
+			if isIdent && assignsWithinExcept(loop.Body, ident.Name, step) {
 				return true
 			}
 		}

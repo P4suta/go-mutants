@@ -23,8 +23,11 @@ import (
 // its own would move it for reasons about the fixture instead. `simple` is a
 // green run end to end; `killable` has survivors, which cost a whole-binary
 // confirmation each under ADR 0010; `coverage` has an uncovered mutant, which
-// costs nothing at all and is the one a regression would start executing.
-var ceilingCorpus = []string{"simple", "killable", "coverage"}
+// costs nothing at all and is the one a regression would start executing; and
+// `runaway` holds a mutant that does not leave its loop, which is the only
+// fixture where the difference between measuring a timeout once and measuring
+// it twice is a number.
+var ceilingCorpus = []string{"simple", "killable", "coverage", "runaway"}
 
 // TestTheWorkAWholeRunDoesIsCounted is the ratchet on how much a run does.
 //
