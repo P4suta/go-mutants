@@ -4249,6 +4249,16 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **The dogfood gate's counted budget, re-measured.** 4386 mutants catalogued
+  at profile balanced, 4311 detected, 833 tests profiled across 17 test
+  binaries, 75 declared rows of which 27 are uncovered, and a score of 100.00%
+  with every expectation fulfilled and none stale. The number worth reading is
+  the last one: **three mutants never return, where six did**. The three that
+  left were not fixed, they were measured differently — each of them fails a
+  test before it reaches the input that hangs it, and a mutant run now stops at
+  the first test that fails, so the binary is gone before that test starts. Each
+  of the three used to pay two full per-mutant timeouts in the serial retry
+  pass, which on this gate is the single most expensive thing a mutant can do.
 - **The interval order is a comparison rather than a subtraction, and two
   declared rows are gone with it.** `internal/coverage`'s intervals are sorted
   by start line and then by end line, and the second key was written as the
