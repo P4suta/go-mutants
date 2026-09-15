@@ -616,3 +616,74 @@ func TestAFailedLoadNamesTheToolchainItFound(t *testing.T) {
 		t.Errorf("toolchainHint with nothing located = %q, want nothing", got)
 	}
 }
+
+// TestAToolchainWithNoDirectoryChangesNoPath is the pair of early returns in
+// the environment builder.
+//
+// Prepending the toolchain's directory to PATH is what keeps a `go` that hands
+// work to another `go` -- the toolchain line in a go.mod is resolved that way --
+// from resolving a different one. When there is no directory to prepend, the
+// environment has to come back as it was: an empty entry in front of PATH would
+// put the *working directory* on it, which is a path this run does not control.
+func TestAToolchainWithNoDirectoryChangesNoPath(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=" + filepath.Join("usr", "bin")}
+	for _, c := range []struct {
+		name  string
+		goBin string
+	}{
+		{name: "no toolchain located at all", goBin: ""},
+		{name: "a toolchain named without a directory", goBin: "go"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := environmentFrom(base, gocmd.Toolchain{GoBin: c.goBin}, false)
+			want := []string{"PATH=" + filepath.Join("usr", "bin"), "GOWORK=off"}
+			if strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Errorf("environmentFrom = %v, want %v", got, want)
+			}
+		})
+	}
+
+	// And a workspace run, which *removes* GOWORK rather than pinning it off:
+	// a module of a workspace has to be loaded with the workspace in force, and
+	// an empty GOWORK is read by the go command as "no workspace" rather than
+	// as "decide for yourself".
+	got := environmentFrom(base, gocmd.Toolchain{}, true)
+	for _, entry := range got {
+		if strings.HasPrefix(entry, "GOWORK=") {
+			t.Errorf("a workspace load carries %q, want no GOWORK at all", entry)
+		}
+	}
+}
+
+// TestAPathWithNoRelativeFormIsOutsideTheModule is [relativePath]'s third
+// refusal, which is neither "outside" nor "unnormalizable".
+//
+// `filepath.Rel` refuses a pair it cannot express -- a relative root and an
+// absolute file have no relative path between them without knowing the working
+// directory -- and the answer has to be "not this module's" rather than a
+// guess. The root a real run passes is absolute, so this is the fail-closed
+// arm; without it a caller that passed a relative root would get a path that
+// looks fine and names a file somewhere else.
+func TestAPathWithNoRelativeFormIsOutsideTheModule(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("the paths here are POSIX ones; the rule they state is not platform-specific")
+	}
+	if rel, ok := relativePath("module", "/abs/pkg/file.go"); ok {
+		t.Errorf("relativePath with a relative root = (%q, true), want a refusal", rel)
+	}
+	if rel, ok := relativePath("/work", "/work/pkg/file.go"); !ok || rel != "pkg/file.go" {
+		t.Errorf("relativePath = (%q, %v), want (pkg/file.go, true)", rel, ok)
+	}
+	if rel, ok := relativePath("/work", "/elsewhere/file.go"); ok {
+		t.Errorf("relativePath outside the root = (%q, true), want a refusal", rel)
+	}
+	if rel, ok := relativePath("/work", "/work"); ok {
+		t.Errorf("relativePath of the root itself = (%q, true), want a refusal", rel)
+	}
+}
