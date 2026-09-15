@@ -6,6 +6,7 @@
 package discover
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -997,5 +998,125 @@ func TestStatementGuardRefusesADeclarationItCannotHoist(t *testing.T) {
 				t.Errorf("guard form = %q, want %q", guard.Form, GuardFormD)
 			}
 		})
+	}
+}
+
+// TestAnErrorRendersItsCodeAndItsCause pins the one line a user reads when
+// discovery refuses something.
+func TestAnErrorRendersItsCodeAndItsCause(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		err  *Error
+		want string
+	}{{
+		name: "a condition this package detected itself",
+		err:  &Error{Code: CodeSpanMismatch, Message: "the span misses its text"},
+		want: "GOM4130: the span misses its text",
+	}, {
+		name: "a failure with a cause underneath it",
+		err: &Error{
+			Code:    CodeFileUnreadable,
+			Message: "cannot read the file",
+			Err:     errors.New("permission denied"),
+		},
+		want: "GOM4140: cannot read the file: permission denied",
+	}} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := test.err.Error(); got != test.want {
+				t.Errorf("Error() = %q, want %q", got, test.want)
+			}
+		})
+	}
+
+	// The cause stays reachable through the rendering, which is what lets a
+	// caller ask what the operating system actually said.
+	cause := errors.New("no such file")
+	wrapped := &Error{Code: CodeFileUnreadable, Message: "cannot read it", Err: cause}
+	if !errors.Is(wrapped, cause) {
+		t.Error("Unwrap does not reach the cause")
+	}
+	if got := CodeOf(wrapped); got != CodeFileUnreadable {
+		t.Errorf("CodeOf = %q, want %q", got, CodeFileUnreadable)
+	}
+	if got := CodeOf(errors.New("somebody else's")); got != "" {
+		t.Errorf("CodeOf(a foreign error) = %q, want the empty code", got)
+	}
+}
+
+// TestEveryCodeIsSpelledTheWayItIsPrinted writes this package's codes out.
+//
+// They are what a user reads in a failure and what docs/errors.md lists, so
+// they are asserted as literals rather than derived from the constants: a test
+// comparing `string(c)` with `c.String()` would pass however the block was
+// renumbered.
+func TestEveryCodeIsSpelledTheWayItIsPrinted(t *testing.T) {
+	t.Parallel()
+
+	spelled := map[Code]string{}
+	for _, code := range Codes() {
+		spelled[code] = code.String()
+		if code.String() != string(code) {
+			t.Errorf("%s renders as %q", string(code), code.String())
+		}
+		if !strings.HasPrefix(code.String(), "GOM41") {
+			t.Errorf("%s is outside the block this package owns", code)
+		}
+	}
+	if len(spelled) != len(Codes()) {
+		t.Errorf("two codes render alike: %v", spelled)
+	}
+	if len(Codes()) == 0 {
+		t.Fatal("this package reports no codes at all")
+	}
+}
+
+// TestAWalkWithNoRuleSelectedLooksForNothing is the shortcut every suppression
+// question is moot behind.
+//
+// A selection that chose no rule has nothing to find, so the walk does not run
+// and no site is recorded as skipped either -- a skip is a decision about an
+// edit, and there is no edit to decide about.
+func TestAWalkWithNoRuleSelectedLooksForNothing(t *testing.T) {
+	t.Parallel()
+
+	// The zero value, which is what a selection naming only rules this build
+	// does not implement produces: Verify accepts them, no table claims them,
+	// and nothing is left to look for. It is also what [newMatchers] returns
+	// beside a refusal, and a walk that read it as a selection would scan every
+	// file in the tree for edits it cannot make.
+	if !(matchers{}).empty() {
+		t.Error("matchers with nothing selected do not report themselves empty")
+	}
+
+	full, err := newMatchers(SupportedRules())
+	if err != nil {
+		t.Fatalf("building the whole registry's matchers: %v", err)
+	}
+	if full.empty() {
+		t.Error("matchers built from every rule report themselves empty")
+	}
+
+	// One rule is not none, which is the boundary the count is about.
+	one, err := newMatchers(SupportedRules()[:1])
+	if err != nil {
+		t.Fatalf("building one rule's matchers: %v", err)
+	}
+	if one.empty() {
+		t.Error("matchers built from one rule report themselves empty")
+	}
+
+	// And a selection of nothing at all is the whole registry rather than an
+	// empty one, which is what makes the shortcut above reachable only through
+	// a selection that named rules this build does not implement.
+	everything, err := newMatchers([]mutation.Rule{})
+	if err != nil {
+		t.Fatalf("building matchers from an empty selection: %v", err)
+	}
+	if everything.empty() {
+		t.Error("an empty selection was read as selecting nothing rather than everything")
 	}
 }

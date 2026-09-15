@@ -223,11 +223,24 @@ func unsetEnv(env []string, name string) []string {
 }
 
 // sameEnvKey compares two environment variable names the way the operating
-// system does: case-insensitively on Windows, where a variable answers to any
-// spelling of its name — PATH is written "Path" as often as "PATH" — and
-// exactly everywhere else.
-func sameEnvKey(a, b string) bool {
-	if runtime.GOOS == "windows" {
+// system this process is running on does.
+func sameEnvKey(a, b string) bool { return sameEnvKeyOn(runtime.GOOS, a, b) }
+
+// sameEnvKeyOn is that comparison as a function of the platform name:
+// case-insensitively on Windows, where a variable answers to any spelling of
+// its name — PATH is written "Path" as often as "PATH" — and exactly everywhere
+// else.
+//
+// The platform arrives as a value rather than as the build this file was
+// compiled into, which is internal/gocmd's sameEnvKeyOn pattern and exists for
+// its reason. Written as a `runtime.GOOS` branch inside one function, the
+// Windows half is a line only a Windows runner ever executes, so the claim it
+// makes is one only a Windows runner can check — and the claim matters here,
+// because the key that fails to match is the one that puts the located
+// toolchain on a child's PATH. As a parameter it is decided by a value handed
+// in, and both halves are asserted on every platform the suite runs on.
+func sameEnvKeyOn(goos, a, b string) bool {
+	if goos == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
@@ -506,9 +519,19 @@ func samePath(a, b string) bool {
 	return pathsEqual(resolvedA, resolvedB)
 }
 
-// pathsEqual compares two paths the way the platform's file system does.
-func pathsEqual(a, b string) bool {
-	if runtime.GOOS == "windows" {
+// pathsEqual compares two paths the way the file system this process is running
+// on does.
+func pathsEqual(a, b string) bool { return pathsEqualOn(runtime.GOOS, a, b) }
+
+// pathsEqualOn is that comparison as a function of the platform name:
+// case-insensitive on Windows and exact everywhere else.
+//
+// The platform is a value for the reason [sameEnvKeyOn] takes one, and the
+// consequence of getting it wrong is larger here: two paths that compare
+// unequal are a package the main-module check refuses to recognise as the
+// snapshot root, which stops the run.
+func pathsEqualOn(goos, a, b string) bool {
+	if goos == "windows" {
 		return strings.EqualFold(a, b)
 	}
 	return a == b

@@ -166,11 +166,16 @@ func isExactlyError(t types.Type) bool {
 
 // implementsError reports whether a type satisfies the error interface, which
 // is what `err != nil` has to be asking about for `nil-error-branch` to apply.
+//
+// Only the absent type is refused before the question is put. go/types
+// dereferences what it is given, so a nil type is a crash rather than an
+// answer; the invalid type and the type of an untyped `nil` are ordinary
+// arguments to it and already answer false. Naming those two as well would be a
+// second spelling of a rule the call below already applies, and one no type
+// could tell from its opposite -- a `&&` in place of either `||` would select
+// the same branch on every type there is.
 func implementsError(t types.Type) bool {
-	if t == nil || t == types.Typ[types.UntypedNil] || t == types.Typ[types.Invalid] {
-		return false
-	}
-	return types.Implements(t, errorInterface)
+	return t != nil && types.Implements(t, errorInterface)
 }
 
 // typeOf returns the type the checker recorded for an expression, or nil.

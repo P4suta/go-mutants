@@ -530,7 +530,7 @@ var wantSkips = []string{
 }
 
 func TestDiscoverFindsEveryImplementedRule(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	equalStrings(t, summarize(result.Candidates), wantCandidates)
 }
 
@@ -541,7 +541,7 @@ func TestDiscoverFindsEveryImplementedRule(t *testing.T) {
 // It reads the rules out of [SupportedRules] rather than out of a list here, so
 // a rule that lands without a fixture fails in the commit that lands it.
 func TestTheFixtureModuleFiresEveryRule(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	fired := make(map[string]bool, len(result.Candidates))
 	for _, c := range result.Candidates {
 		fired[c.Rule.Name] = true
@@ -554,12 +554,12 @@ func TestTheFixtureModuleFiresEveryRule(t *testing.T) {
 }
 
 func TestDiscoverRecordsEverySkippedContext(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	equalStrings(t, summarizeSkips(result.Skips), wantSkips)
 }
 
 func TestDiscoverReportsTheModule(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	if result.ModulePath != "example.com/mini" {
 		t.Errorf("module path = %q, want example.com/mini", result.ModulePath)
 	}
@@ -635,7 +635,7 @@ func sourceLine(t *testing.T, src []byte, c Located) (string, bool) {
 // rests on, checked here against the bytes on disk rather than against the
 // syntax tree the candidate came from.
 func TestDiscoverSpansCoverTheOriginalText(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	if len(result.Candidates) == 0 {
 		t.Fatal("no candidates to check")
 	}
@@ -821,7 +821,7 @@ func TestDiscoverNamesADeclaredTypeFromItsOwnPackage(t *testing.T) {
 // package written to exercise it.
 func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 	root := fixture(t, "mainmod")
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	if len(result.Candidates) == 0 {
 		t.Fatal("no candidates to check")
 	}
@@ -875,6 +875,10 @@ func TestEveryCandidateCarriesAUsableGuard(t *testing.T) {
 // two passes over the same bytes agree field for field, maps and directory
 // order included.
 func TestDiscoverIsDeterministic(t *testing.T) {
+	// The two passes here are deliberately not the shared one every other
+	// whole-fixture test reads: what this asserts is that discovery run twice
+	// agrees, and a cached result compared with itself would agree whatever
+	// discovery did.
 	first := discoverFixture(t, "mainmod", Options{})
 	second := discoverFixture(t, "mainmod", Options{})
 	if !reflect.DeepEqual(first, second) {
@@ -886,7 +890,7 @@ func TestDiscoverIsDeterministic(t *testing.T) {
 // structural: a test file is built, type-checked, and run, is never mutated,
 // and is never recorded as a skip either, because it was never a decision.
 func TestDiscoverNeverMutatesTestFiles(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	for _, c := range result.Candidates {
 		if strings.HasSuffix(c.Path, "_test.go") {
 			t.Errorf("test file produced a candidate: %s", c.Path)
@@ -1271,7 +1275,7 @@ func TestDiscoverSkipsCgoPackages(t *testing.T) {
 	for _, enabled := range []string{"0", "1"} {
 		t.Run("CGO_ENABLED="+enabled, func(t *testing.T) {
 			t.Setenv("CGO_ENABLED", enabled)
-			result := discoverFixture(t, "mainmod", Options{})
+			result := wholeFixture(t)
 			for _, path := range []string{"cgopkg/cgo.go", "cgopkg/pure.go"} {
 				if !hasSkip(result.Skips, path, SkipCgo, 1) {
 					t.Errorf("no cgo skip for %s: %v", path, summarizeSkips(result.Skips))
@@ -1323,7 +1327,7 @@ func TestDiscoverRejectsARootThatIsNotAModuleRoot(t *testing.T) {
 // and asserted here, because a duplicate arising for any *other* reason would
 // mean two rules quietly doing one rule's work.
 func TestBuildCatalogAcceptsEveryCandidate(t *testing.T) {
-	result := discoverFixture(t, "mainmod", Options{})
+	result := wholeFixture(t)
 	catalog, err := BuildCatalog(result)
 	if err != nil {
 		t.Fatalf("BuildCatalog: %v", err)

@@ -173,11 +173,8 @@ func (g *guardResolver) effectFreeOrAbsent(expr ast.Expr) bool {
 // which computes a value of another type from one it is handed, and a builtin
 // from [effectFreeBuiltins].
 func (g *guardResolver) effectFreeCall(call *ast.CallExpr) bool {
-	if !g.isConversion(call) {
-		name, ok := g.builtinName(call)
-		if !ok || !effectFreeBuiltins[name] {
-			return false
-		}
+	if !g.isConversion(call) && !effectFreeBuiltins[g.builtinName(call)] {
+		return false
 	}
 	return g.argumentsAre(call, g.effectFree)
 }
@@ -234,11 +231,13 @@ func (g *guardResolver) panicFreeSelector(sel *ast.SelectorExpr) bool {
 	if !resolved {
 		// Not a selection: a qualified identifier, whose base names a package.
 		// The checker records nothing in Selections for it, so the base is
-		// asked what it is rather than assumed.
-		base, isIdent := sel.X.(*ast.Ident)
-		if !isIdent {
-			return false
-		}
+		// asked what it is rather than assumed -- and asked directly, because
+		// the shape of the base is a fact about the checker rather than about
+		// this expression. A selector left out of that table is a qualified
+		// identifier and its base is therefore an identifier, so a test of the
+		// shape could only ever answer one way. The lookup below is total: a
+		// map read with a nil key is a miss, and a miss is not a package.
+		base, _ := sel.X.(*ast.Ident)
 		_, isPackage := g.info.Uses[base].(*types.PkgName)
 		return isPackage
 	}
@@ -294,8 +293,7 @@ func (g *guardResolver) panicFreeCall(call *ast.CallExpr) bool {
 	if g.isConversion(call) {
 		return g.panicFreeConversion(call)
 	}
-	name, ok := g.builtinName(call)
-	if !ok || !panicFreeBuiltins[name] {
+	if !panicFreeBuiltins[g.builtinName(call)] {
 		return false
 	}
 	return g.argumentsAre(call, g.panicFree)
@@ -387,7 +385,13 @@ func (g *guardResolver) isConversion(call *ast.CallExpr) bool {
 	return g.isTypeExpr(ast.Unparen(call.Fun))
 }
 
-// builtinName names the predeclared function a call calls, or reports false.
+// builtinName names the predeclared function a call calls, and is the empty
+// string for a call of anything else.
+//
+// The empty string is the refusal rather than a flag beside it, because both
+// tables this feeds are keyed by name and neither holds an entry for "": a
+// second way to say "not a builtin" would be a boundary no call could put on
+// the wrong side of.
 //
 // The callee has to be spelled as a bare identifier. `(len)(s)` is legal Go and
 // is just as effect-free, and it is refused here anyway: the question this
@@ -396,22 +400,22 @@ func (g *guardResolver) isConversion(call *ast.CallExpr) bool {
 // far the parentheses go. A `len` the package shadowed with a function of its
 // own is not a [types.Builtin] and is refused by the same lookup, which is why
 // the name is taken from the object rather than from the source.
-func (g *guardResolver) builtinName(call *ast.CallExpr) (string, bool) {
+func (g *guardResolver) builtinName(call *ast.CallExpr) string {
 	if g.info == nil {
-		return "", false
+		return ""
 	}
 	ident, isIdent := call.Fun.(*ast.Ident)
 	if !isIdent {
-		return "", false
+		return ""
 	}
 	builtin, isBuiltin := g.info.Uses[ident].(*types.Builtin)
 	if !isBuiltin || builtin.Parent() != types.Universe {
 		// A builtin of package unsafe has no universe parent, and every one of
 		// them is out: they read or compute over memory the type system is
 		// deliberately not describing.
-		return "", false
+		return ""
 	}
-	return builtin.Name(), true
+	return builtin.Name()
 }
 
 // isTypeExpr reports whether an expression denotes a type rather than a value.
