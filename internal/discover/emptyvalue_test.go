@@ -320,3 +320,137 @@ func TestALabelThatNamesTheNearestTargetIsNotWorthDropping(t *testing.T) {
 		t.Error("a label the checker resolved to nothing was not refused")
 	}
 }
+
+// TestWhichResultsGetTheNeutralValueThatIsNotNil is
+// [fileScan.replaceEmptyNeutral], the family that exists because `len(x) == 0`
+// is true of both readings.
+//
+// A function that returns nil where it meant to return an empty slice passes
+// every `len` check a suite routinely makes, and `encoding/json` writes `null`
+// where the caller expected `[]`. That is the difference the rule is about, and
+// `return-nil` beside it cannot express it -- which is also why the line is
+// drawn where it is: a slice and a map are the only types the standard library
+// distinguishes two neutral values of.
+func TestWhichResultsGetTheNeutralValueThatIsNotNil(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		src  string
+		// want is the replacement text, or empty for no candidate.
+		want string
+	}{
+		{
+			name: "a slice",
+			src:  "package pkg\n\nfunc probe(xs []int) []int {\n\treturn xs\n}\n",
+			want: "[]int{}",
+		},
+		{
+			name: "a map",
+			src:  "package pkg\n\nfunc probe(m map[string]int) map[string]int {\n\treturn m\n}\n",
+			want: "map[string]int{}",
+		},
+		{
+			name: "a named slice type",
+			src:  "package pkg\n\ntype lines []string\n\nfunc probe(l lines) lines {\n\treturn l\n}\n",
+			want: "lines{}",
+		},
+		{
+			name: "a slice of a named element type",
+			src: "package pkg\n\ntype row struct{ n int }\n\n" +
+				"func probe(xs []row) []row {\n\treturn xs\n}\n",
+			want: "[]row{}",
+		},
+		{
+			// Neither of the two: a channel's `make` is not neutral and blocks,
+			// a pointer's `new` hides a nil dereference, and a string has no
+			// nil to be distinguished from.
+			name: "a channel",
+			src:  "package pkg\n\nfunc probe(ch chan int) chan int {\n\treturn ch\n}\n",
+		},
+		{
+			name: "a pointer",
+			src:  "package pkg\n\nfunc probe(p *int) *int {\n\treturn p\n}\n",
+		},
+		{
+			name: "a string",
+			src:  "package pkg\n\nfunc probe(s string) string {\n\treturn s\n}\n",
+		},
+		{
+			name: "an interface",
+			src:  "package pkg\n\nfunc probe(v any) any {\n\treturn v\n}\n",
+		},
+		{
+			name: "a slice already spelled empty",
+			src:  "package pkg\n\nfunc probe() []int {\n\treturn []int{}\n}\n",
+		},
+		{
+			name: "a slice already made empty",
+			src:  "package pkg\n\nfunc probe() []int {\n\treturn make([]int, 0)\n}\n",
+		},
+		{
+			name: "a slice beside a non-nil error",
+			src:  "package pkg\n\nfunc probe(err error) ([]int, error) {\n\treturn nil, err\n}\n",
+		},
+		{
+			// The success path, where the rule is worth the most.
+			name: "a slice beside a nil error",
+			src:  "package pkg\n\nfunc probe(xs []int) ([]int, error) {\n\treturn xs, nil\n}\n",
+			want: "[]int{}",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got []string
+			for _, candidate := range scanSource(t, c.src).candidates {
+				if candidate.Rule.Name == ruleReturnEmptySlice || candidate.Rule.Name == ruleReturnEmptyMap {
+					got = append(got, candidate.Replacement)
+				}
+			}
+			if c.want == "" {
+				if len(got) != 0 {
+					t.Errorf("%s produced the neutral values %v, want none", c.name, got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0] != c.want {
+				t.Errorf("%s produced %v, want [%s]", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// TestASliceOfATypeThisFileCannotSpellIsRecordedRatherThanSkipped is the one
+// refusal in the family that is *not* silent.
+//
+// Every other refusal here is a mutant equal to its original or an equivalence
+// by convention, and a user has no use for being told about either. This one is
+// the same fact Form D records when it cannot spell a declared type:
+// go-mutants knows what it would like to write and cannot say it in Go, which
+// is exactly what `unnameable-decl-type` is for. A dot import is one of the two
+// ways to reach it.
+func TestASliceOfATypeThisFileCannotSpellIsRecordedRatherThanSkipped(t *testing.T) {
+	t.Parallel()
+
+	// unsafe.Pointer is a basic type that still needs an import and has no
+	// source form this rewrite may write; a dot import is the other way, and
+	// needs a package on disk to import.
+	got := scanSource(t, "package pkg\n\nimport \"unsafe\"\n\n"+
+		"func probe(xs []unsafe.Pointer) []unsafe.Pointer {\n\treturn xs\n}\n")
+
+	for _, candidate := range got.candidates {
+		if candidate.Rule.Name == ruleReturnEmptySlice {
+			t.Errorf("a slice of a type this file cannot spell produced %q", candidate.Replacement)
+		}
+	}
+	recorded := false
+	for _, site := range got.sites {
+		if site.Reason == SkipUnnameableDeclType && site.Rule == ruleReturnEmptySlice {
+			recorded = true
+		}
+	}
+	if !recorded {
+		t.Errorf("the refusal was not recorded as %s; the sites are %+v", SkipUnnameableDeclType, got.sites)
+	}
+}
