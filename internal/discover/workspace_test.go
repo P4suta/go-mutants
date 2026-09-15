@@ -621,3 +621,46 @@ func TestAUseLineIsResolvedAgainstTheRootItWasGiven(t *testing.T) {
 		})
 	}
 }
+
+// TestAWorkspaceRunCarriesOneModulesRefusalOut pins the two refusals
+// [DiscoverWorkspace] can meet before it has measured anything.
+//
+// A workspace run is N module runs under one answer, and neither loop collects:
+// a module that cannot be discovered makes the whole workspace's catalogue a
+// catalogue of some of the workspace, with nothing in it to say which part. So
+// the first refusal is the run's answer, and it is the module's own refusal
+// rather than a workspace-shaped restatement of it -- the user has to be told
+// which module and why.
+func TestAWorkspaceRunCarriesOneModulesRefusalOut(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a root that is not there", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := DiscoverWorkspace(t.Context(), Options{SnapshotRoot: filepath.Join(t.TempDir(), "absent")})
+		if code := CodeOf(err); code != CodeSnapshotRoot {
+			t.Fatalf("CodeOf(%v) = %q, want %q", err, code, CodeSnapshotRoot)
+		}
+	})
+
+	t.Run("a module that is itself a workspace", func(t *testing.T) {
+		t.Parallel()
+
+		// Nested workspaces are not a shape the go command supports, and the
+		// module run refuses it for the reason a single-module discovery
+		// always has: everything it does assumes one module.
+		root := t.TempDir()
+		writeWorkspace(t, root, "go 1.26\n\nuse ./app\n")
+		app := filepath.Join(root, "app")
+		writeModuleAt(t, app, "example.com/app")
+		writeWorkspace(t, app, "go 1.26\n\nuse .\n")
+
+		_, err := DiscoverWorkspace(t.Context(), Options{SnapshotRoot: root})
+		if code := CodeOf(err); code != CodeWorkspace {
+			t.Fatalf("CodeOf(%v) = %q, want %q", err, code, CodeWorkspace)
+		}
+		if !strings.Contains(err.Error(), filepath.Join("app", WorkspaceFile)) {
+			t.Errorf("the refusal %q does not name the module it is about", err)
+		}
+	})
+}
