@@ -110,9 +110,15 @@ func CollectTestCoverage(ctx context.Context, opts Options, bins []TestBinary, d
 		return nil, err
 	}
 
-	// The listings first, and serially: there is one per binary rather than one
-	// per test, and the work below needs to know how many runs there will be
-	// before it can share them out.
+	// The listings first, because the work below needs to know how many runs
+	// there will be before it can share them out. They are one per binary
+	// rather than one per test, and they go through the same worker pool for
+	// the same reason -- a project of thirty packages is thirty process starts
+	// before the profiling has begun.
+	listings, err := listEveryBinary(ctx, opts, bins, scratch)
+	if err != nil {
+		return nil, err
+	}
 	type profiling struct {
 		bin  TestBinary
 		name string
@@ -120,11 +126,7 @@ func CollectTestCoverage(ctx context.Context, opts Options, bins []TestBinary, d
 	}
 	var planned []profiling
 	for i, bin := range bins {
-		names, err := listTests(ctx, opts, bin, baseEnvFrom(opts.Env, scratch))
-		if err != nil {
-			return nil, err
-		}
-		for j, name := range names {
+		for j, name := range listings[i] {
 			path, err := profilePath(root, "t", i, j)
 			if err != nil {
 				return nil, err
@@ -232,6 +234,53 @@ func profileOneTest(
 		data.Output = tail(result.Output)
 	}
 	return data, nil
+}
+
+// listEveryBinary asks each binary for the names of its tests, [Options.Jobs]
+// at a time, and returns the answers in the order the binaries were given.
+//
+// The order is the binaries' rather than the order the workers finished in, for
+// the reason the profiles below are written by index: what a run profiles has
+// to be a function of the tree.
+func listEveryBinary(ctx context.Context, opts Options, bins []TestBinary, scratch string) ([][]string, error) {
+	listings := make([][]string, len(bins))
+	failures := make([]error, len(bins))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for worker := range min(opts.workers(), len(bins)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			workerOpts := opts
+			workerOpts.ScratchDir = workerScratchDir(opts.ScratchDir, worker)
+			workerScratchPath, scratchErr := workerScratch(workerOpts.ScratchDir)
+			env := baseEnvFrom(opts.Env, workerScratchPath)
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				i := int(next.Add(1)) - 1
+				if i >= len(bins) {
+					return
+				}
+				if scratchErr != nil {
+					failures[i] = scratchErr
+					continue
+				}
+				listings[i], failures[i] = listTests(ctx, workerOpts, bins[i], env)
+			}
+		}()
+	}
+	wg.Wait()
+	for _, err := range failures {
+		if err != nil {
+			return nil, err
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return listings, nil
 }
 
 // listTests asks one test binary for the names of its tests.

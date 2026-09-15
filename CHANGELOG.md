@@ -4296,13 +4296,16 @@ Entries say *why* a change was made, not only what changed.
   can happen, and still run for every set when the command carries accepted test
   flags — `-test.short` would make the profiling run and the control two
   different invocations of one test.
-  The third was not a process but an ordering: the per-test profiling runs went
-  one after another. Each is a separate process writing a profile of its own
-  under a scratch directory of its own, and nothing is shared but the package
-  directory the binaries already read from — mutant runs of those same binaries
-  already overlap — so they now run `execution.jobs` at a time, with the results
-  written by index so that the order is the plan's rather than the order the
-  workers finished in.
+  The third was not a process but an ordering: everything in the pass went one
+  after another — the listing of each binary's tests, the per-test profiling
+  runs, and the binary-level profiling of a `narrowing = "package"` run. Each is
+  a separate process writing a profile of its own under a scratch directory of
+  its own, and nothing is shared but the package directory the binaries already
+  read from — mutant runs of those same binaries already overlap — so they now
+  run `execution.jobs` at a time, with every answer written by index so that the
+  order is the plan's rather than the order the workers finished in. That is
+  what keeps the narrowing, and the catalogue digest a cache is keyed on, from
+  depending on scheduling.
   The counted proof is `internal/engine/testdata/work-ceiling.golden.txt`, which
   records what each fixture's run starts by kind. `simple` loses six of its
   thirty-three process starts and `killable` and `coverage` four each; on a real
