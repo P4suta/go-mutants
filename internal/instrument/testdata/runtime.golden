@@ -65,6 +65,11 @@ const loopCensusEnv = "GO_MUTANTS_LOOP_CENSUS"
 // unset leaves every ceiling at noLimit, which no loop can reach.
 const loopLimitsEnv = "GO_MUTANTS_LOOP_LIMITS"
 
+// loopFileSuffix is what this module adds to either of those paths. A
+// workspace run has one of these packages per module, each numbering its own
+// loops, and the two variables name one path.
+const loopFileSuffix = ".4a02876d"
+
 // divergedExit is the status this process exits with when a loop passes its
 // ceiling.
 const divergedExit = 96
@@ -155,7 +160,8 @@ func init() {
 	for i := range Limit {
 		Limit[i] = noLimit
 	}
-	if path := os.Getenv(loopCensusEnv); path != "" {
+	if named := os.Getenv(loopCensusEnv); named != "" {
+		path := named + loopFileSuffix
 		file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err == nil {
 			censusFile = file
@@ -167,10 +173,11 @@ func init() {
 			fmt.Fprintln(os.Stderr, "go-mutants: cannot open the loop census "+path+": "+err.Error())
 		}
 	}
-	path := os.Getenv(loopLimitsEnv)
-	if path == "" {
+	named := os.Getenv(loopLimitsEnv)
+	if named == "" {
 		return
 	}
+	path := named + loopFileSuffix
 	if err := readLimits(path); err != nil {
 		for i := range Limit {
 			Limit[i] = noLimit

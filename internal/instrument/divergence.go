@@ -4,10 +4,30 @@
 package instrument
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"strconv"
 	"strings"
 )
+
+// LoopFileSuffix is what a module's loop census and limit table are named
+// with, after the path the environment gives.
+//
+// The two environment variables name one path, and a workspace run has one
+// generated runtime per module, each with a numbering of its own: without a
+// suffix every module of a workspace would append its counts to one file and
+// read another module's ceilings back out of it. The suffix is a digest of the
+// module path rather than the path itself, because an import path holds
+// slashes and a file name may not.
+//
+// It is computed here and nowhere else: the generated runtime bakes it in as a
+// constant and the engine builds the same name to read and write, so the two
+// ends cannot drift.
+func LoopFileSuffix(modulePath string) string {
+	sum := sha256.Sum256([]byte(modulePath))
+	return "." + hex.EncodeToString(sum[:4])
+}
 
 // censusFormat opens the header line of every loop census and names the format
 // itself, for [infectionFormat]'s reason: the file outlives the process that

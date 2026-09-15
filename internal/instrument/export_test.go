@@ -116,7 +116,7 @@ func PackageNames(dir, pkg string) ([]string, error) {
 // names, so that a write failure can be provoked without depending on file
 // modes — which are advice rather than law on some filesystems.
 func WriteRuntime(root, dir string, catalog *mutation.Catalog) error {
-	return writeRuntime(root, dir, catalog, nil)
+	return writeRuntime(root, dir, "example.com/mini", catalog, nil)
 }
 
 // WrappableStatement runs this package's own answer to "may this statement be
