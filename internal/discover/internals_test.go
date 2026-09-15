@@ -395,33 +395,26 @@ func TestIsTestFile(t *testing.T) {
 	}
 }
 
-// TestCgoExemptionCoversTestVariants pins the gate's exemption to a whole
-// package rather than to the one variant that happens to own the cgo file.
+// TestTheCgoExemptionCoversOnlyThePackagesTheScanFound pins the gate's
+// exemption to the packages a cgo import was actually read out of.
 //
-// An external test package owns nothing but test files and the generated test
-// main package owns a file in the build cache, so neither can be recognised
-// from source — and both fail for exactly one reason when the cgo package
-// beside them does.
-func TestCgoExemptionCoversTestVariants(t *testing.T) {
-	exemption := cgoExemption{
-		ids:   map[string]bool{"example.com/m/cgopkg": true},
-		bases: map[string]bool{"example.com/m/cgopkg": true},
-	}
-	covered := []string{
-		"example.com/m/cgopkg",
-		"example.com/m/cgopkg [example.com/m/cgopkg.test]",
-		"example.com/m/cgopkg_test [example.com/m/cgopkg.test]",
-		"example.com/m/cgopkg.test",
-	}
-	for _, path := range covered {
-		if !exemption.covers(&packages.Package{ID: path, PkgPath: path}) {
-			t.Errorf("%s is not covered by the cgo exemption", path)
-		}
+// The exemption exists because a cgo package is excluded from mutation
+// wholesale, so whether its C preprocessing step succeeded is not a question
+// discovery has to have an answer to. That argument covers the package the
+// import is in and stops there: a neighbour that imports it is not exempt,
+// because its failure is a real gap in the type information discovery reads,
+// and neither is a package whose path merely begins the same way.
+func TestTheCgoExemptionCoversOnlyThePackagesTheScanFound(t *testing.T) {
+	exemption := cgoExemption{"example.com/m/cgopkg": true}
+	if !exemption.covers(&packages.Package{ID: "example.com/m/cgopkg", PkgPath: "example.com/m/cgopkg"}) {
+		t.Error("the package the cgo import was found in is not covered by the cgo exemption")
 	}
 	uncovered := []string{
 		"example.com/m/other",
 		"example.com/m/cgopkgx",
 		"example.com/m/cgopkg/inner",
+		"example.com/m/cgopkg_test",
+		"example.com/m/cgopkg.test",
 	}
 	for _, path := range uncovered {
 		if exemption.covers(&packages.Package{ID: path, PkgPath: path}) {

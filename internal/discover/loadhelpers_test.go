@@ -287,48 +287,35 @@ func TestTheEnvironmentAChildLoadIsGiven(t *testing.T) {
 // A cgo package is excluded from mutation wholesale, so whether its C
 // preprocessing step succeeded is not a question discovery has to have an
 // answer to -- and the compile gate has to know that before it refuses the
-// tree. The loader hands the same source over as several packages, though: the
-// package itself, its internal test variant, and the test binary's, each under
-// a decorated path. Missing one of them turns a machine with no C compiler into
-// a refused run.
+// tree. The exemption answers for the packages the loader returned and for no
+// others: one entry per package the scan found a cgo import in, matched by the
+// loader's own ID, and nothing inferred from how a path is spelled.
 func TestWhichPackagesACgoImportExempts(t *testing.T) {
 	t.Parallel()
 
-	exemption := cgoExemption{
-		ids:   map[string]bool{"example.com/m/cgopkg [example.com/m/cgopkg.test]": true},
-		bases: map[string]bool{"example.com/m/cgopkg": true},
-	}
+	exemption := cgoExemption{"example.com/m/cgopkg": true}
 	for _, c := range []struct {
 		name string
 		pkg  *packages.Package
 		want bool
 	}{
 		{
-			name: "the package itself",
+			name: "the package the cgo file was found in",
 			pkg:  &packages.Package{ID: "example.com/m/cgopkg", PkgPath: "example.com/m/cgopkg"},
 			want: true,
 		},
 		{
-			name: "a variant the loader named",
-			pkg: &packages.Package{
-				ID:      "example.com/m/cgopkg [example.com/m/cgopkg.test]",
-				PkgPath: "example.com/m/cgopkg [example.com/m/cgopkg.test]",
-			},
-			want: true,
-		},
-		{
-			name: "the external test package",
+			// The loader is not asked for test variants, so a path spelled
+			// like one is a package somebody wrote under that name -- and its
+			// build errors are its own.
+			name: "a package named like the cgo package's external test package",
 			pkg:  &packages.Package{ID: "x", PkgPath: "example.com/m/cgopkg_test"},
-			want: true,
 		},
 		{
-			name: "the test binary's package",
+			name: "a package named like the cgo package's test binary",
 			pkg:  &packages.Package{ID: "y", PkgPath: "example.com/m/cgopkg.test"},
-			want: true,
 		},
 		{
-			// A package whose name merely ends the same way. The suffix is not
-			// the question; what the suffix is attached to is.
 			name: "another package whose name ends in _test",
 			pkg:  &packages.Package{ID: "z", PkgPath: "example.com/m/other_test"},
 		},
@@ -352,21 +339,21 @@ func TestWhichPackagesACgoImportExempts(t *testing.T) {
 
 	// And an exemption that found nothing exempts nothing, which is what every
 	// run on a tree with no cgo in it is.
-	empty := cgoExemption{ids: map[string]bool{}, bases: map[string]bool{}}
+	empty := cgoExemption{}
 	if empty.covers(&packages.Package{ID: "x", PkgPath: "example.com/m/pkg"}) {
 		t.Error("an empty exemption covers a package")
 	}
 }
 
-// TestACgoImportIsFoundInTheSourceRatherThanInTheGraph pins
-// [findCgoPackages], and the two things it records for each package it finds.
+// TestACgoImportIsFoundInTheSourceRatherThanInTheGraph pins [findCgoPackages].
 //
 // The question is asked of the file on disk because that is the only place the
 // truth survives: with cgo enabled the import is rewritten away before the
 // loader produces syntax, and with cgo disabled the file is not part of the
-// package at all. Both the loader's own ID and the undecorated import path are
-// recorded, because the two answer for different variants of the same source --
-// and a package whose path the loader left empty has only the first.
+// package at all. What is recorded is the loader's own ID, which is the one
+// coordinate every package has -- a package the loader could not place has no
+// import path at all, and keying on that would exempt every other such package
+// with it.
 func TestACgoImportIsFoundInTheSourceRatherThanInTheGraph(t *testing.T) {
 	t.Parallel()
 
@@ -395,22 +382,19 @@ func TestACgoImportIsFoundInTheSourceRatherThanInTheGraph(t *testing.T) {
 
 	exemption := findCgoPackages(loaded, root)
 	for _, id := range []string{"example.com/m/cgopkg", "unplaced"} {
-		if !exemption.ids[id] {
+		if !exemption[id] {
 			t.Errorf("the exemption does not name the loader ID %q", id)
 		}
 	}
-	if exemption.ids["example.com/m/plain"] {
+	if exemption["example.com/m/plain"] {
 		t.Error("the exemption names a package with no cgo file in it")
 	}
-	if !exemption.bases["example.com/m/cgopkg"] {
-		t.Error("the exemption does not name the import path of the cgo package")
-	}
-	if exemption.bases[""] {
-		t.Error("the exemption holds the empty import path, which every unplaced package would match")
+	if exemption[""] {
+		t.Error("the exemption holds the empty ID, which every unnamed package would match")
 	}
 
-	// And the whole point of recording both: the compile gate asks `covers`,
-	// and a package the loader could only give an ID has to be covered by it.
+	// And what recording the ID is for: the compile gate asks `covers`, and a
+	// package the loader could only give an ID has to be covered by it.
 	if !exemption.covers(&packages.Package{ID: "unplaced"}) {
 		t.Error("a package named only by its loader ID is not covered")
 	}
@@ -437,7 +421,7 @@ func TestTheCompileGateNamesWhatStoppedIt(t *testing.T) {
 		}
 		return pkg
 	}
-	empty := cgoExemption{ids: map[string]bool{}, bases: map[string]bool{}}
+	empty := cgoExemption{}
 
 	t.Run("a tree that compiles", func(t *testing.T) {
 		t.Parallel()
@@ -507,10 +491,7 @@ func TestTheCompileGateNamesWhatStoppedIt(t *testing.T) {
 		// preprocessing step succeeded is not a question this gate has to have
 		// an answer to. A machine with no C compiler must still be able to run.
 		loaded := &loadResult{packages: []*packages.Package{failing("example.com/m/cgopkg", 4)}}
-		exempt := cgoExemption{
-			ids:   map[string]bool{"example.com/m/cgopkg": true},
-			bases: map[string]bool{"example.com/m/cgopkg": true},
-		}
+		exempt := cgoExemption{"example.com/m/cgopkg": true}
 		if err := gate(loaded, exempt); err != nil {
 			t.Fatalf("gate over an exempt package's errors: %v", err)
 		}
