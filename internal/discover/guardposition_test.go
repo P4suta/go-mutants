@@ -356,3 +356,119 @@ func TestWhichStatementsAClosureMayHold(t *testing.T) {
 		})
 	}
 }
+
+// TestABodyBlockIsNotAHeaderSlot is the other side of every row above: the same
+// parent statement, and a child that is its *body* rather than its header.
+//
+// The two predicates answer oppositely there, and they have to. A block is
+// legal where a block already is, and a call is not a simple statement slot's
+// occupant merely because the slot's owner has one somewhere else. Reading
+// either question as "is my parent a `for`" would put a closure call where a
+// body belongs and a block in a header.
+func TestABodyBlockIsNotAHeaderSlot(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		body string
+	}{
+		{name: "a for body", body: "\tfor n = 0; n < 3; n++ {\n\t}"},
+		{name: "an if body", body: "\tif n > 0 {\n\t}"},
+		{name: "a switch body", body: "\tswitch n {\n\t}"},
+		{name: "a type switch body", body: "\tswitch v := any(nil).(type) {\n\tdefault:\n\t\t_ = v\n\t}"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			g := guardOver(t, "package pkg\n\nvar n, m int\n\nfunc probe() {\n"+c.body+"\n}\n")
+			// The innermost block: the outer one is the function's body, whose
+			// parent is the declaration rather than the statement under test.
+			var body ast.Stmt
+			for node := range g.parent {
+				block, isBlock := node.(*ast.BlockStmt)
+				if !isBlock {
+					continue
+				}
+				if _, isFunc := g.parent[node].(*ast.FuncDecl); isFunc {
+					continue
+				}
+				body = block
+			}
+			if body == nil {
+				t.Fatal("the fixture holds no body block inside the statement")
+			}
+			if g.simpleStmtSlot(body) {
+				t.Error("simpleStmtSlot = true for a body block, want false")
+			}
+			if !g.blockIsLegalFor(body) {
+				t.Error("blockIsLegalFor = false for a body block, want true")
+			}
+		})
+	}
+}
+
+// TestTheSearchForAStatementStopsAtTheFunctionAndAtTheFile pins
+// [guardResolver.statementSite]'s two ways of finding nothing.
+//
+// The first statement found decides: a candidate whose nearest statement is a
+// `switch` tag is not covered by wrapping some statement further out, it is a
+// site no statement form rewrites. So the search has to stop, and there are two
+// places it can: at the function, for an edit in a signature rather than in a
+// body, and at the file, for an edit in a package-level declaration. Both
+// answer "no statement form", which is what sends the search on to the
+// expression forms rather than wrapping something that is not there.
+func TestTheSearchForAStatementStopsAtTheFunctionAndAtTheFile(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "an edit inside a statement",
+			src:  "package pkg\n\nfunc probe(a, b int) {\n\t_ = a * b\n}\n",
+			want: true,
+		},
+		{
+			// An array length in a parameter type. The walk passes the field,
+			// the field list and the function type without meeting a statement,
+			// and stops at the declaration.
+			name: "an edit in a function's signature",
+			src:  "package pkg\n\nconst n = 2 * 2\n\nfunc probe(xs [2 * 2]int) {\n\t_ = xs\n}\n",
+		},
+		{
+			name: "an edit in a package-level declaration",
+			src:  "package pkg\n\nvar total = 2 * 2\n",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			g := guardOver(t, c.src)
+			var anchor ast.Expr
+			for node := range g.parent {
+				binary, isBinary := node.(*ast.BinaryExpr)
+				if !isBinary {
+					continue
+				}
+				if anchor == nil || binary.Pos() < anchor.Pos() {
+					anchor = binary
+				}
+			}
+			if anchor == nil {
+				t.Fatalf("the fixture holds no binary expression:\n%s", c.src)
+			}
+			guard, ok := g.statementSite(anchor)
+			if ok != c.want {
+				t.Fatalf("statementSite = (%+v, %v), want %v", guard, ok, c.want)
+			}
+			if !ok && guard.Form != "" {
+				t.Errorf("a refusal carries the form %q, want none", guard.Form)
+			}
+			if ok && guard.Form == "" {
+				t.Error("statementSite answered with a guard of no form")
+			}
+		})
+	}
+}

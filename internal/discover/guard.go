@@ -157,17 +157,18 @@ func (g *guardResolver) indexImports(file *ast.File) {
 }
 
 // span is the byte range of a node in the file being indexed.
-func (g *guardResolver) span(node ast.Node) (mutation.Span, bool) {
-	start := g.tokFile.Offset(node.Pos())
-	end := g.tokFile.Offset(node.End())
-	if start < 0 || end < start {
-		return mutation.Span{}, false
+//
+// It cannot fail, and the second answer it used to give was a branch no node
+// could take. [token.File.Offset] clamps a position into the file's own bounds
+// rather than answering outside them, so a start is never negative and an end
+// never precedes its start; and the only span [mutation.Span.Validate] refuses
+// is a reversed one. Three refusals for a shape the positions cannot have is
+// three boundaries no test could put anything on the wrong side of.
+func (g *guardResolver) span(node ast.Node) mutation.Span {
+	return mutation.Span{
+		StartByte: uint32(g.tokFile.Offset(node.Pos())),
+		EndByte:   uint32(g.tokFile.Offset(node.End())),
 	}
-	span, err := mutation.NewSpan(uint32(start), uint32(end))
-	if err != nil {
-		return mutation.Span{}, false
-	}
-	return span, true
 }
 
 // guardFor computes the rewrite site for an edit anchored at one node,
@@ -231,10 +232,7 @@ func (g *guardResolver) formESite(anchor ast.Node) (Guard, bool) {
 		if !g.wrappableValue(expr) {
 			continue
 		}
-		span, ok := g.span(expr)
-		if !ok {
-			return Guard{}, false
-		}
+		span := g.span(expr)
 		spelled, needs, ok := g.typeString(g.info.Types[expr].Type)
 		if !ok {
 			// A type this file cannot name, which is not the end of the search:
@@ -300,10 +298,7 @@ func (g *guardResolver) valueProbe(anchor ast.Node) *ProbeSite {
 		if !g.inertContext(expr) || !g.panicFree(expr) {
 			continue
 		}
-		span, ok := g.span(expr)
-		if !ok {
-			return nil
-		}
+		span := g.span(expr)
 		spelled, needs, ok := g.typeString(declared)
 		if !ok {
 			continue
@@ -388,10 +383,7 @@ func (g *guardResolver) formCPrimeSite(anchor ast.Node) (Guard, bool) {
 		if !g.wrappableNamedBool(expr) {
 			continue
 		}
-		span, ok := g.span(expr)
-		if !ok {
-			return Guard{}, false
-		}
+		span := g.span(expr)
 		spelled, needs, ok := g.typeString(g.info.Types[expr].Type)
 		if !ok {
 			// A boolean type this file cannot name. The same refusal Form D
@@ -440,10 +432,7 @@ func (g *guardResolver) formCSite(anchor ast.Node) (Guard, bool) {
 		if !g.wrappableBool(expr) {
 			continue
 		}
-		span, ok := g.span(expr)
-		if !ok {
-			return Guard{}, false
-		}
+		span := g.span(expr)
 		return Guard{Form: GuardFormC, SiteSpan: span, Probe: g.boolProbe(expr, span)}, true
 	}
 	return Guard{}, false
@@ -602,10 +591,7 @@ func (g *guardResolver) closureSite(stmt ast.Stmt) (Guard, bool) {
 	if !FormFStatement(stmt) || !g.simpleStmtSlot(stmt) {
 		return Guard{}, false
 	}
-	span, ok := g.span(stmt)
-	if !ok {
-		return Guard{}, false
-	}
+	span := g.span(stmt)
 	return Guard{Form: GuardFormF, SiteSpan: span}, true
 }
 
@@ -733,10 +719,7 @@ func FormSStatement(stmt ast.Stmt) bool {
 // declarations back out. A compound assignment (`x += 1`) declares nothing and
 // is Form S; `x := 1` and `var x = 1` declare and are Form D.
 func (g *guardResolver) statementGuard(stmt ast.Stmt) (Guard, bool) {
-	span, ok := g.span(stmt)
-	if !ok {
-		return Guard{}, false
-	}
+	span := g.span(stmt)
 	if FormSStatement(stmt) {
 		return Guard{Form: GuardFormS, SiteSpan: span}, true
 	}
@@ -1029,10 +1012,7 @@ func (g *guardResolver) probeSite(stmt *ast.ReturnStmt, results *types.Tuple) *P
 	if stmt == nil || results == nil || results.Len() != len(stmt.Results) {
 		return nil
 	}
-	span, ok := g.span(stmt)
-	if !ok {
-		return nil
-	}
+	span := g.span(stmt)
 	for _, value := range stmt.Results {
 		if !g.effectFree(value) {
 			return nil
