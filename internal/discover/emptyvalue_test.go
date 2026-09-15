@@ -454,3 +454,97 @@ func TestASliceOfATypeThisFileCannotSpellIsRecordedRatherThanSkipped(t *testing.
 		t.Errorf("the refusal was not recorded as %s; the sites are %+v", SkipUnnameableDeclType, got.sites)
 	}
 }
+
+// TestABranchWhoseTargetThisPhaseCannotFindIsRefused is the fail-closed end of
+// [fileScan.labelNamesTheNearestTarget]'s walk.
+//
+// The walk goes outward from the branch to the first construct its bare form
+// would bind to, and the type checker has already refused a label that binds to
+// nothing -- so arriving at the top without finding one is a shape no program
+// has. It answers *true*, which refuses the candidate, because emitting a
+// mutant on the strength of not understanding a construct is how an equivalent
+// mutant becomes a survivor somebody has to argue about.
+func TestABranchWhoseTargetThisPhaseCannotFindIsRefused(t *testing.T) {
+	t.Parallel()
+
+	const src = "package pkg\n\nfunc probe() {\nouter:\n\tfor {\n\t\tswitch {\n" +
+		"\t\tdefault:\n\t\t\tbreak outer\n\t\t}\n\t}\n}\n"
+	p := parsedAt(t, "scan.go", src)
+	full := newGuardResolver(p.file, p.info, p.pkg, p.fset.File(p.file.Package), nil)
+
+	var branch *ast.BranchStmt
+	for node := range full.parent {
+		if b, isBranch := node.(*ast.BranchStmt); isBranch && b.Label != nil {
+			branch = b
+		}
+	}
+	if branch == nil {
+		t.Fatal("the fixture holds no labelled branch")
+	}
+
+	// The control: with the parent index the walk finds the switch, which a
+	// bare `break` would leave and the label does not.
+	if (&fileScan{info: p.info, guard: full}).labelNamesTheNearestTarget(branch) {
+		t.Fatal("the fixture's branch names the nearest target, which the rest of this test relies on it not doing")
+	}
+
+	// The same branch, resolved by the same checker, with nothing above it: the
+	// label is a real one and there is no construct to compare it against.
+	adrift := &fileScan{info: p.info, guard: &guardResolver{parent: map[ast.Node]ast.Node{}}}
+	if !adrift.labelNamesTheNearestTarget(branch) {
+		t.Error("a branch with no enclosing construct was not refused")
+	}
+}
+
+// TestTheTypeCheckersRecordIsAskedBeforeItIsRead is the fail-closed answer two
+// package-level predicates give, and the one shape the walk never hands them.
+//
+// A scan always holds the checker's record. Both of these are asked by
+// [collectSuppressions], which runs before anything else and decides which
+// regions of a file hold no mutable expression -- so an answer of "yes, that is
+// a type" with nothing to read it from would suppress every index expression in
+// the file and take a whole family of sites away silently.
+func TestTheTypeCheckersRecordIsAskedBeforeItIsRead(t *testing.T) {
+	t.Parallel()
+
+	p := probeSource(t, "var xs []int", "xs[0]")
+	if isTypeExpr(p.info, nil) {
+		t.Error("isTypeExpr accepted an expression that is not there")
+	}
+	if isTypeExpr(nil, p.expr) {
+		t.Error("isTypeExpr answered without the checker's record")
+	}
+	// And the control: an index that really is a type, which is what the
+	// suppression exists for.
+	generic := probeSource(t, "func pair[A any, B any](a A, b B) int { return 0 }", "pair[int, string]")
+	index, isIndex := generic.expr.(*ast.IndexListExpr)
+	if !isIndex {
+		t.Fatalf("the fixture yielded %T, want a generic instantiation", generic.expr)
+	}
+	if !isTypeExpr(generic.info, index.Indices[0]) {
+		t.Error("isTypeExpr refused an explicit type argument")
+	}
+	if isTypeExpr(p.info, p.expr) {
+		t.Error("isTypeExpr accepted an index expression, which is a value")
+	}
+}
+
+// TestAResultIsProbedOnlyWhereThereIsAResolverToAsk pins the two per-result
+// questions the walk cannot answer without one.
+//
+// Both answer the safe way: no hint rather than a hint nothing computed. A
+// probe hint licenses skipping an execution, so one attached on the strength of
+// an absent resolver would be a mutant reported as unkillable because this
+// phase could not look.
+func TestAResultIsProbedOnlyWhereThereIsAResolverToAsk(t *testing.T) {
+	t.Parallel()
+
+	p := probeSource(t, "var n int", "n")
+	blind := &fileScan{info: p.info}
+	if blind.probesResult(p.expr, nil) {
+		t.Error("probesResult answered without a resolver")
+	}
+	if got := blind.probeSite(&ast.ReturnStmt{}, nil); got != nil {
+		t.Errorf("probeSite = %+v without a resolver, want none", got)
+	}
+}

@@ -96,6 +96,8 @@ func TestWhereABooleanSelectorMayStand(t *testing.T) {
 		{name: "the key of a map literal", body: "\t_ = map[bool]int{target: 1}", want: true},
 		{name: "the value of a struct literal's field", body: "\t_ = wrapper{ok: target}", want: true},
 		{name: "a condition", body: "\tif target {\n\t}", want: true},
+		{name: "a map literal's value", body: "\t_ = map[int]bool{1: target}", want: true},
+		{name: "an argument of a variadic call", body: "\ttakeAll(target, other)", want: true},
 		{name: "a returned value", body: "\t_ = func() bool { return target }()", want: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -116,6 +118,7 @@ func positionFixture(body string) string {
 		"var wrapped wrapper\n\n" +
 		"var other bool\n\n" +
 		"func take(bool) {}\n\n" +
+		"func takeAll(...bool) {}\n\n" +
 		"func probe() {\n\tvar target bool\n\t_ = target\n" + body + "\n}\n"
 }
 
@@ -468,6 +471,95 @@ func TestTheSearchForAStatementStopsAtTheFunctionAndAtTheFile(t *testing.T) {
 			}
 			if ok && guard.Form == "" {
 				t.Error("statementSite answered with a guard of no form")
+			}
+		})
+	}
+}
+
+// TestThePositionsThatNeedMoreThanAValue is the rest of
+// [guardResolver.wrappablePosition], for the slots whose fixture cannot be a
+// bare bool.
+//
+// An operand of `++` has to be addressable and a `range` clause's key and value
+// are assignment targets, so a selector in either would be an assignment to a
+// parenthesised expression -- which is not Go. The thing being *ranged over* is
+// an ordinary value in the same statement, and that is the row that makes the
+// rule about the slot rather than about the statement.
+func TestThePositionsThatNeedMoreThanAValue(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		body string
+		// find picks the expression under test out of the statement.
+		find func(ast.Stmt) ast.Expr
+		want bool
+	}{
+		{
+			name: "an operand of an increment",
+			body: "\tn++",
+			find: func(s ast.Stmt) ast.Expr {
+				inc, ok := s.(*ast.IncDecStmt)
+				if !ok {
+					return nil
+				}
+				return inc.X
+			},
+		},
+		{
+			name: "a range clause's key",
+			body: "\tfor n = range xs {\n\t}",
+			find: func(s ast.Stmt) ast.Expr {
+				rng, ok := s.(*ast.RangeStmt)
+				if !ok {
+					return nil
+				}
+				return rng.Key
+			},
+		},
+		{
+			name: "a range clause's value",
+			body: "\tfor _, m = range xs {\n\t}",
+			find: func(s ast.Stmt) ast.Expr {
+				rng, ok := s.(*ast.RangeStmt)
+				if !ok {
+					return nil
+				}
+				return rng.Value
+			},
+		},
+		{
+			name: "the thing being ranged over",
+			body: "\tfor range xs {\n\t}",
+			find: func(s ast.Stmt) ast.Expr {
+				rng, ok := s.(*ast.RangeStmt)
+				if !ok {
+					return nil
+				}
+				return rng.X
+			},
+			want: true,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			g := guardOver(t, "package pkg\n\nvar n, m int\n\nvar xs []int\n\nfunc probe() {\n"+c.body+"\n}\n")
+			var target ast.Expr
+			for node := range g.parent {
+				stmt, isStmt := node.(ast.Stmt)
+				if !isStmt {
+					continue
+				}
+				if found := c.find(stmt); found != nil {
+					target = found
+				}
+			}
+			if target == nil {
+				t.Fatalf("the fixture holds no expression of the kind the test asked for:\n%s", c.body)
+			}
+			if got := g.wrappablePosition(target); got != c.want {
+				t.Errorf("wrappablePosition = %v, want %v", got, c.want)
 			}
 		})
 	}

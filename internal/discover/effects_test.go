@@ -5,6 +5,7 @@ package discover
 
 import (
 	"go/ast"
+	"go/token"
 	"testing"
 )
 
@@ -44,6 +45,7 @@ func TestWhichExpressionsAProbeMayStandInFor(t *testing.T) {
 		{name: "a name", decls: "var n int", expr: "n", effectFree: true, panicFree: true},
 		{name: "a literal", expr: "42", effectFree: true, panicFree: true},
 		{name: "a function literal", expr: "func() int { return 0 }", effectFree: true, panicFree: true},
+		{name: "an index of a call's result by a call", decls: "func f() []int { return nil }\n\nfunc g() int { return 0 }", expr: "f()[g()]"},
 
 		// Parentheses change nothing, and are asked twice so that an edit which
 		// stopped looking inside them is visible from both directions.
@@ -355,6 +357,20 @@ func TestTheResolverReadsAValuesTypeAndNotATypesName(t *testing.T) {
 		t.Errorf("constantValue(nothing at all) = %v, want nil", got)
 	}
 
+	// And with no record at all, which each of them answers for rather than
+	// dereferencing: a resolver over a file the checker refused still has a
+	// parent index, and the walks that read it still ask these questions.
+	blind := &guardResolver{parent: g.parent}
+	if got := blind.typeOf(call); got != nil {
+		t.Errorf("typeOf with no record = %v, want nil", got)
+	}
+	if blind.isTypeExpr(call.Fun) {
+		t.Error("isTypeExpr with no record accepted a type expression")
+	}
+	if got := blind.constantValue(call); got != nil {
+		t.Errorf("constantValue with no record = %v, want nil", got)
+	}
+
 	// And a constant is read from the checker's folding rather than from the
 	// spelling: `2` and `1 + 1` are one value, and a shift by either is
 	// admitted for the same reason.
@@ -493,5 +509,53 @@ func TestAnExpressionWithNoEnclosingStatementIsNotInContext(t *testing.T) {
 	// a statement and not about the expression.
 	if !g.inertContext(p.expr) {
 		t.Error("inertContext = false for an expression inside a statement, want true")
+	}
+}
+
+// TestTheGrammarsAnswerAboutNodesTheParserCouldNotHaveMade is the fall-through
+// of two allowlists, asked with nodes built rather than parsed.
+//
+// Neither shape is one Go can produce today: a generic instantiation's indices
+// are types, so its operands are always effect-free, and every binary operator
+// the language has is named in the list. Both are still *decisions* -- the
+// lists say what they admit and everything else falls off the end -- and a
+// grammar that admitted a shape it was never taught would attach a probe hint
+// on the strength of not recognising something.
+func TestTheGrammarsAnswerAboutNodesTheParserCouldNotHaveMade(t *testing.T) {
+	t.Parallel()
+
+	g := probeSource(t, "var n int", "n").resolver()
+	call := &ast.CallExpr{Fun: ast.NewIdent("f")}
+	name := ast.NewIdent("T")
+
+	if g.effectFree(call) {
+		t.Fatal("the fixture's stand-in call is effect-free, which the rows below rely on")
+	}
+	for _, c := range []struct {
+		name string
+		expr ast.Expr
+	}{
+		{
+			name: "an instantiation whose base has effects",
+			expr: &ast.IndexListExpr{X: call, Indices: []ast.Expr{name, name}},
+		},
+		{
+			name: "an instantiation whose index has effects",
+			expr: &ast.IndexListExpr{X: ast.NewIdent("pair"), Indices: []ast.Expr{name, call}},
+		},
+	} {
+		if g.effectFree(c.expr) {
+			t.Errorf("effectFree(%s) = true, want false", c.name)
+		}
+	}
+
+	// An operator the list does not name. `<-` is a token go/ast will put in a
+	// binary expression's Op field and the parser never does.
+	arrow := &ast.BinaryExpr{X: ast.NewIdent("a"), Op: token.ARROW, Y: ast.NewIdent("b")}
+	if g.panicFree(arrow) {
+		t.Error("panicFree accepted a binary operator the list does not name")
+	}
+	if !g.effectFree(arrow) {
+		t.Error("effectFree refused a binary expression of two names, whatever its operator")
 	}
 }
