@@ -166,8 +166,23 @@ func underRoot(p, root string) (string, bool) {
 
 // equalPath compares two path prefixes under the case rules of the platform
 // they name.
-func equalPath(a, b string) bool {
-	if runtime.GOOS == "windows" || hasVolume(a) || hasVolume(b) {
+func equalPath(a, b string) bool { return equalPathOn(runtime.GOOS, a, b) }
+
+// equalPathOn is that comparison as a function of the platform name:
+// case-insensitive on Windows, or wherever either path carries a drive letter,
+// and exact otherwise.
+//
+// The platform arrives as a value rather than as the build this file was
+// compiled into, and that is the whole reason the split exists -- the same
+// reason internal/gocmd's sameEnvKeyOn takes one. Written as a `runtime.GOOS`
+// branch inside one function, the Windows half is a line only a Windows runner
+// ever executes, so the claim it makes is a claim only a Windows runner can
+// check; and the claim matters, because a prefix that failed to match is a file
+// treated as outside the snapshot and never blamed on the mutant that broke it.
+// As a parameter it is decided by a value handed in, and both halves are
+// asserted on every platform the suite runs on.
+func equalPathOn(goos, a, b string) bool {
+	if goos == "windows" || hasVolume(a) || hasVolume(b) {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
@@ -222,10 +237,12 @@ func chooseDiagnostic(diags []diagnostic, file string, startLine, endLine int) s
 	switch {
 	case len(within) > 0:
 		return strings.Join(within, "\n")
-	case nearest >= 0:
-		return diags[nearest].Text
 	case len(diags) > 0:
-		return diags[0].Text
+		// The nearest, or the first when nothing was near. They are two tiers
+		// in the prose and one expression here, because a nearest of zero *is*
+		// the first: written as a comparison the two would have a second
+		// reading that no output could tell from the first.
+		return diags[max(nearest, 0)].Text
 	default:
 		return ""
 	}
@@ -247,9 +264,8 @@ func blamedPaths(diags []diagnostic) []string {
 }
 
 // abs is integer absolute value.
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}
+//
+// Written as the larger of the two signs rather than as a comparison: zero is
+// zero either way, so a guard here would have a second reading that no distance
+// could tell from the first.
+func abs(n int) int { return max(n, -n) }

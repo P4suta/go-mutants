@@ -14,6 +14,36 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **`internal/validate` joined the dogfood gate, and the floor moved to 99.75.**
+  369 more mutants and four declared rows, and the gate is now seventeen
+  packages and 4383 mutants at 100.00%. This is the phase that spawns processes,
+  and it was kept for last for that reason — but it cost four rows and no
+  timeouts, because the two seams that matter were already there: the compiler
+  and the rewriter are fields on the validator, so "this machine stopped being
+  able to build" is a table rather than a state a test has to produce. The whole
+  search now runs against a fake that answers "does this subset compile" from a
+  set of indices, and the dozen places the phase asks the filesystem or the
+  compiler are swept rather than named — a run that works is counted first, then
+  the same run is made again failing exactly the *n*th call, for every *n*.
+  Thirteen never-returning mutants came off with the widening rather than into
+  it. The search's outer loop was `for {}` and its exit rested on a lemma about
+  another function — that blame never answers an empty list while anything is
+  pending — so every edit to a condition inside it produced a phase that never
+  returned, and the gate paid a per-mutant timeout twice for each of them.
+  Bounded at one pass per catalogued file, the same edits come back as wrong
+  answers a test can state, and what is left is a return past the bound that
+  nothing reaches: two ledger rows for thirteen timeouts. `equalPath` took the
+  platform as a value rather than as the build it was compiled into, which is
+  `internal/gocmd`'s `sameEnvKeyOn` pattern and makes both halves of a
+  Windows-only rule assertable on every platform; `buildTimeout` came out of a
+  constructor for the same reason; and `abs`, the nearest-diagnostic tier and
+  the position clamp each lost a comparison whose two readings no input could
+  separate.
+  **The floor moved to 99.75**, by the rule that has moved it twice: half a
+  percent of 4306 scored mutants is 21.53 survivors of slack, and twenty-one is
+  the number judged too much at 544. A quarter of a percent buys ten, where 99.5
+  bought twelve when it was set — a floor written as a survivor count rather
+  than as a percentage of a growing catalogue.
 - **`internal/cache` joined the dogfood gate.** 422 more mutants and eight
   declared rows, and the gate is now sixteen packages and 4014 mutants at
   100.00%. It is the package that *deletes* — in a directory it shares with

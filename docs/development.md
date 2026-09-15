@@ -1236,7 +1236,7 @@ undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
-the settings they justify. It covers sixteen whole packages:
+the settings they justify. It covers seventeen whole packages:
 
 | package | mutants | what it is |
 | --- | --- | --- |
@@ -1244,6 +1244,7 @@ the settings they justify. It covers sixteen whole packages:
 | `internal/config` | 505 | the reader of the file above — decoding, validation, precedence, the byte-size vocabulary, and the walk that locates a diagnostic in it |
 | `internal/mutation` | 477 | the mutation model everything downstream is built on — catalogue, identity, rule set, scoring, sharding, exit policy |
 | `internal/cache` | 422 | the outcomes a later run may reuse — the key that identifies a run, the entries, and the three commands that survey, collect and clear them |
+| `internal/validate` | 369 | which mutants are real — the compile that proves it, and the search that finds the ones that are not |
 | `internal/snapshot` | 329 | the disposable copy every run is measured in — the walk, the copy, the ownership of the directory, and the drift report that proves the copy is still what it was |
 | `internal/gitdiff` | 257 | what `--changed` selects by — the git commands, their diagnostics, and the unified-diff reader underneath |
 | `internal/coverage` | 162 | the profile reader, and the mapping that decides which suites a mutant is measured against |
@@ -1272,7 +1273,7 @@ variable from every child, which is the rule that stops an exported
 `GO_MUTANTS_ACTIVE` from running a mutant as the baseline. Survivors all in one
 package means a missing tool, not a regression.
 
-Ten of the sixteen are pure arithmetic, pure text matching, a pure filter over
+Ten of the seventeen are pure arithmetic, pure text matching, a pure filter over
 a digest table, or a pure decision over values handed in, with no clock and no
 network, so a mutant either changes an answer or it does not. `internal/config`
 reaches the filesystem in exactly one place — `os.ReadFile` in `LoadFile` — and
@@ -1393,7 +1394,27 @@ encoding, an `encoding/json` failure a struct of strings and integers cannot
 produce, a `filepath.Rel` refusal only two different volume names reach, and two
 guards that something else answers for a step later.
 
-Four mutants that never returned went with the `internal/snapshot` widening
+`internal/validate` is the one that spawns processes, and it was kept for last
+for that reason — but it cost four declared rows and no timeouts, because the
+phase already had the two seams that matter. The compiler and the rewriter are
+fields on the validator, so "this machine stopped being able to build" is a
+table rather than a state a test has to produce: the whole search runs against a
+fake that answers "does this subset compile" from a set of indices, and the
+dozen places the phase asks the filesystem or the compiler are swept rather than
+named — a run that works is counted first, and then the same run is made again
+failing exactly the *n*th call, for every *n*.
+
+Thirteen never-returning mutants came off with that widening rather than into
+it. The search's outer loop was `for {}` and its exit rested on a lemma about
+another function — that blame never answers an empty list while anything is
+pending — so every edit to a condition inside it produced a phase that never
+returned, and the gate paid a per-mutant timeout twice for each. Bounded at one
+pass per catalogued file, the same edits come back as wrong answers a test can
+state, and what is left is a return past the bound that nothing reaches: two
+ledger rows for thirteen timeouts, which is the trade written down rather than
+felt.
+
+Four more mutants that never returned went with the `internal/snapshot` widening
 rather than into it.
 The walk had two path helpers with a guard each — `pathOf` returning the root
 for the empty path, and `walk` joining a name onto an empty parent — and the
@@ -1420,12 +1441,12 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 4014 mutants catalogued, 3941 detected —
-3935 killed, two of them by the memory bound, and six caught by the per-mutant
-timeout — seventy-three declared expectations, **a score of 100.00%**, at
-`--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.5`
+The numbers the gate is sized against: 4383 mutants catalogued, 4306 detected —
+4300 killed, two of them by the memory bound, and six caught by the per-mutant
+timeout — seventy-seven declared expectations, **a score of 100.00%**, at
+`--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.75`
 is compared on every run, `--strict` or not, and at this size it does not fail
-until the twentieth unexpected survivor — so `--strict` is the thing that
+until the eleventh unexpected survivor — so `--strict` is the thing that
 actually fails this job, on the first.
 
 The wall clock, on the shared machine that widened the scope: warm, with the
@@ -1499,17 +1520,18 @@ The bound is derived from the same baseline runs the timeout is, as
 resolved to:
 
 ```text
-memory: baseline peak 169.1 MiB, bound 1.0 GiB (derived)
+memory: baseline peak 171.4 MiB, bound 1.0 GiB (derived)
 ```
 
-169.1 MiB × 4 is 676 MiB, so the 1 GiB floor still applies and the bound is
+171.4 MiB × 4 is 686 MiB, so the 1 GiB floor still applies and the bound is
 about six times what the unmutated suite needs — far enough above anything
 legitimate that it catches runaways rather than honest tests. The peak itself is
 one reading rather than a constant: the nine-package scope read 125.2 MiB, the
 ten-package one 141.5–147.4 MiB across three runs, the twelve-package one
 157.5 MiB, the thirteen-package one 174.2 MiB, the fourteen-package one
-168.5 MiB, the fifteen-package one 168.7 MiB and this one 169.1 MiB — four
-scopes that grew and a peak that did not, which is what "one reading" means.
+168.5 MiB, the fifteen-package one 168.7 MiB, the sixteen-package one
+169.1 MiB and this one 171.4 MiB — five scopes that grew and a peak that did
+not, which is what "one reading" means.
 Each suite that starts processes or writes documents moved the number the bound
 is derived from, and none of them
 moved the bound, because the floor was always the larger of the two. `-v` also
@@ -1517,7 +1539,7 @@ names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 4014 / 3935 / 6 / 73 on
+With that in place the whole summary is stable: the same 4383 / 4300 / 6 / 77 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.
@@ -1559,13 +1581,18 @@ from 120 scored mutants to 544, where the old number would have bought
 twenty-one survivors of slack instead of four; it then stayed at 99 through six
 widenings, because one percent of 549, 583, 809, 1266 and 1371 is five, five,
 eight, twelve and thirteen — always short of the twenty-one that moved it the
-time before. One percent of 2432 is twenty-four, which is not short of it, so
-with the eleventh package the same rule moved the number again, to 99.5: twelve
+time before, which is the same number it is measured against every time. One
+percent of 2432 is twenty-four, which is not short of it, so with the eleventh
+package the same rule moved the number again, to 99.5: twelve
 survivors of slack (2420/2432 clears, 2419/2432 does not) where 99 bought
-thirteen before the widening. It has stayed at 99.5 since, through a catalogue
-that grew to 2614 scored mutants without a package being added, and that is the
-same arithmetic once more: half a percent of 2822 is fourteen survivors
-(2808/2822 clears, 2807/2822 does not), two more than when the number was set
-and still far short of twenty-one. The floor is a fixed number of survivors rather
-than a fixed percentage of a growing catalogue. Do the arithmetic, write the
-answer next to the number, and only then decide whether it moves.
+thirteen before the widening. It then stayed at 99.5 through five more, and that
+was the same arithmetic once more: half a percent of 2822, 2943, 3200, 3527 and
+3941 is fourteen, fourteen, sixteen, seventeen and nineteen survivors — growing,
+and still short of twenty-one.
+
+Half a percent of 4306 is 21.53, and twenty-one is the number that was judged
+too much at 544, so the rule cashes in a second time: **99.75**, which buys ten
+survivors (4296/4306 clears, 4295/4306 does not) where 99.5 bought twelve when
+it was set. The floor is a fixed number of survivors rather than a fixed
+percentage of a growing catalogue. Do the arithmetic, write the answer next to
+the number, and only then decide whether it moves.

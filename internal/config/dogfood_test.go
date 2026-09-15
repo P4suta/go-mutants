@@ -144,6 +144,33 @@ var repositoryExpectations = []Expectation{
 			"dropping it makes two mutants of this package never return.",
 	},
 	{
+		ID: "db02130598a10e890c61ed90883ab299048c2c39d35a78eff6fc34f7d17a8961",
+		Reason: "Equivalent: a pair where exactly one path carries a drive letter " +
+			"differs at the colon, which has no case, so EqualFold and == " +
+			"answer alike on it -- the third disjunct therefore never decides " +
+			"anything the first two did not.",
+	},
+	{
+		ID: "f9c4b0ecc2abd4a97dc1a4e56c28a961c7073f72e5dadf2e764c19262643955d",
+		Reason: "Equivalent: blame over an empty pending set answers an empty list, " +
+			"so `> 0` and `>= 0` set the same blame on every build; the guard " +
+			"is there to skip parsing the compiler's whole output on a trial " +
+			"build, which is a cost and not an answer.",
+	},
+	{
+		ID: "422de23dfd7e9613b11dc0663e7defe76aeac2672fe76510167f6d6f3f44cc3a",
+		Reason: "Unreachable: the loop is bounded at one pass per catalogued file " +
+			"and every pass decides at least one of them, because blame never " +
+			"answers an empty list while anything is pending -- so the search " +
+			"always returns from inside it.",
+	},
+	{
+		ID: "35c5559564979fa6ac1465f4d117c8272d805e92937b994903dff8a5b71893eb",
+		Reason: "Unreachable: the other half of the same backstop, which exists so " +
+			"that a search wrong about its own bound fails closed rather than " +
+			"falling out of the loop.",
+	},
+	{
 		ID: "7793f84f81acc0da784e91c4a1320e9c156ca3d0475b3b002a5ef98874c8201e",
 		Reason: "Unkillable: WriteLengthPrefixed fails only on a field longer than " +
 			"math.MaxUint32 bytes, so entering this branch means hashing a " +
@@ -570,6 +597,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/gitdiff/*.go",
 				"internal/snapshot/*.go",
 				"internal/cache/*.go",
+				"internal/validate/*.go",
 			},
 			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			// `operators` is deliberately omitted from the file, so the
@@ -600,6 +628,7 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/gitdiff/...",
 				"./internal/snapshot/...",
 				"./internal/cache/...",
+				"./internal/validate/...",
 			},
 			// `timeout` is deliberately omitted from the file now that the
 			// binaries are scoped, so it derives from the baseline rather than
@@ -620,18 +649,18 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		// for why it is no longer pinned for correctness.
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		// The floor moved with the eleventh package, for the first time since
-		// it went to 99: one percent of 2432 scored mutants was twenty-four
-		// survivors of slack, which is more than the twenty-one that was
-		// judged too much at 544. It has not moved since, and that is the
-		// same arithmetic rather than inertia: at 2943 scored mutants half a
-		// percent buys fourteen survivors (2929/2943 = 99.52% clears,
-		// 2928/2943 = 99.49% does not), where it bought twelve when it was
-		// set -- still far short of the twenty-one that moves this number.
-		// Two widenings have now landed inside the same fourteen, which is
-		// what a floor written as a survivor count rather than as a
-		// percentage is for. The arithmetic is written out in the file.
-		Policy: mutation.Policy{Strict: false, MinimumScore: 99.5, RequireMutants: true},
+		// The floor has moved twice, by the same rule both times: it goes up
+		// when half a percent -- one percent, before the first move -- buys
+		// more slack than the twenty-one survivors judged too much at 544.
+		// One percent of 2432 was twenty-four, which moved it to 99.5; half a
+		// percent of 4306 is 21.53, which moves it to 99.75. Between those it
+		// stayed put through five widenings, and that was arithmetic rather
+		// than inertia. At 4306 scored mutants a quarter of a percent buys ten
+		// survivors (4296/4306 = 99.77% clears, 4295/4306 = 99.74% does not),
+		// where 99.5 bought twelve when it was set: a floor written as a
+		// survivor count rather than as a percentage of a growing catalogue.
+		// The arithmetic is written out in the file.
+		Policy: mutation.Policy{Strict: false, MinimumScore: 99.75, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",
 			Formats:   []ReportFormat{FormatJSON, FormatHTML},
