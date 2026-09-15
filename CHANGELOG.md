@@ -4273,6 +4273,14 @@ Entries say *why* a change was made, not only what changed.
   discovery starts, and names the file when it does — and a run whose test
   command names other packages entirely is no longer stopped by a broken test
   file it was never going to build.
+  The cgo exemption lost the half of itself that existed for the variants. It
+  used to match a package by import path as well as by loader ID, and to strip a
+  `_test` or `.test` suffix before doing so, because the external test package
+  and the generated test main hold no cgo import to be recognised from. With no
+  variants to recognise, the suffix rule only ever fires on a package somebody
+  wrote under that name — and exempting *that* from the compile gate hides a
+  real build error behind its neighbour's C preprocessor. It is a set of loader
+  IDs now, one entry per package a cgo import was read out of.
 - **A timeout discovery predicted is believed the first time, and the proof now
   reads the loop shape Go is actually written in.** A timeout is ordinarily
   measured twice before it is believed, because one timeout is as much a fact

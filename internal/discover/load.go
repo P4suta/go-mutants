@@ -418,47 +418,20 @@ func moduleFiles(pkg *packages.Package, root string) []fileRef {
 	return refs
 }
 
-// A cgoExemption is the set of packages that import "C", by loader ID and by
-// import path, together with the test variants the go command derives from
-// them.
-type cgoExemption struct {
-	// ids holds the loader IDs of the packages a cgo import was found in.
-	ids map[string]bool
-	// bases holds their import paths, with any test-variant decoration
-	// removed.
-	bases map[string]bool
-}
+// A cgoExemption is the set of packages that import "C", by loader ID.
+//
+// The ID is the whole key because the exemption and the two things that ask it
+// — the compile gate and the file walk — read the same list of packages, the
+// one the loader returned. [load] does not ask for test variants, so there is
+// no second spelling of a package to recognise and no name to match by suffix:
+// a path ending in `_test` or `.test` here is a package somebody wrote under
+// that name, and its build errors are its own rather than the cgo package's
+// next door.
+type cgoExemption map[string]bool
 
 // covers reports whether a package is excluded from mutation, and therefore
 // exempt from the load gate.
-//
-// The test variants have to be named explicitly, because the file scan cannot
-// find them: an external test package owns nothing but `_test.go` files, and
-// the generated test main package owns a file in the build cache, so neither
-// holds the cgo import that identifies the package they belong to. Their
-// failure is the same failure — "could not import the cgo package next door" —
-// and reporting it would be reporting the exempt package's build error under a
-// different name.
-//
-// A package genuinely named `x_test` sitting beside a cgo package `x` would be
-// exempted too. That costs a diagnostic in a directory layout nobody uses; the
-// alternative, matching on the loader's ID decoration, is a private detail of
-// go/packages that would change under us.
-func (e cgoExemption) covers(pkg *packages.Package) bool {
-	if e.ids[pkg.ID] {
-		return true
-	}
-	base := packagePath(pkg)
-	switch {
-	case e.bases[base]:
-		return true
-	case strings.HasSuffix(base, "_test") && e.bases[strings.TrimSuffix(base, "_test")]:
-		return true
-	case strings.HasSuffix(base, ".test") && e.bases[strings.TrimSuffix(base, ".test")]:
-		return true
-	}
-	return false
-}
+func (e cgoExemption) covers(pkg *packages.Package) bool { return e[pkg.ID] }
 
 // findCgoPackages finds the packages that import "C".
 //
@@ -468,10 +441,11 @@ func (e cgoExemption) covers(pkg *packages.Package) bool {
 // the package at all — in both cases the only place the truth survives intact
 // is the file on disk.
 func findCgoPackages(loaded *loadResult, root string) cgoExemption {
-	exemption := cgoExemption{ids: make(map[string]bool), bases: make(map[string]bool)}
+	exemption := make(cgoExemption)
 	fset := token.NewFileSet()
-	// A package and its test variants own the same files, so the answer is
-	// remembered per file rather than recomputed per package.
+	// Two packages of one module can name the same file — a build constraint
+	// puts it in one package's IgnoredFiles and another's GoFiles — so the
+	// answer is remembered per file rather than recomputed per package.
 	answers := make(map[string]bool)
 	for _, pkg := range loaded.packages {
 		for _, ref := range moduleFiles(pkg, root) {
@@ -483,10 +457,7 @@ func findCgoPackages(loaded *loadResult, root string) cgoExemption {
 			if !answer {
 				continue
 			}
-			exemption.ids[pkg.ID] = true
-			if base := packagePath(pkg); base != "" {
-				exemption.bases[base] = true
-			}
+			exemption[pkg.ID] = true
 			break
 		}
 	}
