@@ -123,6 +123,12 @@ const (
 	// inactive tree, which is what proves instrumentation changed nothing.
 	ExecKindInstrumentedBaseline = "instrumented-baseline"
 	// ExecKindCovdataTextfmt converts a coverage directory into a profile.
+	//
+	// No run this build makes starts one. A profiling run is asked for
+	// `-test.coverprofile`, so the binary writes the text format itself and
+	// there is nothing left to render; the kind stays because a published
+	// vocabulary is a superset on purpose, and a recording written by an
+	// earlier version holds these events.
 	ExecKindCovdataTextfmt = "covdata-textfmt"
 	// ExecKindGoList lists packages: the set a test binary covers, or — with
 	// the subject `module` — the whole of what a library consumer asked

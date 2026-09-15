@@ -13,30 +13,39 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// coverDirFlag is how a test binary is told where to leave its coverage data.
+// coverProfileFlag is how a test binary is told where to write its coverage
+// profile, in the text format internal/coverage reads.
+//
+// It is this flag rather than `-test.gocoverdir` for one reason, and the reason
+// is a *process*: a binary handed a coverage directory writes the raw counter
+// and metadata files, which then need `go tool covdata textfmt` to become
+// something readable, and that is one more child process per profile. A run
+// that profiles every test of a suite pays it once per test. `-test.coverprofile`
+// makes the binary write the text format itself, and the two documents are the
+// same format from the same data -- what `go test -coverprofile` has written
+// since Go 1.2 and what covdata renders into.
 //
 // It is a flag and deliberately not the GOCOVERDIR environment variable, which
-// is the obvious guess and is wrong here. GOCOVERDIR is read by
-// internal/coverage/cfile's emitMetaData, the path a program built with
-// `go build -cover` takes; a *test* binary emits through testing's coverTearDown
-// instead, which is handed only the value of `-test.gocoverdir` and, when that
-// is empty, writes into a temporary directory it then deletes. Setting the
+// is the obvious guess and is wrong here for either mechanism. GOCOVERDIR is
+// read by internal/coverage/cfile's emitMetaData, the path a program built with
+// `go build -cover` takes; a *test* binary emits through testing's
+// coverTearDown instead, which is handed only what the flags say and, when they
+// say nothing, writes into a temporary directory it then deletes. Setting the
 // environment variable on a test binary therefore produces a run that reports a
 // coverage percentage and leaves nothing behind, which is the most confusing
-// possible failure: it looks like it worked. Verified against go1.26.5.
-const coverDirFlag = "-test.gocoverdir="
+// possible failure: it looks like it worked. Verified against go1.26.6.
+const coverProfileFlag = "-test.coverprofile="
 
 // A CoverageData is where one test binary left its raw coverage data.
 type CoverageData struct {
 	// ImportPath is the package whose test binary produced it, which is the
 	// name the mapping and the report know a binary by.
 	ImportPath string
-	// Dir is the absolute directory holding the covmeta and covcounters files
-	// this binary wrote. It is `go tool covdata`'s input, and it is one
-	// directory per binary rather than one shared one because merging two
+	// Path is the absolute path of the text-format profile this binary wrote.
+	// It is one file per binary rather than one shared one because merging two
 	// binaries' data would answer "was this line reached by anything", which is
 	// the question coverage-guided selection exists not to ask.
-	Dir string
+	Path string
 }
 
 // CollectCoverage runs every test binary once, with no mutant activated, and
@@ -73,15 +82,15 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 
 	collected := make([]CoverageData, 0, len(bins))
 	for i, bin := range bins {
-		// One directory per binary, named by position rather than by import
-		// path; see profileDir.
-		binDir, err := profileDir(root, i)
+		// One file per binary, named by position rather than by import path;
+		// see profilePath.
+		binPath, err := profilePath(root, "b", i)
 		if err != nil {
 			return nil, err
 		}
 
 		spec := runner.Spec{
-			Argv: []string{bin.BinPath, coverDirFlag + binDir},
+			Argv: []string{bin.BinPath, coverProfileFlag + binPath},
 			Dir:  bin.Dir,
 			// No activation, and the same composed environment a mutant gets:
 			// a profile taken under a different environment would describe a
@@ -107,7 +116,7 @@ func CollectCoverage(ctx context.Context, opts Options, bins []TestBinary, dir s
 			"the coverage pass over "+bin.ImportPath+" failed", opts.Timeout); err != nil {
 			return nil, err
 		}
-		collected = append(collected, CoverageData{ImportPath: bin.ImportPath, Dir: binDir})
+		collected = append(collected, CoverageData{ImportPath: bin.ImportPath, Path: binPath})
 	}
 	return collected, nil
 }
@@ -157,21 +166,24 @@ func coverageTarget(opts Options, dir string) (Options, string, string, error) {
 	return opts, root, scratch, nil
 }
 
-// profileDir creates one directory for one profile under root and names it by
-// the positions given, which is a name that is stable between two runs of one
-// workspace: an import path or a test name is not a file name, and the order
-// the callers walk in is the sorted order [BuildTestBinaries] returned.
-func profileDir(root string, positions ...int) (string, error) {
-	dir := root
-	for _, position := range positions {
-		dir = filepath.Join(dir, strconv.Itoa(position))
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// profilePath names one profile under root, by a prefix and the positions
+// given, and makes sure the directory holding it exists.
+//
+// The name is stable between two runs of one workspace: an import path or a
+// test name is not a file name, and the order the callers walk in is the sorted
+// order [BuildTestBinaries] returned. The prefix keeps a binary's profile and
+// its tests' apart, which matters only to whoever reads a `--keep-temp` run.
+func profilePath(root, prefix string, positions ...int) (string, error) {
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", &Error{
 			Code:    CodeCoverageDir,
-			Message: "the coverage directory " + strconv.Quote(dir) + " could not be created",
+			Message: "the coverage directory " + strconv.Quote(root) + " could not be created",
 			Err:     err,
 		}
 	}
-	return dir, nil
+	name := prefix
+	for _, position := range positions {
+		name += "-" + strconv.Itoa(position)
+	}
+	return filepath.Join(root, name+".txt"), nil
 }

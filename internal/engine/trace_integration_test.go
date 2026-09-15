@@ -251,7 +251,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		trace.ExecKindValidateBuild,
 		trace.ExecKindGoTestC,
 		trace.ExecKindCoverageRun,
-		trace.ExecKindCovdataTextfmt,
 		trace.ExecKindMutantRun,
 	} {
 		if kinds[kind] == 0 {
@@ -271,8 +270,15 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		if e.Exec.Kind == trace.ExecKindScopeList && e.Exec.Subject == "" {
 			t.Errorf("the scope listing at %d does not say which pattern it resolved", e.Seq)
 		}
-		if e.Exec.Kind == trace.ExecKindCovdataTextfmt && e.Exec.Subject == "" {
-			t.Errorf("the profile rendering at %d does not say which package it was for", e.Seq)
+		if e.Exec.Kind == trace.ExecKindCoverageRun && e.Exec.Subject == "" {
+			t.Errorf("the coverage run at %d does not say which package it was for", e.Seq)
+		}
+		// And the kind this run no longer starts. It stays in the vocabulary --
+		// a published enum is a superset on purpose -- and a recording that
+		// held one would mean a profile had gone back to needing a second
+		// process to read.
+		if e.Exec.Kind == trace.ExecKindCovdataTextfmt {
+			t.Errorf("the run started `go tool covdata textfmt` at %d, which a written profile does not need", e.Seq)
 		}
 	}
 

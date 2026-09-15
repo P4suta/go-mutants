@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/P4suta/go-mutants/internal/coverage"
@@ -121,12 +120,11 @@ func (s *session) narrowToTests(
 
 	// The tests of clean binaries, each profiled on its own.
 	testProfiles := make(map[coverage.TestKey]coverage.Profile)
-	for i, data := range collected {
+	for _, data := range collected {
 		if !data.Passed || whole[data.ImportPath] {
 			continue
 		}
-		path := filepath.Join(profileDir, "t"+strconv.Itoa(i)+".txt")
-		profile, err := s.renderProfile(ctx, opts, scratch, data.Dir, data.ImportPath+" "+data.Name, path)
+		profile, err := s.readProfile(data.Path, data.ImportPath+" "+data.Name)
 		if err != nil {
 			return nil, coverageResult{}, err
 		}
@@ -378,9 +376,8 @@ func (s *session) wholeBinaryProfiles(
 		return nil, err
 	}
 	profiles := make(map[string]coverage.Profile, len(collected))
-	for i, data := range collected {
-		path := filepath.Join(profileDir, "b"+strconv.Itoa(i)+".txt")
-		profile, err := s.renderProfile(ctx, opts, scratch, data.Dir, data.ImportPath, path)
+	for _, data := range collected {
+		profile, err := s.readProfile(data.Path, data.ImportPath)
 		if err != nil {
 			return nil, err
 		}

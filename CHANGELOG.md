@@ -4249,6 +4249,41 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **The coverage phase no longer starts a process per profile, and no longer
+  runs its profiling one test at a time.** This is the pass whose cost grows
+  with the *suite* rather than with the catalogue — the one place a run pays for
+  somebody's test count before it measures a single mutant — and it was paying
+  three process starts per test where it needed one.
+  The first was `go tool covdata textfmt`. A test binary handed
+  `-test.gocoverdir` writes raw counters that something still has to render, and
+  that something is a child process, once per profile. Handed
+  `-test.coverprofile` it writes the text format itself — the same format from
+  the same data, what `go test -coverprofile` has written since Go 1.2 — so
+  there is nothing left to render. The kind `covdata-textfmt` stays in the trace
+  vocabulary, because a published enumeration is a superset on purpose and
+  recordings written by earlier versions hold those events; no run starts one.
+  The second was the *control* of a set of one test. A control asks "do these
+  tests pass together with nothing activated", and for one test "together" is
+  "alone" — which is exactly what the profiling pass ran: the same binary, in
+  the same directory, with nothing activated. A test that did not pass there
+  makes its whole binary ineligible for narrowing, so every singleton set that
+  reaches the verifier is already known green. The control is still run for
+  every set of two or more, which is where "they pass apart and fail together"
+  can happen, and still run for every set when the command carries accepted test
+  flags — `-test.short` would make the profiling run and the control two
+  different invocations of one test.
+  The third was not a process but an ordering: the per-test profiling runs went
+  one after another. Each is a separate process writing a profile of its own
+  under a scratch directory of its own, and nothing is shared but the package
+  directory the binaries already read from — mutant runs of those same binaries
+  already overlap — so they now run `execution.jobs` at a time, with the results
+  written by index so that the order is the plan's rather than the order the
+  workers finished in.
+  The counted proof is `internal/engine/testdata/work-ceiling.golden.txt`, which
+  records what each fixture's run starts by kind. `simple` loses six of its
+  thirty-three process starts and `killable` and `coverage` four each; on a real
+  suite the two removals are one per test and one per singleton set, so they
+  scale with the test count rather than with the fixture.
 - **A replacement the source already holds is not a mutation, whether the bytes
   say so or only go/types does.** Discovery has always refused a candidate whose
   replacement is spelled the same as the original — `return 0` under

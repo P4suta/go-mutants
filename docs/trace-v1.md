@@ -567,7 +567,7 @@ command, and an unlabelled command is a recording that does not validate.
 | `baseline-build` | compiling the unmutated tree |
 | `baseline-test` | one unmutated observation of the test command |
 | `instrumented-baseline` | the tests against the instrumented but inactive tree, which is what proves instrumentation changed nothing |
-| `covdata-textfmt` | converting a coverage directory into a profile |
+| `covdata-textfmt` | converting a coverage directory into a profile — no longer started by any run, and kept because the vocabulary is a superset |
 | `go-list` | listing the packages a test binary set covers |
 | `go-test-c` | compiling one test binary |
 | `test-list` | asking one test binary to name its tests |
@@ -580,7 +580,7 @@ command, and an unlabelled command is a recording that does not validate.
 | `verify` | re-checking the frozen tree before a session claims to measure it |
 
 `subject` is the mutant id for `mutant-run`, the import path for `go-test-c`,
-`test-list`, `coverage-run`, `covdata-textfmt` and `control-run`, the pattern
+`test-list`, `coverage-run` and `control-run`, the pattern
 for `scope-list`, and absent where the kind says everything there is to say. A
 `coverage-run` that profiles a single test rather than the whole binary names
 both, as the import path, one space, and the test's name: an import path holds

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -165,24 +164,22 @@ func TestCollectTestCoverageTellsTheTestsOfOneBinaryApart(t *testing.T) {
 		}
 	}
 
-	// The profiles of the tests that passed alone, rendered the way the engine
-	// renders them.
+	// The profiles of the tests that passed alone, read the way the engine
+	// reads them: the binary wrote the text format itself, so there is nothing
+	// between the run and the document.
 	profiles := make(map[coverage.TestKey]coverage.Profile)
-	for i, data := range collected {
+	for _, data := range collected {
 		if !data.Passed {
 			continue
 		}
-		path := filepath.Join(work, "profile-"+strconv.Itoa(i)+".txt")
-		result := mutantkit.RunGo(t, toolchain, snap.Root, env, "tool", "covdata", "textfmt", "-i="+data.Dir, "-o="+path)
-		mutantkit.RequireExit(t, result, 0, "rendering the profile of "+data.Name)
-		file, err := os.Open(path)
+		file, err := os.Open(data.Path)
 		if err != nil {
-			t.Fatalf("opening the rendered profile of %s: %v", data.Name, err)
+			t.Fatalf("opening the profile of %s: %v", data.Name, err)
 		}
 		profile, err := coverage.ParseTextfmt(file)
 		file.Close()
 		if err != nil {
-			t.Fatalf("parsing the rendered profile of %s: %v", data.Name, err)
+			t.Fatalf("parsing the profile of %s: %v", data.Name, err)
 		}
 		profiles[coverage.TestKey{ImportPath: data.ImportPath, Name: data.Name}] = profile
 	}

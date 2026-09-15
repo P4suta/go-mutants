@@ -8,6 +8,8 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/trace"
@@ -60,16 +62,15 @@ type TestCoverageData struct {
 	// here; their parent is, because the parent is what `-test.run` selects
 	// at the granularity a binary can be asked for cheaply.
 	Name string
-	// Dir is the absolute directory holding the covmeta and covcounters
-	// files this run wrote — one directory per test, for the same reason the
-	// binary profiles have one per binary: merged data answers the wrong
-	// question.
-	Dir string
+	// Path is the absolute path of the text-format profile this run wrote --
+	// one file per test, for the same reason the binary profiles have one
+	// per binary: merged data answers the wrong question.
+	Path string
 	// Passed reports whether the test passed when run alone. A test that
 	// does not is a fact rather than an error: it depends on something the
 	// rest of the suite does first, or it was never green. Either way it
 	// cannot be the sole witness of a mutant, and the caller is expected to
-	// leave it out of the narrowing and say so. Its Dir may hold a profile
+	// leave it out of the narrowing and say so. Its Path may hold a profile
 	// or not, depending on whether the binary's own teardown ran; a caller
 	// that leaves the test out need not read it.
 	Passed bool
@@ -108,56 +109,129 @@ func CollectTestCoverage(ctx context.Context, opts Options, bins []TestBinary, d
 	if err != nil {
 		return nil, err
 	}
-	env := baseEnvFrom(opts.Env, scratch)
 
-	var collected []TestCoverageData
+	// The listings first, and serially: there is one per binary rather than one
+	// per test, and the work below needs to know how many runs there will be
+	// before it can share them out.
+	type profiling struct {
+		bin  TestBinary
+		name string
+		path string
+	}
+	var planned []profiling
 	for i, bin := range bins {
-		names, err := listTests(ctx, opts, bin, env)
+		names, err := listTests(ctx, opts, bin, baseEnvFrom(opts.Env, scratch))
 		if err != nil {
 			return nil, err
 		}
 		for j, name := range names {
-			testDir, err := profileDir(root, i, j)
+			path, err := profilePath(root, "t", i, j)
 			if err != nil {
 				return nil, err
 			}
-			spec := runner.Spec{
-				// The anchors matter: `-test.run=TestA` would also select
-				// TestAB and every subtest of both.
-				Argv:        []string{bin.BinPath, testRunFlag + "^" + regexp.QuoteMeta(name) + "$", coverDirFlag + testDir},
-				Dir:         bin.Dir,
-				Env:         env,
-				Timeout:     opts.Timeout,
-				MemoryLimit: opts.MemoryLimit,
-				Trace:       opts.Trace,
-				Kind:        trace.ExecKindCoverageRun,
-				// The import path, a space, the test: an import path holds
-				// no space, so the two are recoverable from the subject.
-				Subject: bin.ImportPath + " " + name,
-			}
-			result := opts.runProcess(ctx, spec)
-			// Only a run that could not happen is an error here: a test that
-			// ran and did not pass is what Passed is for.
-			if result.Err != nil || ctx.Err() != nil {
-				if err := commandFailure(ctx, spec, result, CodeCoverageFailed,
-					"the coverage pass over "+name+" of "+bin.ImportPath+" failed", opts.Timeout); err != nil {
-					return nil, err
-				}
-			}
-			data := TestCoverageData{
-				ImportPath: bin.ImportPath,
-				Name:       name,
-				Dir:        testDir,
-				Passed:     result.ExitCode == 0 && !result.TimedOut,
-				TimedOut:   result.TimedOut,
-			}
-			if !data.Passed {
-				data.Output = tail(result.Output)
-			}
-			collected = append(collected, data)
+			planned = append(planned, profiling{bin: bin, name: name, path: path})
 		}
 	}
+	if len(planned) == 0 {
+		return nil, nil
+	}
+
+	// And the runs concurrently, [Options.Jobs] at a time.
+	//
+	// There is one process per test here and a suite has as many tests as it
+	// has, so this is the pass whose cost grows with the *suite* rather than
+	// with the catalogue -- the one place a run pays for a project's test count
+	// before it measures a single mutant. Each run is a separate process
+	// writing a profile of its own under a scratch directory of its own, and
+	// nothing is shared but the package directory the binaries already read
+	// from, so the only thing serialising them bought was that they did not
+	// overlap. Mutant runs of the same binaries already overlap.
+	//
+	// The results are written by index rather than appended, so the order is
+	// the order of the plan above and not the order the workers finished in: a
+	// coverage set that came out in a different order on two runs of one tree
+	// would make the narrowing -- and the catalogue digest a cache is keyed on
+	// -- depend on scheduling.
+	collected := make([]TestCoverageData, len(planned))
+	failures := make([]error, len(planned))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for worker := range min(opts.workers(), len(planned)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			workerOpts := opts
+			workerOpts.ScratchDir = workerScratchDir(opts.ScratchDir, worker)
+			workerScratchPath, scratchErr := workerScratch(workerOpts.ScratchDir)
+			env := baseEnvFrom(opts.Env, workerScratchPath)
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				i := int(next.Add(1)) - 1
+				if i >= len(planned) {
+					return
+				}
+				if scratchErr != nil {
+					failures[i] = scratchErr
+					continue
+				}
+				collected[i], failures[i] = profileOneTest(ctx, workerOpts, planned[i].bin, planned[i].name, planned[i].path, env)
+			}
+		}()
+	}
+	wg.Wait()
+	// The first failure by position, so that two runs of one tree report the
+	// same one.
+	for _, err := range failures {
+		if err != nil {
+			return nil, err
+		}
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	return collected, nil
+}
+
+// profileOneTest runs one test alone and records what it reached.
+func profileOneTest(
+	ctx context.Context, opts Options, bin TestBinary, name, path string, env []string,
+) (TestCoverageData, error) {
+	spec := runner.Spec{
+		// The anchors matter: `-test.run=TestA` would also select TestAB and
+		// every subtest of both.
+		Argv:        []string{bin.BinPath, testRunFlag + "^" + regexp.QuoteMeta(name) + "$", coverProfileFlag + path},
+		Dir:         bin.Dir,
+		Env:         env,
+		Timeout:     opts.Timeout,
+		MemoryLimit: opts.MemoryLimit,
+		Trace:       opts.Trace,
+		Kind:        trace.ExecKindCoverageRun,
+		// The import path, a space, the test: an import path holds no space, so
+		// the two are recoverable from the subject.
+		Subject: bin.ImportPath + " " + name,
+	}
+	result := opts.runProcess(ctx, spec)
+	// Only a run that could not happen is an error here: a test that ran and
+	// did not pass is what Passed is for.
+	if result.Err != nil || ctx.Err() != nil {
+		if err := commandFailure(ctx, spec, result, CodeCoverageFailed,
+			"the coverage pass over "+name+" of "+bin.ImportPath+" failed", opts.Timeout); err != nil {
+			return TestCoverageData{}, err
+		}
+	}
+	data := TestCoverageData{
+		ImportPath: bin.ImportPath,
+		Name:       name,
+		Path:       path,
+		Passed:     result.ExitCode == 0 && !result.TimedOut,
+		TimedOut:   result.TimedOut,
+	}
+	if !data.Passed {
+		data.Output = tail(result.Output)
+	}
+	return data, nil
 }
 
 // listTests asks one test binary for the names of its tests.

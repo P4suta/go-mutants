@@ -87,8 +87,8 @@
 //     skips a mutant a test does cover, which is a kill lost and a score
 //     inflated. [testScope] carries why the reading is spelling-strict.
 //   - **Fail open, always.** Every way the pass can fail — the
-//     coverage-instrumented build not compiling, a profiling run failing,
-//     `go tool covdata` missing or erroring, a profile that will not parse, a
+//     coverage-instrumented build not compiling, a profiling run failing, a
+//     profile that was not written or will not parse, a
 //     profile set with no blocks in it, a module path the profiles do not line
 //     up with — publishes a [coverage.CodeUnavailable] warning and continues
 //     with every mutant measured against every binary. None of them can fail a
