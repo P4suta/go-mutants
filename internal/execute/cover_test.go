@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -499,5 +500,56 @@ func TestCollectCoverageLabelsEachProfilingRun(t *testing.T) {
 	}
 	if want := []string{"example.com/m/a", "example.com/m/b"}; !slices.Equal(got, want) {
 		t.Errorf("the coverage runs are about %q, want one per binary, named by its package %q", got, want)
+	}
+}
+
+// TestCollectCoverageProfilesTheBinariesConcurrently is the binary-level pass's
+// half of the same rule.
+//
+// It is one process per *package* rather than per test, so it is the smaller of
+// the two -- and it is paid before a run measures anything, by every project
+// with more than a handful of packages. Each binary writes a profile of its own
+// under a scratch directory of its own and shares nothing but the package
+// directory it already reads from, which the mutant runs of that same binary
+// already overlap on.
+//
+// The barrier is the proof, as it is for the per-test pass: a serial
+// implementation does not fail this slowly, it deadlocks.
+func TestCollectCoverageProfilesTheBinariesConcurrently(t *testing.T) {
+	t.Parallel()
+
+	const jobs = 3
+	var arrived sync.WaitGroup
+	arrived.Add(jobs)
+	together := make(chan struct{})
+	var once sync.Once
+
+	f := &fake{respond: func(ctx context.Context, c call) runner.Result {
+		arrived.Done()
+		go once.Do(func() { arrived.Wait(); close(together) })
+		select {
+		case <-together:
+			return passed()
+		case <-ctx.Done():
+			return runner.Result{Err: ctx.Err()}
+		}
+	}}
+	opts, coverDir := coverOptions(t, f)
+	opts.Jobs = jobs
+	bins := testBins("example.com/m/a", "example.com/m/b", "example.com/m/c")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	collected, err := execute.CollectCoverage(ctx, opts, bins, coverDir)
+	if err != nil {
+		t.Fatalf("CollectCoverage: %v", err)
+	}
+
+	// And in the binaries' order rather than the workers': what the mapping
+	// sees has to be a function of the tree.
+	for i, data := range collected {
+		if data.ImportPath != bins[i].ImportPath {
+			t.Errorf("profile %d is for %q, want %q", i, data.ImportPath, bins[i].ImportPath)
+		}
 	}
 }
