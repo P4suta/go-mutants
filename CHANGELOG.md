@@ -14,6 +14,23 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **The glob language's own laws, checked rather than read.** The package was
+  already held to a naive reference matcher by a fuzz target, which is the
+  strongest statement there is that it reads a pattern *the obvious way* — and
+  says nothing about whether the obvious way is the one the package documents,
+  because the reference is the same reading written twice. Five rapid
+  properties state the decisions instead, and every one of them is a decision
+  third-party globbers disagree about: `**` may match zero elements, so
+  prefixing any pattern with `**/` can only add paths and prefixing twice adds
+  nothing more; a trailing `/**` names the directory it excludes as well as
+  everything under it, which is what somebody writing `exclude = ["vendor/**"]`
+  means; a pattern of literals matches exactly itself, which is the floor the
+  wildcards sit on; a wildcard never crosses a separator, without which
+  `include = ["internal/*.go"]` would be the widest scope there is rather than
+  the narrowest; and a compiled pattern answers the same way twice, which is
+  what keeps a catalogue a property of the pattern and the tree alone. The
+  nightly `property` job runs them at its deepened budget with the other three
+  packages.
 - **Six more fuzz targets, and the two they found.** The eight that existed
   covered this repository's own rewrites and three readers of somebody else's
   bytes. Six more finish the set, and each of them reads something no test table
