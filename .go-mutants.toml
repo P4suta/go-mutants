@@ -497,29 +497,23 @@ reason = "Unkillable: `>` and `>=` disagree only on a string of exactly math.Max
 id = "778f61b378f9a44f3cc836eccc8bcac2f79295189a0514b28e838b9340dab6b2"
 reason = "Unkillable: this return is reached only for a string longer than math.MaxUint32 bytes, so killing it means allocating more than four gigabytes in a unit test."
 
-# internal/coverage, whose 146 mutants brought exactly two rows with them. The
-# other twenty-six survivors of the first run over that package are dead, killed
-# by nine named tests and ten new cases in its own suites -- four of the tests
-# in a new white-box file, because the three invariants they pin are true of the
-# index, of merge and of relativeTo and change no answer Map gives, so a test
-# written through Map could not reach them. See CHANGELOG.md.
+# internal/coverage brought two rows with it and has none. The twenty-six
+# survivors of the first run over that package were killed by nine named tests
+# and ten new cases in its own suites -- four of the tests in a new white-box
+# file, because the three invariants they pin are true of the index, of merge
+# and of relativeTo and change no answer Map gives, so a test written through
+# Map could not reach them. See CHANGELOG.md.
 #
-# What is left is one comparator's secondary key, mutated two ways. Both rows
-# make the same argument and it is a proof rather than a shrug: the key orders
-# only intervals that already share a start line, and merge folds any run of
-# those into one interval reaching the furthest of their ends whatever order the
-# sort leaves them in -- so no permutation of a tie changes the merged list, and
-# covers reads nothing else. Neither row is uncovered: a case in map_test.go
-# gives one file two blocks opening on one line, so the line runs and the
-# mutants are executed and reported as survivors rather than skipped.
-
-[[mutation.expect]]
-id = "6e4a484ef1b13b165636f2c9e736bba568df0d13df9e42ae85fda86d882d1774"
-reason = "Equivalent: this is the tie-break of a sort whose primary key is the start line, so it only orders intervals that share one; merge joins any such run into [start, max end] whatever their order, and nothing downstream reads the order itself."
-
-[[mutation.expect]]
-id = "d0c24e273d49ff84d81e3b6e9f100c753eeb97c9a819c862c313ef3e44714e21"
-reason = "Equivalent: the same tie-break as the row above -- intervals sharing a start line all overlap, so merge folds them into [start, max end] however the sort arranges them, and the primary key still decides every pair whose start lines differ."
+# The two that were left were one comparator's secondary key, mutated two ways,
+# and they are gone the way this file prefers: the code that manufactured them
+# is. The key ordered only intervals that already share a start line, and merge
+# folds any run of those into one interval reaching the furthest of their ends
+# whatever order the sort leaves them in -- so no permutation of a tie changed
+# the merged list, and nothing downstream reads the order itself. The order is
+# still total; it is spelled with cmp.Compare instead of with the difference of
+# two line numbers, and a comparison written as a comparison has no arithmetic
+# in it for a rule to rewrite. Two proofs in this file became one sentence in
+# that one.
 
 # internal/testlog brought one row, and it is a guard that does one job with
 # the `break` under it. The parse loop ends at the first line the binary did not
