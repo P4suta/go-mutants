@@ -1095,10 +1095,11 @@ func BuildCatalogOf(results []Result) (*mutation.Catalog, error) {
 // packagePath strips the test-variant decoration go/packages puts on the
 // package path of a package compiled for a test binary, so that a candidate
 // reports the import path a user would type.
+// Cut rather than Index and a slice: the decoration cannot begin at offset
+// zero -- an import path's first byte is never a space -- so `i >= 0` and
+// `i > 0` are one boundary written two ways, and no package path could tell
+// them apart. Cut has no offset for an edit to move.
 func packagePath(pkg *packages.Package) string {
-	path := pkg.PkgPath
-	if i := strings.Index(path, " ["); i >= 0 {
-		path = path[:i]
-	}
+	path, _, _ := strings.Cut(pkg.PkgPath, " [")
 	return path
 }

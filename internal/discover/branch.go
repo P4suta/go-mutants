@@ -162,11 +162,16 @@ var inertBuiltins = map[string]bool{
 // declined to reason about this".
 func (s *fileScan) branchProof(rule mutation.Rule, anchor ast.Node) *BranchProof {
 	direction, decreasing := decreasingRules[rule.Name]
-	if !decreasing || s.info == nil || s.guard == nil {
+	if !decreasing {
 		return nil
 	}
-	cond, body, ok := s.gatedBody(anchor)
-	if !ok || !s.inert(cond) {
+	cond, body := s.gatedBody(anchor)
+	// A refusal is the nil condition, and needs no flag beside it: [fileScan.inert]
+	// is an allowlist over the syntax and answers no for an expression that is
+	// not there, exactly as it does for one it was never taught. A second way to
+	// say "there is nothing here" would be a boundary no input could put on the
+	// wrong side of.
+	if !s.inert(cond) {
 		return nil
 	}
 	start, ok := s.undirectedPosition(body.start)
@@ -198,26 +203,38 @@ func (s *fileScan) branchProof(rule mutation.Rule, anchor ast.Node) *BranchProof
 //
 // An `if`'s init statement is not part of its condition and is never inspected:
 // it runs before the condition is evaluated, and the mutant runs it too.
-func (s *fileScan) gatedBody(anchor ast.Node) (ast.Expr, gatedSpan, bool) {
+//
+// A walk that ends without a proof returns the nil condition, which is the only
+// thing it has to say: the caller puts every condition through
+// [fileScan.inert], and an expression that is not there is refused by the same
+// allowlist that refuses one nobody has thought about.
+func (s *fileScan) gatedBody(anchor ast.Node) (ast.Expr, gatedSpan) {
 	for node := anchor; node != nil; {
 		switch parent := s.guard.parent[node].(type) {
 		case *ast.ParenExpr:
 			node = parent
 		case *ast.BinaryExpr:
 			if parent.Op != token.LAND && parent.Op != token.LOR {
-				return nil, gatedSpan{}, false
+				return nil, gatedSpan{}
 			}
 			node = parent
 		case *ast.IfStmt:
-			if parent.Cond != node || parent.Body == nil || len(parent.Body.List) == 0 {
-				return nil, gatedSpan{}, false
+			// The condition is the only expression child either statement has:
+			// an initialiser is a statement, and a walk that reached one would
+			// have ended at the default arm below. So "is this the condition"
+			// is a question the walk has already answered, and a block is
+			// something the grammar gives every `if` and every `for`. What is
+			// left to ask is whether the body holds anything, because a proof
+			// about a body nobody could enter says nothing.
+			if len(parent.Body.List) == 0 {
+				return nil, gatedSpan{}
 			}
-			return parent.Cond, blockSpan(parent.Body), true
+			return parent.Cond, blockSpan(parent.Body)
 		case *ast.ForStmt:
-			if parent.Cond != node || parent.Body == nil || len(parent.Body.List) == 0 {
-				return nil, gatedSpan{}, false
+			if len(parent.Body.List) == 0 {
+				return nil, gatedSpan{}
 			}
-			return parent.Cond, blockSpan(parent.Body), true
+			return parent.Cond, blockSpan(parent.Body)
 		case *ast.CaseClause:
 			// A clause of a *tagless* switch. Its label is exactly `bool` --
 			// the implicit tag is the typed constant `true` -- so the label is
@@ -230,16 +247,16 @@ func (s *fileScan) gatedBody(anchor ast.Node) (ast.Expr, gatedSpan, bool) {
 			// suppressed before a candidate is proposed, so there is nothing
 			// under it to walk up from.
 			if !slices.Contains(parent.List, exprOf(node)) || len(parent.Body) == 0 {
-				return nil, gatedSpan{}, false
+				return nil, gatedSpan{}
 			}
-			return exprOf(node), clauseSpan(parent), true
+			return exprOf(node), clauseSpan(parent)
 		default:
 			// Including the nil parent of the file itself, which is how the
 			// walk terminates when the edit is not under a condition at all.
-			return nil, gatedSpan{}, false
+			return nil, gatedSpan{}
 		}
 	}
-	return nil, gatedSpan{}, false
+	return nil, gatedSpan{}
 }
 
 // A gatedSpan is the body a condition guards, as the two positions the proof
@@ -337,10 +354,15 @@ func (s *fileScan) inert(expr ast.Expr) bool {
 func (s *fileScan) inertSelector(e *ast.SelectorExpr) bool {
 	selection, ok := s.info.Selections[e]
 	if !ok {
-		ident, isIdent := e.X.(*ast.Ident)
-		if !isIdent {
-			return false
-		}
+		// Who the left operand denotes, rather than what shape it has. A
+		// selector the table has no entry for is a qualified identifier and its
+		// left operand is therefore an identifier, so a test of the shape would
+		// be a test of the checker's own contract with itself: it can only ever
+		// answer one way, and an edit that made it answer the other would be
+		// indistinguishable from the original on every file that type-checks.
+		// The question worth asking is the one below, and it is total -- a map
+		// read with a nil key is a miss, and a miss is not a package.
+		ident, _ := e.X.(*ast.Ident)
 		_, isPackage := s.info.Uses[ident].(*types.PkgName)
 		return isPackage
 	}

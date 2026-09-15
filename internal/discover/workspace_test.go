@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -464,5 +465,159 @@ func TestAWorkspacePatternIsWrittenAgainstTheWorkspaceRoot(t *testing.T) {
 					len(result.Result.Candidates), result.Module.Path)
 			}
 		}
+	}
+}
+
+// TestAWorkspaceFileThatCannotBeReadIsNotAMissingOne is the distinction
+// [DetectWorkspace] turns on, and the only one in it whose two sides are
+// answered by the same call.
+//
+// "There is no go.work here" is the ordinary answer for every module in the
+// world, and it is not an error. "There is one and this process cannot read it"
+// is a refusal, because the alternative is measuring a workspace as though it
+// were a module: one module's candidates, no module paths on them, and
+// identities that silently collide with another module's. The two arrive from
+// `os.ReadFile` as errors that differ only in what they wrap.
+//
+// A directory in the file's place is how the second is staged. It needs no
+// permission change, so it is the same test on every platform and in every
+// container, and it is a shape a real tree produces: a `go.work` directory is
+// what a botched extraction or a stray `mkdir` leaves behind.
+func TestAWorkspaceFileThatCannotBeReadIsNotAMissingOne(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no workspace file at all", func(t *testing.T) {
+		t.Parallel()
+
+		workspace, err := DetectWorkspace(t.TempDir())
+		if err != nil {
+			t.Fatalf("DetectWorkspace over a directory with no %s: %v", WorkspaceFile, err)
+		}
+		if workspace != nil {
+			t.Errorf("DetectWorkspace = %+v, want nothing", workspace)
+		}
+	})
+
+	t.Run("a workspace file that cannot be read", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, WorkspaceFile), 0o755); err != nil {
+			t.Fatalf("making a directory in the workspace file's place: %v", err)
+		}
+
+		_, err := DetectWorkspace(root)
+		if err == nil {
+			t.Fatal("DetectWorkspace over an unreadable workspace file succeeded, want a refusal")
+		}
+		if code := CodeOf(err); code != CodeWorkspace {
+			t.Fatalf("CodeOf(%v) = %q, want %q", err, code, CodeWorkspace)
+		}
+		if !strings.Contains(err.Error(), "could not be read") {
+			t.Errorf("the refusal %q does not say what went wrong", err)
+		}
+
+		// And the two callers that ask the same question and do different
+		// things with the answer both carry the refusal rather than reading it
+		// as "this is a module".
+		if err := CheckWorkspace(root); CodeOf(err) != CodeWorkspace {
+			t.Errorf("CheckWorkspace = %v, want the workspace refusal", err)
+		}
+		if _, err := DiscoverWorkspace(t.Context(), Options{SnapshotRoot: root}); CodeOf(err) != CodeWorkspace {
+			t.Errorf("DiscoverWorkspace = %v, want the workspace refusal", err)
+		}
+	})
+
+	t.Run("a module file that cannot be read", func(t *testing.T) {
+		t.Parallel()
+
+		// The same distinction one level down: a `use` pointing at a directory
+		// with no go.mod is one sentence, and one pointing at a go.mod this
+		// process cannot read is another. Both refuse, and a reader of the
+		// refusal has to be able to tell which happened.
+		root := t.TempDir()
+		writeWorkspace(t, root, "go 1.26\n\nuse ./app\n")
+		if err := os.MkdirAll(filepath.Join(root, "app", "go.mod"), 0o755); err != nil {
+			t.Fatalf("making a directory in the module file's place: %v", err)
+		}
+
+		_, err := DetectWorkspace(root)
+		if err == nil {
+			t.Fatal("DetectWorkspace over an unreadable go.mod succeeded, want a refusal")
+		}
+		if !strings.Contains(err.Error(), "could not be read") {
+			t.Errorf("the refusal %q does not say the file could not be read", err)
+		}
+	})
+
+	t.Run("a module file that declares no module path", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		writeWorkspace(t, root, "go 1.26\n\nuse ./app\n")
+		if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+			t.Fatalf("making the module directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "app", "go.mod"), []byte("go 1.26\n"), 0o644); err != nil {
+			t.Fatalf("writing go.mod: %v", err)
+		}
+
+		_, err := DetectWorkspace(root)
+		if err == nil {
+			t.Fatal("DetectWorkspace over a go.mod with no module line succeeded, want a refusal")
+		}
+		if !strings.Contains(err.Error(), "declares no module path") {
+			t.Errorf("the refusal %q does not say the file declares no module path", err)
+		}
+	})
+}
+
+// TestAUseLineIsResolvedAgainstTheRootItWasGiven pins [containedIn], including
+// the one way the resolution itself can fail.
+//
+// `filepath.Rel` refuses a pair it cannot express — a relative root and an
+// absolute target have no relative path between them without knowing the
+// working directory — and the answer has to be a refusal rather than a
+// guess. The root a real run passes is absolute, so this is the fail-closed
+// arm; it is stated because a caller that passed a relative root would
+// otherwise get a path that looks fine and points somewhere else.
+func TestAUseLineIsResolvedAgainstTheRootItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name     string
+		root     string
+		declared string
+		want     string
+		fails    bool
+	}{
+		{name: "a relative use", root: "/work", declared: "./app", want: "app"},
+		{name: "a nested use", root: "/work", declared: "./one/two", want: "one/two"},
+		{name: "the root itself", root: "/work", declared: ".", want: "."},
+		{name: "a use that climbs out", root: "/work", declared: "../sibling", fails: true},
+		{name: "an absolute use inside the root", root: "/work", declared: "/work/app", want: "app"},
+		{name: "an absolute use outside the root", root: "/work", declared: "/elsewhere", fails: true},
+		{name: "an absolute use against a relative root", root: "work", declared: "/elsewhere", fails: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			if runtime.GOOS == "windows" {
+				t.Skip("the paths in this table are POSIX ones; the rule they state is not platform-specific")
+			}
+			got, err := containedIn(c.root, c.declared)
+			if c.fails {
+				if err == nil {
+					t.Fatalf("containedIn(%q, %q) = %q, want a refusal", c.root, c.declared, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("containedIn(%q, %q): %v", c.root, c.declared, err)
+			}
+			if got != c.want {
+				t.Errorf("containedIn(%q, %q) = %q, want %q", c.root, c.declared, got, c.want)
+			}
+		})
 	}
 }

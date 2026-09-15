@@ -4,8 +4,15 @@
 package discover
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"maps"
 	"slices"
+	"strings"
 	"testing"
+
+	"golang.org/x/tools/go/packages"
 )
 
 // Import completion is the last thing standing between a guard that knows what
@@ -256,5 +263,294 @@ func TestImportsOfPrefersAnExplicitAliasWhateverTheFileOrder(t *testing.T) {
 				t.Errorf("importsOf = %q for \"time\", want the explicit alias %q", got, "clock")
 			}
 		})
+	}
+}
+
+// TestImportsOfReadsTheFilesInSourceOrder pins the tie-break that decides which
+// of two equally good names a package is completed with.
+//
+// Two files that both import a path plainly leave the index with one entry and
+// no name, which the caller resolves. Two that both alias it leave one alias,
+// and *which* one has to be a function of the source rather than of a map
+// iteration: a completion that changed between two runs over one tree would
+// make the instrumented bytes a function of nothing anybody wrote.
+func TestImportsOfReadsTheFilesInSourceOrder(t *testing.T) {
+	t.Parallel()
+
+	for _, order := range []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{name: "the first file's alias", want: "early", files: []string{
+			"package pkg\n\nimport early \"time\"\n",
+			"package pkg\n\nimport late \"time\"\n",
+		}},
+		{name: "the other way round", want: "late", files: []string{
+			"package pkg\n\nimport late \"time\"\n",
+			"package pkg\n\nimport early \"time\"\n",
+		}},
+	} {
+		t.Run(order.name, func(t *testing.T) {
+			t.Parallel()
+
+			index := importsOf(parseAll(t, order.files))
+			if got := index["time"]; got != order.want {
+				t.Errorf("importsOf = %q for \"time\", want the first file's %q", got, order.want)
+			}
+		})
+	}
+}
+
+// TestImportsOfSkipsWhatBindsNoNameAndWhatIsNotAPath covers the specs an index
+// has nothing to learn from.
+//
+// A blank or dot import contributes the path with no name, which is exactly
+// what makes it completable: the package is an edge this one genuinely has and
+// genuinely cannot spell. A path that will not unquote, or an empty one, is not
+// an edge at all.
+func TestImportsOfSkipsWhatBindsNoNameAndWhatIsNotAPath(t *testing.T) {
+	t.Parallel()
+
+	index := importsOf(parseAll(t, []string{
+		"package pkg\n\nimport (\n\t_ \"time\"\n\t. \"strings\"\n\tfp \"path/filepath\"\n)\n",
+	}))
+	for path, want := range map[string]string{
+		"time":          "",
+		"strings":       "",
+		"path/filepath": "fp",
+	} {
+		got, ok := index[path]
+		if !ok {
+			t.Errorf("importsOf left out %q", path)
+			continue
+		}
+		if got != want {
+			t.Errorf("importsOf = %q for %q, want %q", got, path, want)
+		}
+	}
+	if len(index) != 3 {
+		t.Errorf("importsOf found %v, want exactly the three paths", index)
+	}
+
+	// And the two an import spec can hold that are not paths. Neither is
+	// reachable from a file go/parser produced -- a parsed import path is a
+	// string literal and a valid one -- so they are built by hand, which is the
+	// only way to ask whether the reader would carry into the index a name no
+	// rewrite could use.
+	unreadable := &ast.File{
+		Name: ast.NewIdent("pkg"),
+		Imports: []*ast.ImportSpec{
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `"time"`}},
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: "not a quoted string"}},
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `""`}},
+			{Path: nil},
+		},
+	}
+	if got := importsOf([]*ast.File{unreadable}); !maps.Equal(got, map[string]string{"time": ""}) {
+		t.Errorf("importsOf = %v, want only the one path that is one", got)
+	}
+}
+
+// TestImportsOfReadsTheFilesInPositionOrderAndNotTheOrderItWasHanded is the
+// sort, which is the whole of what makes "the first file's alias wins" mean
+// anything.
+//
+// go/packages hands a package's syntax trees over in an order it does not
+// promise, and the answer this index gives has to be the same whichever order
+// that was: a package whose files disagree about what to call an import must
+// not have the disagreement settled by the loader. So the files are ordered by
+// where they start in the file set, and the only way to watch that happen is to
+// hand them over in the other order.
+func TestImportsOfReadsTheFilesInPositionOrderAndNotTheOrderItWasHanded(t *testing.T) {
+	t.Parallel()
+
+	parsed := parseAll(t, []string{
+		"package pkg\n\nimport clock \"time\"\n",
+		"package pkg\n\nimport chrono \"time\"\n",
+	})
+	// The same two files, handed over backwards. Their positions are unchanged,
+	// so a reader that sorts answers the same way and one that does not answers
+	// with the second file's alias.
+	backwards := []*ast.File{parsed[1], parsed[0]}
+
+	for _, order := range []struct {
+		name  string
+		files []*ast.File
+	}{
+		{name: "in the order they were parsed", files: parsed},
+		{name: "backwards", files: backwards},
+	} {
+		t.Run(order.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := importsOf(order.files)["time"]; got != "clock" {
+				t.Errorf("importsOf = %q, want the first file's alias %q", got, "clock")
+			}
+		})
+	}
+}
+
+// TestAPackagesTestFilesAndItsUnplaceableOnesAreLeftOutOfTheIndex is the filter
+// [packageImports] applies before it hands anything to [importsOf], and both
+// halves of it matter for the same reason: the index is what a *non-test* file
+// is completed from.
+//
+// A test file's imports are not the package's — `testing` is in every `_test.go`
+// and in none of the files this index is ever used to rewrite — and a syntax
+// tree the file set cannot place is one nothing is known about, name included.
+// The second half is a guard against a shape the loader has never produced, so
+// it is stated here rather than assumed: a file at [token.NoPos] is what an
+// unplaceable tree looks like, and the answer has to be to drop it rather than
+// to ask a nil file what it is called.
+func TestAPackagesTestFilesAndItsUnplaceableOnesAreLeftOutOfTheIndex(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	parse := func(name, source string) *ast.File {
+		t.Helper()
+		file, err := parser.ParseFile(fset, name, source, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		return file
+	}
+	// Placed in the file set, and named the two ways the filter tells apart.
+	ordinary := parse("widest.go", "package pkg\n\nimport \"time\"\n")
+	itsTests := parse("widest_test.go", "package pkg\n\nimport \"testing\"\n")
+	// Not placed in it at all: a tree whose Package token is token.NoPos, which
+	// is the zero value and belongs to no file in any file set.
+	unplaceable := &ast.File{
+		Name: ast.NewIdent("pkg"),
+		Imports: []*ast.ImportSpec{
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `"unsafe"`}},
+		},
+	}
+
+	d := &discovery{}
+	index := d.packageImports(
+		&loadResult{fset: fset},
+		&packages.Package{PkgPath: "example.com/m/pkg", Syntax: []*ast.File{ordinary, itsTests, unplaceable}},
+	)
+
+	// An unaliased import contributes the path with no name; see [defaultLocal]
+	// for who resolves it and to what.
+	if got, ok := index["time"]; !ok || got != "" {
+		t.Errorf("the index holds (%q, %v) for \"time\", want the ordinary file's unaliased import", got, ok)
+	}
+	for _, left := range []string{"testing", "unsafe"} {
+		if got, ok := index[left]; ok {
+			t.Errorf("the index holds %q for %q, want it left out", got, left)
+		}
+	}
+
+	// And the answer is remembered under the package's own path, which is what
+	// keeps a package with many mutated files from being read many times.
+	if second := d.packageImports(&loadResult{}, &packages.Package{PkgPath: "example.com/m/pkg"}); !maps.Equal(second, index) {
+		t.Errorf("the second question answered %v, want the first answer %v", second, index)
+	}
+}
+
+// TestMergeCompletionsIsAFunctionOfWhatTheRewriteNeeds pins both halves of
+// [MergeCompletions]: the deduplication and the order.
+//
+// A guard's completions are a list of imports to splice into one file, so a
+// path named twice would be an import declared twice -- a compile error in a
+// generated tree rather than a redundancy. And the order has to be a function
+// of the set rather than of the order the type checker happened to ask about
+// packages, because two runs over one workspace have to produce identical
+// bytes. Each key is separated by a pair that agrees on every key before it.
+func TestMergeCompletionsIsAFunctionOfWhatTheRewriteNeeds(t *testing.T) {
+	t.Parallel()
+
+	render := func(list []Completion) string {
+		var parts []string
+		for _, one := range list {
+			parts = append(parts, one.Local+"="+one.Path)
+		}
+		return strings.Join(parts, " ")
+	}
+
+	t.Run("the path orders first", func(t *testing.T) {
+		t.Parallel()
+
+		got := MergeCompletions(
+			[]Completion{{Path: "example.com/z", Local: "a"}},
+			[]Completion{{Path: "example.com/a", Local: "z"}},
+		)
+		if want := "z=example.com/a a=example.com/z"; render(got) != want {
+			t.Errorf("MergeCompletions = %q, want %q", render(got), want)
+		}
+	})
+
+	t.Run("the local name orders within one path", func(t *testing.T) {
+		t.Parallel()
+
+		// One path under two names is a real shape: a file that already binds
+		// `time` gets `time2`, and a second guard in the same file may have
+		// chosen it before this one did.
+		got := MergeCompletions(
+			[]Completion{{Path: "example.com/a", Local: "z"}},
+			[]Completion{{Path: "example.com/a", Local: "a"}},
+		)
+		if want := "a=example.com/a z=example.com/a"; render(got) != want {
+			t.Errorf("MergeCompletions = %q, want %q", render(got), want)
+		}
+	})
+
+	t.Run("a completion already present is not added twice", func(t *testing.T) {
+		t.Parallel()
+
+		one := Completion{Path: "example.com/a", Local: "a"}
+		got := MergeCompletions([]Completion{one}, []Completion{one, one})
+		if want := "a=example.com/a"; render(got) != want {
+			t.Errorf("MergeCompletions = %q, want %q", render(got), want)
+		}
+	})
+
+	t.Run("a path under a second name is not a duplicate", func(t *testing.T) {
+		t.Parallel()
+
+		got := MergeCompletions(
+			[]Completion{{Path: "example.com/a", Local: "a"}},
+			[]Completion{{Path: "example.com/a", Local: "b"}},
+		)
+		if want := "a=example.com/a b=example.com/a"; render(got) != want {
+			t.Errorf("MergeCompletions = %q, want %q", render(got), want)
+		}
+	})
+
+	t.Run("merging nothing into nothing is nothing", func(t *testing.T) {
+		t.Parallel()
+
+		if got := MergeCompletions(nil, nil); len(got) != 0 {
+			t.Errorf("MergeCompletions(nil, nil) = %v, want nothing", got)
+		}
+	})
+}
+
+// TestTheNameAnUnaliasedImportBindsIsTheLastElementOfItsPath pins
+// [defaultLocal], the fallback for a completion whose package the checker
+// cannot be asked about.
+//
+// It is a fallback and not the rule: the last element of a path and the name a
+// package declares differ often enough to matter -- `gopkg.in/yaml.v3` declares
+// `yaml`, `google.golang.org/grpc` declares `grpc` -- and only the declared name
+// compiles. What this answers is the case where there is no package object to
+// ask, and the answer has to be the path's own last element rather than the
+// whole path, which would not be an identifier at all.
+func TestTheNameAnUnaliasedImportBindsIsTheLastElementOfItsPath(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct{ path, want string }{
+		{"time", "time"},
+		{"path/filepath", "filepath"},
+		{"example.com/m/internal/carrier", "carrier"},
+		{"gopkg.in/yaml.v3", "yaml.v3"},
+		{"", "."},
+	} {
+		if got := defaultLocal(c.path); got != c.want {
+			t.Errorf("defaultLocal(%q) = %q, want %q", c.path, got, c.want)
+		}
 	}
 }

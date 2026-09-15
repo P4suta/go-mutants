@@ -4,6 +4,7 @@
 package discover
 
 import (
+	"cmp"
 	"go/ast"
 	"path"
 	"slices"
@@ -137,11 +138,13 @@ func MergeCompletions(into, from []Completion) []Completion {
 			into = append(into, one)
 		}
 	}
+	// cmp.Or rather than a comparison in front of each key: `a.Path != b.Path`
+	// and `strings.Compare(a.Path, b.Path) != 0` are one question asked twice,
+	// and the second spelling is the one that also produces the answer. Two
+	// ways to say "these paths are the same" is a boundary no pair of
+	// completions could put on the wrong side of.
 	slices.SortFunc(into, func(a, b Completion) int {
-		if a.Path != b.Path {
-			return strings.Compare(a.Path, b.Path)
-		}
-		return strings.Compare(a.Local, b.Local)
+		return cmp.Or(strings.Compare(a.Path, b.Path), strings.Compare(a.Local, b.Local))
 	})
 	return into
 }
