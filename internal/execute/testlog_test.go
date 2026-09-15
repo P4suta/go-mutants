@@ -146,17 +146,26 @@ func TestTestLogFlagPrecedesCallerArgs(t *testing.T) {
 				t.Fatalf("started %d binaries, want 1", len(seen))
 			}
 			argv := seen[0].Argv
-			if len(argv) != 4 {
-				t.Fatalf("argv = %q, want the binary, the timeout, the log and the caller's argument", argv)
-			}
-			if !strings.HasPrefix(argv[1], "-test.timeout=") {
-				t.Errorf("argv[1] = %q, want the harness timeout first", argv[1])
-			}
-			if !strings.HasPrefix(argv[2], testLogFlag) {
-				t.Errorf("argv[2] = %q, want %s, as cmd/go places it", argv[2], testLogFlag)
-			}
-			if argv[3] != "-test.run=^TestX$" {
-				t.Errorf("argv[3] = %q, want the caller's own argument last", argv[3])
+			// The claim is the order rather than the length: a pass may carry
+			// a flag of its own -- a mutant run and a control carry
+			// -test.failfast -- and where that lands decides nothing here.
+			timeout := slices.IndexFunc(argv, func(a string) bool {
+				return strings.HasPrefix(a, "-test.timeout=")
+			})
+			log := slices.IndexFunc(argv, func(a string) bool { return strings.HasPrefix(a, testLogFlag) })
+			caller := slices.Index(argv, "-test.run=^TestX$")
+			switch {
+			case timeout != 1:
+				t.Errorf("argv = %q, want the harness timeout right after the binary", argv)
+			case log < 0:
+				t.Errorf("argv = %q, want the engine's %s in it", argv, testLogFlag)
+			case caller < 0:
+				t.Errorf("argv = %q, want the caller's own argument in it", argv)
+			case log > caller:
+				t.Errorf("argv = %q, want %s before the caller's own argument, as cmd/go places it",
+					argv, testLogFlag)
+			case caller != len(argv)-1:
+				t.Errorf("argv = %q, want the caller's own argument last", argv)
 			}
 		})
 	}

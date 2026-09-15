@@ -58,3 +58,8 @@ func ProbeEnv(scratch, logPath string) []string { return probeEnv(scratch, logPa
 // ControlEnv exposes the environment one test binary runs with when nothing is
 // activated, which is the environment the original program runs in.
 func ControlEnv(scratch string) []string { return controlEnv(scratch) }
+
+// FailFastFlag exposes the flag the two single-bit passes carry, so that a
+// scripted target's rule table can match the argv the scheduler really builds
+// rather than a copy of the spelling.
+const FailFastFlag = failFastFlag

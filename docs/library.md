@@ -387,7 +387,7 @@ silent merge.
 |---|---|---|
 | `Mutant string` (Exec only) | required | a full 64-character ID or an unambiguous catalogue prefix |
 | `Package string` | `""` | an import path or one module-relative package directory. Empty selects **every** compiled test package |
-| `Args []string` | `nil` | passed verbatim to each selected test binary, after the engine's own `-test.timeout` |
+| `Args []string` | `nil` | passed verbatim to each selected test binary, after the engine's own `-test.timeout` and, for `Exec` and `Control`, `-test.failfast` |
 | `Env []string` | `nil` | `KEY=VALUE` overlay for this call |
 | `Timeout time.Duration` | `0` → `PrepareOptions.MutantTimeout` | overrides the session default when positive. Negative is invalid |
 | `OutputLimit int` | zero or negative → 1 MiB | cap on the retained combined output of each test binary the call starts, exactly as `Command.OutputLimit`. A positive value below 256 is raised to 256 |
@@ -1090,6 +1090,17 @@ for a log, because two of them are not two logs: the standard flag package keeps
 the last value it sees, so one of the two would silently win and the other would
 report on a file nobody wrote. A request that did not ask is composing nothing,
 so the flag passes through verbatim.
+
+`Exec` and `Control` additionally pass `-test.failfast`, and `Probe` does not.
+Each of the first two produces one bit — did anything catch this edit, does this
+set of tests pass together with nothing activated — and the first failing test
+has answered it, so the rest of the binary is paid for and cannot change the
+answer. A probe pass accumulates its answer from every test that runs, so
+stopping it early would record a smaller set than it measured. The flag is
+placed *before* `Args`, so a caller that wants the whole binary anyway passes
+`-test.failfast=false` and the standard flag package keeps that later value. It
+is not reserved: unlike `-test.timeout`, nothing about the session's guarantees
+depends on it.
 
 The engine adds its own `GOFLAGS` entries for the instrumented builds:
 `-overlay=<manifest>`, `-vet=off`, and `-count=1`. Instrumented sources live

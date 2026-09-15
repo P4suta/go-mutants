@@ -424,7 +424,7 @@ func runPass(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) 
 		logPath := logs.path(i)
 		tests := m.Tests[bin.ImportPath]
 		spec, result := startTarget(ctx, opts, trace.ExecKindMutantRun, m.ID, bin, env,
-			m.Timeout, m.MemoryLimit, m.Args, tests, logPath, m.OutputLimit)
+			m.Timeout, m.MemoryLimit, m.Args, tests, logPath, m.OutputLimit, true)
 		attempt.Duration += result.Duration
 		attempt.PeakMemory = max(attempt.PeakMemory, result.PeakMemory)
 		attempt.Binaries = append(attempt.Binaries, bin.ImportPath)
@@ -592,6 +592,30 @@ func (a *Attempt) keep(result runner.Result) {
 	a.OutputTail = tail(result.Output)
 }
 
+// failFastFlag tells a test binary to start no further test once one has
+// failed.
+//
+// It is a saving rather than a decision, and the two passes that carry it are
+// the two whose product is a single bit. A mutant run asks whether anything
+// caught the edit; a control asks whether a set of tests passes together with
+// nothing activated. The first failure answers either question, and every test
+// the binary would go on to run after it is paid for and cannot change the
+// answer -- which on a mutant narrowed to a dozen covering tests is most of what
+// the execution phase spends.
+//
+// It is placed ahead of the target's own arguments so that a test command that
+// spells the flag itself still decides: the flag package keeps the last value
+// it is given, so `-test.failfast=false` in a test.command is obeyed rather
+// than silently overridden.
+//
+// What it does not change is a verdict. A mutant with no failing test runs
+// every test either way; a mutant with one is killed either way, and the
+// binary that killed it is the same binary. The one thing it can move is which
+// *kind* of detection gets reported when a mutant both fails an early test and
+// hangs a later one: that is a kill now rather than a timeout, which is the
+// more precise of the two answers and is scored the same.
+const failFastFlag = "-test.failfast"
+
 // startTarget starts one prepared test binary and waits for it.
 //
 // This is the whole of what [RunOne] and [RunProbe] do to a child process, and
@@ -695,9 +719,13 @@ func startTarget(
 	tests []string,
 	testLogPath string,
 	outputLimit int,
+	stopAtFirstFailure bool,
 ) (runner.Spec, runner.Result) {
-	argv := make([]string, 0, len(args)+4)
+	argv := make([]string, 0, len(args)+5)
 	argv = append(argv, bin.BinPath, "-test.timeout="+(InProcessTimeoutFactor*timeout).String())
+	if stopAtFirstFailure {
+		argv = append(argv, failFastFlag)
+	}
 	if testLogPath != "" {
 		argv = append(argv, testLogFlagName+"="+testLogPath)
 	}

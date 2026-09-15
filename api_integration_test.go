@@ -778,10 +778,17 @@ func TestSessionExecHonoursOutputLimit(t *testing.T) {
 	// The two targets together: one prints far past the budget and the other is
 	// what turns the suite red, so the capture that comes back is a *deciding*
 	// binary's and not merely a chatty one's.
+	//
+	// And both of them have to run. An execution stops at the first test that
+	// fails, and the one that fails here is registered first -- clamp_test.go
+	// sorts before session_test.go, which is the order a test binary registers
+	// its tests in -- so the chatty one would never start. Turning that off is
+	// what a caller does when it wants the whole binary anyway, and the flag
+	// lands after the engine's own, which is the documented way to say so.
 	result, err := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:      clamp.ID,
 		Package:     "fixture.example/killable",
-		Args:        []string{"-test.run=^TestPrintsALot$|^TestClamp$"},
+		Args:        []string{"-test.run=^TestPrintsALot$|^TestClamp$", "-test.failfast=false"},
 		OutputLimit: limit,
 	})
 	if err != nil {
