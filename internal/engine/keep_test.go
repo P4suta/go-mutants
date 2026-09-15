@@ -433,3 +433,128 @@ func TestKeepTempIsPrintedAsTheWordAUserTyped(t *testing.T) {
 			int(KeepTempNever))
 	}
 }
+
+// TestTheScratchGoesEvenAfterAKilledTestLeftADirectoryShut is the removal a
+// mutation run has to be able to make.
+//
+// Killing test processes is what this tool does: a per-mutant timeout kills
+// one, an interrupted run kills every worker at once. A suite that had made one
+// of its own temporary directories unreadable -- to prove a permission refusal,
+// which is how half the failure paths in this repository are tested -- and
+// would have put it back on the way out is a suite that never got the chance.
+// What is left is a directory nothing can list, inside the run's own scratch,
+// and a run that could not remove it leaves one behind per killed test for as
+// long as anybody uses the tool.
+func TestTheScratchGoesEvenAfterAKilledTestLeftADirectoryShut(t *testing.T) {
+	t.Parallel()
+
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permissions this test uses to make a removal fail")
+	}
+
+	root := filepath.Join(t.TempDir(), "scratch")
+	deep := filepath.Join(root, "workers", "w3", "TestSomething", "001", "inner")
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatalf("staging the scratch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "eight"), []byte("12345678"), 0o600); err != nil {
+		t.Fatalf("staging a file: %v", err)
+	}
+	// Read without execute, which is the shape a test proving "this file cannot
+	// be stat-ed" leaves behind -- and the one os.RemoveAll cannot walk into.
+	if err := os.Chmod(deep, 0o600); err != nil {
+		t.Fatalf("shutting the directory: %v", err)
+	}
+	if err := os.RemoveAll(root); err == nil {
+		t.Skip("this filesystem removes a directory it cannot search, so there is nothing to force")
+	}
+
+	if err := forceRemoveAll(root); err != nil {
+		t.Fatalf("forceRemoveAll: %v", err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the scratch directory is still there: %v", err)
+	}
+}
+
+// TestForcingARemovalStillReportsOneItCannotMake is the other half: widening a
+// mode is not the same as promising the directory will go.
+//
+// The caller's whole answer to a directory that will not be removed is to say
+// so, and a forcing removal that swallowed the second failure would turn a
+// disk somebody has to look at into silence.
+func TestForcingARemovalStillReportsOneItCannotMake(t *testing.T) {
+	t.Parallel()
+
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permissions this test uses to make a removal fail")
+	}
+
+	// The parent refuses the unlink, which no mode inside the tree can widen:
+	// removing an entry is a write to the directory holding it.
+	parent := t.TempDir()
+	root := filepath.Join(parent, "scratch")
+	if err := os.MkdirAll(filepath.Join(root, "inner"), 0o700); err != nil {
+		t.Fatalf("staging the scratch: %v", err)
+	}
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatalf("closing the parent to writes: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+	if err := os.WriteFile(filepath.Join(parent, "probe"), nil, 0o600); err == nil {
+		t.Skip("this filesystem does not enforce the directory mode this test needs")
+	}
+
+	if err := forceRemoveAll(root); err == nil {
+		t.Error("forceRemoveAll reported success for a directory that is still there")
+	}
+	if _, err := os.Stat(root); err != nil {
+		t.Errorf("the directory was removed after all: %v", err)
+	}
+}
+
+// TestWidenReachesADirectoryItCannotListUntilItHasWidenedIt pins the ordering
+// that makes the walk work at all.
+//
+// A directory that cannot be searched cannot be walked into, so a widener that
+// listed before changing the mode would stop at exactly the entry it exists
+// for. The mode comes first, and the listing after it.
+func TestWidenReachesADirectoryItCannotListUntilItHasWidenedIt(t *testing.T) {
+	t.Parallel()
+
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permissions this test uses")
+	}
+
+	root := t.TempDir()
+	outer := filepath.Join(root, "outer")
+	inner := filepath.Join(outer, "inner")
+	if err := os.MkdirAll(inner, 0o700); err != nil {
+		t.Fatalf("staging: %v", err)
+	}
+	// Both shut, the outer one first: reaching the inner one at all means the
+	// outer one was widened before it was listed.
+	for _, dir := range []string{inner, outer} {
+		if err := os.Chmod(dir, 0o000); err != nil {
+			t.Fatalf("shutting %s: %v", dir, err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(outer, 0o700)
+		_ = os.Chmod(inner, 0o700)
+	})
+	if _, err := os.ReadDir(outer); err == nil {
+		t.Skip("this filesystem does not enforce the directory mode this test needs")
+	}
+
+	widen(root)
+	for _, dir := range []string{outer, inner} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("stat %s: %v", dir, err)
+		}
+		if info.Mode().Perm()&0o700 != 0o700 {
+			t.Errorf("%s is %v, want it listable, searchable and writable", dir, info.Mode().Perm())
+		}
+	}
+}

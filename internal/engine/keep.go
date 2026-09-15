@@ -6,6 +6,7 @@ package engine
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -148,6 +149,53 @@ func keepsTemporaries(keep KeepTemp, err error) bool {
 	return false
 }
 
+// forceRemoveAll removes the run's own scratch directory, clearing the modes
+// that stop it.
+//
+// A mutation run kills test processes on purpose -- that is what a per-mutant
+// timeout is, and what an interrupted run does to every worker at once -- so a
+// suite that had made one of its own directories unreadable and would have put
+// it back is a suite that never got the chance. What is left is a directory
+// nothing can list, under a scratch directory this process made, handed to
+// nobody else, and is about to delete: widening its mode takes nothing away
+// from anyone, and leaving it behind means a directory per killed test
+// accumulating in the operating system's temporary area for as long as anybody
+// runs this tool.
+//
+// The widening is one pass and the removal is tried once more, not in a loop. A
+// second failure is a real one -- a file another process holds open, a
+// filesystem that refuses -- and it is reported rather than retried, because
+// the caller's whole answer to a directory that will not go is to say so.
+func forceRemoveAll(root string) error {
+	err := os.RemoveAll(root)
+	if err == nil {
+		return nil
+	}
+	widen(root)
+	return os.RemoveAll(root)
+}
+
+// widen makes one directory and everything under it listable, searchable and
+// writable.
+//
+// The directory's own mode is changed before it is listed, which is the whole
+// point: a directory that cannot be searched cannot be walked into, so a widener
+// that read first would stop at exactly the entry it exists for. Every failure
+// is dropped -- this runs only after a removal has already failed, and the
+// removal that follows is what reports whether it worked.
+func widen(dir string) {
+	_ = os.Chmod(dir, 0o700)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			widen(filepath.Join(dir, entry.Name()))
+		}
+	}
+}
+
 // release settles the run's temporary directories on every path out of the
 // pipeline, and is the only place either of them is removed or kept.
 //
@@ -168,7 +216,7 @@ func (s *session) release(temps *temporaries, keep KeepTemp, out *RunOutcome, er
 	if scratch, owner := temps.scratch, temps.scratchOwner; scratch != "" {
 		// The lock is dropped before the removal: on Windows an open handle
 		// inside a directory is exactly what makes RemoveAll fail.
-		remove := func() error { return errors.Join(owner.Release(), os.RemoveAll(scratch)) }
+		remove := func() error { return errors.Join(owner.Release(), forceRemoveAll(scratch)) }
 		if s.settle(keeping, "per-run temporary directory", CodeScratchNotRemoved, owner.Keep, remove) {
 			preserved = append(preserved, PreservedDir{Kind: KeptScratch, Path: scratch})
 		}

@@ -4643,6 +4643,20 @@ Entries say *why* a change was made, not only what changed.
 
 ### Fixed
 
+- **A run's own scratch directory goes even after a killed test left one of its
+  directories shut.** Killing test processes is what this tool does — a
+  per-mutant timeout kills one, an interrupted run kills every worker at once —
+  so a suite that had made one of its own temporary directories unreadable, to
+  prove a permission refusal, and would have put it back on the way out is a
+  suite that never got the chance. What was left was a directory nothing could
+  list, inside the run's own scratch, and `os.RemoveAll` cannot walk into one:
+  every such run ended with `GOM4041: the per-run temporary directory could not
+  be removed` and left a directory per killed test in the operating system's
+  temporary area. The removal now widens what it owns and tries once more — the
+  directory is one this process made, handed to nobody else, and is about to
+  delete, so widening its mode takes nothing away from anyone. A second failure
+  is still reported rather than retried: a file another process holds open is a
+  disk somebody has to look at, and the whole answer to it is to say so.
 - **On Linux a child's `PeakMemory` was its parent's.** `wait4`'s `ru_maxrss`
   for a process Go starts — with `clone(CLONE_VM|CLONE_VFORK)`, on every Linux
   it supports — begins at the parent's own high-water mark, so a `/bin/true`
