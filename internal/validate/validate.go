@@ -804,6 +804,12 @@ type fileRef struct {
 	path          string
 	root          string
 	runtimeImport string
+	// loopBase is the first loop-site index this file's counters answer to,
+	// as [instrument.Instrument] numbered them across the tree. It is carried
+	// here because the search rewrites one file at a time and the ceilings are
+	// one array in one generated package: a file re-instrumented from base zero
+	// would hold its loops to another file's ceilings. See ADR 0013.
+	loopBase uint32
 }
 
 // snapshotPath joins a module's directory to a module-relative path, which is
@@ -851,10 +857,16 @@ func (v *validator) instrumentModules() error {
 			v.guards[key] = count
 		}
 		instrumented.GuardsByFile = lifted
+		bases := make(map[string]uint32, len(instrumented.LoopBase))
+		for rel, base := range instrumented.LoopBase {
+			bases[snapshotPath(module.Dir, rel)] = base
+		}
+		instrumented.LoopBase = bases
 		for _, key := range instrumented.FilesInstrumented {
 			ref := v.files[key]
 			ref.root = root
 			ref.runtimeImport = instrumented.RuntimeImport
+			ref.loopBase = bases[key]
 			v.files[key] = ref
 		}
 		v.runtimes = append(v.runtimes, instrumented)
@@ -875,6 +887,7 @@ func (v *validator) instrumentModules() error {
 		}
 		ref.root = filepath.Join(v.root, filepath.FromSlash(module.Dir))
 		ref.runtimeImport = v.runtimeImportOf(module)
+		ref.loopBase = v.loopBaseOf(module, key)
 		v.files[key] = ref
 	}
 	return nil
@@ -888,6 +901,18 @@ func (v *validator) moduleOf(modulePath string) (Module, bool) {
 		}
 	}
 	return Module{}, false
+}
+
+// loopBaseOf is the loop-site base the given module's pass gave one file, and
+// zero for a file that pass never reached -- which is a file with no counters
+// to number.
+func (v *validator) loopBaseOf(module Module, key string) uint32 {
+	for i, candidate := range v.modules {
+		if candidate == module && i < len(v.runtimes) {
+			return v.runtimes[i].LoopBase[key]
+		}
+	}
+	return 0
 }
 
 // runtimeImportOf is the import path the given module's runtime was written at.
@@ -912,6 +937,7 @@ func (v *validator) instrumentFile(path string, subset []mutation.Mutant) error 
 		Mutants:       subset,
 		Hints:         v.hints,
 		Mode:          v.mode,
+		LoopBase:      ref.loopBase,
 	})
 	if err != nil {
 		return err

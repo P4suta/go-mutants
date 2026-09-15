@@ -91,15 +91,19 @@ func TestProbeRuntimeGolden(t *testing.T) {
 	}
 }
 
-// TestMutantRuntimeStillExportsOnlyM is the other half of that assertion, and
-// the reason the two runtimes can share a package name at all.
+// TestMutantRuntimeExportsWhatItsTreeSpells is the other half of that
+// assertion, and the reason the two runtimes can share a package name at all.
 //
 // They are generated into different snapshots, so the names never meet; what
-// keeps that true is that neither package grew a second export somebody started
-// depending on. The activation runtime's fixture is asserted here a second time
-// on purpose: this change adds a generator beside its own, and "the mutant tree
-// is byte-for-byte what it was" is the one claim that has to survive it.
-func TestMutantRuntimeStillExportsOnlyM(t *testing.T) {
+// keeps that true is that neither package grew an export nothing in its own
+// tree spells. The activation runtime's three are exactly the three names the
+// mutant rewrite writes: M, which a guard reads; Limit, which a counted loop
+// reads once on the way in; and Over, which that loop calls when its counter
+// passes the ceiling. The probe runtime has none of them and they have none of
+// its. The fixture is asserted here a second time on purpose: "the mutant tree
+// is what it was but for the counters" is the claim that has to survive every
+// change to the generator beside it.
+func TestMutantRuntimeExportsWhatItsTreeSpells(t *testing.T) {
 	t.Parallel()
 
 	root := testkit.Scratch(t)
@@ -110,7 +114,7 @@ func TestMutantRuntimeStillExportsOnlyM(t *testing.T) {
 	generated := filepath.Join(root, result.RuntimeDir, result.RuntimeDir+".go")
 	out := testkit.ReadFile(t, generated)
 
-	if got, want := exportedNames(t, generated, out), []string{"M"}; !equalStrings(got, want) {
+	if got, want := exportedNames(t, generated, out), []string{"Limit", "M", "Over"}; !equalStrings(got, want) {
 		t.Errorf("the generated activation runtime exports %v, want %v", got, want)
 	}
 	if want := testkit.ReadFile(t, filepath.Join("testdata", "runtime.golden")); !bytes.Equal(out, want) {

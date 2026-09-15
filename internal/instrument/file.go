@@ -65,6 +65,18 @@ type FileOptions struct {
 	// mode belongs to the pass, and the caller that chose it for [Instrument] is
 	// the one that has it.
 	Mode Mode
+
+	// LoopBase is the first loop-site index this file's counters answer to,
+	// taken from [Result.LoopBase]. It is passed in for [FileOptions.Hints]'s
+	// reason and a stronger one: the ceilings are one array in one generated
+	// package, numbered across the whole tree, and a file rewritten on its own
+	// has no way to know how many loops the files before it hold. A base that
+	// did not match the one the runtime was generated against would hold a loop
+	// to another loop's ceiling.
+	//
+	// The zero value is the base of the first file, which is what a caller with
+	// exactly one file has.
+	LoopBase uint32
 }
 
 // InstrumentFile rewrites one file of an already-instrumented snapshot so that
@@ -122,8 +134,9 @@ func InstrumentFile(opts FileOptions) (int, error) {
 	dir := filepath.Dir(file)
 	reserved := func(pkg string) (map[string]bool, error) { return names.namesIn(dir, pkg) }
 
-	out, guards, err := instrumentSource(
-		opts.Path, opts.Source, opts.Mutants, opts.Hints, opts.RuntimeImport, reserved, opts.Mode)
+	out, guards, _, err := instrumentSource(
+		opts.Path, opts.Source, opts.Mutants, opts.Hints, opts.RuntimeImport, reserved, opts.Mode,
+		opts.LoopBase)
 	if err != nil {
 		return 0, err
 	}
