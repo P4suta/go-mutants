@@ -490,21 +490,22 @@ jobs:
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
   #
-  # It is now 3592 over fifteen packages, and 722 of those came from adding
-  # four: internal/testlog, internal/tempowner, internal/gitdiff and
-  # internal/snapshot. The rest grew where the gate already looked --
-  # discovery reaching the case labels of a tagless switch, the workspace
-  # coordinate a mutant is catalogued under -- which is the ordinary way
-  # this number moves. Three came off again when discovery learned to refuse
-  # an edit whose replacement is the constant the source already holds,
-  # which is the only way this number has ever fallen. Six of them never
-  # return, and that count has not changed across any of those widenings:
-  # internal/gitdiff brought three and internal/snapshot four, and all seven
-  # were removed rather than measured, because a loop whose stopping
-  # condition is one edit away from never stopping is a loop with one
-  # spelling too many. That is the part of the growth this job's budget
-  # feels, because a mutant that hangs costs a whole derived timeout and
-  # every other mutant costs a fraction of a second.
+  # It is now 4014 over sixteen packages, and 1144 of those came from adding
+  # five: internal/testlog, internal/tempowner, internal/gitdiff,
+  # internal/snapshot and internal/cache. The rest grew where the gate
+  # already looked -- discovery reaching the case labels of a tagless
+  # switch, the workspace coordinate a mutant is catalogued under -- which
+  # is the ordinary way this number moves. Three came off again when
+  # discovery learned to refuse an edit whose replacement is the constant
+  # the source already holds, which is the only way this number has ever
+  # fallen. Six of them never return, and that count has not changed across
+  # any of those widenings: internal/gitdiff brought three and
+  # internal/snapshot four, and all seven were removed rather than measured,
+  # because a loop whose stopping condition is one edit away from never
+  # stopping is a loop with one spelling too many. That is the part of the
+  # growth this job's budget feels, because a mutant that hangs costs a
+  # whole derived timeout and every other mutant costs a fraction of a
+  # second.
   dogfood:
     runs-on: ubuntu-latest
     timeout-minutes: 25
