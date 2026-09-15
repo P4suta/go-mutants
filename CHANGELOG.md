@@ -4249,6 +4249,30 @@ Entries say *why* a change was made, not only what changed.
 
 ### Changed
 
+- **A timeout discovery predicted is believed the first time, and the proof now
+  reads the loop shape Go is actually written in.** A timeout is ordinarily
+  measured twice before it is believed, because one timeout is as much a fact
+  about the machine as about the mutant — a loaded runner, a budget derived from
+  a quieter moment. Discovery can answer that question before anything runs, and
+  when it has, the repeat pays the whole budget again to learn what is already
+  known.
+  The proof was reaching almost nothing, though, and the reason is worth
+  stating: it read a three-clause `for` and nothing else, and the commonest
+  runaway in Go is `for remaining > 0 { …; remaining-- }` — a condition, and the
+  step in the body. `fixtures/runaway`, the fixture written for exactly this
+  hazard, held one and carried no proof at all. It reads both shapes now, and
+  the body form costs three conditions the post slot gives for free, because a
+  post statement runs once per iteration by the grammar and a body statement
+  only does if nothing can jump past it: the step has to be a direct statement
+  of the body, there has to be exactly one of it, and the loop must hold no
+  `continue`.
+  The counted proof is the work ceiling, which gains `runaway` as a fixture for
+  this reason — it is the only one where the difference between measuring a
+  timeout once and twice is a number — and records it at `mutant-run 3` where
+  the same run made 4. Over this repository the widening adds nothing, and that
+  is said in `docs/operators.md` rather than left to be discovered: none of
+  go-mutants' own four spinners tests a variable against a bound, so this gate
+  keeps paying the second wait for every one of them.
 - **The coverage phase no longer starts a process per profile, and no longer
   runs its profiling one test at a time.** This is the pass whose cost grows
   with the *suite* rather than with the catalogue — the one place a run pays for

@@ -63,6 +63,23 @@ type MutantRun struct {
 	// never ends is worse than a mutant reported wrongly.
 	Timeout time.Duration
 
+	// NeverReturns says that discovery proved this mutant's loop has no measure
+	// that decreases: if the loop is entered, it does not leave. It is an
+	// optional fact and false means "nothing was proved", never "it terminates".
+	//
+	// What it changes is one thing, and it is worth being exact about which. A
+	// timeout is ordinarily measured twice before it is believed, because one
+	// timeout is as much a fact about the machine as about the mutant -- a
+	// loaded runner, a budget derived from a quieter moment. A proof answers
+	// that question before anything runs, so the second measurement asks
+	// something already known and costs the whole budget again to do it. With
+	// the proof, one timeout is the verdict.
+	//
+	// It never turns a mutant that finished into one that did not: a proved
+	// mutant that is killed is killed, and a proved mutant that survives
+	// survives. The only attempt it removes is the repeat of a timeout.
+	NeverReturns bool
+
 	// MemoryLimit bounds the resident memory of each test binary's whole
 	// process tree, in bytes, as [runner.Spec.MemoryLimit] takes it. Zero means
 	// no bound.

@@ -1238,3 +1238,83 @@ func TestScheduleWithoutARecorderIsUnchanged(t *testing.T) {
 		t.Errorf("the traced run produced\n%+v\nand the untraced one\n%+v", recorded, untraced)
 	}
 }
+
+// TestAProvedRunawayIsNotMeasuredTwice is what a termination proof buys, and
+// the only thing it changes.
+//
+// A timeout is ordinarily measured twice before it is believed, because one
+// timeout is as much a fact about the machine as about the mutant: a loaded
+// runner, a budget derived from a quieter moment. Discovery can answer that
+// question before anything runs -- a loop whose measure the edit removed does
+// not leave -- and when it has, the second measurement pays the whole budget
+// again to learn what is already known. On a scope holding a handful of
+// runaway mutants that is most of a run's wall clock.
+//
+// What it must not change is a verdict. A proved mutant that is killed is
+// killed and one that survives survives; the only attempt it removes is the
+// repeat of a timeout.
+func TestAProvedRunawayIsNotMeasuredTwice(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name     string
+		proved   bool
+		outcome  mutation.Outcome
+		attempts int
+		final    mutation.Outcome
+	}{
+		{
+			name: "a proved mutant that times out", proved: true,
+			outcome: mutation.OutcomeTimedOut, attempts: 1, final: mutation.OutcomeTimedOut,
+		},
+		{
+			name:    "an unproved mutant that times out",
+			outcome: mutation.OutcomeTimedOut, attempts: 2, final: mutation.OutcomeTimedOut,
+		},
+		{
+			name: "a proved mutant that is killed", proved: true,
+			outcome: mutation.OutcomeKilled, attempts: 1, final: mutation.OutcomeKilled,
+		},
+		{
+			name: "a proved mutant that survives", proved: true,
+			outcome: mutation.OutcomeSurvived, attempts: 1, final: mutation.OutcomeSurvived,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			var started atomic.Int64
+			f := &fake{respond: func(context.Context, call) runner.Result {
+				started.Add(1)
+				switch c.outcome {
+				case mutation.OutcomeTimedOut:
+					return runner.Result{TimedOut: true, ExitCode: runner.ExitCodeUnavailable}
+				case mutation.OutcomeKilled:
+					return failed("--- FAIL: TestX\n")
+				default:
+					return passed()
+				}
+			}}
+			opts := options(f, 2)
+			runs := []execute.MutantRun{{
+				ID:           "abc",
+				Timeout:      time.Minute,
+				NeverReturns: c.proved,
+			}}
+
+			results, err := execute.Schedule(t.Context(), opts, runs, testBins("example.com/m/a"), execute.Hooks{})
+			if err != nil {
+				t.Fatalf("Schedule: %v", err)
+			}
+			if len(results) != 1 {
+				t.Fatalf("Schedule returned %d results, want 1", len(results))
+			}
+			if results[0].Final != c.final {
+				t.Errorf("the verdict is %s, want %s", results[0].Final, c.final)
+			}
+			if got := int(started.Load()); got != c.attempts {
+				t.Errorf("the mutant was measured %d times, want %d", got, c.attempts)
+			}
+		})
+	}
+}

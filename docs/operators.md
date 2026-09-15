@@ -366,31 +366,41 @@ source.
 ## Termination proof
 
 A mutant that never returns is reported as a timeout, and a timeout counts as a
-detection, so the verdict is already honest. What is not honest is how it is
-reached: the run waits out the per-mutant budget, and then waits it out again,
-because a timeout is measured a second time before it is believed. On a scope
-whose budget is derived from a slow baseline that is minutes of worker time for
-one mutant, and the only way to learn which mutant it was is to watch the clock.
+detection, so the verdict is already honest. What was not honest is how it was
+reached: a timeout is ordinarily measured a second time before it is believed,
+because one timeout is as much a fact about the machine as about the mutant, and
+on a scope whose budget is derived from a slow baseline that is minutes of
+worker time spent on one mutant to learn what was already true.
 
 Whether a loop's bound survives an edit is not a fact about the machine. It is a
 fact about the syntax and the types, and discovery has both — so it is decided
 there, before anything is executed, and published on the mutant.
 
 **It never changes a verdict.** A mutant proved unbounded is catalogued,
-instrumented and measured like any other. The proof says what its timeout will
-mean, not whether to have one.
+instrumented and measured like any other, and a proved mutant that is killed is
+killed. What the proof changes is one thing: a timeout it predicted is believed
+the first time, because the question the repeat asks has already been answered.
 
 ### The shape it reads
 
-One: a three-clause `for` whose post statement moves an induction variable by a
-constant step, and whose condition compares that variable against something the
-loop does not change.
+A `for` whose condition compares an induction variable against something the
+loop does not change, and which moves that variable by a constant step — in the
+post slot, or in the body.
 
 ```go
 for i := 0; i < n; i++ { … }      // counting up towards an upper bound
 for i := n; i > 0; i-- { … }      // counting down towards a lower bound
 for i := 0; i < n; i += 2 { … }   // and any constant stride
+for i > 0 { …; i-- }              // and the same measure, written in the body
 ```
+
+The body form is the one most Go loops with a measure are written in, and it
+costs three conditions a post slot gives for free — because a post statement
+runs once per iteration by the grammar and a body statement only does if nothing
+can jump past it. The step has to be a *direct* statement of the body, there has
+to be exactly one of it, and the loop must hold no `continue` anywhere: a
+`continue` jumps to the end of the iteration, which in a body-stepped loop is
+jumping past the step.
 
 | Edit | Verdict | Why |
 | --- | --- | --- |
@@ -409,17 +419,25 @@ timeouts a scope can cost, which is what a budget wants.
 
 A `range`, a `for` with no condition, a condition over a call rather than a
 comparison, a condition over two moving variables, a body that assigns the
-variable or the bound. Each is refused without a proof and without a skip —
+variable anywhere but its step or that assigns the bound, a step behind an `if`
+or inside a nested loop, two steps in one body, a `continue` under a
+body-stepped loop. Each is refused without a proof and without a skip —
 **an absent proof is never a claim that a loop is fine**, and recording a skip
 for every loop go-mutants declined to reason about would bury the skips that
 mean "go-mutants declined to mutate this" under ones that mean "go-mutants
 declined to think about this". That is the [branch proof](#branch-proof)'s rule, applied to the
 second proof.
 
-Measured over this repository at profile `all`: 53 of 3037 mutants carry a
-proof, nine of them `unbounded`. One per cent sounds small and is the right one
-per cent — most mutants are not in a loop condition at all, and the nine are
-every counted loop in the tree whose guard an edit can remove.
+`unbounded` is what lets a run believe one timeout. Everything else a proof says
+is for a reader: `go-mutants list --json` carries it, and "this mutant is proved
+not to return" is the sentence that saves somebody suspecting their machine.
+
+Measured over this repository at profile `all`: 108 of 7069 mutants carry a
+proof, 30 of them `unbounded`. One and a half per cent sounds small and is the
+right one and a half per cent — most mutants are not in a loop condition at all.
+None of this repository's own four spinners is among them, because none of their
+conditions compares a variable against a bound; the proof is a statement about a
+shape rather than a promise about a tree.
 
 ## Documented exclusions
 

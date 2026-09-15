@@ -101,8 +101,44 @@ func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 			want: true, variable: "i", step: 1, comparison: token.LSS,
 		},
 
+		{
+			// The shape most Go loops with a measure are written in: a
+			// condition, and the step in the body rather than in a post slot.
+			name: "a condition with the step in the body",
+			body: "\tfor i > 0 {\n\t\ttotal += i\n\t\ti--\n\t}",
+			want: true, variable: "i", step: -1, comparison: token.GTR,
+		},
+		{
+			name: "a condition with a striding step in the body",
+			body: "\tfor i < n {\n\t\ti += 2\n\t}",
+			want: true, variable: "i", step: 2, comparison: token.LSS,
+		},
 		{name: "a bare loop", body: "\tfor {\n\t}"},
 		{name: "a loop with a condition and no step", body: "\tfor i < n {\n\t}"},
+		{
+			// The step is not reached on every iteration, so the measure is not
+			// one this phase can follow.
+			name: "a step in the body behind a condition",
+			body: "\tfor i < n {\n\t\tif ok {\n\t\t\ti++\n\t\t}\n\t}",
+		},
+		{
+			// `continue` jumps past the step, which is the same hazard written
+			// the other way round.
+			name: "a step in the body a continue can skip",
+			body: "\tfor i < n {\n\t\tif ok {\n\t\t\tcontinue\n\t\t}\n\t\ti++\n\t}",
+		},
+		{
+			name: "two steps in the body",
+			body: "\tfor i < n {\n\t\ti++\n\t\ti++\n\t}",
+		},
+		{
+			name: "a body that moves the variable beside its step",
+			body: "\tfor i < n {\n\t\ti = 0\n\t\ti++\n\t}",
+		},
+		{
+			name: "a step in a nested loop",
+			body: "\tfor i < n {\n\t\tfor j := 0; j < 2; j++ {\n\t\t\ti++\n\t\t}\n\t}",
+		},
 		{name: "a range loop's desugaring has no post", body: "\tfor ; i < n; {\n\t}"},
 		{name: "a step of zero", body: "\tfor i := 0; i < n; i += 0 {\n\t}"},
 		{name: "a step that is not a literal", body: "\tfor i := 0; i < n; i += k {\n\t}"},
@@ -293,7 +329,7 @@ func TestTheReadersUnderneathTheLoopReader(t *testing.T) {
 		// only about loops whose measure has been read, and a condition it
 		// cannot take apart is one it cannot vouch for.
 		loop := loopIn(t, "\tfor i := 0; ok; i++ {\n\t}")
-		if !boundMoves(loop) {
+		if !boundMoves(loop, nil) {
 			t.Error("boundMoves(a condition that is not a comparison) = false, want true")
 		}
 	})
