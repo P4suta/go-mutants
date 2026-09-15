@@ -325,6 +325,7 @@ failure here is a bug in go-mutants rather than a fact about the tree.
 | `GOM7328` | A snapshot the instrumenter could not write to, either an instrumented file or the generated runtime package. | check that the temporary directory has room |
 | `GOM7329` | A catalogued mutant with no guard hint. | file a bug and attach the recording from `go-mutants run --trace` |
 | `GOM7330` | An infection log [ReadInfectionLog] will not read: an empty file, a missing header, a header naming another catalogue or another array width, a repeated header that differs from the first, an index that is not a decimal uint32, an index at or past the catalogue's size — which is every index there is when the catalogue is empty — or a last line the process that wrote it never finished. | file a bug and attach the log the message names |
+| `GOM7331` | A loop census [ReadLoopCensus] will not read, or a limit table that could not be written: an empty file, a line that is neither the tree's own header nor a site and a count, a site outside the tree's own, a count that is not a decimal uint64, or a last line the process that wrote it never finished. A census that cannot be read whole yields no ceiling at all, so the run is bounded in time alone and says so. | file a bug and attach the census the message names |
 
 ## `GOM74xx` -- which mutants compile
 

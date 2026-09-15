@@ -155,7 +155,12 @@ func TestInstrumentGolden(t *testing.T) {
 			// the flattened copy it carries holds no line break at all. Line 31
 			// (0-based 30) is the middle of the site and is untouched.
 			assertContains(t, out, "{ total=total-step*2-1 } else { total = total +\n")
-			assertLinesUntouched(t, in, out, 6, 16, 29, 31, 44, 45)
+			// And line 29 is the `for` this fixture's guarded statement is
+			// inside: a counted loop declares its two locals in front of the
+			// loop and tests them at the top of the body, both on the loop's
+			// own line. See ADR 0013.
+			assertContains(t, out, "__gm_n0, __gm_k0 := uint64(0), __gm.Limit[0]; for _, step := range steps {")
+			assertLinesUntouched(t, in, out, 6, 16, 28, 29, 31, 44, 45)
 		},
 	}, {
 		name:       "declaration",

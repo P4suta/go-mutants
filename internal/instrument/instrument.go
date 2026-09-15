@@ -122,6 +122,17 @@ type Result struct {
 	// way, which is what lets everything above this package hold one [Result]
 	// without asking which mode produced it.
 	GuardsByFile map[string]int
+	// LoopBase is the first loop-site index each file the pass considered was
+	// given, whether or not that file ended up carrying a guard. A file
+	// re-instrumented on its own — which is what the compile bisection does to
+	// every file it rejects a candidate in — has to be handed its own base, or
+	// its counters would answer to another file's ceilings.
+	LoopBase map[string]uint32
+	// Loops is how many `for` statements of those files carry a counter, which
+	// is the width of the generated package's ceiling table and the number of
+	// sites a census and a limit table are read against. It is zero for a probe
+	// tree, which runs the original program and has nothing to diverge from.
+	Loops int
 }
 
 // Instrument rewrites a snapshot so that every catalogued mutant is present in
@@ -174,6 +185,7 @@ func Instrument(opts Options) (Result, error) {
 		RuntimeDir:    dir,
 		RuntimeImport: importPath,
 		GuardsByFile:  make(map[string]int),
+		LoopBase:      make(map[string]uint32),
 	}
 
 	// One cache for the whole pass: the runtime import alias each file gets has
@@ -181,24 +193,32 @@ func Instrument(opts Options) (Result, error) {
 	// once per package rather than once per file is the difference between a
 	// directory read and a quadratic one.
 	names := newPackageNames()
+	// The loop sites of every file, numbered across the tree rather than within
+	// a file: the ceilings are one array in one generated package, so a site's
+	// index has to be a fact about the tree. See [ADR 0013].
+	var loops []loopSite
 	for _, group := range groupByPath(opts.Catalog, opts.Module) {
-		guards, err := instrumentFile(
-			opts.SnapshotRoot, group.path, group.mutants, opts.Hints, importPath, names, opts.Mode)
+		guards, counted, err := instrumentFile(
+			opts.SnapshotRoot, group.path, group.mutants, opts.Hints, importPath, names, opts.Mode,
+			uint32(len(loops)))
 		if err != nil {
 			return Result{}, err
 		}
+		result.LoopBase[group.path] = uint32(len(loops))
+		loops = append(loops, counted...)
 		if guards == 0 {
 			continue
 		}
 		result.FilesInstrumented = append(result.FilesInstrumented, group.path)
 		result.GuardsByFile[group.path] = guards
 	}
+	result.Loops = len(loops)
 
 	// The runtime package is written last so that a failure part way through
 	// leaves a snapshot that is obviously half-rewritten rather than one that
 	// looks instrumented and is not. Its directory name was settled first,
 	// because every file that was rewritten imports it by that name.
-	if err := writeTreeRuntime(opts.SnapshotRoot, dir, opts.Catalog, opts.Mode); err != nil {
+	if err := writeTreeRuntime(opts.SnapshotRoot, dir, opts.Catalog, opts.Mode, loops); err != nil {
 		return Result{}, err
 	}
 	return result, nil
@@ -209,11 +229,11 @@ func Instrument(opts Options) (Result, error) {
 // The directory and the import path are settled identically for both, because
 // they are never in one snapshot; which package goes into that directory is the
 // only thing the two trees disagree about here.
-func writeTreeRuntime(root, dir string, catalog *mutation.Catalog, mode Mode) error {
+func writeTreeRuntime(root, dir string, catalog *mutation.Catalog, mode Mode, loops []loopSite) error {
 	if mode == ModeProbe {
 		return writeProbeRuntime(root, dir, catalog)
 	}
-	return writeRuntime(root, dir, catalog)
+	return writeRuntime(root, dir, catalog, loops)
 }
 
 // validate checks the options and the catalogue's paths.
@@ -362,11 +382,12 @@ func instrumentFile(
 	importPath string,
 	names *packageNames,
 	mode Mode,
-) (int, error) {
+	base uint32,
+) (int, []loopSite, error) {
 	file := filepath.Join(root, filepath.FromSlash(srcPath))
 	info, err := os.Stat(file)
 	if err != nil {
-		return 0, &Error{
+		return 0, nil, &Error{
 			Code:    CodeSourceUnreadable,
 			Message: "cannot read " + strconv.Quote(srcPath) + " in the snapshot",
 			Err:     err,
@@ -374,7 +395,7 @@ func instrumentFile(
 	}
 	src, err := os.ReadFile(file)
 	if err != nil {
-		return 0, &Error{
+		return 0, nil, &Error{
 			Code:    CodeSourceUnreadable,
 			Message: "cannot read " + strconv.Quote(srcPath) + " in the snapshot",
 			Err:     err,
@@ -387,21 +408,21 @@ func instrumentFile(
 	dir := filepath.Dir(file)
 	reserved := func(pkg string) (map[string]bool, error) { return names.namesIn(dir, pkg) }
 
-	out, guards, err := instrumentSource(srcPath, src, mutants, hints, importPath, reserved, mode)
+	out, guards, loops, err := instrumentSource(srcPath, src, mutants, hints, importPath, reserved, mode, base)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if guards == 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
 	if err := replaceFile(file, out, info.Mode().Perm()); err != nil {
-		return 0, &Error{
+		return 0, nil, &Error{
 			Code:    CodeWriteFailed,
 			Message: "cannot write the instrumented " + strconv.Quote(srcPath),
 			Err:     err,
 		}
 	}
-	return guards, nil
+	return guards, loops, nil
 }
 
 // replaceFile writes out over file, as a temporary file in the same directory
@@ -490,19 +511,20 @@ func instrumentSource(
 	importPath string,
 	reserved reservedNames,
 	mode Mode,
-) ([]byte, int, error) {
+	base uint32,
+) ([]byte, int, []loopSite, error) {
 	if len(mutants) == 0 {
-		return src, 0, nil
+		return src, 0, nil, nil
 	}
 	file, tok, err := parseSnapshotFile(srcPath, src)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	var bound map[string]bool
 	if reserved != nil && file.Name != nil {
 		if bound, err = reserved(file.Name.Name); err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 	}
 	// The names a rewrite may not bind, gathered once: the import alias and,
@@ -510,22 +532,34 @@ func instrumentSource(
 	taken := takenNames(file, bound)
 	alias := aliasIn(taken)
 
+	// The counters are found before anything is decided about the guards, and
+	// only for the tree mutants run in: a probe tree runs the original program,
+	// which has nothing to diverge from. Finding them first is what makes a
+	// site's index a function of the file set alone — a file whose every
+	// candidate was rejected keeps the indices it was given, so the numbering
+	// does not move under the bisection that rejects them.
+	var loops []loopSite
+	if mode == ModeMutant {
+		loops = loopSites(file, tok, srcPath)
+	}
+
 	splices, guards, completions, err := composeSites(
 		newSiteIndex(tok, file, src), srcPath, src, mutants, hints, alias, taken, mode)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if guards == 0 {
-		return src, 0, nil
+		return src, 0, loops, nil
 	}
+	splices = append(splices, loopSplices(loops, alias, base)...)
 	imports, err := importSplices(file, tok, srcPath, alias, importPath, completions)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	splices = append(splices, imports...)
 
 	if !LinePreserving(splices) {
-		return nil, 0, &Error{
+		return nil, 0, nil, &Error{
 			Code: CodeLineDrift,
 			Message: "internal error: instrumenting " + strconv.Quote(srcPath) +
 				" would move a line: a guard or the injected import does not replace as many line breaks as it writes",
@@ -533,7 +567,7 @@ func instrumentSource(
 	}
 	out, _, err := Apply(src, splices)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 
 	// Two postconditions, both cheap and both guarding an invariant that
@@ -542,12 +576,12 @@ func instrumentSource(
 	// guard-rendering bug and a snapshot that fails to build with a syntax
 	// error nobody can attribute.
 	if err := checkLineCount(srcPath, src, out); err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if err := checkParses(srcPath, out); err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
-	return out, guards, nil
+	return out, guards, loops, nil
 }
 
 // composeSites turns one file's mutants into the splices its tree's rewrite

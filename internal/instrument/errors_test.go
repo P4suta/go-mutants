@@ -123,6 +123,14 @@ func TestCodesAreReachable(t *testing.T) {
 	_, err = instrument.ReadInfectionLog(strings.NewReader(""), "cafefeed", 1)
 	record(err)
 
+	// And the counting half's, which is the same kind of refusal about the
+	// other file a run reads back off the disk: a census it cannot read whole
+	// yields no ceiling at all rather than the ceilings it could make out.
+	// [TestReadLoopCensusRejectsAnythingItCannotReadWhole] enumerates the
+	// shapes that reach it.
+	_, err = instrument.ReadLoopCensus(strings.NewReader(""), 1)
+	record(err)
+
 	for _, c := range instrument.Codes() {
 		if !produced[c] {
 			t.Errorf("no test produces code %s", c)
