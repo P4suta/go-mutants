@@ -27,7 +27,7 @@ import (
 func declFixture(t *testing.T, decls, stmt string) *guardResolver {
 	t.Helper()
 
-	return guardOver(t, "package pkg\n\n"+decls+"\n\nfunc probe(n int) {\n"+stmt+"\n}\n")
+	return guardOver(t, "package pkg\n\nfunc sum(xs ...int) int { return 0 }\n\n"+decls+"\n\nfunc probe(n int) {\n"+stmt+"\n}\n")
 }
 
 // firstOfKind finds the first statement of the fixture the predicate accepts.
@@ -208,6 +208,14 @@ func TestAVarSpecWhoseCutWouldSwallowALineBreak(t *testing.T) {
 		{
 			name: "a spec whose type is spread over lines",
 			stmt: "\tvar f func(\n\t\tv int,\n\t) int = nil\n\t_ = f",
+		},
+		{
+			// The whole spec spans lines and the type does not, which is the
+			// pair that separates the two cuts: what goes is the *type*, so
+			// the initialiser's own line breaks stay where the user put them.
+			name: "a spec whose initialiser is spread over lines",
+			stmt: "\tvar x int = sum(\n\t\t1,\n\t\t2,\n\t)\n\t_ = x",
+			want: true,
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
