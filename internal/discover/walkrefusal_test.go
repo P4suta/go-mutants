@@ -169,6 +169,36 @@ func TestEveryStatementShapedCandidateRefusesAFileThatGotShorter(t *testing.T) {
 				"\t\tdefault:\n\t\t\tbreak outer\n\t\t}\n\t}\n}\n",
 			at: "break outer",
 		},
+		{
+			name: "a numeric result",
+			src:  "package pkg\n\nfunc probe(n int) int {\n\treturn n + 1\n}\n",
+			at:   "n + 1",
+		},
+		{
+			name: "a boolean result",
+			src:  "package pkg\n\nfunc probe(ok bool) bool {\n\treturn ok\n}\n",
+			at:   "ok\n}",
+		},
+		{
+			name: "a nillable result",
+			src:  "package pkg\n\nfunc probe(xs []int) []int {\n\treturn xs\n}\n",
+			at:   "xs\n}",
+		},
+		{
+			name: "an error result",
+			src:  "package pkg\n\nfunc probe(err error) error {\n\treturn err\n}\n",
+			at:   "err\n}",
+		},
+		{
+			name: "a string result",
+			src:  "package pkg\n\nfunc probe(s string) string {\n\treturn s + \"x\"\n}\n",
+			at:   "s + \"x\"",
+		},
+		{
+			name: "a negation",
+			src:  "package pkg\n\nfunc probe(a bool) {\n\tswitch !a {\n\t}\n}\n",
+			at:   "!a",
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
