@@ -442,3 +442,124 @@ func binaryOp(op token.Token) func(ast.Node) bool {
 		return isBinary && binary.Op == op
 	}
 }
+
+// TestWhatFormDRefusesToReadAtAll is the other end of the same helpers, asked
+// with declarations built rather than parsed.
+//
+// None of these is a shape Go writes: the left of a `:=` is always a name, a
+// `var` block always holds value specifications, and a name a `var` declares is
+// always one the checker defined. They are still decisions, and they are the
+// decisions that keep a wrong answer from being a *generated file that does not
+// compile* -- so each of them is stated with a node built to reach it.
+func TestWhatFormDRefusesToReadAtAll(t *testing.T) {
+	t.Parallel()
+
+	g := declFixture(t, "", "\tx := n + 1\n\t_ = x")
+
+	t.Run("a short declaration whose left side is not a name", func(t *testing.T) {
+		t.Parallel()
+
+		assign := &ast.AssignStmt{
+			Lhs: []ast.Expr{&ast.IndexExpr{X: ast.NewIdent("xs"), Index: ast.NewIdent("i")}},
+			Tok: token.DEFINE,
+			Rhs: []ast.Expr{ast.NewIdent("n")},
+		}
+		if _, _, ok := g.defineTypes(assign); ok {
+			t.Error("defineTypes answered for a left side that declares nothing")
+		}
+	})
+
+	t.Run("a short declaration of a name the checker did not define", func(t *testing.T) {
+		t.Parallel()
+
+		assign := &ast.AssignStmt{
+			Lhs: []ast.Expr{ast.NewIdent("stranger")},
+			Tok: token.DEFINE,
+			Rhs: []ast.Expr{ast.NewIdent("n")},
+		}
+		if _, _, ok := g.defineTypes(assign); ok {
+			t.Error("defineTypes answered for a name with no type")
+		}
+	})
+
+	t.Run("a declaration that is not a var", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tok := range []token.Token{token.CONST, token.TYPE, token.IMPORT} {
+			decl := &ast.DeclStmt{Decl: &ast.GenDecl{Tok: tok}}
+			if _, _, ok := g.declTypes(decl); ok {
+				t.Errorf("declTypes answered for a %s declaration", tok)
+			}
+		}
+	})
+
+	t.Run("a declaration that is not a general one", func(t *testing.T) {
+		t.Parallel()
+
+		decl := &ast.DeclStmt{Decl: &ast.FuncDecl{Name: ast.NewIdent("inner")}}
+		if _, _, ok := g.declTypes(decl); ok {
+			t.Error("declTypes answered for a declaration that declares no values")
+		}
+	})
+
+	t.Run("a var block holding something that is not a value specification", func(t *testing.T) {
+		t.Parallel()
+
+		decl := &ast.DeclStmt{Decl: &ast.GenDecl{
+			Tok:   token.VAR,
+			Specs: []ast.Spec{&ast.ImportSpec{Name: ast.NewIdent("x")}},
+		}}
+		if _, _, ok := g.declTypes(decl); ok {
+			t.Error("declTypes answered for a specification that declares no variable")
+		}
+	})
+
+	t.Run("a var of a name the checker did not define", func(t *testing.T) {
+		t.Parallel()
+
+		decl := &ast.DeclStmt{Decl: &ast.GenDecl{
+			Tok: token.VAR,
+			Specs: []ast.Spec{&ast.ValueSpec{
+				Names:  []*ast.Ident{ast.NewIdent("stranger")},
+				Values: []ast.Expr{ast.NewIdent("n")},
+			}},
+		}}
+		if _, _, ok := g.declTypes(decl); ok {
+			t.Error("declTypes answered for a name with no type")
+		}
+	})
+
+	t.Run("a declaration of nothing", func(t *testing.T) {
+		t.Parallel()
+
+		// No names and no initialisers: there is nothing to rebind and nothing
+		// to hoist, and both questions have to answer rather than index.
+		if g.rebindsOwnInitialiser(nil, nil) {
+			t.Error("rebindsOwnInitialiser answered yes about a declaration of nothing")
+		}
+		if g.rebindsOwnInitialiser(map[string]bool{"x": true}, nil) {
+			t.Error("rebindsOwnInitialiser answered yes about a declaration with no initialiser")
+		}
+		if g.rebindsOwnInitialiser(nil, []ast.Expr{ast.NewIdent("n")}) {
+			t.Error("rebindsOwnInitialiser answered yes about an initialiser with nothing to rebind")
+		}
+	})
+
+	t.Run("a composite literal the checker recorded nothing for", func(t *testing.T) {
+		t.Parallel()
+
+		// fieldKeyed decides whether a literal's keys are field names or
+		// ordinary expressions. Answering "field names" with nothing to read it
+		// from would let a map literal keyed by the variable being declared
+		// through, which is the mistake that costs a wrong verdict rather than
+		// a candidate.
+		literal := &ast.CompositeLit{Type: ast.NewIdent("wrapper")}
+		blind := &guardResolver{}
+		if blind.fieldKeyed(literal) {
+			t.Error("fieldKeyed answered without the checker's record")
+		}
+		if g.fieldKeyed(literal) {
+			t.Error("fieldKeyed answered for a literal the checker did not record")
+		}
+	})
+}
