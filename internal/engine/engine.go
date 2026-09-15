@@ -1279,8 +1279,13 @@ func (s *session) mutate(
 	if len(trees) > 0 {
 		baselineRoot = trees[0]
 	}
+	// The instrumented baseline is the calibration run as well as the semantic
+	// preservation gate, and it is the only run that can be: it executes the
+	// whole test command against the tree the mutants run in, with nothing
+	// activated, which is the original program. See ADR 0013.
 	endInstrumented := s.stage("instrumented-baseline", "")
-	err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, baselineRoot, env)
+	err = s.instrumentedBaseline(ctx, out.TestCommand, toolchain, baselineRoot, env,
+		divergenceCensus(scratch))
 	endInstrumented(err)
 	if err != nil {
 		return err
@@ -1300,6 +1305,13 @@ func (s *session) mutate(
 	if err != nil {
 		return err
 	}
+
+	// What the census came to, after the drift gate has proved that nothing but
+	// the instrumentation moved -- so a census read here is one the baseline
+	// wrote and not one a test left behind.
+	endCeilings := s.stage("divergence", divergenceDetail(validated.Loops()))
+	loopLimits := s.deriveLoopLimits(scratch, validated.Runtimes)
+	endCeilings(nil)
 
 	endSelection := s.stage("selection", "")
 	runs, err := s.selection(opts, catalog, validated.AcceptedIDs, out.Timeout, out.Memory, st)
@@ -1327,6 +1339,7 @@ func (s *session) mutate(
 		// toolchain commands this bounds nothing for are documented on the
 		// field itself.
 		MemoryLimit: out.Memory,
+		LoopLimits:  loopLimits,
 		Trace:       s.trace,
 	}
 	// One reading of the test command decides both of the run's optimisations,
@@ -1492,6 +1505,7 @@ func executionsOf(result execute.MutantResult) []report.Execution {
 			// needs it — why a kill names a binary that reported no failure.
 			MemoryExceeded:  attempt.MemoryExceeded,
 			PeakMemoryBytes: attempt.PeakMemory,
+			Diverged:        attempt.Diverged,
 		})
 	}
 	return executions
@@ -1624,11 +1638,20 @@ func (s *session) instrumentedBaseline(
 	toolchain gocmd.Toolchain,
 	root string,
 	env []string,
+	census string,
 ) error {
+	// -count=1 beside -vet=off, and for the same kind of reason: this run has
+	// two jobs and the toolchain's result cache can do neither of them. It is
+	// the semantic preservation gate, which a reprinted "ok" from an earlier
+	// process does not establish, and it is the census the loop ceilings are
+	// derived from, which a process that never ran cannot write. See
+	// [gocmd.CountOnce] and ADR 0013.
 	spec := runner.Spec{
-		Argv:    resolveProgram(command, toolchain),
-		Dir:     root,
-		Env:     gocmd.AppendGoflags(env, gocmd.VetOff),
+		Argv: resolveProgram(command, toolchain),
+		Dir:  root,
+		Env: append(
+			gocmd.AppendGoflags(gocmd.AppendGoflags(env, gocmd.VetOff), gocmd.CountOnce),
+			instrument.LoopCensusEnv+"="+census),
 		Timeout: BaselineCap,
 		Trace:   s.trace,
 		Kind:    trace.ExecKindInstrumentedBaseline,
@@ -1870,10 +1893,11 @@ func (s *session) hooks(st *state, memoryLimit int64) execute.Hooks {
 			// beside them, so a mutant retried serially reports the peak of the
 			// two passes and not of whichever one happened to be last.
 			shown.MemoryLimit = memoryLimit
-			shown.PeakMemory, shown.MemoryExceeded = 0, false
+			shown.PeakMemory, shown.MemoryExceeded, shown.Diverged = 0, false, false
 			for _, attempt := range result.Attempts {
 				shown.PeakMemory = max(shown.PeakMemory, attempt.PeakMemory)
 				shown.MemoryExceeded = shown.MemoryExceeded || attempt.MemoryExceeded
+				shown.Diverged = shown.Diverged || attempt.Diverged
 			}
 			s.emit(MutantFinished{Result: shown.clone()})
 		},
@@ -2325,6 +2349,7 @@ func notable(st *state, mutants []report.Mutant) []MutantResult {
 			shown.KilledBy = *m.KilledBy
 		}
 		shown.Attempts = m.Attempts
+		shown.Diverged = m.Diverged
 		shown.CoveringTestPackages = slices.Clone(m.CoveringTestPackages)
 		shown.CoveringTests = slices.Clone(m.CoveringTests)
 		out = append(out, shown)

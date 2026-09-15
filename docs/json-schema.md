@@ -155,6 +155,7 @@ below.
 | `mutants[].memory_exceeded`, `mutants[].peak_memory_bytes` | Whether the memory bound settled the mutant and what it cost; see [`mutants[]`](#mutants) |
 | `mutants[].executions[].memory_exceeded` | Whether the run's memory bound stopped that pass; see [`mutants[]`](#mutants) |
 | `mutants[].executions[].peak_memory_bytes` | What that pass cost the machine; see [`mutants[]`](#mutants) |
+| `mutants[].diverged`, `mutants[].executions[].diverged` | Whether a counted loop is what settled the mutant rather than the deadline; see [`mutants[]`](#mutants) |
 | `coverage.tests` | How many tests the coverage pass profiled on their own. Present exactly in `test` mode; see [`coverage`](#coverage) |
 | `mutants[].covering_tests[]` | The tests whose own coverage reaches the mutant, as `{package, name}`; written by a `test` run when there are any |
 | `mutants[].executions[].tests[]` | The tests that pass was narrowed to, as `{package, name}`; absent when every binary ran whole |
@@ -311,6 +312,7 @@ test binaries, in attempt order.
 | `tests[]` | The tests the pass was narrowed to, as `{package, name}`: the binary was started with exactly these selected. Absent when the pass ran the whole binary — every pass outside `test` mode, and a `test`-mode pass over a mutant that was widened or whose survival was confirmed against the whole binary |
 | `memory_exceeded` | This pass was stopped by the run's per-mutant memory bound rather than by a test failing or by the deadline; absent when it was not. Optional. The bound itself is `test.memory_bytes` |
 | `peak_memory_bytes` | The highest the pass was observed to hold, as the **maximum over every binary it started** rather than the deciding binary's: resident memory on Unix, committed charge on Windows, which are close but not the same quantity and are deliberately not converted into one another. Written for every pass and not only the bounded ones — every process is sampled, which on Linux is the only measurement that is the child's own; absent where nothing observed one, which includes a pass that ended before its first sample |
+| `diverged` | This pass ended itself because a counted loop of the instrumented tree went past the ceiling the run derived for it from what the original program did under the same tests; absent when it did not. Optional. It is why a row can say `timed-out` after one attempt and a handful of milliseconds: a timeout is measured twice before it is believed, and a divergence is two counts taken in one tree that say nothing about the machine. The loop and both counts are in `output_tail`. See [ADR 0013](adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md) |
 
 The same two facts are on the **mutant** as well as on its rows, and the
 repetition is for one reader: a `cached` mutant has an attempt count and no rows,

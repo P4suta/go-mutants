@@ -201,10 +201,23 @@ type Result struct {
 	// either way, because a runtime is written once and never regenerated.
 	Runtimes []instrument.Result
 
-	// Builds is how many `go build` invocations the phase spent. One means the
-	// whole catalogue compiled on the first try, which is the ordinary case and
-	// the one the schemata design exists to make ordinary.
+	// Loops is how many `for` statements this phase's trees carry a counter at,
+	// summed over the modules. It is the width of every census and every limit
+	// table the run reads back, and it is a property of the files rather than
+	// of the catalogue: rejecting a candidate does not move a loop.
+	//
+	// One means the whole catalogue compiled on the first try, which is the
+	// ordinary case and the one the schemata design exists to make ordinary.
 	Builds int
+}
+
+// Loops is how many counted loops this phase's trees hold, over every module.
+func (r Result) Loops() int {
+	total := 0
+	for _, tree := range r.Runtimes {
+		total += tree.Loops
+	}
+	return total
 }
 
 // RuntimeDirs is where every generated runtime package sits, relative to the

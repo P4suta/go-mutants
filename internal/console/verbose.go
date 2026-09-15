@@ -145,7 +145,16 @@ func (r *PlainRenderer) attribution(m engine.MutantResult) string {
 		case mutation.OutcomeKilled:
 			b.WriteString(" killed by " + m.KilledBy)
 		case mutation.OutcomeTimedOut:
-			b.WriteString(" hung in " + m.KilledBy)
+			// "Hung" is what a stopwatch can say and all it can say. A
+			// divergence knows more than that: a loop of this binary went past
+			// what the original program does, which is a fact about the mutant
+			// rather than a guess about the machine, and the loop and the two
+			// counts are in the retained output.
+			if m.Diverged {
+				b.WriteString(" does not return; a loop in " + m.KilledBy + " ran away")
+			} else {
+				b.WriteString(" hung in " + m.KilledBy)
+			}
 		}
 	}
 	if m.MemoryExceeded {

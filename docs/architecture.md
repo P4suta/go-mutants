@@ -322,6 +322,24 @@ executes.
   `unnameable-decl-type`, never a silent omission — and so is every other site
   none of the forms can express; see [Operators](operators.md).
 
+**Loop counters.** Every `for` of an instrumented file carries two locals and
+one test besides its guards:
+
+```go
+__gm_n7, __gm_k7 := uint64(0), __gm.Limit[7]; for i := 0; i < n; i++ {
+    if __gm_n7++; __gm_n7 > __gm_k7 { __gm_k7 = __gm.Over(7, __gm_n7) };
+```
+
+They are what decides a mutant that does not return, instead of a stopwatch:
+the ceiling is what the original program did in this tree under this suite, as
+the instrumented baseline counted it, and a loop that passes its own ends the
+process naming itself and both counts. The counter is a local, so nothing is
+shared and nothing is atomic; the declaration goes in front of a *label* where
+there is one, or `break outer` would stop naming a loop; and a function holding
+a `goto` keeps its loops uncounted, because Go forbids a jump that brings a
+variable into scope. See
+[ADR 0013](adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md).
+
 **Flattening.** The mutated copy is re-tokenized with `go/scanner` and explicit
 semicolons are inserted where automatic semicolon insertion would have applied,
 so the copy fits on one physical line. Line comments are dropped, block
@@ -341,7 +359,11 @@ Status: implemented. The runtime lives inside the snapshot at
 because the Go tool ignores those. A name collision bumps a suffix.
 
 It exports `var M [N]bool` — a dense array in catalog order — and a map from
-full ID to index. Its `init` reads `GO_MUTANTS_ACTIVE`: empty means every entry
+full ID to index. It also exports `var Limit [L]uint64`, one ceiling per counted
+loop, and `func Over(site uint32, n uint64) uint64`, which a loop calls when its
+own counter passes its own ceiling: a process holding a table never returns from
+it, and a process taking the census records the count and hands back a higher
+ceiling. Its `init` reads `GO_MUTANTS_ACTIVE`: empty means every entry
 stays false, which is exactly the instrumented baseline; an unknown ID calls
 `os.Exit(97)` so a stale catalog can never masquerade as a clean baseline, and
 the runner classifies 97 as an infrastructure error. Because the package is

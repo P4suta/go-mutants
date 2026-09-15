@@ -827,6 +827,10 @@
           "description": "The highest this mutant was observed to hold: the maximum over its execution rows for a mutant this run executed, and what the measuring run recorded for a cached one. Optional, and absent \u2014 rather than zero \u2014 where the platform could not measure one.",
           "$ref": "#/$defs/count"
         },
+        "diverged": {
+          "description": "A counted loop is what settled this mutant rather than the deadline: a loop of the instrumented tree went past the ceiling this run derived for it from what the original program did under the same tests. It restates what an execution row says, for memory_exceeded's reason. Optional, and only ever true beside an outcome of `timed-out`.",
+          "type": "boolean"
+        },
         "executions": {
           "description": "One row per pass this run made over the test binaries for this mutant, in attempt order, so there are exactly `attempts` of them for a mutant this run executed. It is present and empty for a cached, uncovered or not-run mutant \u2014 each of which was settled without a process being started, and the cached one keeps the attempt count of the run that did measure it. The whole key is optional: a document an older build wrote does not have it, and a merged document drops it, because a worker number and a duration describe one machine.",
           "type": "array",
@@ -983,6 +987,10 @@
         "peak_memory_bytes": {
           "description": "The highest the pass was observed to hold, as the maximum over every binary it started rather than the deciding binary's: a pass's cost is the worst moment it put the machine through. It is resident memory on Unix and committed charge on Windows; the two are close but not the same quantity, and neither is converted into the other, because a conversion between things the kernels measure differently would be a number go-mutants invented. Recorded for every pass and not only the bounded ones, and absent \u2014 rather than zero \u2014 where the platform could not measure one.",
           "$ref": "#/$defs/count"
+        },
+        "diverged": {
+          "description": "This pass ended itself because a counted loop of the tree went past the ceiling this run derived for it from what the original program did under the same tests. It is why a row can say `timed-out` after one attempt and a handful of milliseconds: a timeout is measured twice before it is believed, and a divergence is two counts taken in one tree that say nothing about the machine. Optional, and a document written before the counters existed carries none.",
+          "type": "boolean"
         }
       },
       "allOf": [
@@ -1002,6 +1010,26 @@
             "properties": {
               "outcome": {
                 "const": "killed"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "diverged"
+            ],
+            "properties": {
+              "diverged": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "description": "`diverged` is the counted half of \"this mutant does not return\", so beside any other outcome it would describe a pass that ended itself and also finished: a loop that passed its ceiling ends the process, which is the one thing a survivor, a kill and an errored pass all did not do.",
+            "properties": {
+              "outcome": {
+                "const": "timed-out"
               }
             }
           }

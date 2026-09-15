@@ -267,6 +267,19 @@ type Attempt struct {
 	// different kills, and internal/runner reports exactly one of them.
 	PeakMemory     int64
 	MemoryExceeded bool
+
+	// Diverged reports that the target ended itself because one of its counted
+	// loops passed the ceiling this run derived for it, rather than because a
+	// supervisor ran out of patience.
+	//
+	// It accompanies [mutation.OutcomeTimedOut] and nothing else, and what it
+	// carries is the difference between a measurement and a fact. A timeout is
+	// retried serially because one timeout on a loaded machine says as much
+	// about the machine as about the mutant; a divergence is the count of what
+	// one loop did against the count of what the original program did in the
+	// same tree under the same tests, so a second measurement would produce the
+	// same two numbers and cost a whole budget to do it. See ADR 0013.
+	Diverged bool
 	// Err carries a [Code] from this package, with the underlying cause
 	// reachable through it. It is set whenever Outcome is
 	// [mutation.OutcomeErrored], and on exactly one other outcome: a not-run
@@ -409,6 +422,9 @@ func runPass(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) 
 	}
 
 	env := mutantEnvFrom(opts.Env, m.ID, scratch)
+	if opts.LoopLimits != "" {
+		env = append(env, instrument.LoopLimitsEnv+"="+opts.LoopLimits)
+	}
 	logs := planTestLog(m.RecordTestLog, scratch, m.Args)
 
 	attempt := Attempt{Outcome: mutation.OutcomeSurvived}
@@ -552,6 +568,23 @@ func runPass(ctx context.Context, opts Options, m MutantRun, bins []TestBinary) 
 				Invocation: runner.CommandOf(spec, result),
 				Package:    bin.ImportPath,
 			}
+			return attempt
+
+		case result.ExitCode == instrument.DivergedExit:
+			// A verdict, and one that is settled here for [result.MemoryExceeded]'s
+			// reason: this is not a measurement of how loaded the machine is.
+			// The generated runtime counted a loop past what the original
+			// program did anywhere in this suite and said which loop and by how
+			// much, and running it again would count the same thing.
+			//
+			// It sits ahead of the kill below because the divergence status is
+			// non-zero: read there, a mutant that does not return would be
+			// reported as one the tests caught, which is the same score by a
+			// different name and a diagnosis that is simply wrong.
+			attempt.Outcome = mutation.OutcomeTimedOut
+			attempt.KilledBy = bin.ImportPath
+			attempt.Diverged = true
+			attempt.keep(result)
 			return attempt
 
 		case testLogUnsupported(logPath, result, record):

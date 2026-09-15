@@ -14,6 +14,40 @@ Entries say *why* a change was made, not only what changed.
 
 ### Added
 
+- **A mutant that does not return is decided by the work it does, not by the
+  clock.** Telling a mutant that spins from a mutant that is merely slow has had
+  exactly one instrument: a stopwatch sized at `max(10s, slowest baseline × 5)`,
+  believed only after a second measurement made serially so that nothing else is
+  competing for the machine. Every part of that is a fact about the machine. The
+  verdict moves with the load, the second measurement is the most expensive thing
+  a mutant can do, and "it did not return in 33 seconds" is not a finding anybody
+  can check.
+  What makes a spinning mutant a spinning mutant is that **it does an amount of
+  work the original program never did** — and go-mutants generates the tree it
+  runs in. Every loop of an instrumented file now carries two locals and one
+  test: `__gm_n7, __gm_k7 := uint64(0), __gm.Limit[7]` in front of the loop, and
+  `if __gm_n7++; __gm_n7 > __gm_k7 { … }` at the top of its body. Locals, so
+  there is nothing shared between goroutines, no atomic, and nothing for the race
+  detector; and what is counted is one *entry* to the loop.
+  The ceiling comes from a run that already happens. The instrumented baseline —
+  the semantic preservation gate, which is the original program in the tree the
+  mutants run in — also records, per loop, the largest number of iterations any
+  entry to it reached. The engine scales that by 1024, floors it at 1 048 576,
+  and hands every mutant run the table. A loop that passes its own ceiling ends
+  the process, naming the loop and both counts, and the run reports a mutant that
+  does not return **without a second measurement**: the same tree, the same test
+  and the same census produce the same answer on every machine.
+  Measured on the `runaway` fixture at profile `all`, which holds three mutants
+  that never return: **19–37 ms each, three runs in a row**, where a derived
+  budget of 44s had them at two full budgets apiece. The clock stays as the
+  backstop for what counting cannot see — a mutant that blocks rather than spins,
+  a loop in code the run did not instrument, a subprocess that hangs — and stops
+  being what decides the ordinary case. A census that cannot be read or written
+  leaves every ceiling at "no limit" and says so as `GOM4049`: the run is bounded
+  in time alone, which is what every run was before it could count.
+  See [ADR 0013](docs/adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md).
+  `diverged` is a new optional field on a mutant and on each of its execution
+  rows, additive within `run-report` v1.
 - **The glob language's own laws, checked rather than read.** The package was
   already held to a naive reference matcher by a fuzz target, which is the
   strongest statement there is that it reads a pattern *the obvious way* — and
