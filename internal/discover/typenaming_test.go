@@ -184,6 +184,34 @@ func TestWhichTypesThisFileCanSpell(t *testing.T) {
 			want: true,
 		},
 		{name: "an empty tuple", typ: types.NewTuple(), want: true},
+		{
+			// An alias is a second name for a type and is spelled like a named
+			// one: its own name has to be writable here, and so does every
+			// argument it was instantiated with.
+			name: "an alias of this package's own",
+			typ:  types.NewAlias(types.NewTypeName(0, f.here, "Alias", nil), types.Typ[types.Int]),
+			want: true,
+		},
+		{
+			name: "an alias of an unreachable package",
+			typ:  types.NewAlias(types.NewTypeName(0, f.other, "Alias", nil), types.Typ[types.Int]),
+		},
+		{
+			name:     "an alias of a reachable package",
+			typ:      types.NewAlias(types.NewTypeName(0, f.other, "Alias", nil), types.Typ[types.Int]),
+			siblings: reachableOther, want: true,
+		},
+		{
+			// A type set, which is what an interface embedding `~int | ~string`
+			// holds. It is a type go/types builds and no file writes on its
+			// own, so it falls off the end of the list rather than being
+			// admitted by silence.
+			name: "a union of terms",
+			typ: types.NewUnion([]*types.Term{
+				types.NewTerm(true, types.Typ[types.Int]),
+				types.NewTerm(true, types.Typ[types.String]),
+			}),
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
