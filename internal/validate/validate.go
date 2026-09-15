@@ -271,12 +271,25 @@ func Validate(ctx context.Context, opts Options) (Result, error) {
 		guards:    make(map[string]int),
 		files:     make(map[string]fileRef),
 	}
-	if v.timeout <= 0 {
-		v.timeout = DefaultBuildTimeout
-	}
+	v.timeout = buildTimeout(opts.BuildTimeout)
 	v.build = v.buildSnapshot
 	v.apply = v.instrumentFile
 	return v.run(ctx)
+}
+
+// buildTimeout is the bound one build of the snapshot runs under.
+//
+// It is a function rather than a branch inside the constructor for the reason
+// internal/gocmd's sameEnvKeyOn is one: a decision written where it is made is
+// a decision only a test that can make the whole phase run may ask about, and
+// this one is a number a reader of `-v` output sees. Zero and anything below it
+// mean "the caller did not choose", which is one statement and not two: a
+// negative bound is not a shorter build, it is a caller that set nothing.
+func buildTimeout(configured time.Duration) time.Duration {
+	if configured <= 0 {
+		return DefaultBuildTimeout
+	}
+	return configured
 }
 
 // validate rejects options that cannot describe a validation pass.
@@ -489,7 +502,19 @@ func (v *validator) bisect(ctx context.Context) ([]condemned, error) {
 	}
 
 	var rejected []condemned
-	for {
+	// One pass per catalogued file, and one more. Every pass decides at least
+	// one of them -- [validator.blame] never answers an empty list while
+	// anything is pending -- so the search cannot run more passes than there
+	// are files, and the bound says that in the loop's shape rather than in a
+	// lemma about another function.
+	//
+	// It is written this way for a measured reason. As `for {}` the exit rested
+	// on that lemma, and every edit to a condition inside it -- the build's
+	// verdict, the emptiness of the pending set, the blame that feeds it --
+	// produced a phase that never returns. This repository's own gate paid a
+	// per-mutant timeout, twice, for thirteen of them; bounded, the same edits
+	// come back as a wrong answer that a test can state.
+	for range len(pending) + 1 {
 		for _, path := range failing.blamed {
 			accepted, condemnedHere, err := isolate(ctx, v.byPath[path], v.probe(path))
 			if err != nil {
@@ -530,6 +555,17 @@ func (v *validator) bisect(ctx context.Context) ([]condemned, error) {
 			return rejected, err
 		}
 		failing = result
+	}
+	// Past the bound, which is past the point where every catalogued file has
+	// been isolated. It is the same thing the exhausted search says above and
+	// for the same reason -- the snapshot does not build and there is nothing
+	// left to look at -- and it is stated rather than left as a fall-through,
+	// because a search that came out here has been wrong about its own bound
+	// and the accepted set is exactly as untrustworthy either way.
+	return rejected, &Error{
+		Code: CodeStillFailing,
+		Message: "the snapshot does not build after one isolation pass per catalogued file, " +
+			"which means candidates in different files interact; the accepted set cannot be trusted",
 	}
 }
 
@@ -1074,12 +1110,13 @@ func (v *validator) rejection(m mutation.Mutant, output string) Rejection {
 // rejected mutant and a live one have to be named the same way, and nothing
 // downstream would catch it if they were not.
 func position(src []byte, offset uint32) (int, int) {
-	if int(offset) > len(src) {
-		offset = uint32(len(src))
-	}
-	before := src[:offset]
+	// Clamped rather than guarded: an offset of exactly the length is the whole
+	// file either way, so a comparison here would have a second reading no span
+	// could tell from the first.
+	end := min(int(offset), len(src))
+	before := src[:end]
 	line := 1 + bytes.Count(before, []byte("\n"))
-	column := int(offset) - (bytes.LastIndexByte(before, '\n') + 1) + 1
+	column := end - (bytes.LastIndexByte(before, '\n') + 1) + 1
 	return line, column
 }
 
