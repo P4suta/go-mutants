@@ -26,13 +26,11 @@ const execHelperEnv = "TESTKIT_EXEC_HELPER"
 // portable way to get a process that prints known bytes and exits with a chosen
 // status without compiling a program first.
 //
-// It returns silently when it was not asked for, so a normal run neither runs it
-// nor reports it as skipped.
+// It skips when it was not asked for, rather than returning silently. A bare
+// return is a pass, and a pass is a claim about work this process did not do.
 func TestExecHelperProcess(t *testing.T) {
-	status, wanted := os.LookupEnv(execHelperEnv)
-	if !wanted {
-		return
-	}
+	SkipUnlessHelper(t, execHelperEnv)
+	status := os.Getenv(execHelperEnv)
 	// The writes are unchecked deliberately: the parent reads what arrived, and
 	// a helper that reported a write failure to nobody would only hide it.
 	_, _ = fmt.Fprintf(os.Stdout, "argv=%q\n", os.Args[1:])

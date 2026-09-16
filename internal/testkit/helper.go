@@ -115,6 +115,27 @@ func HelperEnabled(variable string) bool {
 	return os.Getenv(variable) != ""
 }
 
+// SkipUnlessHelper skips unless this process was started as the helper the
+// variable names.
+//
+// It replaces `if !HelperEnabled(v) { return }`, which is what the helper
+// entry points here used to do. A bare return is a pass, and a pass is a claim:
+// those tests asserted nothing and were counted among the ones that did, so a
+// suite reporting 2000 passed was reporting five it had not run. Skipping says
+// what happened, and puts the five where a count of skips can see them.
+//
+// The cost is that an ordinary run now prints five skips it used to print
+// nothing for. That is the right trade: a skip a reader has to scroll past is
+// cheaper than a number a reader cannot trust.
+func SkipUnlessHelper(t testing.TB, variable string) {
+	t.Helper()
+
+	if HelperEnabled(variable) {
+		return
+	}
+	t.Skipf("%s is not set, so this process is not the helper it names", variable)
+}
+
 // Helper is the TestMain of a package whose tests need real processes.
 //
 //	func TestMain(m *testing.M) {
