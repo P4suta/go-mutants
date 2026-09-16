@@ -97,6 +97,11 @@ internal/instrument/probesites_test.go
 # harness needles are matched unqualified: written as `testkit.GoBinary(` they
 # would never match a call from inside package testkit, and the one package
 # whose subject is the tier policy would be the one package outside it.
+#
+# Naming a needle in a sentence no longer puts a file here. The scan blanks
+# comments before it looks, so the paragraph above costs nothing -- which it
+# would not have, back when a file explaining the rule was reported for
+# explaining it.
 internal/testkit/env_test.go
 internal/testkit/module_test.go
 internal/testkit/tiers_test.go
