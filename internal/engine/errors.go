@@ -262,6 +262,25 @@ const (
 	// detected either way — so a census that cannot be read costs the run time
 	// and precision of diagnosis, never a wrong answer. See ADR 0013.
 	CodeLoopCensusUnusable Code = "GOM4049"
+
+	// CodeChangedTestsUnaccounted is a `--changed` run whose diff edited test
+	// files, whose effect on the verdicts the narrowing cannot see.
+	//
+	// The narrowing keeps the mutants the diff touched, and a `_test.go` file
+	// holds none — internal/discover does not mutate one — so a test edit
+	// narrows nothing towards itself. What it changes instead is which mutants
+	// the suite kills, and the mapping that could name those is built from the
+	// selection this narrowing produces: the answer does not exist yet at the
+	// moment the question is asked.
+	//
+	// Both silent answers are wrong. Reporting the narrowed run without a word
+	// turns "I cannot see this" into "there is nothing there", and a diff of
+	// tests alone then publishes a score over an empty selection. Keeping every
+	// mutant instead turns it into "everything may have moved", and since nearly
+	// every commit edits a test beside the code it tests, that is the flag
+	// switched off for the runs it was built for. So the run narrows as asked and
+	// states the part it did not account for.
+	CodeChangedTestsUnaccounted Code = "GOM4050"
 )
 
 // String returns the code as it is printed.
@@ -295,6 +314,7 @@ var codes = []Code{
 	CodeMemoryBoundUnavailable,
 	CodeBaselineFromTestCache,
 	CodeLoopCensusUnusable,
+	CodeChangedTestsUnaccounted,
 }
 
 // Codes returns every diagnostic code this package can report, in numeric

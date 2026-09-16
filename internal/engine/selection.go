@@ -5,6 +5,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/P4suta/go-mutants/internal/coverage"
 	"github.com/P4suta/go-mutants/internal/execute"
@@ -112,6 +114,7 @@ func (s *session) narrowSelection(ids []string, st *state) []string {
 	narrowed := SelectionNarrowed{Selected: len(ids), Of: before}
 	if st.changed != nil {
 		narrowed.ChangedRef = st.changed.Ref
+		s.sayWhatTheDiffsTestsHide(st.changed)
 	}
 	if st.shard != nil {
 		narrowed.Shard, narrowed.Shards = st.shard.Index, st.shard.Total
@@ -146,6 +149,56 @@ func onChangedLines(ids []string, st *state) []string {
 		}
 	}
 	return out
+}
+
+// sayWhatTheDiffsTestsHide states the part of a diff the narrowing cannot see.
+//
+// [onChangedLines] keeps the mutants whose own lines the diff touched, and a
+// `_test.go` file holds none of them: internal/discover walks packages and not
+// their test variants, so nothing in a test file is ever catalogued. A diff of
+// tests alone therefore narrows to nothing, and without this the run reports a
+// score over an empty selection as though it had looked.
+//
+// What a test edit changes is which mutants the suite kills. Naming those would
+// need the coverage mapping, and the mapping is built from the selection this
+// narrowing produces — the answer does not exist yet at the moment the question
+// is asked. Widening instead of saying so is the other wrong answer: nearly
+// every commit edits a test beside the code it tests, so a rule that kept every
+// mutant whenever a test moved would be the flag switched off for the runs it
+// was built for.
+//
+// So it is said once per run, whatever the selection came to. A diff that also
+// edited code keeps mutants on the lines it touched, and the test it edited
+// beside them can still have changed the verdict of a mutant somewhere else
+// that this run will not execute. The count is not the condition; the test file
+// in the diff is.
+func (s *session) sayWhatTheDiffsTestsHide(changed *gitdiff.Changed) {
+	tests := make([]string, 0, 4)
+	for _, path := range changed.Paths() {
+		if strings.HasSuffix(path, "_test.go") {
+			tests = append(tests, path)
+		}
+	}
+	if len(tests) == 0 {
+		return
+	}
+	s.warnDetail(
+		string(CodeChangedTestsUnaccounted),
+		fmt.Sprintf("the diff edited %s, and a changed test moves verdicts this narrowing cannot see",
+			plural(len(tests), "test file", "test files")),
+		"Changed tests are not mutated, so they select no mutant of their own, and which\n"+
+			"mutants their edit kills is not known until the run that executes them. These\n"+
+			"were edited:\n  "+strings.Join(tests, "\n  ")+"\n"+
+			"Run without --changed to measure the mutants they reach.",
+	)
+}
+
+// plural renders a count with the noun that agrees with it.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // ownedByShard keeps the mutants this shard is responsible for.

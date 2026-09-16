@@ -77,6 +77,26 @@ ability to say which tests could have caught something.
 | `GOM1012`, `GOM1013`, `GOM1014` | A GitHub step summary, a recording, or a diagnostics bundle could not be written. The run is unaffected |
 | `GOM4040`, `GOM4041`, `GOM4044`, `GOM4045` | A temporary directory survived cleanup, or one the run was asked to keep could not be marked. The message names the path |
 
+## Narrowings that state what they could not see
+
+`--changed` keeps the mutants whose own lines the diff touched. A `_test.go`
+file holds none of them -- discovery walks packages and not their test
+variants -- so an edited test selects no mutant of its own, while what it
+actually moves is which mutants the suite kills. Naming those would need the
+coverage mapping, and the mapping is built from the selection the narrowing
+produces: the answer does not exist yet at the moment the question is asked.
+
+| Code | What the run could not account for |
+| --- | --- |
+| `GOM4050` | The diff edited test files. Their effect on the verdicts is outside what a changed-line narrowing can see, so the run narrows as asked and names them rather than reporting over them in silence |
+
+Widening instead would be the other wrong answer. Nearly every commit edits a
+test beside the code it tests, so a rule that measured everything whenever a
+test moved would be the flag switched off for the runs it exists for. The
+warning is not about the size of the selection and never looks at it: a diff
+that edited `a.go` and `b_test.go` keeps every mutant on the lines of `a.go`
+and is still not accounting for what the edit to `b_test.go` did to `b.go`.
+
 ## Refusals that stop the run
 
 A run that continued past one of these would publish a number about a different
