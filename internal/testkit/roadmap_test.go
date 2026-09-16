@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -152,4 +154,53 @@ func declaredSkipReasons(t *testing.T, root string) []string {
 		}
 	}
 	return reasons
+}
+
+// roadmapCodeCount is how the first roadmap row states the size of the job.
+var roadmapCodeCount = regexp.MustCompile(`(\d+) constants across (\d+) packages`)
+
+// TestTheRoadmapCountsTheDiagnosticCodesThisModuleDeclares pins a number in
+// prose to the thing it counts.
+//
+// The row said "213 constants across sixteen packages" while the module
+// declared 215 across 15, and nothing had ever compared them. It is the failure
+// this repository's ledger discipline exists for, in the one document whose
+// whole purpose is to be read before somebody decides what to spend a week on:
+// a number in a roadmap is an estimate somebody plans against, and an estimate
+// that drifts silently is worse than none, because it reads like measurement.
+//
+// Both directions are checked by construction -- two numbers compared with two
+// numbers -- so the counterpart other ledgers here carry is the assertion that
+// the pattern matched at all. A row this stopped recognising would otherwise
+// pass by having nothing to compare.
+func TestTheRoadmapCountsTheDiagnosticCodesThisModuleDeclares(t *testing.T) {
+	t.Parallel()
+
+	root := Root(t)
+	source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(roadmapDoc)))
+	if err != nil {
+		t.Fatalf("reading %s: %v", roadmapDoc, err)
+	}
+	stated := roadmapCodeCount.FindStringSubmatch(string(source))
+	if stated == nil {
+		t.Fatalf("%s no longer says how many constants the job covers, in the words %q;\n"+
+			"\tthe row is what this test is about, so a rewrite that drops the count\n"+
+			"\tneeds this test rewritten with it", roadmapDoc, roadmapCodeCount)
+	}
+
+	// The same reader errordocs_test.go uses, rather than a second one. Two
+	// counts of the same set would be two things to keep in step, and the row
+	// this test is about drifted precisely because nothing counted it twice.
+	found := declaredCodes(t, root)
+	declaring := map[string]bool{}
+	for _, code := range found {
+		declaring[code.Package] = true
+	}
+
+	if got, want := stated[1], strconv.Itoa(len(found)); got != want {
+		t.Errorf("%s says %s constants and this module declares %s", roadmapDoc, got, want)
+	}
+	if got, want := stated[2], strconv.Itoa(len(declaring)); got != want {
+		t.Errorf("%s says %s packages declare them and %s do", roadmapDoc, got, want)
+	}
 }

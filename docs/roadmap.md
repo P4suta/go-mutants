@@ -24,7 +24,7 @@ whose Done when reads "it works well" is a row that cannot be finished.
 
 | # | What | Done when |
 | ---: | --- | --- |
-| 1 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 213 constants across sixteen packages | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
+| 1 | A `Remedy()` on every diagnostic code, so that [`docs/errors.md`](errors.md)'s third column is pinned verbatim rather than by shape. 222 constants across 17 packages. It waits for the runner to live beside the engine: the runner's codes are meant to be born with a remedy, so doing this first means doing it twice, once per repository, which is the cost one repository exists to remove | `TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo` compares the column with the method rather than checking that the cell is non-empty |
 | 2 | A `run-report` v2 that carries a workspace in one flat document, instead of the workspace report that holds one run report per module | `internal/schemas`' registry is keyed on (type, version) and `Validate` reads `schema_version` out of the instance before choosing a schema — which is the cost the current design avoids, and the reason it was chosen. See [ADR 0012](adr/0012-a-workspace-is-one-run-of-many-modules.md) |
 
 ## The engine

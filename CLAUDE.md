@@ -84,6 +84,7 @@ repository's prose worth reading, so here is where each ledger lives.
 | What is pinned | To what | Where |
 | --- | --- | --- |
 | `docs/errors.md` | every `GOM` constant, its block, its digit, and the retired ones | `internal/testkit/errordocs_test.go` |
+| the count `docs/roadmap.md` gives for the remedy job | how many constants this module declares, and in how many packages | `internal/testkit/roadmap_test.go` |
 | `docs/operators.md` catalogue | the canonical rule registry, its counts and its tiers | `internal/mutation/docs_test.go` |
 | `docs/operators.md` and `docs/limitations.md` skips | `discover.AllSkipReasons` | `internal/discover/docs_test.go` |
 | `docs/roadmap.md` reserved reasons | the run-report schema's superset | `internal/testkit/roadmap_test.go` |

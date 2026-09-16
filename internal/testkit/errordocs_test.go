@@ -33,8 +33,9 @@ const allocationHeading = "## How the numbers are allocated"
 // codeFileName is where a package declares its codes.
 //
 // Every one of the sixteen packages that has codes follows it, and the scan
-// depends on that: reading every non-test .go file in the module to find
-// sixteen would cost a hundred times as much for the same answer.
+// depends on that: reading every non-test .go file in the module to find the
+// seventeen that hold them would cost a hundred times as much for the same
+// answer.
 // TestEveryDiagnosticCodeIsDeclaredInAnErrorsFile is what keeps the shortcut
 // honest, by reading everything once and refusing a code found elsewhere.
 const codeFileName = "errors.go"
