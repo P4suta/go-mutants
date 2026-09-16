@@ -31,6 +31,15 @@ every run today.
    spliced into the snapshot in a single pass, and the environment variable
    `GO_MUTANTS_ACTIVE=<64-hex id>` activates exactly one of them per test
    process. The build is effectively performed once, not once per mutant.
+
+   The recording says so in counts, and
+   `internal/engine/testdata/work-ceiling.golden.txt` fixes them. A run of the
+   `simple` corpus module starts **1** `go-test-c` and **16** `mutant-run`.
+   A run of `killable` starts **1** and **10**. The compile count is the number
+   of test binaries the scope holds; it does not move when the mutant count
+   does. Rebuilding per mutant would spend sixteen and ten compiles on those
+   same two modules. The claim above is that sentence, and the golden is what
+   keeps it a measurement rather than a slogan.
 3. **Bytes, not pretty-printed syntax.** Mutants are assembled from original
    source byte slices, so comments, whitespace, and CRLF survive untouched, and
    splices preserve line numbers so coverage line data maps one-to-one.
