@@ -13,7 +13,9 @@ import (
 
 	"github.com/P4suta/go-mutants/internal/config"
 	"github.com/P4suta/go-mutants/internal/mutation"
+	"github.com/P4suta/go-mutants/internal/runner"
 	"github.com/P4suta/go-mutants/internal/schemas"
+	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
 // diagnosis is the fabricated finding set the rendering tests use. It carries
@@ -146,7 +148,7 @@ func TestDoctorFailsWhereThereIsNoModule(t *testing.T) {
 	}
 	// The diagnosis is complete even though a check failed: a machine with two
 	// problems must not be told about them one round trip at a time.
-	for _, name := range []string{checkToolchain, checkGit, checkCacheDir, checkPlatform, checkConfiguration} {
+	for _, name := range []string{checkToolchain, checkGit, checkCacheDir, checkPlatform, checkMemory, checkConfiguration} {
 		if !strings.Contains(stdout, name) {
 			t.Errorf("the table stopped before %q:\n%s", name, stdout)
 		}
@@ -239,13 +241,23 @@ func TestDoctorDetailsCarryNoDiagnosticCode(t *testing.T) {
 
 // TestDoctorPublishesItsCheckNames pins the strings docs/json-schema.md tells a
 // consumer it may branch on, and the order the table and the document print
-// them in. Renaming one, or adding a seventh check, is a change to what
-// go-mutants publishes; this is what makes it a visible one.
+// them in. Renaming one, or adding a check, is a change to what go-mutants
+// publishes; this is what makes it a visible one.
+//
+// The list is read out of the page rather than written here a second time. It
+// used to be written here, which meant the comment above was describing a
+// comparison nobody was making: a check added to the code and to this literal,
+// and to neither the page nor anybody's reading of it, would have passed.
 func TestDoctorPublishesItsCheckNames(t *testing.T) {
-	isolatedCache(t)
+	// Before isolatedCache, which moves this process somewhere the repository
+	// root cannot be found from.
+	want := publishedCheckNames(t)
 
-	want := []string{"go toolchain", "module", "git", "cache directory", "platform", "configuration"}
-	constants := []string{checkToolchain, checkModule, checkGit, checkCacheDir, checkPlatform, checkConfiguration}
+	isolatedCache(t)
+	constants := []string{
+		checkToolchain, checkModule, checkGit, checkCacheDir,
+		checkPlatform, checkMemory, checkConfiguration,
+	}
 	if !slices.Equal(constants, want) {
 		t.Errorf("the check names are %q, and the published set is %q", constants, want)
 	}
@@ -299,4 +311,81 @@ func TestDoctorReadsTheConfigurationAndSaysWhere(t *testing.T) {
 	if crossed := configurationCheck(dir); crossed.Status != statusFail {
 		t.Errorf("a configuration a run would refuse is not a failing row: %+v", crossed)
 	}
+}
+
+// TestDoctorSaysWhetherAMemoryBoundIsEnforced pins the check that answers a
+// question nothing answered before a run.
+//
+// A per-mutant memory bound is accepted everywhere and enforced on some
+// platforms: linux samples the process tree, windows adds the kernel's own job
+// limit under the sampler, and darwin does neither. Until now the only way to
+// find out which one you were on was to finish a run and notice that
+// PeakMemory was zero — an answer after the fact, about a bound that was not
+// bounding anything while the run happened.
+func TestDoctorSaysWhetherAMemoryBoundIsEnforced(t *testing.T) {
+	t.Parallel()
+
+	got := memoryCheck()
+	if got.Name != checkMemory {
+		t.Errorf("the memory check is named %q, want %q", got.Name, checkMemory)
+	}
+
+	switch runner.MemoryBound() {
+	case runner.MemoryEnforcedByKernel, runner.MemoryEnforcedBySampler:
+		if got.Status != statusOK {
+			t.Errorf("a bound this platform enforces is reported %q: %s", got.Status, got.Detail)
+		}
+	case runner.MemoryUnenforced:
+		if got.Status != statusWarn {
+			t.Errorf("a bound this platform does not enforce is reported %q, not a warning: %s",
+				got.Status, got.Detail)
+		}
+	default:
+		t.Fatalf("runner.MemoryBound() is %q, which this test does not know how to judge",
+			runner.MemoryBound())
+	}
+
+	if got.Detail == "" {
+		t.Error("the memory check says nothing; a doctor line with no message cannot be acted on")
+	}
+}
+
+// publishedCheckNames is the check names docs/json-schema.md says a consumer
+// may branch on, in the order the page lists them.
+//
+// The anchor is the sentence rather than a line number, because a line number
+// is a pin to where the page was rather than to what it says.
+func publishedCheckNames(t *testing.T) []string {
+	t.Helper()
+
+	const anchor = "The check names are stable within the schema version"
+	page := readRepoFile(t, testkit.Root(t), "docs/json-schema.md")
+	start := strings.Index(page, anchor)
+	if start < 0 {
+		t.Fatalf("docs/json-schema.md no longer says %q, so this test is reading a page that moved", anchor)
+	}
+	paragraph := page[start:]
+	if end := strings.Index(paragraph, "\n\n"); end >= 0 {
+		paragraph = paragraph[:end]
+	}
+
+	var names []string
+	for rest := paragraph; ; {
+		open := strings.Index(rest, "`")
+		if open < 0 {
+			break
+		}
+		rest = rest[open+1:]
+		close := strings.Index(rest, "`")
+		if close < 0 {
+			break
+		}
+		names = append(names, rest[:close])
+		rest = rest[close+1:]
+	}
+	if len(names) < 5 {
+		t.Fatalf("docs/json-schema.md names %d checks in that paragraph, which is fewer than it has ever had: %q",
+			len(names), names)
+	}
+	return names
 }
