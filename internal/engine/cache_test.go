@@ -420,3 +420,80 @@ func hasRun(runs []execute.MutantRun, id string) bool {
 func mutationCacheable(o mutation.Outcome) bool {
 	return o == mutation.OutcomeKilled || o == mutation.OutcomeSurvived || o == mutation.OutcomeTimedOut
 }
+
+// TestAWarmRunExplainsADivergenceTheWayTheColdRunDid is what the fact on the
+// entry is for.
+//
+// A timeout the clock produced and a timeout a counted loop produced are the
+// same outcome and two different findings: one says a process ran out of
+// patience with a machine, the other says which loop of the tree went further
+// than the original program ever goes and by how much. A warm run started no
+// process for the mutant, so the only place that difference can come from is
+// the entry — and a cache that dropped it would make every second run report
+// the weaker of the two.
+//
+// The bound is the other half. A divergence was never measured against the
+// clock, so it is evidence about every run of this tree; an adopted one must
+// therefore survive a run whose per-mutant budget is nothing like the one it
+// was recorded beside. See [cache.Entry.UsableUnder] and ADR 0013.
+func TestAWarmRunExplainsADivergenceTheWayTheColdRunDid(t *testing.T) {
+	t.Parallel()
+
+	f := newCacheFixture(t, t.TempDir())
+	results := measured()
+	results[0].Final = mutation.OutcomeTimedOut
+	results[0].Duration = 20 * time.Millisecond
+	results[0].Attempts = []execute.Attempt{{Outcome: mutation.OutcomeTimedOut, Diverged: true}}
+
+	seed := &session{}
+	seedState := newState()
+	seed.cachePhase(f.opts, f.catalog, f.out, f.runs(), seedState)
+	seed.storeOutcomes(f.opts, results, seedState)
+
+	// A budget a hundred times the one the divergence was recorded beside. A
+	// timeout the clock produced would be refused under it; this one is not
+	// about the clock.
+	warmOut := f.out
+	warmOut.Timeout = 100 * f.out.Timeout
+
+	events := make(chan Event, 16)
+	warm := &session{events: events}
+	warmState := newState()
+	warm.cachePhase(f.opts, f.catalog, warmOut, f.runs(), warmState)
+	close(events)
+
+	adopted, found := warmState.results[ids[0]]
+	if !found {
+		t.Fatal("the warm run did not adopt the divergence at all")
+	}
+	if !adopted.Cached {
+		t.Error("the adopted result is not marked cached")
+	}
+	if adopted.Outcome != mutation.OutcomeTimedOut {
+		t.Errorf("outcome = %s, want %s", adopted.Outcome, mutation.OutcomeTimedOut)
+	}
+	if !adopted.Diverged {
+		t.Error("the warm run lost the fact that a counted loop settled it, so it reports the weaker finding")
+	}
+
+	// The event a renderer draws, which is the other half of "a warm run reads
+	// like a cold one": the fixture's display index is empty, so the events are
+	// told apart by the outcome they carry rather than by an id.
+	timeouts, diverged := 0, 0
+	for event := range events {
+		e, ok := event.(MutantFinished)
+		if !ok || e.Result.Outcome != mutation.OutcomeTimedOut {
+			continue
+		}
+		timeouts++
+		if e.Result.Diverged {
+			diverged++
+		}
+	}
+	if timeouts != 1 {
+		t.Fatalf("published %d finished timeouts, want 1", timeouts)
+	}
+	if diverged != 1 {
+		t.Error("the event a renderer draws lost the fact that a counted loop settled it")
+	}
+}

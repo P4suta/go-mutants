@@ -162,13 +162,15 @@ func TestTruncateTailKeepsTheEndAndSaysThatItDid(t *testing.T) {
 // A killed or survived mutant finished in the recorded duration, so any bound
 // at least that long reaches the same verdict. A confirmed timeout did not
 // finish within its recorded bound, so any bound no larger does not finish
-// either. A run that states no bound cannot say whether a measurement fits
-// inside one, and adopts nothing.
+// either. A divergence was never measured against a bound at all, so every
+// bound reaches it. A run that states no bound cannot say whether a measurement
+// fits inside one, and adopts nothing.
 func TestUsableUnderIsTheWholeArgumentForKeepingTheTimeoutOutOfTheKey(t *testing.T) {
 	t.Parallel()
 
 	finished := Entry{Outcome: mutation.OutcomeKilled, DurationMS: 500, TimeoutMS: 1000}
 	timedOut := Entry{Outcome: mutation.OutcomeTimedOut, DurationMS: 1000, TimeoutMS: 1000}
+	divergent := Entry{Outcome: mutation.OutcomeTimedOut, DurationMS: 20, TimeoutMS: 1000, Diverged: true}
 
 	for _, test := range []struct {
 		name    string
@@ -186,6 +188,17 @@ func TestUsableUnderIsTheWholeArgumentForKeepingTheTimeoutOutOfTheKey(t *testing
 		{name: "a timeout under no bound at all", entry: timedOut, timeout: 0, want: false},
 		{name: "a finished mutant under a negative bound", entry: finished, timeout: -time.Second, want: false},
 		{name: "a timeout under a negative bound", entry: timedOut, timeout: -time.Second, want: false},
+		// The third rule, and the only one that does not read the bound. A
+		// divergence is two counts taken in one tree -- the loop went further
+		// than the original program ever goes under this suite -- so it is
+		// evidence about every run of this tree, including one whose clock is
+		// looser than the clock it was measured beside. Only a run that states
+		// no bound at all adopts nothing, because that is a run this cache has
+		// nothing to say to.
+		{name: "a divergence under exactly its bound", entry: divergent, timeout: time.Second, want: true},
+		{name: "a divergence under a shorter bound", entry: divergent, timeout: time.Millisecond, want: true},
+		{name: "a divergence under a bound a thousand times longer", entry: divergent, timeout: 1000 * time.Second, want: true},
+		{name: "a divergence under no bound at all", entry: divergent, timeout: 0, want: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
