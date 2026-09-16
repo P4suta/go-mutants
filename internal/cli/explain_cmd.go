@@ -1265,6 +1265,19 @@ func verdictSentence(m report.Mutant, memoryBound int64) string {
 		}
 		return "killed" + memoryClause(m, memoryBound) + " after " + countNoun(m.Attempts, "attempt")
 	case report.OutcomeTimedOut:
+		if m.Diverged {
+			// "Hung" is what a stopwatch can say. A divergence knows more: a
+			// loop of this binary went past what the original program does
+			// under the same tests, which is a fact about the mutant rather
+			// than a guess about the machine, and the loop and both counts are
+			// in the retained output this account prints underneath.
+			if killedBy != "" {
+				return "did not return: a loop in " + killedBy +
+					" ran past what the original does, after " + countNoun(m.Attempts, "attempt")
+			}
+			return "did not return: a loop ran past what the original does, after " +
+				countNoun(m.Attempts, "attempt")
+		}
 		if killedBy != "" {
 			return "timed out, hung in " + killedBy + ", after " + countNoun(m.Attempts, "attempt")
 		}
@@ -1354,7 +1367,7 @@ func (e *explainer) executions(doc explainDocument) {
 			execution.Attempt, execution.Worker, execution.Outcome,
 			console.FormatDuration(milliseconds(execution.DurationMS)),
 			peakClause(execution.PeakMemoryBytes),
-			attribution(execution.Outcome, execution.KilledBy))
+			attribution(execution.Outcome, execution.KilledBy, execution.Diverged))
 		if len(execution.Binaries) > 0 {
 			e.printf("    binaries: %s\n", strings.Join(execution.Binaries, ", "))
 		}
@@ -1404,11 +1417,14 @@ func notExecuted(doc explainDocument) string {
 
 // attribution is the tail of an execution row: the binary the pass named, in
 // the words its outcome earns. See [verdictSentence].
-func attribution(outcome string, killedBy *string) string {
+func attribution(outcome string, killedBy *string, diverged bool) string {
 	if killedBy == nil {
 		return ""
 	}
 	if outcome == string(report.OutcomeTimedOut) {
+		if diverged {
+			return "  a loop in " + *killedBy + " ran away"
+		}
 		return "  hung in " + *killedBy
 	}
 	return "  killed by " + *killedBy

@@ -544,6 +544,7 @@
         "duration_ms",
         "peak_memory_bytes",
         "killed_by",
+        "diverged",
         "binaries",
         "commands"
       ],
@@ -582,6 +583,10 @@
             "string",
             "null"
           ]
+        },
+        "diverged": {
+          "description": "A counted loop of the instrumented tree went past the ceiling this run derived for it from what the original program did under the same tests, which is what ended this pass rather than the deadline. It is why a row can say `timed-out` after one attempt and a handful of milliseconds, and the loop and both counts are in the pass's own output.",
+          "type": "boolean"
         },
         "binaries": {
           "type": "array",
