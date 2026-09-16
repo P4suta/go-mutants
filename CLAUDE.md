@@ -98,6 +98,7 @@ repository's prose worth reading, so here is where each ledger lives.
 | `docs/json-schema.md` | every published schema, every document type, and its own counts | `internal/testkit/schemadocs_test.go` |
 | `fixtures/README.md` | the corpus modules and their conformance | `internal/testkit/corpus_test.go` |
 | how many children a run starts, by kind | the recording every run keeps | `internal/engine/workceiling_integration_test.go` |
+| which settings a cached outcome is identified by, and which are deliberately not | every field of `config.Config` | `internal/engine/cacheidentity_test.go` |
 | that a run report and its recording agree | each other, re-derived independently | `internal/devtools/traceaudit/audit_test.go` |
 | which mutants provably cannot return | the loop shapes, decided before anything runs | `internal/discover/termination_test.go` |
 | what the dashboard looks like | the model, on the ASCII theme | `internal/tui/frames_test.go` |
