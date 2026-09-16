@@ -1441,11 +1441,12 @@ skips where a platform or a user is not stopped by it, rather than naming
 Windows or asking `os.Getuid`; and the tests that create symbolic links skip
 where a platform refuses to create one.
 
-The numbers the gate is sized against: 4386 mutants catalogued, 4311 detected —
-4308 killed, two of them by the memory bound, and three caught by the per-mutant
-timeout — seventy-five declared expectations, **a score of 100.00%**, at
-`--jobs 4` against a warm test-owned build cache. `policy.minimum_score = 99.75`
-is compared on every run, `--strict` or not, and at this size it does not fail
+The numbers the gate is sized against: 4396 mutants catalogued, 4321 detected —
+4318 killed, two of them by the memory bound, and three caught by a counted loop
+rather than by the clock — seventy-five declared expectations, **a score of
+100.00%**, at `--jobs 4` against a warm test-owned build cache.
+`policy.minimum_score = 99.75` is compared on every run, `--strict` or not, and
+at this size it does not fail
 until the eleventh unexpected survivor — so `--strict` is the thing that
 actually fails this job, on the first.
 
@@ -1568,7 +1569,7 @@ names the bound on each mutant it stops
 (`killed by … (memory: 1.1 GiB > 1.0 GiB bound)`), and the JSON report carries
 `memory_exceeded` and `peak_memory_bytes` on the mutant and on each execution.
 
-With that in place the whole summary is stable: the same 4386 / 4308 / 3 / 75 on
+With that in place the whole summary is stable: the same 4396 / 4318 / 3 / 75 on
 every run, killed-versus-timed-out included, except for the two kills a loaded
 machine reported as inconclusive. It was not before, and a widening that makes
 a gate's own tally a coin flip is a widening that is not finished.
@@ -1619,9 +1620,9 @@ was the same arithmetic once more: half a percent of 2822, 2943, 3200, 3527 and
 3941 is fourteen, fourteen, sixteen, seventeen and nineteen survivors — growing,
 and still short of twenty-one.
 
-Half a percent of 4311 is 21.56, and twenty-one is the number that was judged
+Half a percent of 4321 is 21.61, and twenty-one is the number that was judged
 too much at 544, so the rule cashes in a second time: **99.75**, which buys ten
-survivors (4301/4311 clears, 4300/4311 does not) where 99.5 bought twelve when
+survivors (4311/4321 clears, 4310/4321 does not) where 99.5 bought twelve when
 it was set. The floor is a fixed number of survivors rather than a fixed
 percentage of a growing catalogue. Do the arithmetic, write the answer next to
 the number, and only then decide whether it moves.

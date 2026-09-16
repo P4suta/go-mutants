@@ -47,7 +47,12 @@ Entries say *why* a change was made, not only what changed.
   in time alone, which is what every run was before it could count.
   See [ADR 0013](docs/adr/0013-a-mutant-that-does-not-return-is-decided-by-work.md).
   `diverged` is a new optional field on a mutant and on each of its execution
-  rows, additive within `run-report` v1.
+  rows, additive within `run-report` v1, and on a cache entry — so a warm run
+  reports which loop ran away rather than the weaker "it did not return", and so
+  that an adopted divergence survives a run whose budget is nothing like the one
+  it was recorded beside. That last part is the one rule in the outcome cache
+  that makes an entry *more* reusable rather than less: a divergence was never
+  measured against the clock, so every bound reaches it.
 - **The glob language's own laws, checked rather than read.** The package was
   already held to a naive reference matcher by a fuzz target, which is the
   strongest statement there is that it reads a pattern *the obvious way* — and

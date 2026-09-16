@@ -405,10 +405,10 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # things that cannot be expressed in that file live here.
 #
 # The budget this job is sized against, in counted quantities rather than in
-# seconds: 4386 mutants catalogued at profile balanced, 4311 of them detected,
-# 833 tests profiled across 17 test binaries, three that never return and are
-# settled by the per-mutant timeout, 75 declared rows of which 27 are uncovered,
-# and no recorded refusal at all. Those are the numbers that decide what this job costs, and
+# seconds: 4396 mutants catalogued at profile balanced, 4321 of them detected,
+# 836 tests profiled across 17 test binaries, three that never return and are
+# settled by a counted loop rather than by the clock, 75 declared rows of which
+# 27 are uncovered, and no recorded refusal at all. Those are the numbers that decide what this job costs, and
 # every one of them is the same on any machine. What a machine then takes to
 # get through them is the machine's business; the timing narrative below is
 # history rather than a budget, and each figure in it is labelled with the
@@ -506,7 +506,10 @@ run = ["mise run fmt", "mise run build", "mise run test", "mise run lint"]
 # waiting where there were a hundred, and a scope 36 mutants larger that
 # finishes 25 seconds sooner. The timeout is itself max(10s, slowest baseline
 # x 5) and the bound is max(1GiB, largest baseline peak x 4); both grow with the
-# machine, and .go-mutants.toml says so where the numbers live.
+# machine, and .go-mutants.toml says so where the numbers live. Both readings
+# are also from before the tree could count what a loop does: a mutant that
+# never returns is ended by its own counter in milliseconds now, so the sixty
+# seconds this row paid down the next one stopped paying at all.
 #
 # The last row is the same arithmetic reaching a different answer, and it is the
 # one worth reading before the next widening. 106 more mutants cost about
