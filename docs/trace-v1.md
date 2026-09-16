@@ -875,9 +875,22 @@ closed, because the recording is one of the things that goes into it.
 | `detail` | the detail line that accompanies it |
 
 A note is what the run could not do, said once. None of them can change a
-verdict or an exit code. goatest spells this payload `progress` rather than
-`note`, with the same `kind` and `detail` fields, so a consumer joining the two
-streams reads go-mutants' `note` and goatest's `progress` as one kind of line.
+verdict or an exit code.
+
+goatest carries a payload spelled `progress` with the same two field names, and
+this page used to say the two were one kind of line. **They are not.** goatest's
+`progress` mixes three things: what the run could not do, which is a note;
+summaries such as how many mutation jobs there were; and actual progress, such
+as how many targets of how many have been reached. Only the first is what a note
+is. A consumer joining the two streams has to read `kind` before deciding what a
+`progress` row is, and cannot read every one of them as a note.
+
+The mistake is worth keeping in view, because the shape of it is general. The
+two field names really were the same, and a check comparing field names would
+have agreed with the sentence. What was wrong was the claim underneath — that
+the same thing flows through them — and no comparison of names can see that. A
+ledger pins the set a page enumerates against the set the code enumerates; it
+does not pin what the page says the members *mean*.
 
 `coverage-unavailable` carries the whole reason rather than its first line,
 which is the difference between a note and the console warning beside it.
@@ -986,6 +999,16 @@ in both — the argument vector, the directory it ran in, and the digest of what
 it printed — so two recordings of one execution can be matched without either
 tool knowing about the other's sequence numbers. `prepare` is identical field
 for field, so a preparation timeline reads the same wherever it is read.
+
+**Every claim on this page about what the two traces share is prose, and
+nothing checks it.** The alignment was designed and then written down, which is
+a different thing from being held: the two schemas live in two repositories, so
+no test can read both, and the sentence above about `note` and `progress` shows
+what that costs — it was wrong about the payloads while being right about their
+field names, and it stayed wrong because being right about field names is all
+anybody could have checked from here. Read the claims as intent rather than as
+a guarantee, and pin the ones a consumer depends on in a test of the consumer's
+own.
 
 A consumer driving the library has a stronger join than that and does not have
 to guess at all: `OpenOptions.Trace` puts both recordings under its own control,

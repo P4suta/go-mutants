@@ -457,10 +457,15 @@ type ArtifactRecord struct {
 
 // NoteRecord is something the run could not do, said once.
 //
-// Its `kind` and `detail` fields are goatest's, which spells this payload
-// `progress` rather than `note`: a consumer joining the two streams reads
-// go-mutants' `note` and goatest's `progress` as one kind of line. `code` is
-// go-mutants' own `GOMnnnn` warning code and has no counterpart there.
+// Its `kind` and `detail` field names are goatest's, which spells its own
+// payload `progress`. The names match and the contents do not: goatest's
+// `progress` carries notes, summaries and actual progress under one type, so a
+// consumer joining the two streams reads `kind` before deciding what a
+// `progress` row is. This comment used to say the two were one kind of line,
+// which was wrong for the whole time it was true that the field names matched.
+//
+// `code` is go-mutants' own `GOMnnnn` warning code and has no counterpart
+// there.
 type NoteRecord struct {
 	Kind   string `json:"kind"`
 	Code   string `json:"code,omitempty"`
