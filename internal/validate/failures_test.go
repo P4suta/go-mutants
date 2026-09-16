@@ -260,6 +260,31 @@ func TestRuntimeDirsNamesEveryGeneratedPackageAndNothingElse(t *testing.T) {
 	}
 }
 
+// TestLoopsIsEveryCountedLoopOfEveryModule is what the census and the limit
+// table are read against.
+//
+// A tree's counted loops are numbered across it, and a workspace has one tree
+// per module, so what the run has to know is the total: a width that counted one
+// module's loops would read another module's census as holding sites that do not
+// exist, and refuse it — which leaves every ceiling at the floor and the run
+// bounded in time alone. It is a sum and not a maximum for that reason, and a
+// phase that instrumented nothing has none rather than one.
+func TestLoopsIsEveryCountedLoopOfEveryModule(t *testing.T) {
+	t.Parallel()
+
+	result := Result{Runtimes: []instrument.Result{
+		{RuntimeDir: "app/gomutants_rt", Loops: 12},
+		{RuntimeDir: "quiet/gomutants_rt", Loops: 0},
+		{RuntimeDir: "lib/gomutants_rt", Loops: 5},
+	}}
+	if got, want := result.Loops(), 17; got != want {
+		t.Errorf("Loops = %d, want %d: every module's loops, added up", got, want)
+	}
+	if got := (Result{}).Loops(); got != 0 {
+		t.Errorf("Loops of nothing = %d, want 0", got)
+	}
+}
+
 // TestTheRecordingSaysWhichTreeWasValidated pins the label a reader tells the
 // two validations of one run apart by.
 func TestTheRecordingSaysWhichTreeWasValidated(t *testing.T) {

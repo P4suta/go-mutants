@@ -1474,8 +1474,8 @@ func joinMemorySources() string {
 	return strings.Join(names, ", ")
 }
 
-// anyExecutionExceeded and highestExecutionPeak fold a mutant's rows into the
-// two facts the mutant itself carries.
+// anyExecutionExceeded, highestExecutionPeak and anyExecutionDiverged fold a
+// mutant's rows into the three facts the mutant itself carries.
 //
 // They are folded rather than required of the caller because the caller already
 // said it once per pass, and a second hand-maintained copy is a second thing to
@@ -1483,21 +1483,21 @@ func joinMemorySources() string {
 // there are no rows to fold and the facts come off the cache entry — so the two
 // sources are combined rather than chosen between, and a caller that supplied
 // both consistently gets the same answer either way.
-// anyExecutionDiverged reports whether a counted loop settled any pass of this
-// mutant, which is [anyExecutionExceeded]'s question about the other thing that
-// ends a target without a test failing.
-func anyExecutionDiverged(executions []Execution) bool {
+func anyExecutionExceeded(executions []Execution) bool {
 	for _, execution := range executions {
-		if execution.Diverged {
+		if execution.MemoryExceeded {
 			return true
 		}
 	}
 	return false
 }
 
-func anyExecutionExceeded(executions []Execution) bool {
+// anyExecutionDiverged is the same fold for the other thing that ends a target
+// without a test failing: a counted loop past the ceiling the run derived for
+// it. See ADR 0013.
+func anyExecutionDiverged(executions []Execution) bool {
 	for _, execution := range executions {
-		if execution.MemoryExceeded {
+		if execution.Diverged {
 			return true
 		}
 	}
