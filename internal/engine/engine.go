@@ -925,6 +925,10 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	// the way discovery and the builds do; a run over one module says nothing
 	// about workspaces here, exactly as it did before. See ADR 0012.
 	env := workspaceEnv(childEnv(scratch), workspace != nil)
+	// The same environment with the workspace question answered, for the
+	// commands go-mutants writes rather than the ones the user did. See
+	// [engineCommandEnv].
+	ownEnv := engineCommandEnv(childEnv(scratch), workspace != nil)
 
 	// The test command's own scope, proven before a single command is measured.
 	// A pattern that names nothing is a mistake in the invocation, exactly like
@@ -936,14 +940,14 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 	patterns, scoped := testScope(out.TestCommand)
 	if scoped {
 		endScope := s.stage("scope", strings.Join(patterns, " "))
-		err := s.resolveTestScope(ctx, toolchain, snap.Root, env, patterns)
+		err := s.resolveTestScope(ctx, toolchain, snap.Root, ownEnv, patterns)
 		endScope(err)
 		if err != nil {
 			return err
 		}
 	}
 
-	if err := s.baseline(ctx, cfg, command, toolchain, snap.Root, env, out); err != nil {
+	if err := s.baseline(ctx, cfg, command, toolchain, snap.Root, env, ownEnv, out); err != nil {
 		return err
 	}
 	// Under isolation, sweep the baseline's own leavings out of the shared tree
@@ -988,7 +992,7 @@ func (s *session) pipeline(ctx context.Context, opts Options, out *RunOutcome) (
 		display:   make(map[string]MutantResult),
 		notRun:    make(map[string]report.NotRunReason),
 	}
-	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, out, st, &temps)
+	mutateErr := s.mutate(ctx, opts, toolchain, snap, scratch, env, ownEnv, out, st, &temps)
 	if mutateErr != nil {
 		// An interruption after the catalogue exists still has something true
 		// to say: which mutants there were, which of them were measured, and
@@ -1015,6 +1019,7 @@ func (s *session) baseline(
 	toolchain gocmd.Toolchain,
 	root string,
 	env []string,
+	ownEnv []string,
 	out *RunOutcome,
 ) error {
 	runs := cfg.Test.BaselineRuns
@@ -1023,7 +1028,9 @@ func (s *session) baseline(
 
 	build := toolchain.Command(append([]string{"build"}, s.patterns...)...)
 	build.Dir = root
-	build.Env = env
+	// The build is go-mutants' own command and the test command beside it is
+	// the user's, so only this one gets told what to do about a workspace.
+	build.Env = ownEnv
 	build.Timeout = BaselineCap
 	build.Trace = s.trace
 	build.Kind = trace.ExecKindBaselineBuild
@@ -1177,6 +1184,7 @@ func (s *session) mutate(
 	snap *snapshot.Snapshot,
 	scratch string,
 	env []string,
+	ownEnv []string,
 	out *RunOutcome,
 	st *state,
 	temps *temporaries,
@@ -1246,7 +1254,7 @@ func (s *session) mutate(
 		Toolchain:    toolchain,
 		Jobs:         cfg.Execution.Jobs,
 		BuildTimeout: BaselineCap,
-		Env:          env,
+		Env:          ownEnv,
 		Trace:        s.trace,
 	})
 	endValidate(err)

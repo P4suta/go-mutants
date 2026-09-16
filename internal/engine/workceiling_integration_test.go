@@ -93,6 +93,19 @@ func TestEveryCountedKindIsOneTheContractNames(t *testing.T) {
 func execCounts(t *testing.T, name string) map[string]int {
 	t.Helper()
 
+	return countExecs(t, recordRun(t, name))
+}
+
+// recordRun runs one corpus module with a recording and returns the stream.
+//
+// Split out of [execCounts] so that a second question can be asked of the same
+// run. The counts are one reading of a recording and not the only one worth
+// taking: the events carry the argument vector and the environment names too,
+// and starting a fourth run to look at those would be paying for the same work
+// twice.
+func recordRun(t *testing.T, name string) string {
+	t.Helper()
+
 	root := testkit.Copy(t, name)
 	opts := optionsAt(t, root)
 
@@ -130,13 +143,109 @@ func execCounts(t *testing.T, name string) map[string]int {
 		t.Fatalf("the recording of %s is lossy: %d dropped, %d missing",
 			name, summary.EventsDropped, summary.MissingSequences)
 	}
+	return filepath.Join(traceRoot, "run", trace.FileName)
+}
+
+// countExecs is how many commands of each kind a recording holds.
+func countExecs(t *testing.T, stream string) map[string]int {
+	t.Helper()
+
+	summary, err := trace.ReadSummary(stream)
+	if err != nil {
+		t.Fatalf("reading %s: %v", stream, err)
+	}
 
 	counts := make(map[string]int, len(summary.ExecByKind))
 	for kind, tally := range summary.ExecByKind {
 		counts[kind] = tally.Count
 	}
 	if len(counts) == 0 {
-		t.Fatalf("%s started no commands at all, so this counts nothing", name)
+		t.Fatalf("%s recorded no commands at all, so this counts nothing", stream)
 	}
 	return counts
+}
+
+// TestEveryGoCommandNamesItsWorkspaceDecision refuses a `go` command that never
+// decided what to do about a workspace.
+//
+// Every child this engine starts runs inside a snapshot, and a `go.work` above
+// that snapshot -- or named by $GOWORK in the environment this process
+// inherited -- is a file the snapshot does not contain. So every command has to
+// say which it is: GOWORK=off for a run of one module, and GOWORK removed for a
+// run of a workspace, which is the one case where the go command is meant to
+// find the file the run is about.
+//
+// Both spellings are a decision and neither is a default. What this refuses is
+// the third state, where the variable is simply whatever the parent had -- and
+// the reason to refuse it here rather than to read the two helpers that set it
+// is that helpers are added. A command written next year through a third path
+// would inherit whatever was around it, and the failure would be a package list
+// that quietly described a workspace nobody asked about.
+//
+// The recording is what makes this checkable at all: `env_names` carries the
+// names a child could see, without the values, so a test can ask what was
+// decided without the recording having to hold a secret.
+func TestEveryGoCommandNamesItsWorkspaceDecision(t *testing.T) {
+	t.Parallel()
+
+	events, err := trace.Read(recordRun(t, "simple"))
+	if err != nil {
+		t.Fatalf("reading the recording: %v", err)
+	}
+
+	commands := 0
+	for _, event := range events {
+		if event.Exec == nil || len(event.Exec.Argv) == 0 {
+			continue
+		}
+		if !isGoCommand(event.Exec.Argv[0]) {
+			continue
+		}
+		if usersOwnCommand[event.Exec.Kind] || resolvesNoWorkspace[event.Exec.Kind] {
+			continue
+		}
+		commands++
+		if !slices.Contains(event.Exec.EnvNames, "GOWORK") {
+			t.Errorf("seq %d ran %v with no GOWORK among %v;\n"+
+				"\ta go command that did not decide about a workspace is one that took the "+
+				"decision this process was started with", event.Seq, event.Exec.Argv, event.Exec.EnvNames)
+		}
+	}
+	if commands == 0 {
+		t.Fatal("the recording holds no go commands, so this test compared nothing")
+	}
+}
+
+// usersOwnCommand are the kinds whose argv the user wrote.
+//
+// internal/engine/workspace.go draws this line and gives the reason: a command
+// go-mutants assembles is one it may decide the workspace question for, and a
+// command that is the user's program is not. Their test command runs in the
+// snapshot and may legitimately want whatever $GOWORK the run inherited, so
+// pinning it here would be go-mutants answering a question it was not asked.
+//
+// Two entries and no more. A kind added here is a `go` command this gate stops
+// looking at, so the list shrinking is ordinary and the list growing is a claim
+// that something else is the user's program too.
+var usersOwnCommand = map[string]bool{
+	trace.ExecKindBaselineTest:         true,
+	trace.ExecKindInstrumentedBaseline: true,
+}
+
+// resolvesNoWorkspace are the kinds that ask the go tool about itself.
+//
+// `go version` prints which toolchain this is and reads no module and no
+// workspace, so there is nothing for GOWORK to change about its answer. It is
+// also the command that locates the toolchain, which happens before a run knows
+// whether it is measuring a workspace at all -- so requiring an answer here
+// would be requiring one before the question exists.
+var resolvesNoWorkspace = map[string]bool{
+	trace.ExecKindGoVersion: true,
+}
+
+// isGoCommand reports whether an argv[0] is the go tool, by the name it ends
+// with rather than by the path it was found at.
+func isGoCommand(program string) bool {
+	base := filepath.Base(program)
+	return base == "go" || base == "go.exe"
 }

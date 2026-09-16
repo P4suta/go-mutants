@@ -154,8 +154,33 @@ func workspaceEnv(env []string, workspace bool) []string {
 	if !workspace {
 		return env
 	}
+	return withoutGowork(env)
+}
+
+// engineCommandEnv is [workspaceEnv] for a command go-mutants writes itself.
+//
+// The distinction the paragraph above draws is whose command it is, and the
+// baseline holds one of each: `go build` over the snapshot's own patterns is
+// go-mutants', and the test command beside it is the user's. They were sharing
+// an environment, so the build inherited whatever $GOWORK this process was
+// started with -- a file outside the snapshot, describing modules the snapshot
+// does not contain, reached by a build that is supposed to be a statement about
+// the snapshot alone.
+//
+// So a command of ours says which it is, the way internal/discover and
+// internal/execute already do: removed for a workspace run, `off` otherwise.
+// Never left as it arrived, because arriving is not a decision.
+func engineCommandEnv(env []string, workspace bool) []string {
+	if workspace {
+		return withoutGowork(env)
+	}
+	return append(withoutGowork(env), "GOWORK=off")
+}
+
+// withoutGowork is env with every GOWORK entry dropped.
+func withoutGowork(env []string) []string {
 	const key = "GOWORK="
-	out := make([]string, 0, len(env))
+	out := make([]string, 0, len(env)+1)
 	for _, entry := range env {
 		if !strings.HasPrefix(entry, key) {
 			out = append(out, entry)
