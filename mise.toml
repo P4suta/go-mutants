@@ -5,16 +5,29 @@
 # language runtimes, so the Go toolchain and every quality gate are pinned
 # here. CI installs exactly this list, which is why a green `mise run check`
 # locally and a green CI job mean the same thing.
+#
+# Two of them name their backend. mise's default registry resolves `committed`
+# and `goreleaser` through aqua, whose package definitions hand an arm64 Mac the
+# x86_64 build -- which worked for as long as Rosetta was there to run it and
+# stopped the day macOS dropped it:
+#
+#   sh: .../committed: Bad CPU type in executable
+#
+# `committed` is the commit-msg hook, so that is every commit on the machine
+# refused, with a message about CPUs. Both projects publish an
+# aarch64-apple-darwin asset; ubi picks by platform and finds it. The pin is the
+# same version either way -- this changes which file is fetched, not which
+# release -- and ubi resolves the same way on Linux, which is what CI runs.
 [tools]
 go = "1.26.6"
 golangci-lint = "2.12.2"
-goreleaser = "2.17.1"
+"ubi:goreleaser/goreleaser" = "2.17.1"
 lefthook = "2.1.10"
 just = "1.57.0"
 actionlint = "1.7.12"
 typos = "1.48.0"
 taplo = "0.10.0"
-committed = "1.1.11"
+"ubi:crate-ci/committed" = "1.1.11"
 gitleaks = "8.30.1"
 yamllint = "1.38.0"
 rumdl = "0.2.43"
