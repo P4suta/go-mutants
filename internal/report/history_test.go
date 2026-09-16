@@ -613,3 +613,36 @@ func TestWorkspaceDirDoesNotTouchTheDisk(t *testing.T) {
 		t.Errorf("WorkspaceDir created the directory: %v", err)
 	}
 }
+
+// TestWriteSaysWhenTheMarkerCannotBeReadBack covers the one path between the
+// create and the read.
+//
+// `claim` creates the marker, and when the create says one is already there it
+// reads the marker back to find out whose it is. Between those two calls is a
+// race it is written to lose safely: another run of the same project wins, and
+// the marker that won is still intact. What has no answer is a marker that
+// exists and cannot be read, and until now nothing exercised the line that says
+// so — the only survivor of a dogfood run that anything covered.
+//
+// A directory at the marker's path is how a test reaches it. os.ReadFile of a
+// directory fails on every platform this builds for, the create refuses it as
+// an existing entry, and the two together are exactly the state the line was
+// written for: something is there, and it is not a marker anybody can read.
+func TestWriteSaysWhenTheMarkerCannotBeReadBack(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	r := buildFixture(t)
+	dir := filepath.Join(root, report.WorkspacesDirName, report.WorkspaceKey(r.Workspace.WorkspaceDigest))
+	if err := os.MkdirAll(filepath.Join(dir, report.MarkerFileName), 0o700); err != nil {
+		t.Fatalf("putting a directory where the marker goes: %v", err)
+	}
+
+	runPath, latestPath, err := report.History{Root: root}.Write(r)
+	if code := report.CodeOf(err); code != report.CodeHistoryDirectory {
+		t.Fatalf("code = %q, want %q (%v)", code, report.CodeHistoryDirectory, err)
+	}
+	if runPath != "" || latestPath != "" {
+		t.Errorf("a refused write reported paths: run=%q latest=%q", runPath, latestPath)
+	}
+}
