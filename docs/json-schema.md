@@ -600,8 +600,11 @@ a status something a reader can act on.
 
 The check names are stable within the schema version, so a consumer may branch
 on them: `go toolchain`, `module`, `git`, `cache directory`, `platform`,
-`configuration`. The list is always complete, even when a check failed — a
-machine with two problems should learn about both at once.
+`memory limit`, `configuration`. The list is always complete, even when a check
+failed — a machine with two problems should learn about both at once. Stable
+means a name that is here keeps its meaning; the list itself grows the way every
+other document on this page does, so a consumer switching on it needs a branch
+for the name it has not seen.
 
 This document describes the machine and not any code, so it carries no run ID,
 no workspace digest, and no mutants.

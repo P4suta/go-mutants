@@ -8,6 +8,45 @@ import (
 	"time"
 )
 
+// MemoryEnforcement is how this build bounds a process tree's memory, if it
+// bounds it at all.
+//
+// A bound is accepted on every platform and enforced on some, and the
+// difference is not visible from the request: [MemoryUnenforced] takes the
+// number and never acts on it. Saying so before a run is the point, because
+// the only evidence after one is a peak of zero -- which is a fact about the
+// measurement rather than about the tree, and reads the same as a tree that
+// used nothing.
+type MemoryEnforcement string
+
+// How a build bounds memory.
+const (
+	// MemoryEnforcedByKernel is the kernel's own limit with the sampler under
+	// it. The kernel line is the backstop and sits above the sampler's, so the
+	// sampler is still what a bound is usually reached through.
+	MemoryEnforcedByKernel MemoryEnforcement = "kernel"
+	// MemoryEnforcedBySampler is the sampler alone: the tree is looked at every
+	// [MemorySampleInterval] and killed when it is over. A bound reached this
+	// way is reached late by about one tick of the tree's own growth.
+	MemoryEnforcedBySampler MemoryEnforcement = "sampler"
+	// MemoryUnenforced is a platform this build has no live resident size for,
+	// so a bound is accepted and nothing acts on it. Measurement at exit still
+	// works where ru_maxrss does; what is missing is anything during the run.
+	MemoryUnenforced MemoryEnforcement = "none"
+)
+
+// MemoryBound reports how this build enforces a memory bound.
+func MemoryBound() MemoryEnforcement {
+	switch {
+	case kernelBoundsMemory:
+		return MemoryEnforcedByKernel
+	case memorySamplingSupported:
+		return MemoryEnforcedBySampler
+	default:
+		return MemoryUnenforced
+	}
+}
+
 // MemorySampleInterval is how often a bounded run looks at what its process
 // tree is using.
 //

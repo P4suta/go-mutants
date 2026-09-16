@@ -100,7 +100,8 @@ a score is a fraction of.
 
 One line per check — the toolchain and its version, the module this directory
 is in (or the modules its `go.work` joins), git, the cache directory, the
-platform, the configuration file — with
+platform, whether a per-mutant memory limit is enforced here, the configuration
+file — with
 `ok`, `warn` or `fail` beside each. A `warn` is a check that failed on something
 only an opt-in feature needs and never fails the command; any `fail` exits 2.
 

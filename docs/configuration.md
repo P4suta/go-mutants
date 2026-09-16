@@ -402,5 +402,12 @@ when the file already there is byte-identical to what this build would write and
 1 when it is not, which is a CI freshness gate rather than a policy failure.
 
 `doctor` reports the toolchain, the module, git, the cache directory, the
-platform, and whether this file parses — as an aligned table, or as a
-`go-mutants/doctor` v1 document with `--json`.
+platform, the memory limit, and whether this file parses — as an aligned table,
+or as a `go-mutants/doctor` v1 document with `--json`.
+
+The memory line is the one that warns on an ordinary machine. A per-mutant
+bound is accepted on every platform and enforced on some: linux samples the
+process tree, windows adds the kernel's job limit under the sampler, and darwin
+does neither. A `warn` there says the number in `[mutants] memory` is being
+taken and not acted on, so a mutant that runs away is stopped by its timeout
+instead.
