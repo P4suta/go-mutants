@@ -987,6 +987,38 @@ A recording also depends on what the run actually did. Trace options take no
 part in cache identity, so a warm run answers from the cache — and its recording
 says so rather than describing the work the cached result stands for.
 
+## Why recording is asked for
+
+A recording cannot be taken afterwards. The account is wanted at the moment
+something went wrong, which is after the run that would have produced it, so
+`--trace` being opt-in means the runs that have an account are the ones somebody
+predicted would need one. That is the wrong way round, and it was measured
+rather than argued about.
+
+Three of the four costs are not costs. The trace options are not part of any
+identity — `internal/cache/key.go` hashes the tool, the toolchain, the
+workspace, the catalogue, the test command and a named set of environment
+variables, and nothing about recording — so a recorded run and an unrecorded one
+share a cache key and reach the same verdict. A sink that cannot write is a
+`trace-unavailable` note and never a failed run. The directory keeps the last
+ten runs and no more. And the wall clock does not separate them: two runs of
+seventy mutants took 66 s and 58 s untraced against 42 s and 42 s traced, which
+is a machine's noise and not a measurement of anything.
+
+The fourth is real, and it is not the disk. One such run writes **7.0 MiB** — 3.0
+of stream and 4.0 of preserved output — which ten of would be seventy. The cost
+is what that does to a suite: `internal/cli`'s tests drive whole runs, and
+recording every one of them takes the package from **about 7 seconds to over
+600**. A default that multiplies the test suite by two orders of magnitude is not
+a default, whatever it buys, and it buys the least in exactly the runs that pay
+the most — a test that asserts on an exit code has no use for an account of how
+it got there.
+
+So it stays opt-in, and the reason is written here rather than left as the shape
+of the flag. `GO_MUTANTS_TRACE=1` in a CI job is the thing worth doing: those
+runs are long, their failures are the ones nobody can reproduce, and a suite is
+not waiting on them.
+
 ## Joining a go-mutants recording to its consumer's
 
 go-mutants is a library as well as a command, and its embedders record their own
