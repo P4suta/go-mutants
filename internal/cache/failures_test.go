@@ -341,6 +341,52 @@ func TestPutRefusesAnEntryThatCouldNotHaveBeenMeasured(t *testing.T) {
 	}
 }
 
+// TestPutRefusesADivergenceBesideAnOutcomeALoopCannotProduce is the twin of the
+// memory rule, and it is a refusal at the point of writing for the same reason.
+//
+// A counted loop past its ceiling ends the process, so the only outcome it can
+// produce is the one a mutant that does not return gets. An entry saying a loop
+// settled a kill or a survival describes a measurement that both ended itself
+// and finished, and the contradiction is exactly the kind a consumer reads
+// straight past: `explain` on a warm run would report which loop ran away from
+// a mutant the suite caught with an assertion.
+//
+// The round trip is asserted beside it, because a field that is refused when
+// wrong and dropped when right is a field nothing carries.
+func TestPutRefusesADivergenceBesideAnOutcomeALoopCannotProduce(t *testing.T) {
+	t.Parallel()
+
+	store, err := Open(Options{Root: t.TempDir(), Context: validContext(), Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	id := strings.Repeat("a1", 32)
+
+	for _, outcome := range []mutation.Outcome{mutation.OutcomeKilled, mutation.OutcomeSurvived} {
+		bad := Entry{Outcome: outcome, DurationMS: 20, Attempts: 1, TimeoutMS: 1000, Diverged: true}
+		putErr := store.Put(id, bad)
+		assertCode(t, putErr, CodeEntryNotWritten)
+		if !strings.Contains(putErr.Error(), "counted loop") {
+			t.Errorf("the failure beside %s names the wrong reason: %v", outcome, putErr)
+		}
+		if _, found, _ := store.Lookup(id); found {
+			t.Fatalf("a %s outcome claiming a divergence reached the disk", outcome)
+		}
+	}
+
+	good := Entry{Outcome: mutation.OutcomeTimedOut, DurationMS: 20, Attempts: 1, TimeoutMS: 1000, Diverged: true}
+	if putErr := store.Put(id, good); putErr != nil {
+		t.Fatalf("Put of a divergence: %v", putErr)
+	}
+	back, found, err := store.Lookup(id)
+	if err != nil || !found {
+		t.Fatalf("Lookup after Put: found=%v err=%v", found, err)
+	}
+	if !back.Diverged {
+		t.Error("the entry came back without the fact that makes a warm run able to explain it")
+	}
+}
+
 // TestACacheKnowsWhereItIs pins the three accessors a caller reads a handle
 // with, because each of them names a directory somebody will be told about.
 func TestACacheKnowsWhereItIs(t *testing.T) {

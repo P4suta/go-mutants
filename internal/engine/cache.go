@@ -197,6 +197,18 @@ func memoryExceeded(result execute.MutantResult) bool {
 	return false
 }
 
+// diverged reports whether a counted loop settled this mutant, and is
+// [memoryExceeded]'s question about the other thing that ends a target without
+// a test failing. It is read off the attempts for that function's reason.
+func diverged(result execute.MutantResult) bool {
+	for _, attempt := range result.Attempts {
+		if attempt.Diverged {
+			return true
+		}
+	}
+	return false
+}
+
 // peakMemory is the highest any attempt at this mutant was observed to hold.
 //
 // It is the maximum over the attempts for the reason [memoryExceeded] folds
@@ -266,6 +278,10 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 		// `explain` on a warm run reports a kill it cannot explain.
 		MemoryExceeded: entry.MemoryExceeded,
 		PeakMemory:     entry.PeakMemory,
+		// And the third: which loop settled a timeout is the whole of what a
+		// counted non-return says over a waited-out one, and an adopted outcome
+		// that lost it would read as a mutant somebody's stopwatch gave up on.
+		Diverged: entry.Diverged,
 	}
 	st.cache.hits++
 
@@ -288,6 +304,7 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 	shown.MemoryExceeded = entry.MemoryExceeded
 	shown.PeakMemory = entry.PeakMemory
 	shown.MemoryLimit = entry.MemoryBytes
+	shown.Diverged = entry.Diverged
 	s.emit(CacheHit{ID: id, DisplayID: shown.DisplayID, Outcome: entry.Outcome})
 	s.emit(MutantFinished{Result: shown.clone()})
 }
@@ -345,6 +362,11 @@ func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st
 			// the peak is what makes a cached kill legible a week later.
 			MemoryExceeded: memoryExceeded(result),
 			PeakMemory:     peakMemory(result),
+			// And whether a counted loop is what settled it, which is the one
+			// fact here that makes the entry *more* reusable rather than less:
+			// a divergence was never measured against the clock, so it is
+			// evidence about every run of this tree. See [cache.Entry.UsableUnder].
+			Diverged: diverged(result),
 		})
 		if err != nil {
 			record.Result = trace.CacheResultFailed
