@@ -653,6 +653,23 @@ description = "Dogfood with a recording, then re-derive the report from it"
 # run-report the history store keeps, and `report latest --json` is how a
 # command line asks for it. Writing this task against the file that was simply
 # there is the mistake this line exists to have already made.
+#
+# Measured, after being wired up rather than before -- which is the mistake this
+# line exists to have already made. On one machine, this repository, the full
+# scope:
+#
+#   dogfood        (no --trace)   baseline 9.1s / 6.7s     whole run ~20m
+#   dogfood-audit  (--trace)      baseline 3m0s / 2m27s    whole run 27m31s, 103 MiB
+#
+# The baseline is twenty times slower and the whole run is about a third
+# slower, because the recorder writes one file per exec and the baseline runs
+# seventeen packages' tests three times while a mutant run is one test. Quoting
+# the twenty without that mechanism is what a borrowed number looks like: a
+# number carries what it measured, and a different subject makes it a claim.
+#
+# That is why this is not the CI gate. The audit answers a question worth
+# asking -- whether the document agrees with the account of what ran -- and not
+# one worth asking on every push at a third again of the longest job.
 run = [
   "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./cmd/go-mutants run --strict --profile balanced --trace",
   "go run ./cmd/go-mutants report latest --json > reports/mutation/latest-run-report.json",
