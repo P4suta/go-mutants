@@ -822,3 +822,127 @@ func TestBuildRefusesAMemoryKillThatIsNotAKill(t *testing.T) {
 		})
 	}
 }
+
+// TestAMutantSaysWhetherACountedLoopSettledIt is the divergence half of the
+// fold [TestACachedMemoryKillCarriesItsFactsWithNoRowsUnderIt] states for the
+// memory bound, and the two halves have to be separate for the reason the
+// second case here is about.
+//
+// `diverged` is on a mutant *and* on each of its rows, and the mutant's value
+// is the union of the two sources rather than either of them: a mutant this run
+// executed says it in its rows and may leave the field alone, and a cached one
+// has an attempt count and no rows at all, so the fact comes off the cache
+// entry. A build that folded only the rows would lose every warm run's
+// divergence; one that read only the field would lose every cold run's.
+func TestAMutantSaysWhetherACountedLoopSettledIt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a mutant this run executed says what its rows say", func(t *testing.T) {
+		t.Parallel()
+
+		// The rows carry it and the mutant does not, which is the shape
+		// internal/engine produces: it fills a row per pass and folds the
+		// mutant's own fields from them.
+		opts := fixtureOptions(t)
+		var target string
+		for i := range opts.Results {
+			if len(opts.Results[i].Executions) == 0 || opts.Results[i].Outcome != mutation.OutcomeTimedOut {
+				continue
+			}
+			opts.Results[i].Executions[0].Diverged = true
+			opts.Results[i].Diverged = false
+			target = opts.Results[i].ID
+			break
+		}
+		if target == "" {
+			t.Fatal("the fixture has no executed timeout, so this proves nothing")
+		}
+
+		built, err := report.Build(opts)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		m := mutantWithID(t, built, target)
+		if !m.Diverged {
+			t.Error("a mutant whose row says a counted loop settled it does not say so itself")
+		}
+		if !m.Executions[0].Diverged {
+			t.Error("the row itself lost the fact on the way into the document")
+		}
+		if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, built)); err != nil {
+			t.Fatalf("the document does not satisfy its own schema: %v", err)
+		}
+	})
+
+	t.Run("a cached mutant says it with no rows under it", func(t *testing.T) {
+		t.Parallel()
+
+		// The other source, and the one the mutant-level field exists for. A
+		// warm run started no process, so there is nothing to fold and the
+		// answer is what the run that did measure it recorded.
+		opts := fixtureOptions(t)
+		var target string
+		for i := range opts.Results {
+			if !opts.Results[i].Cached {
+				continue
+			}
+			opts.Results[i].Outcome = mutation.OutcomeTimedOut
+			opts.Results[i].Diverged = true
+			target = opts.Results[i].ID
+			break
+		}
+		if target == "" {
+			t.Fatal("the fixture has no cached mutant")
+		}
+
+		built, err := report.Build(opts)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		m := mutantWithID(t, built, target)
+		if len(m.Executions) != 0 {
+			t.Fatalf("a cached mutant carries %d rows, so this proves nothing", len(m.Executions))
+		}
+		if !m.Diverged {
+			t.Error("a cached divergence lost the fact the measuring run recorded")
+		}
+		if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, built)); err != nil {
+			t.Fatalf("the document does not satisfy its own schema: %v", err)
+		}
+	})
+
+	t.Run("a mutant no loop settled says nothing", func(t *testing.T) {
+		t.Parallel()
+
+		// The other direction, which is what keeps the fold a fold: the
+		// fixture's own timeouts were ended by a deadline, and neither they nor
+		// their rows may claim a count settled them.
+		built, err := report.Build(fixtureOptions(t))
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		for _, m := range built.Mutants {
+			if m.Diverged {
+				t.Errorf("mutant %s claims a counted loop settled it", m.DisplayID)
+			}
+			for _, execution := range m.Executions {
+				if execution.Diverged {
+					t.Errorf("attempt %d of %s claims a counted loop settled it", execution.Attempt, m.DisplayID)
+				}
+			}
+		}
+	})
+}
+
+// mutantWithID finds one built mutant by its identity, failing the test when
+// the builder dropped it.
+func mutantWithID(t *testing.T, built *report.Report, id string) report.Mutant {
+	t.Helper()
+	for _, m := range built.Mutants {
+		if m.ID == id {
+			return m
+		}
+	}
+	t.Fatalf("the built document holds no mutant %s", id)
+	return report.Mutant{}
+}

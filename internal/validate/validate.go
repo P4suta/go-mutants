@@ -900,7 +900,9 @@ func (v *validator) instrumentModules() error {
 		}
 		ref.root = filepath.Join(v.root, filepath.FromSlash(module.Dir))
 		ref.runtimeImport = v.runtimeImportOf(module)
-		ref.loopBase = v.loopBaseOf(module, key)
+		// Zero for a file that pass never reached, which is a file with no
+		// counters to number: a nil map reads as zero and that is the answer.
+		ref.loopBase = v.treeOf(module).LoopBase[key]
 		v.files[key] = ref
 	}
 	return nil
@@ -916,26 +918,27 @@ func (v *validator) moduleOf(modulePath string) (Module, bool) {
 	return Module{}, false
 }
 
-// loopBaseOf is the loop-site base the given module's pass gave one file, and
-// zero for a file that pass never reached -- which is a file with no counters
-// to number.
-func (v *validator) loopBaseOf(module Module, key string) uint32 {
+// treeOf is the instrumentation pass that rewrote the given module's files, and
+// the zero pass for a module this phase never instrumented.
+//
+// The zero value is what the two readers below want and not a case either of
+// them has to test for: a module with no pass has no runtime to import and no
+// loop to number, which is exactly what an empty import path and a nil base map
+// say. Both questions are asked of one walk because they are one question --
+// "which of these passes is this module's" -- and a second copy of it would be
+// a second thing to keep in step with [Options.Modules]' order.
+func (v *validator) treeOf(module Module) instrument.Result {
 	for i, candidate := range v.modules {
 		if candidate == module && i < len(v.runtimes) {
-			return v.runtimes[i].LoopBase[key]
+			return v.runtimes[i]
 		}
 	}
-	return 0
+	return instrument.Result{}
 }
 
 // runtimeImportOf is the import path the given module's runtime was written at.
 func (v *validator) runtimeImportOf(module Module) string {
-	for i, candidate := range v.modules {
-		if candidate == module && i < len(v.runtimes) {
-			return v.runtimes[i].RuntimeImport
-		}
-	}
-	return ""
+	return v.treeOf(module).RuntimeImport
 }
 
 // instrumentFile is the real [validator.apply]: rewrite one file so that it
