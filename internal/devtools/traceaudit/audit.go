@@ -180,6 +180,25 @@ func recordingFor(tracePath, runID string) (string, error) {
 	return recording, nil
 }
 
+// sameOutcome reports whether a report's outcome and a recording's are the same
+// outcome, across the spelling the two documents use.
+//
+// They differ on purpose and both spellings are frozen: docs/library.md says so
+// under "The outcome vocabulary is not the report's" -- the live API is
+// snake_case (`timed_out`, `not_run`) and the published run report is kebab-case
+// (`timed-out`, `not-run`). A recording carries the API's spelling because it is
+// written by the engine; a report carries the published one.
+//
+// Comparing them as strings made every timed-out mutant a disagreement, which is
+// what this audit found the first time anything ran it: three violations on a
+// run whose report and recording agreed about everything. The rule the two
+// documents share is that a hyphen and an underscore separate the same words, so
+// that is the comparison, rather than a table of pairs that would have to be
+// maintained beside the vocabularies it joins.
+func sameOutcome(reported, recorded string) bool {
+	return strings.ReplaceAll(reported, "-", "_") == strings.ReplaceAll(recorded, "-", "_")
+}
+
 // Audit reads a report and a recording and says whether they agree.
 //
 // tracePath is either the recording itself or the directory recordings are
@@ -365,12 +384,13 @@ func auditTally(claim report, events []event) []Finding {
 			})
 			continue
 		}
-		if seen != mutant.Outcome {
-			findings = append(findings, Finding{
-				Layer: "verdict", Subject: mutant.ID,
-				Detail: fmt.Sprintf("the report says %q and the recording's last attempt says %q", mutant.Outcome, seen),
-			})
+		if sameOutcome(mutant.Outcome, seen) {
+			continue
 		}
+		findings = append(findings, Finding{
+			Layer: "verdict", Subject: mutant.ID,
+			Detail: fmt.Sprintf("the report says %q and the recording's last attempt says %q", mutant.Outcome, seen),
+		})
 	}
 	if got, want := len(claim.Mutants), claim.Summary.Total; got != want {
 		findings = append(findings, Finding{
