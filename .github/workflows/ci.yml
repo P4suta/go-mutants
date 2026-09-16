@@ -490,7 +490,7 @@ jobs:
   # memory bound is what keeps a runner from being the thing that runs out
   # first.
   #
-  # It is now 4386 over seventeen packages, and 1513 of those came from
+  # It is now 4396 over seventeen packages, and 1513 of those came from
   # adding six: internal/testlog, internal/tempowner, internal/gitdiff,
   # internal/snapshot, internal/cache and internal/validate. The rest grew
   # where the gate already looked -- discovery reaching the case labels of a
@@ -501,7 +501,10 @@ jobs:
   # fallen. Three of them never return, where six did until a mutant run
   # learned to stop at the first test that fails: each of the three that
   # left fails a test before it reaches the input that hangs it, so the
-  # binary is gone before that test starts and the verdict is a kill.
+  # binary is gone before that test starts and the verdict is a kill. The
+  # three that are left no longer cost a budget either: every loop of the
+  # instrumented tree counts itself against what the original program did,
+  # so a runaway ends in milliseconds instead of two derived timeouts.
   # Twenty never-returning mutants were removed rather than measured over
   # the widenings -- internal/gitdiff brought three, internal/snapshot four
   # and internal/validate thirteen -- because a loop whose stopping
