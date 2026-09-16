@@ -9,7 +9,7 @@
       "component": "go-mutants",
       "package-name": "go-mutants",
       "changelog-path": ".release-please/CHANGELOG.generated.md",
-      "initial-version": "0.1.0",
+      "initial-version": "0.2.0",
       "version-file": "VERSION",
       "extra-files": [
         {

@@ -2,6 +2,17 @@ module github.com/P4suta/go-mutants
 
 go 1.26
 
+// v0.1.0, v0.1.1 and v0.1.2 were tagged on feat/dogfood-deep, which never
+// reached main. The proxy caches a version immutably and goes on answering
+// `@latest` with one after the branch it was cut from is gone, so the tags
+// cannot be taken back; what these lines do is stop `go get` choosing them and
+// tell anybody who already has one why it is not the engine main describes.
+retract (
+	v0.1.0 // Tagged on a branch that never reached main.
+	v0.1.1 // Tagged on a branch that never reached main.
+	v0.1.2 // Tagged on a branch that never reached main.
+)
+
 require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
