@@ -175,14 +175,18 @@ type accountTestRef struct {
 
 // An accountExecution is one pass over the test binaries.
 type accountExecution struct {
-	Attempt         int              `json:"attempt"`
-	Worker          int              `json:"worker"`
-	Outcome         string           `json:"outcome"`
-	DurationMS      int64            `json:"duration_ms"`
-	PeakMemoryBytes *int64           `json:"peak_memory_bytes"`
-	KilledBy        *string          `json:"killed_by"`
-	Binaries        []string         `json:"binaries"`
-	Commands        []accountCommand `json:"commands"`
+	Attempt         int     `json:"attempt"`
+	Worker          int     `json:"worker"`
+	Outcome         string  `json:"outcome"`
+	DurationMS      int64   `json:"duration_ms"`
+	PeakMemoryBytes *int64  `json:"peak_memory_bytes"`
+	KilledBy        *string `json:"killed_by"`
+	// Diverged says a counted loop ended this pass rather than the deadline,
+	// which is why a row can say `timed-out` after one attempt and a handful of
+	// milliseconds. See ADR 0013.
+	Diverged bool             `json:"diverged"`
+	Binaries []string         `json:"binaries"`
+	Commands []accountCommand `json:"commands"`
 }
 
 // An accountCommand is one child process, with what it printed.
@@ -459,6 +463,7 @@ func gatherExecutions(m *report.Mutant, rec *recording) []accountExecution {
 			Outcome:         execution.Outcome.String(),
 			DurationMS:      execution.DurationMS,
 			PeakMemoryBytes: positive(execution.PeakMemoryBytes),
+			Diverged:        execution.Diverged,
 			Binaries:        append([]string{}, execution.Binaries...),
 			Commands:        gatherCommands(pass(recorded, execution.Attempt), rec),
 		}
