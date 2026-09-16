@@ -386,14 +386,36 @@ run = [
 [tasks.fmt]
 # `gofmt -l` exits 0 even when it lists files, so the offenders have to be
 # turned into a non-zero exit explicitly on both shells.
+#
+# taplo names its files rather than finding them, and that is not tidiness.
+# Bare `taplo fmt --check` walks the filesystem, which puts every TOML anybody's
+# run happens to drop under the tree in front of a formatter nobody asked about
+# it -- a stray `fixtures/x/stray.toml` takes this task from 7 files to 8 and
+# fails the first step of `check` on a file the developer never wrote. It is the
+# defect .gitleaks.toml exists for, one task earlier, and it fails sooner and
+# reads worse because `fmt` runs before anything else.
+#
+# The list is the same one [tasks.lint] gives `taplo check`, and
+# internal/devgates holds both of them to `git ls-files '*.toml'` so that a new
+# TOML file cannot be checked by one and missed by the other.
+#
+# `gofmt -l .` above walks the filesystem too, and a stray .go file under the
+# tree fails this task the same way -- measured, not assumed. It is left alone,
+# and the difference is not the exposure. taplo had *two* call sites answering
+# two different questions about the same files, one naming them and one finding
+# them, so a file added to the named list was checked by one and missed by the
+# other: the inconsistency was the defect and the list already existed. gofmt
+# has one call site and no list, so naming its files would mean deriving one
+# from `git ls-files` -- which would make formatting a question only a git
+# checkout can answer, for an exposure nobody has hit.
 description = "Check Go and TOML formatting without rewriting any file"
 run = [
   'test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }',
-  "taplo fmt --check",
+  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml",
 ]
 run_windows = [
   'pwsh -NoLogo -NoProfile -Command "$f = gofmt -l .; if ($f) { $f; exit 1 }"',
-  "taplo fmt --check",
+  "taplo fmt --check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml",
 ]
 
 [tasks.lint]
@@ -401,10 +423,10 @@ description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linte
 run = [
   "golangci-lint run",
   "typos",
-  "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml",
+  "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml",
   "actionlint",
   "yamllint .github lefthook.yml .golangci.yml",
-  "gitleaks dir . --no-banner --redact --verbose",
+  "gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose",
   "rumdl check .",
 ]
 

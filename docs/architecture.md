@@ -1291,6 +1291,7 @@ is the whole of what was asked for and a failure is an error.
 | `internal/testsupport` | The previous home of the shared test helpers, kept as a forwarder while its call sites move | test-only support |
 | `internal/testkit` | Module and fixture paths, tree copies, hermetic environment, toolchain lookup, child processes, golden files, helper subprocesses, clocks, the keep-on-failure policy and its dumps | test-only support |
 | `internal/testkit/mutantkit` | Snapshots, the discover/catalogue/instrument sequence, mutant lookups, report marshalling and normalisation, a per-test trace recording, a scripted `go` command | test-only support |
+| `internal/devgates` | The checks whose subject is this repository rather than the product: what a configuration file claims, and whether it is still true | test-only support |
 | `internal/devtools/testcache` | The test-owned build cache and the kept scratch root: `path`, `status`, `clean`, `trim`, `exec` | developer tool |
 | `internal/devtools/testcost` | Turns `go test -json` into a per-package cost and skip table | developer tool |
 | `internal/devtools/traceaudit` | Re-derives a run's conclusions from the recording beside it, with code that never calls the engine's | developer tool |

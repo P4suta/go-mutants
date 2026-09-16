@@ -103,6 +103,9 @@ repository's prose worth reading, so here is where each ledger lives.
 | what the dashboard looks like | the model, on the ASCII theme | `internal/tui/frames_test.go` |
 | that every narrowing reaches one verdict | ADR 0010 | `internal/engine/narrowing_integration_test.go` |
 | `REUSE.toml` | every file git holds or would hold | `internal/testkit/licensegate_test.go` |
+| that the licence gate reads what a decoder reads | `REUSE.toml`, decoded | `internal/devgates/licence_integration_test.go` |
+| every path the secret scan excuses | git's own view of what it ignores and tracks | `internal/devgates/gitleaks_integration_test.go` |
+| the TOML files each taplo step names, on every platform | every TOML file git holds or would hold | `internal/devgates/toml_integration_test.go` |
 
 Adding a page that enumerates something means adding its ledger in the same
 change. A page nothing checks is a page that will be wrong, and the only

@@ -5,16 +5,11 @@ package testkit
 
 import (
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
-
-// reuseFile is the licensing manifest for the files that cannot carry an inline
-// header.
-const reuseFile = "REUSE.toml"
 
 // spdxNeedle is what an inline header is, spelled in two pieces so that this
 // rule file is not its own first offender -- the same trick tiers_test.go uses
@@ -63,9 +58,9 @@ func TestEveryFileIsLicensed(t *testing.T) {
 			" the scan is not looking where it thinks", len(tracked))
 	}
 
-	annotations := reusePaths(t, root)
+	annotations := ReusePaths(t, root)
 	if len(annotations) == 0 {
-		t.Fatalf("%s declares no annotation paths; the parser has stopped seeing them", reuseFile)
+		t.Fatalf("%s declares no annotation paths; the parser has stopped seeing them", ReuseFile)
 	}
 
 	covered := map[string]bool{}
@@ -73,52 +68,69 @@ func TestEveryFileIsLicensed(t *testing.T) {
 		if hasInlineHeader(t, filepath.Join(root, filepath.FromSlash(rel))) {
 			continue
 		}
-		matched := false
-		for _, pattern := range annotations {
-			if ok, err := path.Match(pattern, rel); err == nil && ok {
-				covered[pattern] = true
-				matched = true
-			}
+		// An error is a pattern this matcher will not guess at, and swallowing
+		// it as "no match" would report the file it covers as unlicensed -- a
+		// diagnosis about the wrong thing entirely.
+		covering, err := ReuseCovering(annotations, rel)
+		if err != nil {
+			t.Fatalf("matching %s: %v", rel, err)
 		}
-		if !matched {
+		for _, pattern := range covering {
+			covered[pattern] = true
+		}
+		if len(covering) == 0 {
 			t.Errorf("%s carries no %s header and no %s annotation covers it;\n"+
 				"\tadd the header, or add the path to %s with a comment saying why it cannot carry one",
-				rel, spdxNeedle, reuseFile, reuseFile)
+				rel, spdxNeedle, ReuseFile, ReuseFile)
 		}
 	}
 
 	for _, pattern := range annotations {
-		matchesSomething := covered[pattern] || slices.ContainsFunc(tracked, func(rel string) bool {
-			ok, err := path.Match(pattern, rel)
-			return err == nil && ok
-		})
+		live, err := ReuseAnnotationCoversATrackedFile(pattern, tracked)
+		if err != nil {
+			t.Fatalf("matching %q: %v", pattern, err)
+		}
+		matchesSomething := covered[pattern] || live
 		if _, planned := plannedPaths[pattern]; planned {
 			if matchesSomething {
 				t.Errorf("%s annotates %q, which this tree now holds;\n"+
 					"\tdelete its row from plannedPaths -- the annotation is doing its job\n"+
-					"\tand no longer needs an excuse", reuseFile, pattern)
+					"\tand no longer needs an excuse", ReuseFile, pattern)
 			}
 			continue
 		}
 		if covered[pattern] {
 			continue
 		}
+		// Both remaining causes are a row to delete, and neither is a file
+		// without a licence -- which is the reading this has to head off, since
+		// the other thing this gate reports is exactly that.
+		//
+		// This branch used to log rather than fail, on the argument that a file
+		// carrying a header *and* an annotation is belt and braces and that
+		// deleting the row is a judgement. The argument is fine and the
+		// mechanism was not: `go test` discards the log of a test that passes
+		// and CI does not pass `-v`, so "say so once" said it to nobody. A gate
+		// that reports into a void is the shape this repository refuses
+		// elsewhere, and the manifest's own purpose settles which way to go --
+		// it is for the files that *cannot* carry a header, so a row for one
+		// that can is outside what the file is for.
 		if matchesSomething {
-			// The file is committed and carries an inline header as well, which
-			// is belt and braces rather than a defect. Say so once rather than
-			// failing: the row is harmless and deleting it is a judgement.
-			t.Logf("%s annotates %q, which also carries an inline header", reuseFile, pattern)
+			t.Errorf("%s annotates %q, which is committed and carries its own %s;\n"+
+				"\tdelete the row -- this manifest is for the files that cannot carry a header,\n"+
+				"\tand this is not a file without a licence", ReuseFile, pattern, spdxNeedle)
 			continue
 		}
 		t.Errorf("%s annotates %q, which no committed file matches;\n"+
 			"\tdelete the row -- a manifest that describes files this tree does not hold\n"+
-			"\tis one a reader cannot trust about the files it does", reuseFile, pattern)
+			"\tis one a reader cannot trust about the files it does;\n"+
+			"\tthis is not a file without a licence either", ReuseFile, pattern)
 	}
 
 	for pattern := range plannedPaths {
 		if !slices.Contains(annotations, pattern) {
 			t.Errorf("plannedPaths excuses %q, which %s does not annotate any more;\n"+
-				"\tdelete the row -- a stale excuse is as wrong as a missing one", pattern, reuseFile)
+				"\tdelete the row -- a stale excuse is as wrong as a missing one", pattern, ReuseFile)
 		}
 	}
 }
@@ -150,68 +162,6 @@ func trackedFiles(t *testing.T, root string) []string {
 		}
 	}
 	return files
-}
-
-// reusePaths is every path pattern REUSE.toml's annotations name, in file
-// order.
-//
-// It is hand-parsed rather than decoded, because this package may import
-// nothing from this module -- see TestTheHarnessImportsNothingFromThisModule --
-// and the shape it has to read is two lines of TOML. `taplo check` keeps the
-// file well-formed, so a parser that understands a quoted string inside a `path
-// = [...]` is enough.
-func reusePaths(t *testing.T, root string) []string {
-	t.Helper()
-	source, err := os.ReadFile(filepath.Join(root, reuseFile))
-	if err != nil {
-		t.Fatalf("reading %s: %v", reuseFile, err)
-	}
-	var patterns []string
-	inList := false
-	for _, raw := range strings.Split(string(source), "\n") {
-		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		if !inList {
-			rest, ok := strings.CutPrefix(line, "path")
-			if !ok {
-				continue
-			}
-			rest = strings.TrimSpace(rest)
-			rest, ok = strings.CutPrefix(rest, "=")
-			if !ok {
-				continue
-			}
-			rest = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rest), "["))
-			patterns = append(patterns, quotedIn(rest)...)
-			inList = !strings.Contains(raw, "]")
-			continue
-		}
-		patterns = append(patterns, quotedIn(line)...)
-		if strings.Contains(line, "]") {
-			inList = false
-		}
-	}
-	return patterns
-}
-
-// quotedIn is every double-quoted string on one line.
-func quotedIn(line string) []string {
-	var out []string
-	for {
-		open := strings.Index(line, `"`)
-		if open < 0 {
-			return out
-		}
-		rest := line[open+1:]
-		close := strings.Index(rest, `"`)
-		if close < 0 {
-			return out
-		}
-		out = append(out, rest[:close])
-		line = rest[close+1:]
-	}
 }
 
 // hasInlineHeader reports whether a file states its licence in its own bytes.

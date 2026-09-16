@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 go-mutants contributors
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# gitleaks scans the working directory rather than git's history, so that a
+# secret is caught in the file somebody just wrote rather than one commit after
+# it is too late to matter. The cost of that choice is that the scan sees
+# everything on the disk, including what git has been told to ignore -- and a
+# mutation run writes a hundred megabytes of recordings under reports/mutation/
+# whose cache keys are high-entropy hex that every generic secret rule matches.
+#
+# Nothing was wrong with the rules. What was wrong is the question: a path git
+# ignores cannot reach the repository, so a finding there is not a finding about
+# this repository. Before this file, `mise run dogfood` followed by
+# `mise run check` reported 36 leaks, and the CI job never saw one -- lint runs
+# before dogfood there, so the directory does not exist yet. A gate that is red
+# only on the machine of somebody who ran the product is a gate people learn to
+# scroll past.
+#
+# The allowlist is therefore not a judgement about these files. It is the claim
+# that they are outside the repository, and internal/devgates
+# holds it to that: every path here must be one `git check-ignore` agrees with.
+# Allowlisting a path git would commit is the hole this file could open, and
+# that test is what keeps it shut.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Run artefacts git ignores, which cannot reach the repository"
+paths = ['''(^|/)reports/mutation/''']
