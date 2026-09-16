@@ -118,6 +118,25 @@ const (
 	ProbeUnavailable ProbeOutcome = "unavailable"
 )
 
+// ProbeOutcomes returns every outcome a pass can end with, in declaration
+// order.
+//
+// A probe pass ends one of four ways and the four are not interchangeable: one
+// of them carries an infection set and three of them are reasons there is none.
+// The list exists so that the published vocabulary beside it can be pinned to
+// this one instead of being spelled a second time, and so that adding a fifth
+// is a change to one list rather than a discovery somebody makes downstream.
+//
+// Each call returns a fresh slice.
+func ProbeOutcomes() []ProbeOutcome {
+	return []ProbeOutcome{
+		ProbeMeasured,
+		ProbeTestFailed,
+		ProbeTimedOut,
+		ProbeUnavailable,
+	}
+}
+
 // A ProbeAttempt is one pass over the test binaries of the probe tree.
 type ProbeAttempt struct {
 	// Outcome is how the pass ended. It is meaningful only when Err is nil.

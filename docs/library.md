@@ -1168,6 +1168,18 @@ value between the live API and a published report translates rather than
 assumes. `ProbeOutcome` is a third vocabulary again — `measured`,
 `test-failed`, `timed-out`, `unavailable` — and is not an `Outcome`.
 
+`KnownOutcomes()` and `KnownProbeOutcomes()` return the two lists. Go's switch
+is exhaustive by convention and not by compiler, so a consumer routing either
+vocabulary has nothing to tell it when a member is missing; pinning these in a
+test is how the day a vocabulary grows becomes the day that test says so,
+rather than the day a `default` written for values that never arrive receives
+one that does. Each list is the vocabulary of its type and not a claim about
+which call returns which member: `OutcomeNotRun` is the zero value of a result
+nothing filled in, so an ordinary `Session.Exec` does not produce it, and
+whether a consumer routes it to a `default` or to a case naming a broken
+contract is that consumer's decision rather than this list's. Both return a
+fresh slice.
+
 ### Output is capped, and truncation keeps the tail
 
 A capture never grows without bound. When a child produced more than

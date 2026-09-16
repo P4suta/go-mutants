@@ -177,6 +177,12 @@ var (
 	// outside the module.
 	_ func() []gomutants.PreparePhase = gomutants.KnownPreparePhases
 
+	// The two result vocabularies, for the same reason and one step further: a
+	// consumer routing them has no compiler to tell it a case is missing, so
+	// the lists are what let it be told by a test instead.
+	_ func() []gomutants.Outcome      = gomutants.KnownOutcomes
+	_ func() []gomutants.ProbeOutcome = gomutants.KnownProbeOutcomes
+
 	// PrepareOptions.Trace is part of the contract as a type and not only as a
 	// name: a consumer stores its own recorder in it.
 	_ func(gomutants.PrepareEvent) = gomutants.PrepareOptions{}.Trace
