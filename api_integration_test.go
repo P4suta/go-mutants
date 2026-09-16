@@ -283,7 +283,10 @@ func requireTargetIsGone(t *testing.T, pidFile, what string) {
 // Five seconds rather than a tighter number for the same reason: what this
 // rules out is a target that slept when nothing asked it to, and any bound
 // comfortably between a process start and the session's own ten-second default
-// budget proves the gate held. A two-second bound would additionally assert
+// budget proves the gate held. The *first* start of a freshly linked binary is
+// not such a process start — macOS hashes the whole image, which has measured
+// eight and a half seconds on a loaded machine — so the test pays that once in
+// a throwaway execution before it starts the clock. A two-second bound would additionally assert
 // that the runner was not busy, which is not a claim about go-mutants. It is
 // deliberately unmoved by the minute the gated sleep now lasts: an ungated
 // target that slept would be cut off at that default long before the minute
@@ -884,6 +887,26 @@ func TestSessionBlocksOnlyWhenAsked(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	mutant := mutantkit.APIMutantAt(t, session.Catalog(), "untested.go", "neq-to-eq")
+
+	// One throwaway execution first, selecting no test at all, so that the
+	// timed one below is not also paying for the first exec of a freshly
+	// linked binary.
+	//
+	// It is not a precaution about a slow machine. A test binary this session
+	// compiled has never been run, and on macOS the kernel hashes the whole
+	// image the first time one is — tens of megabytes of it — which measured
+	// eight and a half seconds here against a bound of five. What this test is
+	// about is whether a sleep happened, and a bound that a process start can
+	// exhaust cannot tell the two apart. The warm-up asserts nothing, on
+	// purpose: what it is for is the clock, and any claim about it would be a
+	// claim about the machine.
+	if _, warmErr := session.Exec(t.Context(), gomutants.ExecRequest{
+		Mutant:  mutant.ID,
+		Package: ".",
+		Args:    []string{"-test.run=^$"},
+	}); warmErr != nil {
+		t.Fatalf("warming the fixture's test binary: %v", warmErr)
+	}
 
 	started := time.Now()
 	quiet, err := session.Exec(t.Context(), gomutants.ExecRequest{
