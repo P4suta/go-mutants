@@ -540,12 +540,19 @@ jobs:
         with:
           install: true
           cache: true
-      - run: mise run dogfood
+      # dogfood with a recording, and then the audit that re-derives the report
+      # from it. The audit had never run anywhere: it has its own tests and no
+      # caller, and its doc comment gave a command that does not work, which is
+      # what an uncalled command looks like after a while. The two questions are
+      # different -- whether the tests catch a mutant, and whether the document
+      # saying so agrees with the account of what ran -- and a report written by
+      # the run it describes has no second witness until something reads both.
+      - run: mise run dogfood-audit
       # The same gate as platform-tests', and the one job that could break it
-      # without running a test suite at all: `mise run dogfood` is go-mutants
-      # pointed at this repository, and a run writes into the tree it is pointed
-      # at. `always()`, because a run that wrote into the corpus and then failed
-      # its own score gate is exactly the case worth naming.
+      # without running a test suite at all: `mise run dogfood-audit` is
+      # go-mutants pointed at this repository, and a run writes into the tree it
+      # is pointed at. `always()`, because a run that wrote into the corpus and
+      # then failed its own score gate is exactly the case worth naming.
       - name: The corpus is unchanged
         if: always()
         shell: bash

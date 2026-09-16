@@ -46,9 +46,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/P4suta/go-mutants/trace"
 )
 
 // A Finding is one thing the audit noticed.
@@ -154,7 +157,36 @@ type event struct {
 	} `json:"run,omitempty"`
 }
 
+// recordingFor is the recording to read, given either the file itself or the
+// directory recordings are collected in.
+//
+// A directory holding no run of this name is an error and not an empty
+// recording. The two are the same number of findings and opposite statements:
+// one says the run made no events worth auditing, and the other says nobody
+// looked at the run at all.
+func recordingFor(tracePath, runID string) (string, error) {
+	info, err := os.Stat(tracePath)
+	if err != nil {
+		return "", fmt.Errorf("reading the recording: %w", err)
+	}
+	if !info.IsDir() {
+		return tracePath, nil
+	}
+
+	recording := filepath.Join(tracePath, runID, trace.FileName)
+	if _, statErr := os.Stat(recording); statErr != nil {
+		return "", fmt.Errorf("%s holds no recording for run %s: %w", tracePath, runID, statErr)
+	}
+	return recording, nil
+}
+
 // Audit reads a report and a recording and says whether they agree.
+//
+// tracePath is either the recording itself or the directory recordings are
+// collected in, in which case the one this report describes is the run
+// directory named after its run id. Naming the directory is what a task or a
+// workflow step can write down: the run id is minted while the run happens, so
+// a command line spelled ahead of time cannot contain it.
 func Audit(reportPath, tracePath string) (Result, error) {
 	var claim report
 	raw, err := os.ReadFile(reportPath)
@@ -168,7 +200,11 @@ func Audit(reportPath, tracePath string) (Result, error) {
 		return Result{}, fmt.Errorf("%s is a %q, not a run report", reportPath, claim.DocumentType)
 	}
 
-	stream, err := os.ReadFile(tracePath)
+	recording, err := recordingFor(tracePath, claim.RunID)
+	if err != nil {
+		return Result{}, err
+	}
+	stream, err := os.ReadFile(recording)
 	if err != nil {
 		return Result{}, fmt.Errorf("reading the recording: %w", err)
 	}

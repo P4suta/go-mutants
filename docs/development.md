@@ -1235,6 +1235,15 @@ anything that shells out to `go`.
 undeclared survivor fails the build. It is the gate on whether the tests *catch*
 anything, which is why coverage is allowed to be a signal.
 
+`mise run dogfood-audit` is the same run with `--trace`, followed by
+`internal/devtools/traceaudit` re-deriving the report from the recording beside
+it. It answers a different question: not whether the tests catch a mutant, but
+whether the document saying they did agrees with the account of what ran. The
+report is written by the run it describes, so until two documents are read
+separately the run is the only witness to its own honesty. A finding the
+recording cannot settle is counted apart from a disagreement, and only
+disagreements change the exit code.
+
 The scope, the measured score and the floor live in `.go-mutants.toml`, next to
 the settings they justify. It covers seventeen whole packages:
 

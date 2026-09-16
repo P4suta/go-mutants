@@ -206,3 +206,63 @@ func contains(layers []string, want string) bool {
 	}
 	return false
 }
+
+// TestAuditResolvesARecordingRootByTheReportsRunID lets a caller name the
+// directory recordings live in rather than the file inside it.
+//
+// A run writes its recording to `<root>/<run id>/trace.jsonl`, and the run id
+// is minted while the run is happening. A caller that has the report has the id
+// — it is a field of the document — but a caller writing a command line ahead
+// of time does not, so asking for the file by name means asking somebody to
+// interpolate a value that does not exist yet. That is the shape of a task
+// nobody wires up, which is how this package went un-run: the command its own
+// doc comment gave was wrong, and nothing was calling it to find out.
+func TestAuditResolvesARecordingRootByTheReportsRunID(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	run := filepath.Join(root, "20260914T002752Z-1131")
+	if err := os.MkdirAll(run, 0o755); err != nil {
+		t.Fatalf("creating the run directory: %v", err)
+	}
+	stream, err := os.ReadFile(filepath.Join("testdata", "killable.trace.jsonl"))
+	if err != nil {
+		t.Fatalf("reading the fixture recording: %v", err)
+	}
+	if writeErr := os.WriteFile(filepath.Join(run, "trace.jsonl"), stream, 0o600); writeErr != nil {
+		t.Fatalf("writing the recording: %v", writeErr)
+	}
+
+	byRoot, err := traceaudit.Audit(filepath.Join("testdata", "killable.report.json"), root)
+	if err != nil {
+		t.Fatalf("Audit against the recording root: %v", err)
+	}
+	byFile, err := traceaudit.Audit(filepath.Join("testdata", "killable.report.json"), filepath.Join(run, "trace.jsonl"))
+	if err != nil {
+		t.Fatalf("Audit against the recording file: %v", err)
+	}
+
+	if byRoot.Mutants != byFile.Mutants || byRoot.Audited != byFile.Audited ||
+		len(byRoot.Violations()) != len(byFile.Violations()) ||
+		len(byRoot.Unaudited()) != len(byFile.Unaudited()) {
+		t.Errorf("naming the root and naming the file inside it audited differently:\n"+
+			"\troot: %d mutants, %d audited, %d violations, %d unaudited\n"+
+			"\tfile: %d mutants, %d audited, %d violations, %d unaudited",
+			byRoot.Mutants, byRoot.Audited, len(byRoot.Violations()), len(byRoot.Unaudited()),
+			byFile.Mutants, byFile.Audited, len(byFile.Violations()), len(byFile.Unaudited()))
+	}
+}
+
+// TestAuditSaysWhichRecordingItLookedForWhenARootHoldsNone refuses to read a
+// root that has no recording for this report as a root that agrees with it.
+func TestAuditSaysWhichRecordingItLookedForWhenARootHoldsNone(t *testing.T) {
+	t.Parallel()
+
+	_, err := traceaudit.Audit(filepath.Join("testdata", "killable.report.json"), t.TempDir())
+	if err == nil {
+		t.Fatal("auditing against an empty recording root succeeded; an absent recording is not an agreement")
+	}
+	if !strings.Contains(err.Error(), "20260914T002752Z-1131") {
+		t.Errorf("the error does not name the run it looked for: %v", err)
+	}
+}

@@ -40,7 +40,7 @@ decision.
 | `race` | `mise run test-race` — the unit tier under `-race` | ubuntu only: the detector needs cgo |
 | `coverage` | `mise run cover-integration` | **Not a gate.** `continue-on-error`, and skipped on pull requests entirely. See below |
 | `artifacts` | `mise run package` | Exercises the packaging path on every run rather than for the first time on a tag, and smoke-tests that the version stamp reached its target |
-| `dogfood` | `mise run dogfood` — go-mutants against go-mutants | The gate on whether the tests *catch* anything. `--strict`, so one undeclared survivor fails it |
+| `dogfood` | `mise run dogfood-audit` — go-mutants against go-mutants, with a recording, and then the report re-derived from it | Two gates in one job. `--strict`, so one undeclared survivor fails it; and the audit, which reads the report and the recording separately and says whether they agree. A run writes the document that describes it, so until two documents are read apart the run is the only witness to its own honesty. A finding the recording cannot settle is counted apart from a disagreement, and only disagreements fail the job |
 | `action-smoke` | the composite action, over `fixtures/killable` | Builds this checkout onto `PATH` and passes `version: skip`, so what is measured is this source and not the last release. Asserts that every output arrived and that they agree with the report |
 | `ci-success` | nothing | Needs every job above, so branch protection names one check instead of seven |
 
@@ -109,6 +109,7 @@ mise run check
 mise run test-integration
 mise run test-race
 mise run dogfood
+mise run dogfood-audit
 mise run package
 mise run cover-integration
 mise run bench

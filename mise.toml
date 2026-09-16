@@ -608,6 +608,45 @@ description = "Mutation-test this repository with go-mutants itself"
 env = { RAPID_SEED = "1" }
 run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./cmd/go-mutants run --strict --profile balanced"
 
+[tasks.dogfood-audit]
+description = "Dogfood with a recording, then re-derive the report from it"
+# The audit nothing was running.
+#
+# internal/devtools/traceaudit reads a run report and the recording beside it
+# and re-derives one from the other, without importing a line of the code that
+# wrote either. It has existed, with its own tests, while no task and no CI job
+# ever started it -- and its own doc comment gave a command that does not work,
+# which is what a command nobody runs looks like after a while.
+#
+# What it answers is not what dogfood answers. dogfood asks whether the tests
+# catch a mutant; this asks whether the document saying so agrees with the
+# account of what ran. A report is written by the same run it describes, so the
+# run is the only witness to its own honesty until something reads the two
+# separately.
+#
+# A finding the recording cannot settle is counted apart from a disagreement --
+# "I cannot check this" is neither "this is fine" nor "this is broken" -- and
+# only disagreements change the exit code.
+#
+# The recording goes under the report directory because a bare --trace puts it
+# there, and the audit is handed that directory rather than a file: the run id
+# in the path is minted while the run happens, so a command line written here
+# cannot contain it.
+#
+# The report is asked for rather than picked up off disk. `reports/mutation/
+# mutation.json` is published beside the recording and is *not* the document
+# this audits: it is the Stryker projection, which is lossy by design and
+# carries schemaVersion instead of document_type. The lossless account is the
+# run-report the history store keeps, and `report latest --json` is how a
+# command line asks for it. Writing this task against the file that was simply
+# there is the mistake this line exists to have already made.
+run = [
+  "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./cmd/go-mutants run --strict --profile balanced --trace",
+  "go run ./cmd/go-mutants report latest --json > reports/mutation/latest-run-report.json",
+  "go run ./internal/devtools/traceaudit/main.go reports/mutation/latest-run-report.json reports/mutation/trace",
+]
+
+
 [tasks.package]
 # Snapshot artifacts, so that the packaging path is exercised on every CI run
 # rather than for the first time on a tag. The release workflow drives the same
