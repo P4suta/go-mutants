@@ -186,13 +186,21 @@ func TestLocateReportsAProbeThatHangs(t *testing.T) {
 		t.Errorf("Error() = %q, want it to say %q: a hang is not an exit status and must not read as one",
 			err, want)
 	}
-	// Bounded by a small multiple of the deadline the probe was given rather
-	// than by the budget it did not use: the claim is that *this* deadline
-	// ended it, and a bound of two seconds would be satisfied by a probe that
-	// had ignored a two-hundred-millisecond one.
-	if elapsed, bound := time.Since(started), 5*hangTimeout; elapsed > bound {
-		t.Errorf("the probe took %s, want it ended by its own %s deadline (allowing %s for a "+
-			"loaded machine) rather than by the sleep", elapsed, hangTimeout, bound)
+	// Bounded away from the sleep rather than close to the deadline, and the
+	// difference is what a loaded machine can be held to. Five times the
+	// deadline -- one second -- read as "this deadline ended it", and on a
+	// windows runner the probe took 1.25 s and ended by that deadline anyway:
+	// the clock was measuring the runner, not the timeout.
+	//
+	// Half the sleep is what the clock can actually say. A probe that reached
+	// its own deadline is nowhere near it; a probe that ignored the deadline
+	// and returned when the fake stopped sleeping is past it by a wide margin.
+	// The strong claim -- that it was *this* deadline and not some other -- is
+	// the error message's, checked above, which says the timeout in words.
+	if elapsed, bound := time.Since(started), hangSleep/2; elapsed > bound {
+		t.Errorf("the probe took %s, want it ended by its own %s deadline rather than by the "+
+			"%s sleep (bounded at %s, which is half the sleep)",
+			elapsed, hangTimeout, hangSleep, bound)
 	}
 	// The command is attached to a timeout as much as to a failure: it is the
 	// one a reader has to run by hand to see the hang for themselves.
