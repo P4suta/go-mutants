@@ -19,6 +19,11 @@ func HelperEnabled(variable string) bool {
 
 func RunningAsHelper(t *testing.T, variable, testName string) bool {
 	t.Helper()
+	return runningAsHelperWith(t, variable, testName)
+}
+
+func runningAsHelperWith(t testing.TB, variable, testName string) bool {
+	t.Helper()
 	if HelperEnabled(variable) {
 		return true
 	}

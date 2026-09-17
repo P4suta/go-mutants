@@ -607,3 +607,345 @@ id = 'd09822eb741a2850'
 reason = 'the paths being removed were listed by the walk directly above and are taken deepest first, so a removal fails only for a directory the process may not empty, which is permission denial'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = 'b2bb48c628c9d092'
+reason = 'the only caller of this is the package init that registers the flag, and it discards the answer; the second call, whose false the test does read, is the one that decides anything'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'cbae2d0de9c4aa97'
+reason = 'the flag is registered by the package init, so no binary that links this package can reach Update with it absent'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8f69671f6e6e590f'
+reason = 'the read above returns a not-exist error only when every directory on the path exists, so the directory this makes is either already there or a name inside one that is; a parent that is not a directory fails the read instead, with the error that guard reports'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '2640e4dfbf19f9a7'
+reason = 'the same shape from the other side: a path whose write can fail is a path whose read failed with something other than not-exist, which the guard above already reports'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '4b4093fe918e4353'
+reason = 'HelperArgv is the line above and always answers with two elements naming the test, which is what this checks; the guard is a statement about that function, and the function has a test of its own'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'fe943fe361c19c86'
+reason = 'the same self-check: neither half can be true for the two elements HelperArgv returns'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f0cf1bd77e2c9430'
+reason = 'the directory being made is inside the temporary root this fixture owns, so it fails only for a filesystem that has run out of room'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd1f1e3d283f0e141'
+reason = 'the file being written is inside the temporary root this fixture owns, in a directory the line above it just made'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '5e4e3206cef3fe39'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ea7774be3c45470e'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'f8c0566d2067967f'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '04281d2c497c4ea8'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '21d8f49e8a35cc27'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '469640f3dfcf457b'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '53d9d0fb3a5df1cc'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '6f4bde3d0d3ff2aa'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3fd7c079615e9ba0'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '854739ea2570d03e'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ba9a58bd0e023e82'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd259707df27c23fd'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'e5c9ae9a8c820a11'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '35e07eae69a9d441'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3f945b7b519f96a3'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'b153f1966207d2d8'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'b21e5c8cfe7ce125'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '856d4385fc992ce1'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ddb3e3b30b14c54c'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1c08ffa7d6d20112'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '2d15f621e87890b0'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '0976b0cfbf5a027b'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '53373bbaf63bf6ef'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '7289f73c1a3737e6'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'a8d271a13abc469b'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'bbdbae172ee43356'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'c4ae652cff7cc382'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'bd1c5be1b3902910'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '20d6695a2441d1a3'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '31f62254c4b94cf9'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '1bc7f903b66bc1c1'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '49aacf25c39e5cd6'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '590cfeaf7a439066'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '5c38a374f54cb6f9'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '492fc9bd8aff60ca'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '50644eff56f497f2'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'aa5f25289fedd882'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'b3f6c16711b12c94'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'b49adc631c1f9616'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'e5dd893468d09c07'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '62dacfd5175363b3'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '09767010f3d2e8c3'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'c7ed32eae5ffe4fa'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd74dd666e5502a53'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'ebfe6c4b2be97494'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '9c9cdcafe0f1fc51'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3facc7d7e779aae8'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '57143acf0c2581e8'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '72b13f9ef2b49c75'
+reason = 'this is reached only from a test that starts a real go or git, which carries //go:build integration, and the mutation measurement compiles the unit tier alone; the tier that reaches it is named in .goatest.toml, not missing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
