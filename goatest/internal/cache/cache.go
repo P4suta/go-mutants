@@ -36,7 +36,7 @@ type cacheWritableFile interface {
 	Close() error
 }
 
-func New(root string) *Store { return &Store{root: root} }
+func New(root string) *Store { return &Store{root: root, now: time.Now} }
 
 func NewWithPolicy(root string, maxBytes int64, ttl time.Duration) *Store {
 	return &Store{root: root, maxBytes: maxBytes, ttl: ttl, now: time.Now}
@@ -127,11 +127,7 @@ func (store *Store) putWithHooks(digest string, result report.Report, hooks stor
 		}
 	}
 	if store.maxBytes > 0 || store.ttl > 0 {
-		now := time.Now
-		if store.now != nil {
-			now = store.now
-		}
-		_, _ = hooks.collect(store.root, store.maxBytes, store.ttl, now())
+		_, _ = hooks.collect(store.root, store.maxBytes, store.ttl, store.now())
 	}
 	return nil
 }

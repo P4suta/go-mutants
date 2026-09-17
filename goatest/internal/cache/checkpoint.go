@@ -58,7 +58,7 @@ func (store *Store) GetCheckpoint(digest string) (checkpoint.State, bool, error)
 		return checkpoint.State{}, false, errors.New("goatest: checkpoint input identity mismatch")
 	}
 	baseDigest := checkpointFileDigest(data)
-	state, err = store.applyCheckpointJournal(digest, baseDigest, state)
+	state, err = applyCheckpointJournal(path, digest, baseDigest, state)
 	if err != nil {
 		return checkpoint.State{}, false, err
 	}
@@ -93,28 +93,33 @@ func (store *Store) PendingCheckpoint() (bool, error) {
 }
 
 func (store *Store) PutCheckpoint(digest string, state checkpoint.State) error {
+	return store.putCheckpointWithHooks(digest, state, storeHooks{})
+}
+
+func (store *Store) putCheckpointWithHooks(digest string, state checkpoint.State, hooks storeHooks) error {
+	hooks = hooks.resolved()
 	cacheOperationMutex.Lock()
 	defer cacheOperationMutex.Unlock()
 	if state.InputDigest != digest {
 		return errors.New("goatest: checkpoint input digest does not match its cache entry")
 	}
-	if err := checkpoint.Validate(state); err != nil {
-		return err
-	}
 	path, err := store.checkpointPath(digest)
 	if err != nil {
 		return err
 	}
+	if err := checkpoint.Validate(state); err != nil {
+		return err
+	}
 	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, filemode.ReadableDirectory); err != nil {
+	if err := hooks.mkdirAll(directory, filemode.ReadableDirectory); err != nil {
 		return fmt.Errorf("goatest: create checkpoint directory: %w", err)
 	}
-	temporary, err := os.CreateTemp(directory, ".checkpoint-*.tmp")
+	temporary, err := hooks.createTemporary(directory, ".checkpoint-*.tmp")
 	if err != nil {
 		return fmt.Errorf("goatest: create checkpoint temporary file: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
+	defer func() { _ = hooks.remove(temporaryPath) }()
 	data := checkpoint.JSON(state)
 	if _, err := temporary.Write(data); err != nil {
 		_ = temporary.Close()
@@ -127,12 +132,12 @@ func (store *Store) PutCheckpoint(digest string, state checkpoint.State) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("goatest: close checkpoint: %w", err)
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
+	if err := hooks.rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("goatest: atomically publish checkpoint: %w", err)
 	}
 	checkpointBaseDigests[path] = checkpointFileDigest(data)
 	journalPath := filepath.Join(directory, CheckpointJournalFileName)
-	if err := os.Remove(journalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := hooks.remove(journalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("goatest: remove compacted checkpoint journal: %w", err)
 	}
 	return nil
@@ -151,6 +156,11 @@ func (store *Store) AppendMutationCheckpoint(digest string, unit checkpoint.Muta
 }
 
 func (store *Store) appendCheckpointRecord(digest string, record checkpointJournalRecord) error {
+	return store.appendCheckpointRecordWithHooks(digest, record, storeHooks{})
+}
+
+func (store *Store) appendCheckpointRecordWithHooks(digest string, record checkpointJournalRecord, hooks storeHooks) error {
+	hooks = hooks.resolved()
 	cacheOperationMutex.Lock()
 	defer cacheOperationMutex.Unlock()
 	path, err := store.checkpointPath(digest)
@@ -159,7 +169,7 @@ func (store *Store) appendCheckpointRecord(digest string, record checkpointJourn
 	}
 	baseDigest := checkpointBaseDigests[path]
 	if baseDigest == "" {
-		data, readErr := os.ReadFile(path)
+		data, readErr := hooks.read(path)
 		if readErr != nil {
 			return fmt.Errorf("goatest: read checkpoint before journaling: %w", readErr)
 		}
@@ -176,7 +186,7 @@ func (store *Store) appendCheckpointRecord(digest string, record checkpointJourn
 	}
 	data = append(data, '\n')
 	journalPath := filepath.Join(filepath.Dir(path), CheckpointJournalFileName)
-	journal, err := os.OpenFile(journalPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, filemode.PrivateFile)
+	journal, err := hooks.openAppend(journalPath, filemode.PrivateFile)
 	if err != nil {
 		return fmt.Errorf("goatest: open checkpoint journal: %w", err)
 	}
@@ -194,11 +204,7 @@ func (store *Store) appendCheckpointRecord(digest string, record checkpointJourn
 	return nil
 }
 
-func (store *Store) applyCheckpointJournal(digest, baseDigest string, state checkpoint.State) (checkpoint.State, error) {
-	path, err := store.checkpointPath(digest)
-	if err != nil {
-		return checkpoint.State{}, err
-	}
+func applyCheckpointJournal(path, digest, baseDigest string, state checkpoint.State) (checkpoint.State, error) {
 	journalPath := filepath.Join(filepath.Dir(path), CheckpointJournalFileName)
 	data, err := os.ReadFile(journalPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -207,10 +213,6 @@ func (store *Store) applyCheckpointJournal(digest, baseDigest string, state chec
 	if err != nil {
 		return checkpoint.State{}, fmt.Errorf("goatest: read checkpoint journal: %w", err)
 	}
-	if len(data) == 0 {
-		return state, nil
-	}
-
 	lastNewline := bytes.LastIndexByte(data, '\n')
 	if lastNewline < 0 {
 		return state, nil
@@ -321,21 +323,26 @@ func checkpointJournalChecksum(record checkpointJournalRecord) string {
 }
 
 func (store *Store) DeleteCheckpoint(digest string) error {
+	return store.deleteCheckpointWithHooks(digest, storeHooks{})
+}
+
+func (store *Store) deleteCheckpointWithHooks(digest string, hooks storeHooks) error {
+	hooks = hooks.resolved()
 	cacheOperationMutex.Lock()
 	defer cacheOperationMutex.Unlock()
 	path, err := store.checkpointPath(digest)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := hooks.remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("goatest: remove checkpoint: %w", err)
 	}
 	directory := filepath.Dir(path)
-	if err := os.Remove(filepath.Join(directory, CheckpointJournalFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := hooks.remove(filepath.Join(directory, CheckpointJournalFileName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("goatest: remove checkpoint journal: %w", err)
 	}
 	delete(checkpointBaseDigests, path)
-	entries, err := os.ReadDir(directory)
+	entries, err := hooks.readDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -343,7 +350,7 @@ func (store *Store) DeleteCheckpoint(digest string) error {
 		return fmt.Errorf("goatest: inspect checkpoint directory: %w", err)
 	}
 	if len(entries) == 0 {
-		if err := os.Remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := hooks.remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("goatest: remove empty checkpoint directory: %w", err)
 		}
 	}
