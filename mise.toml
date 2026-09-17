@@ -824,6 +824,14 @@ run = "lefthook install"
 # It is the runner's own gate, carried across whole rather than folded into
 # [tasks.dogfood]. The two measure different products with different tools, and
 # a task that did both would report one verdict over two questions.
+#
+# Leave the tree alone while it runs. This takes an hour and a half over the
+# whole module, and goatest watches the repository it is measuring: a commit, a
+# checkout or a merge underneath it ends the run with `repository changed during
+# verification; refusing stale evidence` and nothing is published. That is the
+# right refusal -- evidence gathered against a tree that no longer exists is
+# evidence about nothing -- and it is written here because the cost of learning
+# it is ninety minutes.
 dir = "goatest"
 description = "Run goatest against its own module"
 env = { GOWORK = "off" }
