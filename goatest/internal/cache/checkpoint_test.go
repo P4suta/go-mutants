@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/checkpoint"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/checkpoint"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 func TestCheckpointStoreIsAtomicStrictAndIndependentOfCompletedReport(t *testing.T) {

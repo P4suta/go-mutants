@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/ui"
+	"github.com/P4suta/go-mutants/goatest/internal/ui"
 )
 
 const (

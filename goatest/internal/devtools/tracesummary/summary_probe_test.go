@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func probeEvent(target, outcome string, infected ...string) trace.Event {

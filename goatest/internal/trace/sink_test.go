@@ -19,7 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 type recordingSink struct {

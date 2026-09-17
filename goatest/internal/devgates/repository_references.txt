@@ -13,7 +13,7 @@
 #
 # The reason for a ledger rather than a note is that four of the five hide
 # inside the same spelling the rewrite looks for. A narrow pattern that matches
-# `github.com/P4suta/goatest` catches them all and leaves the fifth, which is
+# `github.com/P4suta/go-mutants/goatest` catches them all and leaves the fifth, which is
 # how go-mutants found the one in README.md; a pattern narrow enough to miss
 # the fifth is wide enough to corrupt the four in silence. Neither is safe
 # without knowing which is which, and that is what this file is.

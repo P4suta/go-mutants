@@ -11,8 +11,8 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/trace"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func recordedRoutes(sink *trace.MemorySink) []trace.RouteRecord {

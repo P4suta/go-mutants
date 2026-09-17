@@ -14,9 +14,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 const goldenSampleName = "golden_sample.txt"

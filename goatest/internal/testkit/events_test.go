@@ -7,8 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 func eventFixture() []assure.Event {

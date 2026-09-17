@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/keptledger"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
 )
 
 func moment(hour int) time.Time {

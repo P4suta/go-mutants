@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	modulePath = "github.com/P4suta/goatest"
+	modulePath = "github.com/P4suta/go-mutants/goatest"
 
 	testkitPath = modulePath + "/internal/testkit"
 

@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/keptledger"
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/tempowner"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func TestRepositoryValidatorKeepsTheCandidateTreeItWasAskedToKeep(t *testing.T) {

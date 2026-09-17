@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 func storeNativeCacheEntry(t *testing.T, root string, action []byte, body string) []byte {

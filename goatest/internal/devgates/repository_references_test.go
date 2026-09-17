@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 // The repository-reference ledger.
@@ -26,7 +26,7 @@ import (
 //
 // The ledger exists because the two cannot be told apart by how wide a search
 // pattern is. Of the five references this repository makes to itself as a
-// repository, four are spelled `https://github.com/P4suta/goatest…`, which is
+// repository, four are spelled `https://github.com/P4suta/go-mutants/goatest…`, which is
 // exactly what a rewrite of import paths looks for; the fifth is a bare
 // `--repo P4suta/goatest`, which a pattern narrow enough to spare the four
 // misses. go-mutants found the fifth by rehearsing the migration and reading
@@ -165,11 +165,11 @@ func TestTheClassificationTellsAnImportPathFromARepositoryName(t *testing.T) {
 		content string
 		want    bool
 	}{
-		{name: "import", content: `import "github.com/P4suta/goatest/internal/report"`},
-		{name: "module", content: "module github.com/P4suta/goatest"},
-		{name: "url", content: "see https://github.com/P4suta/goatest/releases", want: true},
+		{name: "import", content: `import "github.com/P4suta/go-mutants/goatest/internal/report"`},
+		{name: "module", content: "module github.com/P4suta/go-mutants/goatest"},
+		{name: "url", content: "see https://github.com/P4suta/go-mutants/goatest/releases", want: true},
 		{name: "bare", content: "gh attestation verify x --repo P4suta/goatest", want: true},
-		{name: "import-then-url", content: "github.com/P4suta/goatest/internal and https://github.com/P4suta/goatest", want: true},
+		{name: "import-then-url", content: "github.com/P4suta/go-mutants/goatest/internal and https://github.com/P4suta/go-mutants/goatest", want: true},
 		{name: "absent", content: "nothing here"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

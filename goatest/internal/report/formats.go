@@ -103,7 +103,7 @@ func SARIF(input Report) []byte {
 		Schema: "https://json.schemastore.org/sarif-2.1.0.json", Version: "2.1.0",
 		Runs: []sarifRun{{
 			Tool: sarifTool{Driver: sarifDriver{
-				Name: "goatest", InformationURI: "https://github.com/P4suta/goatest", SemanticVersion: sarifSemanticVersion(canonical.Toolchain.Goatest), Rules: rules,
+				Name: "goatest", InformationURI: "https://github.com/P4suta/go-mutants", SemanticVersion: sarifSemanticVersion(canonical.Toolchain.Goatest), Rules: rules,
 			}},
 			Results: results,
 			Properties: map[string]any{

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func routeHasPlanOrProof(record trace.RouteRecord, measuredProbes map[string][]string) bool {

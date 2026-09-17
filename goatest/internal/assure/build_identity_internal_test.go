@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 func TestDigestGoatestExecutableReadsExactBytes(t *testing.T) {

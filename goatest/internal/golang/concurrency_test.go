@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
 func TestConcurrencyPackagesDetectsLanguageAndLibraryPrimitives(t *testing.T) {

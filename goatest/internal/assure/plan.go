@@ -11,12 +11,12 @@ import (
 	"runtime"
 	"slices"
 
-	"github.com/P4suta/goatest/internal/config"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/mutationbridge"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/tempowner"
-	"github.com/P4suta/goatest/internal/testargs"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/testargs"
 )
 
 func Plan(ctx context.Context, options Options) (result report.Report, resultErr error) {

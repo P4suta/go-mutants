@@ -20,12 +20,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/resource"
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/resource"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 const (
@@ -437,7 +437,7 @@ environment = ["GOATEST_ASSURE_RESOURCE_HELPER", "GOATEST_ASSURE_RESOURCE_LOG"]
 `, tomlArgv(testkit.HelperArgv("TestRunResourceProviderHelper")))
 	repository := testkit.NewRepo(t).
 		File(".goatest.toml", crlfFixture(configuration)).
-		File("go.mod", crlfFixture("module github.com/P4suta/goatest\n\ngo 1.26.0\n")).
+		File("go.mod", crlfFixture("module github.com/P4suta/go-mutants/goatest\n\ngo 1.26.0\n")).
 		File("api.go", crlfFixture(`package goatest
 
 import "testing"
@@ -459,7 +459,7 @@ func Boundary(value int) int {
 import (
 	"os"
 	"testing"
-	goatest "github.com/P4suta/goatest"
+	goatest "github.com/P4suta/go-mutants/goatest"
 )
 
 func TestManagedPostgres(t *testing.T) {

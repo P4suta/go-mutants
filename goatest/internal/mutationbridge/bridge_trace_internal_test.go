@@ -13,7 +13,7 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 var traceOrigin = time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)

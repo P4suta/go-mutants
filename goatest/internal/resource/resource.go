@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/P4suta/goatest/internal/processtree"
+	"github.com/P4suta/go-mutants/goatest/internal/processtree"
 )
 
 const ProtocolVersion = 1

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const runStart = `{"seq":1,"type":"run-start","schema":"goatest-trace-v1","timestamp":"2026-01-01T00:00:00Z","elapsed_ms":0}`
@@ -846,7 +846,7 @@ func TestReadEventsAcceptsALineLongerThanAScannerBuffer(t *testing.T) {
 	t.Parallel()
 	targets := make([]string, 0, longTraceTargetCount)
 	for index := range longTraceTargetCount {
-		targets = append(targets, `"github.com/P4suta/goatest/internal/package`+strings.Repeat("x", index%longTraceNameVariantCount)+`"`)
+		targets = append(targets, `"github.com/P4suta/go-mutants/goatest/internal/package`+strings.Repeat("x", index%longTraceNameVariantCount)+`"`)
 	}
 	long := `{"seq":2,"type":"route","timestamp":"2026-01-01T00:00:01Z","elapsed_ms":1,"route":{"path":"a.go","reason":"unreached","granularity":"block","reaching_targets":[` +
 		strings.Join(targets, ",") + `]}}`

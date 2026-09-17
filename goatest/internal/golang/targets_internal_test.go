@@ -18,8 +18,8 @@ func TestAliasesRecognizesSupportedImportsOnly(t *testing.T) {
 		{Name: ast.NewIdent("stdtest"), Path: stringLiteral("testing")},
 		{Name: ast.NewIdent("."), Path: stringLiteral("testing")},
 		{Name: ast.NewIdent("_"), Path: stringLiteral("testing")},
-		{Path: stringLiteral("github.com/P4suta/goatest")},
-		{Name: ast.NewIdent("gt"), Path: stringLiteral("github.com/P4suta/goatest")},
+		{Path: stringLiteral("github.com/P4suta/go-mutants/goatest")},
+		{Name: ast.NewIdent("gt"), Path: stringLiteral("github.com/P4suta/go-mutants/goatest")},
 		{Path: stringLiteral("fmt")},
 		{Path: &ast.BasicLit{Kind: token.STRING, Value: "not-quoted"}},
 	}}

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 // The ledger for the workflow.

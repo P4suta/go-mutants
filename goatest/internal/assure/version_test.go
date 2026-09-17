@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
 )
 
 const goModVersionMatchFields = 2

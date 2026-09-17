@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func TestABundleIsNamedForItsRun(t *testing.T) {

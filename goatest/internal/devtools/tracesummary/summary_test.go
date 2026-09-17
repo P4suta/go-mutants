@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/testkit"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func summarizeFixture(t *testing.T, name string) string {
@@ -118,12 +118,12 @@ func TestExecClassNormalizesWhatVariesBetweenTwoRunsOfOneCommand(t *testing.T) {
 		},
 		{
 			name: "the mutant filter is the value of a flag",
-			argv: []string{"go", "test", "-count=1", "github.com/P4suta/goatest/internal/assure", "-args", "-test.run=^TestPlan$"},
-			want: "go test -count=<value> github.com/P4suta/goatest/internal/assure -args -test.run=<value>",
+			argv: []string{"go", "test", "-count=1", "github.com/P4suta/go-mutants/goatest/internal/assure", "-args", "-test.run=^TestPlan$"},
+			want: "go test -count=<value> github.com/P4suta/go-mutants/goatest/internal/assure -args -test.run=<value>",
 		},
 		{
 			name: "a temporary path and the arguments beyond the class",
-			argv: []string{"go", "test", "-c", "-coverpkg=github.com/P4suta/goatest/...", "-o", "/tmp/goatest-baseline-460516923/12b3f83f398bb463.test", "github.com/P4suta/goatest"},
+			argv: []string{"go", "test", "-c", "-coverpkg=github.com/P4suta/go-mutants/goatest/...", "-o", "/tmp/goatest-baseline-460516923/12b3f83f398bb463.test", "github.com/P4suta/go-mutants/goatest"},
 			want: "go test -c -coverpkg=<value> -o <path> ...",
 		},
 		{

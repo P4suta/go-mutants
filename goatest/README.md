@@ -48,11 +48,11 @@ for every resolved package.
 ## Install
 
 ```console
-go install github.com/P4suta/goatest/cmd/goatest@latest
+go install github.com/P4suta/go-mutants/goatest/cmd/goatest@latest
 ```
 
 Prebuilt archives for Linux, macOS, and Windows (amd64/arm64) are on the
-[releases page](https://github.com/P4suta/goatest/releases), each with a syft
+[releases page](https://github.com/P4suta/go-mutants/releases), each with a syft
 SBOM and a GitHub build-provenance attestation. Verify the one archive you
 downloaded, for example:
 

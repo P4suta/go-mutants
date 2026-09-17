@@ -1,4 +1,4 @@
-module github.com/P4suta/goatest
+module github.com/P4suta/go-mutants/goatest
 
 go 1.26.0
 

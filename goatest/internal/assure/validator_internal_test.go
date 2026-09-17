@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 func TestValidateCopyRootsRejectsDestinationInsideSource(t *testing.T) {

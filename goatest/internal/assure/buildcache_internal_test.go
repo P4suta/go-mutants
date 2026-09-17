@@ -17,8 +17,8 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 const (

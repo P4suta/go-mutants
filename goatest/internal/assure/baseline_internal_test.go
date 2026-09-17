@@ -17,11 +17,11 @@ import (
 	"unicode/utf8"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/checkpoint"
-	"github.com/P4suta/goatest/internal/filemode"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/checkpoint"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const (

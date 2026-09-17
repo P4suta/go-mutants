@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/testargs"
+	"github.com/P4suta/go-mutants/goatest/internal/testargs"
 )
 
 func TestNormalizeCanonicalizesShortClonesAndPreservesCustomFlags(t *testing.T) {

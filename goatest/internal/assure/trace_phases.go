@@ -3,7 +3,7 @@
 
 package assure
 
-import "github.com/P4suta/goatest/internal/trace"
+import "github.com/P4suta/go-mutants/goatest/internal/trace"
 
 const (
 	phaseSnapshot   = "snapshot"

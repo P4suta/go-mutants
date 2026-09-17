@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/app"
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/app"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 func TestVerifyWritesEveryDeterministicReportAndReportReadsLatest(t *testing.T) {

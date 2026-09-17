@@ -12,11 +12,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/app"
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/app"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 func interruptedService(t *testing.T, root string) app.Service {

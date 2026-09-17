@@ -15,7 +15,7 @@ builds:
     ldflags:
       - >-
         -s -w
-        -X github.com/P4suta/goatest/internal/assure.GoatestVersion=v{{ .Version }}
+        -X github.com/P4suta/go-mutants/goatest/internal/assure.GoatestVersion=v{{ .Version }}
 
 archives:
   - id: goatest

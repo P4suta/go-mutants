@@ -12,10 +12,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/repair"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/repair"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 type GenerationEvaluation struct {

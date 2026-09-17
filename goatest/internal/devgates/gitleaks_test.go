@@ -15,7 +15,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 // The secret-scanner allowlist ledger.

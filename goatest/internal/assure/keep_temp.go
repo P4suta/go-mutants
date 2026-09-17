@@ -8,8 +8,8 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/keptledger"
-	"github.com/P4suta/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
 )
 
 const (

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
 )
 
 func claimed(t *testing.T, marker tempowner.Marker, now time.Time) (string, *tempowner.Owner) {

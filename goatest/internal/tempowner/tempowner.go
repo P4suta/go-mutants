@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/P4suta/goatest/internal/advisorylock"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/advisorylock"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 const (

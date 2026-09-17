@@ -13,10 +13,10 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/filemode"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 func TestCollectBaselineBuildsOneBinaryPerPackageAndMapsTopLevelCoverage(t *testing.T) {

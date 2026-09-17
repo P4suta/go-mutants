@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	goanalysis "github.com/P4suta/goatest/internal/golang"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
 const profileSuffix = ".cover"

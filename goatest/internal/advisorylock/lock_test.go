@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/advisorylock"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/advisorylock"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 func open(t *testing.T, path string) *os.File {

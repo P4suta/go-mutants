@@ -19,13 +19,13 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/filemode"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/mutationbridge"
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/tempowner"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const (

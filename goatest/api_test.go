@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/P4suta/goatest"
+	"github.com/P4suta/go-mutants/goatest"
 )
 
 func TestRunPreservesTestingTAndScope(t *testing.T) {

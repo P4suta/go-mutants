@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 var reference = time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)

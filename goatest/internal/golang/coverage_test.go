@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	gotest "github.com/P4suta/goatest/internal/golang"
+	gotest "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
 func TestCoverageFilesKeepsReachedModuleRelativeFiles(t *testing.T) {

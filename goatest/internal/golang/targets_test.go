@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	gotest "github.com/P4suta/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	gotest "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
 func TestDiscoverTargetsKeepsExistingAndWrappedTests(t *testing.T) {
@@ -20,7 +20,7 @@ func TestDiscoverTargetsKeepsExistingAndWrappedTests(t *testing.T) {
 
 import (
 	"testing"
-	gt "github.com/P4suta/goatest"
+	gt "github.com/P4suta/go-mutants/goatest"
 )
 
 func TestExisting(t *testing.T) {}

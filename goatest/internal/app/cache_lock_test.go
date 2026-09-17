@@ -15,14 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/app"
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/checkpoint"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/app"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/checkpoint"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const (

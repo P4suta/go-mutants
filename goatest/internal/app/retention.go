@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/retention"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/retention"
 )
 
 func reportsRoot(root string) string {

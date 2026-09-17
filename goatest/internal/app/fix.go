@@ -13,14 +13,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/config"
-	envselect "github.com/P4suta/goatest/internal/environment"
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/repair"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/resource"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	envselect "github.com/P4suta/go-mutants/goatest/internal/environment"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/repair"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/resource"
 )
 
 func (service Service) fix(ctx context.Context, root string, request cli.Request) (report.Report, error) {

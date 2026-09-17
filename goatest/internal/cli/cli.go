@@ -13,8 +13,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/testargs"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/testargs"
 )
 
 var diagnosticPrefix = regexp.MustCompile(`^(?:goatest: )+`)

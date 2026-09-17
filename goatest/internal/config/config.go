@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/testargs"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/testargs"
 	"github.com/pelletier/go-toml/v2"
 )
 

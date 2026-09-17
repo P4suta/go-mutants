@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/filemode"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/mutationbridge"
-	"github.com/P4suta/goatest/internal/processtree"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
+	"github.com/P4suta/go-mutants/goatest/internal/processtree"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 const (

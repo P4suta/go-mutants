@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/checkpoint"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/checkpoint"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 func BenchmarkCheckpointIO(b *testing.B) {

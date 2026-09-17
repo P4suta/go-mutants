@@ -15,15 +15,15 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/checkpoint"
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/evidence"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/mutationbridge"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/tempowner"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/checkpoint"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/evidence"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const (

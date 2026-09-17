@@ -11,7 +11,7 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func TestOpenMapsOptionsWithoutAliasingAndWrapsFailure(t *testing.T) {

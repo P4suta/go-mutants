@@ -4,7 +4,7 @@
 version = 1
 SPDX-PackageName = "goatest"
 SPDX-PackageSupplier = "goatest contributors <noreply@goatest.invalid>"
-SPDX-PackageDownloadLocation = "https://github.com/P4suta/goatest"
+SPDX-PackageDownloadLocation = "https://github.com/P4suta/go-mutants"
 
 # Every file goatest ships carries its licence. Most carry it as a header; the
 # ones below cannot, and are annotated here instead.

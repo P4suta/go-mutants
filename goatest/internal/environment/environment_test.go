@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/environment"
+	"github.com/P4suta/go-mutants/goatest/internal/environment"
 )
 
 func TestProviderSelectsLaunchAndExplicitNamesWithoutSecrets(t *testing.T) {

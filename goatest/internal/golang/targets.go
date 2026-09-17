@@ -106,7 +106,7 @@ func aliases(file *ast.File) (map[string]bool, map[string]bool) {
 		switch path {
 		case "testing":
 			testingAliases[name] = true
-		case "github.com/P4suta/goatest":
+		case "github.com/P4suta/go-mutants/goatest":
 			goatestAliases[name] = true
 		}
 	}

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
 )
 
 func TestATraceDirectoryIsKeptWhereTheRepositoryCannotBeComparedWithIt(t *testing.T) {

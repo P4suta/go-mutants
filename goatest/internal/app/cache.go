@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/evidence"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/retention"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/evidence"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/retention"
 )
 
 func (service Service) cache(ctx context.Context, root, action string) (report.Report, error) {

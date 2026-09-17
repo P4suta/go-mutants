@@ -16,8 +16,8 @@ import (
 	"slices"
 	"strings"
 
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/trace"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const (

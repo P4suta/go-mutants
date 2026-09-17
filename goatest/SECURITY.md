@@ -10,7 +10,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Please do not open a public issue for security problems.
 
 Report vulnerabilities privately through GitHub:
-<https://github.com/P4suta/goatest/security/advisories/new>
+<https://github.com/P4suta/go-mutants/security/advisories/new>
 
 Include the affected version or commit, reproduction steps, and the impact
 you observed. You will get an acknowledgement within a week; fixes are

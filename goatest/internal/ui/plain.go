@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 const noteLineFormat = "goatest: %-18s %s\n"

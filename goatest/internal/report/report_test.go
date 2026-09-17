@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 

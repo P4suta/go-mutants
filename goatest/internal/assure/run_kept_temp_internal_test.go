@@ -12,10 +12,10 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/keptledger"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const keptFixturePayloadBytes = 1024

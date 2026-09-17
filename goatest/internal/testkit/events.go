@@ -6,7 +6,7 @@ package testkit
 import (
 	"slices"
 
-	"github.com/P4suta/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
 )
 
 func HasEvent(events []assure.Event, kind string) bool {

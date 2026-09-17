@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/P4suta/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
 )
 
 func processSignalCases() []processSignalCase {

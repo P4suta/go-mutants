@@ -6,7 +6,7 @@ package assure
 import (
 	"testing"
 
-	"github.com/P4suta/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
 )
 
 const (

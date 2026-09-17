@@ -14,11 +14,11 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/P4suta/goatest/internal/app"
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/ui"
+	"github.com/P4suta/go-mutants/goatest/internal/app"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/ui"
 )
 
 const (

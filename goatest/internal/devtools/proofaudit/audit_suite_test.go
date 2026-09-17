@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const fixtureSuiteProfile = "0123456789abcdef.test.suite"

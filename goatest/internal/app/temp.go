@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/keptledger"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
 )
 
 func unnamedTemporaryDirectory(id string) report.Evidence {

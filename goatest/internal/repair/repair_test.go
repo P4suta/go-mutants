@@ -17,10 +17,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/repair"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/repair"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 type validator struct{ calls []string }

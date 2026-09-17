@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 const (

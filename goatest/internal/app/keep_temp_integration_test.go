@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/app"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/testkit"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/app"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func TestKeepTempLeavesTheBaselineScratchOfARealRunWhereItSaysItDid(t *testing.T) {

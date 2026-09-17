@@ -22,15 +22,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/buildcache"
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/repair"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/trace"
-	"github.com/P4suta/goatest/internal/ui"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/repair"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/ui"
 )
 
 type RunFunc func(context.Context, assure.Options) (report.Report, error)

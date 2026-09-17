@@ -3,7 +3,7 @@
 
 package ui
 
-import "github.com/P4suta/goatest/internal/report"
+import "github.com/P4suta/go-mutants/goatest/internal/report"
 
 // NoteDetail is what a renderer prints for a note.
 //

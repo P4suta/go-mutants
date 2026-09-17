@@ -24,14 +24,14 @@
 #
 # A skip for a missing tool belongs to neither kind and must not be added here.
 # Set GOATEST_TEST_REQUIRE_TOOLS=1 in CI and the harness will fail instead.
-github.com/P4suta/goatest/cmd/goatest TestTheCLIServiceNamesWhatBelongsToTheMachine
-github.com/P4suta/goatest/internal/app TestATraceDirectoryIsJudgedByWhereItLands
-github.com/P4suta/goatest/internal/app TestAnEntryThatCannotBeStatedKeepsItsPlaceInTheLedger
-github.com/P4suta/goatest/internal/cache TestFlushDoesNotFollowAnEntryReplacedAfterValidation
-github.com/P4suta/goatest/internal/cache TestInspectRefusesASymbolicLinkForTheVersionRoot
-github.com/P4suta/goatest/internal/evidence TestFlushMutationNeverTraversesAStoredSymlink
-github.com/P4suta/goatest/internal/repair TestApplyAcceptsRepositoryRootAlias
-github.com/P4suta/goatest/internal/repair TestApplyRejectsSymlinkDirectoryEscapingRepository
-github.com/P4suta/goatest/internal/retention TestInspectFilesRefusesASymlinkedEntry
-github.com/P4suta/goatest/internal/retention TestRetentionRefusesSymlinkedEntries
-github.com/P4suta/goatest/internal/tempowner TestSweepNeverFollowsASymbolicLink
+github.com/P4suta/go-mutants/goatest/cmd/goatest TestTheCLIServiceNamesWhatBelongsToTheMachine
+github.com/P4suta/go-mutants/goatest/internal/app TestATraceDirectoryIsJudgedByWhereItLands
+github.com/P4suta/go-mutants/goatest/internal/app TestAnEntryThatCannotBeStatedKeepsItsPlaceInTheLedger
+github.com/P4suta/go-mutants/goatest/internal/cache TestFlushDoesNotFollowAnEntryReplacedAfterValidation
+github.com/P4suta/go-mutants/goatest/internal/cache TestInspectRefusesASymbolicLinkForTheVersionRoot
+github.com/P4suta/go-mutants/goatest/internal/evidence TestFlushMutationNeverTraversesAStoredSymlink
+github.com/P4suta/go-mutants/goatest/internal/repair TestApplyAcceptsRepositoryRootAlias
+github.com/P4suta/go-mutants/goatest/internal/repair TestApplyRejectsSymlinkDirectoryEscapingRepository
+github.com/P4suta/go-mutants/goatest/internal/retention TestInspectFilesRefusesASymlinkedEntry
+github.com/P4suta/go-mutants/goatest/internal/retention TestRetentionRefusesSymlinkedEntries
+github.com/P4suta/go-mutants/goatest/internal/tempowner TestSweepNeverFollowsASymbolicLink

@@ -9,8 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/filemode"
-	gotest "github.com/P4suta/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	gotest "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
 func TestRepositoryReadCandidatesNameEveryPackageThatReadsAPathItComputes(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/mutationbridge"
-	"github.com/P4suta/goatest/internal/trace"
+	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 func mutantExecutionRecord(request gomutants.ExecRequest, result gomutants.MutantResult, reason wholeTreeReason, err error) trace.MutantRecord {

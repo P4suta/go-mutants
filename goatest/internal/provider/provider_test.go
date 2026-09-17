@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 const (

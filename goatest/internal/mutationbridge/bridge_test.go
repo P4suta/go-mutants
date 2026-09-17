@@ -6,7 +6,7 @@ package mutationbridge_test
 import (
 	"testing"
 
-	"github.com/P4suta/goatest/internal/mutationbridge"
+	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
 )
 
 func TestProfileMatchesAssuranceContract(t *testing.T) {

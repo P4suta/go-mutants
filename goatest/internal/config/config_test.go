@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 const configuredReportsKeep = 5

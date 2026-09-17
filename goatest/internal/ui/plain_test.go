@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/ui"
+	"github.com/P4suta/go-mutants/goatest/internal/ui"
 )
 
 func TestPlainRendersTheDeterministicNoteLine(t *testing.T) {

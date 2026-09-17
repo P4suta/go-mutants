@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/buildcache"
+	"github.com/P4suta/go-mutants/goatest/internal/buildcache"
 )
 
 func twoLayers(t *testing.T, persist bool) buildcache.Layers {

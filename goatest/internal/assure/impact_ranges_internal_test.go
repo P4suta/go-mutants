@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 // scriptedDiff answers the one git call changedLineRanges makes.

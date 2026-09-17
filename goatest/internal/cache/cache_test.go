@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 func TestStoreAndLoadReuseOnlyTheExactDigest(t *testing.T) {

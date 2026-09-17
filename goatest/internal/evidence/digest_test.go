@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/evidence"
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/evidence"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 func TestDigestIsDeterministicAndEveryInputInvalidatesIt(t *testing.T) {

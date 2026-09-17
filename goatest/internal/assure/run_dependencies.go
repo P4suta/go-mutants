@@ -7,14 +7,14 @@ import (
 	"context"
 	"os"
 
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/config"
-	"github.com/P4suta/goatest/internal/evidence"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
-	"github.com/P4suta/goatest/internal/mutationbridge"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/resource"
-	"github.com/P4suta/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/config"
+	"github.com/P4suta/go-mutants/goatest/internal/evidence"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
+	"github.com/P4suta/go-mutants/goatest/internal/mutationbridge"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/resource"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
 )
 
 type productionRunResourceManager struct{ manager *resource.Manager }

@@ -10,15 +10,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/P4suta/goatest/internal/app"
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/cache"
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/evidence"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/provider"
-	"github.com/P4suta/goatest/internal/repair"
-	"github.com/P4suta/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/app"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/cache"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/evidence"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/provider"
+	"github.com/P4suta/go-mutants/goatest/internal/repair"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
 type operationValidator struct{ original, kills, suite int }

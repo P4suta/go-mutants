@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/cli"
-	"github.com/P4suta/goatest/internal/filemode"
-	"github.com/P4suta/goatest/internal/keptledger"
-	"github.com/P4suta/goatest/internal/report"
-	"github.com/P4suta/goatest/internal/tempowner"
+	"github.com/P4suta/go-mutants/goatest/internal/cli"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/keptledger"
+	"github.com/P4suta/go-mutants/goatest/internal/report"
+	"github.com/P4suta/go-mutants/goatest/internal/tempowner"
 )
 
 func abandonedRunScratch(t *testing.T, parent, name string, bytes int) string {

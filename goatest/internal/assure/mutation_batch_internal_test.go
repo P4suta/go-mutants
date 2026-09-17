@@ -12,7 +12,7 @@ import (
 	"time"
 
 	gomutants "github.com/P4suta/go-mutants"
-	goanalysis "github.com/P4suta/goatest/internal/golang"
+	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
 )
 
 const (

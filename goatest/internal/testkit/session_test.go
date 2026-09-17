@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	gomutants "github.com/P4suta/go-mutants"
-	"github.com/P4suta/goatest/internal/assure"
-	"github.com/P4suta/goatest/internal/testkit"
+	"github.com/P4suta/go-mutants/goatest/internal/assure"
+	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
 var _ assure.MutationSession = (*testkit.ScriptedSession)(nil)

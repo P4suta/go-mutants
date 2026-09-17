@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # CI usage
 
 A packaged GitHub Action is not required. A repository can install a tagged
-release with `go install github.com/P4suta/goatest/cmd/goatest@latest`, or build
+release with `go install github.com/P4suta/go-mutants/goatest/cmd/goatest@latest`, or build
 the checked-out source and use the CLI directly:
 
 ```yaml

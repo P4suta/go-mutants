@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/P4suta/goatest/internal/filemode"
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
 var claimMoment = time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
