@@ -583,6 +583,7 @@ func TestControlOnAFuzzTargetRunsInAPrivateCopy(t *testing.T) {
 		"-test.run=^$",
 		"-test.fuzz=^FuzzSessionIdentity$",
 		"-test.fuzztime=100ms",
+		"-test.parallel=1",
 	}
 	const budget = 30 * time.Second
 
