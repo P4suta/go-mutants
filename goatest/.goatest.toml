@@ -247,3 +247,9 @@ id = '5dda53d6f080fd60'
 reason = 'on every platform but Windows this is the constant true, and on Windows it is true for any writer that is not a console handle, so no writer a test can supply distinguishes the two'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '59e4579e2e5863dd'
+reason = 'a finding that names no mutant would be filed under the empty identity, and no mutant disposition carries that identity, so the entry is never read; the guard says the attribution is deliberate rather than accidental'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

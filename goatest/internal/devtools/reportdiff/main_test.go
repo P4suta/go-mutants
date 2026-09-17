@@ -82,8 +82,8 @@ func TestRunReportsAReportItCannotRead(t *testing.T) {
 		if stdout.Len() != 0 {
 			t.Errorf("run(%q) wrote %q to stdout, want nothing", arguments, stdout.String())
 		}
-		if !strings.Contains(stderr.String(), missing) {
-			t.Errorf("run(%q) wrote %q to stderr, want the path it could not read", arguments, stderr.String())
+		if !strings.Contains(stderr.String(), missing) || !strings.Contains(stderr.String(), "no such file") {
+			t.Errorf("run(%q) wrote %q to stderr, want the path it could not read and why", arguments, stderr.String())
 		}
 	}
 }
