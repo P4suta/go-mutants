@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/P4suta/go-mutants/goatest/internal/trace"
 )
 
 const (
@@ -18,6 +20,9 @@ const (
 	fifthBucketBoundary  = 32
 	sixthBucketBoundary  = 64
 	beyondEveryBucket    = 4096
+
+	deltaCallCount  = 3
+	gammaDurationMS = 5
 )
 
 func TestAFanOutBucketHoldsThePowerOfTwoItsCountFallsIn(t *testing.T) {
@@ -99,5 +104,48 @@ func TestPrepareTotalsOrderByDurationThenFinishedThenStartedThenPhase(t *testing
 				t.Errorf("%s counted %d succeeded, want one", total.phase, total.succeeded)
 			}
 		}
+	}
+}
+
+func TestExecTotalsOrderByDurationThenCallsThenClass(t *testing.T) {
+	t.Parallel()
+	exec := func(seq int, argv []string, duration int64) trace.Event {
+		return trace.Event{
+			Seq: int64(seq), Type: trace.TypeExec, ElapsedMS: int64(seq),
+			Exec: &trace.ExecRecord{Argv: argv, DurationMS: duration},
+		}
+	}
+	totals := execTotals([]trace.Event{
+		exec(2, []string{"beta"}, 1),
+		exec(3, []string{"alpha"}, 1),
+		exec(4, []string{"alpha"}, 0),
+		exec(5, []string{"gamma"}, gammaDurationMS),
+		exec(6, []string{"delta"}, 1),
+		exec(7, []string{"delta"}, 0),
+		exec(8, []string{"delta"}, 0),
+	})
+	got := make([]string, 0, len(totals))
+	for _, total := range totals {
+		got = append(got, total.class)
+	}
+	want := []string{"gamma", "delta", "alpha", "beta"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("exec totals read %q, want %q: the longest first, then the most called, then by name",
+			got, want)
+	}
+	for _, total := range totals {
+		switch total.class {
+		case "delta":
+			if total.calls != deltaCallCount {
+				t.Errorf("delta counted %d calls, want three", total.calls)
+			}
+		case "gamma":
+			if total.duration != gammaDurationMS {
+				t.Errorf("gamma took %dms, want five", total.duration)
+			}
+		}
+	}
+	if totals := execTotals(nil); len(totals) != 0 {
+		t.Fatalf("a recording with no execution totalled %+v, want none", totals)
 	}
 }
