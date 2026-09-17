@@ -33,7 +33,7 @@ var wholeMainmod = sync.OnceValues(func() (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	root, err := filepath.Abs(filepath.Join("testdata", "mainmod"))
+	root, err := fixturePath("mainmod")
 	if err != nil {
 		return Result{}, err
 	}

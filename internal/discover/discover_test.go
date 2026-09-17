@@ -12,6 +12,7 @@ package discover
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -50,14 +51,69 @@ func toolchain(t *testing.T) gocmd.Toolchain {
 // fixture returns the absolute path of a testdata module.
 func fixture(t *testing.T, name string) string {
 	t.Helper()
-	path, err := filepath.Abs(filepath.Join("testdata", name))
+	path, err := fixturePath(name)
 	if err != nil {
-		t.Fatalf("resolving the fixture path: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("fixture %s is missing: %v", name, err)
+		t.Fatalf("fixture %s: %v", name, err)
 	}
 	return path
+}
+
+// fixturePath resolves a testdata module, and refuses anything that is not one.
+//
+// The name is checked before the path is, and the path is checked for a module
+// file rather than for existing. `os.Stat` on the joined path -- which is what
+// this did -- answers a weaker question than the caller asked: the empty name
+// and `.` both join to the `testdata` directory, `..` joins to this package,
+// and all three exist. The helper would hand back a path that is not a module,
+// and every caller puts what it gets straight into [Options.SnapshotRoot];
+// discovery would then walk the wrong tree and the test would measure something
+// nobody named, with nothing anywhere saying so.
+//
+// Either module file counts. `workspace` is a `go.work` with no `go.mod` beside
+// it, and asking only for `go.mod` refuses a fixture two tests here already use
+// -- which is how the first draft of this rule failed them.
+//
+// The rule is internal/testkit's, from `root.go`, which resolves the
+// repository's own fixtures and has refused these shapes since it was written.
+func fixturePath(name string) (string, error) {
+	switch {
+	case name == "", name == ".", name == "..":
+		return "", fmt.Errorf("%q is not a name inside testdata/", name)
+	case name != filepath.Base(name), name != filepath.Clean(name):
+		return "", fmt.Errorf("%q is not a name directly inside testdata/", name)
+	}
+	path, err := filepath.Abs(filepath.Join("testdata", name))
+	if err != nil {
+		return "", fmt.Errorf("resolving the fixture path: %w", err)
+	}
+	for _, marker := range []string{"go.mod", "go.work"} {
+		if _, statErr := os.Stat(filepath.Join(path, marker)); statErr == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("is not a tree a `go` command can be pointed at: "+
+		"%s holds neither a go.mod nor a go.work", path)
+}
+
+// TestFixturePathRefusesWhatIsNotAFixtureModule pins the shape this helper
+// resolves, and not merely that something is there.
+//
+// Watched failing first, on the three names that used to pass: "" and "."
+// resolved the `testdata` directory and ".." resolved this package.
+func TestFixturePathRefusesWhatIsNotAFixtureModule(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"", ".", "..", "nested/name", "discover.go"} {
+		if path, err := fixturePath(name); err == nil {
+			t.Errorf("fixturePath(%q) resolved %s, and that is not a fixture module", name, path)
+		}
+	}
+	// One of each marker, because the rule accepts either.
+	for _, name := range []string{"mainmod", "workspace"} {
+		if _, err := fixturePath(name); err != nil {
+			t.Errorf("fixturePath refused %q, a fixture this package has: %v", name, err)
+		}
+	}
 }
 
 // discoverFixture runs a discovery over a testdata module, failing the test on
