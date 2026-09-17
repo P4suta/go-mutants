@@ -481,3 +481,129 @@ id = 'e976a7640e27c4fe'
 reason = 'the allowed set of a ledger nobody wrote is only ever ranged over and searched, where an empty slice and a nil slice answer alike'
 expires = '2027-09-17T00:00:00Z'
 owner = 'goatest'
+
+[[acceptance]]
+id = '8c88409f271bb845'
+reason = 'a directory entry that is a symbolic link is neither a regular file nor a directory, so both halves of this kind refuse it on their own; the guard is written out because following one is the thing this package exists not to do'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '0f5d913d75ca897a'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8009fd9e4a9b3feb'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8cd04ffa90286fd8'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'fe64724980877a4e'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '983ef03175a9fb58'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd6fdcf9eb6d401c5'
+reason = 'fs.DirEntry.Info fails only for an entry removed between the directory listing that produced it and this call, which is another process working in the same root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '7fe461c6e46873c1'
+reason = 'an inspection that fails yields no entries, so skipping this guard reaches the same state by a longer route and the second inspection reports the same failure'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'eab0ad95fdafde12'
+reason = 'an inspection that fails yields no entries, so skipping this guard reaches the same state by a longer route and the second inspection reports the same failure'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'c1ab76add8d1c6c6'
+reason = 'every artifact this removes was measured a moment earlier by the same walk that refuses a link or an irregular file, so the removal has nothing left to refuse; its own guards answer for a caller that hands it a path from somewhere else, which the tests do directly'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '8ca17615ceb427f6'
+reason = 'every artifact this removes was measured a moment earlier by the same walk that refuses a link or an irregular file, so the removal has nothing left to refuse; its own guards answer for a caller that hands it a path from somewhere else, which the tests do directly'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '67f7cae0ec23e9e1'
+reason = 'every artifact this removes was measured a moment earlier by the same walk that refuses a link or an irregular file, so the removal has nothing left to refuse; its own guards answer for a caller that hands it a path from somewhere else, which the tests do directly'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '308a955b9d5140cb'
+reason = 'every artifact this removes was measured a moment earlier by the same walk that refuses a link or an irregular file, so the removal has nothing left to refuse; its own guards answer for a caller that hands it a path from somewhere else, which the tests do directly'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '771a3cc014608e33'
+reason = 'the closing inspection reads a root the opening one already read, after removals that only take entries away, so it answers again rather than failing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'a1f58a62d6129274'
+reason = 'the closing inspection reads a root the opening one already read, after removals that only take entries away, so it answers again rather than failing'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '451cc8ee518439d6'
+reason = 'the entries of a root nobody has written are only ever ranged over and sorted, where an empty slice and a nil slice answer alike'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'b38a1e24665209f2'
+reason = 'filepath.WalkDir reports an error for a directory it cannot read, which is permission denial, and a test that removes its own read permission passes silently for a process running as root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3081e7329ca73676'
+reason = 'filepath.WalkDir reports an error for a directory it cannot read, which is permission denial, and a test that removes its own read permission passes silently for a process running as root'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '3f4ee2c212cf963d'
+reason = 'filepath.Rel returns an empty relative path with every error it reports, and an empty path is not local, so the guard beside this one already refuses everything a failed call can produce'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = '748fa8ddeebe87b2'
+reason = 'the paths being removed were listed by the walk directly above and are taken deepest first, so a removal fails only for a directory the process may not empty, which is permission denial'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'
+
+[[acceptance]]
+id = 'd09822eb741a2850'
+reason = 'the paths being removed were listed by the walk directly above and are taken deepest first, so a removal fails only for a directory the process may not empty, which is permission denial'
+expires = '2027-09-17T00:00:00Z'
+owner = 'goatest'

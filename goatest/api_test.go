@@ -5,6 +5,7 @@ package goatest_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/P4suta/go-mutants/goatest"
@@ -48,4 +49,25 @@ func TestIntegrationRejectsBlankCapability(t *testing.T) {
 		}
 	}()
 	_ = goatest.Integration(" \t")
+}
+
+func TestIntegrationRejectsNoCapabilityAtAll(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		recovered := recover()
+		message, ok := recovered.(string)
+		if !ok || !strings.Contains(message, "requires at least one capability") {
+			t.Fatalf("Integration() recovered %v, want the missing capability named", recovered)
+		}
+	}()
+	goatest.Integration()
+	t.Fatal("Integration with no capability returned a scope")
+}
+
+func TestNoTestAnswersForItsOwnScope(t *testing.T) {
+	t.Parallel()
+	var absent *goatest.T
+	if got := absent.Scope(); got.Kind != "" || len(got.Capabilities()) != 0 {
+		t.Fatalf("Scope of no test = %+v", got)
+	}
 }
