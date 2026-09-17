@@ -25,6 +25,10 @@ const (
 func validCheckpoint() checkpoint.State {
 	state := everyStructureCheckpoint(false)
 	target := state.Baseline.Targets[0].Target
+	target.Target = checkpoint.Target{
+		ID: "t1", Name: "TestOne", Kind: "test", Package: "example.test/fixture",
+		RelativeDir: ".", Path: "one_test.go", Line: 1,
+	}
 	target.Probed = true
 	target.ProbeDurationNS = 1
 	target.Infected = []uint32{firstInfection, secondInfection}
@@ -620,4 +624,43 @@ func completeCheckpoint() checkpoint.State {
 		Suites: []checkpoint.SuiteCoverage{{Package: "example.test/fixture"}},
 	}
 	return state
+}
+
+func TestACheckpointRefusesCoverageItCannotReadWhereverItCarriesIt(t *testing.T) {
+	t.Parallel()
+	broken := &checkpoint.Coverage{Files: []checkpoint.FileCoverage{{Path: ""}}}
+	for _, test := range []struct {
+		name   string
+		change func(*checkpoint.State)
+		want   string
+	}{
+		{
+			name:   "target instrumentation",
+			change: func(s *checkpoint.State) { s.Baseline.Targets[0].Target.Instrumented = broken },
+			want:   "invalid instrumentation",
+		},
+		{
+			name:   "a partial baseline suite's coverage",
+			change: func(s *checkpoint.State) { s.Baseline.Suites[0].Covered = broken },
+			want:   "invalid covered blocks",
+		},
+		{
+			name:   "a partial baseline suite's instrumentation",
+			change: func(s *checkpoint.State) { s.Baseline.Suites[0].Instrumented = broken },
+			want:   "invalid instrumentation",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			state := validCheckpoint()
+			test.change(&state)
+			err := checkpoint.Validate(state)
+			if err == nil {
+				t.Fatalf("Validate accepted %s it cannot read", test.name)
+			}
+			if !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "empty file path") {
+				t.Fatalf("Validate reported %v, want it to say %q and name the file path", err, test.want)
+			}
+		})
+	}
 }

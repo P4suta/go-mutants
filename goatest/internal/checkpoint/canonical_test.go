@@ -306,3 +306,109 @@ func TestACheckpointKeepsEveryCollectionItWasGivenAndOrdersIt(t *testing.T) {
 		t.Fatalf("coverage blocks read back as %+v, want them in position order", blocks)
 	}
 }
+
+func TestACheckpointKeepsTheStructuresItWasGivenAndDoesNotInventThem(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		blank func(*checkpoint.State)
+		check func(*testing.T, checkpoint.State)
+	}{
+		{
+			name:  "no race phase at all",
+			blank: func(s *checkpoint.State) { s.Race = nil },
+			check: func(t *testing.T, decoded checkpoint.State) {
+				if decoded.Race != nil {
+					t.Fatalf("a checkpoint with no race phase read back %+v, want none", decoded.Race)
+				}
+			},
+		},
+		{
+			name:  "no mutation phase at all",
+			blank: func(s *checkpoint.State) { s.Mutation = nil },
+			check: func(t *testing.T, decoded checkpoint.State) {
+				if decoded.Mutation != nil {
+					t.Fatalf("a checkpoint with no mutation phase read back %+v, want none", decoded.Mutation)
+				}
+			},
+		},
+		{
+			name:  "no probe pass at all",
+			blank: func(s *checkpoint.State) { s.Mutation.Probe = nil },
+			check: func(t *testing.T, decoded checkpoint.State) {
+				if decoded.Mutation.Probe != nil {
+					t.Fatalf("a checkpoint with no probe pass read back %+v, want none", decoded.Mutation.Probe)
+				}
+			},
+		},
+		{
+			name: "target evidence with no coverage",
+			blank: func(s *checkpoint.State) {
+				s.Baseline.Targets[0].Target.Coverage = nil
+				s.Baseline.Targets[0].Target.Instrumented = nil
+			},
+			check: func(t *testing.T, decoded checkpoint.State) {
+				evidence := decoded.Baseline.Targets[0].Target
+				if evidence.Coverage != nil || evidence.Instrumented != nil {
+					t.Fatalf("target evidence with no coverage read back %+v", evidence)
+				}
+			},
+		},
+		{
+			name:  "no baseline routing at all",
+			blank: func(s *checkpoint.State) { s.Baseline.Routing = nil },
+			check: func(t *testing.T, decoded checkpoint.State) {
+				if decoded.Baseline.Routing != nil {
+					t.Fatalf("a baseline with no routing read back %+v, want none", decoded.Baseline.Routing)
+				}
+			},
+		},
+		{
+			name:  "no partial baseline suite at all",
+			blank: func(s *checkpoint.State) { s.Baseline.Suites = nil },
+			check: func(t *testing.T, decoded checkpoint.State) {
+				if len(decoded.Baseline.Suites) != 0 {
+					t.Fatalf("a baseline with no partial suite read back %+v", decoded.Baseline.Suites)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			state := everyStructureCheckpoint(false)
+			test.blank(&state)
+			var decoded checkpoint.State
+			if err := json.Unmarshal(checkpoint.JSON(state), &decoded); err != nil {
+				t.Fatal(err)
+			}
+			test.check(t, decoded)
+		})
+	}
+}
+
+func TestABaselineRoutingKeepsItsSuitesAndOrdersThem(t *testing.T) {
+	t.Parallel()
+	state := everyStructureCheckpoint(true)
+	state.Baseline.Routing.Suites = []checkpoint.SuiteCoverage{
+		{Package: "example.test/zulu"}, {Package: "example.test/alpha"},
+	}
+	var decoded checkpoint.State
+	if err := json.Unmarshal(checkpoint.JSON(state), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	suites := decoded.Baseline.Routing.Suites
+	if len(suites) != 2 || suites[0].Package != "example.test/alpha" || suites[1].Package != "example.test/zulu" {
+		t.Fatalf("routing suites read back as %+v, want them in package order", suites)
+	}
+
+	empty := everyStructureCheckpoint(true)
+	empty.Baseline.Routing.Suites = nil
+	var withoutSuites map[string]any
+	if err := json.Unmarshal(checkpoint.JSON(empty), &withoutSuites); err != nil {
+		t.Fatal(err)
+	}
+	routing, _ := withoutSuites["baseline"].(map[string]any)["routing"].(map[string]any)
+	if routing["suites"] == nil {
+		t.Fatal("a routing with no suite wrote null, want an empty list")
+	}
+}

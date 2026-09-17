@@ -62,3 +62,57 @@ func TestStrictlyIncreasingHoldsOnlyForAscendingDistinctValues(t *testing.T) {
 		})
 	}
 }
+
+func TestCoverageBlocksAreComparedFieldByFieldInOrder(t *testing.T) {
+	t.Parallel()
+	base := CoverageBlock{StartLine: 2, StartColumn: 2, EndLine: 2, EndColumn: 2}
+	for _, test := range []struct {
+		name  string
+		other CoverageBlock
+		want  int
+	}{
+		{name: "the same block", other: base},
+		{
+			name:  "an earlier start line",
+			other: CoverageBlock{StartLine: 1, StartColumn: 9, EndLine: 9, EndColumn: 9}, want: 1,
+		},
+		{
+			name:  "a later start line",
+			other: CoverageBlock{StartLine: 3, StartColumn: 1, EndLine: 1, EndColumn: 1}, want: -1,
+		},
+		{
+			name:  "an earlier start column",
+			other: CoverageBlock{StartLine: 2, StartColumn: 1, EndLine: 9, EndColumn: 9}, want: 1,
+		},
+		{
+			name:  "a later start column",
+			other: CoverageBlock{StartLine: 2, StartColumn: 3, EndLine: 1, EndColumn: 1}, want: -1,
+		},
+		{
+			name:  "an earlier end line",
+			other: CoverageBlock{StartLine: 2, StartColumn: 2, EndLine: 1, EndColumn: 9}, want: 1,
+		},
+		{
+			name:  "a later end line",
+			other: CoverageBlock{StartLine: 2, StartColumn: 2, EndLine: 3, EndColumn: 1}, want: -1,
+		},
+		{
+			name:  "an earlier end column",
+			other: CoverageBlock{StartLine: 2, StartColumn: 2, EndLine: 2, EndColumn: 1}, want: 1,
+		},
+		{
+			name:  "a later end column",
+			other: CoverageBlock{StartLine: 2, StartColumn: 2, EndLine: 2, EndColumn: 3}, want: -1,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := compareCoverageBlocks(base, test.other); got != test.want {
+				t.Fatalf("compareCoverageBlocks(%+v, %+v) = %d, want %d", base, test.other, got, test.want)
+			}
+			if got := compareCoverageBlocks(test.other, base); got != -test.want {
+				t.Fatalf("compareCoverageBlocks(%+v, %+v) = %d, want %d", test.other, base, got, -test.want)
+			}
+		})
+	}
+}

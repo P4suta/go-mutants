@@ -505,3 +505,86 @@ func TestEveryVerdictNamesTheScopeItIsReservedFor(t *testing.T) {
 		})
 	}
 }
+
+func TestAPersistedReportRefusesEveryAmbiguousGitIdentity(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		git  report.Git
+	}{
+		{
+			name: "a commit that says nothing while the rest says unavailable",
+			git:  report.Git{Commit: "commit-a", MergeBase: "unavailable"},
+		},
+		{
+			name: "a merge base that says nothing while the rest says unavailable",
+			git:  report.Git{Commit: "unavailable", MergeBase: "commit-a"},
+		},
+		{
+			name: "an unavailable identity that is also dirty",
+			git:  report.Git{Commit: "unavailable", MergeBase: "unavailable", Dirty: true},
+		},
+		{
+			name: "an unavailable identity that names changed files",
+			git: report.Git{
+				Commit: "unavailable", MergeBase: "unavailable", ChangedFiles: []string{"a.go"},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := persistedFixture()
+			input.Repository.Git = test.git
+			input.Limitations = append(input.Limitations, report.Limitation{
+				Code: report.LimitationGitMetadataUnavailable, Summary: "Git metadata is unavailable",
+			})
+			err := report.ValidateForPersistence(input)
+			if err == nil || !strings.Contains(err.Error(), "ambiguous partial identity") {
+				t.Fatalf("ValidateForPersistence reported %v, want it to refuse the partial identity", err)
+			}
+		})
+	}
+}
+
+func TestAReportRefusesEveryCountThatDoesNotAddUpOnEitherSide(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		apply func(*report.Report, report.CountAccounting)
+		want  string
+	}{
+		{
+			name: "the target count",
+			apply: func(value *report.Report, count report.CountAccounting) {
+				value.Accounting.Targets = count
+				value.Targets = nil
+			},
+			want: "targets accounting",
+		},
+		{
+			name:  "the race count",
+			apply: func(value *report.Report, count report.CountAccounting) { value.Accounting.Race = count },
+			want:  "race accounting",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			input := auditedFixture()
+			test.apply(&input, report.CountAccounting{Discovered: 1, Selected: 1, Executed: 1, Excluded: 1})
+			err := report.Validate(input)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Validate reported %v, want it to refuse %s", err, test.name)
+			}
+		})
+	}
+}
+
+func TestAReportWithNoRunKindIsStillHeldToItsPersistedFields(t *testing.T) {
+	t.Parallel()
+	input := persistedFixture()
+	input.RunKind = ""
+	err := report.ValidateForPersistence(input)
+	if err == nil || !strings.Contains(err.Error(), "missing run_kind") {
+		t.Fatalf("ValidateForPersistence reported %v, want it to say the run kind is missing", err)
+	}
+}

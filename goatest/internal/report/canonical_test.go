@@ -218,3 +218,45 @@ func TestWithoutToolPrefixStripsEveryNameTheToolPutInFront(t *testing.T) {
 		})
 	}
 }
+
+func TestAReportKeepsTheResumeItWasGivenAndDoesNotInventOne(t *testing.T) {
+	t.Parallel()
+	without := auditedFixture()
+	without.Resume = nil
+	var decoded report.Report
+	if err := json.Unmarshal(report.JSON(without), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Resume != nil {
+		t.Fatalf("a report with no resume metadata read back %+v, want none", decoded.Resume)
+	}
+
+	with := auditedFixture()
+	if err := json.Unmarshal(report.JSON(with), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Resume == nil || decoded.Resume.Attempts != with.Resume.Attempts {
+		t.Fatalf("a report with resume metadata read back %+v, want %+v", decoded.Resume, with.Resume)
+	}
+}
+
+func TestMutantDispositionsAreOrderedByIdentity(t *testing.T) {
+	t.Parallel()
+	input := mutantFixture()
+	input.Mutants = []report.MutantDisposition{
+		{ID: "m9", Status: report.MutantKilled},
+		{ID: "m1", Status: report.MutantSurvived},
+		{ID: "m5", Status: report.MutantInconclusive},
+	}
+	input.Accounting.Mutants = report.MutantAccounting{
+		Discovered: 3, Selected: 3, Executed: 3, Killed: 1, Survived: 1, Inconclusive: 1,
+	}
+	var decoded report.Report
+	if err := json.Unmarshal(report.JSON(input), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	got := []string{decoded.Mutants[0].ID, decoded.Mutants[1].ID, decoded.Mutants[2].ID}
+	if got[0] != "m1" || got[1] != "m5" || got[2] != "m9" {
+		t.Fatalf("mutants read back as %q, want them in identity order", got)
+	}
+}
