@@ -386,7 +386,10 @@ func TestTheBranchAndInfectionBlocksAreEmptyWhenTheirLayerWasNotAudited(t *testi
 func TestRenderAuditSaysNothingAboutSuiteReachWhenTheRecordingHoldsASuiteProfile(t *testing.T) {
 	t.Parallel()
 
-	got := renderAudit("trace.jsonl", "profiles", fixtureModule, auditResult{suiteCoverageProfiles: 1})
+	got := renderAudit("trace.jsonl", "profiles", fixtureModule, auditResult{
+		suiteCoverageProfiles: 1,
+		layers:                []layerResult{{name: reachLayerName, audited: 1, kept: 1}},
+	})
 	if strings.Contains(got, whySuiteReachNotAudited) {
 		t.Errorf("an audit holding a package-suite profile still says the layer was not audited:\n%s", got)
 	}

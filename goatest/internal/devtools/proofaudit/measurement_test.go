@@ -318,3 +318,14 @@ func TestASuiteProbeCountsAsMeasuredOnlyWhenItMeasured(t *testing.T) {
 		})
 	}
 }
+
+func TestAnAuditorReadsAMeasurementThatCarriesNoArgumentsAtAll(t *testing.T) {
+	t.Parallel()
+	audit := newAuditor(evidence{}, nil, nil)
+	audit.measurement(nil)
+	audit.measurement([]string{})
+	if len(audit.targets) != 0 || len(audit.testBinaries) != 0 {
+		t.Fatalf("a measurement of no arguments recorded %d targets and %d binaries",
+			len(audit.targets), len(audit.testBinaries))
+	}
+}

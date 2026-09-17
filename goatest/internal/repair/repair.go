@@ -160,9 +160,6 @@ func ApplyCandidate(root string, finding report.Finding, candidate provider.Cand
 func ApplyCandidates(root string, applications []Application) ([]Result, error) {
 	applyRepairMutex.Lock()
 	defer applyRepairMutex.Unlock()
-	if len(applications) == 0 {
-		return []Result{}, nil
-	}
 	states := make([]applicationState, len(applications))
 	results := make([]Result, len(applications))
 	paths := make(map[string]struct{}, len(applications))
@@ -359,7 +356,6 @@ func ListCandidates(root string) ([]CandidateRecord, error) {
 		}
 		records = append(records, record)
 	}
-	slices.SortFunc(records, func(a, b CandidateRecord) int { return strings.Compare(a.ID, b.ID) })
 	return records, nil
 }
 

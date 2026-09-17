@@ -4,6 +4,7 @@
 package repair
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -627,8 +628,17 @@ func TestApplyCandidatesWritesAnArtifactForEveryPreimageThatDoesNotMatch(t *test
 }
 
 func TestApplyCandidatesWritesNothingWhenOneOfABatchDoesNotMatch(t *testing.T) {
+	preserveRepairHooks(t)
 	root := resolvedTempDir(t)
 	matching := filepath.Join(root, "matching_test.go")
+	written := 0
+	originalRename := renameRepairFile
+	renameRepairFile = func(source, target string) error {
+		if target == matching {
+			written++
+		}
+		return originalRename(source, target)
+	}
 	original := []byte("package fixture\n")
 	if err := os.WriteFile(matching, original, filemode.PrivateFile); err != nil {
 		t.Fatal(err)
@@ -659,5 +669,306 @@ func TestApplyCandidatesWritesNothingWhenOneOfABatchDoesNotMatch(t *testing.T) {
 	}
 	if current, readErr := os.ReadFile(matching); readErr != nil || string(current) != string(original) {
 		t.Fatalf("the matching file of a refused batch reads %q (%v), want %q", current, readErr, original)
+	}
+	if written != 0 {
+		t.Fatalf("a batch nobody could apply wrote the matching file %d times, want none", written)
+	}
+}
+
+func applyOneMatching(t *testing.T, root string, original []byte) ([]Result, error) {
+	t.Helper()
+	return ApplyCandidates(root, []Application{{
+		Finding: report.Finding{ID: "finding-a"},
+		Candidate: provider.Candidate{
+			Kind: "patch", Path: "moving_test.go",
+			PreimageSHA256: sha256Hex(original), Content: []byte("package repaired\n"),
+		},
+	}})
+}
+
+func TestApplyCandidatesRefusesAFileThatChangedAfterItWasInspected(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	original := []byte("package fixture\n")
+	target := filepath.Join(root, "moving_test.go")
+	if err := os.WriteFile(target, original, filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	readRepairFile = func(path string) ([]byte, error) {
+		reads++
+		if reads == 1 {
+			return slices.Clone(original), nil
+		}
+		return []byte("package edited\n"), nil
+	}
+	written := 0
+	originalRename := renameRepairFile
+	renameRepairFile = func(source, destination string) error {
+		if destination == target {
+			written++
+		}
+		return originalRename(source, destination)
+	}
+
+	results, err := applyOneMatching(t, root, original)
+	if err != nil {
+		t.Fatalf("a file that changed under the repair reported %v, want an artifact instead", err)
+	}
+	if len(results) != 1 || results[0].Status != StatusArtifact || results[0].Artifact == "" {
+		t.Fatalf("ApplyCandidates answered %+v, want one artifact", results)
+	}
+	if written != 0 {
+		t.Fatalf("a repair of a file that changed wrote it %d times, want none", written)
+	}
+}
+
+func TestApplyCandidatesReportsAFileItCannotReadTheSecondTime(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	original := []byte("package fixture\n")
+	if err := os.WriteFile(filepath.Join(root, "moving_test.go"), original, filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("the second read failed")
+	reads := 0
+	readRepairFile = func(path string) ([]byte, error) {
+		reads++
+		if reads == 1 {
+			return slices.Clone(original), nil
+		}
+		return nil, sentinel
+	}
+
+	results, err := applyOneMatching(t, root, original)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("ApplyCandidates reported %v, want the read failure", err)
+	}
+	if results == nil {
+		t.Fatal("a failed batch answered with no results at all, want the candidate it did not apply")
+	}
+	if len(results) != 1 || results[0].Status != StatusCandidate {
+		t.Fatalf("ApplyCandidates answered %+v, want the candidate it did not apply", results)
+	}
+}
+
+func TestApplyCandidatesReportsAPathItCannotConfine(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	sentinel := errors.New("the root could not be inspected")
+	statRepairPath = func(string) (os.FileInfo, error) { return nil, sentinel }
+
+	results, err := applyOneMatching(t, root, []byte("package fixture\n"))
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("ApplyCandidates reported %v, want the failure of the root it could not confine", err)
+	}
+	if results != nil {
+		t.Fatalf("a batch that never started answered with %+v, want no results", results)
+	}
+}
+
+func rollbackState(root, path string, original []byte, existed bool, content []byte) applicationState {
+	return applicationState{
+		application: Application{Candidate: provider.Candidate{Kind: "patch", Path: path, Content: content}},
+		target:      filepath.Join(root, path),
+		original:    original, existed: existed, mode: filemode.ReadableFile,
+	}
+}
+
+func TestRollbackUndoesWhatItWroteAndRefusesWhatSomebodyElseChanged(t *testing.T) {
+	applied := []byte("package repaired\n")
+	original := []byte("package fixture\n")
+	for _, test := range []struct {
+		name    string
+		present []byte
+		existed bool
+		want    string
+		left    []byte
+	}{
+		{name: "a file it replaced", present: applied, existed: true, left: original},
+		{name: "a file it created", present: applied},
+		{name: "a file it created and somebody removed"},
+		{
+			name: "a file it replaced and somebody removed", existed: true,
+			want: "rollback bystander_test.go",
+		},
+		{
+			name: "a file somebody else has edited since", present: []byte("package edited\n"), existed: true,
+			want: "refused a concurrent edit", left: []byte("package edited\n"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := resolvedTempDir(t)
+			target := filepath.Join(root, "bystander_test.go")
+			if test.present != nil {
+				if err := os.WriteFile(target, test.present, filemode.ReadableFile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := rollbackApplications(root,
+				[]applicationState{rollbackState(root, "bystander_test.go", original, test.existed, applied)})
+			switch {
+			case test.want == "" && err != nil:
+				t.Fatalf("rollback reported %v, want none", err)
+			case test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)):
+				t.Fatalf("rollback reported %v, want it to say %q", err, test.want)
+			}
+			current, readErr := os.ReadFile(target)
+			switch {
+			case test.left == nil && !errors.Is(readErr, os.ErrNotExist):
+				t.Errorf("rollback left %q (%v), want no file at all", current, readErr)
+			case test.left != nil && (readErr != nil || string(current) != string(test.left)):
+				t.Errorf("rollback left %q (%v), want %q", current, readErr, test.left)
+			}
+		})
+	}
+}
+
+func TestRollbackReportsAFileItCannotReadOrRestore(t *testing.T) {
+	applied := []byte("package repaired\n")
+	original := []byte("package fixture\n")
+	for _, stage := range []string{"read", "restore"} {
+		t.Run(stage, func(t *testing.T) {
+			preserveRepairHooks(t)
+			root := resolvedTempDir(t)
+			if err := os.WriteFile(filepath.Join(root, "bystander_test.go"), applied, filemode.ReadableFile); err != nil {
+				t.Fatal(err)
+			}
+			sentinel := errors.New(stage + " failed")
+			if stage == "read" {
+				readRepairFile = func(string) ([]byte, error) { return nil, sentinel }
+			} else {
+				renameRepairFile = func(string, string) error { return sentinel }
+			}
+			err := rollbackApplications(root,
+				[]applicationState{rollbackState(root, "bystander_test.go", original, true, applied)})
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("rollback reported %v, want the %s failure", err, stage)
+			}
+		})
+	}
+}
+
+func TestStoreCandidatePropagatesEveryFailureOfTheStoreItWritesTo(t *testing.T) {
+	record := CandidateRecord{
+		ID: "0123456789abcdef",
+		Finding: report.Finding{
+			ID: "finding-a", Kind: "surviving-mutant", Summary: "survived",
+		},
+		Candidate: provider.Candidate{
+			Kind: "patch", Path: "generated_test.go", Content: []byte("package fixture\n"),
+		},
+	}
+	for _, stage := range []string{"confine", "read", "write"} {
+		t.Run(stage, func(t *testing.T) {
+			preserveRepairHooks(t)
+			root := resolvedTempDir(t)
+			sentinel := errors.New(stage + " failed")
+			switch stage {
+			case "confine":
+				statRepairPath = func(string) (os.FileInfo, error) { return nil, sentinel }
+			case "read":
+				readRepairFile = func(string) ([]byte, error) { return nil, sentinel }
+			case "write":
+				renameRepairFile = func(string, string) error { return sentinel }
+			}
+			if _, err := StoreCandidate(root, record); !errors.Is(err, sentinel) {
+				t.Fatalf("StoreCandidate reported %v, want the %s failure", err, stage)
+			}
+		})
+	}
+}
+
+func TestLoadCandidateReportsTheStageThatRefusedTheFile(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		contents []byte
+		absent   bool
+		want     string
+	}{
+		{name: "a record nobody stored", absent: true, want: "read repair candidate"},
+		{name: "a record that is not JSON", contents: []byte("{\n"), want: "decode repair candidate"},
+		{
+			name:     "a record over the ceiling",
+			contents: append(bytes.Repeat([]byte("x"), candidateRecordCeiling+1), '\n'),
+			want:     "exceeds 8 MiB",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := resolvedTempDir(t)
+			directory := filepath.Join(root, ".goatest", "candidates")
+			if err := os.MkdirAll(directory, filemode.ReadableDirectory); err != nil {
+				t.Fatal(err)
+			}
+			if !test.absent {
+				if err := os.WriteFile(filepath.Join(directory, "0123456789abcdef.json"),
+					test.contents, filemode.PrivateFile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := LoadCandidate(root, "0123456789abcdef"); err == nil {
+				t.Fatal("LoadCandidate read a record it should have refused")
+			} else if !strings.Contains(err.Error(), test.want) {
+				t.Errorf("the error is %q, want it to say %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestListCandidatesReportsAStoreItCannotRead(t *testing.T) {
+	root := resolvedTempDir(t)
+	if err := os.MkdirAll(filepath.Join(root, ".goatest"), filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".goatest", "candidates"),
+		[]byte("not a directory"), filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ListCandidates(root); err == nil {
+		t.Fatal("a candidate store that is not a directory was listed")
+	} else if !strings.Contains(err.Error(), "read repair candidates") {
+		t.Errorf("the error is %q, want it to say it could not read the store", err)
+	}
+}
+
+func TestCurrentContentSaysNothingExistsForEveryFailureItReports(t *testing.T) {
+	preserveRepairHooks(t)
+	root := resolvedTempDir(t)
+	if err := os.WriteFile(filepath.Join(root, "present_test.go"),
+		[]byte("package fixture\n"), filemode.PrivateFile); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("the read failed")
+	readRepairFile = func(string) ([]byte, error) { return nil, sentinel }
+
+	content, exists, err := CurrentContent(root, "present_test.go")
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("CurrentContent reported %v, want the read failure", err)
+	}
+	if exists || content != nil {
+		t.Fatalf("a failed read answered (%q, %t), want nothing and no file", content, exists)
+	}
+
+	statRepairPath = func(string) (os.FileInfo, error) { return nil, sentinel }
+	if content, exists, err = CurrentContent(root, "present_test.go"); !errors.Is(err, sentinel) ||
+		exists || content != nil {
+		t.Fatalf("a path it cannot confine answered (%q, %t, %v), want nothing and no file", content, exists, err)
+	}
+}
+
+func TestConfinedPathRefusesASymbolicLinkInsideTheRepository(t *testing.T) {
+	root := resolvedTempDir(t)
+	if err := os.MkdirAll(filepath.Join(root, "real"), filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+
+	if _, err := confinedPath(root, "linked/inside_test.go"); err == nil {
+		t.Fatal("a path through a symbolic link inside the repository was confined")
+	} else if !strings.Contains(err.Error(), "crosses symbolic link") {
+		t.Errorf("the error is %q, want it to name the link it refused", err)
 	}
 }

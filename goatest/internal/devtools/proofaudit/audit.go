@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"encoding/json"
@@ -20,8 +19,6 @@ import (
 )
 
 const (
-	readBufferSize = 1 << 16
-
 	outcomeKilled = "killed"
 
 	runArgument = "-test.run="
@@ -293,15 +290,15 @@ type targetIdentity struct {
 }
 
 func auditTrace(source io.Reader, recorded evidence, catalog *mutantCatalog, layers []layer) (auditResult, error) {
+	stream, err := io.ReadAll(source)
+	if err != nil {
+		return auditResult{}, fmt.Errorf("read the recording: %w", err)
+	}
 	audit := newAuditor(recorded, catalog, layers)
-	buffered := bufio.NewReaderSize(source, readBufferSize)
-	for number, ended := 1, false; !ended; number++ {
-		line, readErr := buffered.ReadBytes('\n')
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return auditResult{}, fmt.Errorf("line %d: %w", number, readErr)
-		}
-		ended = readErr != nil
-		line = bytes.TrimRight(line, "\r\n")
+	lines := bytes.Split(stream, []byte("\n"))
+	for index, line := range lines {
+		number := index + 1
+		line = bytes.TrimRight(line, "\r")
 		if len(line) == 0 {
 			continue
 		}
@@ -309,7 +306,7 @@ func auditTrace(source io.Reader, recorded evidence, catalog *mutantCatalog, lay
 		decoder := json.NewDecoder(bytes.NewReader(line))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&event); err != nil {
-			if ended && errors.Is(err, io.ErrUnexpectedEOF) {
+			if index == len(lines)-1 && errors.Is(err, io.ErrUnexpectedEOF) {
 				audit.result.truncatedLines++
 				continue
 			}

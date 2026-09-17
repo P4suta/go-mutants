@@ -32,6 +32,7 @@ github.com/P4suta/go-mutants/goatest/internal/cache TestInspectRefusesASymbolicL
 github.com/P4suta/go-mutants/goatest/internal/devtools/proofaudit TestReadEvidenceReportsAProfileItCannotOpen
 github.com/P4suta/go-mutants/goatest/internal/evidence TestFlushMutationNeverTraversesAStoredSymlink
 github.com/P4suta/go-mutants/goatest/internal/repair TestApplyAcceptsRepositoryRootAlias
+github.com/P4suta/go-mutants/goatest/internal/repair TestConfinedPathRefusesASymbolicLinkInsideTheRepository
 github.com/P4suta/go-mutants/goatest/internal/repair TestApplyRejectsSymlinkDirectoryEscapingRepository
 github.com/P4suta/go-mutants/goatest/internal/retention TestInspectFilesRefusesASymlinkedEntry
 github.com/P4suta/go-mutants/goatest/internal/retention TestRetentionRefusesSymlinkedEntries
