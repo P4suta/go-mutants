@@ -533,7 +533,23 @@ func runWithDependencies(ctx context.Context, options Options, dependencies runD
 		baseline, err := dependencies.collectBaseline(ctx, baselineCommands, metadata.model, baselineTargets, baselineOptions)
 		phases.leave()
 		if err != nil || len(baseline.Findings) != 0 {
-			settlePreparation(true)
+			// Normally the preparation's error is the run cancelling it, and
+			// naming that as the cause would blame the run's own cleanup --
+			// see TestRunCoordinatorPrefersBaselineErrorsAndCancelsPreparation.
+			//
+			// gomutants.ErrPrepareFailed is what tells the other case apart.
+			// The engine returns it only from a call made *after* a preparation
+			// has already failed, so it is by construction a consequence and
+			// never a cause: when the baseline saw it, the baseline did not
+			// fail on its own, it failed because preparation did -- and the
+			// preparation's error is the only place the reason is written. It
+			// was going out with the channel, which is how a run ended ERROR
+			// saying "workspace preparation failed" and nothing at all about
+			// what had failed.
+			prepared := settlePreparation(true)
+			if errors.Is(err, gomutants.ErrPrepareFailed) && prepared.err != nil {
+				err = errors.Join(err, prepared.err)
+			}
 		} else if err = acceptPreparation(settlePreparation(false)); err == nil && options.ReplayMutantID == "" {
 			phases.enter(phaseBaseline)
 			baselineOptions.StopAfterChecks = false

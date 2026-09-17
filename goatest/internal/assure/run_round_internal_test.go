@@ -6,12 +6,14 @@ package assure
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	gomutants "github.com/P4suta/go-mutants"
 	"github.com/P4suta/go-mutants/goatest/internal/config"
 	"github.com/P4suta/go-mutants/goatest/internal/evidence"
 	goanalysis "github.com/P4suta/go-mutants/goatest/internal/golang"
@@ -277,4 +279,45 @@ func TestRunCoordinatorHandlesRaceExecutionAndFindingTerminals(t *testing.T) {
 			t.Fatalf("race terminal = (%+v, %v), harness=%+v", result, err, harness)
 		}
 	})
+}
+
+// TestRunCoordinatorReportsWhyPreparationFailedWhenThatIsWhatStoppedTheBaseline
+// pins the one case where the preparation's error is the run's.
+//
+// Preparation runs beside the baseline, and when it fails the engine refuses
+// every later call on that workspace with [gomutants.ErrPrepareFailed]. So the
+// baseline fails too, and it fails *first* -- with the consequence. Its error
+// was the one the run reported, and the preparation's, which is the only place
+// the reason is written down, went out with the channel: an ERROR verdict whose
+// whole account was "workspace preparation failed", and nothing anywhere saying
+// what about it failed.
+//
+// TestRunCoordinatorPrefersBaselineErrorsAndCancelsPreparation pins the
+// opposite and is also right: a baseline that failed on its own cancels the
+// preparation, so the preparation's error is a context cancellation and
+// reporting it would name the run's own cleanup as the cause. ErrPrepareFailed
+// is what tells the two apart, and it is exactly the right signal because the
+// engine returns it only after a preparation has already failed -- it is by
+// construction a consequence and never a cause.
+func TestRunCoordinatorReportsWhyPreparationFailedWhenThatIsWhatStoppedTheBaseline(t *testing.T) {
+	cause := errors.New("main_validation: the instrumented tree did not build")
+	consequence := fmt.Errorf("goatest: go build: gomutants: exec: %w", gomutants.ErrPrepareFailed)
+	harness := newRunCoordinatorHarness(t)
+	harness.dependencies.prepareSession = func(context.Context, *mutationbridge.Workspace, mutationbridge.PrepareOptions) (MutationSession, error) {
+		harness.prepareCalls++
+		return nil, cause
+	}
+	harness.dependencies.collectBaseline = func(context.Context, CommandWorkspace, goanalysis.Model, []BaselineTarget, BaselineOptions) (BaselineResult, error) {
+		harness.baselineCalls++
+		return BaselineResult{}, consequence
+	}
+	_, err := harness.run(Options{})
+	if !errors.Is(err, cause) {
+		t.Fatalf("run error = %v; it does not carry why preparation failed, which is the only"+
+			" account of what went wrong", err)
+	}
+	if !errors.Is(err, gomutants.ErrPrepareFailed) {
+		t.Fatalf("run error = %v; the consequence is what the baseline actually saw and belongs"+
+			" in the account beside the cause", err)
+	}
 }
