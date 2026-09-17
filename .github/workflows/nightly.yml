@@ -402,7 +402,59 @@ jobs:
         with:
           install: true
           cache: true
+      # The previous night's report, so that this one can say what moved.
+      #
+      # It is fetched before the run rather than after, so a run that dies still
+      # leaves the artifact it was going to compare against untouched. `|| true`
+      # because the first night has nothing to fetch and an absent baseline is
+      # not a failure -- it is the first measurement.
+      - name: The report the last run left
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh run download --repo "$GITHUB_REPOSITORY" \
+            --name assurance-report-full \
+            --dir "$RUNNER_TEMP/previous" || true
+          ls -l "$RUNNER_TEMP/previous" || true
       - run: mise run dogfood-runner
+      # `always()` on both: the number this job exists to produce is most worth
+      # keeping on the night it is worst, and a run that ends INSUFFICIENT is
+      # still a measurement. See docs/ci.md.
+      - name: Keep this run's report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: assurance-report-full
+          path: goatest/.goatest/latest-full.json
+          if-no-files-found: warn
+          retention-days: 14
+      # What moved, which is the part a schedule can act on.
+      #
+      # The whole-module verdict is INSUFFICIENT today and will be until the
+      # runner's own suite catches up with the fault model it is now measured
+      # against -- 3984 findings over 18081 mutants, the first time that number
+      # has ever been taken. A job that says the same red thing every night is a
+      # job nobody reads, and dressing the verdict up would be the skip list
+      # wearing a ledger's clothes that both products refuse. So the verdict
+      # stays true and the *diff* is what this step reports: verdict changes,
+      # accounting, mutant transitions, and lost kills.
+      #
+      # It never fails the job. A regression is for a reader to see in the log
+      # beside the verdict, not a second failure on top of one that already
+      # fired.
+      - name: What moved since the last run
+        if: always()
+        shell: bash
+        run: |
+          before="$RUNNER_TEMP/previous/latest-full.json"
+          after="goatest/.goatest/latest-full.json"
+          if [ ! -f "$before" ] || [ ! -f "$after" ]; then
+            echo "nothing to compare: first measurement, or no report"
+            exit 0
+          fi
+          mise run report-diff -- "$before" "$after" || true
 
   bench:
     runs-on: ubuntu-latest
