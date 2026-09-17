@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 	"github.com/P4suta/go-mutants/goatest/internal/report"
 )
 
@@ -213,4 +215,92 @@ func TestPutTrimsTheBoundedCacheAfterCommittingAnEntry(t *testing.T) {
 
 func cachedReport() report.Report {
 	return report.Report{Schema: report.SchemaV1, Verdict: report.VerdictAssured, Snapshot: "digest-a"}
+}
+
+func TestGetRefusesAStoredReportThatDoesNotValidate(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	directory := filepath.Join(root, "v1", "digest-a")
+	if err := os.MkdirAll(directory, filemode.ReadableDirectory); err != nil {
+		t.Fatal(err)
+	}
+	stored := cachedReport()
+	stored.Verdict = "a verdict no vocabulary holds"
+	if err := os.WriteFile(filepath.Join(directory, "report.json"), report.JSON(stored), filemode.ReadableFile); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := New(root).Get("digest-a")
+	if err == nil || found || !strings.Contains(err.Error(), "invalid cache report") {
+		t.Fatalf("Get of an entry that does not validate = (%+v, %t, %v)", got, found, err)
+	}
+}
+
+func TestPutRefusesAReportThatDoesNotValidate(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	offered := cachedReport()
+	offered.Verdict = "a verdict no vocabulary holds"
+	err := New(root).Put("digest-a", offered)
+	if err == nil || !strings.Contains(err.Error(), "invalid cache report") {
+		t.Fatalf("Put of a report that does not validate = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "v1")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a refused Put created %s: %v", filepath.Join(root, "v1"), statErr)
+	}
+}
+
+func TestPutCollectsExactlyWhenTheStoreCarriesAPolicy(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		maxBytes    int64
+		ttl         time.Duration
+		wantCollect bool
+	}{
+		{name: "no policy at all"},
+		{name: "a byte budget", maxBytes: 1 << 20, wantCollect: true},
+		{name: "an age budget", ttl: time.Hour, wantCollect: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			collected := 0
+			hooks := storeHooks{collect: func(string, int64, time.Duration, time.Time) (GCResult, error) {
+				collected++
+				return GCResult{}, nil
+			}}
+			store := NewWithPolicy(t.TempDir(), test.maxBytes, test.ttl)
+			if err := store.putWithHooks("digest-a", cachedReport(), hooks); err != nil {
+				t.Fatal(err)
+			}
+			if (collected != 0) != test.wantCollect {
+				t.Fatalf("collections = %d, want collection %t", collected, test.wantCollect)
+			}
+		})
+	}
+}
+
+func TestPutCollectsAfterRecoveringFromAFailedRename(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	file := &stubCacheFile{name: filepath.Join(root, "temporary")}
+	renames := 0
+	collected := 0
+	hooks := storeHooks{
+		createTemporary: func(string, string) (cacheWritableFile, error) { return file, nil },
+		rename: func(string, string) error {
+			renames++
+			if renames == 1 {
+				return errors.New("first rename")
+			}
+			return nil
+		},
+		remove:  func(string) error { return os.ErrNotExist },
+		collect: func(string, int64, time.Duration, time.Time) (GCResult, error) { collected++; return GCResult{}, nil },
+	}
+	if err := NewWithPolicy(root, 1<<20, 0).putWithHooks("digest-a", cachedReport(), hooks); err != nil {
+		t.Fatal(err)
+	}
+	if renames != 2 || collected != 1 {
+		t.Fatalf("renames = %d, collections = %d, want a retried rename followed by collection", renames, collected)
+	}
 }

@@ -6,6 +6,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -32,12 +34,9 @@ func (signal syntheticSignal) String() string { return string(signal) }
 func (syntheticSignal) Signal()               {}
 
 func TestTheCLIServiceNamesWhatBelongsToTheMachine(t *testing.T) {
-	if _, err := os.Executable(); err != nil {
-		t.Skipf("this process cannot name its own binary: %v", err)
-	}
 	service := cliService()
-	if service.Executable == "" {
-		t.Fatal("cliService named no executable, want the running binary")
+	if service.Executable != executablePath(os.Executable) {
+		t.Fatalf("cliService named %q, want the path os.Executable reports", service.Executable)
 	}
 	if service.UserCacheDir == nil {
 		t.Fatal("cliService named no user cache directory, want the machine's")
@@ -265,13 +264,102 @@ func TestEnvironmentKeepTempReachesTheServiceBesideAnEnvironmentTrace(t *testing
 }
 
 func TestInterruptedExitDistinguishesInterruptAndTermination(t *testing.T) {
-	if got := interruptedExit(cli.ExitInterrupted, os.Interrupt); got != cli.ExitInterrupted {
+	if got := interruptedExit(cli.ExitInterrupted, syscall.SIGINT); got != cli.ExitInterrupted {
 		t.Fatalf("interrupt exit = %d", got)
+	}
+	if got := interruptedExit(cli.ExitInterrupted, 0); got != cli.ExitInterrupted {
+		t.Fatalf("exit with no signal at all = %d", got)
 	}
 	if got := interruptedExit(cli.ExitInterrupted, syscall.SIGTERM); got != cli.ExitTerminated {
 		t.Fatalf("termination exit = %d", got)
 	}
 	if got := interruptedExit(cli.ExitAssured, syscall.SIGTERM); got != cli.ExitAssured {
 		t.Fatalf("completed exit was changed to %d", got)
+	}
+}
+
+func TestExecutablePathIsEmptyWhenTheProcessCannotNameItsOwnBinary(t *testing.T) {
+	t.Parallel()
+	if got := executablePath(func() (string, error) { return "/stale/goatest", errors.New("no executable") }); got != "" {
+		t.Fatalf("executablePath of a failed lookup = %q, want no path at all", got)
+	}
+	if got := executablePath(func() (string, error) { return "/opt/goatest", nil }); got != "/opt/goatest" {
+		t.Fatalf("executablePath = %q", got)
+	}
+}
+
+func TestTerminalInteractivityNeedsATerminalThatTakesEscapeCodesAndAnEnvironmentThatAllowsThem(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name              string
+		environment       map[string]string
+		isTerminal        bool
+		acceptsEscapeCode bool
+		want              bool
+	}{
+		{name: "a terminal that takes escape codes", isTerminal: true, acceptsEscapeCode: true, want: true},
+		{name: "a dumb terminal", environment: map[string]string{"TERM": "dumb"}, isTerminal: true, acceptsEscapeCode: true},
+		{name: "colour refused", environment: map[string]string{"NO_COLOR": "1"}, isTerminal: true, acceptsEscapeCode: true},
+		{name: "not a terminal", acceptsEscapeCode: true},
+		{name: "a terminal that refuses escape codes", isTerminal: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			probe := terminalProbe{
+				isTerminal:        func(io.Writer) bool { return test.isTerminal },
+				acceptsEscapeCode: func(io.Writer) bool { return test.acceptsEscapeCode },
+			}
+			got := terminalInteractivity(&bytes.Buffer{}, func(name string) string { return test.environment[name] }, probe)
+			if got != test.want {
+				t.Fatalf("terminalInteractivity = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTheRealTerminalProbesAnswerForAWriterThatIsNotATerminal(t *testing.T) {
+	t.Parallel()
+	probe := terminalProbes()
+	if probe.isTerminal(&bytes.Buffer{}) {
+		t.Fatal("a buffer was reported as a terminal")
+	}
+	if !probe.acceptsEscapeCode(&bytes.Buffer{}) {
+		t.Fatal("a writer that is not a console was reported as refusing escape codes")
+	}
+	if interactiveTerminal(&bytes.Buffer{}) {
+		t.Fatal("a buffer was reported as an interactive terminal")
+	}
+}
+
+func TestAnEnvironmentFlagIsPlacedBeforeTheArgumentSeparator(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		arguments []string
+		want      []string
+	}{
+		{
+			name:      "a separator ahead of a name that would otherwise match",
+			arguments: []string{"verify", "--", "--trace"},
+			want:      []string{"verify", "--trace", "--", "--trace"},
+		},
+		{
+			name:      "a separator first",
+			arguments: []string{"--", "verify"},
+			want:      []string{"--trace", "--", "verify"},
+		},
+		{
+			name:      "no separator at all",
+			arguments: []string{"verify"},
+			want:      []string{"verify", "--trace"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := withEnvironmentFlag(test.arguments, "--trace", true)
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("withEnvironmentFlag(%v) = %v, want %v", test.arguments, got, test.want)
+			}
+		})
 	}
 }

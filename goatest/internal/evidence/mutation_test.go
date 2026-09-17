@@ -384,42 +384,42 @@ func TestLoadMutationEvidenceRejectsSelfInconsistentRecords(t *testing.T) {
 			store: mutateMutationStore(func(store *evidence.MutationStore) {
 				store.Records[0].KilledBy = nil
 			}),
-			want: "requires a killer",
+			want: "requires exactly killed_by and nothing else",
 		},
 		{
 			name: "killed-with-exhausted-targets",
 			store: mutateMutationStore(func(store *evidence.MutationStore) {
 				store.Records[0].Exhausted = survivedMutationRecord().Exhausted
 			}),
-			want: "requires a killer",
+			want: "requires exactly killed_by and nothing else",
 		},
 		{
 			name: "killed-with-a-finding",
 			store: mutateMutationStore(func(store *evidence.MutationStore) {
 				store.Records[0].Finding = survivedMutationRecord().Finding
 			}),
-			want: "requires a killer",
+			want: "requires exactly killed_by and nothing else",
 		},
 		{
 			name: "survived-without-exhausted-targets",
 			store: mutateMutationStore(func(store *evidence.MutationStore) {
 				store.Records[1].Exhausted = nil
 			}),
-			want: "requires exhausted targets and a finding",
+			want: "requires exactly exhausted and finding and nothing else",
 		},
 		{
 			name: "survived-with-a-killer",
 			store: mutateMutationStore(func(store *evidence.MutationStore) {
 				store.Records[1].KilledBy = killedMutationRecord().KilledBy
 			}),
-			want: "requires exhausted targets and a finding",
+			want: "requires exactly exhausted and finding and nothing else",
 		},
 		{
 			name: "unreached-without-a-suite",
 			store: mutateMutationStore(func(store *evidence.MutationStore) {
 				store.Records[2].Suite = nil
 			}),
-			want: "requires a suite and a finding",
+			want: "requires exactly suite and finding and nothing else",
 		},
 		{
 			name: "finding-without-a-kind",

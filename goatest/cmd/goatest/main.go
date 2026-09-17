@@ -37,12 +37,12 @@ func realMain(arguments []string) int {
 func cliService() app.Service {
 	return app.Service{
 		Root: ".", Progress: os.Stderr, Output: os.Stdout, Interactive: interactiveTerminal,
-		Executable: goatestExecutable(), UserCacheDir: os.UserCacheDir, TempDirectory: os.TempDir(),
+		Executable: executablePath(os.Executable), UserCacheDir: os.UserCacheDir, TempDirectory: os.TempDir(),
 	}
 }
 
-func goatestExecutable() string {
-	path, err := os.Executable()
+func executablePath(locate func() (string, error)) string {
+	path, err := locate()
 	if err != nil {
 		return ""
 	}
@@ -50,10 +50,26 @@ func goatestExecutable() string {
 }
 
 func interactiveTerminal(writer io.Writer) bool {
-	if os.Getenv("TERM") == "dumb" || os.Getenv("NO_COLOR") != "" {
+	return terminalInteractivity(writer, os.Getenv, terminalProbes())
+}
+
+type terminalProbe struct {
+	isTerminal        func(io.Writer) bool
+	acceptsEscapeCode func(io.Writer) bool
+}
+
+func terminalProbes() terminalProbe {
+	return terminalProbe{
+		isTerminal:        func(writer io.Writer) bool { return ui.IsTerminalWriter(writer) },
+		acceptsEscapeCode: func(writer io.Writer) bool { return ui.EnableVirtualTerminal(writer) },
+	}
+}
+
+func terminalInteractivity(writer io.Writer, environment func(string) string, probe terminalProbe) bool {
+	if environment("TERM") == "dumb" || environment("NO_COLOR") != "" {
 		return false
 	}
-	return ui.IsTerminalWriter(writer) && ui.EnableVirtualTerminal(writer)
+	return probe.isTerminal(writer) && probe.acceptsEscapeCode(writer)
 }
 
 func realMainWith(arguments []string, stdout, stderr io.Writer, service cli.Service) int {
@@ -148,22 +164,17 @@ func runWithSignals(arguments []string, service cli.Service, signals <-chan os.S
 	go func() {
 		select {
 		case value := <-signals:
-			if signalValue, ok := value.(syscall.Signal); ok {
-				received.Store(int32(signalValue))
-			}
+			signalValue, _ := value.(syscall.Signal)
+			received.Store(int32(signalValue))
 			cancel()
 		case <-done:
 		}
 	}()
 	code := cli.Run(ctx, arguments, stdout, stderr, service)
-	var receivedSignal os.Signal
-	if value := received.Load(); value != 0 {
-		receivedSignal = syscall.Signal(value)
-	}
-	return interruptedExit(code, receivedSignal)
+	return interruptedExit(code, syscall.Signal(received.Load()))
 }
 
-func interruptedExit(code int, received os.Signal) int {
+func interruptedExit(code int, received syscall.Signal) int {
 	if code == cli.ExitInterrupted && received == syscall.SIGTERM {
 		return cli.ExitTerminated
 	}

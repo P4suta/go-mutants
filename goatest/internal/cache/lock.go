@@ -21,9 +21,10 @@ const (
 )
 
 type Lease struct {
-	file *os.File
-	once sync.Once
-	err  error
+	release func() error
+	close   func() error
+	once    sync.Once
+	err     error
 }
 
 func Acquire(ctx context.Context, root string, onWait func()) (*Lease, error) {
@@ -31,6 +32,7 @@ func Acquire(ctx context.Context, root string, onWait func()) (*Lease, error) {
 		mkdirAll: os.MkdirAll,
 		openFile: os.OpenFile,
 		try:      advisorylock.Try,
+		release:  advisorylock.Release,
 		wait:     waitForCacheLock,
 	})
 }
@@ -39,6 +41,7 @@ type lockOperations struct {
 	mkdirAll func(string, os.FileMode) error
 	openFile func(string, int, os.FileMode) (*os.File, error)
 	try      func(*os.File) (bool, error)
+	release  func(*os.File) error
 	wait     func(context.Context) error
 }
 
@@ -58,7 +61,7 @@ func acquire(ctx context.Context, root string, onWait func(), operations lockOpe
 			return nil, fmt.Errorf("goatest: acquire cache lock: %w", lockErr)
 		}
 		if locked {
-			return &Lease{file: file}, nil
+			return &Lease{release: func() error { return operations.release(file) }, close: file.Close}, nil
 		}
 		if !waiting {
 			waiting = true
@@ -89,8 +92,8 @@ func (lease *Lease) Release() error {
 		return nil
 	}
 	lease.once.Do(func() {
-		lease.err = advisorylock.Release(lease.file)
-		if closeErr := lease.file.Close(); lease.err == nil {
+		lease.err = lease.release()
+		if closeErr := lease.close(); lease.err == nil {
 			lease.err = closeErr
 		}
 	})

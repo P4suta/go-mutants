@@ -44,12 +44,16 @@ func Inspect(root string) (Status, error) {
 }
 
 func Collect(root string, maxBytes int64, ttl time.Duration, now time.Time) (GCResult, error) {
+	return collectWithHook(root, maxBytes, ttl, now, nil)
+}
+
+func collectWithHook(root string, maxBytes int64, ttl time.Duration, now time.Time, beforeRemove func()) (GCResult, error) {
 	if maxBytes < 0 || ttl < 0 {
 		return GCResult{}, errors.New("goatest: cache policy must not be negative")
 	}
 	cacheOperationMutex.Lock()
 	defer cacheOperationMutex.Unlock()
-	return collectUnlocked(root, maxBytes, ttl, now)
+	return collectUnlocked(root, maxBytes, ttl, now, beforeRemove)
 }
 
 func Flush(root string) (GCResult, error) {
@@ -75,24 +79,13 @@ func flushWithHook(root string, beforeRemove func()) (GCResult, error) {
 	return result, err
 }
 
-func collectUnlocked(root string, maxBytes int64, ttl time.Duration, now time.Time) (GCResult, error) {
+func collectUnlocked(root string, maxBytes int64, ttl time.Duration, now time.Time, beforeRemove func()) (GCResult, error) {
 	before, entries, err := inspectUnlocked(root, ttl, now)
 	if err != nil {
 		return GCResult{}, err
 	}
 	result := GCResult{Before: before}
-	slices.SortFunc(entries, func(a, b cacheEntry) int {
-		if a.expired != b.expired {
-			if a.expired {
-				return -1
-			}
-			return 1
-		}
-		if compared := a.modified.Compare(b.modified); compared != 0 {
-			return compared
-		}
-		return strings.Compare(a.name, b.name)
-	})
+	slices.SortFunc(entries, compareCollectionOrder)
 	remaining := before.Bytes
 	removals := make([]cacheEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -102,7 +95,7 @@ func collectUnlocked(root string, maxBytes int64, ttl time.Duration, now time.Ti
 		removals = append(removals, entry)
 		remaining -= entry.size
 	}
-	if err := removeEntries(root, removals, nil); err != nil {
+	if err := removeEntries(root, removals, beforeRemove); err != nil {
 		return GCResult{}, err
 	}
 	for _, entry := range removals {
@@ -113,11 +106,24 @@ func collectUnlocked(root string, maxBytes int64, ttl time.Duration, now time.Ti
 	return result, err
 }
 
+func compareCollectionOrder(a, b cacheEntry) int {
+	if a.expired != b.expired {
+		if a.expired {
+			return -1
+		}
+		return 1
+	}
+	if compared := a.modified.Compare(b.modified); compared != 0 {
+		return compared
+	}
+	return strings.Compare(a.name, b.name)
+}
+
 func inspectUnlocked(root string, ttl time.Duration, now time.Time) (Status, []cacheEntry, error) {
 	versionRoot := filepath.Join(root, "v1")
 	versionInfo, err := os.Lstat(versionRoot)
 	if errors.Is(err, os.ErrNotExist) {
-		return Status{}, []cacheEntry{}, nil
+		return Status{}, nil, nil
 	}
 	if err != nil {
 		return Status{}, nil, fmt.Errorf("goatest: inspect cache: %w", err)

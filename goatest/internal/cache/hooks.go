@@ -19,6 +19,10 @@ type storeHooks struct {
 
 	rename func(oldPath, newPath string) error
 
+	openAppend func(path string, perm os.FileMode) (cacheWritableFile, error)
+
+	readDir func(path string) ([]os.DirEntry, error)
+
 	collect func(root string, maxBytes int64, ttl time.Duration, now time.Time) (GCResult, error)
 }
 
@@ -40,8 +44,18 @@ func (hooks storeHooks) resolved() storeHooks {
 	if hooks.rename == nil {
 		hooks.rename = os.Rename
 	}
+	if hooks.openAppend == nil {
+		hooks.openAppend = func(path string, perm os.FileMode) (cacheWritableFile, error) {
+			return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, perm)
+		}
+	}
+	if hooks.readDir == nil {
+		hooks.readDir = os.ReadDir
+	}
 	if hooks.collect == nil {
-		hooks.collect = collectUnlocked
+		hooks.collect = func(root string, maxBytes int64, ttl time.Duration, now time.Time) (GCResult, error) {
+			return collectUnlocked(root, maxBytes, ttl, now, nil)
+		}
 	}
 	return hooks
 }

@@ -188,26 +188,33 @@ func decodeMutationField(name string, raw json.RawMessage, into any) error {
 	return json.Unmarshal(raw, into)
 }
 
-func (record MutationRecord) validateOutcomeFields(decoded mutationRecordJSON) error {
+type outcomeField struct {
+	name    string
+	present bool
+}
+
+func (record MutationRecord) validateOutcomeShape(present []outcomeField) error {
 	required := mutationOutcomeFields(record.Outcome)
 	if required == nil {
 		return nil
 	}
-	for _, field := range []struct {
-		name    string
-		present bool
-	}{
+	for _, field := range present {
+		if slices.Contains(required, field.name) == field.present {
+			continue
+		}
+		return fmt.Errorf("goatest: mutation evidence %s record %s requires exactly %s and nothing else",
+			record.Outcome, record.MutantID, strings.Join(required, " and "))
+	}
+	return nil
+}
+
+func (record MutationRecord) validateOutcomeFields(decoded mutationRecordJSON) error {
+	return record.validateOutcomeShape([]outcomeField{
 		{"killed_by", len(decoded.KilledBy) != 0},
 		{"exhausted", len(decoded.Exhausted) != 0},
 		{"suite", len(decoded.Suite) != 0},
 		{"finding", len(decoded.Finding) != 0},
-	} {
-		if slices.Contains(required, field.name) == field.present {
-			continue
-		}
-		return mutationOutcomeShapeError(record.Outcome, record.MutantID)
-	}
-	return nil
+	})
 }
 
 func mutationOutcomeFields(outcome string) []string {
@@ -417,33 +424,12 @@ func (record MutationRecord) validateKeys() error {
 }
 
 func (record MutationRecord) validateShape() error {
-	switch record.Outcome {
-	case MutationOutcomeKilled:
-		if len(record.KilledBy) == 0 || len(record.Exhausted) > 0 || record.Suite != nil || record.Finding != nil {
-			return mutationOutcomeShapeError(record.Outcome, record.MutantID)
-		}
-	case MutationOutcomeSurvived:
-		if len(record.KilledBy) > 0 || len(record.Exhausted) == 0 || record.Suite != nil || record.Finding == nil {
-			return mutationOutcomeShapeError(record.Outcome, record.MutantID)
-		}
-	case MutationOutcomeUnreached:
-		if len(record.KilledBy) > 0 || len(record.Exhausted) > 0 || record.Suite == nil || record.Finding == nil {
-			return mutationOutcomeShapeError(record.Outcome, record.MutantID)
-		}
-	}
-	return nil
-}
-
-func mutationOutcomeShapeError(outcome, mutantID string) error {
-	switch outcome {
-	case MutationOutcomeKilled:
-		return fmt.Errorf("goatest: mutation evidence killed record %s requires a killer set that is non-empty and nothing else", mutantID)
-	case MutationOutcomeSurvived:
-		return fmt.Errorf("goatest: mutation evidence %s record %s requires exhausted targets and a finding", outcome, mutantID)
-	case MutationOutcomeUnreached:
-		return fmt.Errorf("goatest: mutation evidence unreached record %s requires a suite and a finding", mutantID)
-	}
-	return nil
+	return record.validateOutcomeShape([]outcomeField{
+		{"killed_by", len(record.KilledBy) != 0},
+		{"exhausted", len(record.Exhausted) != 0},
+		{"suite", record.Suite != nil},
+		{"finding", record.Finding != nil},
+	})
 }
 
 func (target TargetKey) validate(mutantID, field string) error {
