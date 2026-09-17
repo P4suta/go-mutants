@@ -54,10 +54,10 @@ progress stream and a run that goes on recording in memory: one that cannot
 be created or opened — which includes a run directory another recording
 already owns — and one inside the repository but outside `.goatest`. The
 second refusal is not fastidiousness. A trace grows while the run records into
-it, and the source snapshot digests the repository, so a stream written where the
-snapshot reads would make the repository change during verification and cost
-the run its evidence with `repository changed during verification`. Refusing
-the trace is what keeps the trace from failing the run.
+it, and the source snapshot digests the repository, so a stream written where
+the snapshot reads would make the repository change during verification and cost
+the run its evidence with `repository changed during verification`. Refusing the
+trace is what keeps the trace from failing the run.
 
 A directory is judged by its name and by where it lands, so a symbolic link is
 not a way past that refusal: `--trace=/tmp/alias/run` is refused when
@@ -87,10 +87,10 @@ budget as the cache.
 The fourth objection is the one that has not been answered, and it is about this
 repository's own test suite rather than about a user's. `internal/app` and
 `internal/cli` drive whole runs - a test asserting an exit code still executes
-the service beneath it - so a default that records every run records every one of
-those too. go-mutants measured the equivalent change in its own tree and found a
-suite going from about seven seconds to over six hundred, and kept the flag
-opt-in for that reason.
+the service beneath it - so a default that records every run records every one
+of those too. go-mutants measured the equivalent change in its own tree and
+found a suite going from about seven seconds to over six hundred, and kept the
+flag opt-in for that reason.
 
 That figure carries its mechanism, because a figure without one is a conclusion
 without a reason - see [ADR 0021](adr/0021-what-a-ledger-cannot-check.md), which
@@ -108,17 +108,17 @@ tests construct their service directly, so the variable does not reach them and
 the measurement cannot be taken without first making the change it is meant to
 justify.
 
-So the default stands, and stands on a measurement this repository has not taken.
-That is the honest state of it. What is already true is that the runs which most
-need a recording - long, on a machine nobody is watching, failing in a way nobody
-can reproduce - are the runs a workflow can ask for explicitly, and `docs/ci.md`
-says how.
+So the default stands, and stands on a measurement this repository has not
+taken. That is the honest state of it. What is already true is that the runs
+which most need a recording - long, on a machine nobody is watching, failing in
+a way nobody can reproduce - are the runs a workflow can ask for explicitly, and
+`docs/ci.md` says how.
 
 One detail belongs here for whoever does flip it. `os.Getenv` cannot tell an
 unset variable from an empty one, so reading an empty `GOATEST_TRACE` as "off"
-would disable a default for every run that never mentioned the variable. An empty
-value has to mean "said nothing", and switching a default off has to be its own
-spelling.
+would disable a default for every run that never mentioned the variable. An
+empty value has to mean "said nothing", and switching a default off has to be
+its own spelling.
 
 ## Recording without a flag
 
@@ -270,8 +270,9 @@ Every command the run executes through the mutation workspace reaches this one
 event: module inspection (`go list`), `go vet`, `go build`, the test baseline,
 the race pass, and the original-control executions that confirm a kill. The
 toolchain version is not among them: the workspace resolved it when it froze
-the snapshot, so nothing runs `go version` a second time to learn it. Subprocesses started elsewhere are not
-recorded; see [limitations](limitations.md).
+the snapshot, so nothing runs `go version` a second time to learn it.
+Subprocesses started elsewhere are not recorded; see
+[limitations](limitations.md).
 
 `output_path` is absent when the command produced no output, and also when the
 output could not be written — preserving output is best effort, and a failure
@@ -367,8 +368,8 @@ goatest fills `discharged` from both proofs, applied in that order on a route
 decided by block: the branch proof first, then the infection facts on what it
 left. A target both would remove is therefore recorded under
 `branch-never-taken`, which keeps a recording made before the second proof
-existed comparable with one made after. Whichever proof removed each of them, the
-entries are in run order — the order the discharged targets would have been
+existed comparable with one made after. Whichever proof removed each of them,
+the entries are in run order — the order the discharged targets would have been
 executed in, cheapest first — so `reaching_targets` and `discharged` are two
 orderings cut from the same one. A route of `reason: coverage-reaching` with an
 empty `reaching_targets` and a non-empty `discharged` is a mutant resolved
@@ -446,13 +447,13 @@ A plan entry is `individual:<target>` when a compatible execution group has one
 target, `batch:<package>(<count>)` when one exact selector names several targets
 with the same package and environment, and `package-suite` for the whole
 package suite. No plan entry is split or retried. A fuzz seed target uses the
-same plan as any other deterministic target. A mutant no measured target reaches has reason `unreached`
-and no `reaching_targets`. It has the package suite as its plan unless
-`suite_coverage` proved its position unreached or `suite_probe` proved that
-exact execution unchanged, in which case it has no plan. A mutant whose whole
-reaching set was discharged has no plan as well; the proof fields distinguish
-those zero-execution routes. Every other plan is derived from the targets that
-reach it.
+same plan as any other deterministic target. A mutant no measured target reaches
+has reason `unreached` and no `reaching_targets`. It has the package suite as
+its plan unless `suite_coverage` proved its position unreached or `suite_probe`
+proved that exact execution unchanged, in which case it has no plan. A mutant
+whose whole reaching set was discharged has no plan as well; the proof fields
+distinguish those zero-execution routes. Every other plan is derived from the
+targets that reach it.
 
 Reading `route` beside the `mutant-exec` events that follow it is how a trace
 answers "why did this mutant run *that*" — the question a report can only
@@ -497,15 +498,15 @@ directory, or it read a file outside its ordinary input set. `trace summary`
 counts widened targets and widened package suites separately, so the code worth
 changing can be found without reading the stream.
 
-Which targets. goatest probes the test, fuzz seed, and example targets, the ones the
-mutation phase runs under `-test.run=^Name$`, and sends each of them the
-request that phase would send for that single target: the same package, the
-same `-test.run` selection followed by the run's extra test flags, the same
-environment, and a data-derived budget from its passing baseline —
-everything but the mutant, which a probe tree never activates. That is what
-makes the answer a statement about the execution the mutation phase will run
-rather than about some other one. A fuzz target executes only its registered
-seed corpus, whose digest is part of the target evidence key.
+Which targets. goatest probes the test, fuzz seed, and example targets, the ones
+the mutation phase runs under `-test.run=^Name$`, and sends each of them the
+request that phase would send for that single target: the same package, the same
+`-test.run` selection followed by the run's extra test flags, the same
+environment, and a data-derived budget from its passing baseline — everything
+but the mutant, which a probe tree never activates. That is what makes the
+answer a statement about the execution the mutation phase will run rather than
+about some other one. A fuzz target executes only its registered seed corpus,
+whose digest is part of the target evidence key.
 
 Which suites. A package-suite probe carries `suite: true`, the synthetic target
 identity `package-suite:<import-path>`, the run's extra test flags without a
@@ -559,13 +560,13 @@ records are in the interrupted attempt's trace. A clean dogfood trace remains
 the self-contained audit input; command and duration totals never count restored
 facts as executions.
 
-The `probed` field of a `route` is produced from the same prepared tree: it says the
-engine compiled a probe of that mutant, which is what lets a reader tell a
+The `probed` field of a `route` is produced from the same prepared tree: it says
+the engine compiled a probe of that mutant, which is what lets a reader tell a
 mutant a measured target proved it cannot observe from one no measurement could
 ever have named. Routing acts on it in both directions: it discharges a measured
 coverage-reaching target whose `infected` omits the mutant, and adds a target
-whose positive measurement names a mutant coverage missed. A `suite_probe`
-with no infection replaces the package-suite mutant execution outright.
+whose positive measurement names a mutant coverage missed. A `suite_probe` with
+no infection replaces the package-suite mutant execution outright.
 
 An execution ended in exactly one way: it reached an `outcome`, or an `error`
 stopped it before one. A record carries one of the two fields and never both
@@ -621,10 +622,10 @@ both are silent on a machine with nothing to reclaim. `temp-unavailable` and
 None of them can change a verdict.
 
 `build-cache-summary` also reports the external cache counters and the native
-projection: `native-seed=ready|fallback|refresh-failed|collection-failed`, projected action,
-object and logical-byte counts, skipped invalid actions, bytes pruned, and bytes
-remaining. A fallback is an optimization failure only; the command used the
-bounded external cache and its verdict is unchanged.
+projection: `native-seed=ready|fallback|refresh-failed|collection-failed`,
+projected action, object and logical-byte counts, skipped invalid actions, bytes
+pruned, and bytes remaining. A fallback is an optimization failure only; the
+command used the bounded external cache and its verdict is unchanged.
 
 A `--ui=jsonl` run streams the same notes to stdout as
 `{"type":"progress","kind":...,"detail":...,"elapsed_ms":...}` lines: same
@@ -646,15 +647,16 @@ A run emits one for each temporary directory `--keep-temp` asked it to keep:
 `run-scratch` for the one directory the run made everything else below,
 `build-cache-scratch` for the layer of the build cache that would otherwise die
 with the run, `native-build-cache-scratch` for the hard-linked native projection
-beside the persistent base, `baseline-scratch` for the scratch directory a round collected its
-baseline in, `candidate-tree` for the isolated tree a generated candidate was
-validated in, and `mutation-workspace` for each directory the mutation engine
-preserved — its snapshot, its probe tree, its scratch. Those paths are absolute
-and outside the repository, because that is where a temporary directory is made,
-so a `path` is read as it was recorded rather than resolved against anything.
-Nothing else emits an `artifact` event yet. The same paths are written to
-`.goatest/kept-temp-v1.json`, which is what a successful untraced run leaves
-behind; see [development](development.md) for what is kept and what is not.
+beside the persistent base, `baseline-scratch` for the scratch directory a round
+collected its baseline in, `candidate-tree` for the isolated tree a generated
+candidate was validated in, and `mutation-workspace` for each directory the
+mutation engine preserved — its snapshot, its probe tree, its scratch. Those
+paths are absolute and outside the repository, because that is where a temporary
+directory is made, so a `path` is read as it was recorded rather than resolved
+against anything. Nothing else emits an `artifact` event yet. The same paths are
+written to `.goatest/kept-temp-v1.json`, which is what a successful untraced run
+leaves behind; see [development](development.md) for what is kept and what is
+not.
 
 ### `run`
 
@@ -760,11 +762,14 @@ deltas, and preparation stage-duration deltas. It is a read-only diagnostic
 comparison, not evidence and not a verdict comparison contract.
 
 ```console
-$ jq -r 'select(.type=="exec") | [.exec.duration_ms, (.exec.argv|join(" "))] | @tsv' \
+$ jq -r 'select(.type=="exec")
+        | [.exec.duration_ms, (.exec.argv|join(" "))] | @tsv' \
     .goatest/trace/*/trace.jsonl | sort -rn | head
-$ jq -r 'select(.type=="prepare" and .prepare.state=="finished") | [.prepare.duration_ms, .prepare.phase, .prepare.result] | @tsv' \
+$ jq -r 'select(.type=="prepare" and .prepare.state=="finished")
+        | [.prepare.duration_ms, .prepare.phase, .prepare.result] | @tsv' \
     .goatest/trace/*/trace.jsonl | sort -rn
-$ jq -r 'select(.type=="route") | [.route.mutant_id, .route.reason, (.route.plan|join(","))] | @tsv' \
+$ jq -r 'select(.type=="route")
+        | [.route.mutant_id, .route.reason, (.route.plan|join(","))] | @tsv' \
     .goatest/trace/*/trace.jsonl
 $ tail -n1 .goatest/trace/*/trace.jsonl | jq .run
 ```

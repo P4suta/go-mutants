@@ -38,7 +38,7 @@ run = ["mise install", "go mod download", "lefthook install"]
 
 [tasks.build]
 description = "Build every package and run the vet gate"
-run = ["go build ./...", "go vet ./..."]
+run = ["go build ./... ./goatest/...", "go vet ./... ./goatest/..."]
 
 [tasks.test]
 # The tier a developer runs on every save, and the one CI runs on three
@@ -65,7 +65,7 @@ run = ["go build ./...", "go vet ./..."]
 # that hangs is reported as a suite that hung, in under a quarter of an hour,
 # rather than as a job the runner cancelled after six.
 description = "Run the unit test suite"
-run = "go test -timeout 15m ./..."
+run = "go test -timeout 15m ./... ./goatest/..."
 
 [tasks.test-race]
 # The unit tier under the race detector.
@@ -87,7 +87,7 @@ run = "go test -timeout 15m ./..."
 # both compilation and execution, and a budget that fits the uninstrumented run
 # would turn a slow job into a red one.
 description = "Run the unit test suite under the race detector"
-run = "go test -race -timeout 30m ./..."
+run = "go test -race -timeout 30m ./... ./goatest/..."
 
 [tasks.test-integration]
 # The engine's integration suite alone runs 8-10 minutes of real toolchain
@@ -123,7 +123,7 @@ run = "go test -race -timeout 30m ./..."
 # grows an unbounded one. `mise run test-cache-status` says where it is and how
 # big it is; `mise run test-clean` empties it.
 description = "Run the toolchain-backed integration suite"
-run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -tags integration -timeout 40m ./..."
+run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -tags integration -timeout 40m ./... ./goatest/..."
 
 [tasks.test-integration-race]
 # The integration tier under the race detector, which is the pairing that finds
@@ -142,7 +142,7 @@ run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -tags 
 # [tasks.test-integration] is: an instrumented run compiles everything twice
 # over and is the last run anybody wants filling their own build cache.
 description = "Run the integration suite under the race detector"
-run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -race -tags integration -timeout 90m ./..."
+run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -race -tags integration -timeout 90m ./... ./goatest/..."
 
 [tasks.test-cost]
 # The unit tier, with a table saying where its time went and what did not run.
@@ -201,7 +201,7 @@ run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -race 
 # instead, which makes a new one visible on the summary page the day it appears
 # rather than invisible until somebody greps for it.
 description = "Run the unit test suite and print a per-package cost table"
-run = "go run ./internal/devtools/testcost -- go test -json -count=1 -timeout 15m ./..."
+run = "go run ./internal/devtools/testcost -- go test -json -count=1 -timeout 15m ./... ./goatest/..."
 
 [tasks.test-cost-integration]
 # [tasks.test-cost] over the integration tier, through `testcache exec` for the
@@ -218,7 +218,7 @@ run = "go run ./internal/devtools/testcost -- go test -json -count=1 -timeout 15
 # this is the command". The wrapper's size and growth lines go to stderr and the
 # run's JSON to stdout, so neither is in the other's way.
 description = "Run the integration suite and print a per-package cost table"
-run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./internal/devtools/testcost -- go test -json -count=1 -tags integration -timeout 40m ./..."
+run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./internal/devtools/testcost -- go test -json -count=1 -tags integration -timeout 40m ./... ./goatest/..."
 
 [tasks.cover]
 # Coverage of the unit tier: a profile, a browsable HTML rendering, and the one
@@ -257,7 +257,7 @@ run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./inter
 # platform-specific about which lines a test executed.
 description = "Measure unit-tier coverage and render it, as a signal and never a gate"
 run = [
-  "go test -covermode=atomic -coverprofile=cover.out -timeout 15m ./... || echo 'cover: the suite failed; the profile below is of the run that failed' >&2",
+  "go test -covermode=atomic -coverprofile=cover.out -timeout 15m ./... ./goatest/... || echo 'cover: the suite failed; the profile below is of the run that failed' >&2",
   "go tool cover -html=cover.out -o cover.html",
   "go tool cover -func=cover.out | tail -1",
 ]
@@ -281,7 +281,7 @@ run = [
 # a different binary with no counters in it. So the number is a floor.
 description = "Measure integration-tier coverage across every package"
 run = [
-  "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -covermode=atomic -coverprofile=cover.out -coverpkg=./... -tags integration -timeout 90m ./... || echo 'cover-integration: the suite failed; the profile below is of the run that failed' >&2",
+  "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -covermode=atomic -coverprofile=cover.out -coverpkg=./...,./goatest/... -tags integration -timeout 90m ./... ./goatest/... || echo 'cover-integration: the suite failed; the profile below is of the run that failed' >&2",
   "go tool cover -html=cover.out -o cover.html",
   "go tool cover -func=cover.out | tail -1",
 ]
@@ -748,3 +748,131 @@ run_windows = [
 [tasks.hooks]
 description = "Install the git pre-commit and commit-msg hooks"
 run = "lefthook install"
+
+[tasks.dogfood-runner]
+# goatest measuring goatest, from the root of this repository.
+#
+# `dir` is what makes it work at all. The runner refuses a workspace on purpose
+# -- `internal/golang` rejects more than one main module, and its own
+# limitations page says workspace aggregation is deliberately deferred -- so a
+# run started from here would be started in exactly the layout it declines.
+# GOWORK=off is the other half: DetectWorkspace reads go.work as a *file* and
+# walks up to find it, so unsetting the variable is not enough.
+#
+# It is the runner's own gate, carried across whole rather than folded into
+# [tasks.dogfood]. The two measure different products with different tools, and
+# a task that did both would report one verdict over two questions.
+dir = "goatest"
+description = "Run goatest against its own module"
+env = { GOWORK = "off" }
+run = [
+  "go build -o ./dist/dogfood/goatest ./cmd/goatest",
+  "./dist/dogfood/goatest verify --ui=plain",
+]
+run_windows = [
+  "go build -o ./dist/dogfood/goatest.exe ./cmd/goatest",
+  '.\dist\dogfood\goatest.exe verify --ui=plain',
+]
+
+# The runner's own tasks, carried across from goatest/mise.toml with `dir` and
+# GOWORK=off: the runner refuses a workspace on purpose, so every one of these
+# has to be started in the module rather than above it.
+
+
+[tasks.test-audit]
+dir = "goatest"
+env = { GOWORK = "off" }
+description = "Run the unit tier and audit what actually ran"
+run = """
+mkdir -p .goatest
+go test -json -timeout 40m ./... > .goatest/test-events.jsonl && audit_exit=0 || audit_exit=$?
+go run ./internal/devtools/testaudit < .goatest/test-events.jsonl || audit_exit=1
+exit $audit_exit
+"""
+run_windows = """
+New-Item -ItemType Directory -Force -Path .goatest | Out-Null
+go test -json -timeout 40m ./... > .goatest/test-events.jsonl
+$auditExit = $LASTEXITCODE
+Get-Content .goatest/test-events.jsonl | go run ./internal/devtools/testaudit
+if ($LASTEXITCODE -ne 0) { $auditExit = 1 }
+exit $auditExit
+"""
+
+
+[tasks.test-integration-audit]
+dir = "goatest"
+env = { GOWORK = "off" }
+description = "Run both tiers and audit what actually ran"
+run = """
+mkdir -p .goatest
+go test -json -tags integration -timeout 40m ./... > .goatest/integration-events.jsonl && audit_exit=0 || audit_exit=$?
+go run ./internal/devtools/testaudit < .goatest/integration-events.jsonl || audit_exit=1
+exit $audit_exit
+"""
+run_windows = """
+New-Item -ItemType Directory -Force -Path .goatest | Out-Null
+go test -json -tags integration -timeout 40m ./... > .goatest/integration-events.jsonl
+$auditExit = $LASTEXITCODE
+Get-Content .goatest/integration-events.jsonl | go run ./internal/devtools/testaudit
+if ($LASTEXITCODE -ne 0) { $auditExit = 1 }
+exit $auditExit
+"""
+
+# Two scopes, because they answer to different readers.
+#
+# `dogfood` measures the whole project, which is the run whose verdict means
+# something: ASSURED is defined over a full scope and nothing else. It is also
+# over an hour of work on this repository - the mutation phase evaluates every
+# mutant of 2591 tests - so it belongs to a developer who asked for it, or to a
+# schedule, and not to a check that has to answer a pull request.
+#
+# `dogfood-changed` measures what a change touched. That is the scope
+# docs/ci.md recommends to anybody using goatest in a workflow, and the one this
+# repository's own workflow should therefore be seen using.
+[tasks.dogfood-changed]
+dir = "goatest"
+env = { GOWORK = "off" }
+description = "Verify what this branch changed, the way docs/ci.md tells a user to"
+run = [
+  "go build -o ./dist/dogfood/goatest ./cmd/goatest",
+  "./dist/dogfood/goatest verify --changed=origin/main --ui=plain",
+]
+run_windows = [
+  "go build -o ./dist/dogfood/goatest.exe ./cmd/goatest",
+  '.\dist\dogfood\goatest.exe verify --changed=origin/main --ui=plain',
+]
+
+
+[tasks.trace-summary-runner]
+dir = "goatest"
+env = { GOWORK = "off" }
+description = "Summarize a goatest-trace-v1 stream into the run's performance breakdown"
+run = "go run ./internal/devtools/tracesummary"
+
+
+[tasks.report-diff]
+dir = "goatest"
+env = { GOWORK = "off" }
+description = "Compare two assurance reports: verdict, accounting, mutant transitions, and lost kills"
+run = "go run ./internal/devtools/reportdiff"
+
+# Takes arguments, and says so.
+#
+# It read `mise run proof-audit` with no arguments until the day somebody ran
+# it, which printed a usage message and exited 2 - a task that had never worked
+# and could not, because the tool needs a recording and a directory of coverage
+# profiles and neither has a default. A description that implies a task runs is
+# a description that will be believed.
+
+# Takes arguments, and says so.
+#
+# It read `mise run proof-audit` with no arguments until the day somebody ran
+# it, which printed a usage message and exited 2 - a task that had never worked
+# and could not, because the tool needs a recording and a directory of coverage
+# profiles and neither has a default. A description that implies a task runs is
+# a description that will be believed.
+[tasks.proof-audit]
+dir = "goatest"
+env = { GOWORK = "off" }
+description = "Audit the proof layers of a recorded run: proof-audit TRACE.jsonl PROFILES-DIR"
+run = "go run ./internal/devtools/proofaudit"

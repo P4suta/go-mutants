@@ -51,14 +51,14 @@ the exact interruption guarantee the checkpoint exists to provide.
    rejects another base change after current-base replay has begun.
 5. **Replay in linear time and canonicalise once.** Replay indexes existing
    target, suite, and mutant identities, appends each new unit in one pass,
-   rejects a duplicate identity, and sorts each completed collection once. Mutation workers likewise append to
-   in-memory state without sorting the growing slice; compaction performs the
-   canonical sort. Completed checkpoint bytes therefore remain deterministic
-   without an `O(n log n)` operation at every unit.
-6. **Preserve the embedding contract.** The append interface is optional.
-   A cache implementation that provides only the original full-state method
-   still receives an atomic full checkpoint at each scheduling boundary and
-   has exactly the old semantics.
+   rejects a duplicate identity, and sorts each completed collection once.
+   Mutation workers likewise append to in-memory state without sorting the
+   growing slice; compaction performs the canonical sort. Completed checkpoint
+   bytes therefore remain deterministic without an `O(n log n)` operation at
+   every unit. 6. **Preserve the embedding contract.** The append interface is
+   optional. A cache implementation that provides only the original full-state
+   method still receives an atomic full checkpoint at each scheduling boundary
+   and has exactly the old semantics.
 
 ## Crash and concurrency invariants
 

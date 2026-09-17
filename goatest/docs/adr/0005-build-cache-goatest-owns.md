@@ -10,11 +10,12 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 Accepted, 2026-09-03; revised 2026-09-04 after review (decisions 5 to 8), and
 2026-09-05 by ADR 0017.
 Implemented by `internal/buildcache` (the two-layer store, native projection,
-the `GOCACHEPROG` server, and the locked collection), the hidden `goatest cacheprog` subcommand in
-`cmd/goatest`, the run wiring and the persist rule in `internal/assure`
-(`buildCacheWorkspace`, `persistingCommand`, `collectRunBuildCache`), the
-`[cache] build_max_bytes` and `build_dir` settings in `internal/config`, and the
-build-cache reporting and collection in `goatest cache status|gc`.
+the `GOCACHEPROG` server, and the locked collection), the hidden `goatest
+cacheprog` subcommand in `cmd/goatest`, the run wiring and the persist rule in
+`internal/assure` (`buildCacheWorkspace`, `persistingCommand`,
+`collectRunBuildCache`), the `[cache] build_max_bytes` and `build_dir` settings
+in `internal/config`, and the build-cache reporting and collection in `goatest
+cache status|gc`.
 
 ## Context
 
@@ -58,25 +59,26 @@ toolchain makes by TTL.
    vet, build and test-binary compile, and the run's `go version`, `go list
    -json ./...`, `go list -m -json all`, and the selected-package listing.
 
-3. **Nothing that runs the project's tests may write to the persistent layer.** The baseline target runs, the
-   race verification, the original-mutation control, the go-mutants session, and
-   candidate validation all write to run-owned storage, which dies with the run.
-   Compile/list work, including mutation preparation, may write reusable
-   objects to the persistent layer; mutation preparation's instrumented test
-   run and candidate validation use continuously bounded external scratch;
-   baseline, race, probe, and prepared mutant executions use the gated native projection specified by
-   [ADR 0017](0017-project-controls-use-a-native-cache-projection.md). This is
-   the load-bearing half. A current baseline target begins with
-   the compiled test binary itself; older versions wrapped it in `go tool
-   test2json`, whose argument list began with the go binary exactly as a compile
-   does. Both shapes can spawn children that produce throwaway fixture builds.
-   Were either to persist, every fixture package would be written into the base
-   layer and would evict the standard library the layer exists to hold: the
-   cache would grow without bound and get slower the more it was used. The rule
-   therefore reads the *subcommand* for go commands and treats every direct test
-   binary as non-persisting.
+3. 3. **Nothing that runs the project's tests may write to the persistent
+   layer.** The baseline target runs, the race verification, the
+   original-mutation control, the go-mutants session, and candidate validation
+   all write to run-owned storage, which dies with the run. Compile/list work,
+   including mutation preparation, may write reusable objects to the persistent
+   layer; mutation preparation's instrumented test run and candidate validation
+   use continuously bounded external scratch; baseline, race, probe, and
+   prepared mutant executions use the gated native projection specified by [ADR
+   0017](0017-project-controls-use-a-native-cache-projection.md). This is the
+   load-bearing half. A current baseline target begins with the compiled test
+   binary itself; older versions wrapped it in `go tool test2json`, whose
+   argument list began with the go binary exactly as a compile does. Both shapes
+   can spawn children that produce throwaway fixture builds. Were either to
+   persist, every fixture package would be written into the base layer and would
+   evict the standard library the layer exists to hold: the cache would grow
+   without bound and get slower the more it was used. The rule therefore reads
+   the *subcommand* for go commands and treats every direct test binary as
+   non-persisting.
 
-4. **The rule lives in one place and is pinned by a test.** `persistingCommand`
+3. **The rule lives in one place and is pinned by a test.** `persistingCommand`
    is the whole policy, `buildCacheWorkspace` is the only thing that applies it,
    and only a run's workspace is wrapped.
    `TestOnlyCommandsThatCompileOrListPersistToTheBaseLayer` states every command
@@ -84,7 +86,7 @@ toolchain makes by TTL.
    argument-list builders the run uses, so a change to what goatest runs is a
    change that test sees.
 
-5. **Every run bounds the base layer, and the bound is small.** `[cache]
+4. **Every run bounds the base layer, and the bound is small.** `[cache]
    build_max_bytes` bounds it — 2 GiB by default, because the cache is one
    directory on a disk shared with everything else the developer does — and
    `[cache] build_dir` says where it is (per machine by default, because a
@@ -104,7 +106,7 @@ toolchain makes by TTL.
    the layer is shared, so the smallest `build_max_bytes` among the
    repositories that actually run on the machine is the one that wins.
 
-6. **`MinIdle` is at least two touch intervals, and the layer says so.** A
+5. **`MinIdle` is at least two touch intervals, and the layer says so.** A
    collection may only remove an entry whose last touch is older than
    `MinIdle`, and a read refreshes an entry's file time at most once per touch
    interval — otherwise every cache hit would be a write. So an entry a live
@@ -119,7 +121,7 @@ toolchain makes by TTL.
    life is one run and whose go commands are bounded in minutes — and the
    inequality holds for each.
 
-7. **A layer is a directory goatest made, and the marker proves it.**
+6. **A layer is a directory goatest made, and the marker proves it.**
    `Prepare` refuses a directory that exists, holds files, and carries none of
    goatest's own names, and refuses it without writing anything into it. The
    marker is `goatest-build-cache-v1`, not a `README`: a `README` is a file a
@@ -134,7 +136,7 @@ toolchain makes by TTL.
    would be pure cost. It never rewrites a marker and never claims a directory,
    because adopting one is the run's decision and not a go command's.
 
-8. **The scratch layer is bounded by size, not by age, and not on every
+7. **The scratch layer is bounded by size, not by age, and not on every
    close.** A run may compile a package in one phase and want it in a later
    one, so removing an entry because nothing read it for a while only buys a
    recompile; removing the least recently read once the layer is over
@@ -143,33 +145,33 @@ toolchain makes by TTL.
    record inside the layer, because there is one served process per go command
    and collecting on each close is work proportional to the square of the run.
 
-9. **The cache is never a reason to fail.** A layer that cannot be created or
+8. **The cache is never a reason to fail.** A layer that cannot be created or
    written is reported as a progress note and done without; a store that fails
    mid-protocol answers that one request with an error rather than ending the
    server. A build cache is an optimisation, and an optimisation that cannot
    start must not become a verdict.
 
-10. **Only the composition root names the program.** The `GOCACHEPROG` value
-    re-executes the goatest binary, and the go command will wait on whatever
-    that value names. `cmd/goatest` is the one layer that knows the running
-    process is a goatest binary; a service embedded anywhere else — a test
-    binary running it in-process, an application linking it — leaves the
-    executable empty and gets the toolchain's own cache. This is not a detail:
-    resolving it one layer lower made every in-process test hand the go command
-    a test binary, which sat printing `still waiting for GOCACHEPROG` until it
-    failed.
+9. **Only the composition root names the program.** The `GOCACHEPROG` value
+   re-executes the goatest binary, and the go command will wait on whatever
+   that value names. `cmd/goatest` is the one layer that knows the running
+   process is a goatest binary; a service embedded anywhere else — a test
+   binary running it in-process, an application linking it — leaves the
+   executable empty and gets the toolchain's own cache. This is not a detail:
+   resolving it one layer lower made every in-process test hand the go command
+   a test binary, which sat printing `still waiting for GOCACHEPROG` until it
+   failed.
 
-    Where the cache *lives* is resolved separately, and does not need the
-    executable at all. It is a property of the machine and the project, and
-    `cache status` and `cache gc` need it whether or not this process could
-    serve the cache; tying the two together made maintenance silently report an
-    empty cache. Separately, though, is not lower: the machine's cache root is
-    named only by the composition root as well, because `cache status` inspects
-    that directory and `cache gc` and every closing run collect it — so an
-    embedded service or a test binary that resolved it for itself would be
-    deleting entries out of the running developer's own build cache. A process
-    that names no cache root keeps its layer where the project configured one,
-    or keeps none.
+   Where the cache *lives* is resolved separately, and does not need the
+   executable at all. It is a property of the machine and the project, and
+   `cache status` and `cache gc` need it whether or not this process could
+   serve the cache; tying the two together made maintenance silently report an
+   empty cache. Separately, though, is not lower: the machine's cache root is
+   named only by the composition root as well, because `cache status` inspects
+   that directory and `cache gc` and every closing run collect it — so an
+   embedded service or a test binary that resolved it for itself would be
+   deleting entries out of the running developer's own build cache. A process
+   that names no cache root keeps its layer where the project configured one,
+   or keeps none.
 
 ## Consequences
 
@@ -204,6 +206,7 @@ toolchain makes by TTL.
   repository root, so successive runs of one repository hit each other.
 - What a run asked the cache for, projected into native form, and pruned is
   reported as a `build-cache-summary` progress note, and what its final base
-  collection removed as `build-cache-collected`. A reader who sees goatest go faster can see how much of it was the
-  cache, which is the same rule [0004](0004-proof-layers-not-budgets.md) asks of
-  a proof layer: the answer is in the recording, never in a configuration file.
+  collection removed as `build-cache-collected`. A reader who sees goatest go
+  faster can see how much of it was the cache, which is the same rule
+  [0004](0004-proof-layers-not-budgets.md) asks of a proof layer: the answer is
+  in the recording, never in a configuration file.

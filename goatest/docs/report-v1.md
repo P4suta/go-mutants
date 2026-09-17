@@ -33,8 +33,8 @@ and the runs the `latest-*` indexes point at are kept; older ones are collected
 at the end of every run that holds the repository's cache lease, and by
 `goatest cache gc`. Nothing ever rewrites a run
 directory: a run is there in full or it is gone, and `goatest report --run` of a
-collected run says so by name. Copy `reports/runs/<run-id>` elsewhere to keep one
-past the bound.
+collected run says so by name. Copy `reports/runs/<run-id>` elsewhere to keep
+one past the bound.
 
 ## Required audit identity
 
@@ -129,14 +129,15 @@ provider or test output cannot forge `FINDING`, `REPAIR`, `ACCEPTANCE`, or
 A run stopped by a signal records itself before it exits, rather than leaving
 one line on stderr - when it can. A process blocked in the kernel, or killed
 outright rather than signalled, runs no code and publishes nothing; what follows
-describes a run that was signalled and allowed to finish exiting. It publishes a report into `reports/runs/` in the same five
-formats as any other run, writes its diagnostics bundle, and renders the report
-on the terminal. Its verdict is `INSUFFICIENT`, which is what a run with missing
-evidence is, and its exit code is `130` or `143` rather than the `2` that
-verdict usually carries: the verdict says what the evidence supports and the
-exit code says how the run ended, and a run that was stopped and a run that
-finished short of its contract are different facts. The report carries an
-`assurance-interrupted` limitation and a finding of kind `interrupted`.
+describes a run that was signalled and allowed to finish exiting. It publishes a
+report into `reports/runs/` in the same five formats as any other run, writes
+its diagnostics bundle, and renders the report on the terminal. Its verdict is
+`INSUFFICIENT`, which is what a run with missing evidence is, and its exit code
+is `130` or `143` rather than the `2` that verdict usually carries: the verdict
+says what the evidence supports and the exit code says how the run ended, and a
+run that was stopped and a run that finished short of its contract are different
+facts. The report carries an `assurance-interrupted` limitation and a finding of
+kind `interrupted`.
 
 What that report holds is the run's identity, scope, contract, configuration
 digest and duration - not its measurements. A cancelled run hands back no

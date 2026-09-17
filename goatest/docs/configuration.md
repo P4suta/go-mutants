@@ -40,20 +40,19 @@ when the project needs them.
   directories a `--keep-temp` run kept: they are recorded in
   `.goatest/kept-temp-v1.json` and collected by `goatest cache gc` once they are
   older than it. No byte budget applies to those, because a keep is a request
-  somebody made on purpose and the only sensible bound on it is time. Checkpoints live inside their
-  exact-input cache entry and are collected with it. `build_max_bytes`
-  (non-negative, 2 GiB by default) bounds the separate build cache goatest
-  serves its go commands from, and `build_dir` says where that cache lives — a
-  relative path is read from the repository root, and the default under the
-  `goatest` CLI is a per-machine directory below the user cache directory,
-  because a compiled standard library is the same for every repository on the
-  machine. The two
-  bounds are separate because the two stores hold different things at different
-  scales: verdicts of a few kilobytes, and object files measured in gigabytes.
-  Every run that holds the repository's cache lease enforces all of these when
-  it ends — one that could not take the lease leaves them to the next run or to
-  `cache gc` — so they are bounds and not suggestions; see
-  [cache maintenance](#cache-maintenance) below.
+  somebody made on purpose and the only sensible bound on it is time.
+  Checkpoints live inside their exact-input cache entry and are collected with
+  it. `build_max_bytes` (non-negative, 2 GiB by default) bounds the separate
+  build cache goatest serves its go commands from, and `build_dir` says where
+  that cache lives — a relative path is read from the repository root, and the
+  default under the `goatest` CLI is a per-machine directory below the user
+  cache directory, because a compiled standard library is the same for every
+  repository on the machine. The two bounds are separate because the two stores
+  hold different things at different scales: verdicts of a few kilobytes, and
+  object files measured in gigabytes. Every run that holds the repository's
+  cache lease enforces all of these when it ends — one that could not take the
+  lease leaves them to the next run or to `cache gc` — so they are bounds and
+  not suggestions; see [cache maintenance](#cache-maintenance) below.
 - `[reports]`: non-negative `keep`, the number of run directories `reports/runs`
   holds, twenty by default. Zero means that default rather than a history of
   nothing. It is a count and not a byte budget because a report is the product
@@ -136,11 +135,11 @@ cache lock, and reports any failure as a progress note — `cache-gc-unavailable
 verdict. The run history is collected after the report is published, so the run
 doing the collecting is the newest entry and cannot reach its own report.
 
-The build cache collections take a non-blocking lock on the layer and skip if another
-process holds it, so a run and a maintenance command running side by side
-simply let each other finish. A collection keeps anything read within the last
-two touch intervals — two hours for the layer the machine keeps — because the
-go command opens a cached file after the response that named it and a
+The build cache collections take a non-blocking lock on the layer and skip if
+another process holds it, so a run and a maintenance command running side by
+side simply let each other finish. A collection keeps anything read within the
+last two touch intervals — two hours for the layer the machine keeps — because
+the go command opens a cached file after the response that named it and a
 continuously read entry's file time is refreshed only once per interval; the
 bound is therefore soft by at most that window of writes.
 
@@ -149,13 +148,13 @@ of the persistent build layer so child Go commands take the toolchain's direct
 cache path. It lives beside `build_dir` because its output objects are hard
 links. Mutation preparation persists its compile/list products, but overrides
 the cache for its instrumented test run; candidate validation and fallback work
-stay on the continuously bounded external scratch. Once a collection is due, admission
-of new native commands stops until the active finite batch drains, then the
-projection is collected at zero active. It is forced inside `build_max_bytes`
-before a deliberate keep and otherwise removed at run end. A projection or
-collection failure switches later work to external scratch. `cache status` and
-`cache gc` inspect the same base parent and use owner locks to spare live
-projections.
+stay on the continuously bounded external scratch. Once a collection is due,
+admission of new native commands stops until the active finite batch drains,
+then the projection is collected at zero active. It is forced inside
+`build_max_bytes` before a deliberate keep and otherwise removed at run end. A
+projection or collection failure switches later work to external scratch. `cache
+status` and `cache gc` inspect the same base parent and use owner locks to spare
+live projections.
 
 An owned-cache miss may import exactly one verified entry from the host native
 Go cache. The last case-insensitive `GOCACHE` declaration selects an absolute
@@ -190,7 +189,7 @@ validates it and reports the record and outcome counts; a corrupt or irregular
 store is `invalid`, not silently empty and not a reason to hide the status of
 the other stores. It holds only kills, survivals, and unreached verdicts a run
 could state as a checkable claim; timeout findings are never stored. Nothing in
-it expires, and a record is replaced when a later run contradicts it. `cache flush` removes the file, which
-only makes the next run execute every mutant; see
+it expires, and a record is replaced when a later run contradicts it. `cache
+flush` removes the file, which only makes the next run execute every mutant; see
 [the assurance contract](assurance-contract.md) for what a run reuses from it
 and under which conditions.

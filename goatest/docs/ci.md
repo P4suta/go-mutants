@@ -6,8 +6,9 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 # CI usage
 
 A packaged GitHub Action is not required. A repository can install a tagged
-release with `go install github.com/P4suta/go-mutants/goatest/cmd/goatest@latest`, or build
-the checked-out source and use the CLI directly:
+release with `go install
+github.com/P4suta/go-mutants/goatest/cmd/goatest@latest`, or build the
+checked-out source and use the CLI directly:
 
 ```yaml
 name: goatest
@@ -30,7 +31,9 @@ jobs:
         run: go build -o "$RUNNER_TEMP/goatest" ./cmd/goatest
       - name: Pull-request scope
         if: github.event_name == 'pull_request'
-        run: "$RUNNER_TEMP/goatest" verify --changed=origin/${{ github.base_ref }} ./... --ui=plain
+        run: >-
+          "$RUNNER_TEMP/goatest" verify
+          --changed=origin/${{ github.base_ref }} ./... --ui=plain
       - name: Full main scope
         if: github.event_name != 'pull_request'
         run: "$RUNNER_TEMP/goatest" verify ./... --ui=plain
@@ -105,8 +108,8 @@ cannot fail is worse than an absent one, because it is counted.
 The `dogfood` job uses the changeset scope, which is the scope this page
 recommends above and the only one that fits a check answering a pull request. A
 full run of this repository against itself takes over an hour - the mutation
-phase evaluates every mutant of 2591 tests - and `ASSURED` is defined over a full
-scope, so `mise run dogfood` is the one whose verdict means something and
+phase evaluates every mutant of 2591 tests - and `ASSURED` is defined over a
+full scope, so `mise run dogfood` is the one whose verdict means something and
 `mise run dogfood-changed` is the one CI can wait for. The first version of this
 job ran the full scope, which was wired in before it had been timed.
 

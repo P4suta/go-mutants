@@ -39,25 +39,25 @@ answered either.
 
 ## Decision
 
-1. **One scratch directory per run, with one filesystem-required exception.** A run makes
-   `goatest-run-*` under the configured temporary root before it writes
-   anything, and everything it would otherwise have made beside it goes below
-   instead: the mutation engine's snapshot, probe tree, and scratch, `build/`
-   for the build cache layer, `baseline-*` per round, and `candidate-*` per
-   validated candidate. A native build-cache projection must be made beside its
-   persistent base so output objects can be hard links when the configured
+1. 1. **One scratch directory per run, with one filesystem-required exception.**
+   A run makes `goatest-run-*` under the configured temporary root before it
+   writes anything, and everything it would otherwise have made beside it goes
+   below instead: the mutation engine's snapshot, probe tree, and scratch,
+   `build/` for the build cache layer, `baseline-*` per round, and `candidate-*`
+   per validated candidate. A native build-cache projection must be made beside
+   its persistent base so output objects can be hard links when the configured
    temporary directory is another filesystem. It is therefore a second owned
    top-level directory, `goatest-native-cache-*`, with the same marker and lock.
-   One directory is one removal, one owner, and one path a
-   developer looks in. The names below it are short because the parent already
-   says which tool made them.
+   One directory is one removal, one owner, and one path a developer looks in.
+   The names below it are short because the parent already says which tool made
+   them.
 
    The subdirectories are still released as the run finishes with each of them,
    because that is what keeps the peak footprint small; the removal of the run
    scratch at the end covers whatever is left, including what a killed step
    never got to.
 
-2. **A run that cannot make or claim one writes nothing temporary.** An
+1. **A run that cannot make or claim one writes nothing temporary.** An
    unowned directory is one a later sweep judges by age alone, so using it
    would mean writing a run's work somewhere another goatest is entitled to
    delete. Creation or claim failure therefore emits `temp-unavailable` and
@@ -68,7 +68,7 @@ answered either.
    `goatest-run-*` root and applies the same lifecycle to every temporary it
    creates.
 
-3. **The lock is the liveness signal, not the pid.** A claimed directory holds
+2. **The lock is the liveness signal, not the pid.** A claimed directory holds
    `owner.lock`, an exclusive advisory lock held open for the whole run. A lock
    that can be taken means the process that held it no longer exists, whatever
    it was called and whatever its pid has been reused for since. A pid wraps and
@@ -77,7 +77,7 @@ answered either.
    the working directory of a running verification. The lock is the operating
    system's own answer and costs one open file.
 
-4. **The marker is for people, and for one bit.** `owner.json` is a
+3. **The marker is for people, and for one bit.** `owner.json` is a
    `goatest-temp-owner-v1` document naming the run, the process, the start time,
    the repository being verified, and `kept`. A person who finds four gigabytes
    in their temporary directory reads it to learn which project and which run
@@ -86,7 +86,7 @@ answered either.
    all is treated as one that does not say kept: a half-written marker must not
    make a dead directory immortal.
 
-5. **An unowned directory is judged by age, and 24 hours is the number.** A
+4. **An unowned directory is judged by age, and 24 hours is the number.** A
    directory carrying no marker is either one made before this convention or one
    caught in the moment between its own mkdir and its claim. Age is the only
    evidence available about it, and the two costs are asymmetric: waiting costs
@@ -95,7 +95,7 @@ answered either.
    developer who fills their disk on Monday has it back on Tuesday. The window
    is permanent rather than transitional, because the mkdir-then-claim gap is.
 
-6. **Sweeping is what a run does before it writes, and what `cache gc` does on
+5. **Sweeping is what a run does before it writes, and what `cache gc` does on
    demand.** A run sweeps the temporary root first, so that a machine holding
    the leftovers of a killed run has the disk back before this one asks for
    hundreds of megabytes of it. `goatest cache gc` runs the same sweep, and
@@ -113,18 +113,18 @@ answered either.
    maintenance command in a test, with no temporary directory and a clock a day
    ahead, collect the working directory of a run that was using it.
 
-7. **A keep is recorded where it outlives the run.** `--keep-temp` marks the
+6. **A keep is recorded where it outlives the run.** `--keep-temp` marks the
    run root kept, so no sweep takes it, and writes that root to
    `.goatest/kept-temp-v1.json`: path, run, moment, size. The
    filesystem-separated native projection is the only additional ledger entry.
    The trace carries an `artifact` event for each useful child, but a successful
    untraced run writes no trace, and that is precisely the run that leaves
    gigabytes nobody can account for. The ledger lives in the repository's own
-   `.goatest` directory rather than beside the directories it names, because it has to
-   survive the removal of every one of them and because the commands that read
-   it are already run from a repository.
+   `.goatest` directory rather than beside the directories it names, because it
+   has to survive the removal of every one of them and because the commands that
+   read it are already run from a repository.
 
-8. **The ledger names a directory; the directory says whether it may be
+7. **The ledger names a directory; the directory says whether it may be
    removed.** Before a collection removes anything it asks `tempowner.KeptBy`,
    which reads the marker in the directory: goatest's own naming the run the
    entry names. The
@@ -134,20 +134,20 @@ answered either.
    so is one whose path cannot be stat'ed: only `fs.ErrNotExist` means a
    directory is gone.
 
-9. **`[cache] ttl` bounds a keep, and nothing else does.** `goatest cache gc`
+8. **`[cache] ttl` bounds a keep, and nothing else does.** `goatest cache gc`
    removes a kept directory once it is older than the TTL and drops the entries
    of directories that are already gone. No byte budget applies: a keep is a
    request somebody made on purpose, and the only bound that respects the
    request is time. A developer who wants one back sooner removes it by hand,
    and the next `gc` drops its entry.
 
-10. **Housekeeping cannot change an established verdict.** Sweep, removal, and
-    ledger failures are progress notes — `temp-sweep`, `temp-unavailable`,
-    `kept-temp-unrecorded` — and do not change a verdict already established.
-    Creation or ownership failure stops before verification because no command
-    may write to an unowned topology. None of this enters a cache identity:
-    where a run put its directories and what its sweep found are facts about the
-    machine, exactly as [0002](0002-trace-is-not-evidence.md) says of a trace.
+9. **Housekeeping cannot change an established verdict.** Sweep, removal, and
+   ledger failures are progress notes — `temp-sweep`, `temp-unavailable`,
+   `kept-temp-unrecorded` — and do not change a verdict already established.
+   Creation or ownership failure stops before verification because no command
+   may write to an unowned topology. None of this enters a cache identity:
+   where a run put its directories and what its sweep found are facts about the
+   machine, exactly as [0002](0002-trace-is-not-evidence.md) says of a trace.
 
 ## Consequences
 

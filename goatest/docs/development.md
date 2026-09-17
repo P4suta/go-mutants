@@ -63,11 +63,14 @@ instead of starting processes, and records every call:
 ```go
 workspace := testkit.NewWorkspace()
 workspace.On("go", "test", "-race").Return(gomutants.CommandResult{ExitCode: 1})
-workspace.On().Do(func(command gomutants.Command) (gomutants.CommandResult, error) {
+workspace.On().Do(func(
+	command gomutants.Command,
+) (gomutants.CommandResult, error) {
 	return gomutants.CommandResult{Duration: time.Second}, nil
 })
 
-result, err := assure.CollectRace(t.Context(), workspace, model, packages, contract, nil)
+result, err := assure.CollectRace(
+	t.Context(), workspace, model, packages, contract, nil)
 commands := workspace.Calls()
 ```
 
@@ -159,7 +162,8 @@ against a recorded stream — that a warm run reported a cache hit, that a phase
 ran once rather than twice, or which bounded milestones a phase reached:
 
 ```go
-if got := testkit.EventDetails(events, "baseline-progress"); !slices.Equal(got, []string{"0/2", "1/2", "2/2"}) {
+got := testkit.EventDetails(events, "baseline-progress")
+if !slices.Equal(got, []string{"0/2", "1/2", "2/2"}) {
 	t.Fatalf("baseline progress = %v", got)
 }
 ```
@@ -202,12 +206,13 @@ adds. [CONTRIBUTING.md](../CONTRIBUTING.md) lists the complete set CI runs.
 what a run did while it did it. Each run records into a directory of its own,
 `<UTC timestamp>-<pid>/`, under the trace root the flag names; without a
 directory that root is `.goatest/trace/`, which the source snapshot never
-reads, and naming one collects its recordings there instead; `GOATEST_TRACE=1` asks for the same location and `GOATEST_TRACE=DIR`
-for a named one, so a job that cannot change a command line can still ask.
-The environment variable is read in `cmd/goatest` alone, where it becomes the
-flag the command layer parses: no layer below the command line reads the
-environment. Recordings under the default root are one of the stores
-[every run that holds the cache lease collects when it ends](#what-the-repository-keeps-and-what-collects-it).
+reads, and naming one collects its recordings there instead; `GOATEST_TRACE=1`
+asks for the same location and `GOATEST_TRACE=DIR` for a named one, so a job
+that cannot change a command line can still ask. The environment variable is
+read in `cmd/goatest` alone, where it becomes the flag the command layer parses:
+no layer below the command line reads the environment. Recordings under the
+default root are one of the stores [every run that holds the cache lease
+collects when it ends](#what-the-repository-keeps-and-what-collects-it).
 
 A run that asked for no trace still records, into a ring of its last 4096 events
 in memory: no file, no directory, and a bounded price a run of any length pays
@@ -244,55 +249,54 @@ kill in the comparison, and a smaller bill in the summary. A regression is
 reported rather than failed on, so the exit code says whether the two reports
 could be read rather than what they said.
 
-`mise run proof-audit -- [-module PATH] [-catalog PATH] <trace.jsonl> <profiles-dir>`
-audits the proof layers of one recorded run against the kills that run proved.
-The profiles name their files under a module path, which defaults to the
-`module` directive of `./go.mod` — the repository the tool is run from — and
-`-module` names another when the recording came from a different one. A layer is
-any rule that narrows what a mutant is executed against — the block routing that
-keeps a mutant to the coverage blocks containing its position, the
-branch-never-taken proof behind it, and the infection facts of the probe pass,
-which drop a target whose measured probe run never saw the mutant infect — and
-the invariant
-every layer has to satisfy is that it drops no killer: for each mutant a target
-actually killed, the narrowed rule must still route that mutant to that target.
-Why every speed-up is such a layer, and why a budget never is, is
-[ADR 0004](adr/0004-proof-layers-not-budgets.md).
-The `infection` layer reads the recording alone, so it is audited whenever the
+`mise run proof-audit -- [-module PATH] [-catalog PATH] <trace.jsonl>
+<profiles-dir>` audits the proof layers of one recorded run against the kills
+that run proved. The profiles name their files under a module path, which
+defaults to the `module` directive of `./go.mod` — the repository the tool is
+run from — and `-module` names another when the recording came from a different
+one. A layer is any rule that narrows what a mutant is executed against — the
+block routing that keeps a mutant to the coverage blocks containing its
+position, the branch-never-taken proof behind it, and the infection facts of the
+probe pass, which drop a target whose measured probe run never saw the mutant
+infect — and the invariant every layer has to satisfy is that it drops no
+killer: for each mutant a target actually killed, the narrowed rule must still
+route that mutant to that target. Why every speed-up is such a layer, and why a
+budget never is, is [ADR 0004](adr/0004-proof-layers-not-budgets.md). The
+`infection` layer reads the recording alone, so it is audited whenever the
 recording holds a target probe pass and left out — with a line under the layer
 table saying so — whenever it holds none. A resumed attempt announces
 `resume-probe` but does not invent execution records; use its interrupted
-attempt or a clean recording to audit that layer. The `suite-reach` layer is separate:
-it reconstructs passing whole-package coverage controls from recorded command
-arguments, then independently applies exact block containment to attributable
-package-suite kills. It deduplicates identical recorded executions; a missing route,
-missing profile, or more than one profile identity for a package is
-unverifiable, never a pass. Infection suite probes are counted apart because
-they prove or calibrate a whole fallback and are not facts about one killer
-target. Routing now discharges by the rule each layer audits, so a violation it
-reports is a killer a run actually skipped rather than one it
-would have skipped had the layer been switched on. Its
-`infection discharge` block still measures what the layer would buy on top of
-the recording, which on a run that already applied it is nothing: the targets it
-discharged have left `reaching_targets`, and the trace's own `discharged`
-entries are what to read there instead.
-The rule is reimplemented from the recording and the coverage profiles of the
-run's temporary directory rather than called out of `internal/assure`, because
-an audit that asked the code under audit whether it was right would only prove
-that it agrees with itself. The profiles themselves are read by
-`internal/golang`, the parser routing uses, so the independence covers the
-rule and not the reading. The two halves come from one
-`goatest verify --trace --keep-temp` run; the exit code is a gate, zero when
-every layer kept every killer. A recording cut short — a run killed, or one
-whose disk filled — is audited up to its last complete line, but a malformed
-line with more lines after it is refused rather than skipped.
+attempt or a clean recording to audit that layer. The `suite-reach` layer is
+separate: it reconstructs passing whole-package coverage controls from recorded
+command arguments, then independently applies exact block containment to
+attributable package-suite kills. It deduplicates identical recorded executions;
+a missing route, missing profile, or more than one profile identity for a
+package is unverifiable, never a pass. Infection suite probes are counted apart
+because they prove or calibrate a whole fallback and are not facts about one
+killer target. Routing now discharges by the rule each layer audits, so a
+violation it reports is a killer a run actually skipped rather than one it would
+have skipped had the layer been switched on. Its `infection discharge` block
+still measures what the layer would buy on top of the recording, which on a run
+that already applied it is nothing: the targets it discharged have left
+`reaching_targets`, and the trace's own `discharged` entries are what to read
+there instead. The rule is reimplemented from the recording and the coverage
+profiles of the run's temporary directory rather than called out of
+`internal/assure`, because an audit that asked the code under audit whether it
+was right would only prove that it agrees with itself. The profiles themselves
+are read by `internal/golang`, the parser routing uses, so the independence
+covers the rule and not the reading. The two halves come from one `goatest
+verify --trace --keep-temp` run; the exit code is a gate, zero when every layer
+kept every killer. A recording cut short — a run killed, or one whose disk
+filled — is audited up to its last complete line, but a malformed line with more
+lines after it is refused rather than skipped.
 
 The `branch` layer decides by a proof the recording does not carry, so it needs
 a third input. `-catalog` names a `go-mutants list --json` document, produced
 from the repository root of the same tree the run recorded:
 
 ```sh
-go run github.com/P4suta/go-mutants/cmd/go-mutants list --json --profile strong > catalog.json
+go run github.com/P4suta/go-mutants/cmd/go-mutants list \
+    --json --profile strong > catalog.json
 ```
 
 The tree has to match: mutant identities are content-addressed, so a catalog
@@ -339,12 +343,13 @@ no recorder, and no call site branches on whether tracing is on. That is what
 keeps the traced and the untraced path one path.
 
 The nil recorder and the recording every run keeps are two different mechanisms,
-and only the first of them is free. The nil recorder belongs to `internal/trace`:
-it is the disabled trace a caller that passes none is left with, which is how a
-unit test builds options without a recording. A run of the tool is never in that
-position. `internal/app` opens a recording for every run and hands it down, so a
-run that asked for no `--trace` is still handed a live recorder and still
-records — into the bounded ring above rather than into nothing.
+and only the first of them is free. The nil recorder belongs to
+`internal/trace`: it is the disabled trace a caller that passes none is left
+with, which is how a unit test builds options without a recording. A run of the
+tool is never in that position. `internal/app` opens a recording for every run
+and hands it down, so a run that asked for no `--trace` is still handed a live
+recorder and still records — into the bounded ring above rather than into
+nothing.
 
 Two constraints hold below the command layer. `internal/assure` and
 `internal/trace` read no environment variables — `GOATEST_TRACE` becomes a flag
@@ -405,7 +410,8 @@ run. `<run>` is the run identity of the report; a run that stopped before it had
 one — the failure a bundle is most needed for — is named `<UTC timestamp>-<pid>`
 instead, the name a recording of the same run takes, from the same injected
 clock and process id. Bundles are one of the stores
-[every run that holds the cache lease collects when it ends](#what-the-repository-keeps-and-what-collects-it).
+[every run that holds the cache lease collects when it
+ends](#what-the-repository-keeps-and-what-collects-it).
 
 | File | What it holds |
 | --- | --- |
@@ -497,17 +503,17 @@ carries no marker at all and has been untouched for 24 hours. It never
 follows a symbolic link, and one entry it cannot judge never stops the others.
 A run and a plan both sweep before they write anything — a plan makes the same
 directories, so it leaves the same leftovers — and `goatest cache gc` sweeps on
-demand while `goatest cache status` inspects without removing. All three sweep only a
-directory somebody named: an empty `TempDirectory` collects nothing, because a
-value nobody set must never become the machine's own temporary directory, and
-`cmd/goatest` is the one layer that names it. A run still makes its scratch
-where the operating system puts one — creating a directory there is harmless,
-collecting there is not — and maintenance reports the temporary directory as
-`skipped`. go-mutants' directories are nested below the run root and carry
-their own owner files; its `Open` still reports its child sweep through the
-`mutation-temp-sweep` progress note. Why the
-lock and not a pid, why 24 hours, and why the ledger lives in `.goatest` are
-[ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md).
+demand while `goatest cache status` inspects without removing. All three sweep
+only a directory somebody named: an empty `TempDirectory` collects nothing,
+because a value nobody set must never become the machine's own temporary
+directory, and `cmd/goatest` is the one layer that names it. A run still makes
+its scratch where the operating system puts one — creating a directory there is
+harmless, collecting there is not — and maintenance reports the temporary
+directory as `skipped`. go-mutants' directories are nested below the run root
+and carry their own owner files; its `Open` still reports its child sweep
+through the `mutation-temp-sweep` progress note. Why the lock and not a pid, why
+24 hours, and why the ledger lives in `.goatest` are [ADR
+0006](adr/0006-every-temporary-directory-has-an-owner.md).
 
 ### What a kept directory costs, and who collects it
 
@@ -678,7 +684,9 @@ func (store *Store) Get(digest string) (report.Report, bool, error) {
 }
 
 // getWithHooks is Get against a filesystem the caller supplies.
-func (store *Store) getWithHooks(digest string, hooks storeHooks) (report.Report, bool, error) {
+func (store *Store) getWithHooks(
+	digest string, hooks storeHooks,
+) (report.Report, bool, error) {
 	hooks = hooks.resolved()
 	// ...
 }
@@ -692,7 +700,9 @@ func TestGetReturnsTheReadFailureWithoutDecodingFallbackBytes(t *testing.T) {
 	t.Parallel()
 	failure := errors.New("read failure")
 	hooks := storeHooks{
-		read: func(string) ([]byte, error) { return []byte(`{"schema":"assurance-report-v1"}`), failure },
+		read: func(string) ([]byte, error) {
+			return []byte(`{"schema":"assurance-report-v1"}`), failure
+		},
 	}
 	got, ok, err := New(t.TempDir()).getWithHooks("digest-a", hooks)
 	if !errors.Is(err, failure) || ok || !reflect.DeepEqual(got, report.Report{}) {

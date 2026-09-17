@@ -82,9 +82,9 @@ contradictory negative coverage observation.
 
 Everything the measurements do not cover — an unprobed mutant or an unmeasured
 execution — is kept on the conservative path. Fuzz targets execute and probe
-their registered seed corpus like other deterministic targets. The facts live in memory beside coverage and are
-recorded in the trace. Replaying one mutant skips the pass and routes
-conservatively, which only executes more.
+their registered seed corpus like other deterministic targets. The facts live in
+memory beside coverage and are recorded in the trace. Replaying one mutant skips
+the pass and routes conservatively, which only executes more.
 
 Ordinary mutant commands do not wait for a project-independent fixed timeout.
 Their budget is the saturating sum of distinct positive same-run clean
@@ -97,10 +97,10 @@ environment, and deadline;
 a failure or expiration makes that compatible execution group inconclusive
 without executing it. Other groups still run because any one may establish a
 kill. Compilation is outside the derived budget. Replay takes the same control
-through the same prepared session. With no positive control, no mutant starts for
-that group. A mutant timeout answers only its group and starts no recalibration,
-split, or retry. The design is recorded in
-[ADR 0018](adr/0018-confirm-comparative-watchdogs.md).
+through the same prepared session. With no positive control, no mutant starts
+for that group. A mutant timeout answers only its group and starts no
+recalibration, split, or retry. The design is recorded in [ADR
+0018](adr/0018-confirm-comparative-watchdogs.md).
 
 Within a reaching route, every target with the same package and environment
 shares one exact selector. There are no cost, duration, target-count, or
@@ -235,21 +235,21 @@ Every byte a run writes outside the repository has one owned top-level
 directory. Almost all of it goes below `goatest-run-*` under the configured
 temporary root, holding `build/` for the external build cache layer and its
 independent native `go-cache/` backing,
-`baseline-*` per round and `candidate-*` per validated candidate. A native build-cache projection
-is the filesystem-required exception: `goatest-native-cache-*` sits beside the
-persistent base so its objects can be hard links rather than a second copy. Both
-top-level forms carry an owner
-pair — an advisory lock held open for the whole run, and a
-`goatest-temp-owner-v1` marker naming the run, the process, the repository and
-whether it was kept on purpose. The lock is the liveness signal, because a pid
-wraps and is reused; a lock that can be taken means its holder is gone. Each run
-sweeps both named roots before it writes there and collects what runs that were
-killed left behind, and `goatest cache gc` does the same on demand. A
-directory kept with `--keep-temp` is marked kept, so no sweep takes it, and is
-recorded in `.goatest/kept-temp-v1.json`, which `cache status` lists and
-`cache gc` collects once it is older than the cache TTL. None of this can fail
-a run: it is housekeeping, and a run that could not do it still produces its
-verdict. See [ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md).
+`baseline-*` per round and `candidate-*` per validated candidate. A native
+build-cache projection is the filesystem-required exception:
+`goatest-native-cache-*` sits beside the persistent base so its objects can be
+hard links rather than a second copy. Both top-level forms carry an owner pair —
+an advisory lock held open for the whole run, and a `goatest-temp-owner-v1`
+marker naming the run, the process, the repository and whether it was kept on
+purpose. The lock is the liveness signal, because a pid wraps and is reused; a
+lock that can be taken means its holder is gone. Each run sweeps both named
+roots before it writes there and collects what runs that were killed left
+behind, and `goatest cache gc` does the same on demand. A directory kept with
+`--keep-temp` is marked kept, so no sweep takes it, and is recorded in
+`.goatest/kept-temp-v1.json`, which `cache status` lists and `cache gc` collects
+once it is older than the cache TTL. None of this can fail a run: it is
+housekeeping, and a run that could not do it still produces its verdict. See
+[ADR 0006](adr/0006-every-temporary-directory-has-an-owner.md).
 
 Verification is read-only. A generated test or corpus entry is stored through
 `internal/repair` as an isolated candidate. The separate `fix --apply`

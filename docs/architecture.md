@@ -1308,6 +1308,38 @@ is the whole of what was asked for and a failure is an error.
 | `schema` | Public: the JSON Schema documents go-mutants publishes, embedded | implemented |
 | `schema/stryker` | The vendored mutation-testing-report schema and its provenance | vendored |
 | `vendor-assets` | The vendored viewer bundle and its digest check | vendored |
+| `goatest` | The runner's public API: what a Go test needs in order to mean anything, as a library | implemented |
+| `goatest/cmd/goatest` | The runner's single command | implemented |
+| `goatest/internal/advisorylock` | A lock a second run reads rather than blocks on | implemented |
+| `goatest/internal/app` | The command's own layer: flags, output, diagnostics bundles and the interrupt path | implemented |
+| `goatest/internal/assure` | Coordinates a round: baseline, probes, mutants, verdict | implemented |
+| `goatest/internal/buildcache` | The build cache a round reuses between its phases | implemented |
+| `goatest/internal/cache` | The evidence cache, keyed on content identity | implemented |
+| `goatest/internal/checkpoint` | What a round writes down so that an interrupted one can be resumed | implemented |
+| `goatest/internal/cli` | The cobra tree | implemented |
+| `goatest/internal/config` | `.goatest.toml`, its defaults and its validation | implemented |
+| `goatest/internal/devgates` | The checks whose subject is the runner's repository rather than the runner | test-only support |
+| `goatest/internal/devtools/proofaudit` | Re-derives a round's verdict from its own evidence, with code that never calls the runner's | developer tool |
+| `goatest/internal/devtools/reportdiff` | Compares two reports and says which fields moved | developer tool |
+| `goatest/internal/devtools/testaudit` | Turns a test run into the table a reader audits it from | developer tool |
+| `goatest/internal/devtools/tracesummary` | Turns a recording into a summary a person reads | developer tool |
+| `goatest/internal/environment` | The environment a measured command is given, and nothing the caller's leaks into | implemented |
+| `goatest/internal/evidence` | Content identities and the impact graph | implemented |
+| `goatest/internal/filemode` | The permission bits a file is written with, per platform | implemented |
+| `goatest/internal/golang` | Discovers native targets and coverage through the go command | implemented |
+| `goatest/internal/keptledger` | What a kept temporary directory records about why it was kept | implemented |
+| `goatest/internal/mutationbridge` | Freezes the external go-mutants contract: the one door the engine is reached through | implemented |
+| `goatest/internal/processtree` | A measured command's whole process tree, and how it is ended | implemented |
+| `goatest/internal/provider` | Providers run as subprocesses behind strict JSON protocols; core holds no network client | implemented |
+| `goatest/internal/repair` | What a round offers to fix, and what it refuses to touch | implemented |
+| `goatest/internal/report` | Report v1: the document a round publishes, its limitations and its audit | implemented |
+| `goatest/internal/resource` | The resources a target acquires, and the limit an exclusive one reduces | implemented |
+| `goatest/internal/retention` | How long evidence is kept and what decides it is stale | implemented |
+| `goatest/internal/tempowner` | Which run owns a temporary directory, and what a later sweep reads | implemented |
+| `goatest/internal/testargs` | The arguments a measured `go test` is given | test-only support |
+| `goatest/internal/testkit` | The runner's harness | test-only support |
+| `goatest/internal/trace` | The runner's own trace vocabulary, which the engine's deliberately rejects | implemented |
+| `goatest/internal/ui` | The dashboard and the console a round renders into | implemented |
 
 Pure packages have no filesystem or process access, which is what makes the
 golden ID vectors and property tests meaningful.

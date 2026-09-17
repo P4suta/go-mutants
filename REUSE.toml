@@ -176,3 +176,40 @@ path = ["LICENSE-APACHE", "LICENSES/Apache-2.0.txt"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "The Apache Software Foundation"
 SPDX-License-Identifier = "Apache-2.0"
+
+# The runner's own annotations, each path carried across with the `goatest/`
+# prefix the merge gave it.
+#
+# `.gitattributes` is not among them: it was deleted by the merge, because its
+# `text=auto eol=lf` would reinstate normalisation inside the subtree whose
+# bytes decide a mutant's identity. An entry for it would be an annotation
+# covering nothing, which this file's own gate refuses.
+#
+# The copyright stays `2026 goatest contributors`. REUSE accepts both notices
+# and rewriting three hundred files would be history nobody can read; the two
+# licence files are annotated rather than deleted, because goatest is a module
+# somebody can `go install` on its own and its zip holds this directory alone.
+
+[[annotations]]
+path = ["goatest/go.mod", "goatest/go.sum", "goatest/.gitignore"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 goatest contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = ["goatest/LICENSE-APACHE", "goatest/LICENSE-MIT"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 goatest contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+[[annotations]]
+path = [
+  "goatest/internal/trace/schema.json",
+  "goatest/internal/devtools/proofaudit/testdata/**",
+  "goatest/internal/devtools/reportdiff/testdata/**",
+  "goatest/internal/devtools/tracesummary/testdata/**",
+  "goatest/internal/testkit/testdata/**",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 goatest contributors"
+SPDX-License-Identifier = "MIT OR Apache-2.0"

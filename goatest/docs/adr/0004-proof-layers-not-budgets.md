@@ -9,14 +9,16 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 Accepted, 2026-09-02; its coverage-blind consequence was amended by
 [ADR 0008](0008-controls-before-timeouts.md) and
-[ADR 0010](0010-whole-suite-reach-before-fallback.md). Implemented by the block routing
-of `internal/assure` (`routeMutant`, #18), the branch-never-taken discharge it performs with
-go-mutants' branch proof (`dischargeNarrowedBranch`, #23), the `route` events
-of `internal/trace` that name what each layer decided (#18, #19), and the
-`internal/devtools/proofaudit` audit that holds every layer to recorded kills
-(#20, #24).
+[ADR 0010](0010-whole-suite-reach-before-fallback.md). Implemented by the block
+routing of `internal/assure` (`routeMutant`, #18), the branch-never-taken
+discharge it performs with go-mutants' branch proof (`dischargeNarrowedBranch`,
 
-## Context
+## 23), the `route` events of `internal/trace` that name what each layer decided
+
+(#18, #19), and the `internal/devtools/proofaudit` audit that holds every layer
+to recorded kills (#20, #24).
+
+### Context
 
 A first verification of this repository ran for about three hours, and 98 % of
 that was mutation: every mutant executed against every test that ran its file,
@@ -42,7 +44,7 @@ evidence goatest already collects can sometimes establish before any mutant is
 built. Where it can, running the test would only confirm what is already
 known.
 
-## Decision
+### Decision
 
 1. **No mutant is ever left unproved by policy.** There is no time budget,
    sampling rate, exclusion of slow targets, or prediction of which mutants to
@@ -76,7 +78,7 @@ known.
    reimplementation is deliberate — the code under audit is not asked whether
    it agrees with itself.
 
-## Consequences
+### Consequences
 
 - The cost of a surviving mutant remains the bound on a run, and it comes down
   only as proofs come in. That is the work; there is no setting that does it.

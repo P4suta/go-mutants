@@ -7,8 +7,8 @@ SPDX-License-Identifier: MIT OR Apache-2.0
 
 `goatest` is an audit-oriented assurance runner for Go 1.26 and newer. It
 connects native Go tests and fuzz targets with coverage routing, mutation
-testing, deterministic fuzz-seed execution, race checks, explicit integration resources,
-and reviewable repair candidates.
+testing, deterministic fuzz-seed execution, race checks, explicit integration
+resources, and reviewable repair candidates.
 
 The current release line is a pre-release alpha; `v1` is the first intended
 public contract and is defined directly, without a legacy compatibility layer.
@@ -60,7 +60,8 @@ downloaded, for example:
 gh attestation verify goatest_0.1.0_Linux_x86_64.tar.gz --repo P4suta/goatest
 ```
 
-Building from a checkout works the same way: `go build -o goatest ./cmd/goatest`.
+Building from a checkout works the same way: `go build -o goatest
+./cmd/goatest`.
 
 ## Try it
 
@@ -73,10 +74,10 @@ goatest verify --changed=origin/main ./... -- -short
 goatest verify --contract=deep-v1 ./...
 ```
 
-`goatest init` writes a minimal `.goatest.toml` and suggests the next steps, including adding
-`.goatest/` and `reports/` - the directories every verification writes - to
-`.gitignore`. A bare `goatest` prints the help text; `goatest help COMMAND` or
-`goatest COMMAND --help` explains one command.
+`goatest init` writes a minimal `.goatest.toml` and suggests the next steps,
+including adding `.goatest/` and `reports/` - the directories every verification
+writes - to `.gitignore`. A bare `goatest` prints the help text; `goatest help
+COMMAND` or `goatest COMMAND --help` explains one command.
 
 The command surface is:
 
@@ -277,7 +278,10 @@ The complete list is maintained in [limitations](docs/limitations.md).
 go test ./...
 go test -race ./...
 go vet ./...
-go test -run '^$' -bench 'Benchmark(Checkpoint(IO|JournalAppend)|Digest|MutationAccounting|ReportGeneration)$' ./internal/cache ./internal/evidence ./internal/assure ./internal/report
+go test -run '^$' \
+    -bench 'Benchmark(Checkpoint(IO|JournalAppend)|Digest\
+|MutationAccounting|ReportGeneration)$' \
+    ./internal/cache ./internal/evidence ./internal/assure ./internal/report
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the `mise`-based workflow, pull
@@ -289,7 +293,8 @@ under [`docs/`](docs/).
 Development is test-driven. The suite includes deterministic fuzz-seed mutation
 proofs, exact-cache and
 impact-graph cases, provider/resource failures and cleanup, deterministic
-renderers, and the external `go-mutants` bridge contract at the commit `go.mod` pins.
+renderers, and the external `go-mutants` bridge contract at the commit `go.mod`
+pins.
 
 Licensed under either [MIT](LICENSE-MIT) or
 [Apache-2.0](LICENSE-APACHE), at your option.

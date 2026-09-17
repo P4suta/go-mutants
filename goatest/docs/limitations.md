@@ -74,12 +74,12 @@ which is why a report can carry several and still be `ASSURED`.
   narrow nothing, and each is a refusal rather than an oversight. A broad scope
   has nothing to narrow against. A diff that could not be read narrows nothing,
   because a selection built from a misread diff would omit a mutant in changed
-  code - the one mistake a changeset scope may not make. And a changeset in which
-  any `_test.go` changed narrows nothing at all, not even in the packages whose
-  sources did not: a changed test can change the fate of any mutant in its
+  code - the one mistake a changeset scope may not make. And a changeset in
+  which any `_test.go` changed narrows nothing at all, not even in the packages
+  whose sources did not: a changed test can change the fate of any mutant in its
   package, so the lines it touched say nothing about which mutants it now
-  reaches. In those three cases the run over-selects work and still cannot omit a
-  mutant in a selected changed file.
+  reaches. In those three cases the run over-selects work and still cannot omit
+  a mutant in a selected changed file.
 - Mutation routing places a mutant by the start position of its mutation, so a
   mutation spanning several lines is routed by the block that contains its
   first byte. Where the coverage toolchain and the mutation catalog disagree

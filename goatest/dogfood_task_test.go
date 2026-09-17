@@ -5,6 +5,7 @@ package goatest_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,12 +18,16 @@ import (
 // cleanly is a check that leaves a process behind on every cancelled run.
 func TestDogfoodTaskRunsBuiltCLIWithoutGoRunWrapper(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("mise.toml")
+	// One directory up, and under a different name. This module's own
+	// mise.toml was absorbed into the repository's when the two products came
+	// together, and `dogfood` there measures the engine -- so the runner's task
+	// is `dogfood-runner`, carried across whole rather than folded into it.
+	data, err := os.ReadFile(filepath.Join("..", "mise.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const (
-		marker           = "[tasks.dogfood]"
+		marker           = "[tasks.dogfood-runner]"
 		dogfoodTaskParts = 2
 	)
 	parts := strings.SplitN(string(data), marker, dogfoodTaskParts)

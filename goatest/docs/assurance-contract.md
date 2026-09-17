@@ -269,8 +269,8 @@ never the premise, the second control's completed duration is, and no
 compatible group runs a mutant more than twice.
 
 An original control failure or timeout at the ceiling is inconclusive and
-prevents the mutant from starting. A mutation that does not compile is `compile-rejected`, never
-“compile-equivalent”.
+prevents the mutant from starting. A mutation that does not compile is
+`compile-rejected`, never “compile-equivalent”.
 
 Every discovered mutant has exactly one report-v1 disposition:
 
@@ -331,9 +331,10 @@ longer reaches the mutant cannot kill it — so the current set need only be a
 subset. A target that entered it is a test nothing was ever run against, so the
 universal claim is simply not about this run and the mutant executes. Two kinds
 of target disqualify a survival in both directions: one without exact coverage
-blocks and one whose corpus-bound behaviour key changed. A survivor whose whole reaching set the proofs discharged
-is not recorded either: nothing ran to exhaust, and the proofs re-derive the
-verdict on the next run without running anything.
+blocks and one whose corpus-bound behaviour key changed. A survivor whose whole
+reaching set the proofs discharged is not recorded either: nothing ran to
+exhaust, and the proofs re-derive the verdict on the next run without running
+anything.
 
 #### A mutant no target reaches
 

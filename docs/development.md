@@ -1635,3 +1635,40 @@ survivors (4311/4321 clears, 4310/4321 does not) where 99.5 bought twelve when
 it was set. The floor is a fixed number of survivors rather than a fixed
 percentage of a growing catalogue. Do the arithmetic, write the answer next to
 the number, and only then decide whether it moves.
+
+## 12. The runner
+
+`goatest/` is the second module: the assurance runner that consumes this engine
+as a library, through the single door `goatest/internal/mutationbridge`. It
+lives here so that one proof is one pull request — the engine gains a claim and
+the runner gains the rule, the trace vocabulary, the documentation and the audit
+layer in the same change, rather than in a sequence of two with a version pin
+between them.
+
+Every task below starts in `goatest/` and with `GOWORK=off`, and both halves are
+load-bearing. The runner refuses a workspace on purpose: `internal/golang`
+rejects more than one main module, and its own limitations page calls workspace
+aggregation deliberately deferred. `GOWORK=off` alone is not enough, because
+`DetectWorkspace` reads `go.work` as a *file* and walks up to find it — so the
+task has to be started inside the module rather than above it.
+
+| Task | What it does |
+| --- | --- |
+| `mise run dogfood-runner` | goatest measuring goatest, whole scope |
+| `mise run dogfood-changed` | The same over what the branch changed, which is what CI waits for |
+| `mise run test-audit` | The unit tier, with an audit of what actually ran |
+| `mise run test-integration-audit` | Both tiers, audited the same way |
+| `mise run proof-audit` | Re-derives a round's verdict from its own evidence, with code that never calls the runner's |
+| `mise run report-diff` | Compares two assurance reports: verdict, accounting, mutant transitions, lost kills |
+| `mise run trace-summary-runner` | Turns a `goatest-trace-v1` recording into a performance breakdown |
+
+The last one is a separate task rather than a flag on `mise run trace-summary`
+because the two schemas reject each other by design: `gomutants-trace-v1` and
+`goatest-trace-v1` are different vocabularies for different products, and a
+reader that accepted both would be a reader that could not say which it had.
+
+The engine's own gates run over both modules. `./...` does not descend into a
+nested module — cmd/go's walker returns `SkipDir` the moment it finds a second
+`go.mod`, and it does it in silence — so every whole-tree pattern in
+[`mise.toml`](../mise.toml) names `./goatest/...` on the same line, and
+`internal/devgates/modules_integration_test.go` refuses one that does not.
