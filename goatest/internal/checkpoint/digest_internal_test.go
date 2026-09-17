@@ -8,7 +8,10 @@ import (
 	"testing"
 )
 
-const hexDigitRuns = 4
+const (
+	hexDigitRuns    = 4
+	hexDigitsPerRun = 16
+)
 
 func TestACheckpointDigestIsSixtyFourLowercaseHexDigits(t *testing.T) {
 	t.Parallel()
@@ -114,5 +117,72 @@ func TestCoverageBlocksAreComparedFieldByFieldInOrder(t *testing.T) {
 				t.Fatalf("compareCoverageBlocks(%+v, %+v) = %d, want %d", test.other, base, got, -test.want)
 			}
 		})
+	}
+}
+
+func TestCanonicalizingACheckpointFillsEveryCollectionItFindsEmpty(t *testing.T) {
+	t.Parallel()
+	state := State{
+		Schema: SchemaV1, InputDigest: strings.Repeat("a", hexDigitRuns*hexDigitsPerRun), Attempts: 1,
+		Baseline: Baseline{Targets: []BaselineTarget{{
+			ID: "t1",
+			Target: &TargetEvidence{
+				Coverage: &Coverage{}, Instrumented: &Coverage{},
+			},
+		}}},
+		Race: &Race{},
+		Mutation: &Mutation{
+			Probe:   &MutationProbe{Targets: []TargetProbe{{ID: "t1"}}, Suites: []SuiteProbe{{Package: "p"}}},
+			Results: []MutationResult{{ID: "m1"}},
+		},
+	}
+	result := canonical(state)
+
+	for _, test := range []struct {
+		name  string
+		empty func(State) bool
+	}{
+		{name: "baseline evidence", empty: func(s State) bool { return s.Baseline.Evidence == nil }},
+		{name: "baseline findings", empty: func(s State) bool { return s.Baseline.Findings == nil }},
+		{name: "baseline suites", empty: func(s State) bool { return s.Baseline.Suites == nil }},
+		{
+			name:  "target evidence",
+			empty: func(s State) bool { return s.Baseline.Targets[0].Evidence == nil },
+		},
+		{
+			name:  "covered files",
+			empty: func(s State) bool { return s.Baseline.Targets[0].Target.CoveredFiles == nil },
+		},
+		{
+			name:  "coverage files",
+			empty: func(s State) bool { return s.Baseline.Targets[0].Target.Coverage.Files == nil },
+		},
+		{
+			name:  "instrumented files",
+			empty: func(s State) bool { return s.Baseline.Targets[0].Target.Instrumented.Files == nil },
+		},
+		{name: "race packages", empty: func(s State) bool { return s.Race.Packages == nil }},
+		{name: "probe targets", empty: func(s State) bool { return s.Mutation.Probe.Targets == nil }},
+		{name: "probe suites", empty: func(s State) bool { return s.Mutation.Probe.Suites == nil }},
+		{
+			name:  "probe target infections",
+			empty: func(s State) bool { return s.Mutation.Probe.Targets[0].Infected == nil },
+		},
+		{
+			name:  "probe suite infections",
+			empty: func(s State) bool { return s.Mutation.Probe.Suites[0].Infected == nil },
+		},
+		{
+			name:  "mutation result evidence",
+			empty: func(s State) bool { return s.Mutation.Results[0].Evidence == nil },
+		},
+		{
+			name:  "mutation result findings",
+			empty: func(s State) bool { return s.Mutation.Results[0].Findings == nil },
+		},
+	} {
+		if test.empty(result) {
+			t.Errorf("the canonical checkpoint left %s as no list at all, want an empty one", test.name)
+		}
 	}
 }

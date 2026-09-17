@@ -121,10 +121,10 @@ func TestLimitationsAreOrderedByCodeAndThenBySummary(t *testing.T) {
 	t.Parallel()
 	input := auditedFixture()
 	input.Limitations = []report.Limitation{
-		{Code: report.LimitationWholeTreeBehaviourKeys, Summary: "second"},
-		{Code: report.LimitationAssuranceIncomplete, Summary: "b"},
-		{Code: report.LimitationWholeTreeBehaviourKeys, Summary: "first"},
-		{Code: report.LimitationAssuranceIncomplete, Summary: "a"},
+		{Code: report.LimitationWholeTreeBehaviourKeys, Summary: "a"},
+		{Code: report.LimitationAssuranceIncomplete, Summary: "z"},
+		{Code: report.LimitationWholeTreeBehaviourKeys, Summary: "b"},
+		{Code: report.LimitationAssuranceIncomplete, Summary: "y"},
 	}
 	var decoded report.Report
 	if err := json.Unmarshal(report.JSON(input), &decoded); err != nil {
@@ -135,10 +135,10 @@ func TestLimitationsAreOrderedByCodeAndThenBySummary(t *testing.T) {
 		got = append(got, limitation.Code+"/"+limitation.Summary)
 	}
 	want := []string{
-		report.LimitationAssuranceIncomplete + "/a",
-		report.LimitationAssuranceIncomplete + "/b",
-		report.LimitationWholeTreeBehaviourKeys + "/first",
-		report.LimitationWholeTreeBehaviourKeys + "/second",
+		report.LimitationAssuranceIncomplete + "/y",
+		report.LimitationAssuranceIncomplete + "/z",
+		report.LimitationWholeTreeBehaviourKeys + "/a",
+		report.LimitationWholeTreeBehaviourKeys + "/b",
 	}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("limitations read back as %q, want %q", got, want)

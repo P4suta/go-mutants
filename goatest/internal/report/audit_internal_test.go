@@ -8,7 +8,10 @@ import (
 	"testing"
 )
 
-const hexDigitRuns = 4
+const (
+	hexDigitRuns  = 4
+	secondAttempt = 2
+)
 
 func TestAValidDigestIsSixtyFourLowercaseHexDigits(t *testing.T) {
 	t.Parallel()
@@ -121,5 +124,25 @@ func TestACountAddsUpOrSaysWhichEquationItBroke(t *testing.T) {
 				t.Fatalf("validateCount(%+v) = %v, want it to say %q", test.count, err, test.want)
 			}
 		})
+	}
+}
+
+func TestCanonicalizingAReportCopiesTheResumeRatherThanSharingIt(t *testing.T) {
+	t.Parallel()
+	input := Report{Resume: &Resume{Attempts: 1}}
+	result := canonical(input)
+	if result.Resume == nil {
+		t.Fatal("a report with resume metadata was canonicalized without it")
+	}
+	if result.Resume == input.Resume {
+		t.Fatal("the canonical report shares the resume metadata its caller still holds")
+	}
+	input.Resume.Attempts = secondAttempt
+	if result.Resume.Attempts != 1 {
+		t.Fatalf("the canonical resume moved with its caller's: attempts = %d, want 1",
+			result.Resume.Attempts)
+	}
+	if canonical(Report{}).Resume != nil {
+		t.Fatal("a report with no resume metadata was canonicalized with one")
 	}
 }

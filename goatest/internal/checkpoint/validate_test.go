@@ -230,6 +230,42 @@ func TestACheckpointIsValidatedFieldByFieldAndSaysWhichOneFailed(t *testing.T) {
 			change: func(s *checkpoint.State) { s.Baseline.Suites[0].DurationNS = -1 }, want: "invalid measurement",
 		},
 		{
+			name: "a partial baseline suite nothing measured that took time and nothing else",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Suites[0] = checkpoint.BaselineSuite{
+					Package: "example.test/fixture", DurationNS: 1,
+				}
+			},
+			want: "invalid measurement",
+		},
+		{
+			name: "a partial baseline suite nothing measured that claims the whole tree and nothing else",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Suites[0] = checkpoint.BaselineSuite{
+					Package: "example.test/fixture", WholeTree: true,
+				}
+			},
+			want: "invalid measurement",
+		},
+		{
+			name: "a partial baseline suite nothing measured that carries only coverage",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Suites[0] = checkpoint.BaselineSuite{
+					Package: "example.test/fixture", Covered: &checkpoint.Coverage{},
+				}
+			},
+			want: "invalid measurement",
+		},
+		{
+			name: "a partial baseline suite nothing measured that carries only instrumentation",
+			change: func(s *checkpoint.State) {
+				s.Baseline.Suites[0] = checkpoint.BaselineSuite{
+					Package: "example.test/fixture", Instrumented: &checkpoint.Coverage{},
+				}
+			},
+			want: "invalid measurement",
+		},
+		{
 			name: "a partial baseline suite nothing measured that carries coverage",
 			change: func(s *checkpoint.State) {
 				s.Baseline.Suites[0].Measured = false
