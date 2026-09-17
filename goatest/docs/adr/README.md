@@ -38,3 +38,4 @@ the tree no longer holds fails as loudly.
 | [0019](0032-instrument-the-test-binary-import-closure.md) | Instrument the test binary import closure |
 | [0020](0033-bootstrap-cold-preparation-with-verified-local-work.md) | Bootstrap cold preparation with verified local work |
 | [0021](0034-what-a-ledger-cannot-check.md) | What a ledger cannot check |
+| [0038](0038-a-request-with-no-prior-observation-measures-its-own.md) | A request with no prior observation measures its own |
