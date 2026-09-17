@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -421,9 +422,60 @@ func AddAcceptance(root string, acceptance Acceptance) error {
 			return fmt.Errorf("goatest: acceptance %q already exists", acceptance.ID)
 		}
 	}
-	loaded.Acceptance = append(loaded.Acceptance, acceptance)
-	slices.SortFunc(loaded.Acceptance, func(a, b Acceptance) int { return strings.Compare(a.ID, b.ID) })
-	return save(root, loaded)
+	return appendAcceptance(root, acceptance)
+}
+
+// appendAcceptance writes one acceptance table onto the end of the file rather
+// than writing the configuration back out.
+//
+// The difference is the whole of this function. Re-serialising the model loses
+// every comment in the file, and a configuration file is a document rather than
+// a serialisation of a struct: most of what a reader needs from it -- the SPDX
+// header this repository's licence gate requires, and the argument beside each
+// setting for why it is not at its default -- lives in the part the struct does
+// not hold. `goatest accept` deleted fourteen lines of reasoning and the
+// licence header from goatest's own configuration before this, and the only
+// thing that would have noticed is a gate about licences.
+//
+// Appended rather than inserted in sorted order, because sorting means
+// rewriting and rewriting is what this exists to avoid. The order acceptances
+// were recorded in is also the more useful one to read.
+//
+// A file that does not exist is the one case a full write is right for: there
+// is nothing to preserve, and [Load] answered with defaults that have to be
+// written down before an acceptance can sit beside them.
+func appendAcceptance(root string, acceptance Acceptance) error {
+	path := filepath.Join(root, FileName)
+	existing, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		loaded, loadErr := Load(root)
+		if loadErr != nil {
+			return loadErr
+		}
+		loaded.Acceptance = append(loaded.Acceptance, acceptance)
+		return save(root, loaded)
+	}
+	if err != nil {
+		return fmt.Errorf("goatest: read %s: %w", FileName, err)
+	}
+	block, err := toml.Marshal(struct {
+		Acceptance []rawAcceptance `toml:"acceptance"`
+	}{Acceptance: []rawAcceptance{{
+		ID: acceptance.ID, Reason: acceptance.Reason,
+		Expires: acceptance.Expires.UTC().Format(time.RFC3339),
+		Owner:   acceptance.Owner, Ticket: acceptance.Ticket,
+	}}})
+	if err != nil {
+		return fmt.Errorf("goatest: encode acceptance: %w", err)
+	}
+	var out bytes.Buffer
+	out.Write(existing)
+	if len(existing) != 0 && !bytes.HasSuffix(existing, []byte("\n")) {
+		out.WriteByte('\n')
+	}
+	out.WriteByte('\n')
+	out.Write(block)
+	return os.WriteFile(path, out.Bytes(), filemode.ReadableFile)
 }
 
 func save(root string, input Config) error {

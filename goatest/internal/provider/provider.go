@@ -84,9 +84,12 @@ func (client Client) Generate(parent context.Context, request Request) (Response
 		return Response{}, err
 	}
 	cmd := exec.Command(client.Command[0], client.Command[1:]...)
-	if client.Environment != nil {
-		cmd.Env = slices.Clone(client.Environment)
-	}
+	// Unconditionally, because the guard decided nothing: a nil Environment
+	// clones to nil, and exec.Cmd reads a nil Env as "inherit", which is what
+	// not assigning it does. The branch was two ways of writing the same
+	// program, and mutation testing is what said so -- inverting the condition
+	// changed no behaviour any test could see, because there was none to see.
+	cmd.Env = slices.Clone(client.Environment)
 	cmd.Stdin = bytes.NewReader(append(input, '\n'))
 	stdout := &limitedBuffer{remaining: outputLimit}
 	stderr := &limitedBuffer{remaining: outputLimit}
