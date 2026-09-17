@@ -112,6 +112,7 @@ repository's prose worth reading, so here is where each ledger lives.
 | every path the secret scan excuses | git's own view of what it ignores and tracks | `internal/devgates/gitleaks_integration_test.go` |
 | the TOML files each taplo step names, on every platform | every TOML file git holds or would hold | `internal/devgates/toml_integration_test.go` |
 | that a whole-tree pattern names both modules | what `go list ./...` actually walks | `internal/devgates/modules_integration_test.go` |
+| that the runner reaches the engine through its published API | every import in both modules, parsed | `goatest/internal/devgates/direction_test.go` |
 
 Adding a page that enumerates something means adding its ledger in the same
 change. A page nothing checks is a page that will be wrong, and the only

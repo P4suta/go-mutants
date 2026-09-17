@@ -1328,7 +1328,7 @@ is the whole of what was asked for and a failure is an error.
 | `goatest/internal/filemode` | The permission bits a file is written with, per platform | implemented |
 | `goatest/internal/golang` | Discovers native targets and coverage through the go command | implemented |
 | `goatest/internal/keptledger` | What a kept temporary directory records about why it was kept | implemented |
-| `goatest/internal/mutationbridge` | Freezes the external go-mutants contract: the one door the engine is reached through | implemented |
+| `goatest/internal/mutationbridge` | The one door the engine is reached through, and the only file in the runner that names its API. It was one because a module boundary made it one; it is one now because [ADR 0036](adr/0036-the-runner-reaches-the-engine-through-its-public-api.md) says so, and a gate refuses the shortcut Go's path-prefix rule would otherwise permit | implemented |
 | `goatest/internal/processtree` | A measured command's whole process tree, and how it is ended | implemented |
 | `goatest/internal/provider` | Providers run as subprocesses behind strict JSON protocols; core holds no network client | implemented |
 | `goatest/internal/repair` | What a round offers to fix, and what it refuses to touch | implemented |
