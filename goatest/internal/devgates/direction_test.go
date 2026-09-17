@@ -4,6 +4,7 @@
 package devgates_test
 
 import (
+	"errors"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -80,7 +81,25 @@ func TestTheRunnerReachesTheEngineThroughItsPublicAPI(t *testing.T) {
 func TestTheEngineDoesNotImportTheRunner(t *testing.T) {
 	t.Parallel()
 
-	engine := filepath.Dir(moduleRoot(t))
+	// The engine is the nearest ancestor holding a go.mod, found by walking up
+	// rather than by taking the parent: the parent is right in this repository
+	// and wrong in a snapshot, where it would be whatever sits beside the copy
+	// and this gate would answer about somebody else's files.
+	//
+	// Absent, it is out of scope rather than unchecked. goatest verifies this
+	// module by copying it into a tree of its own, and the engine is not in
+	// that tree -- so there is no import here to be pointed the wrong way. A
+	// `t.Skip` would be a finding the moment `mise run dogfood-runner` ran, and
+	// rightly: a skipped target is a claim nobody checked. Returning after
+	// establishing which tree this is keeps the target running and asserting in
+	// both.
+	engine, found := engineRoot(t)
+	if !found {
+		if _, err := os.Stat(filepath.Join(moduleRoot(t), "go.mod")); err != nil {
+			t.Fatalf("this is not a Go module: %v", err)
+		}
+		return
+	}
 	var offenders []string
 	walkGoFiles(t, engine, func(path string, _ bool, imports []string) {
 		if strings.HasPrefix(path, "goatest"+string(filepath.Separator)) {
@@ -162,5 +181,23 @@ func walkGoFiles(t testing.TB, root string, visit func(path string, test bool, i
 	})
 	if err != nil {
 		t.Fatalf("walking %s: %v", root, err)
+	}
+}
+
+// engineRoot is the nearest module above this one, and whether there is one.
+func engineRoot(t testing.TB) (string, bool) {
+	t.Helper()
+	dir := moduleRoot(t)
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+		dir = parent
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, true
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("looking for the engine above %s: %v", moduleRoot(t), err)
+		}
 	}
 }
