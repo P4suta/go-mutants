@@ -855,9 +855,19 @@ func assertWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catalog) {
 		if line >= len(outLines) {
 			t.Fatalf("mutant %s starts past the end of the file", m.DisplayID)
 		}
-		if !strings.Contains(outLines[line], m.Original) {
+		// The first line of the mutant's own bytes, because a mutant's span is
+		// not always one line: `return-err-to-nil` over a returned call takes
+		// the whole expression, function literal and all. Asking a single line
+		// to hold every byte of a multi-line original is a question with no
+		// true answer, and until a fixture had one this read as though it were
+		// checking the whole thing.
+		head := m.Original
+		if cut := strings.IndexByte(head, '\n'); cut >= 0 {
+			head = head[:cut]
+		}
+		if !strings.Contains(outLines[line], head) {
 			t.Errorf("mutant %s: line %d was %q and is now %q, which no longer holds %q",
-				m.DisplayID, line+1, inLines[line], outLines[line], m.Original)
+				m.DisplayID, line+1, inLines[line], outLines[line], head)
 		}
 		if flag := fmt.Sprintf(".M[%d]", m.Index); !bytes.Contains(out, []byte(flag)) {
 			t.Errorf("mutant %s: no guard reads %s", m.DisplayID, flag)
