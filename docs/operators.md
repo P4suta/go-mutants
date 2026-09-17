@@ -388,10 +388,10 @@ loop does not change, and which moves that variable by a constant step — in th
 post slot, or in the body.
 
 ```go
-for i := 0; i < n; i++ { … }      // counting up towards an upper bound
-for i := n; i > 0; i-- { … }      // counting down towards a lower bound
-for i := 0; i < n; i += 2 { … }   // and any constant stride
-for i > 0 { …; i-- }              // and the same measure, written in the body
+for i := 0; i < n; i++ { … }
+for i := n; i > 0; i-- { … }
+for i := 0; i < n; i += 2 { … }
+for i > 0 { …; i-- }
 ```
 
 The body form is the one most Go loops with a measure are written in, and it

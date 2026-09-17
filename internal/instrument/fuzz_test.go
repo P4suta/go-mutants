@@ -12,11 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 )
 
-// fuzzSeeds are inputs worth keeping in the corpus beyond the table cases:
-// shapes found by earlier fuzzing runs, and the ones whose flattening depends
-// on a rule that is easy to get subtly wrong. They live here rather than in
-// testdata/ so that the corpus is reviewable in the same place as the rules it
-// exercises, and so that `go test` without -fuzz still runs every one of them.
 var fuzzSeeds = []string{
 	"",
 	" ",
@@ -55,16 +50,6 @@ var fuzzSeeds = []string{
 	"(((a)))",
 }
 
-// FuzzFlatten drives the flattener with arbitrary bytes and asserts the whole
-// contract for every input that is a Go fragment at all: one line out, output
-// that re-parses, a syntax tree that did not change, and a result that does not
-// move under a second pass.
-//
-// Inputs that do not parse are skipped rather than failing. Flatten works at
-// the token level and accepts fragments go/parser would not, but the meaning
-// of "the meaning did not change" is only defined where there is a tree to
-// compare, and a fuzzer left to assert on unparsable input would only be
-// testing the harness.
 func FuzzFlatten(f *testing.F) {
 	for _, tc := range flattenCases {
 		f.Add(tc.src)
@@ -74,8 +59,6 @@ func FuzzFlatten(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, src string) {
-		// Long inputs cost parser time without reaching new rules; the shapes
-		// that matter are small.
 		if len(src) > 2048 {
 			t.Skip()
 		}

@@ -11,9 +11,6 @@ import (
 	"testing"
 )
 
-// obstructRemoval holds a file inside the orphan open for the rest of the
-// test. Windows refuses to delete a file any process has open, and the
-// directory above it with it, whoever asks.
 func obstructRemoval(t *testing.T, _, orphan string) {
 	t.Helper()
 	held, err := os.Create(filepath.Join(orphan, "held-open"))

@@ -12,12 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/config"
 )
 
-// cacheIdentityInputs are the settings a cached outcome is identified by: change
-// one and the run gets a different context, with none of the old run's entries
-// in it.
-//
-// The value is where the setting reaches the key, because a setting that
-// reaches it through the catalogue looks absent from internal/cache and is not.
 var cacheIdentityInputs = map[string]string{
 	"Mutation.Include": "decides which files discovery walks, so which mutants are catalogued; " +
 		"cache.Context.CatalogDigest is mutation.Catalog.Digest, over the ordered id list",
@@ -28,11 +22,6 @@ var cacheIdentityInputs = map[string]string{
 	"Test.Timeout":       "cache.Context.ConfiguredTimeout, the configured number and deliberately not the derived one",
 }
 
-// cacheIdentityExclusions are the settings deliberately outside cache identity.
-//
-// The value is why, and "why" here has to mean that no mutant's recorded
-// outcome moves when the setting does. A setting that only decides what a
-// finished run is called, written to, or gated by cannot move one.
 var cacheIdentityExclusions = map[string]string{
 	"Version": "the schema version of the file, which says how to read it rather than what the run does",
 	"Mutation.Expect": "decides which survivors the report calls expected and what the process exits with; " +
@@ -51,16 +40,6 @@ var cacheIdentityExclusions = map[string]string{
 	"Report.Low":            "the same threshold, at the other end",
 }
 
-// cacheIdentityUnsettled are the settings for which neither answer is recorded
-// anywhere, and this list is the point of the test.
-//
-// Leaving them in the exclusions would be the mistake this repository refuses
-// in its own product: turning "nothing here knows" into "this is fine". They
-// are not known to be wrong -- no defect is being alleged -- and each is a
-// question somebody has to answer once rather than every time it is noticed.
-//
-// The value states what would have to be true for the setting to be safely out,
-// so that answering it is a day's work and not an archaeology.
 var cacheIdentityUnsettled = map[string]string{
 	"Test.Memory": "the timeout's twin by internal/cache/store.go's own words, filtered at the point of use by " +
 		"cache.Entry.UsableWithin exactly as the timeout is by UsableUnder -- and absent from the key while the " +
@@ -74,20 +53,6 @@ var cacheIdentityUnsettled = map[string]string{
 	"Execution.Isolate": "isolation decides what else is running in the process tree when a mutant is measured",
 }
 
-// TestEverySettingIsEitherInTheCacheIdentityOrDeliberatelyOutOfIt is the ledger
-// for the half of a cache key nobody writes down.
-//
-// cache.Context.Key freezes its recipe field by field, and internal/cache has a
-// test that every field of that struct changes the key. Both are about what
-// goes in. Neither says anything about a setting that never reaches the struct,
-// and that is the direction the damage runs: a new option that moves a verdict
-// and is not added to the context computes the same key as before, so the run
-// adopts entries measured under the other setting and says nothing. The key
-// cannot notice an input it was never given.
-//
-// So the tree is walked and every leaf setting must be in exactly one of three
-// lists. A setting added tomorrow is in none of them and fails here, which is
-// the only moment when whoever added it still knows what it does.
 func TestEverySettingIsEitherInTheCacheIdentityOrDeliberatelyOutOfIt(t *testing.T) {
 	t.Parallel()
 
@@ -135,9 +100,6 @@ func TestEverySettingIsEitherInTheCacheIdentityOrDeliberatelyOutOfIt(t *testing.
 	}
 }
 
-// TestTheSettingWalkReachesANestedLeaf is the ledger on the ledger: a walk that
-// returned only the top-level fields would leave every setting that matters
-// unexamined while the test above passed.
 func TestTheSettingWalkReachesANestedLeaf(t *testing.T) {
 	t.Parallel()
 
@@ -155,12 +117,6 @@ func TestTheSettingWalkReachesANestedLeaf(t *testing.T) {
 	}
 }
 
-// collectSettings names every leaf setting under a configuration type, as
-// `Section.Field`.
-//
-// A struct is descended into and anything else is a leaf, with time.Duration
-// the exception it has to be: it is a named integer and would otherwise be
-// walked as one.
 func collectSettings(t reflect.Type, prefix string, out *[]string) {
 	for i := range t.NumField() {
 		f := t.Field(i)

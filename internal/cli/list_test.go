@@ -18,15 +18,7 @@ import (
 	"github.com/P4suta/go-mutants/internal/schemas"
 )
 
-// The toolchain-backed half of `list` — the snapshot, the loader, the
-// catalogue it produces — lives in list_integration_test.go. Everything here
-// runs without a Go toolchain, which is what keeps the argument checking, the
-// selection algebra, and the rendering rules cheap enough to assert
-// exhaustively.
-
 func TestListRefusesJSONWithQuiet(t *testing.T) {
-	// The rejection has to happen before anything is discovered, or a user who
-	// typed two contradictory flags waits for a snapshot first.
 	code, stdout, stderr := execute(t, "list", "--json", "--quiet")
 	if code != int(mutation.ExitInfrastructure) {
 		t.Errorf("exit = %d, want 2", code)
@@ -50,8 +42,6 @@ func TestListRefusesPositionalArguments(t *testing.T) {
 	if !strings.Contains(stderr, "error "+string(CodeUsage)) {
 		t.Errorf("stderr = %q, want a usage error", stderr)
 	}
-	// The message has to say what to type instead, since a path argument is
-	// what somebody coming from another mutation tester will reach for first.
 	for _, needle := range []string{"--include", "--operator", "--mutant"} {
 		if !strings.Contains(stderr, needle) {
 			t.Errorf("stderr = %q, want it to name %s", stderr, needle)
@@ -97,12 +87,6 @@ func TestListRefusesAnUnusableMutantPrefix(t *testing.T) {
 	}
 }
 
-// TestSelectRulesFollowsTheProfileUntilAnOperatorIsNamed pins the one place
-// where `--operator` and `--profile` could disagree.
-//
-// A named operator is looked up in the whole catalogue, so a family the profile
-// does not reach is still honoured. The alternative — intersecting the two —
-// answers "run the bitwise family" with an empty listing and no explanation.
 func TestSelectRulesFollowsTheProfileUntilAnOperatorIsNamed(t *testing.T) {
 	registry := mutation.CanonicalRegistry()
 
@@ -116,7 +100,6 @@ func TestSelectRulesFollowsTheProfileUntilAnOperatorIsNamed(t *testing.T) {
 			len(rules), len(registry.SelectTier(mutation.TierBalanced)))
 	}
 
-	// bitwise is a `strong` family, so the balanced profile does not select it.
 	outside := config.Defaults()
 	outside.Mutation.Operators = []string{"bitwise"}
 	rules, err = selectRules(outside)
@@ -128,8 +111,6 @@ func TestSelectRulesFollowsTheProfileUntilAnOperatorIsNamed(t *testing.T) {
 		t.Errorf("--operator bitwise selected %v, want the whole family %v", rules, want)
 	}
 
-	// A family and one of its own rules overlap; the result is the family, once,
-	// in registry order rather than in the order the names were written.
 	overlapping := config.Defaults()
 	overlapping.Mutation.Operators = []string{"eq-to-neq", "comparison"}
 	rules, err = selectRules(overlapping)
@@ -147,9 +128,6 @@ func TestSelectRulesFollowsTheProfileUntilAnOperatorIsNamed(t *testing.T) {
 	}
 }
 
-// TestImplementedRulesIsASubsetOfTheSelection proves the warning that says a
-// selection found nothing is asking the right question: it is discovery's own
-// statement about which rules it implements, not a list kept here.
 func TestImplementedRulesIsASubsetOfTheSelection(t *testing.T) {
 	registry := mutation.CanonicalRegistry()
 
@@ -158,12 +136,6 @@ func TestImplementedRulesIsASubsetOfTheSelection(t *testing.T) {
 		t.Errorf("the whole catalogue implements %d rules, discovery reports %d",
 			len(implemented), len(discover.SupportedRules()))
 	}
-	// Discovery implements the whole catalogue today, so the filter is the
-	// identity over any selection. That is a fact about discovery and not about
-	// this filter, which is exactly why it is asserted through
-	// [discover.SupportedRules] rather than through a family named here: the
-	// day a v2 rule lands in the registry ahead of discovery, this keeps
-	// answering correctly without being edited.
 	for _, family := range registry.Families() {
 		rules := registry.FamilyRules(family)
 		if got := len(implementedRules(rules)); got != len(rules) {
@@ -178,23 +150,6 @@ func TestImplementedRulesIsASubsetOfTheSelection(t *testing.T) {
 	}
 }
 
-// TestWarnUnimplementedIsSilentForTheWholeCatalogue is what the
-// partial-selection contract became when discovery finished the catalogue.
-//
-// The contract was one warning line per name the selection dropped, so that
-// `--operator comparison --operator bitwise` could not list the comparison half
-// and drop the other one without a word — leaving the user with exactly the
-// wrong conclusion, "my code has no bitwise operators in it". Every rule in the
-// catalogue is discovered now, so no name can be dropped and the per-name
-// branch has no reachable input.
-//
-// [warnUnimplemented] is kept anyway, for the same reason discovery keeps the
-// branch that ignores a rule it has not implemented: a v2 rule lands in the
-// registry before it lands in discovery, and the first thing it must not do is
-// print an empty listing without a word. This test pins the state that makes
-// the warning unreachable — every catalogue name, family and rule alike, is
-// silent — so the day one of them stops being discovered is the day this fails
-// and the per-name assertions have to come back with it.
 func TestWarnUnimplementedIsSilentForTheWholeCatalogue(t *testing.T) {
 	registry := mutation.CanonicalRegistry()
 
@@ -209,8 +164,6 @@ func TestWarnUnimplementedIsSilentForTheWholeCatalogue(t *testing.T) {
 		t.Run("operator "+name, func(t *testing.T) {
 			cfg := config.Defaults()
 			if name != "" {
-				// The same name twice, which is also the deduplication case:
-				// one dropped name never earned two lines.
 				cfg.Mutation.Operators = []string{name, name}
 			}
 			rules, err := selectRules(cfg)
@@ -227,15 +180,6 @@ func TestWarnUnimplementedIsSilentForTheWholeCatalogue(t *testing.T) {
 	}
 }
 
-// TestWarnUnimplementedStillSaysWhyAnEmptyListingIsEmpty covers the message
-// itself, which the case above can no longer reach through a real selection.
-//
-// The aggregate form is the one a profile takes: a tier is not a list of names
-// the user chose between, so naming its unimplemented members would be a wall
-// of text about a decision they did not make. Driving it directly with a
-// selection that resolved to nothing discoverable keeps the wording, the code,
-// and the "implemented so far" list under test while nothing in the catalogue
-// can produce that selection.
 func TestWarnUnimplementedStillSaysWhyAnEmptyListingIsEmpty(t *testing.T) {
 	cfg := config.Defaults()
 	var b strings.Builder
@@ -256,14 +200,6 @@ func TestWarnUnimplementedStillSaysWhyAnEmptyListingIsEmpty(t *testing.T) {
 	}
 }
 
-// TestWarnInertProfileFiresOnlyOnThePrecedenceInversion pins which of the four
-// ways a profile can go unused is worth a word.
-//
-// A named operator always beats a profile — that is the documented rule, and it
-// is fine when the user typed both on one command line, where both are in front
-// of them. It is not fine when the operators came from .go-mutants.toml and the
-// profile came from a flag: the help text promises that flags override the file,
-// and there the file wins over something typed for this invocation.
 func TestWarnInertProfileFiresOnlyOnThePrecedenceInversion(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -292,9 +228,6 @@ func TestWarnInertProfileFiresOnlyOnThePrecedenceInversion(t *testing.T) {
 			if strings.Count(got, "\n") != 1 || !strings.HasSuffix(got, "\n") {
 				t.Errorf("warnInertProfile wrote %q, want exactly one line", got)
 			}
-			// The user cannot act on "your profile did nothing": the line has to
-			// name the tier that lost, the file that won, the key it won with,
-			// and the two ways out.
 			for _, needle := range []string{
 				string(CodeInertProfile),
 				"--profile all",
@@ -311,10 +244,6 @@ func TestWarnInertProfileFiresOnlyOnThePrecedenceInversion(t *testing.T) {
 	}
 }
 
-// TestOperatorRulesAnswersTheSameQuestionAsTheSelection keeps the diagnostic and
-// the selection reading one catalogue. A warning built from a second, drifting
-// resolution of the same names is a warning that describes a selection nobody
-// made.
 func TestOperatorRulesAnswersTheSameQuestionAsTheSelection(t *testing.T) {
 	registry := mutation.CanonicalRegistry()
 	for _, name := range []string{"comparison", "bitwise", "statement-deletion"} {
@@ -383,8 +312,6 @@ func TestGoVersionFallsBackToTheToolchain(t *testing.T) {
 	if got := goVersion("", "go1.26.5"); got != "go1.26.5" {
 		t.Errorf("goVersion = %q, want the toolchain release when the module declares none", got)
 	}
-	// The catalogue schema requires a non-empty version, so there is no state in
-	// which the field may be left blank.
 	if got := goVersion("", ""); got == "" {
 		t.Error("goVersion returned an empty string, which the catalogue schema refuses")
 	}
@@ -402,13 +329,6 @@ func TestStringListNeverEncodesAsNull(t *testing.T) {
 	}
 }
 
-// TestBranchProofAppearsInTheCatalogDocument carries the branch proof through
-// the same join and into the published document.
-//
-// The absence is asserted on the encoded bytes rather than on the struct,
-// because `branch` is an optional property: a mutant discovery proved nothing
-// about has to carry no key at all, and a `null` would be a different document
-// to everybody's decoder.
 func TestBranchProofAppearsInTheCatalogDocument(t *testing.T) {
 	found := branchProofDiscovery(t)
 	doc, err := found.document(config.Defaults(), "")
@@ -457,9 +377,6 @@ func TestBranchProofAppearsInTheCatalogDocument(t *testing.T) {
 	}
 }
 
-// branchProofDiscovery builds a discovery result holding two candidates in one
-// file: one whose condition discovery proved a body span for, and one it proved
-// nothing about.
 func branchProofDiscovery(t *testing.T) discovered {
 	t.Helper()
 	digest := mutation.DigestString("package a\n")
@@ -514,10 +431,6 @@ func branchProofDiscovery(t *testing.T) discovered {
 	}
 }
 
-// TestCatalogDocumentJoinsCoordinatesOntoTheCatalogue covers the one piece of
-// bookkeeping between discovery and the document: the catalogue knows a mutant's
-// identity and its bytes, and only the discovery result knows which line, column,
-// and package a human would look for it at.
 func TestCatalogDocumentJoinsCoordinatesOntoTheCatalogue(t *testing.T) {
 	found := oneMutantDiscovery(t)
 	doc, err := found.document(config.Defaults(), "")
@@ -543,8 +456,6 @@ func TestCatalogDocumentJoinsCoordinatesOntoTheCatalogue(t *testing.T) {
 			catalogDocumentType, catalogSchemaVersion, Version)
 	}
 
-	// The filter is a prefix of the full id, which the display id is itself a
-	// prefix of, so both spellings of an id select the same mutant.
 	for _, prefix := range []string{m.ID, m.DisplayID, m.ID[:mutation.MinPrefixLength]} {
 		filtered, filterErr := found.document(config.Defaults(), prefix)
 		if filterErr != nil {
@@ -555,8 +466,6 @@ func TestCatalogDocumentJoinsCoordinatesOntoTheCatalogue(t *testing.T) {
 		}
 	}
 
-	// A prefix that matches nothing is an empty listing, never an error: the
-	// flag is a filter, and "no mutant here" is an answer.
 	empty, err := found.document(config.Defaults(), strings.Repeat("f", mutation.IDHexLength))
 	if err != nil {
 		t.Fatalf("filtering by an unmatched prefix: %v", err)
@@ -564,17 +473,11 @@ func TestCatalogDocumentJoinsCoordinatesOntoTheCatalogue(t *testing.T) {
 	if len(empty.Mutants) != 0 {
 		t.Errorf("an unmatched prefix listed %d mutants, want none", len(empty.Mutants))
 	}
-	// The skips describe the discovery pass, not the filtered listing, so they
-	// survive a filter that removed every mutant.
 	if len(empty.Skips) != len(doc.Skips) {
 		t.Errorf("filtering changed the skips from %d rows to %d", len(doc.Skips), len(empty.Skips))
 	}
 }
 
-// TestCatalogDocumentRefusesAMutantItCannotLocate is the invariant behind that
-// join. It cannot happen through the command line — the catalogue is built from
-// the same candidates — and it is checked because the alternative is a document
-// whose coordinates point at nothing.
 func TestCatalogDocumentRefusesAMutantItCannotLocate(t *testing.T) {
 	found := oneMutantDiscovery(t)
 	found.results[0].Candidates = nil
@@ -586,8 +489,6 @@ func TestCatalogDocumentRefusesAMutantItCannotLocate(t *testing.T) {
 	}
 }
 
-// oneMutantDiscovery builds a discovery result holding a single candidate,
-// catalogued the way the pipeline catalogues one.
 func oneMutantDiscovery(t *testing.T) discovered {
 	t.Helper()
 	rule, ok := mutation.CanonicalRegistry().Lookup("eq-to-neq")
@@ -641,17 +542,9 @@ func TestListHelpDocumentsTheSelectionRules(t *testing.T) {
 		"--profile",
 		"--mutant",
 		"--json",
-		// The two decisions a user cannot guess: an operator name is honoured
-		// whatever the profile says, and --mutant filters rather than selects.
 		"rather than from the profile",
 		"a filter, not a selector",
-		// The consequence of the first, and the one place the precedence a user
-		// typed can be overturned by a file: it is a diagnostic, not silence.
 		string(CodeInertProfile),
-		// The counts under a filtered listing are the filtered counts; only the
-		// skip breakdown describes the whole pass. The help said the opposite of
-		// this for one release, which is the kind of sentence a test has to hold
-		// in place because nothing else does.
 		"describe the filtered listing",
 		"the whole discovery",
 		"Exit codes:",
@@ -660,8 +553,6 @@ func TestListHelpDocumentsTheSelectionRules(t *testing.T) {
 			t.Errorf("`list --help` does not document %q:\n%s", needle, stdout)
 		}
 	}
-	// Help output has to be diffable between two machines, so no flag may print
-	// a default that depends on the host.
 	if strings.Contains(stdout, "(default ") {
 		t.Errorf("`list --help` prints a pflag default, which may vary by machine:\n%s", stdout)
 	}

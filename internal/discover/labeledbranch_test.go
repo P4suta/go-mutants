@@ -10,15 +10,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// A labelled branch says "leave *that* construct". Dropping the label says
-// "leave the nearest one", which is a different program wherever the two
-// differ -- and the whole difficulty of the family is that wherever they do not
-// differ, the mutant is equivalent token for token and no test could ever kill
-// it. The gate is structural, and the two rules need it for different shapes,
-// which is why they are two rules.
-
-// TestABreakThatLeavesAnOuterLoopLosesItsLabel is the shape the family exists
-// for: two nested loops, and a `break` that means the outer one.
 func TestABreakThatLeavesAnOuterLoopLosesItsLabel(t *testing.T) {
 	t.Parallel()
 
@@ -41,8 +32,6 @@ outer:
 	}
 }
 
-// TestAContinueThatSkipsAnOuterLoopLosesItsLabel is the same for the other
-// rule.
 func TestAContinueThatSkipsAnOuterLoopLosesItsLabel(t *testing.T) {
 	t.Parallel()
 
@@ -67,9 +56,6 @@ outer:
 	}
 }
 
-// TestALabelOnTheNearestConstructProducesNothing is the refusal, and it is
-// structural rather than statistical: the label names the construct the bare
-// form would bind to anyway, so the two statements are the same program.
 func TestALabelOnTheNearestConstructProducesNothing(t *testing.T) {
 	t.Parallel()
 
@@ -114,16 +100,6 @@ only:
 	}
 }
 
-// TestASwitchInALabelledLoopSeparatesTheTwoRules is the one case that makes
-// this a family of two rules rather than one.
-//
-// A `switch` is breakable and not continuable. So inside a `switch` inside a
-// labelled `for`, `break L` is a real mutant -- the bare form leaves the switch
-// and the labelled one leaves the loop -- while `continue L` at the same
-// position is equivalent, because `continue` was never going to bind to the
-// switch. One gate reading "does the label name the nearest enclosing
-// construct" would have to know which constructs count, and this is the test
-// that says it does.
 func TestASwitchInALabelledLoopSeparatesTheTwoRules(t *testing.T) {
 	t.Parallel()
 
@@ -153,9 +129,6 @@ loop:
 	}
 }
 
-// TestASelectInALabelledLoopIsTheSameShape pins the other breakable-only
-// construct, because "breakable" is three constructs and a gate that knew two
-// of them would pass every test above.
 func TestASelectInALabelledLoopIsTheSameShape(t *testing.T) {
 	t.Parallel()
 
@@ -180,7 +153,6 @@ loop:
 	}
 }
 
-// TestATypeSwitchInALabelledLoopIsTheSameShape is the third and last of them.
 func TestATypeSwitchInALabelledLoopIsTheSameShape(t *testing.T) {
 	t.Parallel()
 
@@ -205,12 +177,6 @@ loop:
 	}
 }
 
-// TestAGotoIsRecordedRatherThanMutated is the reserved reason becoming a fact.
-//
-// `label-or-goto` has been in the run report's enumeration since v1 with
-// nothing emitting it, which is a string a user could meet in a document and
-// find nothing about. It now names the one statement this family reaches and
-// declines.
 func TestAGotoIsRecordedRatherThanMutated(t *testing.T) {
 	t.Parallel()
 
@@ -236,15 +202,6 @@ again:
 	}
 }
 
-// TestAFallthroughIsNeitherMutatedNorRecorded is the deliberate silence beside
-// it, and the two are different for a reason worth keeping straight.
-//
-// A `goto` is mutable in principle and declined with an argument. A
-// `fallthrough` is not a site at all: it has to be the final statement of a
-// case clause, so no guard form can wrap it, and there is no edit to decline.
-// Recording a skip for it would put a row in `list --explain` that means
-// "go-mutants declined to think about this" among rows that mean "go-mutants
-// declined to mutate this".
 func TestAFallthroughIsNeitherMutatedNorRecorded(t *testing.T) {
 	t.Parallel()
 
@@ -272,8 +229,6 @@ func Level(n int) string {
 	}
 }
 
-// TestABareBranchOffersNothing is the absence at the other end: there is no
-// label to drop.
 func TestABareBranchOffersNothing(t *testing.T) {
 	t.Parallel()
 
@@ -296,13 +251,6 @@ func First(values []int) int {
 	}
 }
 
-// TestTheLabeledBranchFamilyIsOnlyInTheAllProfile pins the tier.
-//
-// `all` rather than `strong` for the same reason `statement-deletion` is there:
-// it is an edit that removes something rather than changing it, and the
-// survivors it produces are the ones hardest to argue about. The structural
-// gate removes the equivalent ones it can prove, and what is left is still a
-// family a default run should not carry.
 func TestTheLabeledBranchFamilyIsOnlyInTheAllProfile(t *testing.T) {
 	t.Parallel()
 
@@ -326,18 +274,6 @@ func TestTheLabeledBranchFamilyIsOnlyInTheAllProfile(t *testing.T) {
 	}
 }
 
-// TestDroppingALabelKeepsTheLabelUsed is the trap that would otherwise make
-// this family impossible, written down as a test rather than as a comment.
-//
-// An unused label is a compile error in Go. If the guard replaced the statement
-// outright, a mutant that dropped a label would remove its only reference and
-// the whole tree would stop building -- not for the mutant, for everybody, since
-// the instrumented tree holds every mutant at once. Form S keeps the original
-// bytes in its `else` arm, so the reference survives regardless.
-//
-// What is checked here is the premise: the rewrite site is the whole statement
-// and the form is S. A form that replaced only the label token would put the
-// label in the mutated copy and nowhere else.
 func TestDroppingALabelKeepsTheLabelUsed(t *testing.T) {
 	t.Parallel()
 

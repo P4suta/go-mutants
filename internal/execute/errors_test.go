@@ -18,10 +18,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// TestCodesAreWellFormed keeps the diagnostic codes usable as the stable
-// handles they are advertised to be: unique, sorted, and inside the block this
-// package owns. A duplicated code makes two different failures
-// indistinguishable to anyone searching for one.
 func TestCodesAreWellFormed(t *testing.T) {
 	t.Parallel()
 
@@ -55,10 +51,6 @@ func TestCodesAreWellFormed(t *testing.T) {
 	}
 }
 
-// TestCodesAreReachable asserts the list is complete: every code the package
-// documents can actually be produced. A code nobody can trigger is dead
-// documentation, and one that is triggered but unlisted would be missing from
-// `doctor`'s table.
 func TestCodesAreReachable(t *testing.T) {
 	produced := map[execute.Code]bool{}
 	record := func(err error) {
@@ -69,12 +61,9 @@ func TestCodesAreReachable(t *testing.T) {
 
 	snapshot := t.TempDir()
 
-	// GOM7501: options that cannot describe a build.
 	_, err := execute.BuildTestBinaries(t.Context(), execute.Options{})
 	record(err)
 
-	// GOM7502: a binary directory that cannot be created, because a regular
-	// file already sits where the directory would go.
 	blocked := filepath.Join(t.TempDir(), "occupied")
 	testkit.WriteFile(t, blocked, []byte("not a directory"))
 	_, err = execute.BuildTestBinaries(t.Context(), execute.Options{
@@ -83,7 +72,6 @@ func TestCodesAreReachable(t *testing.T) {
 	})
 	record(err)
 
-	// GOM7503 and GOM7504: a listing that fails, and one that cannot be read.
 	failing := &fake{respond: func(context.Context, call) runner.Result {
 		return runner.Result{ExitCode: 1, Output: []byte("go: broken\n")}
 	}}
@@ -98,7 +86,6 @@ func TestCodesAreReachable(t *testing.T) {
 	_, err = execute.BuildTestBinaries(t.Context(), opts)
 	record(err)
 
-	// GOM7505: a package whose test binary does not compile.
 	broken := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if isList(c) {
 			return runner.Result{Output: []byte(listing(pkgJSON("example.com/m/pkg", "/snap/pkg", true, false)))}
@@ -109,67 +96,50 @@ func TestCodesAreReachable(t *testing.T) {
 	_, err = execute.BuildTestBinaries(t.Context(), opts)
 	record(err)
 
-	// GOM7510: nothing to measure against.
 	_, err = execute.Schedule(t.Context(), execute.Options{},
 		mutants(mutantTimeout, "a"), nil, execute.Hooks{})
 	record(err)
 
-	// GOM7511: a mutant with no timeout.
 	record(execute.RunOne(t.Context(), execute.Options{},
 		execute.MutantRun{ID: "abc"}, testBins("example.com/a")).Err)
 
-	// GOM7512: a worker temporary directory that cannot be created.
 	blockedScratch := execute.WithRunner(execute.Options{ScratchDir: filepath.Join(blocked, "w0")}, (&fake{}).run)
 	record(execute.RunOne(t.Context(), blockedScratch,
 		execute.MutantRun{ID: "abc", Timeout: mutantTimeout}, testBins("example.com/a")).Err)
 
-	// GOM7513: a test binary that could not be started.
 	unstartableRunner := &fake{respond: func(context.Context, call) runner.Result { return unstartable() }}
 	record(execute.RunOne(t.Context(), options(unstartableRunner, 1),
 		execute.MutantRun{ID: "abc", Timeout: mutantTimeout}, testBins("example.com/a")).Err)
 
-	// GOM7514: the generated runtime refusing an unknown identity.
 	stale := &fake{respond: func(context.Context, call) runner.Result { return staleCatalog() }}
 	record(execute.RunOne(t.Context(), options(stale, 1),
 		execute.MutantRun{ID: "abc", Timeout: mutantTimeout}, testBins("example.com/a")).Err)
 
-	// GOM7515: a probe pass with no log to record into, which could only ever
-	// end as an empty set of indices produced by having recorded nothing.
 	record(execute.RunProbe(t.Context(), execute.Options{},
 		execute.ProbeRun{Timeout: mutantTimeout}, testBins("example.com/a")).Err)
 
-	// GOM7516: a probe's test binary that could not be started.
 	record(execute.RunProbe(t.Context(), options(unstartableRunner, 1),
 		execute.ProbeRun{Timeout: mutantTimeout, LogPath: filepath.Join(t.TempDir(), "infection.log")},
 		testBins("example.com/a")).Err)
 
-	// GOM7517: an infection log that exists and cannot be read against the
-	// catalogue it was supposed to have been written against.
 	damaged := filepath.Join(t.TempDir(), "infection.log")
 	testkit.WriteFile(t, damaged, []byte("not an infection log\n"))
 	passing := &fake{respond: func(context.Context, call) runner.Result { return passed() }}
 	record(execute.RunProbe(t.Context(), options(passing, 1),
 		execute.ProbeRun{Timeout: mutantTimeout, LogPath: damaged}, testBins("example.com/a")).Err)
 
-	// GOM7518: a control run with no timeout, which go-mutants will not start a
-	// test binary under any more than it will a mutant.
 	record(execute.RunControl(t.Context(), execute.Options{},
 		execute.ControlRun{}, testBins("example.com/a")).Err)
 
-	// GOM7519: a control run's test binary that could not be started.
 	record(execute.RunControl(t.Context(), options(unstartableRunner, 1),
 		execute.ControlRun{Timeout: mutantTimeout}, testBins("example.com/a")).Err)
 
-	// GOM7520: a cancelled schedule.
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = execute.Schedule(ctx, options(&fake{}, 1),
 		mutants(mutantTimeout, "a"), testBins("example.com/a"), execute.Hooks{})
 	record(err)
 
-	// GOM7521: a test binary that refuses -test.testlogfile, which the flag
-	// package answers with exit 2 — a status this package would otherwise read
-	// as a kill.
 	refusing := &fake{respond: func(context.Context, call) runner.Result {
 		return runner.Result{
 			ExitCode: 2,
@@ -182,14 +152,11 @@ func TestCodesAreReachable(t *testing.T) {
 		execute.MutantRun{ID: "abc", Timeout: mutantTimeout, RecordTestLog: true},
 		testBins("example.com/a")).Err)
 
-	// GOM7530: a coverage directory inside the snapshot, which the drift gate
-	// would otherwise report as a test writing into the tree.
 	covering, _ := coverOptions(t, &fake{respond: func(context.Context, call) runner.Result { return passed() }})
 	_, err = execute.CollectCoverage(t.Context(), covering,
 		testBins("example.com/a"), filepath.Join(covering.SnapshotRoot, "coverage"))
 	record(err)
 
-	// GOM7531: a test binary that does not pass during the coverage pass.
 	redSuite := &fake{respond: func(context.Context, call) runner.Result { return failed("--- FAIL\n") }}
 	coverFailing, coverDir := coverOptions(t, redSuite)
 	_, err = execute.CollectCoverage(t.Context(), coverFailing, testBins("example.com/a"), coverDir)
@@ -207,9 +174,6 @@ func TestCodesAreReachable(t *testing.T) {
 	}
 }
 
-// TestErrorRendersTheCodeAndKeepsTheOutputSeparate pins the two-part shape every
-// GOM error in this repository has: a one-line message a terminal can prefix
-// and a grep can find, with the child's output beside it rather than inside it.
 func TestErrorRendersTheCodeAndKeepsTheOutputSeparate(t *testing.T) {
 	t.Parallel()
 
@@ -244,8 +208,6 @@ func TestErrorRendersTheCodeAndKeepsTheOutputSeparate(t *testing.T) {
 	}
 }
 
-// TestCodeOfAndOutputOfIgnoreForeignErrors keeps the accessors honest about
-// errors this package did not produce.
 func TestCodeOfAndOutputOfIgnoreForeignErrors(t *testing.T) {
 	t.Parallel()
 
@@ -261,11 +223,6 @@ func TestCodeOfAndOutputOfIgnoreForeignErrors(t *testing.T) {
 	}
 }
 
-// TestTailKeepsTheEndAndCleansTheLineEndings pins the trimming every retained
-// output goes through. The tail rather than the head, because the assertion
-// that failed is at the end; the carriage returns removed here rather than by a
-// renderer, because the same string goes into a report where a stray CR is
-// invisible until it shows up in a diff.
 func TestTailKeepsTheEndAndCleansTheLineEndings(t *testing.T) {
 	t.Parallel()
 

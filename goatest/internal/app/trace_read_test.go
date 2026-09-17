@@ -76,10 +76,6 @@ func TestTraceSummaryRejectsExtraRunNames(t *testing.T) {
 	t.Parallel()
 	service := app.Service{Root: t.TempDir()}
 	_, err := service.Execute(t.Context(), cli.CommandTrace, cli.Request{IDs: []string{"run-a", "run-b"}}, "summary")
-	// The message differs from the command line's on purpose. The surface
-	// refuses this first, with a usage hint; reaching the operation means
-	// something called it directly, and the same words in two layers would make
-	// one mistake read two ways depending on which caught it.
 	if err == nil || !strings.Contains(err.Error(), "was given 2 runs and accepts at most one") {
 		t.Fatalf("extra summary run error = %v", err)
 	}

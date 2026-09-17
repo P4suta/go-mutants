@@ -14,18 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/schema/stryker"
 )
 
-// The vendored schema is the only written statement of what the projection has
-// to satisfy, so what is tested here is that it is *unaltered* and that the
-// constants beside it describe the file that is actually present.
-//
-// The one that matters most is [stryker.ReportSchemaVersion]. It is "2" while
-// the package it came from is 3.9.0, which looks like a mistake every time
-// somebody reads it, and the schema's own pattern refuses "3" — so the pattern
-// is read out of the file and applied to the constant here, which turns the
-// argument from a comment into a failing test.
-
-// TestSchemaIsUnaltered pins the vendored bytes against the digest recorded
-// beside them.
 func TestSchemaIsUnaltered(t *testing.T) {
 	t.Parallel()
 
@@ -51,9 +39,6 @@ func TestSchemaIsUnaltered(t *testing.T) {
 	}
 }
 
-// TestSchemaDeclaresWhatTheCompilerIsToldToExpect reads the two things
-// internal/report relies on when it compiles the schema with no URL loader:
-// the identity it registers the document under, and the draft it is written in.
 func TestSchemaDeclaresWhatTheCompilerIsToldToExpect(t *testing.T) {
 	t.Parallel()
 
@@ -72,11 +57,6 @@ func TestSchemaDeclaresWhatTheCompilerIsToldToExpect(t *testing.T) {
 	}
 }
 
-// TestReportSchemaVersionIsTheOneTheSchemaAccepts is the trap, written down.
-//
-// The pattern is read out of the vendored file rather than copied, so that a
-// future version of the schema that widens or narrows it is checked against the
-// constant automatically.
 func TestReportSchemaVersionIsTheOneTheSchemaAccepts(t *testing.T) {
 	t.Parallel()
 
@@ -102,14 +82,11 @@ func TestReportSchemaVersionIsTheOneTheSchemaAccepts(t *testing.T) {
 		t.Errorf("ReportSchemaVersion %q does not match the schema's own pattern %q",
 			stryker.ReportSchemaVersion, pattern)
 	}
-	// The package version is 3.9.0 and would be refused. This is the assertion
-	// that stops somebody "fixing" the constant to match the package name.
 	if major, _, _ := strings.Cut(stryker.PackageVersion, "."); matcher.MatchString(major) {
 		t.Errorf("the schema accepts %q, so the note about the package version no longer holds", major)
 	}
 }
 
-// TestLicenseIsVendored checks the obligation the licence imposes.
 func TestLicenseIsVendored(t *testing.T) {
 	t.Parallel()
 
@@ -119,10 +96,6 @@ func TestLicenseIsVendored(t *testing.T) {
 	}
 }
 
-// TestSchemaIsNotInThePublishedRegistry is the boundary this package exists to
-// draw, checked from the other side: nothing here declares a `document_type`,
-// so `report validate` can never be asked for it and a third-party definition
-// cannot be mistaken for one go-mutants publishes.
 func TestSchemaIsNotInThePublishedRegistry(t *testing.T) {
 	t.Parallel()
 

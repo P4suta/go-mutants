@@ -14,9 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/runner"
 )
 
-// TestRunControlsReturnsEachControlsOwnAnswerInOrder: several controls, one
-// pool, and the answers land where the controls were given whichever worker
-// ran which.
 func TestRunControlsReturnsEachControlsOwnAnswerInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -54,8 +51,6 @@ func TestRunControlsReturnsEachControlsOwnAnswerInOrder(t *testing.T) {
 		t.Errorf("started %d processes, want one per control", len(f.seen()))
 	}
 
-	// Each worker was given a scratch directory of its own, as the
-	// scheduler's workers are, so two concurrent controls cannot share one.
 	dirs := map[string]bool{}
 	for _, c := range f.seen() {
 		dirs[envValue(c.Env, "TMPDIR")] = true
@@ -67,8 +62,6 @@ func TestRunControlsReturnsEachControlsOwnAnswerInOrder(t *testing.T) {
 	}
 }
 
-// TestRunControlsReportsWhatACancellationLeftUnstarted: a control the pool
-// never reached is an interruption, never a pass.
 func TestRunControlsReportsWhatACancellationLeftUnstarted(t *testing.T) {
 	t.Parallel()
 
@@ -96,7 +89,6 @@ func TestRunControlsReportsWhatACancellationLeftUnstarted(t *testing.T) {
 	}
 }
 
-// TestRunControlsWithNothingRunsNothing is the empty case.
 func TestRunControlsWithNothingRunsNothing(t *testing.T) {
 	t.Parallel()
 

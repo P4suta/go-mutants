@@ -10,9 +10,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// TestZeroOutcomeIsNotRun is the reason OutcomeNotRun is the zero value: a
-// result struct nobody filled in must not read as a kill and inflate the
-// score.
 func TestZeroOutcomeIsNotRun(t *testing.T) {
 	t.Parallel()
 
@@ -99,8 +96,6 @@ func TestOutcomeRejectsUnknownValues(t *testing.T) {
 	}
 }
 
-// TestDetectedOutcomes pins the score's definition of detection: a confirmed
-// timeout counts, a single unconfirmed one is inconclusive and does not.
 func TestDetectedOutcomes(t *testing.T) {
 	t.Parallel()
 
@@ -118,14 +113,6 @@ func TestDetectedOutcomes(t *testing.T) {
 		}
 	}
 }
-
-// There is no test of skip reasons here, and there is nothing left to test:
-// this package declares none. The one it used to have pinned
-// `KnownSkipReasons` against the same list retyped, which is a test of a
-// copy-paste rather than of an agreement with anything — the reasons that
-// reach a user come from internal/discover, whose own tests read its sources
-// and whose spelling internal/report checks against the schema. See the note
-// above [RejectReason] in outcome.go.
 
 func TestRejectReasons(t *testing.T) {
 	t.Parallel()

@@ -16,21 +16,10 @@ import (
 )
 
 const (
-	// operatorsDoc is the page this file holds to the registry.
-	operatorsDoc = "docs/operators.md"
-	// catalogueHeading opens the table of families and their rules.
+	operatorsDoc     = "docs/operators.md"
 	catalogueHeading = "## Catalogue"
 )
 
-// TestTheOperatorsPageNamesEveryRuleAndEveryFamily keeps the catalogue table
-// equal to the registry, in both directions.
-//
-// The registry has pinned its own counts since it was written -- rule_test.go
-// compares them with a golden list -- but nothing read the page. So the table a
-// user reads to find out what go-mutants does could name a rule that does not
-// exist, or omit one that does, and every test would pass. The page itself says
-// at the foot of the table that "the registry has settled it in favour of the
-// table", which is a claim about two things nothing compared.
 func TestTheOperatorsPageNamesEveryRuleAndEveryFamily(t *testing.T) {
 	t.Parallel()
 
@@ -67,12 +56,6 @@ func TestTheOperatorsPageNamesEveryRuleAndEveryFamily(t *testing.T) {
 	}
 }
 
-// TestTheOperatorsPageCountsWhatItLists keeps the sentence under the table
-// equal to the table above it and to the registry beside it.
-//
-// The page spells the two numbers out in prose -- "That is 13 families and 47
-// enumerated rules" -- and a spelled number is the first thing to go stale when
-// a row is added, because adding the row feels like the whole change.
 func TestTheOperatorsPageCountsWhatItLists(t *testing.T) {
 	t.Parallel()
 
@@ -99,7 +82,6 @@ func TestTheOperatorsPageCountsWhatItLists(t *testing.T) {
 	}
 }
 
-// TestEveryFamilyOnThePageIsInTheTierItSays keeps the third column honest.
 func TestEveryFamilyOnThePageIsInTheTierItSays(t *testing.T) {
 	t.Parallel()
 
@@ -116,15 +98,12 @@ func TestEveryFamilyOnThePageIsInTheTierItSays(t *testing.T) {
 	}
 }
 
-// A catalogueRow is one line of the family table.
 type catalogueRow struct {
 	family string
 	rules  []string
 	tier   string
 }
 
-// catalogueRows reads the family table: a family, its rules, and its tier, each
-// taken from the backticked tokens of a cell.
 func catalogueRows(t *testing.T) []catalogueRow {
 	t.Helper()
 
@@ -156,7 +135,6 @@ func catalogueRows(t *testing.T) []catalogueRow {
 	return rows
 }
 
-// backtickedIn is every `quoted` token of one cell, in order.
 func backtickedIn(cell string) []string {
 	var out []string
 	for {
@@ -176,8 +154,6 @@ func backtickedIn(cell string) []string {
 	}
 }
 
-// operatorsPage reads the page once per call, which is cheap enough that a
-// cache would be a second thing to be wrong about.
 func operatorsPage(t *testing.T) string {
 	t.Helper()
 
@@ -188,27 +164,8 @@ func operatorsPage(t *testing.T) string {
 	return string(source)
 }
 
-// roadmapDoc is the page whose every row is work nobody has done yet.
 const roadmapDoc = "docs/roadmap.md"
 
-// TestNoRoadmapRowNamesARuleOrFamilyTheRegistryHolds makes the roadmap's own
-// promise true for the half of it this package can check.
-//
-// The page opens with "every row below is work, and every row states what
-// finishing it looks like", and says of the reserved skip reasons that "a row
-// that lands is a test failure telling you to delete it". That guarantee came
-// from internal/testkit/roadmap_test.go and covered only the reasons -- the
-// operator rows, which are the largest section of the page, had nothing. A
-// family could land, its row could stay, and the page would describe something
-// already done for as long as nobody happened to read it.
-//
-// The check is deliberately one-directional. A roadmap row naming a rule the
-// registry holds is a finished row, and that is a failure. A registry rule no
-// roadmap row names is the ordinary case -- forty-seven of them -- and says
-// nothing.
-//
-// It lives here rather than beside the reserved-reason ledger because it needs
-// the registry, and internal/testkit may import nothing from this module.
 func TestNoRoadmapRowNamesARuleOrFamilyTheRegistryHolds(t *testing.T) {
 	t.Parallel()
 

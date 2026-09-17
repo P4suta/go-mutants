@@ -10,54 +10,12 @@ import (
 	"strings"
 )
 
-// infectionFormat opens the header line of every infection log and names the
-// format itself.
-//
-// It carries a version because the log outlives the process that wrote it and
-// is read by a different program than the one that generated the runtime: a
-// reader that met a format it did not know and guessed would be attributing
-// lines it might be misreading to mutants it might not have.
 const infectionFormat = "gomutants-infection-v1"
 
-// infectionHeader renders the line a probe runtime writes before its first
-// index: the format, the catalogue the indices are dense in, and how many
-// indices that catalogue can hold.
-//
-// The generator and the reader both go through this function, which is the only
-// reason they cannot drift: a header written one way and matched another would
-// turn every log into "this target proved nothing", silently and everywhere.
 func infectionHeader(digest string, n int) string {
 	return infectionFormat + " " + digest + " " + strconv.Itoa(n)
 }
 
-// ReadInfectionLog returns the distinct mutant indices an infection log
-// records, sorted ascending.
-//
-// The log is what a probe tree's generated runtime appended to while the tests
-// ran; digest and mutants are the catalogue's [mutation.Catalog.Digest] and its
-// [mutation.Catalog.Len]. Several processes append to one log, so the header may
-// appear more than once — a process buffering it until it had an index to write
-// would have nothing at all to say if it died — and every occurrence has to be
-// the one this catalogue's runtime writes.
-//
-// What the caller is asked for is the catalogue's size and not the width of the
-// runtime's array, and the two are the same number for every catalogue but one.
-// The array is never zero-length, so an empty catalogue's runtime writes a
-// header saying one; that width is derived here through [arraySize], the very
-// function the generators size the array with, so no caller has to know the
-// rule. Indices are then bounded by the size rather than by the width, which is
-// what stops an empty catalogue's log admitting an index 0 that names no mutant
-// — while leaving such a log perfectly readable, since the header and nothing
-// else says that nothing was infected because nothing could be.
-//
-// The reader is fail-closed, and that is the whole design rather than a
-// defensive habit. An infection fact is a licence not to execute a test, so a
-// log that has been truncated, mixed with another run's, or written by a runtime
-// built from a different catalogue must yield nothing at all rather than the
-// part of itself that still parses — the part that still parses is exactly what
-// a smaller, wrong answer looks like. The caller has one safe reading of an
-// error, which is "this target yields no infection facts", and no safe reading
-// of a partial one.
 func ReadInfectionLog(r io.Reader, digest string, mutants int) ([]uint32, error) {
 	if mutants < 0 {
 		return nil, &Error{
@@ -77,8 +35,6 @@ func ReadInfectionLog(r io.Reader, digest string, mutants int) ([]uint32, error)
 				"did not get as far as its own header",
 		}
 	}
-	// A line the writer never terminated is a process that died mid-write.
-	// Taking the prefix would be inventing the rest of an index.
 	if data[len(data)-1] != '\n' {
 		return nil, &Error{
 			Code: CodeInfectionLog,
@@ -117,9 +73,6 @@ func ReadInfectionLog(r io.Reader, digest string, mutants int) ([]uint32, error)
 				Message: "the infection log holds " + strconv.Quote(line) + " where a mutant index belongs",
 			}
 		}
-		// The catalogue's size, not the array's width: the one index an empty
-		// catalogue's array could hold names no mutant, and a fact about a
-		// mutant nobody catalogued is the answer this reader must never give.
 		if index >= uint64(mutants) {
 			return nil, &Error{
 				Code: CodeInfectionLog,
@@ -130,9 +83,6 @@ func ReadInfectionLog(r io.Reader, digest string, mutants int) ([]uint32, error)
 		seen[uint32(index)] = true
 	}
 
-	// A set, in one order: the file is an append log written by however many
-	// processes reached however many sites, and the question it answers — which
-	// mutants could this target have observed — has no order of its own.
 	out := make([]uint32, 0, len(seen))
 	for index := range seen {
 		out = append(out, index)

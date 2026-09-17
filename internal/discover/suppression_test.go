@@ -11,27 +11,10 @@ import (
 	"testing"
 )
 
-// Which reason a position is off limits for, when more than one says so.
-//
-// A boolean literal inside an array length inside a type parameter list is
-// covered by three regions at once, and the answer has to be the outermost:
-// that is the region a walker would have refused to descend into, and the
-// reason that remains true whatever the narrower construct inside it turns out
-// to be. Telling a user their `true` was skipped because array lengths are
-// constant, when the whole type parameter list is not value code, is a true
-// sentence about the wrong subject.
-//
-// Both the order and the tie-break are frozen rather than incidental: the same
-// bytes scanned twice have to produce the same skip counts, and two regions
-// covering exactly the same span have to resolve the same way every time.
-
-// region builds one suppression, so that a table reads as coordinates.
 func region(start, end int, reason SkipReason) suppression {
 	return suppression{start: token.Pos(start), end: token.Pos(end), reason: reason}
 }
 
-// TestTheWidestRegionCoveringAPositionIsTheOneReported pins
-// [fileScan.suppressed] and the tie-break under it.
 func TestTheWidestRegionCoveringAPositionIsTheOneReported(t *testing.T) {
 	t.Parallel()
 
@@ -63,9 +46,6 @@ func TestTheWidestRegionCoveringAPositionIsTheOneReported(t *testing.T) {
 			pos: 12, want: SkipTypeParam,
 		},
 		{
-			// The start is inside and the end is not: a region covers
-			// [start, end), so a position at the end byte belongs to whatever
-			// comes after it.
 			name:    "a position at the end byte",
 			regions: []suppression{region(10, 20, SkipConstDecl)},
 			pos:     20, want: "",
@@ -86,10 +66,6 @@ func TestTheWidestRegionCoveringAPositionIsTheOneReported(t *testing.T) {
 			pos:     12, want: "",
 		},
 		{
-			// Two regions of one width covering one position, differing only
-			// in where they start. The earlier start wins, and the rule exists
-			// so that the answer does not depend on the order the collecting
-			// walk reached them in.
 			name: "two of one width",
 			regions: []suppression{
 				region(11, 21, SkipArrayLength),
@@ -98,9 +74,6 @@ func TestTheWidestRegionCoveringAPositionIsTheOneReported(t *testing.T) {
 			pos: 15, want: SkipConstDecl,
 		},
 		{
-			// And two covering exactly the same bytes, which the collecting
-			// walk really does produce: the lower-ranked reason wins, which is
-			// the order AllSkipReasons declares.
 			name: "two over one span",
 			regions: []suppression{
 				region(10, 20, SkipTypeParam),
@@ -124,8 +97,6 @@ func TestTheWidestRegionCoveringAPositionIsTheOneReported(t *testing.T) {
 	}
 }
 
-// lowerRanked is whichever of two reasons AllSkipReasons declares first, which
-// is the tie-break the table above asserts without restating the order.
 func lowerRanked(a, b SkipReason) SkipReason {
 	if reasonRank[a] <= reasonRank[b] {
 		return a
@@ -133,13 +104,6 @@ func lowerRanked(a, b SkipReason) SkipReason {
 	return b
 }
 
-// TestEveryKeyOfTheWiderTieBreakDecidesSomething separates the three keys, each
-// with a pair that agrees on every key before it.
-//
-// It is a total order on purpose. Two regions this comparison called equal
-// would be resolved by whichever the loop reached first, and the loop's order
-// is the collecting walk's -- which is a fact about go/ast rather than about
-// this file.
 func TestEveryKeyOfTheWiderTieBreakDecidesSomething(t *testing.T) {
 	t.Parallel()
 
@@ -169,7 +133,6 @@ func TestEveryKeyOfTheWiderTieBreakDecidesSomething(t *testing.T) {
 	}
 }
 
-// higherRanked is a reason AllSkipReasons declares after the given one.
 func higherRanked(after SkipReason) SkipReason {
 	best := after
 	for _, reason := range AllSkipReasons() {
@@ -180,14 +143,6 @@ func higherRanked(after SkipReason) SkipReason {
 	return best
 }
 
-// TestSuppressionsComeOutInOneOrderWhateverOrderTheyWereFound is the sort, one
-// key at a time.
-//
-// The regions are collected by an `ast.Inspect`, which visits in an order that
-// is a fact about go/ast; the catalogue that comes out of the walk has to be a
-// fact about the file. So the list is sorted, and each key below is separated
-// by a pair agreeing on every key before it: outermost first, which is start
-// ascending and then end *descending*, and the declared rank last.
 func TestSuppressionsComeOutInOneOrderWhateverOrderTheyWereFound(t *testing.T) {
 	t.Parallel()
 
@@ -212,8 +167,6 @@ func TestSuppressionsComeOutInOneOrderWhateverOrderTheyWereFound(t *testing.T) {
 		t.Errorf("sorted to\n%s\nwant\n%s", render(got), render(want))
 	}
 
-	// And the same list handed over backwards sorts to the same thing, which
-	// is the property the sort exists for.
 	backwards := slices.Clone(unsorted)
 	slices.Reverse(backwards)
 	sortSuppressions(backwards)
@@ -222,7 +175,6 @@ func TestSuppressionsComeOutInOneOrderWhateverOrderTheyWereFound(t *testing.T) {
 	}
 }
 
-// render writes a suppression list for a failure message.
 func render(list []suppression) string {
 	var parts []string
 	for _, one := range list {
@@ -231,16 +183,6 @@ func render(list []suppression) string {
 	return strings.Join(parts, "\n")
 }
 
-// TestAGeneratedFileSaysSoBeforeItsPackageClause pins [isGenerated], and both
-// halves of the convention it implements.
-//
-// https://go.dev/s/generatedcode fixes the line exactly -- anchored, with that
-// trailing full stop -- and requires it to appear *before* the package clause.
-// Both halves matter here rather than in a standard-library helper, because
-// "generated" is a skip reason this package reports and has to keep reporting
-// the same way: a file mistaken for generated is a file nobody mutates and
-// nobody is told about, and one mistaken for handwritten is a catalogue of
-// mutants in a file a tool will overwrite.
 func TestAGeneratedFileSaysSoBeforeItsPackageClause(t *testing.T) {
 	t.Parallel()
 
@@ -265,9 +207,6 @@ func TestAGeneratedFileSaysSoBeforeItsPackageClause(t *testing.T) {
 			want: true,
 		},
 		{
-			// Past the package clause it is a comment about the file rather
-			// than a declaration by its generator, which is the half a search
-			// for the text alone would get wrong.
 			name: "the marker after the package clause",
 			src:  "package pkg\n\n// Code generated by hand. DO NOT EDIT.\n",
 		},
@@ -304,21 +243,12 @@ func TestAGeneratedFileSaysSoBeforeItsPackageClause(t *testing.T) {
 	}
 }
 
-// TestWhichRegionsOfAFileHoldNoMutableExpression pins [collectSuppressions],
-// one construct at a time.
-//
-// The regions are collected rather than enforced during the emitting walk
-// because two of them cover only *part* of a node -- an array's length but not
-// its element type, an explicit type argument but not the expression it indexes
-// -- and a walk that had to remember which child slot it was in would be one
-// `switch` away from silently mutating a type.
 func TestWhichRegionsOfAFileHoldNoMutableExpression(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
-		name string
-		src  string
-		// inside is a piece of the source every collected region must cover.
+		name   string
+		src    string
 		inside string
 		reason SkipReason
 	}{
@@ -380,9 +310,6 @@ func TestWhichRegionsOfAFileHoldNoMutableExpression(t *testing.T) {
 		})
 	}
 
-	// A `switch` suppresses neither kind of label any more, which is the
-	// blanket that used to hide a whole family of sites. Both kinds are here so
-	// that reinstating either is a failure rather than a quiet narrowing.
 	for _, c := range []struct {
 		name string
 		src  string
@@ -407,8 +334,6 @@ func TestWhichRegionsOfAFileHoldNoMutableExpression(t *testing.T) {
 	}
 }
 
-// renderRegions writes a region list with source offsets, for a failure
-// message that can be read against the fixture.
 func renderRegions(p parsed, regions []suppression) string {
 	var lines []string
 	for _, one := range regions {

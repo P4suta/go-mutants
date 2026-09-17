@@ -12,16 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testlog"
 )
 
-// TestParseTestLog is the whole of the format, stated as the cases a real
-// binary produces.
-//
-// The four that matter are the four a caller has to be able to tell apart: a
-// log a binary finished writing, a log a killed binary left half written, a
-// file that is not a log at all, and an operation this build has never heard
-// of. The first two differ only in the final newline — which is exactly the
-// test cmd/go applies before it trusts one — and the last must survive
-// verbatim, because an engine that dropped an unknown operation would be
-// answering a question about a Go release it does not know with silence.
 func TestParseTestLog(t *testing.T) {
 	t.Parallel()
 
@@ -44,16 +34,10 @@ func TestParseTestLog(t *testing.T) {
 			{Op: testlog.OpChdir, Name: "/tmp"},
 		},
 	}, {
-		// A binary that ran to the end and consulted nothing. It is a
-		// measurement and not a failure, so it is complete and empty.
 		name:     "the header alone",
 		input:    header,
 		complete: true,
 	}, {
-		// What a killed or os.Exit-ed binary leaves: testing flushes the log
-		// from m.after(), so a tree the supervisor tore down stops mid-line at
-		// best. The half-written name is dropped rather than reported, because
-		// a truncated path is not a path — and Complete is what says so.
 		name:     "a line the binary never finished",
 		input:    header + "getenv HOME\nopen /tmp/hal",
 		complete: false,
@@ -64,27 +48,16 @@ func TestParseTestLog(t *testing.T) {
 		complete: true,
 		entries:  []testlog.Entry{{Op: testlog.Op("sniff"), Name: "/tmp/x"}},
 	}, {
-		// The name is everything after the first space, verbatim. A file whose
-		// name contains one is a file, and cutting on the last space instead
-		// would rename it.
 		name:     "a name with a space in it",
 		input:    header + "open /tmp/two words.txt\n",
 		complete: true,
 		entries:  []testlog.Entry{{Op: testlog.OpOpen, Name: "/tmp/two words.txt"}},
 	}, {
-		// testing writes "\n" on every platform — the log is not a text file
-		// the operating system rewrites — so a carriage return is part of the
-		// name and is kept. Stripping it here would silently rename a file
-		// somebody really did create with one.
 		name:     "a carriage return is part of the name",
 		input:    header + "open /tmp/x\r\n",
 		complete: true,
 		entries:  []testlog.Entry{{Op: testlog.OpOpen, Name: "/tmp/x\r"}},
 	}, {
-		// A blank line between actions. The testing package does not write one,
-		// but a log is read line by line and an empty line is not an action --
-		// reporting it as one would put an entry with no operation and no name
-		// into a measurement a consumer acts on.
 		name:     "a blank line between actions",
 		input:    header + "getenv HOME\n\nopen /tmp/x\n",
 		complete: true,
@@ -97,9 +70,6 @@ func TestParseTestLog(t *testing.T) {
 		input:   "PASS\nok  \tfixture.example/killable\t0.01s\n",
 		wantErr: testlog.ErrNoHeader,
 	}, {
-		// What a binary that was killed before testing could flush anything
-		// leaves behind: the file exists, created by m.before(), and holds
-		// nothing at all.
 		name:    "an empty file",
 		input:   "",
 		wantErr: testlog.ErrNoHeader,
@@ -131,8 +101,6 @@ func TestParseTestLog(t *testing.T) {
 	}
 }
 
-// TestOperationsArePinned writes the four operation names out, because they are
-// the ones package os hands the logger and a consumer switches on them.
 func TestOperationsArePinned(t *testing.T) {
 	t.Parallel()
 
@@ -151,13 +119,6 @@ func TestOperationsArePinned(t *testing.T) {
 	}
 }
 
-// TestParseCarriesUpAReadFailure is the one failure that is not about the bytes.
-//
-// A log is read whole before it is parsed, because the header and the final
-// newline are both facts about the file rather than about a line -- so a read
-// that stops half way is a file nobody has seen all of, and answering it with
-// an empty measurement would be answering "this target touched nothing", which
-// is a thing a consumer acts on.
 func TestParseCarriesUpAReadFailure(t *testing.T) {
 	t.Parallel()
 
@@ -171,7 +132,6 @@ func TestParseCarriesUpAReadFailure(t *testing.T) {
 	}
 }
 
-// failingReader is a reader that only fails, for the test above.
 type failingReader struct{ err error }
 
 func (r failingReader) Read([]byte) (int, error) { return 0, r.err }

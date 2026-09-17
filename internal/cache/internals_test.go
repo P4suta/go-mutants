@@ -16,22 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The small deciders of this package, tested where they are rather than through
-// the three commands above them.
-//
-// Each of them is one sentence of the cache's contract -- how a duration is
-// rendered, whether an entry is evidence about this run, where a deletion is
-// allowed to land -- and each is a pure function of its arguments. Driving them
-// through `cache status` would be asserting on the arithmetic of a survey.
-
-// TestPresenceAndTimeoutSourceAreHashedAsWordsRatherThanAsValues pins the two
-// renderings the key is built out of.
-//
-// They are words rather than the values themselves because the key hashes a
-// *statement*: a variable nobody set and one set to the empty string are
-// different facts about a run, and a timeout the user promised and one a
-// baseline measured are different facts about a bound even when the number is
-// the same.
 func TestPresenceAndTimeoutSourceAreHashedAsWordsRatherThanAsValues(t *testing.T) {
 	t.Parallel()
 
@@ -60,12 +44,6 @@ func TestPresenceAndTimeoutSourceAreHashedAsWordsRatherThanAsValues(t *testing.T
 	}
 }
 
-// TestMillisecondsTruncatesAndNeverGoesNegative pins the one arithmetic the key
-// and every entry share.
-//
-// A negative bound is not a shorter one: it is a caller that has not set one,
-// and rendering it as a negative number would put a duration in a key that no
-// run could ever have been measured under.
 func TestMillisecondsTruncatesAndNeverGoesNegative(t *testing.T) {
 	t.Parallel()
 
@@ -86,8 +64,6 @@ func TestMillisecondsTruncatesAndNeverGoesNegative(t *testing.T) {
 	}
 }
 
-// TestAnEntryRendersTheMeasurementItStored is the round trip the two duration
-// accessors exist for.
 func TestAnEntryRendersTheMeasurementItStored(t *testing.T) {
 	t.Parallel()
 
@@ -98,15 +74,11 @@ func TestAnEntryRendersTheMeasurementItStored(t *testing.T) {
 	if got := entry.Timeout(); got != 10*time.Second {
 		t.Errorf("Timeout() = %v, want 10s", got)
 	}
-	// A zero is a zero and not an absence: an entry a build before these
-	// fields existed wrote renders as no measurement rather than as one.
 	if got := (Entry{}).Duration(); got != 0 {
 		t.Errorf("Duration() of an empty entry = %v, want 0", got)
 	}
 }
 
-// TestDisplayShortensAnIDAndLeavesShortOnesAlone is the boundary every message
-// in this package is built against.
 func TestDisplayShortensAnIDAndLeavesShortOnesAlone(t *testing.T) {
 	t.Parallel()
 
@@ -125,13 +97,6 @@ func TestDisplayShortensAnIDAndLeavesShortOnesAlone(t *testing.T) {
 	}
 }
 
-// TestTruncateTailKeepsTheEndAndSaysThatItDid is the other boundary: a tail of
-// exactly the limit is kept whole, and one byte more is cut and marked.
-//
-// The end rather than the beginning, because the useful part of a failed test
-// run is the assertion that failed and it is at the bottom. The marker is not
-// decoration either: without it a reader is left wondering whether the output
-// really did start mid-word.
 func TestTruncateTailKeepsTheEndAndSaysThatItDid(t *testing.T) {
 	t.Parallel()
 
@@ -156,15 +121,6 @@ func TestTruncateTailKeepsTheEndAndSaysThatItDid(t *testing.T) {
 	}
 }
 
-// TestUsableUnderIsTheWholeArgumentForKeepingTheTimeoutOutOfTheKey states the
-// two rules in opposite directions, and the boundary of each.
-//
-// A killed or survived mutant finished in the recorded duration, so any bound
-// at least that long reaches the same verdict. A confirmed timeout did not
-// finish within its recorded bound, so any bound no larger does not finish
-// either. A divergence was never measured against a bound at all, so every
-// bound reaches it. A run that states no bound cannot say whether a measurement
-// fits inside one, and adopts nothing.
 func TestUsableUnderIsTheWholeArgumentForKeepingTheTimeoutOutOfTheKey(t *testing.T) {
 	t.Parallel()
 
@@ -188,13 +144,6 @@ func TestUsableUnderIsTheWholeArgumentForKeepingTheTimeoutOutOfTheKey(t *testing
 		{name: "a timeout under no bound at all", entry: timedOut, timeout: 0, want: false},
 		{name: "a finished mutant under a negative bound", entry: finished, timeout: -time.Second, want: false},
 		{name: "a timeout under a negative bound", entry: timedOut, timeout: -time.Second, want: false},
-		// The third rule, and the only one that does not read the bound. A
-		// divergence is two counts taken in one tree -- the loop went further
-		// than the original program ever goes under this suite -- so it is
-		// evidence about every run of this tree, including one whose clock is
-		// looser than the clock it was measured beside. Only a run that states
-		// no bound at all adopts nothing, because that is a run this cache has
-		// nothing to say to.
 		{name: "a divergence under exactly its bound", entry: divergent, timeout: time.Second, want: true},
 		{name: "a divergence under a shorter bound", entry: divergent, timeout: time.Millisecond, want: true},
 		{name: "a divergence under a bound a thousand times longer", entry: divergent, timeout: 1000 * time.Second, want: true},
@@ -210,8 +159,6 @@ func TestUsableUnderIsTheWholeArgumentForKeepingTheTimeoutOutOfTheKey(t *testing
 	}
 }
 
-// TestUsableWithinIsTheSameArgumentForTheMemoryBound covers the four cases the
-// memory rule splits into, and the boundary of each.
 func TestUsableWithinIsTheSameArgumentForTheMemoryBound(t *testing.T) {
 	t.Parallel()
 
@@ -239,9 +186,6 @@ func TestUsableWithinIsTheSameArgumentForTheMemoryBound(t *testing.T) {
 		{name: "a survivor under a larger bound", entry: survived, limit: bound + 1, want: true},
 		{name: "a survivor under a smaller bound", entry: survived, limit: bound - 1, want: false},
 		{name: "a survivor under no bound at all", entry: survived, limit: 0, want: true},
-		// A recorded bound of zero is "measured unbounded", which is what a
-		// build before the field existed wrote, and it is judged by the clock
-		// alone.
 		{name: "a recorded bound of zero", entry: Entry{Outcome: mutation.OutcomeSurvived, MemoryBytes: 0}, limit: 1, want: true},
 		{name: "a recorded bound below zero", entry: Entry{Outcome: mutation.OutcomeSurvived, MemoryBytes: -1}, limit: 1, want: true},
 	} {
@@ -255,20 +199,9 @@ func TestUsableWithinIsTheSameArgumentForTheMemoryBound(t *testing.T) {
 	}
 }
 
-// TestAnEntryIsCheckedAgainstTheQuestionItWasAskedFor covers every shape check
-// a document read off disk goes through.
-//
-// The key and the id are compared rather than assumed from the path, because
-// the path is a truncated hash of one and a full hash of the other: a collision
-// in the truncation would otherwise be adopted as an answer, and adopting the
-// wrong run's outcome is the worst thing this package could do.
 func TestAnEntryIsCheckedAgainstTheQuestionItWasAskedFor(t *testing.T) {
 	t.Parallel()
 
-	// Spelled with Repeat rather than written out: a run of sixty-four hex
-	// characters in a test is indistinguishable from a leaked credential to the
-	// scanner this repository runs over every file, and a digest that is
-	// obviously a pattern says what it is to a reader as well.
 	var (
 		key     = strings.Repeat("ab", 32)
 		context = strings.Repeat("ab", 8)
@@ -326,10 +259,6 @@ func TestAnEntryIsCheckedAgainstTheQuestionItWasAskedFor(t *testing.T) {
 		})
 	}
 
-	// And the shapes that are *not* refused, because each of them is an
-	// ordinary entry somewhere: a zero duration is a very fast mutant, a zero
-	// peak is one nothing measured, and a memory kill with a bound is the
-	// case the field exists for.
 	for _, test := range []struct {
 		name string
 		edit func(*Entry)
@@ -353,12 +282,6 @@ func TestAnEntryIsCheckedAgainstTheQuestionItWasAskedFor(t *testing.T) {
 	}
 }
 
-// TestReasonOfDropsTheCodeAndKeepsTheSentence pins what a Skipped row reads
-// like.
-//
-// The row is already a list of things not touched, so repeating a diagnostic
-// code on every line of it would be noise -- and an error from somewhere with no
-// code at all is printed as it stands rather than cut at its first colon.
 func TestReasonOfDropsTheCodeAndKeepsTheSentence(t *testing.T) {
 	t.Parallel()
 
@@ -393,12 +316,6 @@ func TestReasonOfDropsTheCodeAndKeepsTheSentence(t *testing.T) {
 	}
 }
 
-// TestWithinIsAnsweredByTheFilesystemAndNotBySpelling is the containment rule
-// every deletion in this package goes through.
-//
-// It is the one function in go-mutants that deletes files in a directory
-// somebody else's tools also keep things in, and a check that makes an escape
-// unrepresentable is worth more than an argument that it cannot happen.
 func TestWithinIsAnsweredByTheFilesystemAndNotBySpelling(t *testing.T) {
 	t.Parallel()
 
@@ -435,12 +352,6 @@ func TestWithinIsAnsweredByTheFilesystemAndNotBySpelling(t *testing.T) {
 	}
 }
 
-// TestWithinFollowsALinkOutOfTheCache is the reason containment is asked of the
-// filesystem rather than of the two strings.
-//
-// A context directory replaced by a link to somewhere else is lexically inside
-// the cache and physically wherever it points, and os.RemoveAll asks the
-// filesystem: deleting through it would take the target's contents with it.
 func TestWithinFollowsALinkOutOfTheCache(t *testing.T) {
 	t.Parallel()
 
@@ -451,18 +362,14 @@ func TestWithinFollowsALinkOutOfTheCache(t *testing.T) {
 		t.Skipf("this platform will not create a symbolic link: %v", err)
 	}
 
-	// The link itself is a leaf, and RemoveAll unlinks a leaf rather than
-	// following it -- so removing the link removes the link.
 	if got, err := within(link, root); err != nil || !got {
 		t.Errorf("within(the link itself) = %v, %v, want true", got, err)
 	}
-	// Anything *through* it is not in the cache at all.
 	if got, err := within(filepath.Join(link, "abc"), root); err != nil || got {
 		t.Errorf("within(through the link) = %v, %v, want false", got, err)
 	}
 }
 
-// TestRemoveRefusesWhatIsNotInsideTheCache is [within]'s answer acted on.
 func TestRemoveRefusesWhatIsNotInsideTheCache(t *testing.T) {
 	t.Parallel()
 
@@ -483,13 +390,6 @@ func TestRemoveRefusesWhatIsNotInsideTheCache(t *testing.T) {
 	}
 }
 
-// TestResolvePathAnswersForAPathThatIsNotAllThere is what lets a sweep race
-// another process without failing.
-//
-// filepath.EvalSymlinks needs the whole path to exist, and the paths this is
-// asked about need not: an entry another process's sweep removed a moment ago,
-// a context directory pruned between the listing and the deletion. The answer
-// is about where a deletion *would* land, which is what the caller is deciding.
 func TestResolvePathAnswersForAPathThatIsNotAllThere(t *testing.T) {
 	t.Parallel()
 
@@ -508,8 +408,6 @@ func TestResolvePathAnswersForAPathThatIsNotAllThere(t *testing.T) {
 		t.Errorf("resolvePath(%q) = %q, want %q", missing, got, want)
 	}
 
-	// The volume root is where walking up stops, and its own name is the
-	// answer: there is nothing above it to resolve against.
 	volume := filepath.VolumeName(resolvedRoot) + string(filepath.Separator)
 	if resolved, resolveErr := resolvePath(volume); resolveErr != nil {
 		t.Errorf("resolvePath(%q) = %v, want the volume root itself", volume, resolveErr)
@@ -518,14 +416,6 @@ func TestResolvePathAnswersForAPathThatIsNotAllThere(t *testing.T) {
 	}
 }
 
-// TestTrimExtendedPrefixPutsTwoSpellingsIntoOne is the Windows rule, checked
-// everywhere because it is a string function and a platform cannot make a
-// string function correct.
-//
-// A resolved path and a resolved root have to be compared in one spelling
-// whichever of the two the operating system chose to hand back. Nothing outside
-// Windows is affected: a resolved path on any other platform begins with a
-// separator that is not a backslash.
 func TestTrimExtendedPrefixPutsTwoSpellingsIntoOne(t *testing.T) {
 	t.Parallel()
 
@@ -542,7 +432,6 @@ func TestTrimExtendedPrefixPutsTwoSpellingsIntoOne(t *testing.T) {
 	}
 }
 
-// TestEveryCodeIsSpelledTheWayItIsPrinted writes this package's codes out.
 func TestEveryCodeIsSpelledTheWayItIsPrinted(t *testing.T) {
 	t.Parallel()
 
@@ -559,8 +448,6 @@ func TestEveryCodeIsSpelledTheWayItIsPrinted(t *testing.T) {
 	}
 }
 
-// unreadableDir makes a directory refuse to be listed, and skips the test where
-// it cannot.
 func unreadableDir(t *testing.T, dir string) {
 	t.Helper()
 	chmodOrSkip(t, dir, 0o000, 0o700, func() error {
@@ -569,8 +456,6 @@ func unreadableDir(t *testing.T, dir string) {
 	})
 }
 
-// unsearchableDir makes a directory list its names and refuse to stat any of
-// them, which is read without execute.
 func unsearchableDir(t *testing.T, dir string) {
 	t.Helper()
 	chmodOrSkip(t, dir, 0o600, 0o700, func() error {
@@ -586,7 +471,6 @@ func unsearchableDir(t *testing.T, dir string) {
 	})
 }
 
-// unwritableDir makes a directory refuse new entries.
 func unwritableDir(t *testing.T, dir string) {
 	t.Helper()
 	chmodOrSkip(t, dir, 0o500, 0o700, func() error {
@@ -599,7 +483,6 @@ func unwritableDir(t *testing.T, dir string) {
 	})
 }
 
-// unreadableFile makes a file refuse to be opened.
 func unreadableFile(t *testing.T, path string) {
 	t.Helper()
 	chmodOrSkip(t, path, 0o200, 0o600, func() error {
@@ -611,8 +494,6 @@ func unreadableFile(t *testing.T, path string) {
 	})
 }
 
-// chmodOrSkip sets a mode, proves the mode is enforced, and restores it
-// afterwards -- or skips where a platform or a user is not stopped by it.
 func chmodOrSkip(t *testing.T, path string, mode, restore fs.FileMode, probe func() error) {
 	t.Helper()
 

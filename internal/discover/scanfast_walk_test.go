@@ -8,11 +8,6 @@ import (
 	"testing"
 )
 
-// scanExpr scans a file with one function whose body is `return <expr>` and
-// returns the scan, so a test can pin which candidates a single expression
-// produces. The parameters cover the operand types the type-gates in
-// binaryExpr need: integers, floats, strings, booleans, an error, and a plain
-// pointer that is not an error.
 func scanExpr(t *testing.T, expr string) scanned {
 	t.Helper()
 	return scanSource(t, `package pkg
@@ -25,11 +20,6 @@ func F(i, j int, f, g float64, s, u string, a, b bool, err error, p *notError) a
 `)
 }
 
-// TestNilErrorBranchFiresOnlyForAnErrorInequality pins the three gates in
-// nilErrorBranch: the operator must be `!=`, one side must be the nil literal,
-// and the other must implement error. Each row that does not fire is what kills
-// the corresponding condition — flipping the `!= token.NEQ` guard, the
-// nil-literal test, or the implementsError test would light one of them up.
 func TestNilErrorBranchFiresOnlyForAnErrorInequality(t *testing.T) {
 	t.Parallel()
 
@@ -63,9 +53,6 @@ func F(err error, p *int) bool {
 	}
 }
 
-// TestRemoveNegationFiresOnlyForABooleanNot pins that remove-negation needs a
-// `!` on a boolean operand: a bitwise `^` is not it, and neither is `!` on a
-// named boolean whose operand text is recoverable.
 func TestRemoveNegationFiresOnlyForABooleanNot(t *testing.T) {
 	t.Parallel()
 
@@ -77,10 +64,6 @@ func TestRemoveNegationFiresOnlyForABooleanNot(t *testing.T) {
 	}
 }
 
-// TestComparisonRulesFireForEveryComparison pins that the comparison family
-// fires on a comparison whatever the operand type, and the integer and float
-// families fire only for their own operand types — the isInteger/isFloat gates
-// in binaryExpr.
 func TestComparisonRulesFireForEveryComparison(t *testing.T) {
 	t.Parallel()
 
@@ -92,16 +75,12 @@ func TestComparisonRulesFireForEveryComparison(t *testing.T) {
 	if !floats.has("lt-to-le", "<", "<=") {
 		t.Errorf("float comparison did not produce lt-to-le: %v", floats.rules())
 	}
-	// The connective family fires for a boolean connective and not for a
-	// comparison.
 	conn := scanExpr(t, "a && b")
 	if !conn.has("and-to-or", "&&", "||") {
 		t.Errorf("connective did not produce and-to-or: %v", conn.rules())
 	}
 }
 
-// TestBitwiseRuleFiresForIntegerBitwise pins that the bitwise family fires for
-// an integer bitwise operator and a shift.
 func TestBitwiseRuleFiresForIntegerBitwise(t *testing.T) {
 	t.Parallel()
 

@@ -13,15 +13,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/interval"
 )
 
-// Shorthands that keep the expected forests in these tables readable as trees.
 type (
 	item     = interval.Item[string]
 	node     = interval.Node[string]
 	conflict = interval.Conflict[string]
 )
 
-// TestBuild is organised around the four relations two spans can stand in,
-// because those are exactly the four rules Build implements.
 func TestBuild(t *testing.T) {
 	t.Parallel()
 
@@ -75,8 +72,6 @@ func TestBuild(t *testing.T) {
 		{
 			name: "a nested span attaches to the smallest enclosing span",
 			items: []item{
-				// Deliberately scrambled: the innermost candidate is discovered
-				// first and the outermost last.
 				{Span: span(4, 8), Payload: "inner"},
 				{Span: span(22, 28), Payload: "tail"},
 				{Span: span(2, 20), Payload: "mid"},
@@ -240,9 +235,6 @@ func TestBuild(t *testing.T) {
 	}
 }
 
-// TestBuildDoesNotMutateInput pins that Build sorts a private index vector: the
-// caller's slice is its own record of what was discovered, and reordering it
-// under the caller would make the documented alternative order meaningless.
 func TestBuildDoesNotMutateInput(t *testing.T) {
 	t.Parallel()
 
@@ -261,11 +253,6 @@ func TestBuildDoesNotMutateInput(t *testing.T) {
 	}
 }
 
-// TestAlternativesKeepInsertionOrderAtScale pins the one guarantee that is not
-// a function of the spans alone. A handful of alternatives would pass even if
-// the canonical order fell back on the sort being stable, because Go's sort
-// switches to insertion sort for short runs; at this size an unordered
-// comparison of equal spans really does shuffle them.
 func TestAlternativesKeepInsertionOrderAtScale(t *testing.T) {
 	t.Parallel()
 
@@ -277,8 +264,6 @@ func TestAlternativesKeepInsertionOrderAtScale(t *testing.T) {
 	)
 	for i := range alternatives {
 		payload := fmt.Sprintf("rule-%03d", i)
-		// Interleave an unrelated site so the identical spans are not simply
-		// one contiguous input run either.
 		items = append(items,
 			item{Span: span(0, 8), Payload: payload},
 			item{Span: span(uint32(20+2*i), uint32(21+2*i)), Payload: "other"},
@@ -300,13 +285,6 @@ func TestAlternativesKeepInsertionOrderAtScale(t *testing.T) {
 	}
 }
 
-// nestedForest is the fixture the traversal tests share:
-//
-//	[0,30) outer
-//	  [2,10) left
-//	    [4,6) leaf
-//	  [12,20) right
-//	[40,50) tail
 func nestedForest(t *testing.T) interval.Forest[string] {
 	t.Helper()
 
@@ -351,8 +329,6 @@ func TestWalkVisitsParentsBeforeChildren(t *testing.T) {
 	}
 }
 
-// TestZeroForest guards the documented zero value: an instrumenter that found
-// nothing to rewrite still traverses its (empty) forest.
 func TestZeroForest(t *testing.T) {
 	t.Parallel()
 

@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The half of the discovery tests that needs no toolchain: the decisions this
-// package makes on its own, before and after the loader is involved.
 package discover
 
 import (
@@ -25,10 +23,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// lookupEnv returns the values a "KEY=VALUE" environment gives one variable,
-// in order. It returns every one of them on purpose: a duplicate is a defect
-// this package's environment building has to be caught at, not a detail
-// os/exec's last-one-wins rule may paper over.
 func lookupEnv(env []string, name string) []string {
 	var values []string
 	for _, entry := range env {
@@ -77,10 +71,6 @@ func TestEnvironmentLeavesPathAloneWithoutAToolchain(t *testing.T) {
 	}
 }
 
-// TestEnvironmentFromUsesTheFrozenBase pins the public-session case. Once a
-// workspace has opened, a later edit to process-global environment must not
-// change which build tags, module settings, credentials, or cache inputs its
-// discovery pass observes.
 func TestEnvironmentFromUsesTheFrozenBase(t *testing.T) {
 	dir := filepath.Join("frozen", "go", "bin")
 	base := []string{
@@ -107,15 +97,6 @@ func TestEnvironmentFromUsesTheFrozenBase(t *testing.T) {
 	}
 }
 
-// TestEnvironmentSwitchesWorkspaceModeOff is the guarantee behind
-// [CodeWorkspace]: refusing a `go.work` at the snapshot root only settles the
-// file that is in the snapshot, and the go command would find one in a parent
-// directory or through $GOWORK too. The loader is pinned instead, so whatever
-// the caller's environment says about workspaces, discovery resolves the
-// snapshot and nothing else.
-//
-// A zero toolchain is covered because the PATH branch returns early, and the
-// pin has to survive that.
 func TestEnvironmentSwitchesWorkspaceModeOff(t *testing.T) {
 	toolchains := map[string]gocmd.Toolchain{
 		"located": {GoBin: filepath.Join("opt", "go", "bin", "go")},
@@ -124,8 +105,6 @@ func TestEnvironmentSwitchesWorkspaceModeOff(t *testing.T) {
 	ambient := map[string]func(t *testing.T){
 		"unset": func(t *testing.T) {
 			t.Helper()
-			// t.Setenv first, so that the cleanup it registers puts the
-			// developer's own GOWORK back afterwards.
 			t.Setenv("GOWORK", "restored by cleanup")
 			if err := os.Unsetenv("GOWORK"); err != nil {
 				t.Fatalf("unsetting GOWORK: %v", err)
@@ -148,13 +127,6 @@ func TestEnvironmentSwitchesWorkspaceModeOff(t *testing.T) {
 				if len(got) != 1 || got[0] != "off" {
 					t.Errorf("GOWORK = %v, want exactly one entry set to off", got)
 				}
-				// A workspace run removes it instead, so the go command finds
-				// the workspace file of the tree it is running in by walking up
-				// from its own working directory. Removed and not emptied: an
-				// empty value is a value, and the go command reads an empty
-				// GOWORK as "no workspace" rather than as "decide for
-				// yourself". The caller's ambient one is gone either way, which
-				// is what makes the guarantee hold.
 				if inWorkspace := lookupEnv(environmentFrom(nil, tc, true), "GOWORK"); len(inWorkspace) != 0 {
 					t.Errorf("GOWORK in a workspace run = %v, want no entry at all", inWorkspace)
 				}
@@ -187,8 +159,6 @@ func TestSameEnvKeyFollowsThePlatform(t *testing.T) {
 	}
 }
 
-// parseFixture parses one in-memory file the way the loader would, comments
-// included.
 func parseFixture(t *testing.T, src string) *ast.File {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", src, parser.ParseComments|parser.SkipObjectResolution)
@@ -247,12 +217,12 @@ func TestSuppressedReportsTheWidestRegion(t *testing.T) {
 		reason     SkipReason
 		suppressed bool
 	}{
-		30:  {SkipTypeParam, true}, // inside both: the outer one is the answer
-		50:  {SkipTypeParam, true}, // inside only the outer one
-		150: {"", false},           // between two regions
-		250: {SkipConstDecl, true}, // inside the third
-		100: {"", false},           // the end is exclusive
-		10:  {SkipTypeParam, true}, // the start is inclusive
+		30:  {SkipTypeParam, true},
+		50:  {SkipTypeParam, true},
+		150: {"", false},
+		250: {SkipConstDecl, true},
+		100: {"", false},
+		10:  {SkipTypeParam, true},
 	}
 	for pos, want := range cases {
 		reason, ok := scan.suppressed(pos)
@@ -317,15 +287,6 @@ func TestRelativePathRefusesToLeaveTheModule(t *testing.T) {
 	}
 }
 
-// TestFormatPackageErrorIsAlwaysOneLine pins the shape every diagnostic
-// go-mutants prints depends on.
-//
-// A `go list` failure arrives as the command's whole standard error in a single
-// [packages.Error.Msg]: a `# import/path` banner, then one line per compiler
-// diagnostic. Left as it is, it turns one coded error into several lines of
-// which only the first carries "GOM4111:", and the ones that go uncoded are
-// precisely the ones naming the file and column — invisible to `grep '^error '`
-// and to every CI log parser downstream.
 func TestFormatPackageErrorIsAlwaysOneLine(t *testing.T) {
 	tests := []struct {
 		name string
@@ -371,8 +332,6 @@ func TestFormatPackageErrorIsAlwaysOneLine(t *testing.T) {
 }
 
 func TestCollapseLinesLeavesASingleLineAlone(t *testing.T) {
-	// The common case has to be untouched: a type error is already one line, and
-	// folding must not turn its own punctuation into a join.
 	for _, s := range []string{"", "undefined: x", "a; b", "  padded  "} {
 		want := strings.TrimSpace(s)
 		if got := collapseLines(s); got != want {
@@ -395,15 +354,6 @@ func TestIsTestFile(t *testing.T) {
 	}
 }
 
-// TestTheCgoExemptionCoversOnlyThePackagesTheScanFound pins the gate's
-// exemption to the packages a cgo import was actually read out of.
-//
-// The exemption exists because a cgo package is excluded from mutation
-// wholesale, so whether its C preprocessing step succeeded is not a question
-// discovery has to have an answer to. That argument covers the package the
-// import is in and stops there: a neighbour that imports it is not exempt,
-// because its failure is a real gap in the type information discovery reads,
-// and neither is a package whose path merely begins the same way.
 func TestTheCgoExemptionCoversOnlyThePackagesTheScanFound(t *testing.T) {
 	exemption := cgoExemption{"example.com/m/cgopkg": true}
 	if !exemption.covers(&packages.Package{ID: "example.com/m/cgopkg", PkgPath: "example.com/m/cgopkg"}) {
@@ -423,15 +373,6 @@ func TestTheCgoExemptionCoversOnlyThePackagesTheScanFound(t *testing.T) {
 	}
 }
 
-// scanFor builds a scan over in-memory source, the way the file walk would,
-// and hands back the syntax tree so that a test can name the node an edit is
-// anchored to.
-//
-// There is no type information: these tests are about the span invariant and
-// the suppression bookkeeping, both of which are decided before any type gate
-// is asked anything. The guard resolver works without it — with no types no
-// expression can be proved to be the universe bool, so every hint here comes
-// out as the statement form.
 func scanFor(t *testing.T, src string) (*fileScan, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -454,8 +395,6 @@ func scanFor(t *testing.T, src string) (*fileScan, *ast.File) {
 	}, file
 }
 
-// firstBinary returns the first binary expression of a parsed fixture, which is
-// the node the emit tests anchor their edits to.
 func firstBinary(t *testing.T, file *ast.File) *ast.BinaryExpr {
 	t.Helper()
 	var found *ast.BinaryExpr
@@ -474,7 +413,6 @@ func firstBinary(t *testing.T, file *ast.File) *ast.BinaryExpr {
 	return found
 }
 
-// ruleNamed looks up a canonical rule for a test.
 func ruleNamed(t *testing.T, name string) mutation.Rule {
 	t.Helper()
 	rule, ok := mutation.CanonicalRegistry().Lookup(name)
@@ -502,7 +440,6 @@ func TestEmitRecordsTheSpanAndThePosition(t *testing.T) {
 	if got.Line != 3 {
 		t.Errorf("line = %d, want 3", got.Line)
 	}
-	// Column is a byte offset within the line, counted from one.
 	line := strings.Split(src, "\n")[2]
 	if want := strings.Index(line, "!=") + 1; got.Column != want {
 		t.Errorf("column = %d, want %d", got.Column, want)
@@ -510,8 +447,6 @@ func TestEmitRecordsTheSpanAndThePosition(t *testing.T) {
 	if got.Package != "example.com/p" || got.SourceDigest != mutation.DigestString(src) {
 		t.Errorf("candidate = %+v, want the scan's package and digest", got)
 	}
-	// The hint is the statement the edit sits in, because nothing here can
-	// prove an expression is the universe bool without type information.
 	if got.Guard.Form != GuardFormS {
 		t.Errorf("guard form = %q, want %q", got.Guard.Form, GuardFormS)
 	}
@@ -524,10 +459,6 @@ func TestEmitRecordsTheSpanAndThePosition(t *testing.T) {
 	}
 }
 
-// TestEmitRefusesASpanThatMissesItsText is the invariant that keeps a wrong
-// span from ever reaching the instrumenter: the bytes under the span have to
-// be the text the rule claims it is replacing, and a mismatch is an error
-// rather than a quietly mutated wrong expression.
 func TestEmitRefusesASpanThatMissesItsText(t *testing.T) {
 	const src = "package p\n\nfunc f(a, b int) bool { return a != b }\n"
 	scan, file := scanFor(t, src)
@@ -551,11 +482,6 @@ func TestEmitRefusesASpanPastTheEndOfTheFile(t *testing.T) {
 	}
 }
 
-// TestEmitRefusesAnUnguardableSite is the second thing that removes a
-// candidate, and the one this phase added: an edit whose rewrite site none of
-// the three forms covers is a recorded skip, not a catalogued mutant an
-// instrumenter would have to hand back. The `switch` tag is the shortest such
-// site — no form wraps a switch, and no statement further out holds the edit.
 func TestEmitRefusesAnUnguardableSite(t *testing.T) {
 	const src = "package p\n\nfunc f(a, b int) { switch a != b {\n} }\n"
 	scan, file := scanFor(t, src)
@@ -616,8 +542,6 @@ func TestNewMatchersDefaultsToEverySupportedRule(t *testing.T) {
 	if m.empty() {
 		t.Error("the default selection is empty")
 	}
-	// Every operator matcher replaces its operator with a different one, and
-	// with the operator's own spelling on both sides.
 	for _, table := range []map[token.Token]tokenMatcher{
 		m.comparison, m.connective, m.integer, m.float, m.bitwise, m.assignOp, m.incDec,
 	} {
@@ -632,15 +556,6 @@ func TestNewMatchersDefaultsToEverySupportedRule(t *testing.T) {
 	}
 }
 
-// TestNewMatchersIgnoresAnUnimplementedRule keeps the "ignore what this phase
-// has not built yet" path honest now that there is nothing left to ignore.
-//
-// Every rule in the canonical registry is implemented here, so the ignoring
-// branch has no input any more. It stays in [newMatchers] because a v2 rule
-// would arrive in the registry before it arrives in this package, and the first
-// thing it must not do is fail every run that selected its family. The test
-// therefore asserts the state of the world — the registry and the
-// implementation agree exactly — rather than a behaviour nothing can reach.
 func TestNewMatchersIgnoresAnUnimplementedRule(t *testing.T) {
 	registry := mutation.CanonicalRegistry()
 	for _, rule := range registry.Rules() {
@@ -664,13 +579,6 @@ func TestNewMatchersIgnoresAnUnimplementedRule(t *testing.T) {
 	}
 }
 
-// skipReasonConstants returns the value of every SkipReason-typed constant
-// this package declares, keyed by the name of the constant.
-//
-// The set is read out of the package's own sources rather than from a list
-// typed into the test, because a list typed into the test is exactly the drift
-// this guard exists to catch: it would be written once, agreeing with the
-// constants of that day, and never looked at again.
 func skipReasonConstants(t *testing.T) map[string]SkipReason {
 	t.Helper()
 
@@ -702,16 +610,9 @@ func skipReasonConstants(t *testing.T) map[string]SkipReason {
 	return found
 }
 
-// collectSkipReasons adds the SkipReason constants of one `const` group to
-// found. A constant typed SkipReason that this cannot read is a fatal failure
-// rather than a quiet skip: a constant the guard cannot see is a constant the
-// guard does not guard.
 func collectSkipReasons(t *testing.T, file string, group *ast.GenDecl, found map[string]SkipReason) {
 	t.Helper()
 
-	// Within a group, a spec with neither a type nor a value repeats the one
-	// before it, so the declared type carries over. A spec with a value but no
-	// type does not: its type comes from the value.
 	declared := ""
 	for _, spec := range group.Specs {
 		value, ok := spec.(*ast.ValueSpec)
@@ -728,10 +629,6 @@ func collectSkipReasons(t *testing.T, file string, group *ast.GenDecl, found map
 			declared = ""
 		}
 		if declared != "SkipReason" {
-			// A constant named like a reason but written in a form this cannot
-			// read — `SkipNinth = SkipReason("ninth")`, say — would slip past
-			// the guard silently, which is the very failure this test exists to
-			// end. Stop loudly instead.
 			for _, name := range value.Names {
 				if strings.HasPrefix(name.Name, "Skip") {
 					t.Fatalf("%s declares %s, which reads as a skip reason but is not a SkipReason-typed constant this guard can see; teach this guard to read it", file, name.Name)
@@ -762,14 +659,6 @@ func collectSkipReasons(t *testing.T, file string, group *ast.GenDecl, found map
 	}
 }
 
-// TestAllSkipReasonsListsEverySkipReasonConstant is the drift guard on
-// [AllSkipReasons], and through it on everything derived from that list: the
-// tie-break ranks here, and the `reason` enumeration of the run report schema
-// over in internal/report.
-//
-// The list is compared against the constants the package really declares, read
-// out of these sources, so a ninth Skip* constant fails this test in the commit
-// that adds it rather than in the first run that emits it.
 func TestAllSkipReasonsListsEverySkipReasonConstant(t *testing.T) {
 	declared := skipReasonConstants(t)
 	listed := AllSkipReasons()
@@ -811,14 +700,6 @@ func TestAllSkipReasonsListsEverySkipReasonConstant(t *testing.T) {
 	}
 }
 
-// TestEverySkipReasonExplainsItself is the drift guard on [SkipReason.Explanation],
-// which is what `--explain` prints under each reason.
-//
-// Without it a reason added here would come out of `list --explain` as a
-// heading with a blank line under it — the one place a user goes to find out
-// what a suppression means, silently saying nothing. The list comes from
-// [AllSkipReasons] rather than from a table typed out here, so the guard covers
-// whatever this package declares today.
 func TestEverySkipReasonExplainsItself(t *testing.T) {
 	t.Parallel()
 
@@ -835,24 +716,11 @@ func TestEverySkipReasonExplainsItself(t *testing.T) {
 			t.Errorf("the explanation of %q spans more than one line: %q", reason, explanation)
 		}
 	}
-	// A reason from another build — the ones the schema reserves for
-	// instrumentation, say — is a row worth printing with its counts and no
-	// sentence, rather than a failure. `--explain` reads reasons out of
-	// documents, which this build did not necessarily write.
 	if got := SkipReason("struct-tag").Explanation(); got != "" {
 		t.Errorf("a reason this build does not define explained itself: %q", got)
 	}
 }
 
-// typedFixture type-checks one self-contained file and hands back the guard
-// resolver for it.
-//
-// The Form D refusals below are the only decisions in this package that need
-// both syntax and types, so [scanFor]'s untyped resolver cannot ask them: with
-// no [types.Info] every declared type is unspellable and every Form D site is
-// refused for that reason alone, which would make an accepted case impossible
-// to write. A file with no imports type-checks with no importer, which is what
-// keeps this a unit test.
 func typedFixture(t *testing.T, src string) (*guardResolver, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -877,11 +745,6 @@ func typedFixture(t *testing.T, src string) (*guardResolver, *ast.File) {
 	return newGuardResolver(file, info, pkg, tokFile, nil), file
 }
 
-// lastDeclaringStmt returns the last `:=` or `var` statement in a file.
-//
-// Every fixture below is written so that the statement under test is the last
-// one that declares anything, which is what lets a shadowing case carry the
-// declaration it shadows in the same function.
 func lastDeclaringStmt(t *testing.T, file *ast.File) ast.Stmt {
 	t.Helper()
 	var found ast.Stmt
@@ -902,14 +765,6 @@ func lastDeclaringStmt(t *testing.T, file *ast.File) ast.Stmt {
 	return found
 }
 
-// TestStatementGuardRefusesADeclarationItCannotHoist covers the two Form D
-// refusals that are properties of the user's own source rather than of its
-// types, and the accepted cases each of them has to leave alone.
-//
-// Both are absences everywhere else in the suite — the fixture module proves
-// them by producing no hint — so this is where the distinction between "no
-// candidate because the site is refused" and "no candidate at all" is stated
-// as two columns of one table.
 func TestStatementGuardRefusesADeclarationItCannotHoist(t *testing.T) {
 	cases := []struct {
 		name string
@@ -994,8 +849,6 @@ func TestStatementGuardRefusesADeclarationItCannotHoist(t *testing.T) {
 	}
 }
 
-// TestAnErrorRendersItsCodeAndItsCause pins the one line a user reads when
-// discovery refuses something.
 func TestAnErrorRendersItsCodeAndItsCause(t *testing.T) {
 	t.Parallel()
 
@@ -1025,8 +878,6 @@ func TestAnErrorRendersItsCodeAndItsCause(t *testing.T) {
 		})
 	}
 
-	// The cause stays reachable through the rendering, which is what lets a
-	// caller ask what the operating system actually said.
 	cause := errors.New("no such file")
 	wrapped := &Error{Code: CodeFileUnreadable, Message: "cannot read it", Err: cause}
 	if !errors.Is(wrapped, cause) {
@@ -1040,12 +891,6 @@ func TestAnErrorRendersItsCodeAndItsCause(t *testing.T) {
 	}
 }
 
-// TestEveryCodeIsSpelledTheWayItIsPrinted writes this package's codes out.
-//
-// They are what a user reads in a failure and what docs/errors.md lists, so
-// they are asserted as literals rather than derived from the constants: a test
-// comparing `string(c)` with `c.String()` would pass however the block was
-// renumbered.
 func TestEveryCodeIsSpelledTheWayItIsPrinted(t *testing.T) {
 	t.Parallel()
 
@@ -1067,20 +912,9 @@ func TestEveryCodeIsSpelledTheWayItIsPrinted(t *testing.T) {
 	}
 }
 
-// TestAWalkWithNoRuleSelectedLooksForNothing is the shortcut every suppression
-// question is moot behind.
-//
-// A selection that chose no rule has nothing to find, so the walk does not run
-// and no site is recorded as skipped either -- a skip is a decision about an
-// edit, and there is no edit to decide about.
 func TestAWalkWithNoRuleSelectedLooksForNothing(t *testing.T) {
 	t.Parallel()
 
-	// The zero value, which is what a selection naming only rules this build
-	// does not implement produces: Verify accepts them, no table claims them,
-	// and nothing is left to look for. It is also what [newMatchers] returns
-	// beside a refusal, and a walk that read it as a selection would scan every
-	// file in the tree for edits it cannot make.
 	if !(matchers{}).empty() {
 		t.Error("matchers with nothing selected do not report themselves empty")
 	}
@@ -1093,7 +927,6 @@ func TestAWalkWithNoRuleSelectedLooksForNothing(t *testing.T) {
 		t.Error("matchers built from every rule report themselves empty")
 	}
 
-	// One rule is not none, which is the boundary the count is about.
 	one, err := newMatchers(SupportedRules()[:1])
 	if err != nil {
 		t.Fatalf("building one rule's matchers: %v", err)
@@ -1102,9 +935,6 @@ func TestAWalkWithNoRuleSelectedLooksForNothing(t *testing.T) {
 		t.Error("matchers built from one rule report themselves empty")
 	}
 
-	// And a selection of nothing at all is the whole registry rather than an
-	// empty one, which is what makes the shortcut above reachable only through
-	// a selection that named rules this build does not implement.
 	everything, err := newMatchers([]mutation.Rule{})
 	if err != nil {
 		t.Fatalf("building matchers from an empty selection: %v", err)

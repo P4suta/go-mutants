@@ -11,31 +11,13 @@ import (
 	"time"
 )
 
-// scriptedSupervisor answers the watchdog with a list of samples instead of a
-// process.
-//
-// The sampler's threshold is the one thing about the bound no behavioural test
-// can pin exactly: a real process grows in chunks the sampler sees at whatever
-// moment its ticker fires, so "it tripped somewhere around the limit" is all a
-// hog helper can prove. Scripting the samples turns the question into
-// arithmetic — which sample trips it — and arithmetic is the part that has to
-// be the same on every platform, because it is what the kernel's own line on
-// Windows has to sit *above*.
 type scriptedSupervisor struct {
-	mu      sync.Mutex
-	samples []int64
-	taken   int
-	// unmeasurable makes the platform unable to answer at all, which is not the
-	// same as an empty tree and has to end the sampler rather than stall it.
-	unmeasurable bool
-	// unanswerableFirst is how many opening samples report no measurement
-	// before the platform starts answering, which is what a child that is not
-	// in /proc yet looks like from here. It is not the same as unmeasurable,
-	// and the whole point of it is that the two must not be treated alike.
+	mu                sync.Mutex
+	samples           []int64
+	taken             int
+	unmeasurable      bool
 	unanswerableFirst int
-	// accounted is what the platform's own accounting reports for the reaped
-	// child; zero means it reports nothing.
-	accounted int64
+	accounted         int64
 }
 
 func (s *scriptedSupervisor) configure(*exec.Cmd)                      {}
@@ -47,9 +29,6 @@ func (s *scriptedSupervisor) peakMemory(*os.ProcessState) (int64, bool) {
 	return s.accounted, s.accounted > 0
 }
 
-// usedMemory hands back the next scripted sample, and repeats the last one
-// once the script runs out so a watchdog that was expected not to trip has
-// something to keep reading.
 func (s *scriptedSupervisor) usedMemory(bool) (int64, bool) {
 	if s.unmeasurable {
 		return 0, false
@@ -69,22 +48,12 @@ func (s *scriptedSupervisor) usedMemory(bool) (int64, bool) {
 	return s.samples[i], true
 }
 
-// takenCount is how many samples the watchdog has read.
 func (s *scriptedSupervisor) takenCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.taken
 }
 
-// TestTheSamplerTripsOnTheFirstSampleAboveTheRequestedLimit pins the threshold
-// the whole bound is expressed in, on every platform.
-//
-// It matters twice. It is the number a user writes in `test.memory` and expects
-// to mean what it says; and it is the number Windows' own kernel limit has to
-// sit strictly *above*, because a kernel limit set to the same value caps the
-// job's accounting at it — so the sampler would read the limit, never read more
-// than the limit, and never trip, while the child died of a failed allocation
-// with no explanation anybody could render.
 func TestTheSamplerTripsOnTheFirstSampleAboveTheRequestedLimit(t *testing.T) {
 	t.Parallel()
 
@@ -123,9 +92,6 @@ func TestTheSamplerTripsOnTheFirstSampleAboveTheRequestedLimit(t *testing.T) {
 	}
 }
 
-// TestTheSamplerRemembersTheHighestSampleItSaw pins the other half of what the
-// watchdog is for: a run that is bounded is also a run that is measured, and
-// the number reported is the worst moment rather than the last one.
 func TestTheSamplerRemembersTheHighestSampleItSaw(t *testing.T) {
 	t.Parallel()
 
@@ -133,8 +99,6 @@ func TestTheSamplerRemembersTheHighestSampleItSaw(t *testing.T) {
 	sup := &scriptedSupervisor{samples: []int64{10, 4096, 512, 1024}}
 	w := watchMemory(sup, limit)
 
-	// Long enough for the whole script and then some; nothing here trips, so
-	// the sampler runs until it is stopped.
 	deadline := time.Now().Add(20 * MemorySampleInterval)
 	for time.Now().Before(deadline) && sup.takenCount() < len(sup.samples) {
 		time.Sleep(MemorySampleInterval / 4)
@@ -146,10 +110,6 @@ func TestTheSamplerRemembersTheHighestSampleItSaw(t *testing.T) {
 	}
 }
 
-// TestASamplerOnAPlatformThatCannotMeasureStopsRatherThanSpins pins the
-// fail-open half. A budget nothing can measure must not become a kill, and a
-// sampler that kept asking would be a goroutine per mutant asking a question
-// with no answer ten times a second for the life of the run.
 func TestASamplerOnAPlatformThatCannotMeasureStopsRatherThanSpins(t *testing.T) {
 	t.Parallel()
 
@@ -167,25 +127,6 @@ func TestASamplerOnAPlatformThatCannotMeasureStopsRatherThanSpins(t *testing.T) 
 	}
 }
 
-// TestOnlyAKernelLineCanEndATreeTheSamplerDidNotSee pins the retroactive half
-// of the bound, and — more importantly — the three things that keep it from
-// becoming a false kill.
-//
-// A sampler ten times a second cannot catch a tree that crosses its line and
-// dies inside one tick, and on Windows that is not a corner case: the kernel
-// limit sits a quarter above the sampler's, so a child growing fast enough
-// crosses both between two samples, has its next commit refused, and the Go
-// runtime kills it with "out of memory" and a non-zero status. The sampler saw
-// nothing, and reporting an ordinary failing test there means a mutant `killed`
-// for a reason nobody can find and a control that makes the user's program look
-// broken.
-//
-// The three refusals matter as much as the acceptance. Measured on a loaded
-// machine, ordinary `-cover` test binaries of a three-function fixture peaked at
-// 607 MiB against a 256 MiB bound and finished perfectly well — so "the peak was
-// over the line" is a fact about a run and not a cause of its ending. A rule
-// that read it as a cause reported every one of those as killed by the bound,
-// which is exactly the false kill this feature exists to avoid.
 func TestOnlyAKernelLineCanEndATreeTheSamplerDidNotSee(t *testing.T) {
 	t.Parallel()
 
@@ -219,10 +160,6 @@ func TestOnlyAKernelLineCanEndATreeTheSamplerDidNotSee(t *testing.T) {
 	}
 }
 
-// TestTheFirstSampleIsTakenBeforeWatchMemoryReturns pins why a child that
-// lives ten milliseconds still reports a peak: the sampler's first look is
-// taken on the caller's goroutine, before the child has had a chance to
-// finish, and only the later ones wait.
 func TestTheFirstSampleIsTakenBeforeWatchMemoryReturns(t *testing.T) {
 	t.Parallel()
 
@@ -235,10 +172,6 @@ func TestTheFirstSampleIsTakenBeforeWatchMemoryReturns(t *testing.T) {
 	w.stop()
 }
 
-// TestTheAccountedPeakIsConsultedOnlyWhereItBelongsToTheChild pins how
-// [peakOf] reads the kernel's number: everywhere but Linux it is the child's
-// and is combined with the samples; on Linux it is the parent's as often as
-// the child's and is ignored, leaving the sampler as the only witness.
 func TestTheAccountedPeakIsConsultedOnlyWhereItBelongsToTheChild(t *testing.T) {
 	t.Parallel()
 
@@ -268,18 +201,6 @@ func TestTheAccountedPeakIsConsultedOnlyWhereItBelongsToTheChild(t *testing.T) {
 	}
 }
 
-// TestAChildNotVisibleYetDoesNotEndTheSamplerForever pins the difference
-// between "this platform cannot measure" and "this child is not there yet".
-//
-// The first sample is taken the instant the child is started, and on Linux that
-// is a race with the kernel publishing the process under /proc: the walk finds
-// nothing and reports no measurement. Treating that like an unmeasurable
-// platform ended the sampler before it had sampled anything, and since Linux
-// ignores the kernel's accounted peak -- see peakOf -- the sampler is the only
-// witness there. The call then reported a peak of zero for a process that had
-// plainly run, which is what
-// `session_memory_integration_test.go: Probe reports no peak, and it started a
-// process` was, intermittently, on ubuntu and nowhere else.
 func TestAChildNotVisibleYetDoesNotEndTheSamplerForever(t *testing.T) {
 	t.Parallel()
 

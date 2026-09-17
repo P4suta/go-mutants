@@ -3,27 +3,6 @@
 
 //go:build integration
 
-// The execution phase against a real toolchain and a real test suite.
-//
-// Every other test in this package injects a runner, which is the only way to
-// pin the scheduling policy: a kill, a timeout, a stale-catalogue exit and a
-// start failure are four exit statuses, and building fixture programs that
-// produce them on two platforms would be testing the fixtures. What injection
-// cannot answer is whether the statuses this package interprets are the ones a
-// real `go test -c` binary actually produces — whether the environment it
-// composes really activates a mutant, whether the working directory it chooses
-// really lets a test run, whether exit 97 really comes back from a runtime that
-// was handed an identity it does not know.
-//
-// So this file builds the killable fixture for real: snapshot, discover,
-// catalogue, instrument, compile, and then schedule the mutants whose fates the
-// fixture was designed to have. It shares one instrumented snapshot and one set
-// of binaries across its steps, because that is what a real run does and
-// because the compile is the expensive part.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/execute/...
 package execute_test
 
 import (
@@ -42,30 +21,13 @@ import (
 )
 
 const (
-	// killableModule is the module path of the fixture this file drives.
 	killableModule = "fixture.example/killable"
 
-	// buildTimeout bounds each toolchain command. A compile of a three-file
-	// module takes well under a second once the build cache is warm, so this is
-	// not a budget — it is the point past which something has hung.
 	buildTimeout = 5 * time.Minute
 
-	// runTimeout bounds one mutant attempt. The fixture's whole suite runs in
-	// milliseconds; the generosity is here so that a loaded CI machine cannot
-	// turn a kill into a timeout and make this file flaky about the one thing it
-	// exists to assert.
 	runTimeout = 60 * time.Second
 )
 
-// TestExecutesTheKillableFixtureEndToEnd runs the fixture's four mutants
-// through the real pipeline and watches them meet the fates the fixture was
-// built to give them.
-//
-// The kills and the survival are halves of one claim and neither is worth much
-// alone. Everything reported killed could be a tree that stopped compiling;
-// everything reported survived could be activation that never happened.
-// Together — same binaries, same scheduler, one changed environment variable —
-// they say this package really is measuring what it claims to measure.
 func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	t.Parallel()
 
@@ -74,11 +36,6 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	snap := mutantkit.Snapshot(t, "killable")
 	catalog := mutantkit.InstrumentWith(t, toolchain, snap, env)
 
-	// Outside the snapshot, both of them. A test binary written into the tree
-	// would show up in the snapshot re-digest as drift indistinguishable from a
-	// test that wrote into its own package, and a scratch directory inside it
-	// would be deleted by the snapshot cleanup while children were still using
-	// it.
 	opts := execute.Options{
 		Toolchain:    toolchain,
 		SnapshotRoot: snap.Root,
@@ -93,19 +50,12 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("building the fixture's test binaries: %v\n%s", err, execute.OutputOf(err))
 	}
-	// One package with tests, so one binary. The fixture has three source files
-	// and two test files in a single package, which is what makes this number a
-	// statement about the skip rule rather than a coincidence.
 	if len(bins) != 1 {
 		t.Fatalf("built %d test binaries, want 1: %+v", len(bins), bins)
 	}
 	if bins[0].ImportPath != killableModule {
 		t.Errorf("built %q, want %q", bins[0].ImportPath, killableModule)
 	}
-	// go list reports the package directory with symlinks resolved (macOS's
-	// /var is a link to /private/var), while the snapshot remembers the path
-	// it was created under. The two name one directory, so the comparison
-	// resolves both sides rather than trusting either spelling.
 	if !testkit.SamePath(bins[0].Dir, snap.Root) {
 		t.Errorf("the package directory is %q, want the snapshot root %q", bins[0].Dir, snap.Root)
 	}
@@ -113,10 +63,6 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 		t.Fatalf("the compiled binary at %s is missing or empty: %v", bins[0].BinPath, statErr)
 	}
 
-	// The fixture's own claim about itself, made machine-checkable. Each mutant
-	// is named by its file and its rule rather than by its identity: an identity
-	// is a digest over the fixture's bytes, so a hard-coded one would turn every
-	// edit to a comment in the fixture into a failure here.
 	want := []struct {
 		path, rule string
 		outcome    mutation.Outcome
@@ -133,11 +79,6 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 		queue[i] = execute.MutantRun{ID: mutantkit.MutantAt(t, catalog, w.path, w.rule).ID, Timeout: runTimeout}
 	}
 
-	// Atomic rather than plain counters because the hooks really are called
-	// concurrently: Jobs is 2 over a queue of 4, so both workers increment these.
-	// A plain `int++` from two goroutines is a data race by the Go memory model —
-	// it can lose an increment and fail the assertion below for no reason — and
-	// it would be a test that violates the very contract execute.Hooks documents.
 	var started, finished atomic.Int64
 	hooks := execute.Hooks{
 		Started:  func(string, int) { started.Add(1) },
@@ -151,8 +92,6 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	if len(results) != len(want) {
 		t.Fatalf("got %d results, want %d", len(results), len(want))
 	}
-	// No mutant here should time out, so every one settles on its first attempt:
-	// one start and one finish each, and no retry pass.
 	if started.Load() != int64(len(want)) || finished.Load() != int64(len(want)) {
 		t.Errorf("hooks fired %d starts and %d finishes, want %d of each",
 			started.Load(), finished.Load(), len(want))
@@ -180,10 +119,6 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 			if got.KilledBy != killableModule {
 				t.Errorf("%s was killed by %q, want %q", label, got.KilledBy, killableModule)
 			}
-			// A red suite is not yet evidence: a tree that stopped compiling
-			// exits non-zero too. The mutant's signature is the wrong answer it
-			// produces at the one input where it differs from the original, so
-			// that is what gets asserted.
 			if !strings.Contains(got.OutputTail, w.evidence) {
 				t.Errorf("%s did not print its evidence %q:\n%s", label, w.evidence, got.OutputTail)
 			}
@@ -195,15 +130,6 @@ func TestExecutesTheKillableFixtureEndToEnd(t *testing.T) {
 	}
 }
 
-// TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow proves the one exit
-// status that must never be read as a kill really is produced, and really is
-// recognised.
-//
-// Exit 97 comes from the generated runtime's init, before the testing framework
-// starts. It is non-zero, so the cheap reading is "the tests failed" — and that
-// reading would let a catalogue that no longer matches the instrumented tree
-// report a perfect score. Nothing but a real instrumented binary can prove the
-// status is what this package thinks it is.
 func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
 	t.Parallel()
 
@@ -226,8 +152,6 @@ func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
 		t.Fatalf("building the fixture's test binaries: %v\n%s", err, execute.OutputOf(err))
 	}
 
-	// An identity of the right shape — 64 hex characters — and a value no digest
-	// produces.
 	unknown := strings.Repeat("0", 64)
 	attempt := execute.RunOne(t.Context(), opts,
 		execute.MutantRun{ID: unknown, Timeout: runTimeout}, bins)
@@ -241,9 +165,6 @@ func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
 	if attempt.KilledBy != "" {
 		t.Errorf("a binary was credited with a detection that did not happen: %q", attempt.KilledBy)
 	}
-	// The refusal happens in init, so nothing ran. That is the property worth
-	// asserting and the only one that does not become a flake on a loaded
-	// machine.
 	for _, forbidden := range []string{"PASS", "=== RUN", "--- "} {
 		if strings.Contains(attempt.OutputTail, forbidden) {
 			t.Errorf("the binary got as far as %q before refusing:\n%s", forbidden, attempt.OutputTail)
@@ -251,14 +172,6 @@ func TestRefusesAnIdentityTheGeneratedRuntimeDoesNotKnow(t *testing.T) {
 	}
 }
 
-// TestOnlyTheInstrumentedFilesDriftedDuringExecution is the gate that catches a
-// test writing into the shared snapshot, applied to this package's own
-// activity.
-//
-// Every worker shares one snapshot, which is what makes one build enough. That
-// only holds if running the binaries leaves the tree alone — so the drift after
-// a full schedule has to be exactly the instrumentation's own rewrite, with no
-// compiled binary, no temporary file, and no coverage data added to it.
 func TestOnlyTheInstrumentedFilesDriftedDuringExecution(t *testing.T) {
 	t.Parallel()
 
@@ -309,20 +222,6 @@ func TestOnlyTheInstrumentedFilesDriftedDuringExecution(t *testing.T) {
 	}
 }
 
-// TestScopedBuildCompilesOnlyTheNamedPackages proves the scope against a real
-// toolchain and a module with two test packages.
-//
-// The unit tests pin the argv the listing is issued with, which is the
-// mechanism; this pins the consequence, which is the thing a user pays for. The
-// coverage fixture has a test package in `core` and another in `caller`, so an
-// unscoped build produces two binaries and a scope of `./core/...` has to
-// produce exactly one — and the one it does not produce is the observable half:
-// a binary that was never compiled is a suite that cannot run, which is what a
-// project that scoped its test command asked for.
-//
-// It builds from a pristine snapshot rather than an instrumented one on
-// purpose. Nothing here is about mutants; what is being asserted is that the
-// package set the listing was given is the package set that came out.
 func TestScopedBuildCompilesOnlyTheNamedPackages(t *testing.T) {
 	t.Parallel()
 
@@ -363,16 +262,11 @@ func TestScopedBuildCompilesOnlyTheNamedPackages(t *testing.T) {
 	if info, statErr := os.Stat(scoped[0].BinPath); statErr != nil || info.Size() == 0 {
 		t.Fatalf("the compiled binary at %s is missing or empty: %v", scoped[0].BinPath, statErr)
 	}
-	// Nothing else was compiled into the directory either. A scope that listed
-	// one package and built two would be a scope that saved a listing and
-	// nothing else.
 	if got := len(testkit.Entries(t, opts.BinDir)); got != 1 {
 		t.Errorf("the scoped binary directory holds %d files, want 1", got)
 	}
 }
 
-// importPathsOf names the packages a build produced, in the order it returned
-// them, which internal/execute promises is sorted by import path.
 func importPathsOf(bins []execute.TestBinary) []string {
 	out := make([]string, len(bins))
 	for i, bin := range bins {
@@ -381,20 +275,6 @@ func importPathsOf(bins []execute.TestBinary) []string {
 	return out
 }
 
-// TestCoveragePassLeavesNoTraceInTheSnapshot is the drift gate's verification
-// for the phase that was added after it.
-//
-// The gate allowlists exactly two kinds of change — the files validation left
-// carrying guards, and the generated runtime package — and coverage-guided
-// selection deliberately needed no third entry. This asserts why: the raw
-// coverage data goes into a directory the caller places outside the snapshot,
-// and the `-cover` binaries' own temporary files follow TMPDIR to the
-// per-worker scratch directory, so a full profiling pass plus a full schedule
-// drifts the tree by exactly what instrumentation drifted it by.
-//
-// It is the same assertion [TestOnlyTheInstrumentedFilesDriftedDuringExecution]
-// makes, with coverage turned on — which is the configuration a default run now
-// uses, and therefore the one the gate has to hold for.
 func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -426,8 +306,6 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 	if len(collected) != len(bins) {
 		t.Fatalf("collected %d profiles for %d binaries", len(collected), len(bins))
 	}
-	// The profile really was written, and it is the text format the mapping
-	// reads rather than a directory somebody still has to render.
 	for _, data := range collected {
 		written, readErr := os.ReadFile(data.Path)
 		if readErr != nil {
@@ -467,38 +345,16 @@ func TestCoveragePassLeavesNoTraceInTheSnapshot(t *testing.T) {
 	}
 }
 
-// first is the first line of a document, for a failure message that should not
-// print a whole coverage profile.
 func first(document string) string {
 	line, _, _ := strings.Cut(document, "\n")
 	return line
 }
 
-// TestAPassThatOnlyNeedsOneFailureStopsAtIt is the other half of the unit
-// tier's claim, and the half a fake cannot make.
-//
-// What the scheduler adds to a target's argument vector is this package's
-// business; what a real test binary does with it is the standard library's, and
-// the saving is worth nothing unless the two agree. Two things are asserted at
-// once here, and the second is why this test exists rather than a comment:
-//
-//   - the flag is one a compiled test binary accepts. An argument `flag` does
-//     not know makes a test binary print "flag provided but not defined" and
-//     exit 2, which this package reads as a failing suite — so a flag that went
-//     away in some future Go would not be an error, it would be every mutant
-//     reported killed by a suite that never ran. Nothing else in the run would
-//     notice.
-//   - it stops the binary where it says it does. The module below fails its
-//     first test and fails its last, and a pass that carries the flag reports
-//     only the first: the second was never started.
 func TestAPassThatOnlyNeedsOneFailureStopsAtIt(t *testing.T) {
 	t.Parallel()
 
 	toolchain := mutantkit.Toolchain(t)
 	env := testkit.Compose(t, testkit.Scratch(t))
-	// Two failing tests in source order, which is the order a test binary runs
-	// them in. Neither is parallel: `-test.failfast` stops new tests from
-	// starting, and a parallel test has already started by the time it yields.
 	module := testkit.NewModule(t).
 		Module("fixture.example/failfast").
 		Source("pair_test.go", `package failfast

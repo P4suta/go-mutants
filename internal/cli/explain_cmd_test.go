@@ -1,14 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The half of `explain` that needs no toolchain: joining a run report and a
-// recording into the account of one mutant.
-//
-// The documents here are built rather than measured, which is the point. What
-// is under test is the join — which facts the command reads out of which
-// document, and what it says when the second one is not there — and a real run
-// would prove the same thing far more slowly while making the assertions depend
-// on a fixture's line numbers.
 package cli
 
 import (
@@ -27,9 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The identities the documents below are built from. They are full 64-character
-// identities because that is what a report carries and what activation takes:
-// the display id is a prefix of it, so one literal is both.
 var (
 	killedID    = strings.Repeat("1f", 32)
 	survivorID  = strings.Repeat("2a", 32)
@@ -40,16 +29,10 @@ var (
 	otherTwinID = "abcd" + strings.Repeat("22", 30)
 )
 
-// explainRunID is the run every document here describes.
 const explainRunID = "20260907T120000Z-a1b2"
 
-// displayOf is the display id a report carries for a full identity: its first
-// twenty characters, exactly as internal/mutation mints it.
 func displayOf(id string) string { return id[:20] }
 
-// explainReport is the run report these tests explain: one killed mutant, one
-// survivor, one mutant nothing covers, one adopted from the cache, two mutants
-// sharing a prefix, and one the compiler refused.
 func explainReport() *report.Report {
 	killedBy := "example.com/killable"
 	notRun := string(report.NotRunOutOfSelection)
@@ -178,24 +161,12 @@ func explainReport() *report.Report {
 	}
 }
 
-// positionAccount gathers what the command would render for one position.
-//
-// The tests drive the join rather than the renderer, which is what the command
-// does: a renderer given a hand-built document would pass while the gatherer
-// that feeds it in production was wrong.
 func positionAccount(
 	r *report.Report, where position, sites []discover.SkipSite, mutants []catalogMutant,
 ) explainPositionDocument {
 	return gatherPosition(r, "mutation.json", where, sites, mutants, outcomesOf(r))
 }
 
-// inExplainWorkspace puts the working directory in a temporary one holding the
-// report, and returns that directory.
-//
-// The chdir is what makes the trace lookup a real one: `explain` resolves
-// `report.directory` from the workspace it is run in, exactly as the `trace`
-// commands do, so a test that stayed in the package directory would be reading
-// this repository's own recordings.
 func inExplainWorkspace(t *testing.T, r *report.Report) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -210,8 +181,6 @@ func inExplainWorkspace(t *testing.T, r *report.Report) string {
 	return dir
 }
 
-// explain runs the command in process against the report in the working
-// directory.
 func explain(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -220,7 +189,6 @@ func explain(t *testing.T, args ...string) (code int, stdout, stderr string) {
 	return code, out.String(), errOut.String()
 }
 
-// explained runs the command and fails the test unless it exited 0.
 func explained(t *testing.T, args ...string) string {
 	t.Helper()
 	code, stdout, stderr := explain(t, args...)
@@ -231,13 +199,6 @@ func explained(t *testing.T, args ...string) string {
 	return stdout
 }
 
-// recordEvents writes a recording into `<report.directory>/trace/<run id>/`,
-// which is where a traced run would have filed it, and returns the directory.
-//
-// The events are written by hand rather than recorded, so that a test can put
-// exactly the sequence it is about into the stream. They still go through the
-// reader that every other consumer uses, so a stream this helper writes and
-// the reader disagreed about would fail here rather than in production.
 func recordEvents(t *testing.T, workspace string, events []trace.Event, outputs map[int64]string) string {
 	t.Helper()
 	dir := filepath.Join(workspace, "reports", "mutation", "trace", explainRunID)
@@ -265,11 +226,8 @@ func recordEvents(t *testing.T, workspace string, events []trace.Event, outputs 
 	return dir
 }
 
-// ms is a duration in the unit the recording carries them in.
 func ms(v int64) *int64 { return &v }
 
-// killedRecording is the recording of the killed mutant's two attempts: a
-// timeout on worker 3 and the serial retry that caught it.
 func killedRecording() []trace.Event {
 	return []trace.Event{
 		{Seq: 1, Type: trace.TypeRunStart, Schema: trace.SchemaV1,
@@ -324,14 +282,6 @@ func killedRecording() []trace.Event {
 	}
 }
 
-// TestExplainResolvesAPrefixAgainstMutantsAndRejected is the first thing the
-// command has to do: find the one mutant a prefix names, wherever the document
-// keeps it.
-//
-// A rejected mutant is in `rejected[]` and not in `mutants[]`, and it is
-// exactly the one somebody types a prefix of after reading `run --explain`. A
-// resolver that looked only at the measured mutants would answer "no such
-// mutant" for a mutant the same document names three lines further down.
 func TestExplainResolvesAPrefixAgainstMutantsAndRejected(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -349,10 +299,6 @@ func TestExplainResolvesAPrefixAgainstMutantsAndRejected(t *testing.T) {
 	}
 }
 
-// TestExplainSaysAmbiguousAndListsMatches is the other half of resolution: a
-// prefix that names two mutants is not a question this command can answer, and
-// the remedy is in the list of what it matched rather than in a longer prefix
-// the user would have to guess at.
 func TestExplainSaysAmbiguousAndListsMatches(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -370,8 +316,6 @@ func TestExplainSaysAmbiguousAndListsMatches(t *testing.T) {
 	}
 }
 
-// TestExplainUnknownPrefixIsRefused is the third answer: a well-formed prefix
-// that matches nothing.
 func TestExplainUnknownPrefixIsRefused(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -384,8 +328,6 @@ func TestExplainUnknownPrefixIsRefused(t *testing.T) {
 	}
 }
 
-// TestExplainKilledShowsKilledByAttemptsAndTail is the question the command
-// exists for, asked of a mutant the tests caught.
 func TestExplainKilledShowsKilledByAttemptsAndTail(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(),
@@ -405,13 +347,6 @@ func TestExplainKilledShowsKilledByAttemptsAndTail(t *testing.T) {
 	}
 }
 
-// wantSurvivorAccount is every byte `explain` writes about the survivor when
-// there is no recording to read.
-//
-// It is a literal rather than a golden file for the reason
-// [wantSkipDetail] is one: internal/cli is not in mise.toml's golden-update
-// list, and a literal is the same pin — an exact comparison of the whole
-// output — read in the file that asserts it.
 const wantSurvivorAccount = `run 20260907T120000Z-a1b2  completed
 report mutation.json
 no trace recorded for run 20260907T120000Z-a1b2; re-run with --trace
@@ -444,10 +379,6 @@ reproduce
   go-mutants run --mutant 2a2a2a2a --keep-temp -vv --trace
 `
 
-// TestExplainSurvivorShowsCoveringBinariesAndReproduction pins the whole
-// output, because the shape is what is under test as much as the facts: six
-// titled blocks in one order, so that two accounts of two mutants can be
-// diffed against each other.
 func TestExplainSurvivorShowsCoveringBinariesAndReproduction(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -457,9 +388,6 @@ func TestExplainSurvivorShowsCoveringBinariesAndReproduction(t *testing.T) {
 	}
 }
 
-// TestExplainUncoveredSaysWhichLineNoBinaryReaches is the difference between
-// the two survivors, and it is the difference between two pieces of work:
-// sharpen a test you have, or write one.
 func TestExplainUncoveredSaysWhichLineNoBinaryReaches(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -472,10 +400,6 @@ func TestExplainUncoveredSaysWhichLineNoBinaryReaches(t *testing.T) {
 	}
 }
 
-// TestExplainRejectedQuotesTheDiagnostic is the mutant that never ran: the
-// compiler's own words are the whole of what there is to say, and they are the
-// part that says whether the rejection is a limit of the guard forms or a
-// mutant that could never have meant anything.
 func TestExplainRejectedQuotesTheDiagnostic(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -491,12 +415,6 @@ func TestExplainRejectedQuotesTheDiagnostic(t *testing.T) {
 	}
 }
 
-// TestExplainCachedSaysThisRunDidNotMeasureIt is the third mutant with no
-// executions under it, and the third reason.
-//
-// A cached mutant carries the duration, the attempts and the killer of the run
-// that did measure it, so an account that printed those under an `executions`
-// heading with nothing in it would read as a measurement this run made.
 func TestExplainCachedSaysThisRunDidNotMeasureIt(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -509,10 +427,6 @@ func TestExplainCachedSaysThisRunDidNotMeasureIt(t *testing.T) {
 	}
 }
 
-// TestExplainWithoutATraceSaysSoInsteadOfGuessing is the promise the whole
-// command rests on: everything it prints came out of a document, and the
-// sections whose document is missing say so rather than inventing a plausible
-// command.
 func TestExplainWithoutATraceSaysSoInsteadOfGuessing(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -528,9 +442,6 @@ func TestExplainWithoutATraceSaysSoInsteadOfGuessing(t *testing.T) {
 	}
 }
 
-// TestExplainWithATraceListsEachBinaryRunAndItsOutputFile is what the
-// recording adds: the commands underneath the passes, and the file their
-// output was preserved in.
 func TestExplainWithATraceListsEachBinaryRunAndItsOutputFile(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	dir := recordEvents(t, workspace, killedRecording(),
@@ -554,9 +465,6 @@ func TestExplainWithATraceListsEachBinaryRunAndItsOutputFile(t *testing.T) {
 	}
 }
 
-// TestExplainTimelineNamesTheStagesTheMutantTookPartIn is the "why was this
-// slow" half: a mutant's passes happened inside stages, and the stages are
-// where a run's minutes went.
 func TestExplainTimelineNamesTheStagesTheMutantTookPartIn(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), nil)
@@ -570,15 +478,6 @@ func TestExplainTimelineNamesTheStagesTheMutantTookPartIn(t *testing.T) {
 	}
 }
 
-// TestExplainPositionListsSkipSitesAndMutantsOnThatLine is the other kind of
-// target: a place in the source rather than an identity.
-//
-// It is asked of the renderer rather than of the command, because the command
-// has to run a discovery pass to answer it and a discovery pass needs a
-// toolchain; the integration test drives the whole sentence. What is pinned
-// here is that both halves are printed — the candidates that became mutants and
-// the ones discovery passed over — since a listing that showed only the first
-// would read as "there is nothing else here".
 func TestExplainPositionListsSkipSitesAndMutantsOnThatLine(t *testing.T) {
 	var out bytes.Buffer
 	r := explainReport()
@@ -609,9 +508,6 @@ func TestExplainPositionListsSkipSitesAndMutantsOnThatLine(t *testing.T) {
 			t.Errorf("the position account does not carry %q:\n%s", want, text)
 		}
 	}
-	// The other line's mutant and the other file's skip site are both out of
-	// scope: a position names a line, and a listing that widened to the file
-	// would answer a question nobody asked.
 	if strings.Contains(text, "clamp.go:47") {
 		t.Errorf("a mutant on another line was listed:\n%s", text)
 	}
@@ -620,9 +516,6 @@ func TestExplainPositionListsSkipSitesAndMutantsOnThatLine(t *testing.T) {
 	}
 }
 
-// TestExplainHelpNamesEverySource is the contract the help page is: a reader
-// has to be able to find out which document is being read without running the
-// command against the wrong one.
 func TestExplainHelpNamesEverySource(t *testing.T) {
 	code, stdout, _ := execute(t, "explain", "--help")
 	if code != 0 {
@@ -635,8 +528,6 @@ func TestExplainHelpNamesEverySource(t *testing.T) {
 	}
 }
 
-// TestExplainIsInTheRootHelp keeps the command discoverable: a command nobody
-// is told about is a command nobody uses.
 func TestExplainIsInTheRootHelp(t *testing.T) {
 	_, stdout, _ := execute(t, "--help")
 	if !strings.Contains(stdout, "explain") {
@@ -644,14 +535,6 @@ func TestExplainIsInTheRootHelp(t *testing.T) {
 	}
 }
 
-// TestExplainDistinguishesNoRecordingFromNoProcess is the difference between
-// two absences that look alike in the reproduce block.
-//
-// A run that recorded nothing may still have executed the mutant, and running
-// it again with `--trace` produces the command. A run that recorded everything
-// and holds no command for this mutant never started a process for it, and no
-// amount of re-running will make one appear — so telling a user to add `--trace`
-// as though that were the problem would send them round a loop.
 func TestExplainDistinguishesNoRecordingFromNoProcess(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), nil)
@@ -665,10 +548,6 @@ func TestExplainDistinguishesNoRecordingFromNoProcess(t *testing.T) {
 	}
 }
 
-// inExplainHistory files the report as a stored run of this module and puts the
-// working directory in a module of that name, so that the two sources nobody
-// names on the command line — the latest run, and one named by its id — are
-// resolved out of a real store rather than out of a path.
 func inExplainHistory(t *testing.T, r *report.Report) {
 	t.Helper()
 	base := testsupport.CacheDir(t)
@@ -689,9 +568,6 @@ func inExplainHistory(t *testing.T, r *report.Report) {
 	})
 }
 
-// TestExplainReadsTheLatestRunAndOneNamedById covers the two sources a user
-// reaches for without naming a path: the run they have just made, and one
-// further back in the same module's history.
 func TestExplainReadsTheLatestRunAndOneNamedById(t *testing.T) {
 	inExplainHistory(t, explainReport())
 
@@ -713,9 +589,6 @@ func TestExplainReadsTheLatestRunAndOneNamedById(t *testing.T) {
 	}
 }
 
-// TestExplainRefusesARunItHasNoRecordOf is the other half: a run id that is not
-// in this module's history is a mistake in the command line, not an empty
-// account.
 func TestExplainRefusesARunItHasNoRecordOf(t *testing.T) {
 	inExplainHistory(t, explainReport())
 
@@ -728,9 +601,6 @@ func TestExplainRefusesARunItHasNoRecordOf(t *testing.T) {
 	}
 }
 
-// TestExplainRefusesReportWithRun keeps the two sources from being named at
-// once: each is the whole of the document to explain, so a command line
-// carrying both has no reading that is not a guess about which was meant.
 func TestExplainRefusesReportWithRun(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -744,14 +614,6 @@ func TestExplainRefusesReportWithRun(t *testing.T) {
 	}
 }
 
-// TestExplainSaysWhetherTheTemporariesSurvived is the difference between a
-// command somebody can paste and one whose first word fails.
-//
-// The binary and the directory the reproduction names live in the run's own
-// scratch, which a run removes on the way out unless it was asked to keep it —
-// and the recording says which happened, as an `artifact` of kind
-// `kept-scratch`. A hedge that covered both cases was a hedge the reader had to
-// resolve by running the command and watching `cd` fail.
 func TestExplainSaysWhetherTheTemporariesSurvived(t *testing.T) {
 	const gone = "this run did not keep its temporaries"
 	const kept = "the run kept its temporaries"
@@ -771,8 +633,6 @@ func TestExplainSaysWhetherTheTemporariesSurvived(t *testing.T) {
 	t.Run("removed", func(t *testing.T) {
 		workspace := inExplainWorkspace(t, explainReport())
 		events := killedRecording()
-		// The same recording with the kept-scratch artifact taken out, which is
-		// exactly what a run without --keep-temp records.
 		var without []trace.Event
 		for _, event := range events {
 			if event.Type == trace.TypeArtifact {
@@ -791,20 +651,12 @@ func TestExplainSaysWhetherTheTemporariesSurvived(t *testing.T) {
 	})
 }
 
-// foreignRecording is [killedRecording] filed under a different run.
-//
-// A run id is derived from a stamp and four hex characters, so two runs really
-// can collide — and `--trace DIR` points at whatever directory somebody was
-// sent. Joining the two silently would attribute one run's commands to
-// another's report.
 func foreignRecording() []trace.Event {
 	events := killedRecording()
 	events[0].Start.RunID = "20260101T000000Z-9999"
 	return events
 }
 
-// TestExplainWarnsWhenTheRecordingIsOfAnotherRun keeps the join honest about
-// what it joined.
 func TestExplainWarnsWhenTheRecordingIsOfAnotherRun(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	dir := recordEvents(t, workspace, foreignRecording(), nil)
@@ -818,9 +670,6 @@ func TestExplainWarnsWhenTheRecordingIsOfAnotherRun(t *testing.T) {
 	}
 }
 
-// TestExplainDoesNotBlameTheMutantForAForeignRecording is the other half of the
-// same warning: "this run started no process for it" is a statement about the
-// run, and a recording of somebody else's run cannot support it.
 func TestExplainDoesNotBlameTheMutantForAForeignRecording(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	dir := recordEvents(t, workspace, foreignRecording(), nil)
@@ -834,11 +683,6 @@ func TestExplainDoesNotBlameTheMutantForAForeignRecording(t *testing.T) {
 	}
 }
 
-// TestExplainPositionShowsAWholeFileSkip is the site with no coordinate.
-//
-// A generated, cgo or excluded file was never opened, so its suppression
-// carries line 0 — which is not a line anybody can ask about, and a filter that
-// compared it to the line the user typed hid the one answer that file has.
 func TestExplainPositionShowsAWholeFileSkip(t *testing.T) {
 	var out bytes.Buffer
 	sites := []discover.SkipSite{{Path: "gen.go", Reason: discover.SkipGenerated}}
@@ -851,13 +695,6 @@ func TestExplainPositionShowsAWholeFileSkip(t *testing.T) {
 	}
 }
 
-// TestExplainPositionMatchesAMutantThatSpansLines is `--changed`'s rule applied
-// here: a mutant covers the interval its original bytes touch, not the line it
-// starts on.
-//
-// A multi-line condition mutated at its first line is a mutant *on* every line
-// of it, which is exactly what somebody asking about the third line wants to
-// know.
 func TestExplainPositionMatchesAMutantThatSpansLines(t *testing.T) {
 	var out bytes.Buffer
 	mutants := []catalogMutant{{
@@ -874,19 +711,7 @@ func TestExplainPositionMatchesAMutantThatSpansLines(t *testing.T) {
 	}
 }
 
-// TestParsePositionAcceptsTheSpellingExplainPrints closes the loop between the
-// two halves of the command: the identity block prints `path:line:col`, and
-// pasting that back has to name the same place rather than a malformed prefix.
-//
-// A Windows path survives, which is the reason the scan is right to left and
-// bounded: `C:\src\clamp.go` ends in no digits, so the drive letter's colon is
-// never mistaken for a coordinate's.
 func TestParsePositionAcceptsTheSpellingExplainPrints(t *testing.T) {
-	// A Windows path with a line on the end. The expectation is written through
-	// filepath.ToSlash rather than spelled out, because a backslash is a
-	// separator on one platform and an ordinary byte in a file name on the
-	// other — and what is under test here is that the drive letter's colon
-	// survives, which is true on both.
 	const drivePath = `C:\src\clamp.go:41`
 	for _, c := range []struct {
 		target string
@@ -909,13 +734,6 @@ func TestParsePositionAcceptsTheSpellingExplainPrints(t *testing.T) {
 	}
 }
 
-// TestExplainRefusesAPositionThatNamesNoFile is the answer an empty listing was
-// giving wrongly.
-//
-// A path with a typo in it produced two empty sections and exit 0, which reads
-// as "there is nothing here" — the one answer that is never true of a file that
-// does not exist. It is also checked before the discovery pass, so a mistyped
-// path costs a message rather than a workspace copy.
 func TestExplainRefusesAPositionThatNamesNoFile(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -928,15 +746,6 @@ func TestExplainRefusesAPositionThatNamesNoFile(t *testing.T) {
 	}
 }
 
-// TestExplainAPositionNeedsNoStoredRun is the one target that is a question
-// about the workspace rather than about a run.
-//
-// Refusing it for want of a report would refuse the command in the one
-// situation somebody most wants it — a fresh checkout, before any run — and the
-// outcome column has an honest answer for it already.
-//
-// The proof is the order: with no run recorded at all, the failure reported is
-// the path's, which is only reachable past the report lookup.
 func TestExplainAPositionNeedsNoStoredRun(t *testing.T) {
 	testsupport.CacheDir(t)
 	dir := t.TempDir()
@@ -955,16 +764,10 @@ func TestExplainAPositionNeedsNoStoredRun(t *testing.T) {
 	}
 }
 
-// libraryRecording is [killedRecording] as a library session records it: kind
-// `workspace`, with the overlay manifest its instrumented tree was compiled
-// through.
 func libraryRecording() []trace.Event {
 	events := killedRecording()
 	events[0].Start.Kind = trace.StartKindWorkspace
 	events[0].Start.RunID = ""
-	// Spliced in ahead of the run-end, which is renumbered: a sequence number
-	// is the position in the stream, and the reader refuses a line that does
-	// not follow the one before it.
 	end := events[len(events)-1]
 	manifest := trace.Event{
 		Seq: end.Seq, Type: trace.TypeArtifact, Timestamp: "2026-09-07T12:00:26Z", ElapsedMS: 26000,
@@ -976,13 +779,6 @@ func libraryRecording() []trace.Event {
 	return append(events[:len(events)-1], manifest, end)
 }
 
-// TestExplainPutsTheOverlayRebuildOnItsOwnLine keeps the run line runnable.
-//
-// GOFLAGS is read by the `go` command and by nothing else: a prebuilt test
-// binary ignores it entirely, so an overlay on the run line was a variable that
-// did nothing, in front of the one command in this tool that has to be exactly
-// right. The manifest belongs to the *rebuild*, which is what
-// docs/library.md's recipe says.
 func TestExplainPutsTheOverlayRebuildOnItsOwnLine(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	dir := recordEvents(t, workspace, libraryRecording(), nil)
@@ -1014,14 +810,6 @@ func TestExplainPutsTheOverlayRebuildOnItsOwnLine(t *testing.T) {
 	}
 }
 
-// TestExplainTimelineNamesTheMutantsOwnShare is what makes the section worth
-// printing per mutant.
-//
-// Every mutant of a run takes part in the same `mutate/execute` stage, so the
-// stage's own duration is the same figure on every account and says nothing
-// about the mutant beside it. The share is the part that distinguishes the
-// mutant that took twenty seconds from the four hundred that took three
-// milliseconds each.
 func TestExplainTimelineNamesTheMutantsOwnShare(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	recordEvents(t, workspace, killedRecording(), nil)
@@ -1032,13 +820,6 @@ func TestExplainTimelineNamesTheMutantsOwnShare(t *testing.T) {
 	}
 }
 
-// TestExplainTimelineSaysAStageIsStillOpen covers the recording that stops in
-// the middle of a step: a ring that wrapped, a bundle written from a run that
-// died, a Ctrl-C.
-//
-// That step is the one a reader most needs named — it is where the run was when
-// it stopped — and a stage carried only from its closing event would drop it
-// silently.
 func TestExplainTimelineSaysAStageIsStillOpen(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	var interrupted []trace.Event
@@ -1059,13 +840,6 @@ func TestExplainTimelineSaysAStageIsStillOpen(t *testing.T) {
 	}
 }
 
-// TestExplainARejectionShowsTheValidationThatRefusedIt is the timeline of a
-// mutant that was never executed.
-//
-// It has no passes, so the question "why was this slow" is answered somewhere
-// else entirely: by the bisection that established which candidates compile,
-// which is where a slow run's minutes often went and which the recording
-// records against the candidate it refused.
 func TestExplainARejectionShowsTheValidationThatRefusedIt(t *testing.T) {
 	workspace := inExplainWorkspace(t, explainReport())
 	events := []trace.Event{
@@ -1098,8 +872,6 @@ func TestExplainARejectionShowsTheValidationThatRefusedIt(t *testing.T) {
 	if !strings.Contains(out, "8s") {
 		t.Errorf("the validation step carries no duration:\n%s", out)
 	}
-	// It still has no coverage and no executions: nothing measured a mutant
-	// that does not compile, and a heading with nothing under it is noise.
 	for _, absent := range []string{"\ncoverage\n", "\nexecutions\n"} {
 		if strings.Contains(out, absent) {
 			t.Errorf("a rejection was given a %q block it cannot fill:\n%s", strings.TrimSpace(absent), out)
@@ -1107,13 +879,6 @@ func TestExplainARejectionShowsTheValidationThatRefusedIt(t *testing.T) {
 	}
 }
 
-// TestExplainResolvesARunPrefix is `--run` read the way the target is read.
-//
-// A run id is a stamp and four hex characters. Nobody retypes one, everybody
-// selects one out of `report list` or out of a CI log, and a selection that
-// clipped the last character should not be a different question — so a prefix
-// that names one run is that run, and one that names two is refused with both
-// listed, exactly as an ambiguous mutant prefix is.
 func TestExplainResolvesARunPrefix(t *testing.T) {
 	first := explainReport()
 	second := explainReport()
@@ -1162,23 +927,8 @@ func TestExplainResolvesARunPrefix(t *testing.T) {
 	})
 }
 
-// TestExplainSaysWhichBudgetSettledAMemoryKill is the account of the one
-// outcome that reads wrong without it.
-//
-// A mutant the memory bound stopped is reported as `killed` and names the suite
-// that was running — and that suite's tests all pass. A reader who went and
-// looked would find nothing, which is exactly the state `explain` exists to
-// resolve, so the verdict says which budget settled it and against what. The
-// per-attempt lines carry the peak whether or not a bound was involved, because
-// "which of my mutants cost the machine most" is a question about a run in
-// which nothing went wrong.
 func TestExplainSaysWhichBudgetSettledAMemoryKill(t *testing.T) {
 	doc := explainReport()
-	// The second pass, which is the one that settled it, is turned into a
-	// memory kill: the outcome does not change, and everything about how it
-	// reads does. The mutant's own fields carry the same facts — a document
-	// records them at both levels so that a cached mutant, which has no rows at
-	// all, reads the same way; see [TestExplainSaysWhichBudgetSettledACachedMemoryKill].
 	rows := doc.Mutants[0].Executions
 	rows[1].MemoryExceeded = true
 	rows[1].PeakMemoryBytes = 3435973836
@@ -1198,8 +948,6 @@ func TestExplainSaysWhichBudgetSettledAMemoryKill(t *testing.T) {
 	}
 }
 
-// TestExplainShowsWhatEachPassCostWithoutABoundInSight is the other half: the
-// peak is an ordinary fact about an ordinary pass, not a footnote to a kill.
 func TestExplainShowsWhatEachPassCostWithoutABoundInSight(t *testing.T) {
 	inExplainWorkspace(t, explainReport())
 
@@ -1212,15 +960,6 @@ func TestExplainShowsWhatEachPassCostWithoutABoundInSight(t *testing.T) {
 	}
 }
 
-// TestExplainSaysWhichBudgetSettledACachedMemoryKill is the case the mutant's
-// own memory fields exist for.
-//
-// A cached mutant carries an attempt count and no execution rows, because this
-// run started no process for it. An account that read the rows would therefore
-// say "killed by <pkg>" and stop — the same sentence a passing suite gets, on a
-// run where nothing can be looked at — which is precisely the state `explain`
-// exists to resolve. The facts are on the mutant as well as on the rows, and
-// this is the reader that needs them there.
 func TestExplainSaysWhichBudgetSettledACachedMemoryKill(t *testing.T) {
 	doc := explainReport()
 	var cached *report.Mutant

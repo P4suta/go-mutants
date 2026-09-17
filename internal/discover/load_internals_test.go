@@ -11,10 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 )
 
-// TestPluralAgreesWithTheCount pins plural: one is singular and named without a
-// count of its own spelling elsewhere, and any other count is the number
-// followed by the plural noun. The zero and two cases pin the `n == 1` guard,
-// and both rendered strings pin that neither branch returns the empty string.
 func TestPluralAgreesWithTheCount(t *testing.T) {
 	t.Parallel()
 
@@ -34,11 +30,6 @@ func TestPluralAgreesWithTheCount(t *testing.T) {
 	}
 }
 
-// TestToolchainHintNamesTheLocatedBinary pins toolchainHint: it is empty when
-// no toolchain was located, and otherwise a parenthetical naming the binary, so
-// a load failure can tell the reader which `go` the loader was pointed at. The
-// empty case pins the `GoBin == ""` guard and the non-empty case pins that the
-// binary path is actually in the string.
 func TestToolchainHintNamesTheLocatedBinary(t *testing.T) {
 	t.Parallel()
 
@@ -51,20 +42,6 @@ func TestToolchainHintNamesTheLocatedBinary(t *testing.T) {
 	}
 }
 
-// TestEnvironmentFromPlacesTheToolchainAheadOfPath pins the three outcomes of
-// environmentFrom's PATH handling over a controlled base, none of which may
-// return a nil environment: the toolchain directory is prepended to an existing
-// PATH, an entry that already leads with it is left alone, and a base with no
-// PATH gains one.
-//
-// GOWORK is switched off in the first three, and the fourth is why that
-// sentence needs the qualifier: the `workspace` argument decides it, and a
-// workspace run removes the variable instead of setting it — so that the
-// go.work above the snapshot is the one the command sees, which is the whole
-// point of a workspace run. Asserting only the `false` branch would leave the
-// `true` one asserted nowhere, and it is the one whose failure is silent: a
-// workspace run that switched GOWORK off would discover one module and report
-// a score over it.
 func TestEnvironmentFromPlacesTheToolchainAheadOfPath(t *testing.T) {
 	t.Parallel()
 
@@ -115,10 +92,6 @@ func TestEnvironmentFromPlacesTheToolchainAheadOfPath(t *testing.T) {
 	})
 }
 
-// TestSameEnvKeyOnFollowsTheNamedPlatform pins both branches of the env-key
-// rule on whatever host runs it: Windows answers a variable to any spelling of
-// its name, and every other platform matches exactly. A test bound to the
-// running platform could only reach one branch; naming the OS reaches both.
 func TestSameEnvKeyOnFollowsTheNamedPlatform(t *testing.T) {
 	t.Parallel()
 
@@ -136,9 +109,6 @@ func TestSameEnvKeyOnFollowsTheNamedPlatform(t *testing.T) {
 	}
 }
 
-// TestPathsEqualOnFollowsTheNamedPlatform pins both branches of the path rule
-// the same way: Windows compares paths case-insensitively, every other platform
-// exactly.
 func TestPathsEqualOnFollowsTheNamedPlatform(t *testing.T) {
 	t.Parallel()
 

@@ -7,18 +7,6 @@ import (
 	"testing"
 )
 
-// Form E is the last form and the least demanding one: an expression, in a
-// position where an expression of the same type is legal, whose type this file
-// can spell. What it buys is every position that holds an expression and no
-// statement a guard can stand in -- a `switch` tag, a `range` clause, a type
-// switch guard, and the initialiser of a `:=` in a header slot. Between them
-// those were every refusal this repository had left.
-
-// TestASwitchTagIsNowASite is the shape with no statement around it at all.
-//
-// The nearest statement to a `switch` tag is the `switch` itself, and no form
-// wraps one; walking further out would guard a statement that does not hold the
-// edit. The tag is an expression, and an expression is what this form needs.
 func TestASwitchTagIsNowASite(t *testing.T) {
 	t.Parallel()
 
@@ -51,13 +39,6 @@ func Kind(a, b int) string {
 	}
 }
 
-// TestAShortDeclarationInAnInitialiserIsNowASite is the shape Form F could not
-// reach, and the reason the two forms are both needed.
-//
-// Form F moves a *statement* into a closure, and a `:=` moved into a closure
-// declares inside the closure -- the condition after it would name something
-// that is not there. Form E moves the *initialiser expression* instead, which
-// declares nothing and leaves the declaration exactly where it was.
 func TestAShortDeclarationInAnInitialiserIsNowASite(t *testing.T) {
 	t.Parallel()
 
@@ -87,10 +68,6 @@ func Sum(values []int, start int) int {
 	}
 }
 
-// TestATypeSwitchGuardIsNowASite is the third position with no statement a
-// guard can stand in. `v := x.(type)` is its own production rather than a
-// simple statement, so neither Form F nor Form D reaches it -- but the
-// expression being asserted over is an ordinary expression.
 func TestATypeSwitchGuardIsNowASite(t *testing.T) {
 	t.Parallel()
 
@@ -113,10 +90,6 @@ func Kind(values []any, i int) string {
 	}
 }
 
-// TestARangeExpressionIsNowASite is the fourth, and it is the one a reader is
-// likeliest to have wondered about: `for _, v := range xs[n+1:]` has an
-// expression that decides how many times the loop runs, and nothing was
-// mutating it.
 func TestARangeExpressionIsNowASite(t *testing.T) {
 	t.Parallel()
 
@@ -147,13 +120,6 @@ func Sum(values []int, from int) int {
 	}
 }
 
-// TestATypeIsNotAValueAndIsRefused is the condition that keeps this form from
-// claiming everything an ast.Expr can be.
-//
-// `case int:` in a type switch records a *type*, `fmt` in `fmt.Println` records
-// a package, and `len` records a builtin. All three are expressions to go/ast,
-// none is something a function can return, and go/types is what tells them
-// apart.
 func TestATypeIsNotAValueAndIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -179,13 +145,6 @@ func Kind(values []any) string {
 	}
 }
 
-// TestAnExpressionWhoseTypeThisFileCannotSpellIsRefused is the one refusal Form
-// E is left making, and it is the one `unnameable-decl-type` now names alone.
-//
-// A dot import binds a package's names without binding a name for the package,
-// so there is no qualification the speller will claim for a type from it. The
-// arithmetic is what makes the refusal reachable: a comparison would be `bool`
-// and an ordinary Form C site, while `d + 1` has the dot-imported type itself.
 func TestAnExpressionWhoseTypeThisFileCannotSpellIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -210,13 +169,6 @@ func Pick(d Duration) string {
 	}
 }
 
-// TestTheSearchWalksPastATypeItCannotSpell is that refusal's other side, and
-// the reason it is a `continue` rather than a stop.
-//
-// A type this file cannot name is not the end of the search: an expression
-// around it may have a type the file can. Here the tag's own type is
-// dot-imported and the edit sits inside an `int` the file spells perfectly
-// well, so the site is that inner expression and there is nothing to refuse.
 func TestTheSearchWalksPastATypeItCannotSpell(t *testing.T) {
 	t.Parallel()
 
@@ -245,16 +197,6 @@ func Pick(durations []Duration, i int) string {
 	}
 }
 
-// TestAnInitialiserThatNamesItsOwnDeclaredVariableIsASite is the case that
-// makes Form E more than a convenience, and it is the one Form D has to refuse.
-//
-// Go begins a declared name's scope at the *end* of its specification. Form D
-// hoists `var total int;` in front of the assignment, which puts the new name
-// in scope first and reads a zero out of it -- a program that compiles and
-// computes something else, which is why that site is refused. Form E changes
-// nothing about where anything is: the closure sits inside the initialiser,
-// which is before that end, so the `total` inside it resolves to the enclosing
-// declaration exactly as the original did.
 func TestAnInitialiserThatNamesItsOwnDeclaredVariableIsASite(t *testing.T) {
 	t.Parallel()
 
@@ -283,9 +225,6 @@ func Double(n int) int {
 	}
 }
 
-// TestAnOrdinaryExpressionStillUsesTheFormThatCoveredIt is the ordering
-// promise, which every form after the first has to carry: Form E is last, so a
-// site any earlier form covers is covered by exactly that form.
 func TestAnOrdinaryExpressionStillUsesTheFormThatCoveredIt(t *testing.T) {
 	t.Parallel()
 

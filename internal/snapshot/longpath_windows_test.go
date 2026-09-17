@@ -10,10 +10,6 @@ import (
 	"testing"
 )
 
-// TestExtendedPath pins the string transformation itself. The end-to-end deep
-// tree test cannot do this job: the Go standard library rewrites long absolute
-// paths on its own, so a deep tree would copy correctly even if this helper
-// returned its argument unchanged.
 func TestExtendedPath(t *testing.T) {
 	t.Parallel()
 
@@ -40,8 +36,6 @@ func TestExtendedPath(t *testing.T) {
 		},
 		{
 			name: "forward slashes are converted before prefixing",
-			// Under \\?\ nothing is normalized, so a surviving forward slash
-			// would become part of a file name and the path would not resolve.
 			in:   strings.ReplaceAll(deep, `\`, "/"),
 			want: `\\?\` + deep,
 		},

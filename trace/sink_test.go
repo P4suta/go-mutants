@@ -21,7 +21,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// errHook is what a stubbed filesystem hook fails with.
 var errHook = errors.New("stubbed filesystem failure")
 
 func TestDirSinkCreatesItsRunDirectoryAndAppendsJSONL(t *testing.T) {
@@ -63,11 +62,6 @@ func TestDirSinkCreatesItsRunDirectoryAndAppendsJSONL(t *testing.T) {
 func TestDirSinkRefusesARunDirectoryThatAlreadyExists(t *testing.T) {
 	t.Parallel()
 
-	// Two recordings in one directory would append to each other's stream and
-	// write over each other's preserved output, because everything in a
-	// recording is numbered from its first event. Refusing the directory is
-	// what keeps two processes tracing one workspace out of each other's
-	// recording.
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, fixtureRunID), 0o755); err != nil {
 		t.Fatal(err)
@@ -84,9 +78,6 @@ func TestDirSinkRefusesARunDirectoryThatAlreadyExists(t *testing.T) {
 func TestDirSinkMakesEachLineReadableBeforeClose(t *testing.T) {
 	t.Parallel()
 
-	// A run that hangs, is interrupted, or is killed leaves a readable prefix:
-	// only run-end is missing. That is the whole reason a completed line is
-	// written rather than buffered until shutdown.
 	root := t.TempDir()
 	sink, err := trace.NewDirSink(root, fixtureRunID, trace.Filesystem{})
 	if err != nil {
@@ -177,9 +168,6 @@ func TestDirSinkTruncatesAPreservedOutputAtOneMiBWithTheMarker(t *testing.T) {
 	if !event.Exec.OutputTruncated {
 		t.Error("output_truncated is not set for an output that did not fit")
 	}
-	// The digest and the byte count always cover the whole capture, whether or
-	// not the file was cut: a reader comparing two runs compares what the
-	// commands produced rather than what fitted.
 	if event.Exec.OutputBytes != len(output) {
 		t.Errorf("output_bytes = %d, want %d", event.Exec.OutputBytes, len(output))
 	}
@@ -202,9 +190,6 @@ func TestDirSinkTruncatesAPreservedOutputAtOneMiBWithTheMarker(t *testing.T) {
 func TestDirSinkKeepsTheEventWhenPreservingOutputFails(t *testing.T) {
 	t.Parallel()
 
-	// Preserving output is best effort, and a failure costs the path rather
-	// than the event: the digest is still the join key, and the command is
-	// still in the account of the run.
 	root := t.TempDir()
 	sink, err := trace.NewDirSink(root, fixtureRunID, trace.Filesystem{
 		WriteFile: func(string, []byte, fs.FileMode) error { return errHook },
@@ -252,15 +237,12 @@ func TestDirSinkCountsTheEventsItCouldNotWrite(t *testing.T) {
 	recorder.Note(trace.NoteWarning, fixtureNoteCode, fixtureNoteDetail)
 	recorder.RunEnd(fixtureVerdict, 0, nil)
 
-	// run-start, the note and run-end: three events the stream refused, and
-	// run-end is the line that would have said so had it been writable.
 	if sink.Dropped() != 3 {
 		t.Errorf("Dropped() = %d, want 3", sink.Dropped())
 	}
 	if err := sink.Close(); err == nil {
 		t.Error("Close reported success for a stream it could not sync")
 	}
-	// An event that arrives after Close is a drop as well, not a panic.
 	if err := sink.Emit(trace.Event{Seq: 99, Type: trace.TypeNote}); err == nil {
 		t.Error("Emit after Close reported success")
 	}
@@ -269,7 +251,6 @@ func TestDirSinkCountsTheEventsItCouldNotWrite(t *testing.T) {
 	}
 }
 
-// brokenFile is a stream that cannot be written, synced, or closed.
 type brokenFile struct{}
 
 func (*brokenFile) Write([]byte) (int, error) { return 0, errHook }
@@ -286,7 +267,6 @@ func TestMemorySinkDropsTheOldestWhenFullAndKeepsTheLastSlotForRunEnd(t *testing
 			t.Fatal(err)
 		}
 	}
-	// Two ordinary events fit, because the third slot is held back.
 	if got := seqsOf(sink.Events()); !slices.Equal(got, []int64{4, 5}) {
 		t.Fatalf("the ring holds %v, want the newest two", got)
 	}
@@ -321,14 +301,11 @@ func TestMemorySinkClonesOnTheWayInAndOut(t *testing.T) {
 	if err := sink.Emit(trace.Event{Seq: 1, Type: trace.TypeExec, Exec: &record}); err != nil {
 		t.Fatal(err)
 	}
-	// A caller that reuses its record must not be able to rewrite history.
 	record.Argv[0] = "rewritten"
 	record.Kind = trace.ExecKindVerify
 	if held := sink.Events()[0].Exec; held.Argv[0] != "go" || held.Kind != trace.ExecKindMutantRun {
 		t.Errorf("a later write reached the ring: %v %q", held.Argv, held.Kind)
 	}
-	// And a reader that mutates what it was handed must not reach the ring
-	// either.
 	handed := sink.Events()[0]
 	handed.Exec.Argv[1] = "vet"
 	if again := sink.Events()[0].Exec; again.Argv[1] != "test" {
@@ -339,8 +316,6 @@ func TestMemorySinkClonesOnTheWayInAndOut(t *testing.T) {
 func TestTeeSinkFansOutAndSumsDrops(t *testing.T) {
 	t.Parallel()
 
-	// One sink that counts its own losses, one that only fails, and one nil
-	// that the tee must drop rather than dereference.
 	ring := trace.NewMemorySink(0)
 	silent := &countingSink{fail: true}
 	tee := trace.NewTeeSink(ring, silent, nil)
@@ -354,8 +329,6 @@ func TestTeeSinkFansOutAndSumsDrops(t *testing.T) {
 	if silent.emitted != 3 {
 		t.Fatalf("the second sink saw %d events, want 3", silent.emitted)
 	}
-	// The ring lost nothing; the failing sink lost all three, and the tee
-	// counts them because that sink does not count them itself.
 	if tee.Dropped() != 3 {
 		t.Errorf("Dropped() = %d, want 3", tee.Dropped())
 	}
@@ -371,7 +344,6 @@ func TestTeeSinkFansOutAndSumsDrops(t *testing.T) {
 	}
 }
 
-// countingSink counts what it is handed and optionally refuses all of it.
 type countingSink struct {
 	mutex   sync.Mutex
 	fail    bool
@@ -404,9 +376,6 @@ func (sink *countingSink) Close() error {
 func TestDigestedSinkStripsExecOutputAndMutantOutputTail(t *testing.T) {
 	t.Parallel()
 
-	// A bounded ring must cost a bounded amount of memory, and captured output
-	// grows with the run rather than with the ring. The digest and the byte
-	// count survive, which is what a reader joins on.
 	inner := &countingSink{}
 	digested := trace.Digested(inner)
 	recorder := trace.New(digested, fixtureClock(), fixtureStartRecord())
@@ -440,7 +409,6 @@ func TestDigestedSinkStripsExecOutputAndMutantOutputTail(t *testing.T) {
 	}
 }
 
-// eventAt decodes one line of a sink's stream.
 func eventAt(t *testing.T, sink *trace.DirSink, index int) trace.Event {
 	t.Helper()
 	lines := readLines(t, filepath.Join(sink.Directory(), trace.FileName))
@@ -454,7 +422,6 @@ func eventAt(t *testing.T, sink *trace.DirSink, index int) trace.Event {
 	return event
 }
 
-// readLines returns the non-empty lines of a file.
 func readLines(t *testing.T, path string) []string {
 	t.Helper()
 	file, err := os.Open(path)
@@ -485,19 +452,8 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// itoa spells a sequence number the way a preserved output file is named.
 func itoa(seq int64) string { return strconv.FormatInt(seq, 10) }
 
-// TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn is why the
-// wrapper keeps a counter at all.
-//
-// A digested ring is what an untraced run records into, so the wrapper sits
-// between the recorder and everything that could refuse an event. A wrapper
-// that answered zero would make the recorder prefer that zero over its own
-// count of refusals — and a `TeeSink` around it would stop counting the branch
-// too, because it defers to any sink that claims to count itself. The result
-// would be a recording that lost every event and said it lost none, which is
-// the one failure the accounting exists to prevent.
 func TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn(t *testing.T) {
 	t.Parallel()
 
@@ -507,13 +463,10 @@ func TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn(t *testing.T) 
 	recorder.Artifact(trace.ArtifactTrace, fixtureArtifactPath)
 	recorder.RunEnd(fixtureVerdict, 0, nil)
 
-	// run-start and the two artifacts were refused before run-end was written.
 	if got := lastRunRecord(t, refusing); got.EventsDropped != 3 || got.EventsEmitted != 0 {
 		t.Errorf("run-end reported %d dropped and %d emitted, want 3 and 0", got.EventsDropped, got.EventsEmitted)
 	}
 
-	// And the same wrapper inside a tee, where the tee must not double-count
-	// what the wrapper already counts and must not lose it either.
 	ring := trace.NewMemorySink(0)
 	second := &countingSink{fail: true}
 	tee := trace.NewTeeSink(ring, trace.Digested(second))
@@ -528,10 +481,6 @@ func TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn(t *testing.T) 
 		t.Errorf("run-end reported %d drops, want the 2 taken before it was written", last.Run.EventsDropped)
 	}
 
-	// A wrapper around a sink that does count itself reports that sink's count
-	// and nothing of its own, because the two would otherwise be the same
-	// refusal counted twice. The ring below loses events both ways: silently,
-	// by overflowing, and with an error, once it is closed.
 	bounded := trace.NewMemorySink(2)
 	wrapped := trace.Digested(bounded)
 	for seq := int64(1); seq <= 4; seq++ {
@@ -556,9 +505,6 @@ func TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn(t *testing.T) 
 		t.Errorf("the wrapper reported %d drops, want exactly the ring's %d", got, bounded.Dropped())
 	}
 
-	// The same for a directory sink, which counts every event it could not
-	// write. A wrapper that added its own tally would make a run-end report
-	// more losses than the stream had.
 	file, err := trace.NewDirSink(t.TempDir(), fixtureRunID, trace.Filesystem{})
 	if err != nil {
 		t.Fatalf("NewDirSink: %v", err)
@@ -580,8 +526,6 @@ func TestDigestedSinkReportsTheDropsOfASinkThatDoesNotCountItsOwn(t *testing.T) 
 	}
 }
 
-// lastRunRecord is the run payload of the last event a sink was handed, even
-// when it refused every one of them.
 func lastRunRecord(t *testing.T, sink *countingSink) trace.RunRecord {
 	t.Helper()
 	sink.mutex.Lock()
@@ -596,15 +540,6 @@ func lastRunRecord(t *testing.T, sink *countingSink) trace.RunRecord {
 	return *last.Run
 }
 
-// TestDigestedSinkClearsThePreservedOutputMarkersWithTheBytes pins the shape a
-// ring-then-file recording must never have.
-//
-// `output_truncated` and `output_path` describe a file the sink that preserved
-// the bytes wrote. Stripping the bytes and keeping those two would leave an
-// event claiming a 1 MiB truncation of a file that is not there — and when the
-// ring is later written out as a diagnostics bundle, the sink writing it has no
-// bytes to preserve and so no path to set, so the claim would survive into a
-// recording nothing could satisfy.
 func TestDigestedSinkClearsThePreservedOutputMarkersWithTheBytes(t *testing.T) {
 	t.Parallel()
 
@@ -628,8 +563,6 @@ func TestDigestedSinkClearsThePreservedOutputMarkersWithTheBytes(t *testing.T) {
 	if got.OutputBytes != trace.OutputFileLimit+1 || got.OutputSHA256 != fixtureDigest {
 		t.Error("the stripped event lost the size and the digest, which are what a reader joins on")
 	}
-	// The caller's own record is untouched, because a sink that rewrote what it
-	// was handed would change what every other sink of a tee sees.
 	if !preserved.OutputTruncated || preserved.OutputPath == "" {
 		t.Error("Digested wrote into the caller's record")
 	}

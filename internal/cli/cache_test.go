@@ -17,20 +17,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// cacheDigest and cacheMutant are one workspace and one mutant for the
-// maintenance tests.
 var (
 	cacheDigest = strings.Repeat("ab", 32)
 	cacheMutant = strings.Repeat("a1", 32)
 )
 
-// isolatedCache points os.UserCacheDir and the working directory at temporary
-// ones, and returns the cache root the commands will resolve.
-//
-// The redirection is [testsupport.CacheDir]'s rather than this package's,
-// because which variable os.UserCacheDir reads is a property of the operating
-// system and not of these tests; see its documentation for what a partial
-// redirection costs.
 func isolatedCache(t *testing.T) string {
 	t.Helper()
 	base := testsupport.CacheDir(t)
@@ -38,18 +29,14 @@ func isolatedCache(t *testing.T) string {
 	return filepath.Join(base, report.DirName)
 }
 
-// seedCache stores one outcome under the given root and returns the directory
-// it was filed in.
 func seedCache(t *testing.T, root string) string {
 	t.Helper()
 	store, err := cache.Open(cache.Options{
 		Root:    root,
 		Timeout: 10 * time.Second,
 		Context: cache.Context{
-			ToolVersion: Version,
-			ToolDigest:  strings.Repeat("11", 32),
-			// Any real release token will do: these tests care where the entry
-			// is filed, never which directory the key names.
+			ToolVersion:      Version,
+			ToolDigest:       strings.Repeat("11", 32),
 			ToolchainVersion: "go1.26.5",
 			WorkspaceDigest:  cacheDigest,
 			CatalogDigest:    strings.Repeat("cd", 32),
@@ -67,9 +54,6 @@ func seedCache(t *testing.T, root string) string {
 	return store.Dir()
 }
 
-// TestCacheStatusOnAMachineThatHasNeverRunIsNotAFailure. "Nothing cached yet" is
-// an answer, and a non-zero status for it would break a script that checks the
-// tool is present.
 func TestCacheStatusOnAMachineThatHasNeverRunIsNotAFailure(t *testing.T) {
 	root := isolatedCache(t)
 
@@ -85,7 +69,6 @@ func TestCacheStatusOnAMachineThatHasNeverRunIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestCacheStatusCountsWhatIsStored.
 func TestCacheStatusCountsWhatIsStored(t *testing.T) {
 	root := isolatedCache(t)
 	seedCache(t, root)
@@ -101,7 +84,6 @@ func TestCacheStatusCountsWhatIsStored(t *testing.T) {
 	}
 }
 
-// TestCacheCleanRemovesTheOutcomes, and says how many.
 func TestCacheCleanRemovesTheOutcomes(t *testing.T) {
 	root := isolatedCache(t)
 	dir := seedCache(t, root)
@@ -116,7 +98,6 @@ func TestCacheCleanRemovesTheOutcomes(t *testing.T) {
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Errorf("the entries are still there: %v", err)
 	}
-	// A second clean is not a failure: there is simply nothing left.
 	code, stdout, _ = execute(t, "cache", "clean")
 	if code != 0 {
 		t.Fatalf("cleaning an empty cache exited %d", code)
@@ -126,7 +107,6 @@ func TestCacheCleanRemovesTheOutcomes(t *testing.T) {
 	}
 }
 
-// TestCacheGCKeepsWhatIsRecentAndRemovesWhatIsNot.
 func TestCacheGCKeepsWhatIsRecentAndRemovesWhatIsNot(t *testing.T) {
 	root := isolatedCache(t)
 	dir := seedCache(t, root)
@@ -159,9 +139,6 @@ func TestCacheGCKeepsWhatIsRecentAndRemovesWhatIsNot(t *testing.T) {
 	}
 }
 
-// TestCacheGCHonoursTheDayWindow: `--days 0` is "everything already written",
-// which is a legitimate thing to ask for and distinct from `clean` only in that
-// it prunes rather than removes the tree.
 func TestCacheGCHonoursTheDayWindow(t *testing.T) {
 	root := isolatedCache(t)
 	dir := seedCache(t, root)
@@ -188,8 +165,6 @@ func TestCacheGCHonoursTheDayWindow(t *testing.T) {
 	}
 }
 
-// TestCacheGCRefusesANegativeWindow before it touches anything: a negative age
-// is a mistake about the invocation, and the remedy is to retype it.
 func TestCacheGCRefusesANegativeWindow(t *testing.T) {
 	isolatedCache(t)
 
@@ -202,9 +177,6 @@ func TestCacheGCRefusesANegativeWindow(t *testing.T) {
 	}
 }
 
-// TestTheMaintenanceCommandsRefuseADirectoryTheyDoNotOwn is the safety property
-// the ownership marker exists for. The cache root is a directory other programs
-// keep things in, and go-mutants deletes files there.
 func TestTheMaintenanceCommandsRefuseADirectoryTheyDoNotOwn(t *testing.T) {
 	root := isolatedCache(t)
 	seedCache(t, root)
@@ -232,7 +204,6 @@ func TestTheMaintenanceCommandsRefuseADirectoryTheyDoNotOwn(t *testing.T) {
 	}
 }
 
-// TestCacheWithNoSubcommandPrintsHelp, exactly as `report` and the bare root do.
 func TestCacheWithNoSubcommandPrintsHelp(t *testing.T) {
 	isolatedCache(t)
 
@@ -247,8 +218,6 @@ func TestCacheWithNoSubcommandPrintsHelp(t *testing.T) {
 	}
 }
 
-// TestFormatBytesReadsLikeAFileManager. The numbers here sit beside what a file
-// manager reports, so the units are the unambiguous binary ones.
 func TestFormatBytesReadsLikeAFileManager(t *testing.T) {
 	t.Parallel()
 
@@ -267,8 +236,6 @@ func TestFormatBytesReadsLikeAFileManager(t *testing.T) {
 	}
 }
 
-// TestRunAcceptsEveryCacheMode and refuses anything else, with the flag's own
-// name in the diagnostic rather than the TOML key nobody wrote.
 func TestRunAcceptsEveryCacheMode(t *testing.T) {
 	t.Parallel()
 

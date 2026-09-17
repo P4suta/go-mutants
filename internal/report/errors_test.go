@@ -14,25 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/schemas"
 )
 
-// TestCodesAreUniqueAndInBlock holds this package inside the ranges it owns.
-//
-// GOM5001 to GOM5009 belong to internal/schemas, which checks the documents
-// this package writes; overlapping the two would make a code ambiguous in
-// exactly the situation a user is trying to tell them apart — a report that was
-// written and a report that does not validate.
-//
-// GOM52xx is the second block: the project artefacts — the
-// mutation-testing-report projection, the vendored viewer, and the two files a
-// run writes into `report.directory`. It is numbered apart because nothing in
-// it can make the run report wrong, and a user reading GOM52 should know at a
-// glance that the record of their run is intact.
-//
-// GOM78xx is the third, and it is sharding: the `--shard` specification, the
-// document's `shard` block, and every refusal `report merge` can make.
-//
-// The membership of the two secondary blocks is listed here rather than merely
-// allowed, so that a shard code cannot drift into the GOM51xx range, an
-// artefact code into the shard one, or a reporting code into either.
 func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	t.Parallel()
 
@@ -86,7 +67,6 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	}
 }
 
-// TestErrorRendersOneLine checks the shape every renderer in the tool expects.
 func TestErrorRendersOneLine(t *testing.T) {
 	t.Parallel()
 
@@ -108,8 +88,6 @@ func TestErrorRendersOneLine(t *testing.T) {
 	}
 }
 
-// TestCodeOfForeignError proves the accessor says nothing about an error that
-// did not come from here, rather than guessing.
 func TestCodeOfForeignError(t *testing.T) {
 	t.Parallel()
 

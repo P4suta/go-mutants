@@ -14,9 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/runner"
 )
 
-// diverged is what a test binary reports when one of its counted loops passed
-// the ceiling this run derived for it: the generated runtime's own status, and
-// the line it printed before exiting.
 func diverged() runner.Result {
 	return runner.Result{
 		ExitCode: instrument.DivergedExit,
@@ -27,20 +24,6 @@ func diverged() runner.Result {
 	}
 }
 
-// TestADivergedMutantIsANonReturnThatNeedsNoSecondOpinion is the verdict half
-// of ADR 0013.
-//
-// A timeout is measured twice before it is believed, and the reason is written
-// into this package: one timeout on a machine running N test binaries at once
-// says as much about the machine as about the mutant. A divergence says nothing
-// at all about the machine. It is the count of what one loop did against the
-// count of what the original program did in the same tree under the same tests,
-// so measuring it again on a quiet machine would produce the same two numbers
-// and cost a whole budget to do it.
-//
-// So it settles where it is read: the outcome is the outcome a mutant that does
-// not return gets, and the flag beside it is what tells the scheduler it has
-// already been confirmed.
 func TestADivergedMutantIsANonReturnThatNeedsNoSecondOpinion(t *testing.T) {
 	t.Parallel()
 
@@ -65,14 +48,6 @@ func TestADivergedMutantIsANonReturnThatNeedsNoSecondOpinion(t *testing.T) {
 	}
 }
 
-// TestTheSchedulerDoesNotRemeasureADivergence is the same claim where it is
-// paid for.
-//
-// The retry pass is serial on purpose — it exists so that a timeout is measured
-// once with nothing else running — so every mutant it takes costs a whole
-// per-mutant budget of wall clock that nothing else can use. A divergence that
-// went through it would be the deterministic answer waiting for the
-// non-deterministic one to agree.
 func TestTheSchedulerDoesNotRemeasureADivergence(t *testing.T) {
 	t.Parallel()
 
@@ -98,8 +73,6 @@ func TestTheSchedulerDoesNotRemeasureADivergence(t *testing.T) {
 	}
 }
 
-// contains is strings.Contains, spelled here so that the assertions above read
-// as one line each.
 func contains(haystack, needle string) bool {
 	return len(needle) == 0 || len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
 }

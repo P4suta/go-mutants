@@ -3,17 +3,6 @@
 
 //go:build integration
 
-// The run-history commands against a history a real run wrote.
-//
-// The unit tests read a store this file's fabricated documents were placed in,
-// which is how the damaged, the foreign and the empty cases are pinned. What
-// they cannot prove is that the store a run actually writes is one these
-// commands can read: the layout, the run id, the module path, and the clock all
-// have to line up, and every one of them is decided in another package.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -29,9 +18,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// measuredFixture copies the killable fixture into a temporary directory,
-// points everything the run writes at temporary directories too, and returns
-// the workspace root and the history store the run will file itself in.
 func measuredFixture(t *testing.T) (root, store string) {
 	t.Helper()
 	fixture, err := filepath.Abs(filepath.Join("..", "..", "fixtures", "killable"))
@@ -40,14 +26,9 @@ func measuredFixture(t *testing.T) (root, store string) {
 	}
 
 	temp := t.TempDir()
-	// os.TempDir reads TMPDIR on POSIX and TMP then TEMP on Windows, so all
-	// three are set rather than guessing which platform is reading.
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
 	t.Setenv("TEMP", temp)
-	// The run files a report, so os.UserCacheDir is redirected too — by
-	// [testsupport.CacheDir], which knows what each platform reads and proves
-	// afterwards that it landed where it meant to.
 	cache := testsupport.CacheDir(t)
 
 	root = filepath.Join(t.TempDir(), "killable")
@@ -61,14 +42,9 @@ func measuredFixture(t *testing.T) (root, store string) {
 	return root, filepath.Join(cache, report.DirName)
 }
 
-// TestHistoryCommandsReadWhatARunWrote walks the three of them over one real
-// run: an empty history before it, the run's own document after it, and an
-// empty history again once it has been cleaned.
 func TestHistoryCommandsReadWhatARunWrote(t *testing.T) {
 	_, store := measuredFixture(t)
 
-	// Before anything has run, the listing is empty and says so, and `latest`
-	// is the one of the three that refuses.
 	code, stdout, stderr := execute(t, "report", "list")
 	if code != int(mutation.ExitOK) {
 		t.Fatalf("`report list` on a fresh machine exited %d\n%s", code, stderr)
@@ -102,8 +78,6 @@ func TestHistoryCommandsReadWhatARunWrote(t *testing.T) {
 		t.Errorf("a document go-mutants had just written could not be read back:\n%s", stdout)
 	}
 
-	// The summary names the run and the file, and the file is the document the
-	// run filed — schema and all.
 	code, stdout, stderr = execute(t, "report", "latest")
 	if code != int(mutation.ExitOK) {
 		t.Fatalf("`report latest` exited %d\n%s", code, stderr)
@@ -146,7 +120,6 @@ func TestHistoryCommandsReadWhatARunWrote(t *testing.T) {
 		t.Error("the run measured nothing, so this proves less than it should")
 	}
 
-	// And `clean` removes exactly what the run filed.
 	code, stdout, stderr = execute(t, "report", "clean")
 	if code != int(mutation.ExitOK) {
 		t.Fatalf("`report clean` exited %d\n%s", code, stderr)
@@ -157,8 +130,6 @@ func TestHistoryCommandsReadWhatARunWrote(t *testing.T) {
 	if _, err = os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("the stored run survived the clean: %v", err)
 	}
-	// The marker stays, which is what lets a run already in flight keep its
-	// claim on the directory.
 	dir := filepath.Dir(filepath.Dir(path))
 	if _, err = os.Stat(filepath.Join(dir, report.MarkerFileName)); err != nil {
 		t.Errorf("the ownership marker was deleted: %v", err)
@@ -168,7 +139,6 @@ func TestHistoryCommandsReadWhatARunWrote(t *testing.T) {
 	}
 }
 
-// lastLine returns the last non-empty line of some output.
 func lastLine(text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	return strings.TrimSpace(lines[len(lines)-1])

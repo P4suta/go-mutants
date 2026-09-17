@@ -11,27 +11,14 @@ import (
 	"testing"
 )
 
-// The documentation ledger for the limitation vocabulary.
-//
-// A limitation code is a published identifier: it is what a reader greps after
-// seeing `LIMITATION <code>` in plain output or `limitations[].code` in JSON.
-// Until this ledger the set existed only as string literals at the sites that
-// raised them, which is how `goatest doctor` came to say `git-unavailable` for
-// the condition a run called `git-metadata-unavailable` - two names, one fact,
-// and nothing that could notice.
-
 const (
-	// limitationsDocumentation is the page that lists the codes.
 	limitationsDocumentation = "../../docs/limitations.md"
 
-	// limitationTableHeading identifies the table among the page's others.
 	limitationTableHeading = "| Code | What the run is saying |"
 )
 
-// limitationTableRow matches a row's code cell.
 var limitationTableRow = regexp.MustCompile("^\\| `([a-z0-9-]+)` \\|")
 
-// documentedLimitationCodes reads the codes the page lists.
 func documentedLimitationCodes(t *testing.T) []string {
 	t.Helper()
 	page, err := os.ReadFile(limitationsDocumentation)
@@ -59,7 +46,6 @@ func documentedLimitationCodes(t *testing.T) []string {
 	return codes
 }
 
-// TestEveryLimitationCodeIsDocumented pins the Go vocabulary against the page.
 func TestEveryLimitationCodeIsDocumented(t *testing.T) {
 	t.Parallel()
 	documented := documentedLimitationCodes(t)
@@ -70,10 +56,6 @@ func TestEveryLimitationCodeIsDocumented(t *testing.T) {
 	}
 }
 
-// TestEveryDocumentedLimitationCodeExists pins the page against the vocabulary.
-//
-// This is the direction that catches a code renamed in Go and left on the page,
-// and a page describing a caveat the tool stopped carrying.
 func TestEveryDocumentedLimitationCodeExists(t *testing.T) {
 	t.Parallel()
 	for _, code := range documentedLimitationCodes(t) {
@@ -83,11 +65,6 @@ func TestEveryDocumentedLimitationCodeExists(t *testing.T) {
 	}
 }
 
-// TestTheLimitationLedgerSeesADocumentedCodeThatDoesNotExist proves the check
-// above can fail.
-//
-// Two agreeing lists is also what it looks like when one of them was read as
-// empty, so the reading is exercised against a row that should not pass.
 func TestTheLimitationLedgerSeesADocumentedCodeThatDoesNotExist(t *testing.T) {
 	t.Parallel()
 	forged := "| `a-caveat-nothing-raises` | invented by a test |"
@@ -99,8 +76,6 @@ func TestTheLimitationLedgerSeesADocumentedCodeThatDoesNotExist(t *testing.T) {
 	}
 }
 
-// TestTheLimitationCodesAreSorted keeps the vocabulary and the page in an order
-// a reader can search by eye.
 func TestTheLimitationCodesAreSorted(t *testing.T) {
 	t.Parallel()
 	codes := LimitationCodes()

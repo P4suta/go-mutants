@@ -72,6 +72,13 @@ before committing. The second prints a per-package cost and skip table.
 - **Every error carries a `GOM` code**, declared in its package's `errors.go`
   and explained in [docs/errors.md](docs/errors.md). A code is allocated once
   and never reused, even after the condition it named is gone.
+- **Comments are banned.** A source file may carry an SPDX header, a tool or
+  language directive, and a doc comment of one line. Nothing else. A reason
+  worth keeping is enforced by a type, a gate, or an ADR — see
+  [ADR 0037](docs/adr/0037-a-value-carries-its-meaning-in-its-type.md) — not
+  written beside the code where nothing checks it. `mise run lint` runs
+  `ocomment` over every file that is not Go, and `goatest/internal/devgates`
+  refuses a Go file that carries more.
 - **SPDX on every file.** The ones that cannot carry a header are annotated in
   `REUSE.toml`, and a test refuses a file that is in neither.
 - **Conventional Commits.** This repository squash-merges, so the pull request
@@ -130,6 +137,7 @@ repository's prose worth reading, so here is where each ledger lives.
 | that the runner reaches the engine through its published API | every import in both modules, parsed | `goatest/internal/devgates/direction_test.go` |
 | how much of a machine a mutation run may take | one ceiling, read from both trees rather than imported | `goatest/internal/devgates/worker_default_test.go` |
 | every switch over a closed vocabulary in either module | the constants that vocabulary declares, by type | `internal/analysis/exhaustive` |
+| that no file carries a comment that is not allowed | every tracked file, by `ocomment` and a scan | `goatest/internal/devgates/comments_test.go` |
 
 Adding a page that enumerates something means adding its ledger in the same
 change. A page nothing checks is a page that will be wrong, and the only

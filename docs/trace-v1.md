@@ -1056,9 +1056,9 @@ The schema is `schema/trace-v1.schema.json`, embedded in the binary, returned by
 this is the one published contract that describes a line rather than a file.
 
 ```go
-events, err := trace.Read(dir)              // every event, strictly decoded
-summary, err := trace.ReadSummary(dir)      // what the recording says about itself
-delta := trace.Diff(before, summary)        // what changed between two runs
+events, err := trace.Read(dir)
+summary, err := trace.ReadSummary(dir)
+delta := trace.Diff(before, summary)
 ```
 
 `Read` is strict, because a recording is a contract and a reader that silently

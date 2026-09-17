@@ -22,12 +22,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// generatedMarker is the convention every Go code generator follows:
-// https://go.dev/s/generatedcode. The line has to appear before the package
-// clause, which is checked separately.
 var generatedMarker = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.$`)
 
-// pkg walks one loaded package.
 func (d *discovery) pkg(loaded *loadResult, pkg *packages.Package) error {
 	if d.cgo.covers(pkg) {
 		d.recordCgoPackage(pkg)
@@ -41,8 +37,6 @@ func (d *discovery) pkg(loaded *loadResult, pkg *packages.Package) error {
 	return nil
 }
 
-// recordCgoPackage skips every file of a package that imports "C", naming each
-// one rather than the package: a skip is something a user looks up by path.
 func (d *discovery) recordCgoPackage(pkg *packages.Package) {
 	for _, ref := range moduleFiles(pkg, d.root) {
 		if d.seen[ref.rel] {
@@ -57,21 +51,15 @@ func (d *discovery) recordCgoPackage(pkg *packages.Package) {
 	}
 }
 
-// file walks one syntax tree, or records why it did not.
 func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.File) error {
 	tokFile := loaded.fset.File(file.Package)
 	if tokFile == nil {
 		return nil
 	}
 	abs := tokFile.Name()
-	// A test file is never mutated and never recorded: that is structural,
-	// not a decision about this particular file.
 	if isTestFile(abs) {
 		return nil
 	}
-	// Anything outside the module root is somebody else's source: a dependency,
-	// the standard library, or the cgo preprocessor's output in the build
-	// cache. None of it is ours to mutate, and none of it is worth a skip.
 	rel, ok := relativePath(d.root, abs)
 	if !ok {
 		return nil
@@ -101,26 +89,6 @@ func (d *discovery) file(loaded *loadResult, pkg *packages.Package, file *ast.Fi
 		d.packageImports(loaded, pkg))
 }
 
-// scanParsed runs the mutation walk over one file that has already been parsed
-// and type-checked, emitting its candidates and skips into d.
-//
-// It is the part of discovery that needs no package loader: every input is
-// passed in rather than read from a [packages.Package], so a caller that has
-// built an *ast.File and a *types.Info another way — go/parser and go/types over
-// a synthetic source, for instance — can exercise the whole walk without a
-// toolchain. [discovery.file] is the loader-fed caller, and it is the only
-// difference between a real discovery and a test's: both reach the walk through
-// here, so the two cannot come to disagree about what the walk does.
-//
-// tokFile is the [token.File] file's positions resolve against, info its type
-// information, and pkgTypes the package it was checked in — what the guard
-// resolver needs to name the type an edit would produce.
-//
-// siblings is the import index of the package's *other* files, which is what
-// import completion may draw on; nil is a file with no siblings, which has
-// nothing to complete from. It is passed in rather than derived here for the
-// same reason everything else is: this is the part of discovery that needs no
-// package loader.
 func (d *discovery) scanParsed(
 	rel, pkgPath string,
 	src []byte,
@@ -137,10 +105,6 @@ func (d *discovery) scanParsed(
 		}
 	}
 	digest := mutation.Digest(src)
-	// Recorded for every file whose bytes were read, and not only for the ones
-	// that go on to produce a candidate: [Result.SourceDigests] is what
-	// discovery saw, and a caller checking that the tree held still underneath
-	// this pass needs the files it found nothing in most of all.
 	d.digests[rel] = digest
 	scan := &fileScan{
 		discovery:    d,
@@ -156,15 +120,6 @@ func (d *discovery) scanParsed(
 	return scan.walk(file)
 }
 
-// selection applies the include and exclude patterns to a module-relative
-// path. Excludes are applied after includes, so an exclude always wins, and an
-// empty include set includes everything.
-//
-// The path is matched under [discovery.prefix], which is empty outside a
-// workspace and the module's own directory inside one: the patterns are
-// written against the tree the user is looking at, and in a workspace that is
-// the workspace. Only the matching sees the prefix -- what the path is
-// *recorded* as stays relative to the module it belongs to.
 func (d *discovery) selection(rel string) (SkipReason, bool) {
 	subject := rel
 	if d.prefix != "" {
@@ -190,23 +145,7 @@ func (d *discovery) selection(rel string) (SkipReason, bool) {
 	return "", false
 }
 
-// isGenerated reports whether a file claims to be generated.
-//
-// [ast.IsGenerated] answers the same question and answers it correctly, CRLF
-// line endings included — go/scanner strips the carriage return from a
-// //-comment before the literal is ever stored, so the marker's "DO NOT EDIT."
-// suffix matches on a Windows checkout too. The check is spelled out here
-// anyway because "generated" is a [SkipReason] this package reports and has to
-// keep reporting the same way: both halves of the convention — the anchored
-// marker line and the requirement that it precede the package clause — are
-// written down in one place under this package's control, rather than tracking
-// a standard-library helper whose exact semantics are free to shift.
 func isGenerated(file *ast.File) bool {
-	// One loop over the comments in source order rather than a bound on the
-	// groups and another on the comments inside them: both were the same
-	// question -- "is this past the package clause" -- and go/ast places the
-	// groups and their contents in order, so the first comment past it is the
-	// last this has to look at.
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
 			if comment.Pos() > file.Package {
@@ -220,38 +159,20 @@ func isGenerated(file *ast.File) bool {
 	return false
 }
 
-// A suppression is one region of a file discovery refuses to descend into.
 type suppression struct {
 	start  token.Pos
 	end    token.Pos
 	reason SkipReason
 }
 
-// width is the region's size in bytes, which is how two nested regions are
-// ordered.
 func (s suppression) width() int { return int(s.end - s.start) }
 
-// collectSuppressions collects every region of a file that cannot hold a mutable
-// expression, together with the reason.
-//
-// Regions are collected rather than enforced during the emitting walk because
-// two of them cover only part of a node — an array's length but not its
-// element type, a case clause's labels but not its body — and a walk that had
-// to remember which child slot it was in would be one `switch` away from
-// silently mutating a case label.
 func collectSuppressions(file *ast.File, info *types.Info) []suppression {
 	var out []suppression
-	// Recorded as it comes. Every region below is bounded by a node the parser
-	// placed, so both ends are positions and the end follows the start; and a
-	// region that covered nothing would be inert anyway, because a position is
-	// inside [start, end) for no position at all when the two are equal.
 	add := func(from, to token.Pos, reason SkipReason) {
 		out = append(out, suppression{start: from, end: to, reason: reason})
 	}
 
-	// Package-level variable initialisers are read from the declaration list
-	// and not from the walk, because a `var` inside a function body is
-	// ordinary code that the same syntax node would otherwise catch.
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.VAR {
@@ -276,25 +197,6 @@ func collectSuppressions(file *ast.File, info *types.Info) []suppression {
 			if n.Len != nil {
 				add(n.Len.Pos(), n.Len.End(), SkipArrayLength)
 			}
-		// Neither kind of `switch` suppresses its case labels any more, and
-		// the two arms that used to are gone for two different reasons.
-		//
-		// A *tagless* switch's labels are exactly `bool` -- the implicit tag is
-		// the typed constant `true` -- so each of them is precisely a Form C
-		// site. Suppressing those was a blanket rather than a verdict: the
-		// labels were never offered to the guard chooser, so nothing ever
-		// decided they could not be expressed.
-		//
-		// A *tagged* switch's labels are compared against the tag and are
-		// ordinary expressions of the tag's type. Form C cannot take one --
-		// it needs exactly `bool` -- and no statement form can either, because
-		// a label is not a statement. Form E can: a label is an expression, and
-		// a closure returning the tag's type stands exactly where it stood.
-		//
-		// A *type* switch's labels hold types rather than values, which is why
-		// nothing here mentions them. No rule in the registry rewrites a type,
-		// so nothing is ever proposed at one and there is nothing to decline --
-		// the same silence a `fallthrough` gets, and for the same reason.
 		case *ast.FuncDecl:
 			if n.Type != nil && n.Type.TypeParams != nil {
 				add(n.Type.TypeParams.Pos(), n.Type.TypeParams.End(), SkipTypeParam)
@@ -304,10 +206,6 @@ func collectSuppressions(file *ast.File, info *types.Info) []suppression {
 				add(n.TypeParams.Pos(), n.TypeParams.End(), SkipTypeParam)
 			}
 		case *ast.IndexExpr:
-			// A single explicit type argument. The same syntax is an ordinary
-			// index expression when the index is a value, which is why this
-			// asks the type checker instead of guessing: `m[true]` is runtime
-			// code and stays mutable.
 			if isTypeExpr(info, n.Index) {
 				add(n.Index.Pos(), n.Index.End(), SkipTypeParam)
 			}
@@ -325,19 +223,6 @@ func collectSuppressions(file *ast.File, info *types.Info) []suppression {
 	return out
 }
 
-// sortSuppressions puts the regions in the order the lookup below reads them:
-// outermost first, which is the start ascending and then the end descending,
-// with the declared rank of the reason as the last key.
-//
-// The order is a decision rather than a convenience. The regions are collected
-// by an `ast.Inspect`, so the order they arrive in is a fact about go/ast; the
-// catalogue that comes out of the walk has to be a fact about the file.
-//
-// Written with cmp.Or rather than a comparison in front of each subtraction:
-// "are these two starts the same" and "is the difference between them zero"
-// are one question asked twice, and the spelling that also produces the answer
-// is the one to keep. It cannot overflow either, which a difference of two
-// token.Pos values in an int can.
 func sortSuppressions(out []suppression) {
 	slices.SortFunc(out, func(x, y suppression) int {
 		return cmp.Or(
@@ -348,7 +233,6 @@ func sortSuppressions(out []suppression) {
 	})
 }
 
-// isTypeExpr reports whether an expression denotes a type rather than a value.
 func isTypeExpr(info *types.Info, expr ast.Expr) bool {
 	if info == nil || expr == nil {
 		return false
@@ -357,7 +241,6 @@ func isTypeExpr(info *types.Info, expr ast.Expr) bool {
 	return ok && tv.IsType()
 }
 
-// A fileScan is the emitting walk over one file.
 type fileScan struct {
 	*discovery
 	rel          string
@@ -370,13 +253,6 @@ type fileScan struct {
 	guard        *guardResolver
 }
 
-// walk emits every candidate in the file, or records why it did not.
-//
-// One switch over the syntax, one case per node kind a family can be anchored
-// to. Several families share a node kind — a binary expression is where the
-// comparison, connective, arithmetic, bitwise, and nil-error rules all look —
-// and each of them asks the type checker its own question there, which is why
-// the dispatch is by node and the discrimination is by type.
 func (s *fileScan) walk(file *ast.File) error {
 	var failure error
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -417,12 +293,6 @@ func (s *fileScan) walk(file *ast.File) error {
 	return failure
 }
 
-// binaryExpr emits every candidate anchored on one binary expression.
-//
-// The arithmetic families are the reason the operand types are read once here
-// rather than inside each swap: `+` is an integer rule, a float rule, or
-// neither, and string concatenation is excluded because its operands are
-// strings — never because a quote was spotted near the operator.
 func (s *fileScan) binaryExpr(n *ast.BinaryExpr) error {
 	if err := s.swap(s.matchers.comparison, n, n.Op, n.OpPos); err != nil {
 		return err
@@ -447,13 +317,6 @@ func (s *fileScan) binaryExpr(n *ast.BinaryExpr) error {
 	return s.nilErrorBranch(n)
 }
 
-// bitwise emits the bitwise swap, if the operator is one and the operands allow
-// it.
-//
-// A shift is gated on its left operand alone. The count is an operand of a
-// different kind — it may be any integer type and is never what the rule
-// rewrites — so requiring it to match the shifted value would refuse
-// `x << shift` for no reason connected to the mutation.
 func (s *fileScan) bitwise(n *ast.BinaryExpr, left, right types.Type) error {
 	switch n.Op {
 	case token.SHL, token.SHR:
@@ -468,13 +331,6 @@ func (s *fileScan) bitwise(n *ast.BinaryExpr, left, right types.Type) error {
 	return s.swap(s.matchers.bitwise, n, n.Op, n.OpPos)
 }
 
-// nilErrorBranch emits the rule that makes an `if err != nil` branch stop
-// firing.
-//
-// The whole comparison is replaced with `false` rather than the operator being
-// swapped, because the point is a branch that never runs: `err == nil` would
-// only move the failure to the other arm, which the comparison family already
-// covers.
 func (s *fileScan) nilErrorBranch(n *ast.BinaryExpr) error {
 	rule, ok := s.matchers.rule(ruleNilErrorBranch)
 	if !ok || n.Op != token.NEQ {
@@ -495,12 +351,6 @@ func (s *fileScan) nilErrorBranch(n *ast.BinaryExpr) error {
 	return s.emitNode(rule, n, "false")
 }
 
-// unaryExpr emits the negation-removal rule.
-//
-// The span is the whole unary expression and the replacement is the operand's
-// own bytes, so the edit is exactly "delete the `!`" however much whitespace or
-// commentary sits between the two. Removing an operator can never remove a line
-// break, which is what keeps this line-preserving.
 func (s *fileScan) unaryExpr(n *ast.UnaryExpr) error {
 	rule, ok := s.matchers.rule(ruleRemoveNegation)
 	if !ok || n.Op != token.NOT || !isBoolClassed(s.typeOf(n.X)) {
@@ -508,15 +358,11 @@ func (s *fileScan) unaryExpr(n *ast.UnaryExpr) error {
 	}
 	operand, ok := s.text(n.X)
 	if !ok {
-		// [fileScan.replaceReturn]'s reason: the text is read to build the
-		// replacement, and the emitter below would refuse the same file.
 		return s.nodeReachesPastTheEnd(n.X)
 	}
 	return s.emitNode(rule, n, operand)
 }
 
-// booleanLiteral emits the boolean-literal swap for a predeclared `true` or
-// `false`.
 func (s *fileScan) booleanLiteral(n *ast.Ident) error {
 	matcher, ok := s.matchers.boolean[n.Name]
 	if !ok || !s.isUniverseConst(n) {
@@ -525,13 +371,6 @@ func (s *fileScan) booleanLiteral(n *ast.Ident) error {
 	return s.emit(matcher.rule, n, n.Pos(), n.Name, matcher.replacement)
 }
 
-// negateCondition wraps an `if` or `for` condition in a negation.
-//
-// The gate is "boolean underneath" rather than "the universe bool", because `!`
-// applies to any boolean type: a condition of a named boolean type is still
-// negatable, even though the guard around it cannot be Form C. Wrapping the
-// original bytes in `!(…)` rather than re-rendering the condition is what keeps
-// comments, spacing, and line count intact.
 func (s *fileScan) negateCondition(cond ast.Expr, name string) error {
 	rule, ok := s.matchers.rule(name)
 	if !ok || cond == nil || !isBoolClassed(s.typeOf(cond)) {
@@ -544,29 +383,6 @@ func (s *fileScan) negateCondition(cond ast.Expr, name string) error {
 	return s.emitNode(rule, cond, "!("+original+")")
 }
 
-// branchStmt is the labeled-branch family and the one refusal beside it.
-//
-// `break L` and `continue L` become `break` and `continue`. That is a real
-// question about a program: a labelled branch says "leave *that* construct",
-// and dropping the label says "leave the nearest one", which is a different
-// program wherever the two differ -- and wherever they do not, this refuses.
-//
-// The refusal is structural rather than statistical. If the label names the
-// innermost construct the bare form would bind to, the two statements are the
-// same program, token for token, and there is nothing to measure. What makes
-// that worth computing is that the answer differs between the two rules: a
-// `switch` inside a labelled `for` is breakable and not continuable, so
-// `break L` there is a real mutant -- the bare form leaves the switch -- while
-// `continue L` at the same position is equivalent.
-//
-// The unused-label trap disarms itself. An unused label does not compile, so
-// removing a label's only reference would break the tree; Form S keeps the
-// original bytes in its `else` arm, so `L` goes on being referenced whether or
-// not the mutant is active.
-//
-// `goto` is recorded as [SkipLabelOrGoto] rather than mutated, and
-// `fallthrough` is neither: see that constant for the first, and
-// [FormSStatement] for why the second is not even a site.
 func (s *fileScan) branchStmt(n *ast.BranchStmt) error {
 	switch n.Tok {
 	case token.GOTO:
@@ -577,7 +393,6 @@ func (s *fileScan) branchStmt(n *ast.BranchStmt) error {
 		return nil
 	}
 	if n.Label == nil {
-		// A bare branch has no label to drop.
 		return nil
 	}
 	name := ruleDropBreakLabel
@@ -589,28 +404,11 @@ func (s *fileScan) branchStmt(n *ast.BranchStmt) error {
 		return nil
 	}
 	if s.labelNamesTheNearestTarget(n) {
-		// The mutation and the source are the same program. Silent, for
-		// [fileScan.replaceReturn]'s reason.
 		return nil
 	}
 	return s.emitNode(rule, n, n.Tok.String())
 }
 
-// labelNamesTheNearestTarget reports whether dropping the label would leave the
-// branch bound to the same construct it is bound to now.
-//
-// The walk is outward from the branch to the first construct its *bare* form
-// would bind to -- a `for` or `range` for `continue`, and those plus `switch`,
-// a type switch and `select` for `break` -- and the question is whether that
-// construct is the one the label labels. The comparison is by object rather
-// than by name: a label may be shadowed in an inner function literal, and two
-// labels spelled the same are two labels.
-//
-// A branch this phase cannot resolve answers true, which refuses the candidate.
-// That is the fail-closed direction: an unresolvable label is one this code
-// does not understand, and emitting a mutant on the strength of not
-// understanding it is how an equivalent mutant becomes a survivor somebody has
-// to argue about.
 func (s *fileScan) labelNamesTheNearestTarget(n *ast.BranchStmt) bool {
 	if s.guard == nil || s.info == nil {
 		return true
@@ -629,17 +427,9 @@ func (s *fileScan) labelNamesTheNearestTarget(n *ast.BranchStmt) bool {
 		}
 		return s.info.Defs[labelled.Label] == target
 	}
-	// No enclosing construct at all, which the type checker would already have
-	// refused. Fail closed.
 	return true
 }
 
-// bindsBareBranch reports whether a node is a construct an unlabelled branch of
-// the given kind binds to.
-//
-// The two sets differ by exactly the three constructs that are breakable and
-// not continuable, and that difference is the whole reason this family has two
-// rules rather than one.
 func (s *fileScan) bindsBareBranch(node ast.Node, tok token.Token) bool {
 	switch node.(type) {
 	case *ast.ForStmt, *ast.RangeStmt:
@@ -651,35 +441,6 @@ func (s *fileScan) bindsBareBranch(node ast.Node, tok token.Token) bool {
 	}
 }
 
-// settleCondition replaces a whole condition with a constant.
-//
-// The catalogue could not say this before. `negate-condition` writes `!(C)`,
-// which is a different condition rather than a settled one; `true-to-false`
-// fires only where the condition *is* a literal; `nil-error-branch` is the one
-// special case of "this branch stops firing", written for `err != nil` alone.
-// A guard that always fires and a guard that never does are the two questions a
-// reader asks about a branch, and neither had a rule.
-//
-// No new guard form is needed: this is the anchor [fileScan.negateCondition]
-// already uses, and `true` is an untyped constant that Form C writes into the
-// same selector any other boolean expression goes into.
-//
-// The type gate is the one difference from negation, and it is the guard's
-// rather than this rule's. `!` applies to any boolean type, so a condition of a
-// named boolean type is negatable; Form C requires a site of *exactly* the
-// universe `bool`, so such a condition is refused as [SkipUnnameableDeclType]
-// by [fileScan.emitAt] -- the same answer the negation at that site already
-// gets, from the same place, rather than a silence this rule invented.
-//
-// A `for` with no condition and a `range` clause both arrive here with a nil
-// Cond and are passed over: there is nothing to settle, and inventing a
-// condition would be a different edit than this rule describes.
-//
-// There is deliberately no `loop-condition-to-true`. It would turn every
-// counted loop in a tree into one that never ends, each costing a whole
-// per-mutant timeout -- twice, since a timeout is measured again before it is
-// believed -- to teach a reader nothing the source does not already say. False
-// is the safe direction: the loop runs zero times.
 func (s *fileScan) settleCondition(cond ast.Expr, name, replacement string) error {
 	rule, ok := s.matchers.rule(name)
 	if !ok || cond == nil || !isBoolClassed(s.typeOf(cond)) {
@@ -687,47 +448,16 @@ func (s *fileScan) settleCondition(cond ast.Expr, name, replacement string) erro
 	}
 	original, ok := s.text(cond)
 	if !ok || original == replacement || s.spellsTheSameConstant(cond, replacement) {
-		// A condition already spelled as its own replacement is not a place
-		// go-mutants declined to mutate; it is a place where the mutation and
-		// the source are the same program. [fileScan.replaceReturn] makes the
-		// same refusal for the same reason.
-		//
-		// The constant check is the same refusal one level down, and it is the
-		// one that earns its keep: `const limit = 3 > 2` used in an `if` is
-		// spelled `limit` and *is* `true`, so settling it true writes different
-		// bytes for the same program. go/types has already folded it, so this
-		// costs a map lookup and removes a mutant that could never die. Only
-		// the matching direction is refused -- settling a constantly-true
-		// condition *false* is a branch that stops firing, which is a real and
-		// useful mutant.
 		return nil
 	}
 	return s.emitNode(rule, cond, replacement)
 }
 
-// returnStmt emits the return-replacement and error-swallowing rules for every
-// value of one `return`.
-//
-// A bare `return` in a function with named results is passed over in silence:
-// there are no bytes to replace, so there is no candidate and nothing was
-// decided against. A `return f()` whose single call fills several results is
-// passed over too — the values and the declared results cannot be lined up
-// one to one, and replacing the whole call would be a different edit than the
-// one this family describes.
 func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
 	results := s.enclosingResults(n)
 	if len(n.Results) == 0 || results == nil || results.Len() != len(n.Results) {
 		return nil
 	}
-	// One site for the whole statement, computed before any candidate: the
-	// probe rewrite replaces the statement rather than the value, so every
-	// candidate in it describes the same rewrite and differs only in which
-	// result it replaces. A nil site is a statement this file cannot spell a
-	// probe for, or one the probe cannot stand in for, and every candidate in it
-	// goes out unprobed.
-	//
-	// The per-result conditions are asked after it, and each of them refuses one
-	// result while leaving the others probed.
 	site := s.probeSite(n, results)
 	for i, value := range n.Results {
 		declared := results.At(i).Type()
@@ -742,8 +472,6 @@ func (s *fileScan) returnStmt(n *ast.ReturnStmt) error {
 	return nil
 }
 
-// returnSite computes the probe hint of one `return`, or nil when this phase
-// holds no resolver to compute it with.
 func (s *fileScan) probeSite(n *ast.ReturnStmt, results *types.Tuple) *ProbeSite {
 	if s.guard == nil {
 		return nil
@@ -751,9 +479,6 @@ func (s *fileScan) probeSite(n *ast.ReturnStmt, results *types.Tuple) *ProbeSite
 	return s.guard.probeSite(n, results)
 }
 
-// probesResult reports whether one result of a `return` may carry the site
-// computed for that statement, or false when this phase holds no resolver to
-// ask.
 func (s *fileScan) probesResult(value ast.Expr, declared types.Type) bool {
 	if s.guard == nil {
 		return false
@@ -761,15 +486,6 @@ func (s *fileScan) probesResult(value ast.Expr, declared types.Type) bool {
 	return s.guard.probesResult(value, declared)
 }
 
-// returnValue emits whichever replacement the declared result type admits.
-//
-// The nillable results are split between two families, and the split is stated
-// on both sides so that neither can widen without the other narrowing: a value
-// whose static type is exactly `error` belongs to error-swallowing, and every
-// other nillable result belongs to return-replacement. `return &myErr{}` from a
-// function returning `error` is therefore a `return-nil` candidate — the value
-// is a concrete pointer, not an error interface value — while `return err` is
-// the `return-err-to-nil` the family exists for.
 func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ProbeSite) error {
 	if isExactlyError(s.typeOf(value)) {
 		return s.replaceReturn(value, ruleReturnErrToNil, "nil", site, nil)
@@ -785,7 +501,6 @@ func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ProbeS
 		}
 		return s.replaceReturn(value, ruleReturnFalse, "false", site, nil)
 	case isNillable(declared):
-		// Not an error-typed value: that was settled above.
 		if err := s.replaceReturn(value, ruleReturnNil, "nil", site, nil); err != nil {
 			return err
 		}
@@ -795,24 +510,6 @@ func (s *fileScan) returnValue(value ast.Expr, declared types.Type, site *ProbeS
 	}
 }
 
-// replaceReturn emits one return-value replacement, unless the value already
-// *is* the replacement -- spelled that way, or folded to it.
-//
-// The catalogue would refuse a replacement equal to its original anyway, and
-// refusing it loudly there would turn every `return nil` in the tree into a
-// failed run. It is not a skip either: `return 0` is not a place go-mutants
-// declined to mutate, it is a place where the mutation and the source are the
-// same program.
-//
-// The constant check is the same refusal one level down, and it is the one that
-// earns its keep. `return Disjoint`, where `Disjoint` is the first name of an
-// iota block, writes different bytes for the same constant: go/types folds both
-// readings to 0, the `return` converts both by the same rule, and the two trees
-// compile to one program. This repository found that survivor twice by running
-// its own gate against itself and declared it twice, which is two ledger rows
-// arguing about a mutant that was never a question. [fileScan.settleCondition]
-// makes the same refusal for conditions, and has since the branch-replacement
-// family arrived.
 func (s *fileScan) replaceReturn(
 	value ast.Expr, name, replacement string, site *ProbeSite, needs []Completion,
 ) error {
@@ -822,12 +519,6 @@ func (s *fileScan) replaceReturn(
 	}
 	original, ok := s.text(value)
 	if !ok {
-		// Refused rather than skipped, which is what every other emitter in
-		// this file does with the same discovery. The text is read here only to
-		// compare it against the replacement, and [fileScan.emitProbed] would
-		// have read it a moment later and refused; swallowing it here would
-		// make a file that changed underneath the run into a silent gap in the
-		// catalogue for one family and a refusal for every other.
 		return s.nodeReachesPastTheEnd(value)
 	}
 	if original == replacement || s.spellsTheSameConstant(value, replacement) {
@@ -836,7 +527,6 @@ func (s *fileScan) replaceReturn(
 	return s.emitProbed(rule, value, replacement, site, needs)
 }
 
-// enclosingResults returns the declared results of the function a node sits in.
 func (s *fileScan) enclosingResults(node ast.Node) *types.Tuple {
 	if s.guard == nil || s.info == nil {
 		return nil
@@ -864,7 +554,6 @@ func (s *fileScan) enclosingResults(node ast.Node) *types.Tuple {
 	return nil
 }
 
-// assignStmt emits the compound-assignment swap and the assignment deletion.
 func (s *fileScan) assignStmt(n *ast.AssignStmt) error {
 	if matcher, ok := s.matchers.assignOp[n.Tok]; ok && len(n.Lhs) == 1 {
 		if target := s.typeOf(n.Lhs[0]); isInteger(target) || isFloat(target) {
@@ -873,15 +562,12 @@ func (s *fileScan) assignStmt(n *ast.AssignStmt) error {
 			}
 		}
 	}
-	// Only a plain `=` is deleted. A `:=` declares, and deleting a declaration
-	// makes every later use of the name a compile error rather than a mutant.
 	if rule, ok := s.matchers.rule(ruleDeleteAssignment); ok && n.Tok == token.ASSIGN {
 		return s.emitNode(rule, n, "")
 	}
 	return nil
 }
 
-// incDecStmt emits the `++`/`--` swap and the statement deletion.
 func (s *fileScan) incDecStmt(n *ast.IncDecStmt) error {
 	if matcher, ok := s.matchers.incDec[n.Tok]; ok {
 		if target := s.typeOf(n.X); isInteger(target) || isFloat(target) {
@@ -896,15 +582,6 @@ func (s *fileScan) incDecStmt(n *ast.IncDecStmt) error {
 	return nil
 }
 
-// exprStmt emits the call-statement deletion.
-//
-// A `panic(…)` statement is left alone, and so is the `(panic)(…)` the same
-// call may be written as. Deleting one removes the only reason the function
-// ends there, so every path that fell through it now reaches the closing brace
-// without a return — a compile error, manufactured wholesale in exactly the
-// defensive code where a deleted call would otherwise be an interesting mutant.
-// A `panic` the package shadowed with a function of its own is an ordinary call
-// and is deleted like any other.
 func (s *fileScan) exprStmt(n *ast.ExprStmt) error {
 	rule, ok := s.matchers.rule(ruleDeleteCallStatement)
 	if !ok {
@@ -917,7 +594,6 @@ func (s *fileScan) exprStmt(n *ast.ExprStmt) error {
 	return s.emitNode(rule, n, "")
 }
 
-// swap emits one operator-token rewrite from a family table.
 func (s *fileScan) swap(table map[token.Token]tokenMatcher, anchor ast.Node, op token.Token, pos token.Pos) error {
 	matcher, ok := table[op]
 	if !ok {
@@ -926,35 +602,19 @@ func (s *fileScan) swap(table map[token.Token]tokenMatcher, anchor ast.Node, op 
 	return s.emit(matcher.rule, anchor, pos, matcher.original, matcher.replacement)
 }
 
-// text returns the pristine bytes of a node, as a string.
 func (s *fileScan) text(node ast.Node) (string, bool) {
 	start := s.tokFile.Offset(node.Pos())
 	end := s.tokFile.Offset(node.End())
-	// One comparison, against the one thing that can be true. Offset clamps a
-	// position into the *token file's* bounds, so a start is never negative and
-	// an end never precedes its start -- but the token file's size is the size
-	// the parser saw, and the bytes below are the ones the caller handed over.
-	// A file that got shorter between the two is what this refuses.
 	if end > len(s.src) {
 		return "", false
 	}
 	return string(s.src[start:end]), true
 }
 
-// emitNode records a candidate whose span is a whole node, with the node's own
-// bytes as the original text.
-//
-// A node parsed from these bytes always lies inside them, so the failure below
-// is unreachable; it is an error rather than a silent skip because the one way
-// to reach it is a syntax tree and a file that have stopped describing each
-// other, which is the condition [emit]'s span check exists to shout about.
 func (s *fileScan) emitNode(rule mutation.Rule, node ast.Node, replacement string) error {
 	return s.emitProbed(rule, node, replacement, nil, nil)
 }
 
-// emitProbed is [fileScan.emitNode] for a candidate that also carries a probe
-// hint. The hint is a fact about the rewrite site of a *different* tree, so it
-// travels beside the candidate rather than changing anything about it.
 func (s *fileScan) emitProbed(
 	rule mutation.Rule, node ast.Node, replacement string, site *ProbeSite, needs []Completion,
 ) error {
@@ -965,33 +625,10 @@ func (s *fileScan) emitProbed(
 	return s.emitAt(rule, node, node.Pos(), original, replacement, site, needs)
 }
 
-// emit records one candidate, or the reason it was suppressed.
-//
-// The span invariant is checked here and nowhere else: the bytes the span
-// covers in the file on disk must be exactly the text the rule says it is
-// replacing. Everything downstream — the identity, the instrumented splice,
-// the diff a survivor is displayed as — trusts that, and a mismatch means the
-// syntax tree and the file have drifted apart. Failing loudly is the only
-// honest answer; splicing a replacement over the wrong bytes is not.
-//
-// The guard hint is resolved here too, and it is the second thing that can
-// remove a candidate: an edit whose rewrite site none of the guard forms
-// can express is recorded as [SkipUnnameableDeclType] rather than catalogued
-// for an instrumenter that would have to refuse it later. anchor is the node
-// the edit belongs to — the binary expression an operator sits in, the
-// statement a deletion removes, the value a return replaces — and it is where
-// the search for that site starts.
-//
-// The branch proof is resolved from the same anchor and removes nothing: it is
-// present when this phase could prove the edit only narrows an `if` or `for`
-// condition, and nil otherwise. See [BranchProof].
 func (s *fileScan) emit(rule mutation.Rule, anchor ast.Node, pos token.Pos, original, replacement string) error {
 	return s.emitAt(rule, anchor, pos, original, replacement, nil, nil)
 }
 
-// emitAt is [fileScan.emit] with the probe hint the return-value family carries.
-// Every other family passes nil, because the probe forms of their sites are not
-// written yet and a hint nothing can rewrite would be worse than none.
 func (s *fileScan) emitAt(
 	rule mutation.Rule,
 	anchor ast.Node,
@@ -1006,8 +643,6 @@ func (s *fileScan) emitAt(
 	}
 	offset := s.tokFile.Offset(pos)
 	end := offset + len(original)
-	// Offset never answers below zero; see [fileScan.text] for why, and for what
-	// the one comparison left is about.
 	if end > len(s.src) {
 		return s.spanMismatch(pos, original, "the span reaches past the end of the file")
 	}
@@ -1027,38 +662,13 @@ func (s *fileScan) emitAt(
 		s.recordAt(s.rel, SkipUnnameableDeclType, rule.Name, pos)
 		return nil
 	}
-	// The replacement text can need an import of its own -- `[]carrier.Box{}`
-	// spells a type where every other rule writes a constant -- and it is the
-	// same tree the guard is spliced into, so the two sets are one list. They
-	// are merged rather than concatenated: a rewrite that named one package
-	// twice would be one import declared twice.
 	guard.Imports = MergeCompletions(guard.Imports, needs)
-	// The probe hint is attached after the guard and never instead of it: a
-	// site the probe tree cannot express is still a site the mutant tree does,
-	// so a nil hint is not a skip and removes no candidate.
-	//
-	// A return hint replaces whatever the guard chose, and never the other way
-	// round. Both can apply to one candidate -- `return a > b` under
-	// `return-true` is a Form C site and a `return` statement at once -- and
-	// the return form is the stronger evidence: it compares the value the
-	// function would really have returned, after the conversion the `return`
-	// itself performs, while the boolean form compares the site's own value.
 	if site != nil {
 		guard.Probe = site
 	}
-	// And the weakest form last, for the family that can have no other. A
-	// deleted statement's mutant differs by the *absence* of an effect, which
-	// nothing a probe tree evaluates can see; what it can record is that the
-	// statement ran at all. See [ProbeFormReach].
 	if guard.Probe == nil && rule.Family == mutation.FamilyStatementDeletion {
 		guard.Probe = s.guard.reachProbe(guard)
 	}
-	// And the one question a probe hint cannot be computed without the *rule*.
-	// The two in-place forms evaluate the mutated reading as well as the
-	// original, so an edit that puts a division where a multiplication was can
-	// panic in a tree that is meant to be the original program. See
-	// [guardResolver.introducesPanic]; the reachability form is unaffected,
-	// since it evaluates nothing extra.
 	if guard.Probe != nil && guard.Probe.Form != ProbeFormReach &&
 		s.guard.introducesPanic(anchor, replacement) {
 		guard.Probe = nil
@@ -1092,33 +702,6 @@ func (s *fileScan) emitAt(
 	return nil
 }
 
-// replaceEmptyNeutral offers the neutral value that is not nil: `[]T{}` for a
-// slice result and `map[K]V{}` for a map one.
-//
-// `len(x) == 0` is true of both nil and empty, and it is the assertion a suite
-// routinely makes -- so a function that returns nil where it meant to return an
-// empty slice passes every `len` check, and `encoding/json` writes `null` where
-// the caller expected `[]`. That is the difference this rule is about, and
-// `return-nil` beside it cannot express it.
-//
-// The type has to be *spelled*, which is what makes this a rule rather than a
-// constant: `[]T{}` needs T rendered against the file's own imports.
-// [guardResolver.typeString] is the machinery -- the same one Form D's
-// declarations go through, so a type this file cannot name is refused here
-// exactly as it is there.
-//
-// Two refusals, both silent for [fileScan.replaceReturn]'s reason:
-//
-//   - a result already spelled as its own replacement. `return []T{}` and
-//     `return make([]T, 0)` are the program the mutant would be, and
-//     replaceReturn's own check only catches the first spelling.
-//   - a result returned beside a non-nil error. `if err != nil { return nil,
-//     err }` is the commonest `return nil` for a slice in Go, and a caller that
-//     sees an error does not look at the other results -- so the mutant is
-//     equivalent by universal convention. That is an argument from convention
-//     rather than a proof, and docs/operators.md says so where the gate is
-//     documented. `return xs, nil` -- the success path, where the rule is worth
-//     the most -- is not gated.
 func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site *ProbeSite) error {
 	slice, mapped := isEmptiable(declared)
 	if !slice && !mapped {
@@ -1136,21 +719,12 @@ func (s *fileScan) replaceEmptyNeutral(value ast.Expr, declared types.Type, site
 	}
 	spelled, needs, ok := s.guard.typeString(declared)
 	if !ok {
-		// The same fact Form D records when it cannot spell a declared type:
-		// go-mutants knows what it would like to write here and cannot say it
-		// in Go. A dot import and an unsafe.Pointer element are the two ways
-		// to reach this.
 		s.recordAt(s.rel, SkipUnnameableDeclType, rule, value.Pos())
 		return nil
 	}
-	// No probe hint. A slice is not comparable, so `r0 != []T{}` is not legal
-	// Go and the return form's `!=` cannot be written for it; the `return-nil`
-	// beside this one keeps its own, because `r0 != nil` is legal for both.
 	return s.replaceReturn(value, rule, spelled+"{}", nil, needs)
 }
 
-// returnsBesideAnError reports whether the statement this value belongs to also
-// returns a non-nil error.
 func (s *fileScan) returnsBesideAnError(value ast.Expr) bool {
 	if s.guard == nil {
 		return false
@@ -1170,9 +744,6 @@ func (s *fileScan) returnsBesideAnError(value ast.Expr) bool {
 	return false
 }
 
-// alreadyEmpty reports whether a result is already the empty value this rule
-// would write: a composite literal with no elements, or a `make` with a zero
-// length and no capacity.
 func (s *fileScan) alreadyEmpty(value ast.Expr) bool {
 	switch expr := value.(type) {
 	case *ast.CompositeLit:
@@ -1193,20 +764,6 @@ func (s *fileScan) alreadyEmpty(value ast.Expr) bool {
 	}
 }
 
-// constantReplacements is the value each replacement text in this registry
-// denotes, for the rules whose replacement is a constant at all.
-//
-// `nil` is deliberately absent rather than mapped to something: it is not a
-// constant, go/types folds no value for it, and the two rules that write it
-// have no constant to be equal to. So is every replacement that spells a type
-// (`[]T{}`, `map[K]V{}`) or a whole expression (`!(…)`, a negation's operand,
-// an empty statement) -- [fileScan.alreadyEmpty] is what settles the first pair,
-// and the rest are edits no folding can make into their own originals.
-//
-// A replacement this map does not hold is never refused on these grounds, which
-// is the fail-open direction: the catalogue's own textual check still stands
-// behind it, and a mutant catalogued in error is a survivor somebody reads
-// rather than a killed mutant nobody does.
 var constantReplacements = map[string]constant.Value{
 	"0":     constant.MakeInt64(0),
 	`""`:    constant.MakeString(""),
@@ -1214,13 +771,6 @@ var constantReplacements = map[string]constant.Value{
 	"false": constant.MakeBool(false),
 }
 
-// spellsTheSameConstant reports whether go/types folded an expression to
-// exactly the constant a replacement text denotes.
-//
-// It is the one question behind three refusals -- a settled condition, a
-// replaced result, and a `make` whose length is already zero -- and the answer
-// is the checker's, not this package's: a constant expression has one value,
-// the compiler computed it, and two spellings of it are one program.
 func (s *fileScan) spellsTheSameConstant(expr ast.Expr, replacement string) bool {
 	want, ok := constantReplacements[replacement]
 	if !ok || s.info == nil || expr == nil {
@@ -1233,16 +783,6 @@ func (s *fileScan) spellsTheSameConstant(expr ast.Expr, replacement string) bool
 	return constant.Compare(got, token.EQL, want)
 }
 
-// comparableConstants reports whether two folded constants are of kinds
-// [constant.Compare] can put side by side.
-//
-// The numeric kinds are one class: go/constant promotes an integer and a
-// complex to the wider of the two before comparing them, which is the same
-// promotion the compiler performs, so `complex(0, 0)` and `0` are one value.
-// Bool and String are each their own class, and a pair drawn from two classes
-// is not equal rather than a panic -- Compare asserts on the kind it was handed
-// and there is no answer to give for `"" == 0` anyway, since no Go program can
-// write the comparison.
 func comparableConstants(a, b constant.Value) bool {
 	class := func(v constant.Value) constant.Kind {
 		switch v.Kind() {
@@ -1255,27 +795,11 @@ func comparableConstants(a, b constant.Value) bool {
 	return class(a) == class(b) && a.Kind() != constant.Unknown
 }
 
-// recordAt records one suppression at the position the edit would have sat at,
-// naming the rule whose edit it was.
-//
-// The coordinates cost one [token.File.PositionFor] call, made where the
-// [token.Pos] is already in hand, and they are what turns "four const-decl
-// sites in this file" into four places a reader can go. The position is
-// unadjusted, exactly as the one [emitAt] stamps on a candidate is: both name a
-// byte in the snapshot's own copy of the file, and a `//line` directive that
-// relocated a skip while leaving the mutants beside it alone would make the two
-// halves of one listing disagree about where they are.
 func (s *fileScan) recordAt(rel string, reason SkipReason, rule string, pos token.Pos) {
 	position := s.tokFile.PositionFor(pos, false)
 	s.recordSite(rel, reason, rule, position.Line, position.Column)
 }
 
-// guardFor resolves the rewrite site of one candidate, checking the one
-// invariant the hint has to hold: the site contains the edit.
-//
-// A site that did not would be an instrumenter splicing a mutation into an
-// expression that does not hold it, which is the failure the whole span
-// discipline exists to prevent — so it is refused here rather than passed on.
 func (s *fileScan) guardFor(anchor ast.Node, span mutation.Span) (Guard, bool) {
 	if s.guard == nil || anchor == nil {
 		return Guard{}, false
@@ -1287,15 +811,6 @@ func (s *fileScan) guardFor(anchor ast.Node, span mutation.Span) (Guard, bool) {
 	return guard, true
 }
 
-// spanMismatch builds the internal-invariant error, located the way a user
-// would look for it even though only a maintainer should ever see it.
-// nodeReachesPastTheEnd is the refusal for a node whose end is outside the
-// bytes this scan was handed.
-//
-// One sentence for three callers, because it is one discovery: the file the
-// parser saw and the file this walk was given are not the same file. Two
-// wordings would be two things for a reader to tell apart that are not
-// different.
 func (s *fileScan) nodeReachesPastTheEnd(node ast.Node) error {
 	position := s.tokFile.PositionFor(node.Pos(), false)
 	return &Error{
@@ -1315,14 +830,6 @@ func (s *fileScan) spanMismatch(pos token.Pos, original, detail string) error {
 	}
 }
 
-// suppressed reports the reason a position is off limits, if it is.
-//
-// The widest containing region wins. That is the region a walker would have
-// refused to descend into, so it is the reason that remains true whatever the
-// narrower construct inside it turns out to be: a boolean literal inside an
-// array length inside a type parameter list is not off limits because array
-// lengths are constant, it is off limits because none of a type parameter list
-// is value code.
 func (s *fileScan) suppressed(pos token.Pos) (SkipReason, bool) {
 	best := -1
 	for i := range s.suppressions {
@@ -1340,13 +847,6 @@ func (s *fileScan) suppressed(pos token.Pos) (SkipReason, bool) {
 	return s.suppressions[best].reason, true
 }
 
-// wider reports whether x is the outer region of two that both contain a
-// position, with a frozen tie-break so that two regions covering exactly the
-// same bytes always resolve the same way.
-// It is the same order [sortSuppressions] imposes, asked as a question about
-// two regions rather than used to arrange a list, and it is written the same
-// way for the same reason: a comparison in front of each key is that key's own
-// question asked twice.
 func wider(x, y suppression) bool {
 	return cmp.Or(
 		cmp.Compare(y.width(), x.width()),

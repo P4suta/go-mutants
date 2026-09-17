@@ -11,14 +11,6 @@ import (
 	"testing"
 )
 
-// TestRootFindsTheModuleFromAnyPackageDirectory pins the one property that
-// makes every path helper here usable from a test anywhere in the tree.
-//
-// The walk cannot stop at the first go.mod it meets. A fixture is a module of
-// its own — that is what keeps this repository's `./...` from ever picking one
-// up — so a test whose working directory is a fixture would otherwise resolve
-// the corpus root as the repository root and look for `fixtures/fixtures/…`.
-// The walk is for the go.mod that names *this* module, and nothing else.
 func TestRootFindsTheModuleFromAnyPackageDirectory(t *testing.T) {
 	root := Root(t)
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
@@ -35,12 +27,6 @@ func TestRootFindsTheModuleFromAnyPackageDirectory(t *testing.T) {
 	}
 }
 
-// TestRootReportsAWorkingDirectoryOutsideTheModule keeps the failure legible.
-//
-// A test binary run from somewhere else entirely — a t.TempDir, a `go test` in
-// another checkout — has no answer to give, and the useful diagnostic names the
-// module it was looking for and the directory it started from rather than
-// returning an empty string that fails later somewhere else.
 func TestRootReportsAWorkingDirectoryOutsideTheModule(t *testing.T) {
 	t.Parallel()
 
@@ -51,10 +37,6 @@ func TestRootReportsAWorkingDirectoryOutsideTheModule(t *testing.T) {
 	}
 }
 
-// TestFixtureRefusesANameWithoutGoMod is the corpus half of the same rule: a
-// fixture is a whole module, and a name that does not resolve to one is a typo
-// or a deleted directory rather than something to hand to the engine and watch
-// fail three phases later.
 func TestFixtureRefusesANameWithoutGoMod(t *testing.T) {
 	t.Parallel()
 
@@ -74,11 +56,6 @@ func TestFixtureRefusesANameWithoutGoMod(t *testing.T) {
 	}
 }
 
-// TestFixtureRefusesANameThatLeavesTheCorpus stops a caller from reaching the
-// rest of the repository through the corpus. `Fixture(t, "../internal")` is not
-// a fixture, and a helper that resolved it would let a test mutate, copy or
-// snapshot the working tree it is running in — which is the one thing this
-// project promises never to do.
 func TestFixtureRefusesANameThatLeavesTheCorpus(t *testing.T) {
 	t.Parallel()
 
@@ -90,15 +67,6 @@ func TestFixtureRefusesANameThatLeavesTheCorpus(t *testing.T) {
 	}
 }
 
-// TestFixtureNamesListsEveryModuleInTheCorpus proves the listing is the corpus
-// rather than a directory listing: `README.md` lives beside the fixtures and is
-// not one, and a test that iterates the corpus must not be handed it.
-//
-// "A fixture" is a tree a `go` command can be pointed at, which is a module in
-// every case but one: `workspace/` carries a `go.work` and its two modules one
-// level down, because what it is for is the run that has to refuse a workspace
-// root. It is named here so that a listing that quietly went back to requiring
-// a `go.mod` would take the two tests that drive it with it.
 func TestFixtureNamesListsEveryModuleInTheCorpus(t *testing.T) {
 	t.Parallel()
 

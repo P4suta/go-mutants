@@ -12,23 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// What `report merge` says, and the four failures underneath it that only a
-// document read off a disk can produce.
-//
-// merge_test.go proves the refusals happen. This file reads the sentences they
-// are made of, because those sentences are the whole of what a person has to
-// work with: a CI job hands `report merge` four files from four runners, and
-// "the shards do not describe one run" without saying which shard and which
-// field sends somebody to open all four by hand.
-
-// TestAMissingShardIsNamedByItsPlaceInTheList reads the ordinal out of the
-// refusal.
-//
-// The list is the order the user wrote the files in, so "the third report to
-// merge is missing" is a position on their own command line. Counting from the
-// wrong end, or falling off the end of the words and printing "0th", turns that
-// into a puzzle — and the sixth is here because the words run out at five and
-// the number has to take over without going out of bounds.
 func TestAMissingShardIsNamedByItsPlaceInTheList(t *testing.T) {
 	t.Parallel()
 
@@ -66,8 +49,6 @@ func TestAMissingShardIsNamedByItsPlaceInTheList(t *testing.T) {
 	}
 }
 
-// TestAReportThatIsNotAShardIsNamedByItsPlaceToo covers the other two refusals
-// the list walk can reach, which count the same way.
 func TestAReportThatIsNotAShardIsNamedByItsPlaceToo(t *testing.T) {
 	t.Parallel()
 
@@ -96,13 +77,6 @@ func TestAReportThatIsNotAShardIsNamedByItsPlaceToo(t *testing.T) {
 	}
 }
 
-// TestAnIncompleteSetSaysHowManyAreMissingAndWhich reads the count and the
-// verb.
-//
-// One missing shard and two are the same failure and a differently shaped
-// sentence, and the sentence is what tells a CI author whether one job died or
-// the matrix is the wrong size. The list in brackets is the actionable half: it
-// names the indices to go and look for.
 func TestAnIncompleteSetSaysHowManyAreMissingAndWhich(t *testing.T) {
 	t.Parallel()
 
@@ -131,13 +105,6 @@ func TestAnIncompleteSetSaysHowManyAreMissingAndWhich(t *testing.T) {
 	}
 }
 
-// TestARefusalNamesTheShardAsTheUserWouldNameIt reads the other half of every
-// merge refusal: which of the documents it is about.
-//
-// "2 of 4" is how a CI matrix names a job and "run 20260218T091502Z-3f9c" is
-// what the file is called. A refusal that gave one without the other would send
-// somebody to the right job with no way to tell which of its two artefacts to
-// open, or to the right file with no idea which job wrote it.
 func TestARefusalNamesTheShardAsTheUserWouldNameIt(t *testing.T) {
 	t.Parallel()
 
@@ -154,12 +121,6 @@ func TestARefusalNamesTheShardAsTheUserWouldNameIt(t *testing.T) {
 	}
 }
 
-// TestMergeRefusesADocumentWhoseClockCannotBeRead covers both timestamps.
-//
-// The merged duration is the envelope of the shards' clocks, so a shard whose
-// own start or finish is not a time makes the whole envelope meaningless — and
-// the failure a caller must never get instead is a merged document quietly
-// stamped with the zero time, which reads as a run that happened in the year 1.
 func TestMergeRefusesADocumentWhoseClockCannotBeRead(t *testing.T) {
 	t.Parallel()
 
@@ -187,13 +148,6 @@ func TestMergeRefusesADocumentWhoseClockCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestMergeRefusesRowsItsOwnBlocksContradict is the three checks that read the
-// merged rows rather than the shards' own headers.
-//
-// Each of them is a statement the merged document must not be able to make, and
-// each is reachable only from a file: [report.Build] refuses all three on the
-// way in, and `report merge` reads documents that another build, another
-// version, or somebody's editor produced.
 func TestMergeRefusesRowsItsOwnBlocksContradict(t *testing.T) {
 	t.Parallel()
 
@@ -246,12 +200,6 @@ func TestMergeRefusesRowsItsOwnBlocksContradict(t *testing.T) {
 	}
 }
 
-// TestMergeRefusesARunIDItCouldNotFile is the merged document's own identity,
-// which is the one field of it nothing else checked.
-//
-// The id becomes a file name under `runs/`, so a value with a path separator in
-// it is a path bug waiting to happen — and the merged document is exactly the
-// one a CI job publishes, with an id the job invented.
 func TestMergeRefusesARunIDItCouldNotFile(t *testing.T) {
 	t.Parallel()
 
@@ -269,15 +217,6 @@ func TestMergeRefusesARunIDItCouldNotFile(t *testing.T) {
 	}
 }
 
-// TestOwnershipReadsTheOutcomeRatherThanTheReason is about a document that
-// contradicts itself, and which half of it the ownership check believes.
-//
-// A row that states an outcome and a not-run reason at once cannot come out of
-// [report.Build] — the pairing is refused in both directions — but it can come
-// out of a file. What decides whether a shard disclaimed a mutant is that it
-// was not run; the reason only says which kind of not-run it was. A check that
-// read the reason alone would see a measured mutant as somebody else's and
-// refuse a set that is perfectly complete.
 func TestOwnershipReadsTheOutcomeRatherThanTheReason(t *testing.T) {
 	t.Parallel()
 
@@ -294,14 +233,6 @@ func TestOwnershipReadsTheOutcomeRatherThanTheReason(t *testing.T) {
 	}
 }
 
-// TestMergedStatusIsAlwaysOneTheSchemaKnows guards the merged document's own
-// status against a value it copied from somewhere.
-//
-// The status of a merge is the worst thing that happened to any shard, ranked
-// over the three a run can end in. A document with a fourth value in it — an
-// older build, a newer one, a hand edit — is not evidence that anything went
-// wrong, and letting it become the merged status would publish a document that
-// fails the schema its own package defines.
 func TestMergedStatusIsAlwaysOneTheSchemaKnows(t *testing.T) {
 	t.Parallel()
 
@@ -319,15 +250,6 @@ func TestMergedStatusIsAlwaysOneTheSchemaKnows(t *testing.T) {
 	}
 }
 
-// TestMergedWarningsAreInShardOrderWhateverOrderTheFilesArrive pins the one
-// ordering a merged document has that no shard has.
-//
-// `report merge a.json b.json c.json` is a command line, and a CI job's glob
-// hands the files over in whatever order the runner listed them. The warnings
-// are one list made of three, and the only order that means anything is the
-// shards' own: shard 1's warnings, then shard 2's, then shard 3's. Publication
-// order inside a shard is preserved for the same reason, so the two together
-// are a timeline rather than a set.
 func TestMergedWarningsAreInShardOrderWhateverOrderTheFilesArrive(t *testing.T) {
 	t.Parallel()
 
@@ -342,7 +264,6 @@ func TestMergedWarningsAreInShardOrderWhateverOrderTheFilesArrive(t *testing.T) 
 		unique = append(unique, w)
 	}
 
-	// Handed over out of order, which is what a glob does.
 	merged := mergeShards(t, []*report.Report{set[2], set[0], set[1]})
 	got := merged.Warnings[len(merged.Warnings)-len(unique):]
 	for i := range unique {
@@ -352,13 +273,6 @@ func TestMergedWarningsAreInShardOrderWhateverOrderTheFilesArrive(t *testing.T) 
 	}
 }
 
-// TestParseRefusesAFileHoldingMoreThanOneDocument is the one shape of file a
-// decoder accepts silently.
-//
-// Two concatenated reports decode as the first one, so a `report merge` given a
-// log somebody appended to would take the older document and say nothing. The
-// second document is what proves the file is not a run report, and it has to be
-// looked for after the first one has been read rather than instead of it.
 func TestParseRefusesAFileHoldingMoreThanOneDocument(t *testing.T) {
 	t.Parallel()
 
@@ -375,10 +289,6 @@ func TestParseRefusesAFileHoldingMoreThanOneDocument(t *testing.T) {
 	}
 }
 
-// placeholderShard is the least a document can be and still get past the list
-// walk: a shard block and nothing else. The walk checks three things in order
-// and returns on the first, so a set built to reach the third position only has
-// to be non-nil, sharded, and not itself a merge.
 func placeholderShard(index, total int) *report.Report {
 	return &report.Report{
 		DocumentType:  report.DocumentType,
@@ -388,9 +298,6 @@ func placeholderShard(index, total int) *report.Report {
 	}
 }
 
-// ownedRow returns the index of a row this shard measured itself: one it owns,
-// and that it did not adopt from the cache, so that breaking it reaches the
-// check under test rather than the cache block above it.
 func ownedRow(t *testing.T, shard *report.Report) int {
 	t.Helper()
 	for i, m := range shard.Mutants {
@@ -403,7 +310,6 @@ func ownedRow(t *testing.T, shard *report.Report) int {
 	return -1
 }
 
-// mustMarshalReport encodes a report or fails the test.
 func mustMarshalReport(t *testing.T, r *report.Report) []byte {
 	t.Helper()
 	data, err := r.Marshal()
@@ -413,13 +319,6 @@ func mustMarshalReport(t *testing.T, r *report.Report) []byte {
 	return data
 }
 
-// TestShardNameFallsBackToTheRunItself covers the one rendering a merge cannot
-// reach.
-//
-// Every caller has refused a report with no `shard` block long before it gets
-// here, so this is what the sentence would say if one ever did — and "run
-// 20260218T091500Z-3f9c" is the answer, because the run id is what the file is
-// called and is the only thing such a document could be identified by.
 func TestShardNameFallsBackToTheRunItself(t *testing.T) {
 	t.Parallel()
 

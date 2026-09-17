@@ -13,26 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The orders a result promises, one tie-break at a time.
-//
-// A discovery is run twice over the same bytes — by a developer and by CI, by
-// two shards of one run — and the two have to agree byte for byte, because the
-// catalogue's digest is what an outcome cache is keyed on and a run report is
-// what a reviewer diffs. The walk itself reaches nodes in a deterministic
-// order, so a comparison that ignored one key would still *look* stable on
-// every fixture in this repository while resting on the walk rather than on the
-// order it claims. Each of these tests separates one key: two values that agree
-// on every key before it and differ on that one.
-
-// TestEveryKeyOfTheSkipSiteOrderDecidesSomething is [compareSkipSites], which
-// is the order `list --explain` prints.
-//
-// The last two keys are the ones worth stating. Two rules can be declined at
-// one coordinate for one reason each, so the reason is a key rather than a
-// grouping; and three rules can be declined at one coordinate for one reason,
-// which a named boolean condition produces every time — so the rule name is a
-// key after it, and without it those three would come out in whatever order the
-// walk reached them.
 func TestEveryKeyOfTheSkipSiteOrderDecidesSomething(t *testing.T) {
 	t.Parallel()
 
@@ -63,9 +43,6 @@ func TestEveryKeyOfTheSkipSiteOrderDecidesSomething(t *testing.T) {
 		t.Errorf("compareSkipSites of one site with itself = %d, want 0", got)
 	}
 
-	// A larger line before a smaller one, with every earlier key equal: the
-	// coordinates are compared as numbers, which is what keeps line 9 before
-	// line 10 rather than after it.
 	sites := []SkipSite{
 		{Path: "pkg/a.go", Line: 10, Column: 1},
 		{Path: "pkg/a.go", Line: 9, Column: 1},
@@ -82,22 +59,11 @@ func TestEveryKeyOfTheSkipSiteOrderDecidesSomething(t *testing.T) {
 	}
 }
 
-// with copies a skip site and applies one edit, so that a table row names the
-// one key it is about.
 func with(base SkipSite, edit func(*SkipSite)) SkipSite {
 	edit(&base)
 	return base
 }
 
-// TestEveryKeyOfTheCandidateOrderDecidesSomething is the same for
-// [discovery.sortedCandidates], where the third key is the one no lexical order
-// could supply.
-//
-// Two rules proposing an edit over the same bytes are ordered by their position
-// in the canonical registry rather than by their names, because the registry's
-// order is the one `docs/operators.md` prints and the one a reader of a report
-// is looking at. Sorting by name would put `add-to-sub` before `negate-condition`
-// for no reason anybody could see.
 func TestEveryKeyOfTheCandidateOrderDecidesSomething(t *testing.T) {
 	t.Parallel()
 
@@ -119,10 +85,6 @@ func TestEveryKeyOfTheCandidateOrderDecidesSomething(t *testing.T) {
 		return s
 	}
 
-	// Two rules over one span, given to the sorter in registry order reversed.
-	// `negate-condition` precedes `and-to-or` in the catalogue, so the answer
-	// is not the order they were handed over and not their alphabetical one
-	// either — which is what makes this row decide the third key.
 	early, late := rule("negate-condition"), rule("and-to-or")
 	if registryPosition(t, registry, early) > registryPosition(t, registry, late) {
 		early, late = late, early
@@ -149,14 +111,11 @@ func TestEveryKeyOfTheCandidateOrderDecidesSomething(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("sortedCandidates =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	// And the argument is not reordered: a caller still holding the slice it
-	// handed over would otherwise find it rearranged underneath it.
 	if d.candidates[0].Path != "pkg/b.go" {
 		t.Errorf("sortedCandidates reordered its own input: %+v", d.candidates[0])
 	}
 }
 
-// registryPosition is one rule's place in the canonical order.
 func registryPosition(t *testing.T, registry *mutation.Registry, rule mutation.Rule) int {
 	t.Helper()
 
@@ -167,9 +126,6 @@ func registryPosition(t *testing.T, registry *mutation.Registry, rule mutation.R
 	return position
 }
 
-// TestASkipOrderIsByPathAndThenByReason pins [discovery.sortedSkips], whose two
-// keys are both lexical and whose aggregation is a map — so the order it comes
-// out in is the one this comparison imposes and no other.
 func TestASkipOrderIsByPathAndThenByReason(t *testing.T) {
 	t.Parallel()
 
@@ -192,13 +148,6 @@ func TestASkipOrderIsByPathAndThenByReason(t *testing.T) {
 	}
 }
 
-// TestATestVariantReportsTheImportPathAUserWouldType pins [packagePath].
-//
-// go/packages decorates the path of a package compiled for a test binary --
-// `example.com/m/pkg [example.com/m/pkg.test]` -- and every place a candidate's
-// package is printed, compared or grouped by wants the undecorated one. The
-// decoration is also how a package and its test variant are told apart in the
-// loader's own IDs, which is why it is stripped here and not there.
 func TestATestVariantReportsTheImportPathAUserWouldType(t *testing.T) {
 	t.Parallel()
 

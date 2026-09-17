@@ -23,8 +23,6 @@ func TestTallyOf(t *testing.T) {
 		{Outcome: OutcomeInconclusive},
 		{Outcome: OutcomeErrored},
 		{Outcome: OutcomeNotRun},
-		// An expectation flag on a non-survivor is meaningless and must not
-		// move any counter: the ledger only ever predicts survival.
 		{Outcome: OutcomeKilled, ExpectedSurvivor: true},
 	}
 	want := Tally{
@@ -82,10 +80,6 @@ func TestTallyOfEmptyRun(t *testing.T) {
 	}
 }
 
-// TestSurvivorsSplitByTheLedger pins which of the two survivor counters a
-// survivor lands in. The counts are deliberately lopsided: the tallies above
-// hold one of each, and one of each is exactly the shape a rule that sent
-// every survivor to the wrong counter would still produce.
 func TestSurvivorsSplitByTheLedger(t *testing.T) {
 	t.Parallel()
 
@@ -103,8 +97,6 @@ func TestSurvivorsSplitByTheLedger(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("tally mismatch (-want +got):\n%s", diff)
 	}
-	// Only the three the ledger did not predict reach the denominator; the
-	// declared one is accounted for and leaves the score alone.
 	if got.Denominator() != 3 {
 		t.Errorf("Denominator() = %d, want 3", got.Denominator())
 	}
@@ -221,8 +213,6 @@ func TestScoreOf(t *testing.T) {
 	}
 }
 
-// TestNoScoreIsNotZeroPercent is the whole reason Score has no float field:
-// "nothing was measured" and "nothing was caught" must be distinguishable.
 func TestNoScoreIsNotZeroPercent(t *testing.T) {
 	t.Parallel()
 

@@ -220,17 +220,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, service S
 	result, err := service.Execute(ctx, command, request, id)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			// A stopped run publishes what it had settled, and a published
-			// report is rendered here the same way a failed one is - otherwise
-			// the only trace of it on a terminal is a line saying the run
-			// stopped, and the reader has to know to go looking.
 			if result.RunID != "" {
 				render(stdout, result, request)
 			}
-			// The cause is kept. A run that was stopped part way through is the
-			// hardest kind to understand afterwards, and "interrupted" on its
-			// own says only that somebody pressed a key - not which phase was
-			// open, nor what the run was waiting for when it stopped.
 			diagnose(stderr, "interrupted: "+err.Error())
 			return ExitInterrupted
 		}
@@ -249,36 +241,16 @@ func diagnose(stderr io.Writer, message string) {
 	_, _ = fmt.Fprintf(stderr, "goatest: %s\n", report.LineText(message))
 }
 
-// usageError is a command line this tool will not act on.
-//
-// It is the only error type this module declares, which makes what it does and
-// does not do the whole of the vocabulary a caller has for recognising a
-// failure. Until it had Unwrap, it had neither: Error returned the cause's text
-// and nothing could reach the cause, so errors.Is through a usage error found
-// nothing however carefully the cause had been constructed.
-//
-// Hint is separate from the message on purpose. The usage errors this package
-// builds say what is wrong and never what to do about it, and the command line
-// prints the remedy on its own line - "run 'goatest help trace' for usage". That
-// separation is the one an error-code table wants: a message is what happened,
-// and a remedy is what to do, and a table that mixes them has a column nobody
-// can fill in.
 type usageError struct {
-	// command is the subcommand whose usage the reader should be sent to.
 	command Command
 
-	// cause is what was wrong.
 	cause error
 }
 
-// Error reports the cause.
 func (err usageError) Error() string { return err.cause.Error() }
 
-// Unwrap exposes the cause, so that errors.Is and errors.As reach through a
-// usage error to whatever it was built from.
 func (err usageError) Unwrap() error { return err.cause }
 
-// Hint is what to do about it, which the command line prints on its own line.
 func (err usageError) Hint() string {
 	if err.command == "" {
 		return "run 'goatest --help' for usage"
@@ -496,7 +468,6 @@ func parsedCommand(command Command, request Request, id string) (Command, Reques
 }
 
 func exitCode(verdict report.Verdict) int {
-	//exhaustive:total VerdictError is the exit code the default returns.
 	switch verdict {
 	case report.VerdictAssured, report.VerdictChangeAssured, report.VerdictScopeAssured,
 		report.VerdictResolved, report.VerdictCompleted:
@@ -505,7 +476,8 @@ func exitCode(verdict report.Verdict) int {
 		return ExitDefect
 	case report.VerdictInsufficient:
 		return ExitInsufficient
-	default:
+	case report.VerdictError:
 		return ExitError
 	}
+	return ExitError
 }

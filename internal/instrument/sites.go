@@ -18,71 +18,21 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// A site is one rewrite site: the bytes a guard replaces, the form it takes,
-// and everything that form needs beyond those bytes.
-//
-// It is what a [discover.Guard] becomes once it has been checked against the
-// file on disk. The hint says which shape to use and over which bytes; this
-// says which node those bytes turned out to be and, for a declaration, exactly
-// which splices turn it into the plain assignment a guard branch can hold.
 type site struct {
-	// form is the rewrite shape.
-	form discover.GuardForm
-	// span is the byte range the guard replaces, in file coordinates.
-	span mutation.Span
-	// declare are the names a Form D site hoists out in front of its guard,
-	// with the type each is declared as. Empty for the other two forms, and for
-	// a declaration whose every name is the blank identifier.
-	declare []discover.DeclType
-	// siteType is the type a Form C' guard converts its selector back to,
-	// spelled as the file may write it. Empty for every other form.
-	siteType string
-	// undeclare are the splices that turn a Form D site's own bytes into plain
-	// assignments — the `:=` downgraded to `=`, the `var` keyword, the
-	// parentheses and the declared types cut out — in site-relative
-	// coordinates against the pristine source. Empty for the other two forms.
-	//
-	// They are splices rather than a rendered string so that the original bytes
-	// survive: everything the declaration held that is not one of those tokens,
-	// line breaks included, stays exactly where the user wrote it, and [Apply]
-	// proves each cut covers the bytes it claims before anything is edited.
+	form      discover.GuardForm
+	span      mutation.Span
+	declare   []discover.DeclType
+	siteType  string
 	undeclare []Splice
 }
 
-// A siteIndex answers "which node does this hint name?" for one parsed file.
-//
-// It is built by one walk over the syntax tree and then queried once per
-// candidate, so a file with a hundred mutants is still one parse and one walk.
-// Both maps are keyed by byte span rather than by [token.Pos], because a hint
-// arrives from discovery holding byte offsets and nothing else.
-//
-// Statements and expressions are indexed apart because they collide: an
-// expression statement covers exactly the bytes of the call inside it, and a
-// Form S hint over `f()` means the statement while a Form C hint over the same
-// bytes would mean the expression. Where two nodes of one kind share a span the
-// outer one is kept — [ast.Inspect] visits it first — since it is the one an
-// enclosing rewrite would have to replace.
 type siteIndex struct {
 	stmts map[mutation.Span]ast.Stmt
 	exprs map[mutation.Span]ast.Expr
-	// src is the pristine file, so that a cut can carry the bytes it removes.
-	src []byte
-	tok *token.File
+	src   []byte
+	tok   *token.File
 }
 
-// parseSnapshotFile parses pristine snapshot bytes, keeping every position
-// exact.
-//
-// Positions have to be exact because every span in the catalogue and every span
-// in a hint is a byte offset into these same bytes: the parse is how this
-// package finds the node a hint names, and an approximate position would find
-// the wrong one. It is also why the file is re-parsed here instead of reusing
-// whatever discovery held — that tree belongs to another package's loader, and
-// a shared one would tie instrumentation to a go/packages load it does not
-// otherwise need.
-//
-// No type information is computed, and none is needed: the questions that need
-// it were answered by discovery and travel in the hint. See [Hints].
 func parseSnapshotFile(srcPath string, src []byte) (*ast.File, *token.File, error) {
 	file, tok, err := parseGo(srcPath, src)
 	if err != nil {
@@ -95,9 +45,6 @@ func parseSnapshotFile(srcPath string, src []byte) (*ast.File, *token.File, erro
 	return file, tok, nil
 }
 
-// checkParses is the postcondition side of the same parse: instrumented output
-// that go/parser rejects is a bug in this package, and one that would otherwise
-// surface as a build failure in a generated tree the user never asked to read.
 func checkParses(srcPath string, out []byte) error {
 	if _, _, err := parseGo(srcPath, out); err != nil {
 		return &Error{
@@ -109,7 +56,6 @@ func checkParses(srcPath string, out []byte) error {
 	return nil
 }
 
-// parseGo parses one file's bytes and returns the parser's own error.
 func parseGo(srcPath string, src []byte) (*ast.File, *token.File, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, src, parser.SkipObjectResolution)
@@ -118,14 +64,11 @@ func parseGo(srcPath string, src []byte) (*ast.File, *token.File, error) {
 	}
 	tok := fset.File(file.Package)
 	if tok == nil {
-		// Unreachable: ParseFile added the file to the set it was handed.
 		return nil, nil, errors.New("parsed file has no position information")
 	}
 	return file, tok, nil
 }
 
-// newSiteIndex walks a parsed file once and records every node a hint could
-// name.
 func newSiteIndex(tok *token.File, file *ast.File, src []byte) *siteIndex {
 	x := &siteIndex{
 		stmts: make(map[mutation.Span]ast.Stmt),
@@ -159,30 +102,12 @@ func (x *siteIndex) hasExpr(span mutation.Span) bool {
 	return ok
 }
 
-// offset is the byte offset of a position in the file being indexed.
-//
-// [token.File.Offset] panics on a position outside the file, and every caller
-// here passes one taken from the syntax tree just parsed from that file, which
-// cannot be. Nothing derived from the catalogue reaches it: a hint's span is
-// used as a map key or compared, never converted back into a position — the one
-// place that does convert one, [siteIndex.position], checks it against the
-// file's size first, because that one really is fed catalogue data.
 func (x *siteIndex) offset(pos token.Pos) uint32 { return uint32(x.tok.Offset(pos)) }
 
-// span is the byte range of a node.
 func (x *siteIndex) span(node ast.Node) mutation.Span {
 	return mutation.Span{StartByte: x.offset(node.Pos()), EndByte: x.offset(node.End())}
 }
 
-// siteFor turns one mutant's hint into the site the renderer works from,
-// checking everything the hint claims against the file that is really there.
-//
-// Three things are checked and none of them is ceremony. The site has to
-// contain the edit, or the rewrite would splice a mutation into bytes that do
-// not hold it. The site has to be a node of the kind its form needs, or the
-// hint describes a different file than the one on disk. And a Form D site has
-// to be a declaration this form can express, because turning one into an
-// assignment is a byte edit over its own tokens rather than a re-rendering.
 func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath string) (site, error) {
 	span := guard.SiteSpan
 	if !span.Contains(m.Span) {
@@ -204,10 +129,6 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
 		}
 		if guard.SiteType == "" {
-			// The result type is what the closure is written around, and there
-			// is none. A hint like this is discovery and this package
-			// disagreeing about the form, which is what the independent check
-			// here exists to catch.
 			return site{}, x.unsupported(m, srcPath, span,
 				"a Form E site carries no type for its closure to return")
 		}
@@ -218,10 +139,6 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 			return site{}, x.notFound(m, srcPath, span, "no expression covers these bytes")
 		}
 		if guard.SiteType == "" {
-			// The conversion is the whole of what this form adds, and there is
-			// nothing to convert to. A hint like this is discovery and this
-			// package disagreeing about the form, which is exactly what the
-			// independent check here exists to catch.
 			return site{}, x.unsupported(m, srcPath, span,
 				"a Form C' site carries no type to convert its selector back to")
 		}
@@ -271,26 +188,6 @@ func (x *siteIndex) siteFor(m mutation.Mutant, guard discover.Guard, srcPath str
 	}
 }
 
-// wrappableStatement reports whether a statement may be buried in a block.
-//
-// The list is exactly the one [discover.Guard] documents for Form S, and it is
-// short for one reason: every statement here declares nothing, so wrapping it
-// in `if … { … } else { … }` changes no scope and the code after it goes on
-// compiling. A `:=` and a `var` do declare, which is what Form D exists for; an
-// `if`, a `for` or a block is never a hint this package should see, and a hint
-// naming one means discovery and this package have drifted apart.
-//
-// `defer` and `go` are in the list and are wrapped whole, statement and all,
-// rather than having their call rewritten in place. Both are function-scoped
-// rather than block-scoped: a `defer` inside the guard's block still runs when
-// the enclosing *function* returns, and a `go` still starts its goroutine, so
-// the block the guard adds changes nothing about when either fires.
-//
-// This list and [discover.FormSStatement] are one fact in two places, and the
-// second one is the fail-closed one: a hint naming a statement this package
-// cannot wrap has to be refused here rather than trusted. Two implementations
-// can disagree, so TestBothPhasesAgreeOnWhatFormSCanWrap drives every statement
-// kind Go has through both and requires the same answer.
 func wrappableStatement(stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case *ast.ExprStmt, *ast.ReturnStmt, *ast.IncDecStmt, *ast.SendStmt, *ast.DeferStmt, *ast.GoStmt:
@@ -298,26 +195,12 @@ func wrappableStatement(stmt ast.Stmt) bool {
 	case *ast.AssignStmt:
 		return s.Tok != token.DEFINE
 	case *ast.BranchStmt:
-		// A branch binds to the nearest enclosing construct of its own kind and
-		// an `if` is not one, so the block the guard adds changes nothing about
-		// where it goes. `fallthrough` is refused for a syntactic reason rather
-		// than a semantic one: it has to be the final statement of a case
-		// clause, which a statement inside an `if` block is not.
 		return s.Tok != token.FALLTHROUGH
 	default:
 		return false
 	}
 }
 
-// closurableStatement reports whether a statement may be moved into a closure
-// that is called where it stood.
-//
-// It is [wrappableStatement]'s list minus a `return`, a `defer`, a `go` and
-// every branch statement, and the reasons are written out in
-// [discover.FormFStatement] beside the list this one has to agree with. Asking
-// again here rather than trusting the hint is the same fail-closed rule the
-// Form S check follows, and TestBothPhasesAgreeOnWhatFormFCanClose is what
-// keeps the two lists one list.
 func closurableStatement(stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case *ast.ExprStmt, *ast.SendStmt, *ast.IncDecStmt:
@@ -329,35 +212,6 @@ func closurableStatement(stmt ast.Stmt) bool {
 	}
 }
 
-// undeclare computes the cuts that turn one declaring statement into plain
-// assignments, in coordinates relative to the site.
-//
-// Two shapes reach here, and each is handled by removing the tokens that make
-// it a declaration and nothing else:
-//
-//   - `x, y := f()` loses one byte: the `:` of its `:=`. Everything else — the
-//     names, the spacing, the whole right-hand side, every line break in it —
-//     is the user's own bytes, still in place.
-//   - `var x T = f()` loses the `var` keyword and the type, and a parenthesized
-//     `var ( … )` block loses its parentheses too, which leaves the specs
-//     inside it as a list of assignments separated by the line breaks that were
-//     already there. A spec with no initialiser has nothing to assign and is
-//     cut whole; the name it declared is still declared, by the `var` the guard
-//     writes in front of itself from the hint's [discover.DeclType] list.
-//
-// Every cut has to be free of line breaks for the rewrite to stay
-// line-preserving. Two of them are as long as the source says — a spec with no
-// initialiser, and a spelled-out type — and discovery is what keeps those on
-// one line: a `var` it cannot undeclare this way is refused there, so no hint
-// naming one ever arrives, and the candidate is a recorded skip rather than a
-// failed run. That refusal belongs to the phase that can decline a candidate;
-// this one can only fail a whole file.
-//
-// The check is still made, by the caller rather than here: the splices go
-// through [LinePreserving] together with the nested guards, so a cut that does
-// hold a line break is reported as [CodeLineDrift] against the site instead of
-// being silently swallowed. Reaching it means discovery and this package have
-// drifted apart, which is what an internal error is for.
 func (x *siteIndex) undeclare(stmt ast.Stmt, span mutation.Span, m mutation.Mutant, srcPath string) ([]Splice, error) {
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
@@ -385,7 +239,6 @@ func (x *siteIndex) undeclare(stmt ast.Stmt, span mutation.Span, m mutation.Muta
 	}
 }
 
-// undeclareVar is [siteIndex.undeclare] for a `var` declaration.
 func (x *siteIndex) undeclareVar(gen *ast.GenDecl, span mutation.Span, m mutation.Mutant, srcPath string) ([]Splice, error) {
 	cuts := make([]Splice, 0, 3+2*len(gen.Specs))
 	keyword, err := x.rewriteToken(gen.TokPos, token.VAR.String(), "", span, m, srcPath)
@@ -412,8 +265,6 @@ func (x *siteIndex) undeclareVar(gen *ast.GenDecl, span mutation.Span, m mutatio
 			return nil, x.unsupported(m, srcPath, span,
 				fmt.Sprintf("a %T is not a value specification", spec))
 		}
-		// A spec with no initialiser is not an assignment and cannot become
-		// one, so the whole of it goes; the guard declares its names anyway.
 		if len(value.Values) == 0 {
 			cuts = append(cuts, x.cut(value.Pos(), value.End(), span))
 			continue
@@ -425,10 +276,6 @@ func (x *siteIndex) undeclareVar(gen *ast.GenDecl, span mutation.Span, m mutatio
 	return cuts, nil
 }
 
-// cut is the splice that removes the bytes between two positions, expressed
-// relative to base. The bytes it carries are read from the file, so the splice
-// describes what is really there and [Apply] has something to check the site
-// against.
 func (x *siteIndex) cut(from, to token.Pos, base mutation.Span) Splice {
 	span := mutation.Span{StartByte: x.offset(from), EndByte: x.offset(to)}
 	return Splice{
@@ -437,13 +284,6 @@ func (x *siteIndex) cut(from, to token.Pos, base mutation.Span) Splice {
 	}
 }
 
-// rewriteToken is [siteIndex.cut] for one fixed token, checked against the
-// bytes at its position.
-//
-// The check is what turns a hint that no longer describes the file into a
-// refusal rather than an edit. Every position here comes from the parsed file
-// and so cannot miss, which is precisely why the one way it could — a future
-// caller passing a position from somewhere else — is worth a line of code.
 func (x *siteIndex) rewriteToken(
 	pos token.Pos,
 	tok, replacement string,
@@ -462,7 +302,6 @@ func (x *siteIndex) rewriteToken(
 	}, nil
 }
 
-// notFound builds the "the file is not what the hint says" error.
 func (x *siteIndex) notFound(m mutation.Mutant, srcPath string, span mutation.Span, detail string) error {
 	return &Error{
 		Code: CodeSiteNotFound,
@@ -471,7 +310,6 @@ func (x *siteIndex) notFound(m mutation.Mutant, srcPath string, span mutation.Sp
 	}
 }
 
-// unsupported builds the "this hint names a shape no guard form covers" error.
 func (x *siteIndex) unsupported(m mutation.Mutant, srcPath string, span mutation.Span, detail string) error {
 	return &Error{
 		Code: CodeUnsupportedGuard,
@@ -480,9 +318,6 @@ func (x *siteIndex) unsupported(m mutation.Mutant, srcPath string, span mutation
 	}
 }
 
-// position renders a span's start as the file:line:column a user would look
-// for. Out-of-range offsets fall back to the byte range, since a diagnostic
-// must not panic on the very drift it is reporting.
 func (x *siteIndex) position(srcPath string, span mutation.Span) string {
 	if uint64(span.StartByte) > uint64(x.tok.Size()) {
 		return srcPath + " " + span.String()
@@ -491,16 +326,6 @@ func (x *siteIndex) position(srcPath string, span mutation.Span) string {
 	return fmt.Sprintf("%s:%d:%d", srcPath, pos.Line, pos.Column)
 }
 
-// buildSites arranges one file's mutants into the forest of rewrite sites they
-// occupy, and the site each of those nodes is.
-//
-// Identical site spans become alternatives of one node — six comparison rules
-// rewriting one operator are one guard with six branches, and an arithmetic
-// swap and a statement deletion on one statement are one guard with two, family
-// notwithstanding — and nested sites become children. Partial overlap cannot
-// happen: two nodes of one syntax tree either nest or are disjoint, so a
-// conflict means a hint's site span does not describe a node at all, and it is
-// reported as the internal error it is.
 func buildSites(
 	index *siteIndex,
 	srcPath string,
@@ -530,9 +355,6 @@ func buildSites(
 			}
 		}
 		sites[resolved.span] = resolved
-		// Collected per mutant rather than per site: two mutants can share a
-		// site and reach it through guards that spell different types, and what
-		// the file needs is the union of what is written into it.
 		completions = discover.MergeCompletions(completions, guard.Imports)
 		items = append(items, interval.Item[mutation.Mutant]{Span: resolved.span, Payload: m})
 	}
@@ -543,13 +365,6 @@ func buildSites(
 	return forest, sites, completions, nil
 }
 
-// agree refuses two hints that name one site and disagree about what it is.
-//
-// The form and the declared names are properties of the site rather than of the
-// mutant, so two candidates in one statement must produce the same answer.
-// Rendering one guard from two contradictory hints would mean silently picking
-// whichever arrived first, which is the kind of order dependence the whole
-// phase is built to keep out.
 func agree(previous, current site, m mutation.Mutant, srcPath string) error {
 	if previous.form == current.form && slices.Equal(previous.declare, current.declare) {
 		return nil
@@ -562,26 +377,6 @@ func agree(previous, current site, m mutation.Mutant, srcPath string) error {
 	}
 }
 
-// renderSites composes every site of one file, children before parents, and
-// returns the splices to apply to the pristine bytes.
-//
-// The composition is bottom-up in parent-relative coordinates: a site's
-// original text is its own pristine bytes with each child's finished rewrite
-// spliced in, and only the outermost sites are ever spliced against the file
-// itself. [interval.Forest.InnerFirst] supplies the order that makes this
-// possible; the [OffsetMap] each nested [Apply] returns is deliberately unused,
-// because composing in a child's parent-relative coordinates is the same
-// arithmetic done by construction rather than by lookup, and it never leaves the
-// file's own coordinate system to begin with.
-//
-// The second return value is the number of sites rewritten: one per node,
-// nested sites included. Several mutants of one site are alternatives inside a
-// single rewrite, which is why it is not the number of mutants.
-//
-// Both trees share this, and only this. What a site becomes is the caller's
-// compose function — a guard chain in one tree, a probe block in the other —
-// and everything around it, the order and the splices, is a fact about nested
-// byte ranges rather than about either form.
 func renderSites(
 	forest interval.Forest[mutation.Mutant],
 	src []byte,
@@ -611,17 +406,12 @@ func renderSites(
 			Span:        root.Span,
 			Original:    src[root.Span.StartByte:root.Span.EndByte],
 			Replacement: rendered[root],
-			// Named for the same reason every other producer here is: a
-			// conflict between a site and something else used to be reported as
-			// two slice indices, which says nothing about either side.
-			Origin: "the rewrite site at " + root.Span.String(),
+			Origin:      "the rewrite site at " + root.Span.String(),
 		})
 	}
 	return splices, len(rendered), nil
 }
 
-// placeSites is the forest placement itself, split out from the site
-// computation so that the invariant it enforces can be exercised directly.
 func placeSites(srcPath string, items []interval.Item[mutation.Mutant]) (interval.Forest[mutation.Mutant], error) {
 	forest, conflicts := interval.Build(items)
 	if len(conflicts) > 0 {
@@ -635,7 +425,6 @@ func placeSites(srcPath string, items []interval.Item[mutation.Mutant]) (interva
 	return forest, nil
 }
 
-// relativeTo re-expresses a span in coordinates that start at base.
 func relativeTo(span mutation.Span, base uint32) mutation.Span {
 	return mutation.Span{StartByte: span.StartByte - base, EndByte: span.EndByte - base}
 }

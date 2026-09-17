@@ -11,21 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// `unobserved` is the second way a survivor reaches the document without having
-// been executed, and the document has to keep it apart from the first.
-//
-// An uncovered mutant's lines are never run, and the remedy is a test that
-// reaches them. An unobserved one's lines *are* run, and the remedy is an
-// assertion in a test that already runs them. A row carrying both would be one
-// two phases each claim to have settled, and a reader could not tell which
-// remedy to reach for -- so it is refused rather than resolved.
-
-// unobservedOptions is the coverage fixture with one survivor settled by a
-// probe rather than by coverage.
-//
-// The uncovered mutant is left as it is: the two answers coexist in one run,
-// and a fixture where only one could appear would not exercise the rule that
-// keeps them apart.
 func unobservedOptions(t *testing.T) (report.Options, int) {
 	t.Helper()
 
@@ -38,8 +23,6 @@ func unobservedOptions(t *testing.T) (report.Options, int) {
 		result.Unobserved = true
 		return opts, i
 	}
-	// Every survivor of the fixture is already uncovered, so one is converted:
-	// what is under test is the document's rule, not the fixture's shape.
 	for i := range opts.Results {
 		result := &opts.Results[i]
 		if !result.Uncovered {
@@ -53,8 +36,6 @@ func unobservedOptions(t *testing.T) (report.Options, int) {
 	return report.Options{}, 0
 }
 
-// TestAnUnobservedSurvivorIsWrittenAndIsNotUncovered is the ordinary case: the
-// document carries the fact, and carries it in the field that means it.
 func TestAnUnobservedSurvivorIsWrittenAndIsNotUncovered(t *testing.T) {
 	t.Parallel()
 
@@ -86,11 +67,6 @@ func TestAnUnobservedSurvivorIsWrittenAndIsNotUncovered(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesAnUnobservedMutantThatCannotBeOne is the rule itself, one
-// impossible combination at a time.
-//
-// Each row is a document a run could only write by having decided two things at
-// once, and the refusal is what stops the contradiction reaching a reader.
 func TestBuildRefusesAnUnobservedMutantThatCannotBeOne(t *testing.T) {
 	t.Parallel()
 
@@ -131,11 +107,6 @@ func TestBuildRefusesAnUnobservedMutantThatCannotBeOne(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesAnUnobservedMutantWithExecutions is the same rule asked of
-// the other field, and it is a different refusal with a different code.
-//
-// A mutant the run did not execute has nothing to show for it, and rows under
-// one would describe passes a probe settled the mutant instead of making.
 func TestBuildRefusesAnUnobservedMutantWithExecutions(t *testing.T) {
 	t.Parallel()
 

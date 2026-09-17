@@ -18,547 +18,86 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// Options configures [Discover].
-//
-// The zero value is not usable: [Options.SnapshotRoot] has no sensible
-// default, since discovery must never be pointed at the user's own tree by
-// accident.
 type Options struct {
-	// SnapshotRoot is the absolute or relative path of the module root to
-	// discover in. It is the snapshot, never the user's working tree: the
-	// digests candidates carry are of the bytes found here.
 	SnapshotRoot string
 
-	// Toolchain is the located Go toolchain. Its directory is prepended to the
-	// child environment's PATH; see the package documentation for what that
-	// does and does not achieve.
 	Toolchain gocmd.Toolchain
 
-	// Env is the complete base environment used by the package loader. Nil
-	// inherits the current process environment. Discovery still decides GOWORK
-	// -- off, or removed -- and prepends the located toolchain's
-	// directory to PATH. The field allows a long-lived public workspace to
-	// freeze all other build inputs at Open time instead of observing later
-	// process-global changes.
 	Env []string
 
-	// Workspace says that the snapshot is a `go.work` and its modules are to be
-	// resolved through it. It is false for every run that is not a workspace
-	// run.
-	//
-	// GOWORK is off by default, and that default is what turns the refusal of
-	// a snapshot-root `go.work` into a guarantee -- see [environment]. A
-	// workspace run inverts exactly one half of it: GOWORK is *removed* rather
-	// than pinned, so the go command finds the workspace file of the tree it is
-	// running in by walking up from its own working directory. That file is the
-	// snapshot's own and cannot be another: the loader runs inside a copy that
-	// carries one, and it is at or above every directory the loader looks in.
-	//
-	// Removed rather than named, because a named path has a spelling and a
-	// working directory has another. A temporary directory reached through a
-	// symlink -- which is every one of them on macOS -- gives the go command a
-	// resolved cwd and an unresolved GOWORK, and it compares the two as text:
-	// "directory prefix app does not contain modules listed in go.work", about
-	// a module that is right there. Letting it find the file relative to the
-	// directory it is already in is the only spelling that cannot disagree.
 	Workspace bool
 
-	// WorkspaceRoot is the directory holding the `go.work` the caller already
-	// read, and is empty outside a workspace pass.
-	//
-	// It is a path rather than a flag because of what the flag could not say. A
-	// workspace pass hands each module its own directory, and for a `use .`
-	// that directory is the workspace root -- which [Discover] would otherwise
-	// refuse for holding the very file the pass was walking. Excusing every
-	// module of a workspace instead would excuse a module that carries a
-	// *second* `go.work` of its own, which the go command does not support and
-	// which everything below this still has to refuse. Naming the one file
-	// distinguishes the two.
 	WorkspaceRoot string
 
-	// PathPrefix is what [Options.Include] and [Options.Exclude] are written
-	// against, relative to the module root, and is empty outside a workspace.
-	//
-	// A pattern is written by somebody looking at their tree, and in a
-	// workspace what they are looking at is the workspace: `app/*.go` is one
-	// module's files. Matching a module-relative path instead would make one
-	// pattern mean a different set in every module, and `*.go` would quietly
-	// mean "every module's top-level files". This is the module's own directory
-	// within the workspace, prepended before a path is matched -- and nothing
-	// else sees it: the paths candidates, skips and digests carry stay relative
-	// to the module they belong to, because that is what the identity and the
-	// module's own report are keyed on.
 	PathPrefix string
 
-	// Rules selects the operators to apply. Empty means every rule this phase
-	// implements, which is what [SupportedRules] returns. Rules the canonical
-	// registry does not know are an error; rules it knows but this phase has
-	// not implemented yet are ignored, so a caller may pass a whole profile's
-	// selection without tracking which families have landed.
 	Rules []mutation.Rule
 
-	// Include lists the patterns a file must match to be considered, matched
-	// against its '/'-normalized module-relative path. Empty includes
-	// everything; a file matching none of a non-empty set is recorded as an
-	// "excluded" skip.
 	Include []glob.Pattern
 
-	// Exclude lists the patterns that remove a file again. Excludes are
-	// applied after includes, so an exclude always wins.
 	Exclude []glob.Pattern
 
 	Packages []string
 }
 
-// A Located is one candidate plus where a human would look for it.
-//
-// The embedded [mutation.Candidate] is the whole truth for identity and
-// instrumentation; the line, column, and package are for the console, the
-// report, and the GitHub annotations, none of which can do anything with a
-// byte offset. [Located.Guard] is neither: it is the site hint the
-// instrumentation phase consumes, and it is documented as a contract on
-// [Guard].
 type Located struct {
 	mutation.Candidate
 
-	// Line is the 1-based line the candidate's span starts on.
-	Line int
-	// Column is the 1-based byte offset of the span's start within that line.
-	// Bytes, not runes and not display cells: it is what `file:line:col`
-	// consumers — editors, `::warning file=`, a jump-to-mutant — expect.
-	Column int
-	// Package is the import path of the package owning the file, with the
-	// " [pkg.test]" suffix of a test variant removed.
-	Package string
-	// Guard is the rewrite site the instrumenter has to use for this candidate.
-	// Every candidate carries one; a candidate for which no guard form could be
-	// determined is not emitted at all, it is a [SkipUnnameableDeclType] skip.
-	Guard Guard
-	// Branch is the body a decreasing edit's condition gates, or nil when this
-	// phase proved nothing about the candidate. Unlike [Located.Guard] it is
-	// optional in both directions: nothing downstream needs it, and a consumer
-	// that has it can discharge tests without running them. See [BranchProof].
-	Branch *BranchProof
-	// Termination is what this phase could prove about the loop the candidate
-	// sits in, or nil when it could prove nothing. It is optional in both
-	// directions for [Located.Branch]'s reason, and it never changes a verdict:
-	// a mutant proved unbounded is catalogued, instrumented and measured like
-	// any other. See [TerminationProof].
+	Line        int
+	Column      int
+	Package     string
+	Guard       Guard
+	Branch      *BranchProof
 	Termination *TerminationProof
 }
 
-// A GuardForm names one of the rewrite shapes instrumentation composes a
-// dormant mutant from. The design plan calls them Form S, Form C, and Form D,
-// and these are those three and no others.
 type GuardForm string
 
-// The guard forms.
 const (
-	// GuardFormC is the bool selector:
-	//
-	//	(__gm.M[3] && (<mutated>) || !(__gm.M[3]) && (<original>))
-	//
-	// It wraps an expression whose static type is exactly the universe `bool`,
-	// so that both branches are ordinary expressions in the site's own context
-	// and the compiler settles typing, evaluation order, and short-circuiting.
-	// A named boolean type is deliberately not a Form C site: the selector
-	// evaluates to `bool`, which is not assignable to `type Flag bool`.
-	GuardFormC GuardForm = "C"
-	// GuardFormS is the statement guard:
-	//
-	//	if __gm.M[7] { <mutated statement, flattened> } else { <original bytes> }
-	//
-	// It is used where the edit is not inside any bool-valued expression. The
-	// site is a statement that declares nothing, so wrapping it in a block
-	// changes no scope.
-	GuardFormS GuardForm = "S"
-	// GuardFormD is the declaration rewrite:
-	//
-	//	var x T; if __gm.M[9] { x = <mutated> } else { x = <original> }
-	//
-	// It is used where the site is a statement that *does* declare something —
-	// `x := e` or `var x = e` — because Form S would bury those declarations
-	// inside a block and the code after them would stop compiling. The declared
-	// types the rewrite needs are in [Guard.DeclTypes]; discovery computes them
-	// because it is the only phase that has the type information.
-	GuardFormD GuardForm = "D"
-	// GuardFormCPrime is the bool selector with a conversion at each end,
-	// for a site whose type is a *named* boolean rather than the universe one:
-	//
-	//	Flag(__gm.M[3] && bool(<mutated>) || !(__gm.M[3]) && bool(<original>))
-	//
-	// It exists because Form C requires the site to be exactly the universe
-	// `bool` -- the selector it writes is an untyped boolean expression, and
-	// putting one where a `Flag` was expected does not compile. Both
-	// conversions are always legal: a defined boolean type's underlying type is
-	// `bool`, so each direction is a conversion between a type and its
-	// underlying type, and for a type parameter whose core type is boolean the
-	// same conversion is valid for every type in the set.
-	//
-	// It is the last form tried rather than a variant of Form C, so that a site
-	// Form C or Form S already covers is covered by exactly what covered it
-	// before: this adds sites and moves none.
-	//
-	// [Guard.SiteType] carries the type to convert to, spelled as this file may
-	// write it. A type the file cannot name is refused, exactly as a Form D
-	// declaration of such a type is.
+	GuardFormC      GuardForm = "C"
+	GuardFormS      GuardForm = "S"
+	GuardFormD      GuardForm = "D"
 	GuardFormCPrime GuardForm = "C'"
-	// GuardFormF is the statement guard inside a closure that is called at
-	// once:
-	//
-	//	func() { if __gm.M[7] { <mutated copy, flattened> } else { <original> } }()
-	//
-	// A call is an expression, so the whole thing is an expression statement --
-	// which is a *simple* statement, and simple statements are what the slots
-	// Form S cannot reach will hold. `for i := 0; i < n; if __gm.M[3] { … }` is
-	// not Go; `for i := 0; i < n; func() { … }()` is.
-	//
-	// The closure captures by reference, so a statement that assigns or
-	// increments works on the variable it named, and a `for` post statement
-	// operates on the per-iteration variable Go declares before running it --
-	// the closure is created and called within that statement, so it captures
-	// exactly what the statement would have touched.
-	//
-	// The statements this form may hold are *narrower* than Form S's, and the
-	// three it excludes are excluded for one reason each rather than for
-	// tidiness. A `return` inside the closure returns from the closure. A
-	// `defer` fires when the closure returns. A `break`, `continue` or `goto`
-	// cannot cross a function boundary at all. None of the three can appear in
-	// a slot this form reaches, so excluding them costs nothing and saying so
-	// costs one sentence. [FormFStatement] is the list.
-	GuardFormF GuardForm = "F"
-	// GuardFormE is the typed expression selector: the guard inside a closure
-	// that returns the site's own type and is called where the expression was.
-	//
-	//	func() int { if __gm.M[7] { return <mutated, flattened> } else { return <original> } }()
-	//
-	// It is the last form tried and the one that needs the least of its site: an
-	// expression, in a position where an expression of the same type is legal,
-	// whose type this file can spell. What it buys is every position that holds
-	// an expression and no statement a guard can stand in -- a `switch` tag, a
-	// `range` clause, a type switch guard, and the initialiser of a `:=` in a
-	// slot Form F cannot reach.
-	//
-	// Three properties come from the closure being *where the expression was*
-	// rather than hoisted in front of it, and each one is a refusal some other
-	// design would have had to make. The expression is evaluated in the same
-	// order and the same number of times, because a call is evaluated where it
-	// is written. Every name in scope at the expression is in scope inside the
-	// closure, including a `:=`'s own declared name -- Go begins a declared
-	// name's scope at the *end* of its specification, so a closure inside the
-	// initialiser is before that end and reads the enclosing declaration, which
-	// is what the original did. And no new identifier is invented, so there is
-	// no name to allocate and no name to collide.
-	//
-	// [Guard.SiteType] carries the result type, spelled as this file may write
-	// it. A type the file cannot name is refused, which is the last refusal
-	// `unnameable-decl-type` is left naming.
-	GuardFormE GuardForm = "E"
+	GuardFormF      GuardForm = "F"
+	GuardFormE      GuardForm = "E"
 )
 
-// A DeclType is one identifier a Form D site declares, together with the source
-// spelling of its type.
-//
-// Type is what [types.TypeString] produced against a qualifier built from the
-// file's own import declarations, so it can be written into that file verbatim.
-// Discovery never invents an import to make a type nameable: a type that cannot
-// be spelled with what the file already imports makes the whole candidate a
-// [SkipUnnameableDeclType] skip instead.
 type DeclType struct {
-	// Name is the identifier as it is spelled in the declaration.
 	Name string
-	// Type is the type as it must be written in this file.
 	Type string
 }
 
-// A Guard is the Form D site hint: the contract between discovery, which has
-// the type information, and instrumentation, which has none.
-//
-// # Why the hint is computed here
-//
-// Choosing a guard form needs answers only a type checker holds — is this
-// expression the universe `bool` or a named boolean type, what type does `x :=
-// f()` declare, is this value an `error` — and instrumentation deliberately
-// parses the snapshot without type checking it. Handing the decision down as
-// data keeps that split: the instrumenter stays a byte rewriter that can be
-// tested with no toolchain in the loop, and the phase that already paid for
-// go/types answers the questions once.
-//
-// # How the form is chosen
-//
-// Walking outward from the edit, in this order:
-//
-//  1. The nearest enclosing expression whose static type is exactly the
-//     universe `bool` — `types.Typ[types.Bool]`, or an untyped bool that
-//     materialised as one — and that sits in a position where a parenthesised
-//     expression is legal, is a [GuardFormC] site. The search stops at the
-//     first ancestor that is not an expression, so it never crosses out of a
-//     function literal into the expression the literal sits in.
-//  2. Otherwise the nearest enclosing statement, which must be an expression
-//     statement, a `return`, an assignment that is not `:=`, an `++`/`--`, a
-//     send, a `defer` or a `go` for [GuardFormS], or a `:=` or a `var`
-//     declaration for [GuardFormD]. The search stops at the enclosing function,
-//     for the same reason.
-//  3. A statement in a slot that holds a *simple* statement rather than any
-//     statement -- an `if`, `switch` or `for` initialiser, or a `for` post
-//     statement -- is a [GuardFormF] site when it is one of the four
-//     [FormFStatement] names.
-//  4. Otherwise the nearest enclosing expression whose type is boolean
-//     *underneath* -- a named boolean type -- is a [GuardFormCPrime] site.
-//  5. Otherwise the nearest enclosing expression of any type this file can
-//     spell is a [GuardFormE] site. Each form is tried after the ones before
-//     it, so every site an earlier form covered is covered by exactly that
-//     form: a new form adds sites and moves none.
-//
-// Anything else is refused, and a refused candidate is never emitted. The
-// refusals are all reported as [SkipUnnameableDeclType], which this phase reads
-// as "v1's guard forms cannot express this site":
-//
-//   - the nearest statement is one no form covers — a `switch` tag or a `range`
-//     clause;
-//   - an expression in a position that needs more than its type: an assignment
-//     target, the operand of `++` or `&`, a field name;
-//   - a Form D site declares a type that cannot be spelled with the file's own
-//     imports;
-//   - a `:=` redeclares an existing variable instead of declaring every name on
-//     its left afresh. Form D would have to know which names to declare and
-//     which to leave alone, so v1 declines the whole site;
-//   - an initialiser of a Form D site mentions a name that same site declares.
-//     Go begins a declared name's scope at the end of its own specification, so
-//     `total := total * 2` and `err := fmt.Errorf("…: %w", err)` read the
-//     enclosing declaration; hoisting the new one out in front would rebind
-//     them to a zero value and quietly change what the program computes;
-//   - a Form D site is a `var` whose declaration tokens cannot be cut without
-//     moving a line: a spec with no initialiser, or a spelled-out type, written
-//     across more than one line. The whole of the first and the type of the
-//     second are what the rewrite removes, and removing a line break moves
-//     every line after it.
-//
-// # The probe hint rides beside it
-//
-// [Guard.Probe] answers a question about a different tree and does not touch
-// any of the above. The guard forms are how a mutant is written into the mutant
-// tree; the probe site is how the same candidate is *measured* in the probe
-// tree, where no mutant is ever active. It may be absent, and its absence
-// changes nothing about the guard — see [ProbeSite].
 type Guard struct {
-	// Form is the rewrite shape to use.
-	Form GuardForm
-	// SiteSpan is the byte range the guard replaces: the bool expression for
-	// Form C, the statement for Form S and Form D. It always contains the
-	// candidate's own span.
-	SiteSpan mutation.Span
-	// DeclTypes are the identifiers a Form D site declares, in source order,
-	// with the type each one must be declared as. It is empty for Form C and
-	// Form S, and may be empty for a Form D site whose every name is the blank
-	// identifier, which declares nothing.
+	Form      GuardForm
+	SiteSpan  mutation.Span
 	DeclTypes []DeclType
-	// SiteType is the type the site's own expression has, spelled as this file
-	// may write it. It is set for [GuardFormCPrime] and empty for every other
-	// form, which need no type of their own: Form C's selector is untyped, and
-	// the two statement forms produce statements rather than values.
-	SiteType string
+	SiteType  string
 
-	// Imports are the packages this guard's spelling needs the file to import
-	// and does not already, each with the name the spelling binds it to. It is
-	// empty for almost every guard: a completion only happens where a type
-	// belongs to a package a *sibling* file of the same package imports, which
-	// is the one addition that cannot change the import graph. See imports.go.
-	//
-	// It belongs to the guard rather than to the file because a rewrite may
-	// instrument any subset of a file's mutants — validation bisects — so a
-	// guard has to declare everything its own bytes need, whether or not
-	// another guard in the same file happens to need it too.
 	Imports []Completion
 
-	// Probe is what the probe tree needs in order to measure this candidate,
-	// and nil when no form can. A nil Probe means the mutant is not probed,
-	// never that it is not mutated: the candidate is catalogued, guarded and
-	// executed exactly as any other. See [ProbeSite].
 	Probe *ProbeSite
 }
 
-// A ProbeForm names the shape a probe tree takes for one candidate.
-//
-// # The invariant every form shares
-//
-// A probe tree runs the *original* program with a report attached, and what it
-// reports is one bit per mutant: `Infect(i)` means **this pass could not rule
-// mutant i out**, and the absence of i from every log of every covering binary
-// means **it could**. Nothing else is claimed, and nothing else is needed: the
-// second reading is the one that licenses skipping an execution, and it is the
-// one that has to be conservative.
-//
-// Writing the invariant in those words rather than as "the value differed" is
-// what lets a form exist for a site that has no value. A deleted statement's
-// mutant differs from the original by the *absence* of an effect, which no
-// expression can compare; what a probe can say there is that the statement ran
-// at all, and a pass that never ran it is a pass that cannot have observed its
-// removal. Same licence, different evidence.
 type ProbeForm string
 
-// The probe forms.
 const (
-	// ProbeFormReturn is the return-value form: the whole `return` statement is
-	// rewritten so that each result is named, and the probed one is compared
-	// with the constant the mutant would have returned.
-	//
-	//	{ var r0 T0 = E0; …; if rj != K { __gm.Infect(i) }; return r0, …, rn }
-	//
-	// It is the form with the strongest evidence — the comparison is exactly
-	// the question "would the two programs have returned different values" —
-	// and the narrowest conditions, which [ProbeSite] states in full.
 	ProbeFormReturn ProbeForm = "return"
 
-	// ProbeFormBool is the boolean form: the site is measured where it stands,
-	// by a helper that evaluates both readings of it and yields the original's.
-	//
-	//	__gm.Differs(i, (<original>), (<mutated>))
-	//
-	// It reaches every Form C site — a comparison, a boolean operator, an `if`
-	// or `for` condition — which is most of what a run catalogues, and it is
-	// the one form whose conditions are about the *whole* site rather than
-	// about one operand: both readings are evaluated, so an effect anywhere in
-	// it would happen twice, and a mutant that rearranges short-circuiting can
-	// reach an operand the original never did.
-	//
-	// The helper is possible only here. Its parameters are `bool`, which is
-	// exactly what a Form C site is — a named boolean type could not be passed
-	// to it, and internal/instrument's doc.go gives the general argument
-	// against helper forms that this one shape escapes.
 	ProbeFormBool ProbeForm = "bool"
 
-	// ProbeFormValue is the typed form: the nearest expression around the edit
-	// whose value can be compared is wrapped in a closure that measures it.
-	//
-	//	func() T { var p T = (<original>); if p != (<mutated>) { __gm.Infect(i) }; return p }()
-	//
-	// It is the boolean form for everything that is not a boolean, and it costs
-	// what the boolean form does not: the type has to be written out, which is
-	// the machinery Form D's declarations and Form E's closures already go
-	// through. What it buys is the arithmetic, the bitwise and the comparison
-	// families measured at sites no statement rewrite could reach -- a `switch`
-	// tag and a `for` post statement have nowhere to hoist a temporary to, and
-	// this needs nowhere.
-	//
-	// Its conditions are the boolean form's plus two about the comparison
-	// itself: the value has to be comparable without panicking, and it may not
-	// be floating-point or complex, since `-0.0 != 0` is false while the two
-	// are distinguishable. [ProbeSite] states all of them.
 	ProbeFormValue ProbeForm = "value"
 
-	// ProbeFormReach is the reachability form: the statement is prefixed with
-	// the call and otherwise left exactly as it was.
-	//
-	//	{ __gm.Infect(i); <original statement> }
-	//
-	// It is what a deleted statement gets, and the reason the invariant on
-	// [ProbeForm] is written the way it is. A deletion's mutant differs from
-	// the original by the *absence* of an effect, and a probe tree runs
-	// effects: there is no value to compare, and no rewrite of the original
-	// program could make one appear. What there is instead is the fact that the
-	// statement ran, and a pass that never ran it cannot have observed its
-	// removal — the same licence, from different evidence.
-	//
-	// Two costs, and both are real. It over-approximates badly: a deletion on a
-	// hot path is "infected" by nearly every test that touches the package,
-	// which licenses nothing. And reaching a statement is not observing its
-	// removal — deleting `x = x` changes nothing, and this form will report it
-	// infected by every test that runs it. Neither costs correctness: both make
-	// the answer *more* conservative, which is the direction this layer is
-	// allowed to be wrong in.
 	ProbeFormReach ProbeForm = "reach"
 )
 
-// A ProbeSite is what the probe tree needs to know about one candidate.
-//
-// # What it describes
-//
-// The probe tree runs the original program and reports, per mutant, whether
-// this pass could rule that mutant out. [ProbeForm] says in what shape; this
-// says over which bytes, and with which types and position where the shape
-// needs them.
-//
-// For [ProbeFormReturn] at result position j of `return E0, E1, …` the rewrite
-// is
-//
-//	{ var r0 T0 = E0; var r1 T1 = E1; …; if rj != K { __gm.Infect(i) }; return r0, r1, … }
-//
-// and this is the T0, T1, … and the j it needs. K is the mutant's own
-// replacement, which the catalogue already carries.
-//
-// # Why the type is the declared result type
-//
-// Tj is the *result* type of the enclosing function and never the type of the
-// operand. `return 1` in a function returning int64 becomes
-// `var r0 int64 = 1`, because that is the conversion the `return` itself
-// performs — and it is the conversion the mutant's `return 0` would have
-// performed too, so comparing a temporary of that type against the constant
-// asks exactly the question "would the two returns have differed". A temporary
-// declared as the operand's type would be a different program, and one that
-// usually compiles.
-//
-// # Why every result is named
-//
-// The rewrite replaces the statement, so it has to reproduce it: naming only
-// the mutated result would leave the others to the `return` and evaluate them a
-// second time. So the hint describes the whole statement, and two candidates in
-// one `return` carry the same Span and Types and differ only in Index.
-//
-// # When it is absent
-//
-// Five reasons, and the first two are about the statement as a whole. The
-// rewrite writes the result types into the file it rewrites, so a type that
-// file cannot spell is a probe that cannot be written. A result that is or
-// contains a type parameter is refused too — a value of a type parameter's type
-// need not be comparable with a constant, and the constraint decides.
-//
-// The third is the soundness of the measurement rather than the writing of it.
-// The mutant returns its constant *instead of evaluating* the operand it
-// replaces, so the probe stands in for it only where evaluating that operand is
-// nothing but computing a value. Every operand of the statement therefore has
-// to be effect-free: an effect in the mutated operand is one the mutant does
-// not have, and an effect in any other operand makes the order matter, which
-// the rewrite fixes to source order while the compiler is free to read a plain
-// variable after the calls beside it.
-//
-// The last two are per result and leave the other results of the same statement
-// probed. The probed operand may not be one whose evaluation can panic, because
-// a panic makes the two programs diverge somewhere the comparison is never
-// reached to see, so nothing is recorded and the log reads as "never differed".
-// And the probed result may not be floating-point or complex, because
-// `-0.0 != 0` is false while the two values are distinguishable. effects.go
-// carries the grammars that decide the last three and the argument for each.
-//
-// A refusal costs the probe and nothing else. The candidate is still emitted,
-// still catalogued, still mutated and still guarded, which is why it is not a
-// [Skip]: nothing was declined, and a skip counted here would tell a user that
-// go-mutants had passed over an edit it in fact makes.
 type ProbeSite struct {
-	// Form is the shape the probe rewrite takes. It decides which of the fields
-	// below carry anything, and a consumer branches on it before reading them.
-	Form ProbeForm
-	// Span is the byte range the probe rewrite replaces: the whole `return`
-	// statement for [ProbeFormReturn].
-	Span mutation.Span
-	// Types is one spelled type per operand the rewrite has to declare, in
-	// order, as this file may write them.
-	Types []string
-	// Index is the position, in that list, of the operand the candidate's span
-	// replaces.
-	Index int
-	// Imports are the packages the spellings in Types need the file to import
-	// and does not already. It is [Guard.Imports] for the probe tree, and is
-	// kept apart from it because the two are different trees: an import the
-	// probe's temporaries need is one the mutant tree would carry unused, which
-	// does not compile.
+	Form    ProbeForm
+	Span    mutation.Span
+	Types   []string
+	Index   int
 	Imports []Completion
 }
 
-// at returns the hint for one operand position of the same site, or nil for a
-// site that has none. The statement-level part is computed once per statement
-// and every candidate in it takes a copy with its own position, which is what
-// keeps two candidates of one statement agreeing about the site.
 func (r *ProbeSite) at(index int) *ProbeSite {
 	if r == nil {
 		return nil
@@ -568,83 +107,23 @@ func (r *ProbeSite) at(index int) *ProbeSite {
 	return &site
 }
 
-// A SkipReason names why discovery passed something over. Reasons are part of
-// the report format and of `--explain` output, so each string is fixed.
 type SkipReason string
 
-// The v1 skip reasons: three that remove a whole file, five that suppress an
-// expression because of the context it sits in, and one that refuses a site no
-// guard form can express.
 const (
-	// SkipGenerated marks a file whose leading comments claim it is generated.
-	// Mutating generated code measures the generator's test suite, not this
-	// project's, and the edit would be overwritten by the next run of it.
 	SkipGenerated SkipReason = "generated"
-	// SkipCgo marks every file of a package that imports "C". The instrumented
-	// build would have to survive the cgo preprocessor, which v1 does not
-	// attempt.
-	SkipCgo SkipReason = "cgo"
-	// SkipExcluded marks a file the include and exclude patterns removed. When
-	// more than one whole-file reason applies to a file, this is the one
-	// reported: the others are facts about the code, and this one is the
-	// user's own decision, which is the answer they are looking for.
-	SkipExcluded SkipReason = "excluded"
+	SkipCgo       SkipReason = "cgo"
+	SkipExcluded  SkipReason = "excluded"
 
-	// SkipConstDecl marks an expression inside a `const` declaration. A
-	// constant must stay constant, and an `iota` block is one edit away from
-	// renumbering everything after it.
-	SkipConstDecl SkipReason = "const-decl"
-	// SkipArrayLength marks an expression inside an array length. It is part of
-	// a type, evaluated by the compiler and never at run time.
-	SkipArrayLength SkipReason = "array-length"
-	// SkipPackageVarInit marks an expression in a package-level variable
-	// initialiser, `//go:embed` declarations included. Initialisation order is
-	// a global property that a per-mutant guard cannot express in v1.
+	SkipConstDecl      SkipReason = "const-decl"
+	SkipArrayLength    SkipReason = "array-length"
 	SkipPackageVarInit SkipReason = "package-var-init"
-	// SkipTypeParam marks an expression inside a type parameter list, a
-	// constraint, or an explicit type argument. Those positions hold types, not
-	// values, however much a constant array length inside one may look like a
-	// value.
-	SkipTypeParam SkipReason = "type-param"
+	SkipTypeParam      SkipReason = "type-param"
 
-	// SkipLabelOrGoto marks a `goto`, whose jump this phase will not move.
-	//
-	// The name covers both halves of one decision, and only one half of it is
-	// still a refusal. A *label* cannot be removed, because an unused label is
-	// a compile error and a used one leaves its references dangling -- so no
-	// rule proposes removing one, and nothing is declined. Dropping a label
-	// from the `break` or `continue` that carries it is a different edit, and
-	// it is the `labeled-branch` family rather than a refusal.
-	//
-	// A `goto` is what is left. It is mutable in principle -- retarget it, or
-	// remove it -- and both are refused with a reason rather than passed over.
-	// Retargeting is not stable: Go forbids jumping over a declaration or into
-	// a block, so a great many retargets do not compile, and every one of them
-	// costs a whole rejection pass to find out. Removing is legal Go and still
-	// wrong: `goto` is a terminating statement, so `if __gm.M[3] { } else {
-	// goto L }` is not one, and a function that ended with the `goto` now
-	// reaches its closing brace without returning. That is the argument the
-	// deletion family already makes about `panic`, and it reaches the same
-	// answer.
 	SkipLabelOrGoto SkipReason = "label-or-goto"
 
-	// SkipUnnameableDeclType marks a candidate whose rewrite site none of the
-	// three guard forms can express. The name comes from the case the design
-	// plan called out — a Form D declaration whose type cannot be spelled with
-	// the imports the file already has — and it has since become the single
-	// reason for every such refusal, because they are one fact for a user:
-	// go-mutants knows what it would like to mutate here and cannot say it in
-	// Go. [Guard] enumerates them.
 	SkipUnnameableDeclType SkipReason = "unnameable-decl-type"
 )
 
-// explanations is one sentence per reason, for `--explain`.
-//
-// They live here rather than in the command line package because they are
-// statements about what discovery decided, and a second copy of that prose
-// would go stale the first time a reason's meaning was sharpened. They are
-// deliberately shorter than the doc comments above: a listing prints one per
-// reason, and a paragraph each would bury the counts they annotate.
 var explanations = map[SkipReason]string{
 	SkipGenerated:          "the file says it is generated, so an edit here would measure the generator's tests and be overwritten by its next run",
 	SkipCgo:                "the package imports \"C\", and v1 does not put its rewrites through the cgo preprocessor",
@@ -657,24 +136,8 @@ var explanations = map[SkipReason]string{
 	SkipUnnameableDeclType: "no guard form can express a rewrite here, usually a declared type that cannot be spelled with the file's own imports",
 }
 
-// Explanation is one sentence saying what a reason means, or "" for a reason
-// this build does not define.
-//
-// The empty answer is for a document rather than for a run: `--explain` reads
-// reasons out of a report, which may have been written by another version, and
-// a reason nobody here recognises is still a row worth printing with its counts.
 func (r SkipReason) Explanation() string { return explanations[r] }
 
-// AllSkipReasons returns every reason discovery can emit, in the declaration
-// order of the constants above. The slice is freshly allocated, so a caller
-// may sort or filter it without disturbing anyone else.
-//
-// This list MUST name every [SkipReason] this package emits. It is the
-// canonical enumeration the rest of the tree checks itself against: the
-// package's own tests parse these sources and fail when a Skip* constant is
-// declared without being listed here, and the tests of internal/report check
-// the `reason` enumeration of the run report schema against it. A reason
-// missing from this list is a reason nothing guards.
 func AllSkipReasons() []SkipReason {
 	return []SkipReason{
 		SkipGenerated,
@@ -689,11 +152,6 @@ func AllSkipReasons() []SkipReason {
 	}
 }
 
-// reasonRank is the tie-break order for two suppressed regions that cover
-// exactly the same bytes. It is the order of [AllSkipReasons] — the
-// declaration order above — frozen so that the same collision resolves the
-// same way on every machine, and derived rather than retyped so that a new
-// reason cannot arrive without a rank of its own.
 var reasonRank = func() map[SkipReason]int {
 	reasons := AllSkipReasons()
 	ranks := make(map[SkipReason]int, len(reasons))
@@ -703,137 +161,34 @@ var reasonRank = func() map[SkipReason]int {
 	return ranks
 }()
 
-// A Skip is one recorded reason, aggregated per file.
-//
-// Count means one of two things, depending on the reason, and the distinction
-// is worth stating: for a whole-file reason ([SkipGenerated], [SkipCgo],
-// [SkipExcluded]) it is 1, because the file was never opened and counting
-// candidates in it would mean guessing. For a context reason it is the number
-// of candidates that really were suppressed there.
 type Skip struct {
-	// Path is the '/'-normalized module-relative path of the file.
-	Path string
-	// Reason is why discovery passed it over.
+	Path   string
 	Reason SkipReason
-	// Count is the number of suppressed candidates, or 1 for a whole file.
-	Count int
+	Count  int
 }
 
-// A SkipSite is one suppressed candidate, at the coordinates discovery saw it
-// at.
-//
-// [Skip] answers "how much of this file was passed over, and why"; this answers
-// "which of it". They are two views of one event and are recorded together, so
-// grouping the sites of a pass by file and reason reproduces its [Skip] rows
-// exactly — which is the invariant that lets the report go on carrying the
-// aggregate alone.
-//
-// The pair is therefore not a redundancy to collapse. A run report is a
-// document other tools read and diff, and forty coordinates per file is a
-// document nobody would; a listing is read once, by the person who asked why
-// their catalogue is smaller than they expected, and "somewhere in this file"
-// is not an answer for them.
-//
-// One site is one *candidate*, not one expression: two rules proposing an edit
-// at the same position in a suppressed context are two sites at one coordinate,
-// because two edits really were declined there. That is what keeps the sites
-// summing to the counts, and it is why each site names the rule that was
-// declined -- otherwise the same coordinate repeated three times is three lines
-// carrying one line's worth of information, and the reader cannot tell whether
-// they are looking at three refusals or at a bug in the counting.
 type SkipSite struct {
-	// Path is the '/'-normalized module-relative path of the file.
-	Path string
-	// Reason is why discovery passed it over.
+	Path   string
 	Reason SkipReason
-	// Line is the 1-based line the suppressed candidate's edit would have
-	// started on, or 0 for a whole-file reason ([SkipGenerated], [SkipCgo],
-	// [SkipExcluded]). Such a file was never opened, so there is no site in it
-	// to name and a coordinate here would be an invention — 0 says so.
-	Line int
-	// Column is the 1-based, byte-counted column of that position, or 0 for a
-	// whole-file reason. It is the unadjusted position, exactly as
-	// [Located.Column] is: a `//line` directive relocates a compiler
-	// diagnostic, and this coordinate has to name the byte in the file the
-	// snapshot holds.
+	Line   int
 	Column int
-	// Rule is the name of the rule whose edit was declined, or empty for a
-	// whole-file reason -- such a file is never opened, so no rule ever
-	// proposed anything in it.
-	//
-	// It is the rule's name rather than the [mutation.Rule] so that a site
-	// stays a coordinate and a label: nothing downstream needs the version or
-	// the tier of a rule that produced no mutant, and carrying them would
-	// invite a consumer to treat a refusal as a catalogue entry.
-	Rule string
+	Rule   string
 }
 
-// A Result is everything one discovery pass learned.
 type Result struct {
-	// Candidates are the proposed edits, in (path, span start, rule registry
-	// position) order.
-	Candidates []Located
-	// Skips are the recorded reasons, in (path, reason) order.
-	Skips []Skip
-	// SkipSites are the same suppressions one candidate at a time, in
-	// (path, line, column, reason, rule) order. See [SkipSite].
-	SkipSites []SkipSite
-	// ModulePath is the module path of the main module at the snapshot root.
-	ModulePath string
-	// GoVersion is that module's `go` directive — "1.26", not "go1.26.5". It
-	// is deliberately not the toolchain version: the caller passed the
-	// toolchain in and already knows that. An empty string means the module
-	// declares no `go` directive, which is reported as the empty string rather
-	// than filled in from somewhere else.
-	GoVersion string
-	// SourceDigests is the lowercase hex SHA-256 of every file this pass
-	// actually read, keyed by module-relative path with forward slashes.
-	//
-	// It is what discovery *saw*, which is a bigger set than the files that
-	// produced candidates — and the difference is the point. A caller checking
-	// that the tree did not move underneath the pass cannot do it from the
-	// candidates alone: a file with nothing mutable in it, or one a transient
-	// edit emptied, is loaded, walked and read, and contributes no candidate
-	// at all, so a check built on candidates would never look at it.
-	//
-	// What it does not cover is every file no byte of which was read: a test
-	// file, a generated one, one an include or exclude pattern dropped, one
-	// belonging to a package that imports "C", and all of them when no rule is
-	// selected. Those are [Skip]s where they are skipped for a reason, and a
-	// caller comparing digests has nothing to compare for them.
+	Candidates    []Located
+	Skips         []Skip
+	SkipSites     []SkipSite
+	ModulePath    string
+	GoVersion     string
 	SourceDigests map[string]string
 }
 
-// Discover finds every mutation candidate in the snapshot.
-//
-// The sequence is fixed: refuse what cannot be discovered at all (a bad root,
-// a workspace, an unknown rule), load, prove the tree compiles, and only then
-// walk syntax. Each step's failure has its own code, so a user never has to
-// guess which half of the phase went wrong.
 func Discover(ctx context.Context, opts Options) (Result, error) {
 	root, err := resolveRoot(opts.SnapshotRoot)
 	if err != nil {
 		return Result{}, err
 	}
-	// Only the snapshot's own workspace file is an error. The go command would
-	// also find one in a parent directory or through $GOWORK, and neither is
-	// part of the snapshot; the loader runs with GOWORK=off so that neither can
-	// decide what this run resolves against. See [environment].
-	//
-	// The workspace pass is excused for its own root module and for nothing
-	// else. [DiscoverWorkspace] walks a workspace module by module and hands
-	// each one its own directory; for a `use .` that directory is the workspace
-	// root, so this check would find the very file that pass had just read and
-	// refuse it — telling the caller to point at one of the workspace's
-	// modules, which is exactly what it was doing.
-	//
-	// [Options.WorkspaceRoot] is that one file's directory rather than a
-	// boolean, because "the caller is a workspace pass" is not the same
-	// permission as "this go.work is the one the caller already read". A module
-	// *inside* a workspace that carries a second go.work of its own is a nested
-	// workspace, which the go command does not support and which this refuses
-	// for the reason it always has: everything below assumes one module. Told
-	// only that a workspace pass was running, this would have let that through.
 	if opts.WorkspaceRoot == "" || !samePath(opts.WorkspaceRoot, root) {
 		if workspaceErr := CheckWorkspace(root); workspaceErr != nil {
 			return Result{}, workspaceErr
@@ -852,13 +207,6 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	// Every path from here on is measured against the module directory the go
-	// command reported, not against the root as it was configured. The two name
-	// the same directory — mainModule proved it — but they need not be spelled
-	// the same way, and a temporary directory reached through a symlink or a
-	// Windows short name is exactly where that bites: relative paths taken
-	// against the other spelling would climb out of the module and every file
-	// would silently vanish from the catalogue.
 	moduleRoot := module.Dir
 	cgoPackages := findCgoPackages(loaded, moduleRoot)
 	if err := gate(loaded, cgoPackages); err != nil {
@@ -889,7 +237,6 @@ func Discover(ctx context.Context, opts Options) (Result, error) {
 	}, nil
 }
 
-// resolveRoot turns the configured root into an absolute directory path.
 func resolveRoot(root string) (string, error) {
 	if strings.TrimSpace(root) == "" {
 		return "", &Error{Code: CodeSnapshotRoot, Message: "no snapshot root was given"}
@@ -916,46 +263,27 @@ func resolveRoot(root string) (string, error) {
 	return abs, nil
 }
 
-// discovery is the mutable state of one pass. It exists so that the walk can
-// record a skip from anywhere without threading an accumulator through every
-// helper.
 type discovery struct {
 	root     string
 	matchers matchers
-	// prefix is [Options.PathPrefix]: what a module-relative path is joined to
-	// before the include and exclude patterns see it.
-	prefix  string
-	include []glob.Pattern
-	exclude []glob.Pattern
-	// cgo names the packages whose files are excluded wholesale.
-	cgo cgoExemption
+	prefix   string
+	include  []glob.Pattern
+	exclude  []glob.Pattern
+	cgo      cgoExemption
 
 	candidates []Located
 	skips      map[skipKey]int
-	// sites is the same record one suppression at a time, appended in walk
-	// order and sorted on the way out. See [SkipSite].
-	sites []SkipSite
-	// seen deduplicates files across the package variants go/packages returns
-	// for one directory: a package and its "[pkg.test]" twin share every
-	// non-test file.
-	seen map[string]bool
-	// digests is the digest of every file whose bytes this pass read, keyed by
-	// module-relative path. It becomes [Result.SourceDigests].
-	digests map[string]string
-	// siblings caches one import index per package, keyed by import path. It is
-	// a cache rather than a field of the walk because the index is a fact about
-	// a package while the walk is per file: computing it per file would read
-	// every file of a package once for every file of that package.
-	siblings map[string]map[string]string
+	sites      []SkipSite
+	seen       map[string]bool
+	digests    map[string]string
+	siblings   map[string]map[string]string
 }
 
-// skipKey is the aggregation key of [Skip].
 type skipKey struct {
 	path   string
 	reason SkipReason
 }
 
-// record adds n to the count of one (path, reason) pair.
 func (d *discovery) record(path string, reason SkipReason, n int) {
 	if n <= 0 {
 		return
@@ -963,13 +291,6 @@ func (d *discovery) record(path string, reason SkipReason, n int) {
 	d.skips[skipKey{path: path, reason: reason}] += n
 }
 
-// recordSite records one suppression, aggregate and coordinates alike.
-//
-// It is the only way either record is written, and that is the point: the
-// counts and the sites are two views of one event, so a call site that could
-// add to one without the other is a call site where they can drift. Every
-// suppression goes through here, and [SkipSite] carries the invariant that
-// falls out of it.
 func (d *discovery) recordSite(path string, reason SkipReason, rule string, line, column int) {
 	d.record(path, reason, 1)
 	d.sites = append(d.sites, SkipSite{
@@ -981,20 +302,10 @@ func (d *discovery) recordSite(path string, reason SkipReason, rule string, line
 	})
 }
 
-// recordFile records a whole-file suppression, which has no coordinates.
-//
-// The file was never opened — that is what a whole-file reason means — so
-// nothing here knows where in it a candidate would have been, and line 0 says
-// exactly that rather than pointing at the package clause.
 func (d *discovery) recordFile(path string, reason SkipReason) {
 	d.recordSite(path, reason, "", 0, 0)
 }
 
-// run walks every package the main module owns, in a fixed order.
-//
-// Cancellation is checked once per package rather than per node: the walk is
-// pure computation over syntax that is already in memory, so a package is the
-// smallest unit where stopping early buys anything.
 func (d *discovery) run(ctx context.Context, loaded *loadResult) error {
 	for _, pkg := range loaded.packages {
 		if err := ctx.Err(); err != nil {
@@ -1007,17 +318,9 @@ func (d *discovery) run(ctx context.Context, loaded *loadResult) error {
 	return nil
 }
 
-// sortedCandidates returns the candidates in catalogue-compatible order:
-// path, then span, then registry position. The last key matters only when two
-// rules propose an edit at the same span, which this phase's two families
-// never do — it is there so that the order does not have to change when a
-// family that does lands.
 func (d *discovery) sortedCandidates() []Located {
 	out := slices.Clone(d.candidates)
 	registry := mutation.CanonicalRegistry()
-	// Every rule here was verified against this registry by newMatchers, so
-	// the lookup cannot miss; the zero from a miss would still leave the
-	// comparison total rather than panicking on a future caller's mistake.
 	position := func(l Located) int {
 		p, _ := registry.Position(l.Rule.Name)
 		return p
@@ -1037,7 +340,6 @@ func (d *discovery) sortedCandidates() []Located {
 	return out
 }
 
-// sortedSkips flattens the aggregation map into (path, reason) order.
 func (d *discovery) sortedSkips() []Skip {
 	out := make([]Skip, 0, len(d.skips))
 	for key, count := range d.skips {
@@ -1052,26 +354,12 @@ func (d *discovery) sortedSkips() []Skip {
 	return out
 }
 
-// sortedSkipSites returns the sites in (path, line, column, reason, rule) order.
-//
-// Reading order, and for the same reason `list --explain` prints them: a user
-// who has just been told a file holds four suppressed const expressions wants
-// them in the order they would scroll past, not grouped by a reason they have
-// already been given. The reason is the last key rather than an absent one so
-// that the comparison is total — two rules can propose an edit at one position
-// and be declined for one reason each — and the rule name is the last key after
-// it, for the case that makes the reason insufficient: three rules declined at
-// one coordinate for one reason, which is what a named boolean condition
-// produces. Without it the order between those three would be the order the
-// walk happened to reach them in, and two passes over the same bytes have to
-// produce the same bytes here.
 func (d *discovery) sortedSkipSites() []SkipSite {
 	out := slices.Clone(d.sites)
 	slices.SortFunc(out, compareSkipSites)
 	return out
 }
 
-// compareSkipSites is the order [Result.SkipSites] promises.
 func compareSkipSites(x, y SkipSite) int {
 	if c := strings.Compare(x.Path, y.Path); c != 0 {
 		return c
@@ -1088,24 +376,10 @@ func compareSkipSites(x, y SkipSite) int {
 	return strings.Compare(x.Rule, y.Rule)
 }
 
-// BuildCatalog feeds a result into the catalogue builder.
-//
-// It is a convenience and nothing more: [mutation.Builder] sorts, deduplicates,
-// and indexes on its own, so the ordering [Discover] produces is not load
-// bearing here. Rule selection has already happened — it is [Options.Rules] —
-// which is why this takes no selection argument.
 func BuildCatalog(result Result) (*mutation.Catalog, error) {
 	return BuildCatalogOf([]Result{result})
 }
 
-// BuildCatalogOf builds one catalogue out of several discoveries, which is what
-// a workspace produces: one catalogue spanning its modules, so that a mutant of
-// one is measured against every test that covers it whichever module compiled
-// that test. See ADR 0012.
-//
-// The candidates are added in the order the results are given, and the
-// catalogue's own canonical order is what decides everything downstream, so
-// which module was discovered first changes nothing about the answer.
 func BuildCatalogOf(results []Result) (*mutation.Catalog, error) {
 	builder := mutation.NewBuilder()
 	for _, result := range results {
@@ -1122,13 +396,6 @@ func BuildCatalogOf(results []Result) (*mutation.Catalog, error) {
 	return builder.Build()
 }
 
-// packagePath strips the test-variant decoration go/packages puts on the
-// package path of a package compiled for a test binary, so that a candidate
-// reports the import path a user would type.
-// Cut rather than Index and a slice: the decoration cannot begin at offset
-// zero -- an import path's first byte is never a space -- so `i >= 0` and
-// `i > 0` are one boundary written two ways, and no package path could tell
-// them apart. Cut has no offset for an edit to move.
 func packagePath(pkg *packages.Package) string {
 	path, _, _ := strings.Cut(pkg.PkgPath, " [")
 	return path

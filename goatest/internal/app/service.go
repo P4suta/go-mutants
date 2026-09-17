@@ -35,13 +35,8 @@ import (
 
 type RunFunc func(context.Context, assure.Options) (report.Report, error)
 
-// GitOutput runs one git command in root and returns its standard output.
-//
-// An error means the command could not be run or did not succeed; the caller
-// decides whether that is fatal or is the repository simply not being one.
 type GitOutput func(ctx context.Context, root string, arguments ...string) ([]byte, error)
 
-// resolved fills in the real git for a nil GitOutput.
 func (git GitOutput) resolved() GitOutput {
 	if git == nil {
 		return gitOutputBytes
@@ -72,22 +67,6 @@ type Service struct {
 
 	TraceFilesystem trace.Filesystem
 
-	// Git runs one git command in a directory and returns its standard output.
-	//
-	// The zero value runs the real git, like the two filesystems above it. It
-	// is a field rather than a package-level variable because ADR 0014 wants
-	// replaceable behaviour to travel as an argument, and it is on Service
-	// rather than passed to each call because the operations that need it are
-	// reached through Service.Execute and nothing else.
-	//
-	// Before it existed, every test that drove an operation started a real git
-	// - about ten files' worth - even when the test had a fake Run installed
-	// and cared nothing for the repository. The process always failed, because
-	// the root was a temporary directory outside any repository, and the run
-	// settled into the git-metadata-unavailable limitation it was supposed to.
-	// So the child cost a few milliseconds and changed no answer, which is the
-	// worst shape a dependency can have: it made those tests need git in order
-	// to be classified, while needing nothing from it in order to pass.
 	Git GitOutput
 
 	DiagnosticsFilesystem DiagnosticsFilesystem
@@ -97,12 +76,6 @@ type Service struct {
 
 	doctorFilesystem doctorProbeFilesystem
 
-	// doctorProcess starts the children `goatest doctor` runs.
-	//
-	// It is nil in production and a fake in a test that drives a failure a real
-	// process would not produce. It was a package-level variable, which is why
-	// every test in this package ran alone: a variable one test replaces is
-	// shared with every test that does not.
 	doctorProcess startDoctorProcess
 }
 
@@ -110,31 +83,16 @@ var (
 	reportRunSequence atomic.Uint64
 )
 
-// reportHooks are the operations finalizing a report performs outside itself.
-//
-// One value rather than a parameter each, because they arrive together and
-// travel together: a report is finalized once, from one place, and a caller that
-// has to remember two arguments will one day remember one. The zero value is
-// production.
 type reportHooks struct {
-	// git runs one git command in a directory.
 	git GitOutput
 
-	// readConfiguration reads the configuration file whose bytes the run is
-	// identified by.
 	readConfiguration func(string) ([]byte, error)
 }
 
-// reportHooks are the operations this service finalizes a report through.
-//
-// Git is a field of Service, like the two filesystems, so a caller outside this
-// package can replace it. readConfiguration is not: nothing outside needs to,
-// and an exported field nobody sets is a surface with no reader.
 func (service Service) reportHooks() reportHooks {
 	return reportHooks{git: service.Git}.resolved()
 }
 
-// resolved fills every operation this value leaves unset from the real thing.
 func (hooks reportHooks) resolved() reportHooks {
 	hooks.git = hooks.git.resolved()
 	if hooks.readConfiguration == nil {
@@ -336,12 +294,6 @@ func (service Service) runAndWrite(ctx context.Context, root string, request cli
 	}
 	if err != nil {
 		if !ran && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			// Stopped while still waiting for the repository cache lease, so
-			// the run never began and has nothing to say about this
-			// repository. Either cause is the same fact here, which is why
-			// this is the one place they are not told apart: what differs
-			// between them is how the process ends, and this process is
-			// ending the same way whatever it writes.
 			return report.Report{}, err
 		}
 		interrupted := errors.Is(err, context.Canceled)
@@ -416,31 +368,6 @@ func infrastructureErrorReport(partial report.Report, request cli.Request, cause
 	return result
 }
 
-// interruptedReport marks a stopped run as stopped.
-//
-// Every other way a run can end badly leaves a report and a diagnostics bundle.
-// Cancellation left a line on stderr, which is the wrong way round: the run
-// most likely to be stopped is the long one on a machine nobody is watching,
-// and a CI job that reaches its own time limit is sent a SIGTERM - so the case
-// where the failure is hardest to reproduce was the one case that recorded
-// nothing about itself.
-//
-// What this publishes is worth stating exactly, because the obvious reading is
-// wrong. assure.Run pairs every error it returns with an empty report, at all
-// thirty-one of its error returns, and a cancellation arrives as an error - so
-// this report carries the run's identity, scope, contract, configuration digest
-// and duration, and none of its measurements.
-// The measurements-so-far are in the diagnostics bundle written beside it,
-// which holds the recorded events the run had reached: the phase that was open
-// and the commands that had run. Making assure.Run hand back what it had
-// settled is the change that would put them in the report, and it is not this
-// one.
-//
-// The verdict is INSUFFICIENT rather than ERROR. Nothing failed; the evidence is
-// missing, which is the one thing INSUFFICIENT means. This is applied after
-// finalizeReport rather than before it, unlike infrastructureErrorReport,
-// because scopedVerdict maps a replay run by its findings count and an
-// interrupted replay that found nothing is not RESOLVED.
 func interruptedReport(partial report.Report, cause error) report.Report {
 	result := partial
 	result.Verdict = report.VerdictInsufficient
@@ -463,10 +390,6 @@ func (service Service) run(ctx context.Context, root string, request cli.Request
 	}
 	options := service.assureOptions(root, request)
 	options.Trace = recording.recorder
-	// The engine's own account, which a run used to close a workspace on and
-	// lose. The two recordings are kept beside each other rather than merged:
-	// they are different formats that reject each other by design, and a reader
-	// has to know which one they are holding.
 	options.EngineRecording = recording.engine.add
 	cacheHit := false
 	var mutex sync.Mutex
@@ -728,17 +651,13 @@ func requestedScope(request cli.Request, kind report.RunKind) report.ScopeSpec {
 
 func scopedVerdict(verdict report.Verdict, kind report.RunKind, resolved string, findings int) report.Verdict {
 	if kind == report.RunReplay {
-		//exhaustive:total A replay has two answers and an error is neither: every verdict but Error
-		// becomes Resolved or Reproduced by whether the replay found anything.
-		switch verdict {
-		case report.VerdictError:
+		if verdict == report.VerdictError {
 			return verdict
-		default:
-			if findings == 0 {
-				return report.VerdictResolved
-			}
-			return report.VerdictReproduced
 		}
+		if findings == 0 {
+			return report.VerdictResolved
+		}
+		return report.VerdictReproduced
 	}
 	if verdict != report.VerdictAssured {
 		return verdict

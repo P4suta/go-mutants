@@ -3,28 +3,6 @@
 
 //go:build integration
 
-// The whole operator catalogue, end to end.
-//
-// The rest of the engine's integration suite proves one mechanism at a time
-// against a fixture built for it: the baseline gate, compile validation,
-// coverage narrowing, the interruption path. This file proves the operators
-// themselves. `fixtures/families` holds at least one live candidate for each of
-// the forty-nine rules the frozen registry names, and the run here has to
-// discover, instrument, compile, execute and score every one of them.
-//
-// It lives in its own file rather than at the end of integration_test.go
-// because it is the only part of the suite whose subject is the catalogue, and
-// because its expectations are the families fixture's documented claims about
-// itself — fixtures/README.md says the same things in prose.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/engine/...
-//
-// The comment above is deliberately not a package doc: integration_test.go
-// carries this package's, and a second one would leave `go doc` picking between
-// them.
-
 package engine
 
 import (
@@ -39,28 +17,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// A familyTally is one row of the families fixture's claim about itself: how
-// many of an operator family's executed mutants die, and how many live.
 type familyTally struct{ killed, survived int }
 
-// familiesTable is that claim in full, one row per family, counted over the
-// mutants the run actually executed.
-//
-// It is aggregated by family rather than written out mutant by mutant because
-// what this fixture exists to prove is a statement about families: that every
-// one of the fourteen reaches execution, and that each one both kills and —
-// where the fixture leaves a gap on purpose — survives. A hundred and eleven
-// per-mutant rows
-// would say the same thing in a form nobody reads, and would turn every
-// reformatting of the fixture into a wall of diff. The survivors are then named
-// individually below, because that is the half a count cannot pin.
-//
-// The uncovered pair in `Orphan` is deliberately outside this table. Coverage
-// settles those two without executing either, so counting them here would sit a
-// survivor no test could have caught beside survivors that eleven tests ran
-// straight past, and would inflate `integer-arithmetic` and
-// `return-replacement` with a fate that is not about the operator at all. They
-// are asserted separately, as coverage's own finding.
 var familiesTable = map[string]familyTally{
 	string(mutation.FamilyBooleanLiteral):    {killed: 2, survived: 2},
 	string(mutation.FamilyConditionNegation): {killed: 8, survived: 1},
@@ -78,10 +36,6 @@ var familiesTable = map[string]familyTally{
 	string(mutation.FamilyStatementDeletion): {killed: 7, survived: 0},
 }
 
-// The families fixture's totals, stated once so that the assertions below read
-// as claims about the fixture rather than as restatements of whatever the run
-// happened to produce. familiesBalanced and familiesStrong are the same
-// catalogue seen from the two narrower tiers.
 const (
 	familiesMutants   = 111
 	familiesKilled    = 95
@@ -92,20 +46,10 @@ const (
 	familiesStrong   = 102
 )
 
-// TestFamiliesRunReachesEveryOperatorFamily is the catalogue end to end.
-//
-// A family that stopped being discovered, stopped being instrumentable, or
-// started being refused by the compiler shows up here as a missing row rather
-// than as a number that quietly got smaller. The run is at profile `all`
-// because that is the only tier that selects every family; the tiers themselves
-// are the next test's subject.
 func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	t.Parallel()
 	opts := options(t, "families")
 	opts.Config.Mutation.Profile = mutation.TierAll
-	// Four workers rather than the harness's one. Everything asserted here is a
-	// tally or a set, so the event *order* is not part of the claim — and this
-	// fixture starts a hundred and nine processes, which is where the time goes.
 	opts.Config.Execution.Jobs = 4
 
 	outcome, events, err := collect(t, t.Context(), opts)
@@ -119,11 +63,6 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 		t.Errorf("the report records profile %q, want %q", profile, mutation.TierAll)
 	}
 
-	// Nothing was refused. Every guard form the expanded catalogue needs — the
-	// bool selector, the statement guard, and the declaration rewrite — composes
-	// a compilable program over every family in this fixture, and a rejection
-	// here would mean one of the three stopped being able to express one of the
-	// fourteen. fixtures/rejectable is where a rejection is the expected answer.
 	if len(outcome.Report.Rejected) != 0 {
 		t.Errorf("rejected = %+v, want none: every family in this fixture instruments", outcome.Report.Rejected)
 	}
@@ -136,11 +75,6 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	if summary.NotRun != 0 || summary.Errored != 0 || summary.Inconclusive != 0 {
 		t.Errorf("summary = %+v, want every mutant settled as killed or survived", summary)
 	}
-	// Called out on its own because the tally above would report a hang as a
-	// missing kill and send a reader looking in the wrong place. A timeout here
-	// means a loop in the fixture stopped terminating under every mutant of it,
-	// which is the invariant the fixture's package documentation is most
-	// concerned with.
 	if summary.TimedOut != 0 {
 		t.Errorf("%d mutants timed out: a loop in the fixture no longer terminates under every mutant of it",
 			summary.TimedOut)
@@ -150,7 +84,6 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 		t.Errorf("score = %v, want %v (%d of %d)", summary.ScorePercent, want, familiesKilled, familiesMutants)
 	}
 
-	// The table, over the mutants the run executed.
 	got := make(map[string]familyTally, len(familiesTable))
 	for _, m := range outcome.Report.Mutants {
 		if m.Uncovered {
@@ -171,17 +104,12 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 		t.Errorf("per-family results =\n\t%s\nwant\n\t%s", renderTally(got), renderTally(familiesTable))
 	}
 
-	// Stated against the registry rather than against the table above, which
-	// would be circular: a family the registry names and this run never executed
-	// is the failure the whole fixture exists to catch.
 	for _, family := range mutation.CanonicalRegistry().Families() {
 		if got[string(family)].killed == 0 {
 			t.Errorf("the %s family contributed no executed, killed mutant: %+v", family, got[string(family)])
 		}
 	}
 
-	// And every rule, not merely every family: a family whose six rules had
-	// collapsed into one matcher would still fill in its row above.
 	fired := make(map[string]bool, mutation.CanonicalRuleCount)
 	for _, m := range outcome.Report.Mutants {
 		fired[m.Rule] = true
@@ -203,18 +131,6 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 
 	assertFamiliesSurvivors(t, events)
 
-	// Nothing is skipped, and the empty list is an assertion rather than an
-	// omission.
-	//
-	// There used to be two, both on the `i++` post statement of the fixture's
-	// counted loop, because a block is not legal Go in a post slot and no form
-	// could express one. Form F expresses it, so they are mutants now. The
-	// `i := 0` initialiser beside them never was a skip: `0` is an integer
-	// literal and no rule proposes an edit there, so nothing was ever declined.
-	//
-	// This fixture holds one live candidate for every rule; refusals are
-	// fixtures/discovery's subject, and a skip appearing here would mean a
-	// guard form had silently begun swallowing sites.
 	wantSkips := []report.Skip(nil)
 	if !slices.Equal(outcome.Report.Skips, wantSkips) {
 		t.Errorf("skips = %+v, want %+v", outcome.Report.Skips, wantSkips)
@@ -229,20 +145,6 @@ func TestFamiliesRunReachesEveryOperatorFamily(t *testing.T) {
 	validateDocument(t, document)
 }
 
-// assertFamiliesSurvivors names the sixteen survivors.
-//
-// The per-family table says how many there are; this says which they are,
-// because a survivor that moved from an under-tested function into a pinned one
-// would leave every count intact. Each line here is a function the fixture's
-// README lists as deliberately under-tested — `Salt`, `Toggle`, `Drift`,
-// `Weigh`, `Tags` — or the one nothing calls at all, `Orphan`.
-//
-// The line numbers are the fixture's, and a mutant's coordinates come from a
-// byte offset into the file — so editing a *doc comment* in
-// fixtures/families moves them exactly as editing code does. The cheapest way to
-// refresh this list after any edit there is to ask the tool rather than to count:
-//
-//	cd fixtures/families && go-mutants list --profile all
 func assertFamiliesSurvivors(t *testing.T, events []Event) {
 	t.Helper()
 	want := []string{
@@ -275,18 +177,9 @@ func assertFamiliesSurvivors(t *testing.T, events []Event) {
 	}
 }
 
-// assertFamiliesCoverage is coverage-guided selection judged against the
-// families fixture.
-//
-// The binary count on its own would pass with the narrowing broken, so what is
-// asserted is the consequence: the two mutants in the function nothing calls
-// were never started, carry no attempts, and are still published as survivors —
-// while every other mutant in the fixture really ran.
 func assertFamiliesCoverage(t *testing.T, outcome RunOutcome, events []Event) {
 	t.Helper()
 	block := outcome.Report.Coverage
-	// The default narrowing is test-level, so a default run of this fixture
-	// narrows each mutant to the tests that reach it and the block says so.
 	if block.Mode != report.CoverageTest {
 		t.Fatalf("coverage mode = %q, want %q with the built-in test command", block.Mode, report.CoverageTest)
 	}
@@ -315,9 +208,6 @@ func assertFamiliesCoverage(t *testing.T, outcome RunOutcome, events []Event) {
 			continue
 		}
 		uncovered++
-		// Orphan's, and only Orphan's. The file is named because a mutant that
-		// became uncovered somewhere else would mean a test stopped reaching a
-		// line, which is a different fault from the narrowing being wrong.
 		if m.Path != "numbers.go" {
 			t.Errorf("the uncovered mutant %s is in %s, want it in Orphan's numbers.go", m.DisplayID, m.Path)
 		}
@@ -337,9 +227,6 @@ func assertFamiliesCoverage(t *testing.T, outcome RunOutcome, events []Event) {
 	}
 }
 
-// renderTally prints a per-family table as sorted lines, so that a failure
-// names the family that moved instead of printing two map literals in whatever
-// order the runtime felt like.
 func renderTally(table map[string]familyTally) string {
 	families := slices.Sorted(maps.Keys(table))
 	lines := make([]string, 0, len(families))
@@ -350,26 +237,12 @@ func renderTally(table map[string]familyTally) string {
 	return strings.Join(lines, "\n\t")
 }
 
-// A tierSelection is what one profile's run catalogued.
 type tierSelection struct {
 	total    int
 	ids      map[string]bool
 	families map[string]bool
 }
 
-// TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue is the profile
-// contract measured through the run pipeline rather than asserted about the
-// rule table.
-//
-// `balanced ⊂ strong ⊂ all` is a property of that table and is already unit
-// tested there. What this adds is that the property survives every phase between
-// the table and the report: three real runs over one fixture, each discovering,
-// instrumenting, compiling and executing its own tier's selection.
-//
-// The counts are the readable half. The load-bearing half is which *families*
-// each tier adds, because a count that moved could have moved for any reason —
-// a fixture edit, a deduplication change, a rule that stopped firing — while the
-// family sets name the three operators a profile is actually about.
 func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 	t.Parallel()
 
@@ -386,9 +259,6 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 		if outcome.Status != StatusOK {
 			t.Fatalf("--profile %s: status = %s, want %s", tier, outcome.Status, StatusOK)
 		}
-		// Each tier is a whole, healthy run and not merely a catalogue: nothing
-		// is refused and nothing is left unmeasured, so the sets compared below
-		// are sets of mutants that really executed.
 		if len(outcome.Report.Rejected) != 0 {
 			t.Errorf("--profile %s rejected %+v, want none", tier, outcome.Report.Rejected)
 		}
@@ -427,10 +297,6 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 			balanced.total, strong.total, all.total)
 	}
 
-	// Inclusion by identity, not by count. A mutant's id is a digest over its
-	// path, rule, span and bytes and has nothing to do with the profile that
-	// selected it, so a tier that swapped one mutant for another would keep the
-	// arithmetic and fail here.
 	for _, pair := range []struct{ narrow, wide mutation.Tier }{
 		{mutation.TierBalanced, mutation.TierStrong},
 		{mutation.TierStrong, mutation.TierAll},
@@ -444,12 +310,6 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 		}
 	}
 
-	// What each tier adds, by family. These five names are the whole meaning of
-	// the profile setting, and they are the reason `balanced` is the default:
-	// bit manipulation, a condition settled at a constant, the second neutral
-	// value of a slice or a map, and statement deletion are where an equivalent
-	// mutant is likeliest -- or, for the neutral values, where a survivor is
-	// likeliest against a suite that only ever asks `len` -- so they are opt-in.
 	wantStrongAdds := []string{
 		string(mutation.FamilyArithmeticAssign),
 		string(mutation.FamilyBitwise),
@@ -466,10 +326,6 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 	if got := addedFamilies(strong, all); !slices.Equal(got, wantAllAdds) {
 		t.Errorf("all adds the families %v to strong, want %v", got, wantAllAdds)
 	}
-	// And balanced really is the other eight, whole: a tier that dropped a
-	// family it is supposed to hold would leave both differences above looking
-	// exactly right. The count is derived rather than written, so a family
-	// landing in a tier is one edit and not two.
 	if got, want := len(balanced.families), mutation.CanonicalFamilyCount-len(wantStrongAdds)-len(wantAllAdds); got != want {
 		t.Errorf("balanced selected %d families, want %d", got, want)
 	}
@@ -478,8 +334,6 @@ func TestProfileTiersSelectMonotonicallyOverTheWholeCatalogue(t *testing.T) {
 	}
 }
 
-// addedFamilies returns the families the wider selection holds and the narrower
-// one does not, sorted.
 func addedFamilies(narrow, wide tierSelection) []string {
 	var out []string
 	for family := range wide.families {

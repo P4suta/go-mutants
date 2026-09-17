@@ -14,15 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestRunVVPrintsEverySubprocessOfTheKillableFixture is the claim `-vv` makes,
-// checked against the recording of the same run.
-//
-// The console and the stream are two renderings of one sequence, so the count
-// of `exec` lines on the screen has to be the count of `exec` events in the
-// file — not "about the same", exactly the same. A renderer that dropped one
-// kind of event, or that printed a kind twice, is invisible from either side
-// alone, and a developer reading the console would be reading an account of a
-// run that did not happen.
 func TestRunVVPrintsEverySubprocessOfTheKillableFixture(t *testing.T) {
 	inKillableFixture(t)
 
@@ -73,9 +64,6 @@ func TestRunVVPrintsEverySubprocessOfTheKillableFixture(t *testing.T) {
 		t.Errorf("the console shows %d attempt lines and the recording holds %d mutant-exec events", got, want)
 	}
 
-	// A run at the default verbosity prints none of it, which is the other half
-	// of the same promise: the recording is what `-vv` asks for, not what a run
-	// pays for by being traced.
 	code, quiet, stderr := execute(t, "run", "--trace", "--no-tui", "--no-color")
 	if code != int(mutation.ExitOK) {
 		t.Fatalf("`go-mutants run --trace` exited %d\nstderr:\n%s", code, stderr)

@@ -28,18 +28,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// This file is the recording half of the engine API: what a workspace records
-// about itself, and what a consumer joining its own recording to it may rely
-// on.
-//
-// Every test here is toolchain-backed, because the claim is about what the
-// engine *did* rather than about the shape of an event: a `go-test-c` that is
-// recorded only when a test builds one is the only kind of evidence worth
-// having that the label is on the command it says it is. The claims about the
-// shape alone are in trace_contract_test.go, where they cost nothing.
-
-// recordingOf is what a workspace recorded, with the two failures that make
-// every later assertion meaningless reported once, here.
 func recordingOf(t *testing.T, workspace *gomutants.Workspace) []trace.Event {
 	t.Helper()
 	events := workspace.Recording()
@@ -53,9 +41,6 @@ func recordingOf(t *testing.T, workspace *gomutants.Workspace) []trace.Event {
 	return events
 }
 
-// validateRecording checks every line against the published contract, through
-// the very validator a consumer would use, and reports the stream-level rules
-// the schema cannot state because it validates one line at a time.
 func validateRecording(t *testing.T, events []trace.Event) {
 	t.Helper()
 	previous := int64(0)
@@ -83,7 +68,6 @@ func validateRecording(t *testing.T, events []trace.Event) {
 	}
 }
 
-// execKinds is every command label the recording holds, deduplicated.
 func execKinds(events []trace.Event) []string {
 	var kinds []string
 	for _, event := range events {
@@ -95,8 +79,6 @@ func execKinds(events []trace.Event) []string {
 	return kinds
 }
 
-// eventAt is the event recorded at one sequence number, which is how a result's
-// TraceSeq is followed into the recording.
 func eventAt(t *testing.T, events []trace.Event, seq int64) trace.Event {
 	t.Helper()
 	if seq == 0 {
@@ -112,8 +94,6 @@ func eventAt(t *testing.T, events []trace.Event, seq int64) trace.Event {
 	return trace.Event{}
 }
 
-// artifactsOfKind is every path the recording says was written or kept under
-// one kind.
 func artifactsOfKind(events []trace.Event, kind string) []string {
 	var paths []string
 	for _, event := range events {
@@ -124,15 +104,6 @@ func artifactsOfKind(events []trace.Event, kind string) []string {
 	return paths
 }
 
-// TestOpenWithoutATraceSinkRecordsIntoARingReadableAfterClose is the default
-// every consumer gets without asking.
-//
-// A workspace that was handed no sink still records, into a bounded ring, and
-// the recording stays readable after Close — which is the moment it is for: the
-// last event is the run-end Close wrote, so a caller reading it then has the
-// whole account of the workspace. That is the same bargain an untraced
-// `go-mutants run` makes, and for the same reason: the failure nobody expected
-// is exactly the failure nobody thought to ask for a recording of.
 func TestOpenWithoutATraceSinkRecordsIntoARingReadableAfterClose(t *testing.T) {
 	root := copyFixture(t, "simple")
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
@@ -181,8 +152,6 @@ func TestOpenWithoutATraceSinkRecordsIntoARingReadableAfterClose(t *testing.T) {
 			" the ring holds", last.Run.EventsDropped)
 	}
 
-	// Everything Open did is in there, labelled: the toolchain probe, the sweep
-	// it ran before copying anything, the tree it froze.
 	if kinds := execKinds(events); !slices.Contains(kinds, trace.ExecKindGoVersion) ||
 		!slices.Contains(kinds, trace.ExecKindWorkspaceExec) {
 		t.Errorf("the recording holds the command kinds %v, want %q and %q among them",
@@ -201,10 +170,6 @@ func TestOpenWithoutATraceSinkRecordsIntoARingReadableAfterClose(t *testing.T) {
 		t.Error("nothing in the recording says what Open's sweep reclaimed")
 	}
 
-	// The join a consumer writes: a CommandResult in hand, the whole command in
-	// the recording. argv[0] is the located toolchain rather than the "go" the
-	// caller wrote, which is exactly what a reader reproducing the command
-	// needs and cannot reconstruct.
 	command := eventAt(t, events, listed.TraceSeq)
 	if command.Type != trace.TypeExec {
 		t.Fatalf("CommandResult.TraceSeq points at a %s, want an %s", command.Type, trace.TypeExec)
@@ -223,8 +188,6 @@ func TestOpenWithoutATraceSinkRecordsIntoARingReadableAfterClose(t *testing.T) {
 		t.Errorf("the recording says exit %d over %d bytes and the result says exit %d over %d",
 			command.Exec.ExitCode, command.Exec.OutputBytes, listed.ExitCode, listed.TotalBytes)
 	}
-	// Names, never values: a recording is meant to be attachable to a bug
-	// report from a machine holding real credentials.
 	for _, name := range command.Exec.EnvNames {
 		if strings.Contains(name, "=") {
 			t.Errorf("env_names holds %q, which is a value and not a name", name)
@@ -232,15 +195,8 @@ func TestOpenWithoutATraceSinkRecordsIntoARingReadableAfterClose(t *testing.T) {
 	}
 }
 
-// TestOpenWithATraceSinkRecordsNothingIntoTheRing is the other half of the
-// choice.
-//
-// A caller that supplies a sink owns the recording, and there is no second copy
-// of it: a caller holding both would have to decide which is the account of the
-// run, and the ring is the one that silently drops its oldest events.
 func TestOpenWithATraceSinkRecordsNothingIntoTheRing(t *testing.T) {
 	root := copyFixture(t, "simple")
-	// Unbounded, because what is under test is that the sink saw everything.
 	sink := trace.NewMemorySink(0)
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
 		TempDirectory: t.TempDir(),
@@ -275,23 +231,11 @@ func TestOpenWithATraceSinkRecordsNothingIntoTheRing(t *testing.T) {
 	if command.Type != trace.TypeExec || command.Exec.Kind != trace.ExecKindWorkspaceExec {
 		t.Errorf("CommandResult.TraceSeq points at %+v, want a workspace-exec", command)
 	}
-	// The sink belongs to the caller, so nothing closed it: a caller that tees
-	// one recording into two workspaces would otherwise lose the second.
 	if err := sink.Emit(trace.Event{Type: trace.TypeNote}); err != nil {
 		t.Errorf("the workspace closed the caller's sink: %v", err)
 	}
 }
 
-// TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses is
-// the whole timeline of a prepared session, checked against the answers the
-// same session gave its caller.
-//
-// Every claim here is a join a consumer writes: a mutant result and the
-// `mutant-exec` that explains it, a probe result and the `probe-exec` that
-// explains it, an overlay manifest and the file it names. What makes them worth
-// stating is that each one has two sources — the value returned and the event
-// recorded — and a recording that disagreed with the result it came from would
-// be worse than no recording at all.
 func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(t *testing.T) {
 	prepared := probeable(t)
 	width := mutantkit.APIByRule(t, prepared.catalog, widthRule)
@@ -312,9 +256,6 @@ func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(
 	events := recordingOf(t, prepared.workspace)
 	validateRecording(t, events)
 
-	// Two trees were frozen and the recording says which was which. A session
-	// prepared with a probe tree copies the module twice, and a reader looking
-	// at a run that took twice as long as expected is looking for exactly this.
 	var snapshots []string
 	for _, event := range events {
 		if event.Type == trace.TypeSnapshot {
@@ -325,10 +266,6 @@ func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(
 		t.Errorf("the recording holds the snapshots %v, want %v", snapshots, want)
 	}
 
-	// The preparation timeline, event for event with the one the callback saw.
-	// Two audiences, one sequence: a consumer that watched the preparation live
-	// and one that reads the recording afterwards must not be able to tell two
-	// different stories about it.
 	var recorded []*trace.PrepareRecord
 	for _, event := range events {
 		if event.Type == trace.TypePrepare {
@@ -350,9 +287,6 @@ func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(
 		}
 	}
 
-	// Every subprocess the session started, labelled. An unlabelled command is
-	// a recording that does not validate, so what this adds is that the labels
-	// are on the commands they name.
 	kinds := execKinds(events)
 	for _, kind := range []string{
 		trace.ExecKindGoVersion,
@@ -392,8 +326,6 @@ func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(
 	if len(killed.Binaries) == 0 {
 		t.Error("the result names no test binaries, so it says nothing about what it was measured against")
 	}
-	// The join goes one level further down: an attempt names the executions
-	// underneath it, and through them their preserved output.
 	for _, seq := range mutant.ExecSeqs {
 		if under := eventAt(t, events, seq); under.Type != trace.TypeExec ||
 			under.Exec.Kind != trace.ExecKindMutantRun {
@@ -411,17 +343,6 @@ func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(
 	if !slices.Equal(pass.Probe.Binaries, probe.Binaries) {
 		t.Errorf("the pass ran %v and the result reports %v", pass.Probe.Binaries, probe.Binaries)
 	}
-	// By identity and never by index: an index means nothing outside this
-	// session, and the identity is what the report, the cache and a consumer's
-	// own recording all key on.
-	//
-	// A subset rather than an equality, and in one direction only. The event is
-	// the *raw* set the probe runtime recorded; the result is that set minus the
-	// mutants validation rejected, because an infection fact about a mutant
-	// nothing will execute licenses no skipping. So everything the caller was
-	// given must be in the recording — a recording that lost one of them would
-	// be an account of a pass that did not happen — and everything the
-	// recording holds and the caller was not given must be a rejected mutant.
 	infected := infectedIDs(t, prepared, probe)
 	rejected := make(map[string]bool, len(prepared.catalog.Rejections))
 	for _, rejection := range prepared.catalog.Rejections {
@@ -443,7 +364,6 @@ func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(
 		t.Errorf("the pass is recorded as measuring %q, want %q", pass.Probe.Package, probeableModule)
 	}
 
-	// The two paths a consumer needs to reproduce any of this by hand.
 	for kind, manifest := range map[string]string{
 		trace.ArtifactOverlayManifest:      prepared.session.OverlayManifest(),
 		trace.ArtifactProbeOverlayManifest: prepared.session.ProbeOverlayManifest(),
@@ -461,14 +381,6 @@ func TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses(
 	}
 }
 
-// hostileSink is a caller's sink that cannot keep an event: half of them it
-// refuses, and the other half it panics on.
-//
-// Both, because they are two different failures with one required outcome. A
-// Sink is an interface and an embedder's implementation of it is ordinary Go
-// code, which panics; without the recorder's recover that panic unwinds through
-// whichever goroutine was recording and takes the process with it. A diagnostic
-// that can kill the run it is a diagnostic of inverts the point of having one.
 type hostileSink struct{ mu sync.Mutex }
 
 func (sink *hostileSink) Emit(event trace.Event) error {
@@ -482,12 +394,6 @@ func (sink *hostileSink) Emit(event trace.Event) error {
 
 func (sink *hostileSink) Close() error { return errors.New("the consumer's sink refused to close") }
 
-// hostileFixture is one probeable session prepared exactly as the shared one is
-// and recording into a sink that fails every event.
-//
-// It is prepared once, like the sessions api_integration_test.go shares, and
-// registered with them so that TestMain releases it: preparing a session is the
-// expensive thing this file does, and two tests ask the same question of it.
 var hostileFixture = sync.OnceValue(func() *preparedFixture {
 	return prepareFixtureWith("probeable", nil,
 		gomutants.OpenOptions{Trace: &hostileSink{}},
@@ -498,9 +404,6 @@ var hostileFixture = sync.OnceValue(func() *preparedFixture {
 		})
 })
 
-// hostile returns that session, failing the calling test if preparing it did
-// not work — which is itself the first half of the claim, since a preparation
-// that a broken sink stopped would not get this far.
 func hostile(t *testing.T) *preparedFixture {
 	t.Helper()
 	prepared := hostileFixture()
@@ -510,15 +413,6 @@ func hostile(t *testing.T) *preparedFixture {
 	return prepared
 }
 
-// TestATraceSinkThatFailsChangesNoCatalogDigestOrResult is the fail-open
-// promise, stated over two preparations of one tree.
-//
-// A trace is never evidence. A sink that refuses every event and panics on the
-// rest is the worst case an embedder can hand over, and what it may cost is the
-// recording and nothing else: the same mutants are catalogued, the same
-// preparation is identified, the same mutant is killed by the same package, and
-// the same target infects the same sites. A diagnostic that made the tool less
-// reliable than it was without it would invert the point of the feature.
 func TestATraceSinkThatFailsChangesNoCatalogDigestOrResult(t *testing.T) {
 	sound := probeable(t)
 	broken := hostile(t)
@@ -532,10 +426,6 @@ func TestATraceSinkThatFailsChangesNoCatalogDigestOrResult(t *testing.T) {
 			" keyed on it would re-measure everything the day it handed over a sink", got, want)
 	}
 
-	// A known kill, run on both, compared field for field rather than on the
-	// two fields somebody remembered to check: what is under test is that
-	// *nothing* moved, and a comparison that named the fields would go on
-	// passing the day a new one started depending on the sink.
 	killed := [2]gomutants.MutantResult{}
 	for i, session := range [2]*preparedFixture{sound, broken} {
 		mutant := mutantkit.APIByRule(t, session.catalog, widthRule)
@@ -557,9 +447,6 @@ func TestATraceSinkThatFailsChangesNoCatalogDigestOrResult(t *testing.T) {
 		t.Errorf("the kill differs between a ring and a broken sink (-ring +sink):\n%s", diff)
 	}
 
-	// And a probe pass, the same way. The infection set is compared by identity
-	// rather than by index, because that is the comparison that would still
-	// hold if the two catalogues were merely equivalent rather than equal.
 	passes := [2]gomutants.ProbeResult{}
 	infected := [2][]string{}
 	for i, session := range [2]*preparedFixture{sound, broken} {
@@ -577,33 +464,19 @@ func TestATraceSinkThatFailsChangesNoCatalogDigestOrResult(t *testing.T) {
 	}
 }
 
-// elapsed matches the `(1.23s)` a Go test binary stamps on every result line.
 var elapsed = regexp.MustCompile(`\(\d+\.\d+s\)`)
 
-// steadyMutantResult is one result with the two things that cannot be equal
-// between two runs of one test flattened: the wall-clock time the process took,
-// and the wall-clock time the test binary printed into its own output.
-//
-// Only those. Everything else — the identities, the outcome, the deciding
-// package, the binaries, the truncation flag, the captured bytes themselves —
-// is compared as it came back, because a trace option that moved any of them
-// would be the bug this test exists to find. `Duration`, `TotalBytes` and
-// `TraceSeq` are ignored by the comparison rather than flattened here:
-// TotalBytes counts the unflattened bytes, and a sequence number is the one
-// field that is *meant* to differ.
 func steadyMutantResult(result gomutants.MutantResult) gomutants.MutantResult {
 	result.Output = elapsed.ReplaceAll(result.Output, []byte("(0.00s)"))
 	result.OutputTail = elapsed.ReplaceAllString(result.OutputTail, "(0.00s)")
 	return result
 }
 
-// steadyProbeResult is [steadyMutantResult] for a probe pass.
 func steadyProbeResult(result gomutants.ProbeResult) gomutants.ProbeResult {
 	result.Output = elapsed.ReplaceAll(result.Output, []byte("(0.00s)"))
 	return result
 }
 
-// infectedIDs is one measured pass's infection set by mutant identity.
 func infectedIDs(t *testing.T, prepared *preparedFixture, result gomutants.ProbeResult) []string {
 	t.Helper()
 	ids := make([]string, 0, len(result.Infected))
@@ -613,14 +486,6 @@ func infectedIDs(t *testing.T, prepared *preparedFixture, result gomutants.Probe
 	return ids
 }
 
-// TestTraceOptionsTakeNoPartInThePreparedDigest is the narrow half of the same
-// claim, stated on its own because it is the one a consumer keys a store on.
-//
-// Two sessions prepared over one tree are interchangeable, and handing one of
-// them a sink does not make them anything else: a recording is an account of
-// how a preparation happened and not a fact about what it produced. A digest
-// that moved with a trace option would be a cache that never hits for anybody
-// who turned tracing on.
 func TestTraceOptionsTakeNoPartInThePreparedDigest(t *testing.T) {
 	sound := probeable(t)
 	broken := hostile(t)
@@ -640,14 +505,6 @@ func TestTraceOptionsTakeNoPartInThePreparedDigest(t *testing.T) {
 	}
 }
 
-// TestKeepTempKeepsTheExecScratchAndNamesItInPreserved is the escape hatch,
-// extended to the one directory it used to miss.
-//
-// KeepTemp exists to answer the question a removed directory cannot — what did
-// the tree this mutant ran in actually look like — and the per-execution
-// scratch is half of that tree: it is where the target's TMPDIR pointed, where
-// a fuzz cache lived, and where anything the test wrote went. A keep that left
-// the snapshot and removed that was answering half the question.
 func TestKeepTempKeepsTheExecScratchAndNamesItInPreserved(t *testing.T) {
 	kept := keepTempWorkspace(t, 3)
 
@@ -662,7 +519,6 @@ func TestKeepTempKeepsTheExecScratchAndNamesItInPreserved(t *testing.T) {
 	validateRecording(t, events)
 
 	execScratch := artifactsOfKind(events, trace.ArtifactKeptExecScratch)
-	// One per workspace command and one per session execution.
 	if want := 1 + len(kept.executions); len(execScratch) != want {
 		t.Fatalf("the recording names %d directories as kept execution scratch, want %d",
 			len(execScratch), want)
@@ -679,8 +535,6 @@ func TestKeepTempKeepsTheExecScratchAndNamesItInPreserved(t *testing.T) {
 		}
 	}
 
-	// The durable directories are named too, under kinds of their own, so a
-	// reader of the recording can tell a snapshot from the scratch beside it.
 	for _, kind := range []string{trace.ArtifactKeptSnapshot, trace.ArtifactKeptScratch} {
 		paths := artifactsOfKind(events, kind)
 		if len(paths) != 1 {
@@ -695,23 +549,11 @@ func TestKeepTempKeepsTheExecScratchAndNamesItInPreserved(t *testing.T) {
 				" run's sweep would collect it as an orphan", paths[0], err)
 		}
 	}
-	// A session prepared without a probe tree kept none, and says nothing about
-	// one: an artifact for a directory that was never made would be a path a
-	// reader would go looking for.
 	if paths := artifactsOfKind(events, trace.ArtifactKeptProbeTree); len(paths) != 0 {
 		t.Errorf("a session prepared without a probe tree kept %v", paths)
 	}
 }
 
-// TestAKeptExecScratchHoldsOnlyWhatTheTargetWrote is why a per-call directory
-// carries no lock and no marker of go-mutants' own.
-//
-// That directory *is* the child's TMPDIR, and it is kept so that somebody can
-// look at what the target left in it. Two files of the engine's in there would
-// be two files in the very tree the keep exists to show them — and they would
-// buy nothing, because a sweep looks at the direct children of the temporary
-// parent and a per-call scratch is nested inside the workspace scratch, which
-// does carry a marker. It survives because its parent does.
 func TestAKeptExecScratchHoldsOnlyWhatTheTargetWrote(t *testing.T) {
 	kept := keepTempWorkspace(t, 1)
 	events := recordingOf(t, kept.workspace)
@@ -734,8 +576,6 @@ func TestAKeptExecScratchHoldsOnlyWhatTheTargetWrote(t *testing.T) {
 			}
 		}
 	}
-	// And the parent it survives by is marked, which is the whole of why the
-	// nested one does not have to be.
 	workspaceScratch := artifactsOfKind(events, trace.ArtifactKeptScratch)
 	if len(workspaceScratch) != 1 {
 		t.Fatalf("the recording names %v as the kept workspace scratch, want one", workspaceScratch)
@@ -748,20 +588,10 @@ func TestAKeptExecScratchHoldsOnlyWhatTheTargetWrote(t *testing.T) {
 	}
 }
 
-// TestAKeptExecScratchIsRecordedBesideItsExecution is where a kept directory
-// goes in the stream, and why it matters that it is not at the end.
-//
-// A recording is bounded. A Close that reported ten thousand kept directories
-// in one burst would push the run-start, the whole preparation timeline and
-// every mutant attempt out of the ring in the last moment of the workspace's
-// life — so every TraceSeq a caller was handed would name an event that is no
-// longer there. Recording each one where it is kept makes eviction cost
-// housekeeping instead, and puts the directory beside the execution it explains.
 func TestAKeptExecScratchIsRecordedBesideItsExecution(t *testing.T) {
 	kept := keepTempWorkspace(t, 3)
 	events := recordingOf(t, kept.workspace)
 
-	// Exactly one per execution, and each between its own attempt and the next.
 	for i, result := range kept.executions {
 		attempt := eventAt(t, events, result.TraceSeq)
 		next := int64(0)
@@ -784,9 +614,6 @@ func TestAKeptExecScratchIsRecordedBesideItsExecution(t *testing.T) {
 		}
 	}
 
-	// And Close added the durable ones alone. The last execution's own scratch
-	// is recorded after its attempt, so the boundary is that artifact rather
-	// than the attempt: everything past it belongs to Close.
 	last := int64(0)
 	for _, event := range events {
 		if event.Type == trace.TypeArtifact && event.Artifact.Kind == trace.ArtifactKeptExecScratch {
@@ -808,15 +635,11 @@ func TestAKeptExecScratchIsRecordedBesideItsExecution(t *testing.T) {
 	}
 }
 
-// A keptWorkspace is one closed KeepTemp workspace and the executions it made,
-// which three tests ask three different questions of.
 type keptWorkspace struct {
 	workspace  *gomutants.Workspace
 	executions []gomutants.MutantResult
 }
 
-// keepTempWorkspace prepares a KeepTemp workspace over fixtures/probeable, runs
-// one workspace command and count executions against it, and closes it.
 func keepTempWorkspace(t *testing.T, count int) keptWorkspace {
 	t.Helper()
 	parent := t.TempDir()
@@ -861,14 +684,6 @@ func keepTempWorkspace(t *testing.T, count int) keptWorkspace {
 	return kept
 }
 
-// TestAFailedOpenEndsTheRecordingItWasGiven is the one recording a caller can
-// still read when nothing was returned.
-//
-// Open hands back a workspace or an error, and there is nowhere on an error to
-// hang a ring — so a failed Open's account exists only for a caller that
-// supplied a sink. It is a complete account: the recording ends with a run-end
-// of verdict "failed" carrying the error, rather than stopping mid-sentence and
-// leaving a reader to wonder whether the process died.
 func TestAFailedOpenEndsTheRecordingItWasGiven(t *testing.T) {
 	sink := trace.NewMemorySink(0)
 	workspace, err := gomutants.Open(t.Context(), filepath.Join(t.TempDir(), "not-a-tree"),
@@ -896,22 +711,11 @@ func TestAFailedOpenEndsTheRecordingItWasGiven(t *testing.T) {
 		t.Errorf("the run-end carries %q and Open returned %v; the recording is meant to say"+
 			" what stopped it", last.Run.Error, err)
 	}
-	// The tree it was about, and the toolchain probe it got as far as, are
-	// there too: a failed Open is exactly the one somebody reads a recording of.
 	if events[0].Start.Kind != trace.StartKindWorkspace {
 		t.Errorf("run-start kind = %q, want %q", events[0].Start.Kind, trace.StartKindWorkspace)
 	}
 }
 
-// TestPrepareFailedNamesThePhaseAndNotARefusal is what a `prepare-failed` note
-// is for, and what it is not for.
-//
-// A note is what the run could not do. A workspace that is closed, one that was
-// already prepared, an option this engine does not accept: none of those
-// started a preparation, so a note about one would name no phase and describe
-// nothing that happened — it would be an event a reader has to learn to ignore.
-// A preparation that got as far as running something and failed is the opposite
-// case, and the phase is the first thing anybody wants from it.
 func TestPrepareFailedNamesThePhaseAndNotARefusal(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "probeable")
@@ -928,8 +732,6 @@ func TestPrepareFailedNamesThePhaseAndNotARefusal(t *testing.T) {
 		}
 	})
 
-	// A verification that cannot pass, which is a preparation failure in a
-	// named phase rather than a refusal of the request.
 	_, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{
 		Verify:        gomutants.Command{Argv: []string{"go", "list", "./definitely-not-a-package"}},
 		MutantTimeout: 30 * time.Second,
@@ -948,7 +750,6 @@ func TestPrepareFailedNamesThePhaseAndNotARefusal(t *testing.T) {
 		t.Errorf("the note says %q and names neither the phase nor the failure", notes[0])
 	}
 
-	// A second Prepare is a refusal. Nothing was prepared, so nothing failed.
 	if _, again := workspace.Prepare(t.Context(), gomutants.PrepareOptions{}); again == nil {
 		t.Fatal("a workspace accepted a second Prepare")
 	}
@@ -957,16 +758,6 @@ func TestPrepareFailedNamesThePhaseAndNotARefusal(t *testing.T) {
 	}
 }
 
-// TestPrepareFailedNamesThePhaseOfTheFailureTheCallerGot is the same claim as
-// the unit test beside [prepareFailedDetail], over a preparation that really
-// does run two builds at once.
-//
-// A binary build that cannot list its packages fails, and the probe tree's own
-// build — running concurrently over the same patterns — fails or is cancelled
-// beside it. Which of the two errors reaches the caller is the scheduler's
-// business and not this test's; what must hold either way is that the note
-// names *that* error's phase. Asserting a particular phase here would be
-// asserting which goroutine won.
 func TestPrepareFailedNamesThePhaseOfTheFailureTheCallerGot(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "probeable")
@@ -1011,20 +802,9 @@ func TestPrepareFailedNamesThePhaseOfTheFailureTheCallerGot(t *testing.T) {
 	}
 }
 
-// TestAFailedProbeStillPointsAtItsOwnRecord is the contract `TraceSeq` states,
-// held to on the paths that are easiest to forget.
-//
-// A pass that reached the probe tree is in the recording whatever became of it,
-// and the documented meaning of a zero sequence is "nothing was recorded". So a
-// failure that handed back a zero would be saying something untrue about the
-// one pass a consumer most wants to read the account of — and it is exactly the
-// pass whose `Output` is empty and whose `Outcome` is blank, so the recording is
-// all there is.
 func TestAFailedProbeStillPointsAtItsOwnRecord(t *testing.T) {
 	prepared := probeable(t)
 
-	// A pass the caller cancelled. The probe tree is reached, the event is
-	// recorded, and the pass then reports that it has no facts.
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	result, err := prepared.session.Probe(cancelled, gomutants.ProbeRequest{Package: probeableModule})
@@ -1038,7 +818,6 @@ func TestAFailedProbeStillPointsAtItsOwnRecord(t *testing.T) {
 		t.Fatal("a probe that reached the probe tree and failed carries TraceSeq 0, so the one" +
 			" account of it there is cannot be found")
 	}
-	// And nothing it did not establish: no outcome, no infection set.
 	if result.Outcome != "" || result.Infected != nil {
 		t.Errorf("a failed pass reports outcome %q and infected %v, want neither",
 			result.Outcome, result.Infected)
@@ -1056,8 +835,6 @@ func TestAFailedProbeStillPointsAtItsOwnRecord(t *testing.T) {
 		t.Errorf("the pass ran %v and the result reports %v", pass.Probe.Binaries, result.Binaries)
 	}
 
-	// The same claim for an execution, which has always been built before its
-	// error paths and must stay that way.
 	execution, err := prepared.session.Exec(cancelled, gomutants.ExecRequest{
 		Mutant:  mutantkit.APIByRule(t, prepared.catalog, widthRule).ID,
 		Package: probeableModule,
@@ -1074,14 +851,11 @@ func TestAFailedProbeStillPointsAtItsOwnRecord(t *testing.T) {
 	}
 }
 
-// events2 re-reads the recording, for a claim about an event recorded after the
-// previous read of it.
 func events2(t *testing.T, prepared *preparedFixture) []trace.Event {
 	t.Helper()
 	return recordingOf(t, prepared.workspace)
 }
 
-// notesOfKind is the detail of every note of one kind in a recording.
 func notesOfKind(events []trace.Event, kind string) []string {
 	var details []string
 	for _, event := range events {
@@ -1092,17 +866,6 @@ func notesOfKind(events []trace.Event, kind string) []string {
 	return details
 }
 
-// TestASuppliedSinkReceivesExactlyWhatTheRingWould is the claim that makes the
-// two branches one feature.
-//
-// A sink and the default ring are meant to be one recording written to two
-// places, and the failure that would be invisible without this is a call site
-// that records into one and not the other: every existing test reads whichever
-// destination it configured, so a sweep event recorded only into the ring would
-// pass both tiers. Two workspaces over one fixture, doing the same things, must
-// produce the same recording — the same event types, the same command kinds,
-// the same artifact kinds — and the results they return must agree field for
-// field.
 func TestASuppliedSinkReceivesExactlyWhatTheRingWould(t *testing.T) {
 	sink := trace.NewMemorySink(0)
 	supplied, suppliedResult := recordedWorkspace(t, sink)
@@ -1126,12 +889,6 @@ func TestASuppliedSinkReceivesExactlyWhatTheRingWould(t *testing.T) {
 	}
 }
 
-// recordingShape is what a recording holds, counted: one entry per event type,
-// per command kind and per artifact kind.
-//
-// The shape rather than the events themselves, because two workspaces over one
-// fixture differ in every path, every duration and every sequence number — and
-// none of that is what "the sink gets what the ring gets" is about.
 func recordingShape(events []trace.Event) map[string]int {
 	shape := map[string]int{}
 	for _, event := range events {
@@ -1148,8 +905,6 @@ func recordingShape(events []trace.Event) map[string]int {
 	return shape
 }
 
-// recordedWorkspace opens one workspace over fixtures/simple, runs one command
-// against it and closes it.
 func recordedWorkspace(t *testing.T, sink trace.Sink) (*gomutants.Workspace, gomutants.CommandResult) {
 	t.Helper()
 	workspace, err := gomutants.Open(t.Context(), copyFixture(t, "simple"), gomutants.OpenOptions{
@@ -1169,23 +924,11 @@ func recordedWorkspace(t *testing.T, sink trace.Sink) (*gomutants.Workspace, gom
 	return workspace, result
 }
 
-// TestEveryLineOfAWorkspaceRecordingValidates is the fail-closed half of a
-// fail-open feature.
-//
-// Recording is best effort about *loss*, and about nothing else. A line that
-// went into a recording is a line the published contract describes, because a
-// consumer decoding one strictly — which trace.Read does, and which the schema
-// exists to let anybody else do — must not be handed a document outside it. The
-// richest recording this suite makes is the shared prepared session's, which is
-// why the claim is stated over that one: it holds every payload the API can
-// produce, from the sweep before the snapshot to the probe pass at the end.
 func TestEveryLineOfAWorkspaceRecordingValidates(t *testing.T) {
 	prepared := probeable(t)
 	events := recordingOf(t, prepared.workspace)
 	validateRecording(t, events)
 
-	// Otherwise the walk above could hold vacuously over a recording that lost
-	// everything interesting, and go on passing the day it did.
 	seen := map[string]bool{}
 	for _, event := range events {
 		seen[event.Type] = true
@@ -1205,19 +948,4 @@ func TestEveryLineOfAWorkspaceRecordingValidates(t *testing.T) {
 	}
 }
 
-// resultMeasurements are the fields two runs of the same work are never
-// expected to agree on, and which every comparison of two results therefore
-// ignores.
-//
-// Duration and PeakMemory are both measurements of the machine rather than
-// statements about the code: the same binary takes a different number of
-// nanoseconds and a different number of pages every time it runs, and on Linux
-// the peak moved between two runs of one fixture by 80 KiB — enough to fail a
-// comparison that had only thought of the clock. TotalBytes is the same kind of
-// thing for output whose length depends on how far a suite got, and TraceSeq is
-// the one field recording is meant to change.
-//
-// They are one list rather than three literals so that a field added to a
-// result later is added here once, and so that "which of these is a
-// measurement" is answered in a comment rather than three times over.
 var resultMeasurements = []string{"Duration", "PeakMemory", "TotalBytes", "TraceSeq"}

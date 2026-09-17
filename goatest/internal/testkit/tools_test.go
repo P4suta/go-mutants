@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// TestTruthyReadsTheSpellingsAPersonTypes pins the falsehoods, because the set
-// of false values is the whole of the decision: everything else is true.
 func TestTruthyReadsTheSpellingsAPersonTypes(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{"", " ", "0", "0 ", "false", "FALSE", "no", "off", "  Off  "} {
@@ -24,9 +22,6 @@ func TestTruthyReadsTheSpellingsAPersonTypes(t *testing.T) {
 	}
 }
 
-// TestRequireToolsPrefersTheLiveEnvironment covers the ordinary case: a job
-// sets the variable, and every test in it refuses to be skipped for a missing
-// tool.
 func TestRequireToolsPrefersTheLiveEnvironment(t *testing.T) {
 	t.Setenv(RequireToolsEnv, "1")
 	if !RequireTools() {
@@ -38,13 +33,6 @@ func TestRequireToolsPrefersTheLiveEnvironment(t *testing.T) {
 	}
 }
 
-// TestRequireToolsFallsBackToThePinnedValue covers the case the fallback exists
-// for: a test that hands the machinery a composed environment, from which this
-// variable is absent because it was not on the allowlist.
-//
-// Unsetting the variable must not read as "the job did not ask for tools". It
-// reads as "this corner of this test cannot see what the job asked for", and
-// the answer to that is the value the process started with.
 func TestRequireToolsFallsBackToThePinnedValue(t *testing.T) {
 	previous := pinnedRequireTools
 	t.Cleanup(func() { pinnedRequireTools = previous })

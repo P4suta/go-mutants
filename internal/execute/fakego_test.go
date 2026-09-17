@@ -1,19 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The build phase against a real process.
-//
-// build_test.go injects a runner and asserts on the [runner.Spec] values this
-// package produced, which is the right way to test a policy — which packages are
-// compiled, in what order, under what names — and cannot test the one thing that
-// only exists once a process has run: the argv and the environment a child
-// really received, and the bytes a failing compiler really wrote.
-//
-// Those are what these tests are about, and the scripted `go` from
-// internal/testkit/mutantkit is what makes them a unit-tier test rather than a
-// tagged one: no toolchain, no compile, and an answer that can be a compile
-// failure on demand.
-
 package execute_test
 
 import (
@@ -32,23 +19,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestMain turns this binary into the scripted `go` when it is started as one.
-// The tests below run this very binary as their toolchain, so without the
-// dispatch each compile would run the whole package again.
 func TestMain(m *testing.M) {
 	os.Exit(mutantkit.Main(m))
 }
 
-// fakePackage is the one package the scripted listing reports. Its import path
-// is what a failure has to name, so it is spelled once.
 const fakePackage = "example.com/m/pkg"
 
-// fakeBuild wires a scripted toolchain into options that describe a plausible
-// build of one package, and returns the fake so the test can script the rest.
-//
-// The binary directory is outside the snapshot on purpose:
-// [execute.BuildTestBinaries] refuses one inside it, and a test that happened to
-// nest them would be testing the refusal instead of the build.
 func fakeBuild(t *testing.T) (*mutantkit.Fake, execute.Options) {
 	t.Helper()
 	f := mutantkit.FakeGo(t)
@@ -61,51 +37,23 @@ func fakeBuild(t *testing.T) (*mutantkit.Fake, execute.Options) {
 	opts := execute.Options{
 		Toolchain:    gocmd.Toolchain{GoBin: f.Bin()},
 		SnapshotRoot: snapshot,
-		// Under the harness's scratch rather than t.TempDir, because a scripted
-		// compile's output is the fake itself and one test here goes on to run
-		// it. On Windows a copy whose process has just exited can still be held
-		// for a moment while its mapping is torn down, and the harness's
-		// scratch — under the keep policy CI runs with — is removed with
-		// retries. Go's own t.TempDir cleanup has none, and an unremovable file
-		// there fails the test through its cleanup rather than through an
-		// assertion.
-		BinDir:  filepath.Join(testkit.Scratch(t), "bin"),
-		Env:     f.Env(testkit.Compose(t, testkit.Scratch(t))),
-		Jobs:    1,
-		Timeout: time.Minute,
+		BinDir:       filepath.Join(testkit.Scratch(t), "bin"),
+		Env:          f.Env(testkit.Compose(t, testkit.Scratch(t))),
+		Jobs:         1,
+		Timeout:      time.Minute,
 	}
 	return f, opts
 }
 
-// compilerOutput is what a `go test -c` that failed really looks like, copied
-// from one: the header names the package *and the test binary it was building
-// for*, in brackets, and then one located message per problem.
-//
-// It is written out rather than described because the shape is the assertion —
-// internal/validate reads exactly this to attribute a rejected mutant, and a
-// capture that arrived reordered, joined or missing its header would be read as
-// a different set of diagnostics. The bracketed form is the part a
-// hand-invented fixture gets wrong: `go build` prints a bare `# import/path`
-// and `go test -c` does not, so a fake that printed the bare one would be
-// asserting a shape the phase never sees.
 const compilerOutput = "# " + fakePackage + " [" + fakePackage + ".test]\n" +
 	"pkg/pkg_test.go:4:2: \"fmt\" imported and not used\n" +
 	"pkg/pkg_test.go:9:2: declared and not used: total\n" +
 	"pkg/pkg_test.go:10:5: undefined: helper\n"
 
-// TestCompileFailureNamesThePackageAndQuotesTheDiagnostics is the failure this
-// package's own documentation calls a go-mutants bug: a snapshot that will not
-// compile.
-//
-// A bug report about one needs three things, and all three used to stop at the
-// process boundary: which package it was, what the compiler said, and the exact
-// `go test -c` line that said it.
 func TestCompileFailureNamesThePackageAndQuotesTheDiagnostics(t *testing.T) {
 	t.Parallel()
 
 	f, opts := fakeBuild(t)
-	// One, not two: `go test -c` exits 1 for a package it could not build, and
-	// 2 is the go command refusing the invocation itself.
 	f.On("test", "-c").Stderr(compilerOutput).Exit(1)
 
 	binaries, err := execute.BuildTestBinaries(t.Context(), opts)
@@ -152,29 +100,11 @@ func TestCompileFailureNamesThePackageAndQuotesTheDiagnostics(t *testing.T) {
 	}
 }
 
-// TestCompileCarriesVetOffAndListDoesNot is the vet suppression asserted where
-// it actually takes effect: in the environment a child process received.
-//
-// The claim is a pair, and only the pair is worth anything. A compile of an
-// instrumented tree has to carry `-vet=off`, because every mutant of an
-// expression is spliced in beside the original and a file legitimately holds
-// `s == "." && s == ".."` — which vet's `bools` analyzer rejects, stopping the
-// run over generated code the user cannot fix. The listing must *not* carry it:
-// `go list` runs no vet pass, so handing it the flag would be harmless and would
-// still be wrong, since it would say that `go list` is one of the commands this
-// rewrite has an opinion about.
-//
-// build_test.go asserts the same pair on the spec this package built. This one
-// asserts it on the GOFLAGS a real child was started with, which is the only
-// place the merge with an inherited GOFLAGS can be seen to have happened.
 func TestCompileCarriesVetOffAndListDoesNot(t *testing.T) {
 	t.Parallel()
 
 	f, opts := fakeBuild(t)
 	f.On("test", "-c").CreateOutput()
-	// An inherited value, because that is what the merge rule exists for: a
-	// project's own GOFLAGS is part of what "the tests build here" means, and
-	// the flag is appended to it rather than set over it.
 	opts.Env = append(opts.Env, "GOFLAGS=-mod=readonly")
 
 	binaries, err := execute.BuildTestBinaries(t.Context(), opts)
@@ -213,9 +143,6 @@ func TestCompileCarriesVetOffAndListDoesNot(t *testing.T) {
 		t.Errorf("the listing ran with GOWORK %q, want %q so a workspace above the snapshot cannot "+
 			"change the package set", got, "off")
 	}
-	// Nothing that starts a `go` command may carry an activation: a compile run
-	// with one would build the wrong program, and the failure would look like a
-	// detection.
 	for _, call := range calls {
 		if value, ok := call.Env["GO_MUTANTS_ACTIVE"]; ok {
 			t.Errorf("`go %s` ran with GO_MUTANTS_ACTIVE=%q, want it stripped", call.Argv[0], value)
@@ -226,21 +153,6 @@ func TestCompileCarriesVetOffAndListDoesNot(t *testing.T) {
 	}
 }
 
-// TestBuildFailureDiagnosticsAreParsedFromRealProcessOutput is the assertion an
-// injected runner cannot make: that a compiler's output survives the pipe.
-//
-// Everything downstream of a failed build reads this text as a document —
-// internal/validate attributes a rejected mutant by matching `file:line:col:`
-// rows against a catalogue, and the renderer prints the block under the message
-// — so the block has to arrive whole, in the order the child wrote it, with its
-// `# import/path` header still in front of the messages it heads. A capture that
-// reordered the two streams, dropped the header or joined two lines would be
-// read as a different set of diagnostics, and nothing about it would look like a
-// failure.
-//
-// The go command writes progress and downloads on stdout and diagnostics on
-// stderr, so both are scripted and both have to come back, interleaved the way
-// internal/runner's single pipe delivers them.
 func TestBuildFailureDiagnosticsAreParsedFromRealProcessOutput(t *testing.T) {
 	t.Parallel()
 
@@ -257,9 +169,6 @@ func TestBuildFailureDiagnosticsAreParsedFromRealProcessOutput(t *testing.T) {
 		t.Fatalf("OutputOf(err) is empty, want what the compiler printed: %v", err)
 	}
 
-	// Every line, in the order the child wrote it, and nothing joined: the
-	// header has to stay a line of its own or the messages under it belong to
-	// no package.
 	want := []string{
 		strings.TrimSuffix(chatter, "\n"),
 		"# " + fakePackage + " [" + fakePackage + ".test]",
@@ -273,8 +182,6 @@ func TestBuildFailureDiagnosticsAreParsedFromRealProcessOutput(t *testing.T) {
 			strings.Join(lines, "\n\t"), strings.Join(want, "\n\t"))
 	}
 
-	// And the located rows are still located: a row a parser can read has a
-	// file, a line, a column and a message, separated by colons.
 	for _, line := range lines[2:] {
 		file, rest, ok := strings.Cut(line, ":")
 		if !ok || !strings.HasSuffix(file, ".go") {
@@ -287,29 +194,11 @@ func TestBuildFailureDiagnosticsAreParsedFromRealProcessOutput(t *testing.T) {
 	}
 }
 
-// TestToolchainCommandsPutTheLocatedToolchainFirstOnPath is the one rule about
-// a child's environment this package states and had no way to check.
-//
-// [gocmd.Toolchain.GoBin] already decides which `go` os/exec starts — the argv
-// carries an absolute path — so putting its directory in front of PATH decides
-// something else: what that `go` sees. A toolchain that finds a different one
-// ahead of itself on PATH can hand work to it, and a run that reported one Go
-// version while a second compiled the tree would be reporting about a toolchain
-// it never used.
-//
-// The assertion is on the PATH a real child received, which is the only place
-// the rule takes effect: the environment this package composes is a []string
-// that nothing else reads.
 func TestToolchainCommandsPutTheLocatedToolchainFirstOnPath(t *testing.T) {
 	t.Parallel()
 
 	f, opts := fakeBuild(t)
 	f.On("test", "-c").CreateOutput()
-	// A PATH that already names somewhere else, so "in front" is a claim about
-	// order rather than about a PATH with one entry in it. It replaces the
-	// entry the harness composed rather than joining it: os/exec keeps the last
-	// of two entries naming one variable, and a duplicate would make this a
-	// test of that rule instead.
 	elsewhere := t.TempDir()
 	opts.Env = withPath(opts.Env, elsewhere)
 
@@ -330,27 +219,11 @@ func TestToolchainCommandsPutTheLocatedToolchainFirstOnPath(t *testing.T) {
 	}
 }
 
-// TestAScriptedCompileProducesABinaryTheSchedulerRuns is the phase below the
-// build, which used to need a real toolchain for a reason that turns out not to
-// be about the toolchain at all.
-//
-// [execute.RunOne] does not run `go`: it starts a compiled test binary
-// directly. What it needed was a binary that exists and behaves, and that is
-// what a scripted compile's output is — the fake again, answering the same rule
-// table — so a mutant can be scripted killed or survived by exit status and the
-// whole path from `go test -c` to a verdict runs with no Go installed.
-//
-// The arguments the scheduler adds are asserted along the way, because they are
-// what the rules have to match: the `-test.timeout` it owns, doubled to the
-// in-process budget, the `-test.failfast` a mutant run carries, and then the
-// mutant's own arguments.
 func TestAScriptedCompileProducesABinaryTheSchedulerRuns(t *testing.T) {
 	t.Parallel()
 
 	f, opts := fakeBuild(t)
 	f.On("test", "-c").CreateOutput()
-	// The binary runs in its package's directory, which a real build would have
-	// created. Nothing else here needs the tree.
 	packageDir := filepath.Join(opts.SnapshotRoot, "pkg")
 	if err := os.MkdirAll(packageDir, 0o755); err != nil {
 		t.Fatalf("creating the package directory the binary runs in: %v", err)
@@ -395,10 +268,6 @@ func TestAScriptedCompileProducesABinaryTheSchedulerRuns(t *testing.T) {
 		})
 	}
 
-	// What the scheduler really started, read off the log rather than off the
-	// spec it built: the compile, then one run per mutant, each with the
-	// timeout the supervisor owns in front of the mutant's own arguments and
-	// exactly one mutant switched on.
 	var runs []mutantkit.Call
 	for _, call := range f.Calls() {
 		if len(call.Argv) > 0 && strings.HasPrefix(call.Argv[0], "-test.timeout=") {
@@ -421,13 +290,6 @@ func TestAScriptedCompileProducesABinaryTheSchedulerRuns(t *testing.T) {
 	}
 }
 
-// withPath returns env with its PATH entry replaced, however it was spelled.
-//
-// Replaced rather than appended, because two entries naming one variable are
-// resolved by os/exec as "the last wins" and by this package's own prependPath
-// as "the first is the one to grow": a duplicate would make the environment a
-// child receives depend on which of those two rules ran, which is a thing to
-// keep out of an assertion about PATH order.
 func withPath(env []string, dir string) []string {
 	out := make([]string, 0, len(env)+1)
 	replaced := false

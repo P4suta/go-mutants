@@ -78,9 +78,6 @@ func TestAnInterruptedRunLeavesTheBundleThatSaysHowFarItGot(t *testing.T) {
 		t.Fatalf("verify error = %v, want a cancellation", err)
 	}
 
-	// The report of a stopped run holds no measurements, because a cancelled
-	// assure.Run hands back none. The bundle is where how-far-it-got lives, so
-	// this is the assertion that the change is worth anything at all.
 	bundle := diagnosticsBundle(t, root)
 	if filepath.Base(bundle) != result.RunID {
 		t.Fatalf("bundle %s is not named for run %s", bundle, result.RunID)

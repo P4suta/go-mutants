@@ -15,28 +15,10 @@ import (
 	gomutants "github.com/P4suta/go-mutants"
 )
 
-// hunkHeader matches the new-side span of a unified diff hunk: the `+13,4` of
-// `@@ -12,0 +13,4 @@`.
-//
-// The count is optional, and its absence means one line, which is what a diff
-// writes for a single-line change.
 var hunkHeader = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
 
-// diffPathPrefix opens the line naming the file a hunk belongs to.
 const diffPathPrefix = "+++ b/"
 
-// changedLineRanges reports which lines of which changed files are new.
-//
-// Without it, a changeset run discovers every mutant in a changed file and then
-// executes all of them, including the ones in the four hundred lines nobody
-// touched. go-mutants has taken a line-range selection since before the version
-// pinned here; this module simply never sent one.
-//
-// It fails closed. A diff it cannot read, a path the caller did not already
-// know about, a hunk header it cannot parse - each returns false, and the run
-// measures the whole of every changed file exactly as it did before. Narrowing
-// on a misread diff would skip a mutant in changed code, which is the one
-// mistake a changeset scope may not make.
 func changedLineRanges(ctx context.Context, root, reference string, changed []string) (map[string][]gomutants.LineRange, bool) {
 	tracked, untracked := splitTrackedChanges(root, changed)
 	ranges := make(map[string][]gomutants.LineRange, len(changed))
@@ -97,7 +79,6 @@ func changedLineRanges(ctx context.Context, root, reference string, changed []st
 	return ranges, true
 }
 
-// hunkSpan turns a parsed hunk header into the lines it added.
 func hunkSpan(match []string) (gomutants.LineRange, bool) {
 	first, err := strconv.Atoi(match[1])
 	if err != nil || first < 1 {
@@ -111,14 +92,11 @@ func hunkSpan(match []string) (gomutants.LineRange, bool) {
 		}
 	}
 	if count == 0 {
-		// A hunk that only deletes adds no line to select.
 		return gomutants.LineRange{First: first, Last: first - 1}, true
 	}
 	return gomutants.LineRange{First: first, Last: first + count - 1}, true
 }
 
-// splitTrackedChanges separates the changed paths git can diff from the ones it
-// cannot, which are the untracked files changedFiles collected with ls-files.
 func splitTrackedChanges(root string, changed []string) (tracked, untracked []string) {
 	for _, path := range changed {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err != nil {
@@ -129,7 +107,6 @@ func splitTrackedChanges(root string, changed []string) (tracked, untracked []st
 	return tracked, untracked
 }
 
-// fileLineCount counts the lines of one file.
 func fileLineCount(path string) (int, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -145,20 +122,6 @@ func fileLineCount(path string) (int, bool) {
 	return lines, true
 }
 
-// mutationSelection narrows the mutants a changeset run executes to the lines it
-// changed.
-//
-// It returns nil - meaning every mutant the include patterns discovered - in
-// three cases, and each is a deliberate refusal to narrow rather than an
-// oversight.
-//
-// A broad scope has nothing to narrow against. A run whose diff could not be
-// read narrows nothing, because a selection built from a misread diff skips
-// mutants in changed code. And a run in which a `_test.go` changed narrows
-// nothing at all, not even in the packages whose sources did not: a changed test
-// can change the fate of any mutant in its package, so the lines it touched say
-// nothing about which mutants it now reaches. That widening is in
-// docs/limitations.md and stays there.
 func mutationSelection(selection impactSelection) *gomutants.Selection {
 	if selection.broad || selection.ranges == nil {
 		return nil

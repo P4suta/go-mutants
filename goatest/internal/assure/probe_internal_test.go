@@ -688,13 +688,6 @@ func TestProbePassRecordsWhatEachTargetMeasured(t *testing.T) {
 	}
 }
 
-// TestSessionOriginalControlRunsTheOriginalThroughThePreparedBinaries covers
-// the one path a control takes now.
-//
-// It used to take two, and the test that stood here covered the second: a probe
-// of the semantics-preserving tree, whose test-failed outcome was read as "the
-// original is red". That measured the probe tree's binaries rather than the
-// mutant tree's, and answered in a vocabulary built for infection facts.
 func TestSessionOriginalControlRunsTheOriginalThroughThePreparedBinaries(t *testing.T) {
 	t.Parallel()
 	session := &mutationUnitSession{control: func(gomutants.ControlRequest) (gomutants.ControlResult, error) {
@@ -736,13 +729,6 @@ func TestSessionOriginalControlRunsTheOriginalThroughThePreparedBinaries(t *test
 	}
 }
 
-// TestSessionOriginalControlFailsClosed keeps the two ways a control can be
-// unusable apart from the one way it can report a red suite.
-//
-// A red suite is a result, and the caller turns it into an inconclusive mutant.
-// An engine that could not measure, and a measurement that contradicts itself,
-// are errors: neither says anything about the repository, and reporting either
-// as an exit status would have the run blame the user's tests for the engine.
 func TestSessionOriginalControlFailsClosed(t *testing.T) {
 	t.Parallel()
 	cause := errors.New("control process did not start")

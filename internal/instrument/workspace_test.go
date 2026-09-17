@@ -14,10 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The two modules of the workspace these tests instrument. Each holds one
-// mutable comparison, and the two files are deliberately named differently so
-// that a failure is about the module and never about a path collision -- the
-// catalogue's own tests cover the collision.
 const (
 	firstModule  = "example.com/ws/first"
 	secondModule = "example.com/ws/second"
@@ -32,20 +28,6 @@ func Wider(a, b int) bool { return a > b }
 `
 )
 
-// TestInstrumentingOneModuleOfAWorkspaceRewritesOnlyItsOwnFiles is the whole of
-// what a workspace asks of this package, and it is two claims rather than one.
-//
-// A pass rewrites one module, because a module's files can only import a
-// runtime its own module declares: a generated package under `first/` is not
-// on `second/`'s import path without a `require`, and editing a go.mod inside
-// the snapshot is editing the tree under test.
-//
-// And every module's runtime carries the *whole* catalogue. A mutant of
-// `second` can be activated while `first`'s tests are the ones running -- that
-// is cross-module coverage, and it is the reason a workspace is measured as one
-// run rather than as two. A runtime that only knew its own module's indices
-// would meet an id it had never heard of and exit as if the snapshot were
-// stale, turning every cross-module mutant into an infrastructure error.
 func TestInstrumentingOneModuleOfAWorkspaceRewritesOnlyItsOwnFiles(t *testing.T) {
 	t.Parallel()
 
@@ -79,8 +61,6 @@ func TestInstrumentingOneModuleOfAWorkspaceRewritesOnlyItsOwnFiles(t *testing.T)
 		t.Errorf("a runtime was written into the sibling module")
 	}
 
-	// The table, which is the half a single-module pass cannot show. Both
-	// mutants are in it, and the array is as wide as the catalogue.
 	runtime := readWorkspaceFile(t, filepath.Join(root, "first", result.RuntimeDir, result.RuntimeDir+".go"))
 	for _, mutant := range catalog.Mutants() {
 		if !strings.Contains(runtime, mutant.ID) {
@@ -90,15 +70,6 @@ func TestInstrumentingOneModuleOfAWorkspaceRewritesOnlyItsOwnFiles(t *testing.T)
 	}
 }
 
-// TestInstrumentingRefusesACatalogueAndAModuleThatDisagree is fail-closed about
-// the two states that would instrument nothing and say nothing.
-//
-// A workspace catalogue with no module named would rewrite no file at all, and
-// hand back a Result saying so in a field nobody reads as an error. A
-// single-module catalogue with one named is the same mistake arriving from the
-// other side. Both are callers that have lost track of which kind of run they
-// are in, and a tree instrumented by either compiles, passes validation, and
-// reports every mutant as a survivor.
 func TestInstrumentingRefusesACatalogueAndAModuleThatDisagree(t *testing.T) {
 	t.Parallel()
 
@@ -149,8 +120,6 @@ func TestInstrumentingRefusesACatalogueAndAModuleThatDisagree(t *testing.T) {
 	}
 }
 
-// workspaceCatalog is one mutable comparison in each of the two modules, and
-// the hints their guards need.
 func workspaceCatalog(t *testing.T) (*mutation.Catalog, instrument.Hints) {
 	t.Helper()
 
@@ -159,16 +128,12 @@ func workspaceCatalog(t *testing.T) (*mutation.Catalog, instrument.Hints) {
 		workspaceEdit(t, secondModule, "second.go", secondSource, "gt-to-ge", "a > b", ">", ">="))
 }
 
-// singleModuleCatalog is the same edit with no module named, which is what
-// every run that is not a workspace run produces.
 func singleModuleCatalog(t *testing.T) (*mutation.Catalog, instrument.Hints) {
 	t.Helper()
 
 	return workspaceCatalogOf(t, workspaceEdit(t, "", "first.go", firstSource, "eq-to-neq", "a == b", "==", "!="))
 }
 
-// workspaceEdit is one candidate and the Form C guard that rewrites it, both
-// located by searching the source for the site and the operator.
 func workspaceEdit(t *testing.T, module, path, source, rule, site, original, replacement string) discover.Located {
 	t.Helper()
 
@@ -197,7 +162,6 @@ func workspaceEdit(t *testing.T, module, path, source, rule, site, original, rep
 	}
 }
 
-// workspaceCatalogOf builds a catalogue and its hints from located candidates.
 func workspaceCatalogOf(t *testing.T, located ...discover.Located) (*mutation.Catalog, instrument.Hints) {
 	t.Helper()
 
@@ -218,7 +182,6 @@ func workspaceCatalogOf(t *testing.T, located ...discover.Located) (*mutation.Ca
 	return catalog, hints
 }
 
-// writeWorkspaceModule puts one module of the workspace under test on disk.
 func writeWorkspaceModule(t *testing.T, root, dir, source string) {
 	t.Helper()
 
@@ -237,7 +200,6 @@ func writeWorkspaceModule(t *testing.T, root, dir, source string) {
 	}
 }
 
-// readWorkspaceFile reads a file of the tree under test.
 func readWorkspaceFile(t *testing.T, path string) string {
 	t.Helper()
 

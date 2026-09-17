@@ -15,52 +15,18 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/testkit"
 )
 
-// The repository-reference ledger.
-//
-// `P4suta/go-mutants` is two different things wearing one spelling. In an import
-// path it is where the code lives, and when this module is folded into
-// go-mutants every one of those is rewritten to
-// github.com/P4suta/go-mutants/goatest. As the name of a GitHub repository it
-// is where the project lives, and that does not move: a repository does not
-// gain a path segment because a module inside it did.
-//
-// The ledger exists because the two cannot be told apart by how wide a search
-// pattern is. Of the five references this repository makes to itself as a
-// repository, four are spelled `https://github.com/P4suta/go-mutants/goatest…`, which is
-// exactly what a rewrite of import paths looks for; the fifth is a bare
-// `--repo P4suta/go-mutants`, which a pattern narrow enough to spare the four
-// misses. go-mutants found the fifth by rehearsing the migration and reading
-// the diff. This file is so that the other four are not found the same way.
-
 const (
-	// repositoryReferenceLedger names the files that refer to this repository
-	// as a repository.
 	repositoryReferenceLedger = "internal/devgates/repository_references.txt"
 
-	// repositoryName is the spelling both meanings share.
-	//
-	// It moved with the products. Before they shared a repository this was
-	// `P4suta/goatest`, and the whole point of the ledger was that the coming
-	// rewrite must not touch it; the rewrite has happened, the four files below
-	// name `P4suta/go-mutants` now, and the question the ledger asks is the same
-	// one it always asked -- which of these spellings is a repository and which
-	// is an import path. The import path gained a segment. The repository did
-	// not.
 	repositoryName = "P4suta/go-mutants"
 
-	// importPrefix precedes the spelling when it is an import path.
 	importPrefix = "github.com/"
 
-	// urlPrefix precedes the spelling when it is a repository URL, which is a
-	// reference to the repository however much of an import path it resembles.
 	urlPrefix = "https://github.com/"
 
-	// ledgerTestFile is this file, which quotes both forms and is therefore
-	// not evidence about the tree.
 	ledgerTestFile = "internal/devgates/repository_references_test.go"
 )
 
-// readLedgerPaths reads a one-path-per-line ledger.
 func readLedgerPaths(t *testing.T, root, ledger string) []string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ledger)))
@@ -75,23 +41,12 @@ func readLedgerPaths(t *testing.T, root, ledger string) []string {
 		}
 		paths = append(paths, trimmed)
 	}
-	// Fail closed. Every assertion below is a loop, and a loop over nothing
-	// passes: an empty read and a repository that names itself nowhere look
-	// the same from inside the range statement.
 	if len(paths) == 0 {
 		t.Fatalf("%s lists no file, and this repository refers to itself by name in several", ledger)
 	}
 	return paths
 }
 
-// referencesRepositoryByName reports whether a file names this repository as a
-// repository rather than as an import path.
-//
-// The classification is by what precedes the name: a URL scheme means a link to
-// the repository, no `github.com/` at all means a bare `owner/name`, and
-// anything else is an import path. That is mechanical and it is a choice of
-// granularity, which is to say nothing checks that it is the right one - a
-// sixth form of reference would be classified as an import path and pass.
 func referencesRepositoryByName(t *testing.T, path string) bool {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -115,7 +70,6 @@ func referencesRepositoryByName(t *testing.T, path string) bool {
 	}
 }
 
-// TestEveryFileNamingTheRepositoryIsInTheLedger pins the tree to the ledger.
 func TestEveryFileNamingTheRepositoryIsInTheLedger(t *testing.T) {
 	t.Parallel()
 	root := repositoryRoot(t)
@@ -134,12 +88,6 @@ func TestEveryFileNamingTheRepositoryIsInTheLedger(t *testing.T) {
 	}
 }
 
-// TestEveryLedgeredFileStillNamesTheRepository pins the ledger to the tree.
-//
-// This is the direction that keeps the file honest after the migration. Once
-// the references are decided one way or another, an entry that no longer names
-// the repository is a claim about work still to do that has already been done,
-// and a ledger nobody can finish is a ledger nobody reads.
 func TestEveryLedgeredFileStillNamesTheRepository(t *testing.T) {
 	t.Parallel()
 	root := repositoryRoot(t)
@@ -155,7 +103,6 @@ func TestEveryLedgeredFileStillNamesTheRepository(t *testing.T) {
 	}
 }
 
-// TestTheRepositoryReferenceLedgerIsSorted keeps it searchable by eye.
 func TestTheRepositoryReferenceLedgerIsSorted(t *testing.T) {
 	t.Parallel()
 	listed := readLedgerPaths(t, repositoryRoot(t), repositoryReferenceLedger)
@@ -164,8 +111,6 @@ func TestTheRepositoryReferenceLedgerIsSorted(t *testing.T) {
 	}
 }
 
-// TestTheClassificationTellsAnImportPathFromARepositoryName proves the reading
-// this ledger rests on, rather than assuming it.
 func TestTheClassificationTellsAnImportPathFromARepositoryName(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
@@ -176,10 +121,6 @@ func TestTheClassificationTellsAnImportPathFromARepositoryName(t *testing.T) {
 		{name: "import", content: `import "github.com/P4suta/go-mutants/goatest/internal/report"`},
 		{name: "module", content: "module github.com/P4suta/go-mutants/goatest"},
 		{name: "url", content: "see https://github.com/P4suta/go-mutants/goatest/releases", want: true},
-		// The bare form README.md still carries, which names the archived
-		// repository on purpose: it is correct about the artefacts it
-		// describes. The row uses the current name because that is what the
-		// classifier is asked about.
 		{name: "bare", content: "gh attestation verify x --repo P4suta/go-mutants", want: true},
 		{name: "import-then-url", content: "github.com/P4suta/go-mutants/goatest/internal and https://github.com/P4suta/go-mutants/goatest", want: true},
 		{name: "absent", content: "nothing here"},

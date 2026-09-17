@@ -16,280 +16,87 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// unknownValue is what a workspace field says when the run genuinely does not
-// know it — a module too old to declare a `go` directive, or a failure early
-// enough that the loader never answered. It is the same word internal/cli uses
-// for the same question, and it is preferred to an empty string, which would
-// read as a fact rather than as an absence.
 const unknownValue = "unknown"
 
-// A MutantResult is what execution learned about one catalogued mutant.
-//
-// The outcome is the core [mutation.Outcome] rather than this document's
-// spelling, so that the execution layer never has to know how a report writes
-// things down; [Build] translates.
 type MutantResult struct {
-	// ID is the full 64 hex character mutant id.
-	ID string
-	// Outcome is what happened.
-	Outcome mutation.Outcome
-	// NotRunReason says why a not-run mutant was not run. It is required for
-	// [mutation.OutcomeNotRun] and refused for every other outcome: a
-	// measurement has no reason for not having been made, and a mutant that was
-	// not measured always has one. See [NotRunReason].
-	NotRunReason NotRunReason
-	// Duration is the wall-clock time the mutant's execution took, summed over
-	// every attempt.
-	Duration time.Duration
-	// KilledBy names the test binary that detected the mutant — the one that
-	// failed, or the one it hung — when the harness could name it. Empty
-	// becomes null, which is what an outcome that detected nothing carries.
-	KilledBy string
-	// Attempts is how many times the mutant was executed: zero for a mutant the
-	// run never reached, one for an outcome settled first time, two for a
-	// confirmed timeout.
-	//
-	// A not-run mutant is therefore usually zero, but not always. A mutant that
-	// timed out once and was interrupted before the serial retry could repeat it
-	// is not-run with one recorded attempt: it really was executed, and an
-	// unrepeated timeout is not something the run is entitled to call a result.
-	// That is internal/execute's documented contract for a cancelled run, and
-	// this field reports what happened rather than smoothing it.
-	Attempts int
-	// OutputTail is the tail of the test output kept for a human. Empty becomes
-	// null.
-	OutputTail string
-	// MemoryExceeded says the memory bound settled this mutant and PeakMemory is
-	// what it was observed to hold. They are for the *cached* case, where there
-	// are no execution rows to read them off and the facts come from the cache
-	// entry; a mutant this run executed may leave them zero, and [Build] folds
-	// its rows instead.
-	MemoryExceeded bool
-	PeakMemory     int64
-	// Diverged says a counted loop is what settled this mutant rather than the
-	// deadline. It is here for MemoryExceeded's reason and no other: a cached
-	// mutant has no execution rows to read it off.
-	Diverged bool
-	// Executions are the passes this run made over the test binaries for this
-	// mutant, in attempt order. Nil becomes the empty list, which is what a
-	// mutant nothing executed carries.
-	//
-	// [Build] refuses them on a cached, uncovered or not-run mutant, and
-	// refuses a count that disagrees with Attempts. Both refusals are about the
-	// same thing: an execution is a pass *this* run made, so a document
-	// carrying one for a mutant this run never started, or carrying three of
-	// them beside an attempt count of one, would be stating in detail something
-	// its own summary contradicts.
-	Executions []Execution
-	// CoveringTestPackages are the import paths of the test binaries whose
-	// coverage profile reaches this mutant's lines. Nil becomes the empty list,
-	// which is what a run with coverage off carries for every mutant.
+	ID                   string
+	Outcome              mutation.Outcome
+	NotRunReason         NotRunReason
+	Duration             time.Duration
+	KilledBy             string
+	Attempts             int
+	OutputTail           string
+	MemoryExceeded       bool
+	PeakMemory           int64
+	Diverged             bool
+	Executions           []Execution
 	CoveringTestPackages []string
-	// CoveringTests are the tests whose own coverage reaches this mutant's
-	// lines, sorted. Only a [CoverageTest] run may name any; [Build] refuses
-	// them in every other mode, where nothing measured them.
-	CoveringTests []TestRef
-	// Uncovered says the run established that no test binary reaches this
-	// mutant's lines and therefore did not execute it. Such a result is a
-	// survivor with no attempts; [Build] refuses any other combination, because
-	// a document that recorded a killed mutant as uncovered would be describing
-	// a detection nothing performed.
-	Uncovered bool
-	// Unobserved says the run established that no test binary *could observe*
-	// this mutant and therefore did not execute it. Such a result is a survivor
-	// with no attempts, exactly as an uncovered one is, and [Build] refuses any
-	// other combination for the same reason.
-	//
-	// It is the other half of a pair a reader has to be able to tell apart. An
-	// uncovered mutant's lines are never run; an unobserved one's are run, and
-	// running them changes nothing any test looks at. "Uncovered" for the
-	// second would send somebody to write a test for a line that is already
-	// tested.
-	Unobserved bool
-	// Cached says the outcome was adopted from the outcome cache rather than
-	// measured by this run. The rest of the fields are then the ones the run
-	// that measured it recorded. See [Mutant.Cached] for what [Build] refuses.
-	Cached bool
+	CoveringTests        []TestRef
+	Uncovered            bool
+	Unobserved           bool
+	Cached               bool
 }
 
-// A Rejection is a catalogued mutant validation refused, with the compiler
-// diagnostic the delta-debugging pass isolated.
 type Rejection struct {
-	// ID is the full 64 hex character mutant id.
-	ID string
-	// Diagnostic is the compiler's own words, already trimmed by validation.
+	ID         string
 	Diagnostic string
 }
 
-// Options is everything [Build] needs. Every field is supplied by the caller;
-// this package reads no global state except the platform it is running on.
 type Options struct {
-	// ToolVersion is the go-mutants version string.
 	ToolVersion string
-	// RunID is the run identifier, in the fixed `20060102T150405Z-abcd` shape.
-	// It becomes a file name, so it is checked here rather than trusted.
-	RunID string
-	// Status is how the run ended. There is no default.
-	Status Status
-	// Started and Finished bracket the run. Both are required, and Finished
-	// must not precede Started.
-	Started  time.Time
-	Finished time.Time
+	RunID       string
+	Status      Status
+	Started     time.Time
+	Finished    time.Time
 
-	// Config is the fully resolved configuration. The selection block, the
-	// policy gates, and the expectations ledger are read from it, so that the
-	// report describes the configuration the run actually obeyed rather than a
-	// second copy of it assembled by hand.
-	Config config.Config
-	// Mode is how the run chose what to execute. The zero value is [ModeAll].
-	Mode SelectionMode
-	// ChangedRef is the git ref a `--changed` run took its diff against. Empty
-	// is a run that did not narrow by a diff, and is written as null. A
-	// [ModeChanged] run must name one: the mode without the ref would be a
-	// document saying it looked at a diff without saying which.
+	Config     config.Config
+	Mode       SelectionMode
 	ChangedRef string
-	// Shard is which shard of a split run this is, or nil when the run was not
-	// split. A non-nil shard implies [ModeShard]; see [Shard].
-	Shard *Shard
-	// Selected is how many catalogued mutants the run set out to execute. It is
-	// stated rather than counted, because "selected but never reached" — an
-	// interrupted run — is a real state that no count of results can express.
-	Selected int
+	Shard      *Shard
+	Selected   int
 
-	// Module is which module of the catalogue this document is about, and is
-	// empty for a run over one module -- which is every run that is not a
-	// workspace run.
-	//
-	// A workspace is measured as one run over one catalogue that spans its
-	// modules and reported one module at a time, because `workspace.module_path`
-	// is required of a run report and a workspace has no single answer for it.
-	// See ADR 0012. So the catalogue given here is the whole one and this says
-	// whose document is being built: the mutants of the other modules belong to
-	// their own documents, and counting them here would make every module's
-	// score the workspace's.
-	//
-	// It is the value a catalogued mutant's own ModulePath carries, which for a
-	// single-module catalogue is the empty string -- so a run that is not a
-	// workspace run selects everything by leaving this alone.
 	Module string
 
-	// ModulePath, GoVersion and WorkspaceDigest name the tree that was read.
-	// The digest is required and checked; the other two fall back to "unknown".
 	ModulePath      string
 	GoVersion       string
 	WorkspaceDigest string
-	// Platform is the host. The zero value is this process's own GOOS and
-	// GOARCH, which is the right answer for every run that is not being
-	// replayed.
-	Platform Platform
+	Platform        Platform
 
-	// Catalog is the identified, deduplicated set of mutants. It is the
-	// document's backbone: mutants[] and rejected[] are a partition of it, in
-	// catalogue order.
 	Catalog *mutation.Catalog
-	// Located are discovery's candidates, which carry the coordinates the
-	// catalogue does not. Every catalogued mutant must be among them.
 	Located []discover.Located
-	// Skips are discovery's recorded suppressions.
-	Skips []discover.Skip
+	Skips   []discover.Skip
 
-	// Results is one result per catalogued mutant that was not rejected —
-	// including an explicit not-run result for every mutant the run did not
-	// execute. That is the contract [mutation.Tally] documents, and [Build]
-	// enforces it rather than filling in silence: a forgotten mutant would
-	// leave the score's denominator without anybody noticing, which is the one
-	// way a mutation score can flatter a test suite.
-	Results []MutantResult
-	// Rejections are the mutants validation refused. A rejected mutant must not
-	// also have a result.
+	Results    []MutantResult
 	Rejections []Rejection
 
-	// TestCommand is the argv the run measured, as the user wrote it. Empty
-	// falls back to `test.command` from the configuration.
-	TestCommand []string
-	// Baseline holds every baseline observation, in measurement order.
-	Baseline []time.Duration
-	// Timeout is the per-mutant timeout, and TimeoutSource says where it came
-	// from. An empty source is derived from the configuration: explicit exactly
-	// when `test.timeout` is set.
+	TestCommand   []string
+	Baseline      []time.Duration
 	Timeout       time.Duration
 	TimeoutSource TimeoutSource
-	// Memory is the per-mutant memory bound in bytes and MemorySource says
-	// where it came from. A zero Memory with an empty source is a run that
-	// predates the bound or bounded nothing, and writes neither key.
-	Memory       int64
-	MemorySource MemorySource
+	Memory        int64
+	MemorySource  MemorySource
 
-	// CoverageMode is how coverage narrowed the run. The zero value is
-	// [CoverageOff], which is what a run with a custom test command or a failed
-	// coverage pass reports.
-	CoverageMode CoverageMode
-	// CoverageBinaries is how many test binaries the coverage pass profiled. It
-	// is recorded only in [CoveragePackage] mode; an `off` run states no number
-	// rather than a zero it never measured.
-	CoverageBinaries int
-	// CoverageTests is how many tests the coverage pass profiled on their
-	// own. It is recorded only in [CoverageTest] mode, for the reason
-	// CoverageBinaries is only recorded when the pass ran.
-	CoverageTests int
-	// CoverageUnavailableReason is the whole failure that made the run give up
-	// coverage-instrumented test binaries, and CoverageBuildFallback says it
-	// did. Empty and false are the ordinary run, which says nothing about a
-	// fallback that did not happen. See [Coverage].
+	CoverageMode              CoverageMode
+	CoverageBinaries          int
+	CoverageTests             int
 	CoverageUnavailableReason string
 	CoverageBuildFallback     bool
 
-	// CacheMode is the mode the outcome cache operated in. The zero value is
-	// [CacheOff], which is what a run with the cache configured off, a run that
-	// could not open the cache directory, and a run whose `auto` stood down for
-	// a custom test command all report.
-	CacheMode CacheMode
-	// CacheMisses is how many mutants were looked up, not found, and executed.
-	// CacheWrites is how many of those outcomes were stored for a later run.
-	//
-	// The hits are not here: they are counted from the results, so the summary
-	// and the rows underneath it cannot disagree. See [Cache].
+	CacheMode   CacheMode
 	CacheMisses int
 	CacheWrites int
 
-	// Timing is where the run's wall-clock time went, Validation is what
-	// establishing which mutants compile cost it, Snapshot is what the copy of
-	// the workspace turned out to be, Toolchain is the Go that ran the tests,
-	// and ResolvedCommand is the argv that was really started.
-	//
-	// All five are the facts a reader needs to explain a run's cost without a
-	// recording beside it, and all five may be nil: a caller that did not
-	// measure one says nothing rather than publishing a zero that reads as a
-	// measurement. Every run internal/engine performs supplies all of them, so
-	// every document a run writes carries them; `report merge` builds its
-	// document without them, because four shards are four runs and there is no
-	// single answer to give. See [Timing].
 	Timing          *Timing
 	Validation      *Validation
 	Snapshot        *SnapshotFacts
 	Toolchain       *ToolchainFacts
 	ResolvedCommand []string
 
-	// Warnings are the warnings the run published, in publication order.
 	Warnings []Warning
 
-	// InfrastructureError says the run hit an infrastructure, configuration,
-	// snapshot, or baseline failure. It feeds [mutation.Signals], and a
-	// [StatusFailed] report should set it: the policy gates are not consulted
-	// at all for a run that cannot be trusted.
 	InfrastructureError bool
 }
 
-// Build assembles one run report.
-//
-// The order of work is the order the document has to be believable in: check
-// the identity of the run, partition the catalogue into executed and rejected,
-// judge the expectations ledger against that partition, and only then count.
-// Everything that could disagree is checked rather than assumed — a result for
-// a mutant that is not in the catalogue, a mutant claimed twice, a mutant with
-// no coordinates — because a report is the artefact every other output is
-// derived from, and a report that quietly drops a mutant is worse than no
-// report at all.
 func Build(opts Options) (*Report, error) {
 	if err := checkIdentity(opts); err != nil {
 		return nil, err
@@ -381,8 +188,6 @@ func Build(opts Options) (*Report, error) {
 	return r, nil
 }
 
-// timingOf copies the caller's timeline, so that the document shares no slice
-// with the run that may still be writing one.
 func timingOf(timing *Timing) *Timing {
 	if timing == nil {
 		return nil
@@ -393,7 +198,6 @@ func timingOf(timing *Timing) *Timing {
 	}
 }
 
-// validationOf copies the validation facts.
 func validationOf(validation *Validation) *Validation {
 	if validation == nil {
 		return nil
@@ -402,7 +206,6 @@ func validationOf(validation *Validation) *Validation {
 	return &facts
 }
 
-// snapshotOf copies the snapshot facts.
 func snapshotOf(snapshot *SnapshotFacts) *SnapshotFacts {
 	if snapshot == nil {
 		return nil
@@ -411,14 +214,6 @@ func snapshotOf(snapshot *SnapshotFacts) *SnapshotFacts {
 	return &facts
 }
 
-// toolchainOf copies the toolchain facts, filling in what the run does not know
-// and saying nothing at all when it knows neither.
-//
-// A run that failed before it located a toolchain has no honest answer here,
-// and "" is not one: the schema wants a name, and failing a whole run at the
-// very last step over a display field would throw away everything it measured.
-// So a half-known toolchain says "unknown" for the half it does not have,
-// exactly as the workspace block does, and an entirely unknown one is absent.
 func toolchainOf(toolchain *ToolchainFacts) *ToolchainFacts {
 	if toolchain == nil || (toolchain.GoBin == "" && toolchain.Version == "") {
 		return nil
@@ -429,10 +224,6 @@ func toolchainOf(toolchain *ToolchainFacts) *ToolchainFacts {
 	}
 }
 
-// resolvedCommand copies the argv that was really started, or nothing when the
-// caller did not resolve one. It is nil rather than `[]` for absent, because
-// the key is then omitted rather than written empty: an empty argv is not a
-// command anybody ran.
 func resolvedCommand(argv []string) []string {
 	if len(argv) == 0 {
 		return nil
@@ -440,9 +231,6 @@ func resolvedCommand(argv []string) []string {
 	return slices.Clone(argv)
 }
 
-// checkIdentity refuses a report that cannot be trusted to name itself: the run
-// id that will become a file name, the status, the clock, and the digest that
-// will name the history directory.
 func checkIdentity(opts Options) error {
 	if !runIDPattern.MatchString(opts.RunID) {
 		return &Error{
@@ -480,7 +268,6 @@ func checkIdentity(opts Options) error {
 	return nil
 }
 
-// testCommand resolves the argv the report says the run measured.
 func testCommand(opts Options) ([]string, error) {
 	command := opts.TestCommand
 	if len(command) == 0 {
@@ -495,8 +282,6 @@ func testCommand(opts Options) ([]string, error) {
 	return slices.Clone(command), nil
 }
 
-// index turns the results and rejections into lookups, refusing every way the
-// two can contradict each other.
 func index(opts Options) (map[string]MutantResult, map[string]Rejection, error) {
 	results := make(map[string]MutantResult, len(opts.Results))
 	for _, result := range opts.Results {
@@ -522,15 +307,6 @@ func index(opts Options) (map[string]MutantResult, map[string]Rejection, error) 
 	return results, rejections, nil
 }
 
-// partition walks the catalogue once and splits it into the mutants that were
-// executed and the ones validation refused.
-//
-// Both arrays come out in catalogue order, which is (path, span, rule registry
-// position, replacement, id) — a total order that internal/mutation already
-// proves is a pure function of the candidate set. Sorting here would be a
-// second, weaker opinion about the same question: the specified report order,
-// (path, start_byte, rule position), is a prefix of it and has ties that
-// catalogue order has already broken.
 func partition(opts Options, results map[string]MutantResult, rejections map[string]Rejection) ([]Mutant, []Rejected, error) {
 	catalogued := opts.Catalog.Mutants()
 	located := locate(opts.Located)
@@ -538,9 +314,6 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 	mutants := make([]Mutant, 0, len(catalogued))
 	rejected := make([]Rejected, 0, len(rejections))
 	for _, m := range catalogued {
-		// One module's document holds one module's mutants. Everything else in
-		// the catalogue belongs to a sibling's, and for a run over one module
-		// the two strings are both empty and nothing is skipped.
 		if m.ModulePath != opts.Module {
 			continue
 		}
@@ -584,28 +357,24 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 			return nil, nil, err
 		}
 		mutants = append(mutants, Mutant{
-			ID:           m.ID,
-			DisplayID:    m.DisplayID,
-			Path:         m.Path,
-			Package:      where.Package,
-			Family:       string(m.Rule.Family),
-			Rule:         m.Rule.Name,
-			RuleVersion:  m.Rule.Version,
-			Line:         where.Line,
-			Column:       where.Column,
-			StartByte:    m.Span.StartByte,
-			EndByte:      m.Span.EndByte,
-			Original:     m.Original,
-			Replacement:  m.Replacement,
-			Branch:       branchOf(where.Branch),
-			Outcome:      outcome,
-			NotRunReason: reason,
-			DurationMS:   milliseconds(result.Duration),
-			KilledBy:     text(result.KilledBy),
-			// Copied rather than clamped. A negative attempt count is a caller
-			// bug, and quietly rewriting it to zero would hide the bug behind a
-			// document that looks fine; the schema refuses it, which is where a
-			// value this package cannot interpret belongs.
+			ID:                   m.ID,
+			DisplayID:            m.DisplayID,
+			Path:                 m.Path,
+			Package:              where.Package,
+			Family:               string(m.Rule.Family),
+			Rule:                 m.Rule.Name,
+			RuleVersion:          m.Rule.Version,
+			Line:                 where.Line,
+			Column:               where.Column,
+			StartByte:            m.Span.StartByte,
+			EndByte:              m.Span.EndByte,
+			Original:             m.Original,
+			Replacement:          m.Replacement,
+			Branch:               branchOf(where.Branch),
+			Outcome:              outcome,
+			NotRunReason:         reason,
+			DurationMS:           milliseconds(result.Duration),
+			KilledBy:             text(result.KilledBy),
 			Attempts:             result.Attempts,
 			Executions:           executionsOf(result.Executions),
 			OutputTail:           text(result.OutputTail),
@@ -625,15 +394,6 @@ func partition(opts Options, results map[string]MutantResult, rejections map[str
 	return mutants, rejected, nil
 }
 
-// notRunReasonOf checks one result's outcome against its not-run reason and
-// renders the reason for the document.
-//
-// The pairing is a biconditional and both halves are refused rather than
-// repaired. A not-run mutant with no reason would put the one outcome a reader
-// cannot act on into the document with nothing to act on it by — and the
-// commonest way to produce one is a new code path that forgot the field, which
-// is exactly what this catches. A measured mutant carrying a reason is the
-// mirror image: a document explaining why it did not do something it did.
 func notRunReasonOf(m mutation.Mutant, result MutantResult, outcome Outcome) (*string, error) {
 	reason := result.NotRunReason
 	switch {
@@ -661,21 +421,6 @@ func notRunReasonOf(m mutation.Mutant, result MutantResult, outcome Outcome) (*s
 	return text(string(reason)), nil
 }
 
-// checkExecutions holds one mutant's per-attempt rows to what the rest of its
-// row says about it.
-//
-// Two things are refused and both are statements a document must never be able
-// to make. An execution on a cached, uncovered or not-run mutant would be this
-// run claiming a pass over the test binaries it never made: a cached outcome
-// was read out of a file, an uncovered one was settled by a coverage profile
-// before any process started, and a not-run one was never reached. And a count
-// that disagrees with `attempts` would be one document stating two different
-// numbers of attempts — the summary a consumer counts, and the rows the same
-// consumer would count by hand.
-//
-// The rows are not *required*: a caller that recorded no per-attempt detail
-// passes none, and the document says `[]` rather than inventing rows. What is
-// refused is a pair that contradicts itself.
 func checkExecutions(m mutation.Mutant, result MutantResult, outcome Outcome) error {
 	if len(result.Executions) == 0 {
 		return nil
@@ -720,11 +465,6 @@ func checkExecutions(m mutation.Mutant, result MutantResult, outcome Outcome) er
 					i+1, m.DisplayID, execution.Outcome, joinObservations()),
 			}
 		}
-		// `memory_exceeded` is what tells a killed row apart from an
-		// assertion's, so beside any other outcome it describes a pass that
-		// both was and was not stopped by the supervisor. A survivor finished,
-		// a timeout was killed by the deadline instead, and an errored pass
-		// never got a verdict — none of them is a tree the bound ended.
 		if execution.MemoryExceeded && execution.Outcome != OutcomeKilled {
 			return &Error{
 				Code: CodeInvalidExecutions,
@@ -736,8 +476,6 @@ func checkExecutions(m mutation.Mutant, result MutantResult, outcome Outcome) er
 	return nil
 }
 
-// joinObservations lists what a pass can observe, so that the list in an error
-// and the enum in the schema cannot drift apart.
 func joinObservations() string {
 	names := make([]string, 0, len(Observations()))
 	for _, outcome := range Observations() {
@@ -746,13 +484,6 @@ func joinObservations() string {
 	return strings.Join(names, ", ")
 }
 
-// executionsOf copies the per-attempt rows, numbering them from one and giving
-// every row a binary list that is `[]` rather than null.
-//
-// The attempt numbers are imposed here rather than trusted, for the reason the
-// skips are sorted here: the rows are in attempt order by contract, so the
-// numbering is a function of the position, and a caller that got it wrong would
-// publish a document whose rows disagree with their own order.
 func executionsOf(executions []Execution) []Execution {
 	out := make([]Execution, 0, len(executions))
 	for i, execution := range executions {
@@ -764,9 +495,6 @@ func executionsOf(executions []Execution) []Execution {
 	return out
 }
 
-// testRefs clones a list of test references, keeping nil as nil: the key is
-// omitted when there is nothing to name, and an empty list would be a claim
-// that something was named.
 func testRefs(refs []TestRef) []TestRef {
 	if len(refs) == 0 {
 		return nil
@@ -774,8 +502,6 @@ func testRefs(refs []TestRef) []TestRef {
 	return slices.Clone(refs)
 }
 
-// joinReasons lists the not-run reasons for a message, so that the list in an
-// error and the enum in the schema cannot drift apart.
 func joinReasons() string {
 	names := make([]string, 0, len(NotRunReasons()))
 	for _, reason := range NotRunReasons() {
@@ -784,21 +510,6 @@ func joinReasons() string {
 	return strings.Join(names, ", ")
 }
 
-// checkAccountedFor proves that every result and every rejection names a
-// catalogued mutant, and that every one of them belonging to this document was
-// consumed by the catalogue walk.
-//
-// A row naming a mutant the catalogue does not have means two phases are
-// looking at different catalogues, and everything downstream of that is
-// fiction, so it is named where it is found. The rest is a counting argument
-// rather than a second lookup loop: the walk consumed one distinct id per row
-// it produced, the rows hold distinct ids, so equal counts mean equal sets.
-//
-// "Belonging to this document" is what makes the count right in a workspace,
-// where one run's results span the modules and one document holds one module's.
-// A row for another module's mutant is not unaccounted for; it is accounted for
-// in that module's document. For a run over one module every row belongs here,
-// exactly as it always did.
 func checkAccountedFor(opts Options, mutants, rejected int) error {
 	if err := checkRowsOf(opts, "result", opts.Results,
 		func(r MutantResult) string { return r.ID }, mutants); err != nil {
@@ -808,7 +519,6 @@ func checkAccountedFor(opts Options, mutants, rejected int) error {
 		func(r Rejection) string { return r.ID }, rejected)
 }
 
-// checkRowsOf is [checkAccountedFor] for one kind of row.
 func checkRowsOf[T any](opts Options, kind string, rows []T, id func(T) string, consumed int) error {
 	mine := 0
 	for _, row := range rows {
@@ -827,24 +537,12 @@ func checkRowsOf[T any](opts Options, kind string, rows []T, id func(T) string, 
 	if mine == consumed {
 		return nil
 	}
-	// Unreachable: the counts only disagree when a row of this module was not
-	// consumed, and such a row is consumed exactly when its id is catalogued --
-	// which the loop above has just established of every row. Reported rather
-	// than returned as nil, because a nil here would silently produce a report
-	// that has lost a mutant.
 	return &Error{
 		Code:    CodeUnknownMutant,
 		Message: "internal error: a " + kind + " could not be matched to the catalogue",
 	}
 }
 
-// A locationKey is what identifies one candidate among the discovery's: the
-// module it belongs to, the file within that module, the span, and the rule.
-//
-// The module is part of it for the reason it is part of the identity: two
-// modules of one workspace can each hold an `app.go`, and an edit at one span
-// by one rule in each is two candidates. A key without it would hand one
-// module's coordinates to the other module's mutant, silently.
 type locationKey struct {
 	module string
 	path   string
@@ -852,13 +550,10 @@ type locationKey struct {
 	rule   string
 }
 
-// keyOf is the location key of one candidate.
 func keyOf(module, path string, span mutation.Span, rule string) locationKey {
 	return locationKey{module: module, path: path, span: span, rule: rule}
 }
 
-// branchOf converts discovery's branch proof into the document's. Nil stays
-// nil, which is what keeps the property absent rather than null.
 func branchOf(proof *discover.BranchProof) *Branch {
 	if proof == nil {
 		return nil
@@ -872,9 +567,6 @@ func branchOf(proof *discover.BranchProof) *Branch {
 	}
 }
 
-// locate indexes discovery's candidates by that key, keeping the first of any
-// duplicates: two candidates with the same key are the same edit, so they are
-// at the same line and column by construction.
 func locate(candidates []discover.Located) map[locationKey]discover.Located {
 	out := make(map[locationKey]discover.Located, len(candidates))
 	for _, candidate := range candidates {
@@ -886,8 +578,6 @@ func locate(candidates []discover.Located) map[locationKey]discover.Located {
 	return out
 }
 
-// dispositions is what the expectations ledger is judged against: every id the
-// catalogue holds, and what this run found out about it.
 func dispositions(mutants []Mutant, rejected []Rejected) map[string]Disposition {
 	known := make(map[string]Disposition, len(mutants)+len(rejected))
 	for _, m := range mutants {
@@ -899,12 +589,6 @@ func dispositions(mutants []Mutant, rejected []Rejected) map[string]Disposition 
 	return known
 }
 
-// tallyOf counts the executed mutants, with the expectations ledger deciding
-// which survivors are expected.
-//
-// The counting is [mutation.Tally]'s, not this package's. A second
-// implementation of "what counts as a detection" is exactly how a report and a
-// console end up disagreeing about a number the user is looking at in both.
 func tallyOf(mutants []Mutant, results map[string]MutantResult, expectations []Expectation) (mutation.Tally, error) {
 	expected := make(map[string]bool, len(expectations))
 	for _, e := range expectations {
@@ -930,14 +614,6 @@ func tallyOf(mutants []Mutant, results map[string]MutantResult, expectations []E
 	return tally, nil
 }
 
-// selectionOf assembles the selection block and checks its arithmetic.
-//
-// Two consistency rules are enforced here rather than left to the schema, which
-// cannot express either. A [ModeChanged] run must name the ref it diffed
-// against, because the mode without the ref is a document saying it looked at a
-// diff without saying which one; and a sharded run must report [ModeShard],
-// because a document carrying a `shard` block and claiming to have run
-// everything would be two contradictory statements about the same run.
 func selectionOf(opts Options, candidates, rejected int) (Selection, error) {
 	mode := opts.Mode
 	if mode == "" {
@@ -986,8 +662,6 @@ func selectionOf(opts Options, candidates, rejected int) (Selection, error) {
 	}, nil
 }
 
-// joinModes lists the selection modes for a message, so that the list in an
-// error and the enum in the schema cannot drift apart.
 func joinModes() string {
 	names := make([]string, 0, len(SelectionModes()))
 	for _, mode := range SelectionModes() {
@@ -996,14 +670,6 @@ func joinModes() string {
 	return strings.Join(names, ", ")
 }
 
-// shardOf assembles the shard block, filling in the assignment function this
-// build implements and refusing a shard it could not honestly describe.
-//
-// The assignment is defaulted rather than demanded, because there is exactly
-// one and a caller spelling it out again is a second place for it to be wrong.
-// A caller that names a different one is refused rather than corrected: the
-// value is a promise that a consumer can recompute the partition, and quietly
-// rewriting it would turn a caller's mistake into a document that lies.
 func shardOf(opts Options) (*Shard, error) {
 	if opts.Shard == nil {
 		return nil, nil
@@ -1029,38 +695,16 @@ func shardOf(opts Options) (*Shard, error) {
 	return &shard, nil
 }
 
-// coverageOf assembles the coverage block and checks that the mutants agree
-// with it.
-//
-// Two things are checked rather than trusted, and both are conditions a
-// document must never be able to state. An uncovered mutant that is not a
-// survivor with zero attempts would be claiming a measurement the run refused
-// to make — the whole point of `uncovered` is that nothing was executed — and
-// an uncovered mutant in a run with coverage off would be claiming a fact
-// nobody went looking for. Either is a caller bug, and a report is the artefact
-// every other output is derived from: it is worth failing at the last step
-// rather than publishing a document that quietly contradicts itself.
-//
-// `mutants_uncovered` is counted here from the rows above rather than passed
-// in, so the number in the summary and the rows a reader would count by hand
-// are the same number by construction.
 func coverageOf(opts Options, mutants []Mutant) (Coverage, error) {
 	coverage, err := coverageBlock(opts.CoverageMode, opts.CoverageBinaries, opts.CoverageTests, mutants)
 	if err != nil {
 		return Coverage{}, err
 	}
-	// The fallback is a fact about this run rather than about the narrowing, so
-	// it is filled in here and not in the block `report merge` shares: a merged
-	// document has several runs' worth of it and reports none.
 	coverage.UnavailableReason = text(opts.CoverageUnavailableReason)
 	coverage.BuildFallback = opts.CoverageBuildFallback
 	return coverage, nil
 }
 
-// coverageBlock is [coverageOf] over the two values rather than over the whole
-// options struct, so that `report merge` — which has rows and no options — can
-// recount `mutants_uncovered` through this one implementation instead of
-// growing a second opinion about what an uncovered mutant is.
 func coverageBlock(mode CoverageMode, binaryCount, testCount int, mutants []Mutant) (Coverage, error) {
 	stated := mode
 	if mode == "" {
@@ -1130,14 +774,6 @@ func coverageBlock(mode CoverageMode, binaryCount, testCount int, mutants []Muta
 	return coverage, nil
 }
 
-// checkUnobserved refuses the combinations an unobserved mutant cannot be in.
-//
-// The same two the uncovered check makes, for the same reason -- a mutant the
-// run did not execute is a survivor with no attempts -- and one more that is
-// this pair's own: a mutant cannot be both. Coverage settles what nothing
-// reaches before a probe is asked about it, so a mutant marked both would be
-// one two phases each claim to have settled, and a reader could not tell which
-// remedy to reach for.
 func checkUnobserved(m Mutant) error {
 	if !m.Unobserved {
 		return nil
@@ -1159,9 +795,6 @@ func checkUnobserved(m Mutant) error {
 	return nil
 }
 
-// checkCoverageFacts refuses a row that names tests in a run that never
-// measured any: covering tests on the mutant, or a selection on one of its
-// passes, are statements only a test-narrowed run can make.
 func checkCoverageFacts(mode CoverageMode, m Mutant) error {
 	if mode == CoverageTest {
 		return nil
@@ -1185,23 +818,6 @@ func checkCoverageFacts(mode CoverageMode, m Mutant) error {
 	return nil
 }
 
-// cacheBlock assembles the cache block and checks that the mutants agree with
-// it.
-//
-// It is written over the three values rather than over the whole options
-// struct, exactly as [coverageBlock] is and for the same reason: `report merge`
-// has rows and no options, and one implementation of "what a cache hit is" is
-// the only way the merged document and the shard documents can be counted the
-// same way.
-//
-// Four things are refused rather than trusted, and every one of them is a
-// statement a document must never be able to make. A cached mutant carrying an
-// outcome the cache will not store — inconclusive, errored, not-run — would be
-// claiming an entry that cannot exist. A cached mutant that is also uncovered
-// would be claiming a measurement adopted for a mutant nothing ever executed.
-// A run with the cache off that reports a hit would be contradicting itself in
-// two adjacent lines. And more writes than misses would mean the run stored an
-// outcome it did not measure.
 func cacheBlock(mode CacheMode, misses, writes int, mutants []Mutant) (Cache, error) {
 	stated := mode
 	if mode == "" {
@@ -1264,27 +880,16 @@ func cacheBlock(mode CacheMode, misses, writes int, mutants []Mutant) (Cache, er
 	return Cache{Mode: mode, Hits: hits, Misses: misses, Writes: writes}, nil
 }
 
-// reusable reports whether an outcome is one the cache stores, in this
-// document's spelling.
-//
-// It is deliberately a small duplicate of internal/cache's own rule rather than
-// a call into it: this package is the document, and a document validator that
-// imported the store it is validating would run the dependency the wrong way
-// round — internal/cache already reads [Mutant] the other way. The package
-// tests hold the two lists together.
 func reusable(o Outcome) bool {
-	//exhaustive:total Reuse is fail-closed. Three outcomes are worth storing and the default
-	// answers false for everything else, which is the only safe answer for an
-	// outcome nobody has decided about yet.
 	switch o {
 	case OutcomeKilled, OutcomeSurvived, OutcomeTimedOut:
 		return true
-	default:
+	case OutcomeErrored, OutcomeInconclusive, OutcomeNotRun:
 		return false
 	}
+	return false
 }
 
-// countNoun renders "1 attempt" or "3 attempts".
 func countNoun(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
@@ -1292,12 +897,6 @@ func countNoun(n int, noun string) string {
 	return strconv.Itoa(n) + " " + noun + "s"
 }
 
-// summaryOf counts the run and asks the policy what it makes of it.
-//
-// The verdict is computed here rather than passed in so that the number in the
-// document and the gate that read it cannot disagree: [mutation.Decide] is
-// asked about this report's own tally. Only the first failure is named — see
-// [PolicyResult] for why nothing is lost by that.
 func summaryOf(t mutation.Tally, policy mutation.Policy, infrastructure bool, expectations []Expectation, mutants []Mutant) Summary {
 	summary := Summary{
 		Total:        t.Total(),
@@ -1327,15 +926,11 @@ func summaryOf(t mutation.Tally, policy mutation.Policy, infrastructure bool, ex
 	return summary
 }
 
-// expectationFailure is [Report.ExpectationFailure] over the pieces, before
-// there is a report to ask. The two must answer alike, which the package tests
-// hold in place.
 func expectationFailure(expectations []Expectation, mutants []Mutant) bool {
 	r := Report{Expectations: expectations, Mutants: mutants}
 	return r.ExpectationFailure()
 }
 
-// baselineOf renders the baseline observations.
 func baselineOf(runs []time.Duration) Baseline {
 	durations := make([]int64, 0, len(runs))
 	var slowest int64
@@ -1347,18 +942,6 @@ func baselineOf(runs []time.Duration) Baseline {
 	return Baseline{Runs: len(runs), DurationsMS: durations, SlowestMS: slowest}
 }
 
-// skipsOf renders discovery's skips, sorted by (path, reason).
-//
-// The order is imposed here rather than borrowed from discovery. Discovery does
-// sort its skips, but a report that depends on somebody else's ordering promise
-// is a report whose determinism is somebody else's business to keep.
-//
-// Reasons are copied through verbatim rather than checked against the schema's
-// enumeration. A reason discovery emits and this schema has not heard of is a
-// documentation bug to fix in the same commit as the reason, not grounds for
-// failing a run at the very end of it; the package tests assert that every
-// reason either package defines is in the schema, which is where that drift
-// gets caught.
 func skipsOf(skips []discover.Skip) []Skip {
 	out := make([]Skip, 0, len(skips))
 	for _, skip := range skips {
@@ -1373,16 +956,11 @@ func skipsOf(skips []discover.Skip) []Skip {
 	return out
 }
 
-// warningsOf copies the warnings, keeping publication order: a warning about
-// the workspace that was published before the baseline ran belongs above one
-// about the baseline, and sorting them would destroy the only ordering they
-// have.
 func warningsOf(warnings []Warning) []Warning {
 	out := make([]Warning, 0, len(warnings))
 	return append(out, warnings...)
 }
 
-// platformOf fills in the running host when the caller named none.
 func platformOf(p Platform) Platform {
 	if p.OS == "" {
 		p.OS = runtime.GOOS
@@ -1393,13 +971,6 @@ func platformOf(p Platform) Platform {
 	return p
 }
 
-// timeoutSource resolves where the timeout came from, deriving it from the
-// configuration when the caller did not say.
-//
-// The fallback reads `test.timeout` rather than defaulting to "derived",
-// because a report that labelled a configured timeout as derived would be
-// wrong in exactly the case a reader is investigating: why every mutant timed
-// out.
 func timeoutSource(opts Options) TimeoutSource {
 	if opts.TimeoutSource.Valid() {
 		return opts.TimeoutSource
@@ -1410,14 +981,6 @@ func timeoutSource(opts Options) TimeoutSource {
 	return TimeoutDerived
 }
 
-// memorySource resolves what the document says about where the memory bound
-// came from, and writes nothing at all for a run that had none.
-//
-// The empty string is deliberate and is not [MemoryUnavailable]. A run that
-// bounded nothing *and* knew why says so; a caller that said nothing about
-// memory at all — every caller that predates the bound, and every test fixture
-// that does not care — leaves both keys out, which is what makes the pair
-// additive.
 func memorySource(opts Options) MemorySource {
 	if opts.MemorySource.Valid() {
 		return opts.MemorySource
@@ -1425,15 +988,6 @@ func memorySource(opts Options) MemorySource {
 	return ""
 }
 
-// checkMemory refuses a bound that contradicts where it says it came from.
-//
-// The two keys are one fact written twice, and every contradiction between them
-// is the kind a consumer reads straight past: `derived` with no number is a
-// bound nobody can check a `memory_exceeded` row against, `unavailable` with a
-// number is "there was no bound, and here it is", and a number with no source
-// is a budget of unknown provenance. Silence — neither field — is the one
-// combination that means something, and it means what every caller that
-// predates the bound says: nothing.
 func checkMemory(opts Options) error {
 	source, memory := opts.MemorySource, opts.Memory
 	switch {
@@ -1467,8 +1021,6 @@ func checkMemory(opts Options) error {
 	return nil
 }
 
-// joinMemorySources lists the sources for a message, so that the list in an
-// error and the enum in the schema cannot drift apart.
 func joinMemorySources() string {
 	names := make([]string, 0, 3)
 	for _, source := range []MemorySource{MemoryExplicit, MemoryDerived, MemoryUnavailable} {
@@ -1477,15 +1029,6 @@ func joinMemorySources() string {
 	return strings.Join(names, ", ")
 }
 
-// anyExecutionExceeded, highestExecutionPeak and anyExecutionDiverged fold a
-// mutant's rows into the three facts the mutant itself carries.
-//
-// They are folded rather than required of the caller because the caller already
-// said it once per pass, and a second hand-maintained copy is a second thing to
-// get wrong. What the caller does supply directly is the *cached* case, where
-// there are no rows to fold and the facts come off the cache entry — so the two
-// sources are combined rather than chosen between, and a caller that supplied
-// both consistently gets the same answer either way.
 func anyExecutionExceeded(executions []Execution) bool {
 	for _, execution := range executions {
 		if execution.MemoryExceeded {
@@ -1495,9 +1038,6 @@ func anyExecutionExceeded(executions []Execution) bool {
 	return false
 }
 
-// anyExecutionDiverged is the same fold for the other thing that ends a target
-// without a test failing: a counted loop past the ceiling the run derived for
-// it. See ADR 0013.
 func anyExecutionDiverged(executions []Execution) bool {
 	for _, execution := range executions {
 		if execution.Diverged {
@@ -1515,7 +1055,6 @@ func highestExecutionPeak(executions []Execution) int64 {
 	return peak
 }
 
-// duplicate builds the error for one mutant claimed twice.
 func duplicate(kind, id string) error {
 	return &Error{
 		Code:    CodeDuplicateEntry,
@@ -1523,8 +1062,6 @@ func duplicate(kind, id string) error {
 	}
 }
 
-// display shortens an id for a message, and leaves a short or malformed one
-// alone rather than slicing past its end.
 func display(id string) string {
 	if len(id) <= mutation.DisplayIDLength {
 		return id
@@ -1532,8 +1069,6 @@ func display(id string) string {
 	return id[:mutation.DisplayIDLength]
 }
 
-// stringList returns a non-nil copy of a list. Every array in the document is a
-// list that may legitimately be empty, and an empty list is `[]`, never `null`.
 func stringList(values []string) []string {
 	if len(values) == 0 {
 		return []string{}
@@ -1541,7 +1076,6 @@ func stringList(values []string) []string {
 	return slices.Clone(values)
 }
 
-// or returns value, or fallback when value is empty.
 func or(value, fallback string) string {
 	if value == "" {
 		return fallback

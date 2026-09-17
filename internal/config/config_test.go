@@ -16,10 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// problems flattens whatever this package returned into the individual
-// diagnostics it carries. Every error path either is an *Error or joins
-// *Errors, so a test that finds nothing here has found a violation of that
-// contract rather than a missing case.
 func problems(t *testing.T, err error) []*Error {
 	t.Helper()
 	if err == nil {
@@ -44,7 +40,6 @@ func problems(t *testing.T, err error) []*Error {
 	return []*Error{problem}
 }
 
-// only asserts that err carries exactly one diagnostic and returns it.
 func only(t *testing.T, err error) *Error {
 	t.Helper()
 	got := problems(t, err)
@@ -54,7 +49,6 @@ func only(t *testing.T, err error) *Error {
 	return got[0]
 }
 
-// codesOf lists the codes of every diagnostic, in report order.
 func codesOf(problems []*Error) []Code {
 	out := make([]Code, 0, len(problems))
 	for _, problem := range problems {
@@ -82,9 +76,6 @@ func TestDefaults(t *testing.T) {
 			Narrowing:    NarrowingTest,
 			Probing:      ProbingOff,
 		},
-		// The default worker count is a property of the machine, so it is
-		// derived here the way the documentation states it rather than pinned
-		// to whatever this test host happens to have.
 		Execution: Execution{Jobs: min(runtime.NumCPU(), 8)},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
 		Policy:    mutation.Policy{Strict: false, MinimumScore: 0, RequireMutants: true},
@@ -103,8 +94,6 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-// The defaults are handed out, not shared: a caller that edits what it got
-// must not be able to change what the next caller gets.
 func TestDefaultsAreFresh(t *testing.T) {
 	first := Defaults()
 	first.Mutation.Include[0] = "tampered"
@@ -143,9 +132,6 @@ func TestCloneSharesNothing(t *testing.T) {
 	}
 }
 
-// Codes are a user-facing contract: they have to be unique, and they have to
-// stay inside the block this package owns, or two packages will eventually
-// print the same code for different things.
 func TestCodesAreUniqueAndOwned(t *testing.T) {
 	seen := make(map[Code]bool, len(codes))
 	for _, code := range codes {
@@ -162,10 +148,6 @@ func TestCodesAreUniqueAndOwned(t *testing.T) {
 	}
 }
 
-// Codes() is the list `doctor` prints so that a code seen in a log can be
-// looked up without reading the source, and it is handed out rather than
-// shared: a caller that sorts or truncates what it got must not be able to
-// change what the next caller is told.
 func TestCodesIsAFreshCopyOfTheWholeLedger(t *testing.T) {
 	got := Codes()
 	if diff := cmp.Diff(codes, got); diff != "" {
@@ -178,9 +160,6 @@ func TestCodesIsAFreshCopyOfTheWholeLedger(t *testing.T) {
 	}
 }
 
-// A code is printed on its own — in a console line, in a CI log, in an issue
-// report — and String is how. Nothing else in this package reaches it, because
-// Error.Error writes the field rather than calling it.
 func TestCodeStringIsTheCodeItself(t *testing.T) {
 	if got := CodeThresholdsInverted.String(); got != "GOM3064" {
 		t.Errorf("CodeThresholdsInverted.String() = %q, want %q", got, "GOM3064")
@@ -192,11 +171,6 @@ func TestCodeStringIsTheCodeItself(t *testing.T) {
 	}
 }
 
-// A Position renders three ways, and only one of them is what an *Error
-// carrying a located value prints. The other two are the honest answers for a
-// key with no position and for a layer that could name the line but not a
-// column inside it, and neither has anywhere else in this repository to be
-// exercised.
 func TestPositionString(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -206,11 +180,7 @@ func TestPositionString(t *testing.T) {
 	}{
 		{"unknown", Position{}, false, "-"},
 		{"line and column", Position{Line: 55, Column: 8}, true, "55:8"},
-		// A line with no column is not "column zero": the column is dropped
-		// rather than printed as a number no editor would accept.
 		{"line only", Position{Line: 55}, true, "55"},
-		// A column with no line points at nothing, which is what the zero
-		// Position means.
 		{"column only", Position{Column: 8}, false, "-"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -224,18 +194,11 @@ func TestPositionString(t *testing.T) {
 	}
 }
 
-// baseKey is what lets a diagnostic about `mutation.include[3]` find the flag
-// registered for `mutation.include`. It strips from the first '[' and does not
-// look for a matching one, which is a decision rather than an oversight: every
-// key the validators build puts the index last or last but one.
 func TestBaseKeyStripsTheIndexAndWhatFollowsIt(t *testing.T) {
 	for _, test := range []struct{ key, want string }{
 		{"report.low", "report.low"},
 		{"mutation.include[3]", "mutation.include"},
 		{"mutation.expect[1].id", "mutation.expect"},
-		// A key that is nothing but an index has the empty prefix in front of
-		// it, and that — rather than the key itself — is what no flag is
-		// registered under.
 		{"[0]", ""},
 		{"", ""},
 	} {
@@ -256,8 +219,6 @@ func TestSet(t *testing.T) {
 	if got := unset.String(); got != "unset" {
 		t.Errorf("String() on an unset Set = %q", got)
 	}
-	// A set value renders as the value, which is what makes "unset" mean
-	// something rather than being one rendering among two that look alike.
 	if got := Explicit(3).String(); got != "3" {
 		t.Errorf("String() on Explicit(3) = %q, want %q", got, "3")
 	}
@@ -265,7 +226,6 @@ func TestSet(t *testing.T) {
 		t.Errorf("String() on a set slice = %q, want %q", got, "[a b]")
 	}
 
-	// A deliberate zero is a value: this is the whole reason the type exists.
 	zero := Explicit(0)
 	if !zero.IsSet() {
 		t.Errorf("Explicit(0) is not set")
@@ -294,7 +254,6 @@ func TestSet(t *testing.T) {
 	if Explicit([]string{"a"}).Equal(Explicit([]string{"b"})) {
 		t.Errorf("two Sets holding different slices are equal")
 	}
-	// go-cmp has to use Equal rather than reaching for the unexported fields.
 	if diff := cmp.Diff(Explicit(5), Explicit(5)); diff != "" {
 		t.Errorf("cmp.Diff on equal Sets: %s", diff)
 	}
@@ -305,7 +264,6 @@ func TestOverlayIsEmpty(t *testing.T) {
 	if !empty.IsEmpty() {
 		t.Errorf("the zero Overlay is not empty")
 	}
-	// Every field must count, including the ones whose value is a zero.
 	for name, overlay := range map[string]Overlay{
 		"version":          {Version: Explicit(1)},
 		"include":          {Include: Explicit([]string(nil))},
@@ -366,8 +324,6 @@ func TestErrorRendering(t *testing.T) {
 	}
 }
 
-// A joined error prints one problem per line and stays reachable to errors.As
-// and errors.Is.
 func TestMultiErrorRendering(t *testing.T) {
 	first := &Error{Code: CodeUnknownKey, File: "f.toml", Position: Position{Line: 1, Column: 1}, Key: "a", Message: "one"}
 	second := &Error{Code: CodeUnknownKey, File: "f.toml", Position: Position{Line: 2, Column: 1}, Key: "b", Message: "two"}
@@ -384,7 +340,6 @@ func TestMultiErrorRendering(t *testing.T) {
 	if !errors.Is(err, error(second)) {
 		t.Errorf("errors.Is did not reach the second problem")
 	}
-	// One problem is reported on its own, with no wrapper around it.
 	if got := join([]error{first}); got != error(first) {
 		t.Errorf("join of one error wrapped it: %T", got)
 	}

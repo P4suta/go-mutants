@@ -27,11 +27,6 @@ type impactSelection struct {
 	broad   bool
 	prior   *evidence.GraphRecord
 
-	// ranges are the lines of each changed file that are new.
-	//
-	// It is nil when the diff could not be read, which narrows nothing: a
-	// selection built from a misread diff skips mutants in changed code, and
-	// that is the one mistake a changeset scope may not make.
 	ranges map[string][]gomutants.LineRange
 }
 
@@ -71,8 +66,6 @@ func selectImpact(ctx context.Context, root string, model goanalysis.Model, targ
 	if len(changed) == 0 {
 		return impactSelection{changed: []string{}, prior: &record}
 	}
-	// The ranges go through gitNamesOutput, which is already a seam a test can
-	// replace, so this needs no second one. The seam ledger may only shrink.
 	ranges, _ := changedLineRanges(ctx, root, options.ChangedRef, changed)
 	impact := record.Graph.Affected(changed)
 	if impact.Broad {

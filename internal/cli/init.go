@@ -40,13 +40,11 @@ configuration to the release that generated it. It is the one place in
 go-mutants where 1 does not mean a policy gate failed — it is still an opt-in
 gate somebody asked for, and it is still not an infrastructure failure.`
 
-// initOptions holds the flag destinations for one `init`.
 type initOptions struct {
 	dryRun bool
 	check  bool
 }
 
-// newInitCommand builds `init`.
 func newInitCommand() *cobra.Command {
 	o := &initOptions{}
 	cmd := &cobra.Command{
@@ -59,13 +57,10 @@ func newInitCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "print what would be written, and write nothing")
 	cmd.Flags().BoolVar(&o.check, "check", false,
 		"exit 0 if the file already there is what this build would write, and 1 if it is not")
-	// Neither flag is wrong on its own; asking for both is asking to print a
-	// file and to compare it in the same breath.
 	cmd.MarkFlagsMutuallyExclusive("dry-run", "check")
 	return cmd
 }
 
-// execute is `init`'s body.
 func (o *initOptions) execute(cmd *cobra.Command, _ []string) error {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -87,11 +82,6 @@ func (o *initOptions) execute(cmd *cobra.Command, _ []string) error {
 	return o.write(cmd, path, content)
 }
 
-// write creates the file, refusing to replace one that is already there.
-//
-// The refusal is the create itself rather than a look followed by a write:
-// O_EXCL is the filesystem's own answer to "does this exist", and it cannot be
-// raced by an editor saving the file in the half-second between the two.
 func (o *initOptions) write(cmd *cobra.Command, path, content string) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	switch {
@@ -113,8 +103,6 @@ func (o *initOptions) write(cmd *cobra.Command, path, content string) error {
 		err = closeErr
 	}
 	if err != nil {
-		// The file exists and is incomplete, which is worse than no file: the
-		// next `init` would refuse it and a run would read half a configuration.
 		_ = os.Remove(path)
 		return &Error{
 			Code:    CodeConfigurationNotWritten,
@@ -126,13 +114,6 @@ func (o *initOptions) write(cmd *cobra.Command, path, content string) error {
 		"every value in it is the built-in default, so nothing about your runs has changed yet\n")
 }
 
-// compare is `init --check`.
-//
-// The comparison is byte-for-byte and deliberately so. A file that parses to
-// the same configuration through different words is a fine file and a poor
-// answer to the question this flag asks, which is whether the file in the
-// repository is the one this release generates — a wording change in a comment
-// is exactly the drift a freshness check exists to catch.
 func (o *initOptions) compare(cmd *cobra.Command, path, content string) error {
 	found, err := os.ReadFile(path)
 	switch {
@@ -151,7 +132,6 @@ func (o *initOptions) compare(cmd *cobra.Command, path, content string) error {
 	return emit(cmd.OutOrStdout(), path+" is what `go-mutants init` writes in "+Version+"\n")
 }
 
-// stale builds the one failure in this package that exits 1. See [initLong].
 func stale(message string) error {
 	return &exitError{
 		code: mutation.ExitPolicyFailure,
@@ -163,27 +143,6 @@ func stale(message string) error {
 	}
 }
 
-// StarterConfig returns the file `init` writes.
-//
-// It is exported so that the tests can hold it to the one property that makes
-// it worth shipping: the file parses, and resolves to exactly
-// [config.Defaults]. Every value in it is interpolated from that function
-// rather than typed out here, so a changed default cannot leave a stale number
-// behind in the text — and the three keys whose defaults cannot be written down
-// are commented out rather than guessed at:
-//
-//   - `execution.jobs` is min(CPU count, 8), which is a different number on a
-//     laptop and on a CI runner. Writing it would make the generated file
-//     machine-dependent and `init --check` a gate that fails on the wrong
-//     hardware.
-//   - `test.timeout` is zero meaning "derive it from the baseline", and
-//     `test.memory` is zero meaning the same about the baseline's peak memory.
-//     No duration and no size spells that, and the file has no way back to
-//     derivation once either is set.
-//   - `mutation.exclude`, `mutation.operators` and `[[mutation.expect]]` are
-//     empty by default, and an empty list is a decision — "constrain nothing" —
-//     that reads as an oversight when it is written out. They are shown as
-//     commented examples instead.
 func StarterConfig() string {
 	c := config.Defaults()
 	var b strings.Builder
@@ -307,8 +266,6 @@ low = ` + strconv.Itoa(c.Report.Low) + `
 	return b.String()
 }
 
-// formatNames renders the report formats as the strings the file spells them
-// with.
 func formatNames(formats []config.ReportFormat) []string {
 	names := make([]string, 0, len(formats))
 	for _, format := range formats {
@@ -317,12 +274,8 @@ func formatNames(formats []config.ReportFormat) []string {
 	return names
 }
 
-// tomlString renders one TOML basic string. strconv.Quote is Go's escaping and
-// TOML's are the same for everything a configuration value can contain here —
-// and every value it is handed is an identifier, a path, or a flag name.
 func tomlString(value string) string { return strconv.Quote(value) }
 
-// tomlStrings renders a TOML array of strings on one line.
 func tomlStrings(values []string) string {
 	quoted := make([]string, 0, len(values))
 	for _, value := range values {
@@ -331,15 +284,8 @@ func tomlStrings(values []string) string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
-// tomlBool renders a TOML boolean.
 func tomlBool(value bool) string { return strconv.FormatBool(value) }
 
-// tomlFloat renders a TOML float, and keeps it a float.
-//
-// The decimal point is not decoration: `minimum_score = 0` is a TOML integer,
-// and the decoder refuses an integer for a key the schema types as a number
-// with a fraction. A default of 0 would therefore generate a file this build
-// cannot read, which is exactly the drift the round-trip test exists to catch.
 func tomlFloat(value float64) string {
 	text := strconv.FormatFloat(value, 'f', -1, 64)
 	if !strings.ContainsAny(text, ".eE") {

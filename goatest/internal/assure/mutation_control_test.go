@@ -56,9 +56,6 @@ func (session *killingSession) Probe(context.Context, gomutants.ProbeRequest) (g
 	return gomutants.ProbeResult{Outcome: gomutants.ProbeUnavailable}, nil
 }
 
-// Control reports a clean original of a measurable duration, because these
-// tests are about what a mutant does and a control that reported nothing
-// would make every one of them inconclusive for another reason.
 func (session *killingSession) Control(context.Context, gomutants.ControlRequest) (gomutants.ControlResult, error) {
 	return gomutants.ControlResult{Duration: time.Millisecond}, nil
 }
@@ -81,9 +78,6 @@ func (session *suiteControlSession) Probe(context.Context, gomutants.ProbeReques
 	return gomutants.ProbeResult{Outcome: gomutants.ProbeUnavailable}, nil
 }
 
-// Control reports a clean original of a measurable duration, because these
-// tests are about what a mutant does and a control that reported nothing
-// would make every one of them inconclusive for another reason.
 func (session *suiteControlSession) Control(context.Context, gomutants.ControlRequest) (gomutants.ControlResult, error) {
 	return gomutants.ControlResult{Duration: time.Millisecond}, nil
 }

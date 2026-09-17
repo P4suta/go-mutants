@@ -17,55 +17,18 @@ import (
 	"testing"
 )
 
-// DumpDirName is where [DumpFiles] copies what it printed, whole.
-//
-// Each call gets a numbered directory of its own inside it, named after the
-// tree it came from. One directory for all of them was the first shape and it
-// was wrong for the commonest case: a test that instruments the same fixture
-// twice and compares the two trees — internal/validate's determinism test does
-// exactly that — has two roots holding the same relative paths, so the second
-// dump wrote over the first and what a reader found was one tree made of halves
-// of each, with nothing saying so.
 const DumpDirName = "dump"
 
-// The caps [DumpFiles] prints inside.
-//
-// A CI log has a size limit of its own, and a dump that blows through it takes
-// the failure it was supposed to explain with it. 64 KiB is far more than any
-// instrumented Go file in this repository and far less than a log's budget; the
-// megabyte is what a whole snapshot's worth of them would otherwise cost.
 const (
 	DumpFileLimit  = 64 << 10
 	DumpTotalLimit = 1 << 20
 )
 
-// DumpFiles prints the files under root that a glob matches, but only when the
-// test failed.
-//
-// It is what turns "the validation rejected three candidates" into a failure
-// somebody can read: the instrumented source is written into a directory that is
-// about to be removed, and a test that failed over its contents printed nothing
-// about them. `**/*.go` is the pattern that matters here — `**` matches any run
-// of path elements and everything else is [path.Match] on one element — and the
-// paths are matched as slash-separated relative paths on every platform.
-//
-// Every printed header names the file by its full path rather than its path
-// inside the tree, because a test with two snapshots prints two `limits.go` and
-// a reader has to be able to tell which tree each came from — and because the
-// path is what somebody pastes into an editor.
-//
-// The output is capped at [DumpFileLimit] per file and [DumpTotalLimit] over
-// all of them, and it says what it elided. Whatever is kept is also copied
-// whole into `<kept>/dump/<n>-<tree>/`, because the cap is a property of the log
-// rather than of the evidence. [Verbose] makes it print on a test that passed.
 func DumpFiles(t testing.TB, root string, globs ...string) {
 	t.Helper()
 	if len(globs) == 0 {
 		globs = []string{"**"}
 	}
-	// Both resolved now rather than in the cleanup: creating the kept directory
-	// is what registers the cleanup that decides its fate, and a cleanup may not
-	// be the thing that starts that.
 	kept := KeptDir(t)
 	into := ""
 	if kept != "" {
@@ -91,13 +54,6 @@ func DumpFiles(t testing.TB, root string, globs ...string) {
 	})
 }
 
-// dumpName is the directory one call's copies go in: its position in the test,
-// then the name of the tree it came from.
-//
-// Both halves are needed. The number is what keeps two dumps of two trees apart
-// when the trees are named alike — two snapshots of one fixture are
-// `go-mutants-snap-<digest>` and differ only in the digest — and the name is
-// what lets a reader tell which is which without counting the calls in the test.
 func dumpName(t testing.TB, root string) string {
 	l := ledgerFor(t)
 	l.mu.Lock()
@@ -107,8 +63,6 @@ func dumpName(t testing.TB, root string) string {
 	return strconv.Itoa(index) + "-" + sanitizedName(filepath.Base(root), keptNameBudget)
 }
 
-// matchingFiles lists the files under root that any glob matches, by relative
-// slash-separated path, sorted.
 func matchingFiles(root string, globs []string) ([]string, error) {
 	var found []string
 	err := filepath.WalkDir(root, func(p string, entry fs.DirEntry, walkErr error) error {
@@ -135,14 +89,6 @@ func matchingFiles(root string, globs []string) ([]string, error) {
 	return found, nil
 }
 
-// matchPath matches one relative path against a glob in which `**` stands for
-// any run of path elements.
-//
-// [path.Match] alone cannot express it: its `*` stops at a separator, so
-// `**/*.go` matches `a/b.go` and not `b.go`, and every caller wants both. The
-// pattern is split on `/` and matched element by element, which is exact for
-// the shapes this repository uses and answers the same way on every platform,
-// because the paths are made slash-separated before they arrive.
 func matchPath(pattern, name string) bool {
 	return matchSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))
 }
@@ -168,7 +114,6 @@ func matchSegments(pattern, name []string) bool {
 	return matchSegments(pattern[1:], name[1:])
 }
 
-// printDump prints the matched files, inside the two caps.
 func printDump(t testing.TB, root string, found []string) {
 	t.Helper()
 	total := 0
@@ -194,12 +139,6 @@ func printDump(t testing.TB, root string, found []string) {
 	}
 }
 
-// readCapped returns a file's true size and at most limit bytes of it.
-//
-// The size comes from a stat and the bytes from a bounded read, so that a dump
-// pointed at a tree holding something enormous — a coverage profile, a test
-// binary a build left behind — costs the cap rather than the file. Reading the
-// whole thing to print a cap of it is the shape this replaces.
 func readCapped(path string, limit int) (int64, []byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -212,9 +151,6 @@ func readCapped(path string, limit int) (int64, []byte, error) {
 		return 0, nil, err
 	}
 	buffer := make([]byte, limit)
-	// A short file is the ordinary case rather than a failure: io.ReadFull
-	// reports one as ErrUnexpectedEOF and an empty one as EOF, and both mean the
-	// whole file is in the buffer.
 	read, err := io.ReadFull(file, buffer)
 	switch {
 	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
@@ -224,8 +160,6 @@ func readCapped(path string, limit int) (int64, []byte, error) {
 	return info.Size(), buffer[:read], nil
 }
 
-// copyDump copies the matched files whole into the kept directory, because the
-// caps above are a property of the log rather than of the evidence.
 func copyDump(t testing.TB, root string, found []string, into string) {
 	t.Helper()
 	for _, rel := range found {

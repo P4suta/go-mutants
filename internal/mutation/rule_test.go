@@ -11,48 +11,34 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-// canonicalOrder is the frozen v1 rule order, transcribed from the operator
-// table in the design plan and in docs/operators.md.
-//
-// This is a golden list, not a convenience: registry position is the
-// deduplication tiebreak, so reordering these names silently changes which of
-// two identical edits gets a mutant ID and which is recorded as a duplicate.
 var canonicalOrder = []string{
-	// boolean-literal
 	"true-to-false",
 	"false-to-true",
-	// condition-negation
 	"negate-condition",
 	"negate-loop-condition",
 	"remove-negation",
-	// boolean-connective
 	"and-to-or",
 	"or-to-and",
-	// comparison
 	"eq-to-neq",
 	"neq-to-eq",
 	"lt-to-le",
 	"le-to-lt",
 	"gt-to-ge",
 	"ge-to-gt",
-	// integer-arithmetic
 	"add-to-sub",
 	"sub-to-add",
 	"mul-to-div",
 	"div-to-mul",
 	"rem-to-mul",
-	// float-arithmetic
 	"fadd-to-fsub",
 	"fsub-to-fadd",
 	"fmul-to-fdiv",
 	"fdiv-to-fmul",
-	// return-replacement
 	"return-zero-numeric",
 	"return-empty-string",
 	"return-true",
 	"return-false",
 	"return-nil",
-	// error-swallowing
 	"return-err-to-nil",
 	"nil-error-branch",
 	"return-empty-slice",
@@ -60,19 +46,16 @@ var canonicalOrder = []string{
 	"condition-to-true",
 	"condition-to-false",
 	"loop-condition-to-false",
-	// bitwise
 	"band-to-bor",
 	"bor-to-band",
 	"xor-to-band",
 	"shl-to-shr",
 	"shr-to-shl",
 	"andnot-to-band",
-	// arithmetic-assignment
 	"add-assign-to-sub-assign",
 	"sub-assign-to-add-assign",
 	"incr-to-decr",
 	"decr-to-incr",
-	// statement-deletion
 	"drop-break-label",
 	"drop-continue-label",
 	"delete-call-statement",
@@ -222,9 +205,6 @@ func TestTierMonotonicity(t *testing.T) {
 		t.Errorf("all selects %d rules, want %d", len(all), CanonicalRuleCount)
 	}
 
-	// balanced ⊂ strong ⊂ all, as prefixes: because tiers rise with table
-	// position in the canonical table, each selection is the previous one
-	// plus new rules, never a reshuffle.
 	if diff := cmp.Diff(balanced, strong[:len(balanced)]); diff != "" {
 		t.Errorf("strong does not extend balanced (-balanced +strong):\n%s", diff)
 	}
@@ -287,12 +267,6 @@ func TestTierNames(t *testing.T) {
 	}
 }
 
-// TestTierNamesAreSpeltOutOneByOne pins each tier's canonical name on its own.
-// The round trip above cannot: ParseTier resolves a name by comparing it
-// against String(), so a String() that answered the same wrong thing twice
-// would still round-trip perfectly. These names are the `--profile` values and
-// the `mutation.profile` values, so they are a published vocabulary rather
-// than a rendering detail.
 func TestTierNamesAreSpeltOutOneByOne(t *testing.T) {
 	t.Parallel()
 
@@ -307,9 +281,6 @@ func TestTierNamesAreSpeltOutOneByOne(t *testing.T) {
 		}
 	}
 
-	// Tiers() is the list ParseTier searches and the one the tier vocabulary
-	// is enumerated from, so it has to be all three tiers in inclusion order
-	// rather than merely something to range over.
 	if diff := cmp.Diff([]Tier{TierBalanced, TierStrong, TierAll}, Tiers()); diff != "" {
 		t.Fatalf("Tiers() changed (-want +got):\n%s", diff)
 	}
@@ -325,11 +296,6 @@ func TestTierNamesAreSpeltOutOneByOne(t *testing.T) {
 	}
 }
 
-// TestRegistryLookupsRefuseUnknownNames is the other half of the lookup
-// contract. Every accessor here returns a value and an ok, and the value is
-// position zero — the first row of the table — when the name is unknown, so an
-// ok that is always true would silently attribute an unregistered rule to
-// whatever happens to be catalogued first.
 func TestRegistryLookupsRefuseUnknownNames(t *testing.T) {
 	t.Parallel()
 
@@ -348,8 +314,6 @@ func TestRegistryLookupsRefuseUnknownNames(t *testing.T) {
 		t.Errorf("FamilyRules(unknown) = %v, want none", rules)
 	}
 
-	// And the registered names still resolve, so the check above is not
-	// passing because everything says false.
 	if position, ok := r.Position("eq-to-neq"); !ok || position == 0 {
 		t.Errorf("Position(%q) = %d, %v; want a non-zero position and true", "eq-to-neq", position, ok)
 	}
@@ -358,12 +322,6 @@ func TestRegistryLookupsRefuseUnknownNames(t *testing.T) {
 	}
 }
 
-// TestMustRegistryPanicsOnAnInconsistentTable pins what the package-level
-// `canonical` rests on: the table is proven consistent while the package is
-// initialising, which is why no accessor downstream re-checks it. An
-// inconsistent table is a programming error, and swallowing the error would
-// hand every caller a nil registry to dereference instead of a stack trace
-// naming the row that is wrong.
 func TestMustRegistryPanicsOnAnInconsistentTable(t *testing.T) {
 	t.Parallel()
 

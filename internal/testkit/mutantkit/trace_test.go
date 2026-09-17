@@ -14,17 +14,7 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestTraceDumpsTheRingTailWhenTheTestFails is what a recording is for in a
-// test: the failure prints the last of what the run did, without anybody having
-// to reproduce it.
-//
-// The tail is bounded because the ring is not. A recording of a mutation run
-// holds thousands of events, and a failure that printed all of them would push
-// the assertion that failed off the top of the log — which is the one thing
-// worse than printing nothing.
 func TestTraceDumpsTheRingTailWhenTheTestFails(t *testing.T) {
-	// The policy is off, so this test is about the log alone: nothing is
-	// written, and the real kept root is not touched.
 	t.Setenv(testkit.KeepEnv, "")
 	t.Setenv(testkit.KeepDirEnv, filepath.Join(t.TempDir(), "kept"))
 
@@ -59,9 +49,6 @@ func TestTraceDumpsTheRingTailWhenTheTestFails(t *testing.T) {
 	}
 }
 
-// TestTraceWritesTheWholeRingIntoTheKeptDirectory is the other half: the log
-// gets a tail, the kept directory gets the recording — in the encoding every
-// reader of this project's traces already takes.
 func TestTraceWritesTheWholeRingIntoTheKeptDirectory(t *testing.T) {
 	t.Setenv(testkit.KeepEnv, "always")
 	t.Setenv(testkit.KeepDirEnv, filepath.Join(t.TempDir(), "kept"))
@@ -83,12 +70,6 @@ func TestTraceWritesTheWholeRingIntoTheKeptDirectory(t *testing.T) {
 		t.Fatalf("reading the kept recording %s: %v", stream, err)
 	}
 
-	// Complete rather than merely readable. A recording with no run-end is what
-	// an interrupted run leaves, and every reader of these files — `trace
-	// summary`, `trace validate`, goatest — says so out loud; a harness that
-	// closed none of its recordings would have every kept trace reporting the
-	// test as having been killed. The run-end is also the only place the drop
-	// tally is written, so without it a truncated ring cannot say it is one.
 	summary, err := trace.ReadSummary(stream)
 	if err != nil {
 		t.Fatalf("summarising the kept recording %s: %v", stream, err)
@@ -102,8 +83,6 @@ func TestTraceWritesTheWholeRingIntoTheKeptDirectory(t *testing.T) {
 	if summary.EventsDropped != 0 || summary.MissingSequences != 0 {
 		t.Errorf("the recording says it lost events it did not lose: %+v", summary)
 	}
-	// One run-start, five notes and one run-end: the whole ring rather than the
-	// tail the log was given.
 	if len(events) != 7 {
 		t.Fatalf("the kept recording holds %d events, want 7: %+v", len(events), events)
 	}
@@ -118,7 +97,6 @@ func TestTraceWritesTheWholeRingIntoTheKeptDirectory(t *testing.T) {
 	}
 }
 
-// tailOf keeps a failure message from being the wall of text the test is about.
 func tailOf(s string) string {
 	if len(s) <= 2000 {
 		return s

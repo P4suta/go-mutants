@@ -9,25 +9,6 @@ import (
 	"testing"
 )
 
-// The three refusals that keep a rule from proposing the program it is already
-// looking at.
-//
-// A mutant equal to its original is not a mutant. The catalogue refuses one
-// anyway, so none of these is about correctness -- they are about what a
-// refusal *is*: recording a skip would tell a user go-mutants declined to
-// mutate their code, and refusing loudly would turn every `return nil` in a
-// tree into a failed run. So each of these is silent, and each is a claim about
-// the source that has to be right in both directions.
-
-// TestAResultThatIsAlreadyTheEmptyValue pins [fileScan.alreadyEmpty], which is
-// what keeps `neutral-value` from proposing `[]int{}` where the source already
-// says `[]int{}`.
-//
-// The `make` arm is the one worth stating. `make([]int, 0)` and `make([]int, 0, 0)`
-// are the same slice as `[]int{}` -- empty, non-nil -- and `make([]int, n)` is
-// not, whatever n turns out to be. The length is read through the checker's
-// folding rather than off the spelling, so a constant that folds to zero counts
-// however it was written.
 func TestAResultThatIsAlreadyTheEmptyValue(t *testing.T) {
 	t.Parallel()
 
@@ -76,16 +57,6 @@ func TestAResultThatIsAlreadyTheEmptyValue(t *testing.T) {
 	}
 }
 
-// TestAResultBesideANonNilErrorIsLeftAlone pins
-// [fileScan.returnsBesideAnError].
-//
-// `if err != nil { return nil, err }` is the universal Go convention, and a
-// caller that has seen a non-nil error does not look at the other results. A
-// mutant that emptied one of them there is one no honest test can kill, and
-// without this gate most of what the neutral-value family proposed would be
-// exactly that shape. It is an argument from convention rather than a proof,
-// which is why it is narrow: the value beside a *nil* error is the success
-// path, and that is where the mutant is worth having.
 func TestAResultBesideANonNilErrorIsLeftAlone(t *testing.T) {
 	t.Parallel()
 
@@ -140,26 +111,12 @@ func TestAResultBesideANonNilErrorIsLeftAlone(t *testing.T) {
 		})
 	}
 
-	// And with no resolver, which is the fail-closed direction the other way
-	// round: without the parent index there is no statement to look along, and
-	// answering "no error beside it" would licence the mutant rather than
-	// decline it.
 	blind := &fileScan{}
 	if blind.returnsBesideAnError(ast.NewIdent("xs")) {
 		t.Error("returnsBesideAnError answered without a parent index")
 	}
 }
 
-// TestAConstantThatIsAlreadyTheReplacement pins
-// [fileScan.spellsTheSameConstant], which is the refusal this repository found
-// by running its own gate against itself.
-//
-// `return Disjoint`, where `Disjoint` is the first name of an iota block, writes
-// different bytes for the same constant: go/types folds both readings to 0, the
-// `return` converts both by the same rule, and the two trees compile to one
-// program. The comparison is of *values* rather than of spellings for exactly
-// that reason -- and it is between values of one kind, because `0` and `""` are
-// both constants and neither is the other.
 func TestAConstantThatIsAlreadyTheReplacement(t *testing.T) {
 	t.Parallel()
 
@@ -183,9 +140,6 @@ func TestAConstantThatIsAlreadyTheReplacement(t *testing.T) {
 		{name: "false against true", expr: "false", replacement: "true"},
 		{name: "false", expr: "false", replacement: "false", want: true},
 		{
-			// Two constants of different kinds are not equal, and comparing
-			// them is not a question go/constant answers -- it is one that
-			// panics. The empty string is not zero.
 			name: "an empty string against zero",
 			expr: `""`, replacement: "0",
 		},
@@ -193,9 +147,6 @@ func TestAConstantThatIsAlreadyTheReplacement(t *testing.T) {
 		{name: "false against zero", expr: "false", replacement: "0"},
 		{name: "zero against false", expr: "0", replacement: "false"},
 		{
-			// A replacement this build has no constant for is never refused on
-			// these grounds: `nil` is not a constant and go/types folds no
-			// value for it.
 			name: "a replacement that is not a constant",
 			expr: "0", replacement: "nil",
 		},
@@ -211,9 +162,6 @@ func TestAConstantThatIsAlreadyTheReplacement(t *testing.T) {
 		})
 	}
 
-	// And without the checker's record there is no folded value to compare, so
-	// nothing is refused: the rule is "this mutant is the original", and with
-	// no evidence it is not.
 	blind := &fileScan{}
 	if blind.spellsTheSameConstant(ast.NewIdent("zero"), "0") {
 		t.Error("spellsTheSameConstant answered without the checker's record")
@@ -223,16 +171,6 @@ func TestAConstantThatIsAlreadyTheReplacement(t *testing.T) {
 	}
 }
 
-// TestALabelThatNamesTheNearestTargetIsNotWorthDropping pins
-// [fileScan.labelNamesTheNearestTarget], which is what separates a real
-// `drop-break-label` mutant from the program that was already there.
-//
-// `L: for { break L }` and `L: for { break }` are one program, because the
-// label names the construct a bare `break` would leave anyway. What makes the
-// rule worth having is that the *same* position answers differently for the two
-// branch kinds: inside a `switch` inside a labelled `for`, a bare `break` leaves
-// the switch and `break L` leaves the loop -- while `continue L` and `continue`
-// both reach the loop, because a switch is not something `continue` binds to.
 func TestALabelThatNamesTheNearestTargetIsNotWorthDropping(t *testing.T) {
 	t.Parallel()
 
@@ -302,11 +240,6 @@ func TestALabelThatNamesTheNearestTargetIsNotWorthDropping(t *testing.T) {
 		})
 	}
 
-	// Two ways the question cannot be answered, and both answer *true*, which
-	// refuses the candidate. An unresolvable label is one this code does not
-	// understand, and emitting a mutant on the strength of not understanding it
-	// is how an equivalent mutant becomes a survivor somebody has to argue
-	// about.
 	labelled := &ast.BranchStmt{Tok: token.BREAK, Label: ast.NewIdent("outer")}
 	if !(&fileScan{}).labelNamesTheNearestTarget(labelled) {
 		t.Error("a branch this phase cannot resolve was not refused")
@@ -321,23 +254,12 @@ func TestALabelThatNamesTheNearestTargetIsNotWorthDropping(t *testing.T) {
 	}
 }
 
-// TestWhichResultsGetTheNeutralValueThatIsNotNil is
-// [fileScan.replaceEmptyNeutral], the family that exists because `len(x) == 0`
-// is true of both readings.
-//
-// A function that returns nil where it meant to return an empty slice passes
-// every `len` check a suite routinely makes, and `encoding/json` writes `null`
-// where the caller expected `[]`. That is the difference the rule is about, and
-// `return-nil` beside it cannot express it -- which is also why the line is
-// drawn where it is: a slice and a map are the only types the standard library
-// distinguishes two neutral values of.
 func TestWhichResultsGetTheNeutralValueThatIsNotNil(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
 		name string
 		src  string
-		// want is the replacement text, or empty for no candidate.
 		want string
 	}{
 		{
@@ -362,9 +284,6 @@ func TestWhichResultsGetTheNeutralValueThatIsNotNil(t *testing.T) {
 			want: "[]row{}",
 		},
 		{
-			// Neither of the two: a channel's `make` is not neutral and blocks,
-			// a pointer's `new` hides a nil dereference, and a string has no
-			// nil to be distinguished from.
 			name: "a channel",
 			src:  "package pkg\n\nfunc probe(ch chan int) chan int {\n\treturn ch\n}\n",
 		},
@@ -393,7 +312,6 @@ func TestWhichResultsGetTheNeutralValueThatIsNotNil(t *testing.T) {
 			src:  "package pkg\n\nfunc probe(err error) ([]int, error) {\n\treturn nil, err\n}\n",
 		},
 		{
-			// The success path, where the rule is worth the most.
 			name: "a slice beside a nil error",
 			src:  "package pkg\n\nfunc probe(xs []int) ([]int, error) {\n\treturn xs, nil\n}\n",
 			want: "[]int{}",
@@ -421,21 +339,9 @@ func TestWhichResultsGetTheNeutralValueThatIsNotNil(t *testing.T) {
 	}
 }
 
-// TestASliceOfATypeThisFileCannotSpellIsRecordedRatherThanSkipped is the one
-// refusal in the family that is *not* silent.
-//
-// Every other refusal here is a mutant equal to its original or an equivalence
-// by convention, and a user has no use for being told about either. This one is
-// the same fact Form D records when it cannot spell a declared type:
-// go-mutants knows what it would like to write and cannot say it in Go, which
-// is exactly what `unnameable-decl-type` is for. A dot import is one of the two
-// ways to reach it.
 func TestASliceOfATypeThisFileCannotSpellIsRecordedRatherThanSkipped(t *testing.T) {
 	t.Parallel()
 
-	// unsafe.Pointer is a basic type that still needs an import and has no
-	// source form this rewrite may write; a dot import is the other way, and
-	// needs a package on disk to import.
 	got := scanSource(t, "package pkg\n\nimport \"unsafe\"\n\n"+
 		"func probe(xs []unsafe.Pointer) []unsafe.Pointer {\n\treturn xs\n}\n")
 
@@ -455,15 +361,6 @@ func TestASliceOfATypeThisFileCannotSpellIsRecordedRatherThanSkipped(t *testing.
 	}
 }
 
-// TestABranchWhoseTargetThisPhaseCannotFindIsRefused is the fail-closed end of
-// [fileScan.labelNamesTheNearestTarget]'s walk.
-//
-// The walk goes outward from the branch to the first construct its bare form
-// would bind to, and the type checker has already refused a label that binds to
-// nothing -- so arriving at the top without finding one is a shape no program
-// has. It answers *true*, which refuses the candidate, because emitting a
-// mutant on the strength of not understanding a construct is how an equivalent
-// mutant becomes a survivor somebody has to argue about.
 func TestABranchWhoseTargetThisPhaseCannotFindIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -482,28 +379,16 @@ func TestABranchWhoseTargetThisPhaseCannotFindIsRefused(t *testing.T) {
 		t.Fatal("the fixture holds no labelled branch")
 	}
 
-	// The control: with the parent index the walk finds the switch, which a
-	// bare `break` would leave and the label does not.
 	if (&fileScan{info: p.info, guard: full}).labelNamesTheNearestTarget(branch) {
 		t.Fatal("the fixture's branch names the nearest target, which the rest of this test relies on it not doing")
 	}
 
-	// The same branch, resolved by the same checker, with nothing above it: the
-	// label is a real one and there is no construct to compare it against.
 	adrift := &fileScan{info: p.info, guard: &guardResolver{parent: map[ast.Node]ast.Node{}}}
 	if !adrift.labelNamesTheNearestTarget(branch) {
 		t.Error("a branch with no enclosing construct was not refused")
 	}
 }
 
-// TestTheTypeCheckersRecordIsAskedBeforeItIsRead is the fail-closed answer two
-// package-level predicates give, and the one shape the walk never hands them.
-//
-// A scan always holds the checker's record. Both of these are asked by
-// [collectSuppressions], which runs before anything else and decides which
-// regions of a file hold no mutable expression -- so an answer of "yes, that is
-// a type" with nothing to read it from would suppress every index expression in
-// the file and take a whole family of sites away silently.
 func TestTheTypeCheckersRecordIsAskedBeforeItIsRead(t *testing.T) {
 	t.Parallel()
 
@@ -514,8 +399,6 @@ func TestTheTypeCheckersRecordIsAskedBeforeItIsRead(t *testing.T) {
 	if isTypeExpr(nil, p.expr) {
 		t.Error("isTypeExpr answered without the checker's record")
 	}
-	// And the control: an index that really is a type, which is what the
-	// suppression exists for.
 	generic := probeSource(t, "func pair[A any, B any](a A, b B) int { return 0 }", "pair[int, string]")
 	index, isIndex := generic.expr.(*ast.IndexListExpr)
 	if !isIndex {
@@ -529,13 +412,6 @@ func TestTheTypeCheckersRecordIsAskedBeforeItIsRead(t *testing.T) {
 	}
 }
 
-// TestAResultIsProbedOnlyWhereThereIsAResolverToAsk pins the two per-result
-// questions the walk cannot answer without one.
-//
-// Both answer the safe way: no hint rather than a hint nothing computed. A
-// probe hint licenses skipping an execution, so one attached on the strength of
-// an absent resolver would be a mutant reported as unkillable because this
-// phase could not look.
 func TestAResultIsProbedOnlyWhereThereIsAResolverToAsk(t *testing.T) {
 	t.Parallel()
 

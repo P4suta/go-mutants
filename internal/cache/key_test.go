@@ -14,19 +14,14 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// baseContext is one complete, believable key context. Every field is a real
-// value of the right shape, because [cache.Context.Key] refuses the rest.
 func baseContext() cache.Context {
 	return cache.Context{
-		ToolVersion:      "0.1.0-dev",
-		ToolDigest:       strings.Repeat("11", 32),
-		ToolchainVersion: "go1.26.5",
-		WorkspaceDigest:  strings.Repeat("ab", 32),
-		CatalogDigest:    strings.Repeat("cd", 32),
-		TestCommand:      []string{"go", "test", "./..."},
-		// Zero would mean "derived", which is the commoner case and the one the
-		// key deliberately does not carry a number for; an explicit bound is set
-		// here so that both halves of the field are exercised.
+		ToolVersion:       "0.1.0-dev",
+		ToolDigest:        strings.Repeat("11", 32),
+		ToolchainVersion:  "go1.26.5",
+		WorkspaceDigest:   strings.Repeat("ab", 32),
+		CatalogDigest:     strings.Repeat("cd", 32),
+		TestCommand:       []string{"go", "test", "./..."},
 		ConfiguredTimeout: 10 * time.Second,
 		Env: map[string]cache.EnvValue{
 			"CGO_ENABLED":  {Value: "1", Set: true},
@@ -39,7 +34,6 @@ func baseContext() cache.Context {
 	}
 }
 
-// keyOf computes a key and fails the test if the context will not produce one.
 func keyOf(t *testing.T, c cache.Context) string {
 	t.Helper()
 	key, err := c.Key()
@@ -49,9 +43,6 @@ func keyOf(t *testing.T, c cache.Context) string {
 	return key
 }
 
-// TestKeyIsDeterministic is the property the whole store rests on: two runs
-// that agree about everything in the context have to agree about the key, on
-// any machine and in any order.
 func TestKeyIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -65,14 +56,6 @@ func TestKeyIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestEveryFieldOfTheContextChangesTheKey is the other half of the same
-// property, and the more important half: a field that does not reach the hash
-// is a field a stale outcome can be adopted across.
-//
-// The table is written as "one thing differs from the base context", so a field
-// added to [cache.Context] without a row here shows up as a missing row rather
-// than as a silent hole — there is no way to make the test pass by leaving a
-// field out of the hash.
 func TestEveryFieldOfTheContextChangesTheKey(t *testing.T) {
 	t.Parallel()
 
@@ -84,9 +67,6 @@ func TestEveryFieldOfTheContextChangesTheKey(t *testing.T) {
 		{"tool version", func(c *cache.Context) { c.ToolVersion = "0.2.0" }},
 		{"executable digest", func(c *cache.Context) { c.ToolDigest = strings.Repeat("22", 32) }},
 		{
-			// The patch release, which is the upgrade nothing else in the key
-			// notices: the test command is the literal word `go`, and go.mod
-			// pins a language version rather than a toolchain.
 			"toolchain version",
 			func(c *cache.Context) { c.ToolchainVersion = "go1.26.6" },
 		},
@@ -94,16 +74,11 @@ func TestEveryFieldOfTheContextChangesTheKey(t *testing.T) {
 		{"catalogue digest", func(c *cache.Context) { c.CatalogDigest = strings.Repeat("dc", 32) }},
 		{"test command", func(c *cache.Context) { c.TestCommand = []string{"go", "test", "./internal/..."} }},
 		{
-			// The argv length is hashed before the elements precisely so that
-			// this cannot collide with the base: "go test ./..." and
-			// "go" "test ./..." are different commands.
 			"test command regrouped",
 			func(c *cache.Context) { c.TestCommand = []string{"go", "test ./..."} },
 		},
 		{"configured timeout", func(c *cache.Context) { c.ConfiguredTimeout = 11 * time.Second }},
 		{
-			// Zero is "derive it from the baseline", which is a different
-			// statement from any number and has to hash as one.
 			"a derived timeout rather than an explicit one",
 			func(c *cache.Context) { c.ConfiguredTimeout = 0 },
 		},
@@ -111,9 +86,6 @@ func TestEveryFieldOfTheContextChangesTheKey(t *testing.T) {
 		{"GOARCH", func(c *cache.Context) { c.Env["GOARCH"] = cache.EnvValue{Value: "arm64", Set: true} }},
 		{"GOFLAGS", func(c *cache.Context) { c.Env["GOFLAGS"] = cache.EnvValue{Value: "-tags=x", Set: true} }},
 		{
-			// `//go:build cgo` decides which files a package has, exactly as
-			// GOOS does, so two images that differ only in whether a C compiler
-			// is installed must not share a key.
 			"CGO_ENABLED",
 			func(c *cache.Context) { c.Env["CGO_ENABLED"] = cache.EnvValue{Value: "0", Set: true} },
 		},
@@ -123,9 +95,6 @@ func TestEveryFieldOfTheContextChangesTheKey(t *testing.T) {
 		},
 		{"GODEBUG", func(c *cache.Context) { c.Env["GODEBUG"] = cache.EnvValue{Value: "httplaxcontentlength=1", Set: true} }},
 		{
-			// The one that is easy to get wrong: an unset variable and one set
-			// to nothing are different to the go command, so they have to be
-			// different to the key.
 			"GOFLAGS set to nothing rather than unset",
 			func(c *cache.Context) { c.Env["GOFLAGS"] = cache.EnvValue{Value: "", Set: true} },
 		},
@@ -139,9 +108,6 @@ func TestEveryFieldOfTheContextChangesTheKey(t *testing.T) {
 			if key == base {
 				t.Fatalf("changing the %s did not change the key", c.field)
 			}
-			// Distinct from every other variation as well as from the base: two
-			// different runs landing on one key is the same bug as a field that
-			// does not hash at all.
 			if other, clash := seen[key]; clash {
 				t.Fatalf("the %s hashes the same as %s", c.field, other)
 			}
@@ -153,8 +119,6 @@ func TestEveryFieldOfTheContextChangesTheKey(t *testing.T) {
 	}
 }
 
-// TestKeyRefusesAContextThatCouldNotIdentifyARun covers the fields whose
-// absence would make one key serve two runs.
 func TestKeyRefusesAContextThatCouldNotIdentifyARun(t *testing.T) {
 	t.Parallel()
 
@@ -162,8 +126,6 @@ func TestKeyRefusesAContextThatCouldNotIdentifyARun(t *testing.T) {
 		"no tool version":      func(c *cache.Context) { c.ToolVersion = "" },
 		"no executable digest": func(c *cache.Context) { c.ToolDigest = "" },
 		"a short digest":       func(c *cache.Context) { c.ToolDigest = "abcd" },
-		// Without it every toolchain shares one bucket, which is the whole of
-		// what the field was added to prevent.
 		"no toolchain version": func(c *cache.Context) { c.ToolchainVersion = "" },
 		"an uppercase digest":  func(c *cache.Context) { c.WorkspaceDigest = strings.ToUpper(c.WorkspaceDigest) },
 		"no workspace digest":  func(c *cache.Context) { c.WorkspaceDigest = "" },
@@ -185,8 +147,6 @@ func TestKeyRefusesAContextThatCouldNotIdentifyARun(t *testing.T) {
 	}
 }
 
-// TestContextKeyIsAPrefixOfTheKey pins the relationship the directory layout
-// depends on: the directory name is the key truncated, never a second hash.
 func TestContextKeyIsAPrefixOfTheKey(t *testing.T) {
 	t.Parallel()
 
@@ -204,21 +164,6 @@ func TestContextKeyIsAPrefixOfTheKey(t *testing.T) {
 	}
 }
 
-// TestContextFieldsAreExactlyTheKnownSet is the pin behind
-// `docs/adr/0001-trace-is-not-evidence.md`: a cached outcome depends on these
-// eight things and on nothing else, ever.
-//
-// The list is checked by name rather than by counting, and the two directions
-// catch opposite mistakes. A field *added* here — a trace sink, a keep-temp
-// mode, a verbosity — would split every context in two and silently empty the
-// cache of every user who ever passed the flag, while never changing a single
-// verdict: what makes a diagnostic option a diagnostic option is precisely that
-// it changes nothing about the run. A field *removed* is the worse direction,
-// because it lets two runs that measured different programs share a key.
-//
-// The tests around it check that each of these hashes; this one checks that
-// there is nothing else to hash. Growing the recipe is therefore a deliberate
-// edit in two places, which is the amount of friction a frozen key should have.
 func TestContextFieldsAreExactlyTheKnownSet(t *testing.T) {
 	t.Parallel()
 
@@ -244,8 +189,6 @@ func TestContextFieldsAreExactlyTheKnownSet(t *testing.T) {
 	}
 }
 
-// TestKeyEnvIsSortedAndItsOwnCopy checks the list the recipe, the documentation,
-// and the tests all read.
 func TestKeyEnvIsSortedAndItsOwnCopy(t *testing.T) {
 	t.Parallel()
 
@@ -264,8 +207,6 @@ func TestKeyEnvIsSortedAndItsOwnCopy(t *testing.T) {
 	}
 }
 
-// TestEnvFromReadsExactlyTheKeyVariables proves the reader distinguishes unset
-// from empty, which the key relies on and the process environment cannot state.
 func TestEnvFromReadsExactlyTheKeyVariables(t *testing.T) {
 	t.Parallel()
 
@@ -286,12 +227,6 @@ func TestEnvFromReadsExactlyTheKeyVariables(t *testing.T) {
 	}
 }
 
-// TestToolDigestIsThisBinary is the one place the executable is really read.
-//
-// Under `go test` the executable is this package's test binary, which is
-// exactly why [cache.ToolDigest] is a function the caller calls once rather
-// than something [cache.Context.Key] does for itself: a key that read it would
-// change from one test run to the next.
 func TestToolDigestIsThisBinary(t *testing.T) {
 	t.Parallel()
 

@@ -19,15 +19,6 @@ import (
 	"time"
 )
 
-// TestPathRefusesARelativeOverride keeps the one mistake that would silently
-// undo the whole tool from being a fallback.
-//
-// The go command refuses a relative GOCACHE outright, so a wrapper that
-// resolved `GO_MUTANTS_TEST_GOCACHE=cache` against its own working directory —
-// or, worse, ignored it and used the default — would send the run either
-// somewhere nobody named or straight back into the developer's own cache, which
-// is the directory the caller was explicitly moving away from. It is an error,
-// and the error names the variable.
 func TestPathRefusesARelativeOverride(t *testing.T) {
 	t.Parallel()
 
@@ -45,9 +36,6 @@ func TestPathRefusesARelativeOverride(t *testing.T) {
 	}
 }
 
-// TestPathPrintsTheResolvedDirectory covers both halves of the rule testkit
-// states: the named directory wins, and the default is one shared directory
-// under the platform's cache root rather than anything below a moved HOME.
 func TestPathPrintsTheResolvedDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -74,18 +62,6 @@ func TestPathPrintsTheResolvedDirectory(t *testing.T) {
 	}
 }
 
-// TestStatusReportsSizeAndCountOfATree is the line that ends every long run,
-// and the only reason anybody notices the cache before the disk does.
-//
-// The exact byte count is printed beside the human-readable one on purpose: the
-// human number is what a person reads, and the exact one is what two runs of a
-// suite can be subtracted from each other. The file count is there because a
-// cache of 400 000 tiny entries and a cache of 400 large ones are the same
-// number of gigabytes and a very different `rm -rf`.
-//
-// The kept-scratch root is reported in the same breath. Keeping is opt-in per
-// run and its directories outlive the run that wrote them, so a developer who
-// turned it on last week has a tree somewhere they have no reason to remember.
 func TestStatusReportsSizeAndCountOfATree(t *testing.T) {
 	t.Parallel()
 
@@ -121,10 +97,6 @@ func TestStatusReportsSizeAndCountOfATree(t *testing.T) {
 	}
 }
 
-// TestStatusSaysSoWhenThereIsNothingThere keeps the first run of the day
-// readable: a cache that does not exist yet is the normal state after
-// `test-clean`, not an error, and the report says which it is rather than
-// printing a zero that could mean either.
 func TestStatusSaysSoWhenThereIsNothingThere(t *testing.T) {
 	t.Parallel()
 
@@ -143,22 +115,6 @@ func TestStatusSaysSoWhenThereIsNothingThere(t *testing.T) {
 	}
 }
 
-// TestTrimWipesOnlyWhenOverBudget is the rule that keeps a persistent cache
-// persistent.
-//
-// The budget is the whole reason one shared directory is safe to keep: without
-// it the cache grows for as long as the machine lives, and with a wipe on every
-// run it is not a cache at all — the standard library would be recompiled once
-// per suite, which is the failure a per-test cache had. So the wipe is
-// conditional, it happens after the run rather than before it (the run that
-// paid to fill the cache is the run that should benefit from it), and a
-// directory under budget is left completely alone.
-//
-// The kept scratch root is deliberately not part of a trim. It holds the
-// evidence of runs that failed, its size has nothing to do with the build
-// cache's, and deleting a failing run's diagnostics because a *cache* grew is
-// the one thing this tool must not do. `clean` removes it, because `clean` is a
-// person asking for exactly that.
 func TestTrimWipesOnlyWhenOverBudget(t *testing.T) {
 	t.Parallel()
 
@@ -178,9 +134,6 @@ func TestTrimWipesOnlyWhenOverBudget(t *testing.T) {
 			cache := filepath.Join(t.TempDir(), "go-build")
 			writeTree(t, cache, map[string]int{"ab/entry": 4096, "cd/entry": 512, "trim.txt": 12})
 			stamp(t, cache, buildCacheMarker)
-			// Resolved now, while it still exists: a directory the trim removes
-			// cannot be resolved afterwards, and the tool named it at the far end
-			// of whatever links its path had.
 			wiped := resolved(t, cache)
 			kept := filepath.Join(t.TempDir(), "kept")
 			writeTree(t, kept, map[string]int{"engine/TestRun-0a1b2c/KEPT.txt": 300})
@@ -218,9 +171,6 @@ func TestTrimWipesOnlyWhenOverBudget(t *testing.T) {
 	}
 }
 
-// TestTrimRefusesAMissingOrUnreadableBudget keeps a typo from turning the wipe
-// into a no-op nobody notices: a `trim` with no budget cannot mean "never wipe",
-// because that is what a `trim` that was never wired up also looks like.
 func TestTrimRefusesAMissingOrUnreadableBudget(t *testing.T) {
 	t.Parallel()
 
@@ -236,14 +186,6 @@ func TestTrimRefusesAMissingOrUnreadableBudget(t *testing.T) {
 	}
 }
 
-// TestCleanEmptiesTheCacheAndTheKeptRoot is `mise run test-clean`: one command
-// that leaves nothing of the harness behind.
-//
-// Both directories, because they are the two places the suites write outside a
-// temporary directory, and a developer reclaiming disk space should not have to
-// know there were two. The go command's own eviction runs first — see the
-// integration test for why — and the removal that follows is what makes the
-// claim "empty" true rather than "empty of entries the go command recognised".
 func TestCleanEmptiesTheCacheAndTheKeptRoot(t *testing.T) {
 	t.Parallel()
 
@@ -253,7 +195,6 @@ func TestCleanEmptiesTheCacheAndTheKeptRoot(t *testing.T) {
 	kept := filepath.Join(t.TempDir(), "kept")
 	writeTree(t, kept, map[string]int{"engine/TestRun-0a1b2c/KEPT.txt": 300})
 	stamp(t, kept, keptMarker)
-	// Resolved before the removal, for the same reason as in the trim above.
 	removedCache, removedKept := resolved(t, cache), resolved(t, kept)
 
 	var cleaned []string
@@ -281,22 +222,6 @@ func TestCleanEmptiesTheCacheAndTheKeptRoot(t *testing.T) {
 	}
 }
 
-// TestCleanReportsARemovalItCannotFinish is the Windows rule, written so that a
-// POSIX machine can prove it.
-//
-// A file in the build cache can be held open by something the run started — an
-// antivirus scanner, a lingering `go` command, a test binary Windows has not
-// finished unmapping — and a removal that fails for that reason is retried once
-// after a pause and then *reported*. It must not fail the caller: this runs as
-// the last step of a suite, and a collector that turns a green run red because a
-// directory it wanted to delete is still there has done more damage than the
-// directory ever would.
-//
-// This is the half of the pair that exits 0. The other half is
-// TestWipeRefusesADirectoryItDoesNotOwn, where `clean` exits non-zero — the two
-// ways a directory does not get emptied are different questions and get opposite
-// answers, and reading either test without the other gives the wrong idea of
-// what a non-zero exit from `mise run test-clean` means.
 func TestCleanReportsARemovalItCannotFinish(t *testing.T) {
 	t.Parallel()
 
@@ -311,8 +236,6 @@ func TestCleanReportsARemovalItCannotFinish(t *testing.T) {
 	cache := filepath.Join(parent, "go-build")
 	writeTree(t, cache, map[string]int{"ab/entry": 16})
 	stamp(t, cache, buildCacheMarker)
-	// A directory can only be unlinked from a writable parent, so this makes the
-	// removal fail without making the tree unreadable.
 	if err := os.Chmod(parent, 0o500); err != nil {
 		t.Fatalf("making %s read-only: %v", parent, err)
 	}
@@ -340,26 +263,11 @@ func TestCleanReportsARemovalItCannotFinish(t *testing.T) {
 	}
 }
 
-// TestExecExportsGocacheAndPrintsTheDelta is the wrapper doing its one job.
-//
-// Everything the suites spend disk on happens in a child: `go build`, `go test
-// -c`, `go list`, and — under dogfood — a whole mutation run's worth of them. So
-// the wrapper exports the directory into that child rather than trying to
-// intercept anything, and it exports it twice: GOCACHE for every `go` command
-// the child starts, and GO_MUTANTS_TEST_GOCACHE so that a test which composes a
-// hermetic environment of its own through testkit resolves the same directory
-// instead of falling back to the default.
-//
-// The report goes to stderr, and nothing at all goes to stdout, because a caller
-// pipes the child's stdout: `exec -- go-mutants run --json > report.json` must
-// produce JSON and not JSON with a size line in it.
 func TestExecExportsGocacheAndPrintsTheDelta(t *testing.T) {
 	t.Parallel()
 
 	cache := filepath.Join(t.TempDir(), "go-build")
 	writeTree(t, cache, map[string]int{"seeded-by-an-earlier-run": 100})
-	// An earlier run left the marker as well as the entries, which is what makes
-	// this a warm cache rather than somebody else's directory.
 	stamp(t, cache, buildCacheMarker)
 	report := filepath.Join(t.TempDir(), "what-the-child-saw")
 
@@ -384,7 +292,6 @@ func TestExecExportsGocacheAndPrintsTheDelta(t *testing.T) {
 		}
 	}
 
-	// 100 bytes were already there and the child wrote 4096 more.
 	want := fmt.Sprintf("testcache: %s %d bytes (%+d)", resolved(t, cache), 4196, 4096)
 	if !strings.Contains(stderr.String(), want) {
 		t.Errorf("`exec` did not report the growth as %q:\n%s", want, stderr.String())
@@ -394,15 +301,6 @@ func TestExecExportsGocacheAndPrintsTheDelta(t *testing.T) {
 	}
 }
 
-// TestExecForwardsTheChildExitStatus keeps the wrapper invisible to CI.
-//
-// `mise run test-integration` and `mise run dogfood` are gates: the whole point
-// of them is that a failing suite or an undeclared survivor fails the job. A
-// wrapper that swallowed the status — or that reported its own success after
-// cleaning up — would turn both into steps that always pass, and nobody would
-// notice until a release. A child killed by a signal has no exit status at all,
-// so it gets the shell's convention, 128+N, rather than the -1 the operating
-// system reports.
 func TestExecForwardsTheChildExitStatus(t *testing.T) {
 	t.Parallel()
 
@@ -437,9 +335,6 @@ func TestExecForwardsTheChildExitStatus(t *testing.T) {
 		got := run(argv, &stdout, &stderr, env, deps{})
 
 		if runtime.GOOS == "windows" {
-			// Windows has no signals to map: a terminated process carries the
-			// exit code the terminator chose, and all this can promise is that
-			// it is not mistaken for success.
 			if got == 0 {
 				t.Errorf("`exec` exited 0 for a child that was terminated")
 			}
@@ -451,14 +346,6 @@ func TestExecForwardsTheChildExitStatus(t *testing.T) {
 	})
 }
 
-// TestExecAppliesTheBudgetAfterTheChildAndKeepsItsStatus pins the order of the
-// two things `exec` does when the run is over.
-//
-// The trim is after the child and not before it, because the run that paid to
-// fill the cache is the run that should benefit from it — trimming first would
-// hand every suite a cold cache and recompile the standard library for nothing.
-// And the trim must not touch the status: a suite that failed under a cache that
-// happened to be over budget still failed.
 func TestExecAppliesTheBudgetAfterTheChildAndKeepsItsStatus(t *testing.T) {
 	t.Parallel()
 
@@ -493,9 +380,6 @@ func TestExecAppliesTheBudgetAfterTheChildAndKeepsItsStatus(t *testing.T) {
 	}
 }
 
-// TestExecRefusesToRunNothing keeps `exec` from silently becoming a `status`:
-// `testcache exec --budget 4GiB` with the command left off is a broken task
-// definition, and a green exit would hide it for as long as nobody read the log.
 func TestExecRefusesToRunNothing(t *testing.T) {
 	t.Parallel()
 
@@ -509,30 +393,14 @@ func TestExecRefusesToRunNothing(t *testing.T) {
 	}
 }
 
-// The variables that turn this test binary into the child process the `exec`
-// tests run.
-//
-// The binary re-executes itself rather than building a program at test time:
-// the fixture then lives beside the assertions that depend on it, it needs no
-// toolchain, and it leaves nothing behind. The guard is what keeps an ordinary
-// `go test` run from becoming a helper — its presence, not its value, decides.
 const (
 	helperModeEnv   = "TESTCACHE_TEST_HELPER"
 	helperReportEnv = "TESTCACHE_TEST_HELPER_REPORT"
 	helperBytesEnv  = "TESTCACHE_TEST_HELPER_BYTES"
 	helperExitEnv   = "TESTCACHE_TEST_HELPER_EXIT"
-	// helperMisuse is the status a helper that cannot do its job exits with. It
-	// is not a status any test asks for, so it can never be mistaken for one.
-	helperMisuse = 99
+	helperMisuse    = 99
 )
 
-// TestExecHelper is not a test.
-//
-// It is the child process the `exec` tests run: it records the cache-related
-// variables it was given, grows the cache by an exact number of bytes, and then
-// ends the way the test asked — with a status, or by being killed. Without the
-// guard it skips, because in an ordinary run of this package it is only ever
-// reached by the framework enumerating tests.
 func TestExecHelper(t *testing.T) {
 	mode := os.Getenv(helperModeEnv)
 	if mode == "" {
@@ -542,8 +410,6 @@ func TestExecHelper(t *testing.T) {
 	if path := os.Getenv(helperReportEnv); path != "" {
 		body := "GOCACHE=" + os.Getenv("GOCACHE") + "\n" +
 			buildCacheEnv + "=" + os.Getenv(buildCacheEnv) + "\n" +
-			// Everything after the program name, so a test can prove the wrapper
-			// handed the child its own flags rather than reading them.
 			"ARGV=" + strings.Join(os.Args[1:], " ") + "\n"
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			fmt.Fprintf(os.Stderr, "helper: reporting the environment: %v\n", err)
@@ -584,11 +450,6 @@ func TestExecHelper(t *testing.T) {
 	os.Exit(code)
 }
 
-// helperArgv re-executes this test binary as [TestExecHelper] and nothing else.
-//
-// The `-test.run` anchor is what makes it a program rather than a test run:
-// without the `^…$` a pattern would also match a future TestExecHelperSomething,
-// and the child would run two tests and exit from the wrong one.
 func helperArgv(t *testing.T) []string {
 	t.Helper()
 	binary, err := os.Executable()
@@ -598,15 +459,6 @@ func helperArgv(t *testing.T) []string {
 	return []string{binary, "-test.run=^TestExecHelper$"}
 }
 
-// helperEnvironment is this process's environment with the helper's switches
-// applied, as the map [run] composes a child's environment from.
-//
-// GOCOVERDIR is pointed at a directory of the test's own. A helper is this
-// coverage-instrumented binary re-executed, and it exits without the testing
-// package's "the profile is already written" call, so the coverage runtime's
-// exit hook fires and writes a covmeta file named after the binary. Left in the
-// single directory `go test -cover` exports, the concurrent renames collide and
-// every helper but one prints an error onto the stderr this test inherits.
 func helperEnvironment(t *testing.T, extra map[string]string) map[string]string {
 	t.Helper()
 	env := map[string]string{}
@@ -622,7 +474,6 @@ func helperEnvironment(t *testing.T, extra map[string]string) map[string]string 
 	return env
 }
 
-// readReport reads back the `name=value` lines [TestExecHelper] wrote.
 func readReport(t *testing.T, path string) map[string]string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -638,20 +489,6 @@ func readReport(t *testing.T, path string) map[string]string {
 	return saw
 }
 
-// resolved is a path as the tool will name it.
-//
-// The tool resolves what it is pointed at through filepath.EvalSymlinks, because
-// a cache that is a symlink onto a bigger disk has to be measured and emptied at
-// the far end of the link. So a test that compares the tool's output against a
-// raw t.TempDir() is testing the platform rather than the tool: it passes on
-// Linux and fails on both platforms where a temporary directory is not the path
-// it is spelled as — macOS hands out `/var/folders/…`, which resolves to
-// `/private/var/folders/…`, and Windows may hand out an 8.3 short name whose long
-// form is what EvalSymlinks returns.
-//
-// A path that does not exist comes back unchanged, which is exactly what the
-// tool does with one, so this can be applied to every comparison without a test
-// having to know which of its directories exist yet.
 func resolved(t *testing.T, path string) string {
 	t.Helper()
 	full, err := filepath.EvalSymlinks(path)
@@ -661,13 +498,6 @@ func resolved(t *testing.T, path string) string {
 	return full
 }
 
-// stamp writes the ownership marker a removal needs to find, the way the harness
-// and `exec` write it in production.
-//
-// The file is empty here on purpose: a fixture's byte arithmetic should be about
-// the files the test wrote, not about the length of a paragraph in production
-// code. That the real marker has a body of its own is asserted where it is
-// written, in TestExecStampsTheCacheItWritesInto.
 func stamp(t *testing.T, root, marker string) {
 	t.Helper()
 	if err := os.MkdirAll(root, 0o750); err != nil {
@@ -678,9 +508,6 @@ func stamp(t *testing.T, root, marker string) {
 	}
 }
 
-// writeTree creates a tree of files of the given sizes, and returns nothing: a
-// test that wants the total states it, because a total computed the same way the
-// code under test computes it would assert nothing.
 func writeTree(t *testing.T, root string, files map[string]int) {
 	t.Helper()
 	for name, size := range files {
@@ -694,14 +521,6 @@ func writeTree(t *testing.T, root string, files map[string]int) {
 	}
 }
 
-// TestParseSizeAcceptsBinaryUnits pins the spelling a budget is written in.
-//
-// The units are binary and only binary. A developer who types `4GB` means four
-// gibibytes about as often as they mean four gigabytes, and the two differ by
-// 7%: read as decimal, a `4GB` budget wipes a cache that is still 300 MiB below
-// what its author intended, which shows up as a suite that recompiles the
-// standard library for no visible reason. So the decimal spellings are refused
-// with a message naming the accepted ones rather than quietly reinterpreted.
 func TestParseSizeAcceptsBinaryUnits(t *testing.T) {
 	t.Parallel()
 
@@ -730,20 +549,12 @@ func TestParseSizeAcceptsBinaryUnits(t *testing.T) {
 		}
 	}
 
-	// The refusals. The last six are the ones that matter most, and they are the
-	// reason this is not a clamp: a budget that overflows int64 wraps to
-	// math.MinInt64, every measured total is then "over budget", and a tool
-	// whose entire job is keeping one cache warm quietly empties it on every
-	// run instead. NaN is the same defect wearing a different hat — every
-	// comparison against it is false, so `used.bytes <= budget` is false and the
-	// wipe happens. A budget nobody could have meant is a typo, and a typo
-	// should be visible rather than absorbed.
 	for _, text := range []string{
 		"", "   ", "4GB", "4kb", "-1", "-1GiB", "GiB", "four", "4 GiB extra",
 		"nan", "NaN", "inf", "-inf", "infGiB",
-		"9223372036854775807", // the largest int64, which no float64 can name
-		"9223372036854775808", // exactly 2^63, one past it
-		"8388608TiB",          // the same number written with a unit
+		"9223372036854775807",
+		"9223372036854775808",
+		"8388608TiB",
 		"9007199254740992TiB",
 		"1e30", "1e300GiB",
 	} {
@@ -757,29 +568,11 @@ func TestParseSizeAcceptsBinaryUnits(t *testing.T) {
 		}
 	}
 
-	// The bound is a refusal of what cannot be held rather than a lower ceiling
-	// nobody wrote down: the largest budget a float64 can name below 2^63 is
-	// still accepted exactly. (The last 1024 bytes below the int64 ceiling are
-	// not representable as a float64 at all, so a budget written inside them is
-	// refused rather than rounded to something its author did not type. Nobody
-	// budgets eight exbibytes; what matters is that the refusal is a refusal and
-	// never a negative number.)
 	if got, err := parseSize("9223372036854774784"); err != nil || got != 9223372036854774784 {
 		t.Errorf("parseSize(the largest representable budget) = %d (%v), want 9223372036854774784", got, err)
 	}
 }
 
-// TestMeasureCountsWhatItCanReadAndSaysWhatItCouldNot is about the budget being
-// decided on a number that means what it says.
-//
-// A walk that stops at the first unreadable entry returns whatever it had added
-// up so far — and that partial total is then compared against the budget as if
-// it were the size of the cache. One unreadable subdirectory near the top of a
-// 6 GiB cache therefore reports 200 MiB, passes a 4 GiB budget, and keeps
-// passing it for as long as the directory stays unreadable: the cache never
-// gets trimmed and nothing anywhere says why. So the walk continues past what it
-// cannot read, the total is everything it could, and the error comes back beside
-// it so the report can say the number is a floor rather than a size.
 func TestMeasureCountsWhatItCanReadAndSaysWhatItCouldNot(t *testing.T) {
 	t.Parallel()
 
@@ -791,8 +584,6 @@ func TestMeasureCountsWhatItCanReadAndSaysWhatItCouldNot(t *testing.T) {
 	}
 
 	cache := filepath.Join(t.TempDir(), "go-build")
-	// Named so that the unreadable one is walked first: a total that included the
-	// readable entry could otherwise mean the walk stopped afterwards.
 	writeTree(t, cache, map[string]int{"aa-locked/entry": 512, "bb-open/entry": 4096})
 	stamp(t, cache, buildCacheMarker)
 	locked := filepath.Join(cache, "aa-locked")
@@ -812,8 +603,6 @@ func TestMeasureCountsWhatItCanReadAndSaysWhatItCouldNot(t *testing.T) {
 			"at the entry it could not open", used.bytes)
 	}
 
-	// And the decision made on that total says so, because a cache that is over
-	// its budget and survives is otherwise inexplicable.
 	var stdout, stderr bytes.Buffer
 	env := map[string]string{buildCacheEnv: cache, keepDirEnv: filepath.Join(t.TempDir(), "kept")}
 	d := deps{cleaner: func(string) error { return nil }}
@@ -825,31 +614,9 @@ func TestMeasureCountsWhatItCanReadAndSaysWhatItCouldNot(t *testing.T) {
 	}
 }
 
-// TestWipeRefusesADirectoryItDoesNotOwn is the guard that stands between a
-// mistyped environment variable and somebody's home directory.
-//
-// `GO_MUTANTS_TEST_GOCACHE=$HOME` used to be enough: the value was absolute, so
-// it was accepted, and `clean` then ran `go clean -cache` and os.RemoveAll
-// against it. Nothing in the tool knew the difference between a directory it had
-// created and a directory that merely got named. The marker file is that
-// difference — the harness writes it when it resolves the cache, this tool
-// refuses to remove anything that does not carry it, and the worst outcome of
-// the whole scheme becomes a directory that grows rather than one that vanishes.
-//
-// The three subcommands end differently on purpose. `clean` is a person asking
-// for a removal, so being unable to do it is a failure. `trim` and `exec` are
-// housekeeping around somebody else's run: they report and get out of the way,
-// because a collector that fails a green suite over a directory it did not
-// recognise is worse than the directory.
-//
-// A refusal is the *only* thing that makes `clean` exit non-zero. A removal it
-// began and could not finish is reported and forgiven — see
-// TestCleanReportsARemovalItCannotFinish, which is the other half of this pair.
 func TestWipeRefusesADirectoryItDoesNotOwn(t *testing.T) {
 	t.Parallel()
 
-	// The reviewer's demonstration, as a fixture: a directory full of somebody's
-	// work, named by a variable that was meant to name a cache.
 	setup := func(t *testing.T) (string, deps, *[]string) {
 		t.Helper()
 		dir := filepath.Join(t.TempDir(), "pretend")
@@ -922,11 +689,6 @@ func TestWipeRefusesADirectoryItDoesNotOwn(t *testing.T) {
 		}
 		survives(t, dir)
 
-		// And it did not write itself a permission slip on the way in. This is
-		// the sharp edge of the whole scheme: `exec` stamps the cache it is about
-		// to fill, and a stamp written into whatever the variable happened to name
-		// would make `--budget 0` delete the directory two lines later — with this
-		// tool's own marker as the licence.
 		if _, err := os.Stat(filepath.Join(dir, buildCacheMarker)); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("`exec` stamped a directory full of somebody else's files: %v", err)
 		}
@@ -951,15 +713,6 @@ func TestWipeRefusesADirectoryItDoesNotOwn(t *testing.T) {
 	})
 }
 
-// TestHarnessDirectoryRefusesRootHomeAndTheUsersGoCache is the belt to the
-// marker's braces.
-//
-// A marker cannot help with a directory that carries one and should still never
-// be named: these are refused by their identity rather than by their contents,
-// before anything is measured, stamped or removed. The user's own
-// `<cache>/go-build` is in the list because it is the exact directory this whole
-// tool exists to keep the suites out of, and a variable pointing back at it
-// would quietly reinstate the 14 GB problem while looking configured.
 func TestHarnessDirectoryRefusesRootHomeAndTheUsersGoCache(t *testing.T) {
 	t.Parallel()
 
@@ -986,7 +739,6 @@ func TestHarnessDirectoryRefusesRootHomeAndTheUsersGoCache(t *testing.T) {
 
 			var stdout, stderr bytes.Buffer
 			env := map[string]string{buildCacheEnv: cacheRoot, keepDirEnv: cacheRoot, tc.variable: tc.dir}
-			// `status` resolves both directories, so it reaches either guard.
 			if code := run([]string{"status"}, &stdout, &stderr, env, d); code == 0 {
 				t.Errorf("%s=%s was accepted:\n%s", tc.variable, tc.dir, stdout.String())
 			}
@@ -998,8 +750,6 @@ func TestHarnessDirectoryRefusesRootHomeAndTheUsersGoCache(t *testing.T) {
 	}
 }
 
-// filesystemRoot walks up from a real directory until it cannot go further, so
-// that the test names a root on every platform rather than assuming "/".
 func filesystemRoot(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -1012,15 +762,6 @@ func filesystemRoot(t *testing.T) string {
 	}
 }
 
-// TestExecStampsTheCacheItWritesInto is the other half of the ownership rule:
-// something has to write the marker, and it has to be whatever created the
-// directory.
-//
-// The harness writes it when a test resolves the cache; this writes it when a
-// run is wrapped, because `exec` is the one path that fills a cache without any
-// of this repository's own tests being involved — a dogfood run's children are
-// `go` commands, and a `go` command has never heard of the marker. Both are
-// idempotent, because between them they run thousands of times per suite.
 func TestExecStampsTheCacheItWritesInto(t *testing.T) {
 	t.Parallel()
 
@@ -1048,7 +789,6 @@ func TestExecStampsTheCacheItWritesInto(t *testing.T) {
 		}
 	}
 
-	// And the stamp licenses the removal it exists for.
 	var stdout, stderr bytes.Buffer
 	env2 := map[string]string{buildCacheEnv: cache, keepDirEnv: filepath.Join(t.TempDir(), "kept")}
 	d := deps{cleaner: func(string) error { return nil }}
@@ -1060,14 +800,6 @@ func TestExecStampsTheCacheItWritesInto(t *testing.T) {
 	}
 }
 
-// TestASymlinkedCacheRootIsMeasuredAndWipedByItsContents covers the arrangement
-// a developer on a small root disk actually builds: the cache is a link to
-// somewhere with room on it.
-//
-// Unresolved, os.Stat says the path exists, WalkDir walks the link itself and
-// reports 24 bytes in one "file", so every budget passes — and the removal takes
-// the link and leaves the gigabytes behind it untouched, which makes the cache
-// both never trimmed and permanently cold.
 func TestASymlinkedCacheRootIsMeasuredAndWipedByItsContents(t *testing.T) {
 	t.Parallel()
 
@@ -1084,7 +816,6 @@ func TestASymlinkedCacheRootIsMeasuredAndWipedByItsContents(t *testing.T) {
 	if code := run([]string{"status"}, &stdout, &stderr, env, deps{}); code != 0 {
 		t.Fatalf("`status` exited %d: %s", code, stderr.String())
 	}
-	// Unresolved, this would read "24 B (24 bytes) in 1 file" — the link itself.
 	if !strings.Contains(stdout.String(), "4.0 KiB") || !strings.Contains(stdout.String(), "2 files") {
 		t.Errorf("`status` measured the link rather than what is behind it:\n%s", stdout.String())
 	}
@@ -1100,14 +831,6 @@ func TestASymlinkedCacheRootIsMeasuredAndWipedByItsContents(t *testing.T) {
 	}
 }
 
-// TestExecRefusesAnEmptyBudget closes the gap between the two subcommands that
-// take one.
-//
-// `trim --budget ""` is refused and `exec --budget ""` used to mean "no budget
-// at all", which is the worst of the three possible readings: a task definition
-// with an unset shell variable in it — `--budget "$BUDGET"` — would have run for
-// months with no ceiling and nothing in the log to say so. An absent flag is
-// still no budget, because that is a caller who never asked for one.
 func TestExecRefusesAnEmptyBudget(t *testing.T) {
 	t.Parallel()
 
@@ -1127,13 +850,6 @@ func TestExecRefusesAnEmptyBudget(t *testing.T) {
 	}
 }
 
-// TestExecPassesTheChildItsOwnFlags is why the argv is split at `--`.
-//
-// The command this wraps has flags of its own, and one of them is spelled the
-// same as this one: `go-mutants run --budget …` is a plausible future, and
-// `go test -budget` is not, but neither is the point. The point is that
-// everything after `--` is the child's, verbatim, and a wrapper that parsed it
-// would silently steal an argument and change what the run measured.
 func TestExecPassesTheChildItsOwnFlags(t *testing.T) {
 	t.Parallel()
 
@@ -1146,10 +862,6 @@ func TestExecPassesTheChildItsOwnFlags(t *testing.T) {
 		keepDirEnv:      filepath.Join(t.TempDir(), "kept"),
 	})
 
-	// The `--` in the middle is the child's own, not this tool's: the child here
-	// is a Go test binary, whose flag parser refuses a flag it does not know
-	// until one tells it to stop reading them. What is being asserted is that
-	// everything after the *wrapper's* `--` arrived verbatim.
 	var stdout, stderr bytes.Buffer
 	argv := append(append([]string{"exec", "--budget", "4GiB", "--"}, helperArgv(t)...), "--", "--budget", "8MiB")
 	if code := run(argv, &stdout, &stderr, env, deps{}); code != 0 {
@@ -1164,13 +876,6 @@ func TestExecPassesTheChildItsOwnFlags(t *testing.T) {
 	}
 }
 
-// TestExecReportsACommandItCannotStart separates the two failures a caller has
-// to tell apart: a child that ran and failed, and a command that was never
-// there at all.
-//
-// 127 is what a shell reports for the second, and a wrapper that returned 1 for
-// both would turn a typo in a mise task into something that looks exactly like
-// a failing test suite.
 func TestExecReportsACommandItCannotStart(t *testing.T) {
 	t.Parallel()
 
@@ -1189,22 +894,9 @@ func TestExecReportsACommandItCannotStart(t *testing.T) {
 	}
 }
 
-// TestKeptCleanRefusesARootItDoesNotOwn is [TestWipeRefusesADirectoryItDoesNotOwn]
-// pointed at the second directory, and it is not a duplicate of it.
-//
-// The kept scratch root is the one a person is most likely to point somewhere
-// they already keep things: it holds evidence they want to look at, so
-// `GO_MUTANTS_TEST_KEEP_DIR=~/Desktop/failures` is a perfectly natural thing to
-// type — and it is a directory this tool empties. The two roots also travel
-// different code paths inside `clean`: the build cache goes through `wipe`,
-// which asks the go command to evict first, while the kept root is measured and
-// removed directly. A guard proven on one says nothing about the other.
 func TestKeptCleanRefusesARootItDoesNotOwn(t *testing.T) {
 	t.Parallel()
 
-	// The cache half is stamped so that the only reason this `clean` can fail is
-	// the kept root: a test where both halves refuse would pass for the wrong
-	// reason if the kept guard disappeared.
 	cache := filepath.Join(t.TempDir(), "go-build")
 	writeTree(t, cache, map[string]int{"ab/entry": 4096})
 	stamp(t, cache, buildCacheMarker)
@@ -1226,8 +918,6 @@ func TestKeptCleanRefusesARootItDoesNotOwn(t *testing.T) {
 			t.Errorf("the refusal does not name %q:\n%s", needle, stderr.String())
 		}
 	}
-	// The cache still went, because the two directories are two questions: a
-	// refusal over one is not a reason to leave the other full.
 	if _, err := os.Stat(cache); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("the build cache survived a refusal that was about the kept root: %v", err)
 	}

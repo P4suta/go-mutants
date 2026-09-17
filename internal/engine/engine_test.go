@@ -36,10 +36,6 @@ func TestCodesAreUniqueAndInBlock(t *testing.T) {
 	if !slices.IsSortedFunc(Codes(), func(a, b Code) int { return strings.Compare(string(a), string(b)) }) {
 		t.Error("Codes() is not in numeric order")
 	}
-	// GOM0001 was the pre-release warning that a run stopped after the
-	// baseline, and its own documentation promised it would disappear when the
-	// mutation phases landed. They have. A code means one thing forever, so the
-	// number stays spent rather than being reused for something else.
 	for _, code := range Codes() {
 		if code == "GOM0001" {
 			t.Error("GOM0001 is retired and must not be reused")
@@ -133,8 +129,6 @@ func TestTestCommandPrefersTheOverride(t *testing.T) {
 	if !slices.Equal(got, override) {
 		t.Errorf("testCommand with an override = %q, want %q", got, override)
 	}
-	// The result must not alias the caller's slice: the engine hands it to a
-	// child process and reports it afterwards.
 	got[0] = "mutated"
 	if override[0] != "gotestsum" {
 		t.Error("testCommand aliased the override slice")
@@ -200,9 +194,6 @@ func TestChildEnvRedirectsTempAndDropsActivation(t *testing.T) {
 			t.Errorf("%s = %q, want the scratch directory", key, got)
 		}
 	}
-	// Exactly one entry per temporary variable: the inherited TMP must have
-	// been dropped rather than shadowed, since a child reading the first match
-	// would otherwise get the wrong one.
 	for _, key := range tempKeys {
 		count := 0
 		for _, entry := range env {
@@ -234,17 +225,6 @@ func TestWorkspaceRootRejectsNothing(t *testing.T) {
 	}
 }
 
-// TestTempDirectoryIsResolvedOrRefusedWhenRelative pins the answer every
-// path-valued option has to give, and it is the answer the root package's
-// [gomutants.OpenOptions.TempDirectory] already gives: a relative path is
-// resolved against this process's working directory rather than refused.
-//
-// The sweep is what proves it, because the sweep is the half that would go
-// wrong quietly. internal/snapshot has TestCreateWithRelativeDestParent for the
-// copy, and a destination that came out relative fails loudly there — the
-// cleanup guard refuses to delete it. A sweep pointed at a directory other than
-// the one the caller meant does not fail at all: it collects nothing, or
-// somebody else's directories, and says nothing either way.
 func TestTempDirectoryIsResolvedOrRefusedWhenRelative(t *testing.T) {
 	base := t.TempDir()
 	parent := filepath.Join(base, "temporary")
@@ -266,9 +246,6 @@ func TestTempDirectoryIsResolvedOrRefusedWhenRelative(t *testing.T) {
 	}
 }
 
-// TestTempDirectoryDefaultsToTheSystemTemporaryDirectory keeps the option's
-// zero value meaning exactly what every run meant before the option existed.
-// internal/cli passes nothing, so this is the path production takes.
 func TestTempDirectoryDefaultsToTheSystemTemporaryDirectory(t *testing.T) {
 	for _, unset := range []string{"", "   "} {
 		if got := temporaryParent(unset); got != os.TempDir() {
@@ -340,8 +317,6 @@ func TestNewRunIDIsSortableAndDistinct(t *testing.T) {
 }
 
 func TestRunWithoutEventsDoesNotPanic(t *testing.T) {
-	// A nil channel is the documented "publish nothing" case, and close(nil)
-	// panics: the run has to fail on its own terms instead.
 	out, err := Run(t.Context(), Options{Config: config.Defaults(), WorkspaceRoot: ""})
 	if CodeOf(err) != CodeWorkspaceRoot {
 		t.Fatalf("Run with no workspace root = %v, want %s", err, CodeWorkspaceRoot)
@@ -395,14 +370,6 @@ func TestMean(t *testing.T) {
 	}
 }
 
-// TestCheckCarriesTheInvocationOnEveryFailure is the whole of what [check] owes
-// the renderer beyond a code.
-//
-// A baseline failure that says "the snapshot does not build" and nothing else
-// is a sentence about a directory the user has never seen, in a snapshot that
-// is deleted before they can look at it. Every branch here therefore names the
-// command it judged — including the cancellation, which is the one place a
-// reader most wants to know what was still running when the signal arrived.
 func TestCheckCarriesTheInvocationOnEveryFailure(t *testing.T) {
 	t.Parallel()
 
@@ -468,9 +435,6 @@ func TestCheckCarriesTheInvocationOnEveryFailure(t *testing.T) {
 		})
 	}
 
-	// A failure the runner noticed itself already named its command, argv copy
-	// and all. That one is carried up rather than rebuilt, so the error the user
-	// reads and the event the recording holds cannot disagree about what ran.
 	named := &runner.Invocation{Argv: []string{"/usr/bin/go", "test", "./..."}, TraceSeq: 12}
 	inner := &runner.Error{Code: runner.CodeProcessStartFailed, Message: "could not start it", Invocation: named}
 	err := check(t.Context(), spec, runner.Result{ExitCode: runner.ExitCodeUnavailable, Err: inner},
@@ -485,37 +449,19 @@ func TestCheckCarriesTheInvocationOnEveryFailure(t *testing.T) {
 	}
 }
 
-// TestCoverageBuildFallbackKeepsTheWholeFailure is about what the fallback
-// throws away.
-//
-// A coverage build that will not compile is given up on and retried without
-// coverage, and the warning that says so is one line — which is right for a
-// console during a run that is going to succeed anyway. The compiler's own
-// diagnostics were dropped entirely, though, and they are the only evidence
-// there is that go-mutants' `-coverpkg` build is what broke. The whole failure
-// is kept beside the warning instead, for the reporting that follows.
 func TestCoverageBuildFallbackKeepsTheWholeFailure(t *testing.T) {
 	t.Parallel()
 
-	// The failure as it arrives from internal/execute: one coded line and a
-	// compiler blob underneath it.
 	failure := &execute.Error{
 		Code:    execute.CodeTestBuildFailed,
 		Message: "the test binary for example.com/m/pkg could not be built: exited with status 2",
 		Output:  "./a_test.go:9:2: undefined: Missing\n./a_test.go:12:2: undefined: AlsoMissing",
 	}
-	// Written out exactly: the error's own text, and the output on the lines
-	// under it. A containment check would pass for a composition that dropped a
-	// line or ran two together, which is the only thing this value has to get
-	// right.
 	kept := fallbackText(failure)
 	if want := failure.Error() + "\n" + failure.Output; kept != want {
 		t.Errorf("fallbackText =\n%s\nwant\n%s", kept, want)
 	}
 
-	// And the fallback path files it. The options are deliberately unusable, so
-	// both builds fail; what is asserted is that the *coverage* build's failure
-	// was kept whole while the warning kept its first line.
 	s := &session{}
 	opts := execute.Options{CoverPkg: "example.com/m/..."}
 	var cov coverageResult
@@ -529,10 +475,6 @@ func TestCoverageBuildFallbackKeepsTheWholeFailure(t *testing.T) {
 	if len(s.warnings) != 1 {
 		t.Fatalf("published %d warnings, want the one that says coverage was given up", len(s.warnings))
 	}
-	// One direction, and it is the one the fallback actually promises: the
-	// warning is the kept failure's first line wrapped in a sentence, so the
-	// console's summary and the record cannot end up describing two different
-	// failures.
 	if !strings.Contains(s.warnings[0].Message, firstLine(cov.coverageFallback)) {
 		t.Errorf("the warning does not quote the kept failure's first line:\n%s\n%s",
 			s.warnings[0].Message, cov.coverageFallback)
@@ -542,9 +484,6 @@ func TestCoverageBuildFallbackKeepsTheWholeFailure(t *testing.T) {
 	}
 }
 
-// TestTheBudgetIsSizedOnARunThatDidNotCompile pins [budgetBaseline]: the first
-// baseline run of `go test` is the one that compiles, so with more than one run
-// the budget takes the slowest of the rest; with one run it takes that run.
 func TestTheBudgetIsSizedOnARunThatDidNotCompile(t *testing.T) {
 	t.Parallel()
 
@@ -576,18 +515,6 @@ func TestTheBudgetIsSizedOnARunThatDidNotCompile(t *testing.T) {
 	}
 }
 
-// TestARunTheToolchainAnsweredFromItsCacheDoesNotSizeTheBudget is the second
-// half of [budgetBaseline], and the half that decides whether a per-mutant
-// budget is a measurement or a guess.
-//
-// `go test` without `-count=1` caches a passing result. The first baseline run
-// in a fresh snapshot always misses that cache, because the copied files carry
-// new timestamps, and every run after it hits — so the rule above, which takes
-// the runs after the first precisely because they are the shape a mutant run
-// has, takes the runs that did not run the tests at all. A mutant run always
-// misses the cache: its binary is instrumented and its environment names a
-// mutant. Sizing its budget on a cache lookup is sizing it on the wrong
-// measurement, and it is wrong in the direction that reports work as a timeout.
 func TestARunTheToolchainAnsweredFromItsCacheDoesNotSizeTheBudget(t *testing.T) {
 	t.Parallel()
 
@@ -630,10 +557,6 @@ func TestARunTheToolchainAnsweredFromItsCacheDoesNotSizeTheBudget(t *testing.T) 
 	}
 }
 
-// TestACachedGoTestRunSaysSoInItsOwnOutput pins [servedFromTestCache] to the
-// line `go test` prints, which is the only evidence there is: a cached run and
-// a run of a suite that happens to be fast are the same duration, and only the
-// output tells them apart.
 func TestACachedGoTestRunSaysSoInItsOwnOutput(t *testing.T) {
 	t.Parallel()
 

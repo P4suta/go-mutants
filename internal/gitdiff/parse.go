@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// The markers of a unified diff, as git writes one.
 const (
 	fileMarker  = "diff --git "
 	targetMaker = "+++ "
@@ -19,22 +18,6 @@ const (
 	dstPrefix   = "b/"
 )
 
-// parseDiff reads `git diff -U0` output into a changed-line set.
-//
-// The whole of the parsing difficulty is that a diff body is arbitrary source
-// code, and source code contains lines that look like diff headers. Under `-U0`
-// every body line begins with `+` or `-`, so an added line whose content starts
-// with `++ ` arrives as `+++ ` and is indistinguishable from a file header
-// unless the reader knows where it is. So this is a state machine rather than a
-// scan: `+++` is a header only before the first hunk of a file, and a `diff
-// --git` line is what starts a file. That is also why the `---` line is not
-// read at all — the destination name is the only one that matters, and reading
-// one fewer header is one fewer line to be confused by.
-//
-// Paths arrive relative to the repository root and leave relative to the
-// workspace root, which is what prefix is for. Anything outside the workspace is
-// dropped: the pathspec already asked git for the subtree, and a path that
-// escapes it anyway is not a file this run can mutate.
 func parseDiff(out, prefix string) (map[string][]Range, error) {
 	files := make(map[string][]Range)
 	path := ""
@@ -57,10 +40,6 @@ func parseDiff(out, prefix string) (map[string][]Range, error) {
 			if err != nil {
 				return nil, err
 			}
-			// A pure deletion adds no lines and therefore touches none: the
-			// text that was there is gone, and there is nothing left to mutate.
-			// A file with only deletions produces no entry at all, which is
-			// why an empty range list is never stored.
 			if path == "" || count == 0 {
 				continue
 			}
@@ -74,11 +53,6 @@ func parseDiff(out, prefix string) (map[string][]Range, error) {
 	return files, nil
 }
 
-// targetPath reads the destination path out of a `+++ ` header.
-//
-// `/dev/null` is a deleted file and yields the empty path, which suppresses the
-// hunks underneath it — the same effect as a hunk that adds nothing, reached
-// from the other direction.
 func targetPath(line string) (string, error) {
 	name := strings.TrimPrefix(line, targetMaker)
 	if name == devNull {
@@ -94,19 +68,8 @@ func targetPath(line string) (string, error) {
 	return unquote(strings.TrimPrefix(name, dstPrefix)), nil
 }
 
-// hunkLines reads the destination side of a hunk header: `@@ -a,b +c,d @@`,
-// where each count is omitted when it is 1.
-//
-// A count of zero is a pure deletion at that point and is reported as such
-// rather than as a one-line range, which is the difference between "these lines
-// are new" and "something used to be here".
 func hunkLines(line string) (first, count int, err error) {
 	rest := strings.TrimPrefix(line, hunkMarker)
-	// Cut rather than Index and a slice: `@@  @@` puts the closing marker at
-	// offset zero, and `end < 0` and `end <= 0` are then the same refusal
-	// reached one line apart -- the empty field list below has nothing with a
-	// `+` in it either. One boundary that cannot be written two ways is worth
-	// more here than the offset, which nothing after this needs.
 	ranges, _, closed := strings.Cut(rest, " @@")
 	if !closed {
 		return 0, 0, malformedHunk(line)
@@ -134,15 +97,12 @@ func hunkLines(line string) (first, count int, err error) {
 			return 0, 0, malformedHunk(line)
 		}
 	}
-	// A hunk that adds lines always starts at a real line. Zero with a non-zero
-	// count would be a line number no file has.
 	if count > 0 && first < 1 {
 		return 0, 0, malformedHunk(line)
 	}
 	return first, count, nil
 }
 
-// malformedHunk builds the error for a hunk header this parser cannot read.
 func malformedHunk(line string) error {
 	return &Error{
 		Code:    CodeMalformedDiff,
@@ -150,13 +110,7 @@ func malformedHunk(line string) error {
 	}
 }
 
-// relative maps a repository-relative path onto a workspace-relative one, and
-// returns "" for anything outside the workspace.
 func relative(path, prefix string) string {
-	// An empty prefix needs no special case: CutPrefix always cuts it, and
-	// returns the path unchanged. Saying so twice would be two rules for one
-	// answer, and the second of them could not be told from its opposite by
-	// any path -- which is how this one was found.
 	rest, inside := strings.CutPrefix(path, prefix)
 	if !inside || rest == "" {
 		return ""
@@ -164,32 +118,7 @@ func relative(path, prefix string) string {
 	return rest
 }
 
-// Merge sorts a file's ranges and joins the ones that touch or overlap, so that
-// the stored set is canonical: two diffs describing the same lines produce the
-// same ranges whatever order git emitted the hunks in.
-//
-// The join test is written as `r.First-1 <= last` rather than as the more
-// obvious `r.First <= last+1`, and the difference is not style. A range ending
-// at math.MaxInt is a legal one — "from line 41 to the end of the file" is how a
-// caller spells a range whose end it does not know — and adding one to it wraps
-// to a negative number, at which point every following range compares as
-// disjoint and the result is not canonical at all. Subtracting cannot wrap here:
-// every producer of a Range refuses a First below 1.
-//
-// It is exported because the engine API's Selection is the same shape asked for
-// from the other end — a caller naming the lines it cares about rather than git
-// naming the lines it changed — and the two have to canonicalise identically or
-// a selection and a diff describing one file could compare unequal while
-// selecting the same mutants. The argument is sorted in place and the result
-// aliases its storage, so a caller that still needs the input passes a copy.
 func Merge(ranges []Range) []Range {
-	// cmp.Compare rather than a subtraction, in the one function whose own
-	// comment is about a Last of math.MaxInt: a difference of two ints is not
-	// an ordering when either end of the range is that number. It is also the
-	// only ordering the merge below cannot observe -- two ranges that share a
-	// First are joined by taking the larger Last whichever arrives first --
-	// so a tie-break written as arithmetic would be a mutant no input could
-	// decide.
 	slices.SortFunc(ranges, func(x, y Range) int {
 		return cmp.Or(cmp.Compare(x.First, y.First), cmp.Compare(x.Last, y.Last))
 	})
@@ -204,14 +133,6 @@ func Merge(ranges []Range) []Range {
 	return out
 }
 
-// unquote undoes git's C-style quoting of a path.
-//
-// `core.quotePath=false` is passed on every invocation, so non-ASCII paths
-// arrive literally; what remains quoted is a path containing a quotation mark,
-// a backslash, or a control character. Those are vanishingly rare and are still
-// paths a run has to be able to name, so they are decoded rather than refused.
-// Anything that is not quoted is returned untouched, which is every ordinary
-// path.
 func unquote(path string) string {
 	if len(path) < 2 || path[0] != '"' || path[len(path)-1] != '"' {
 		return path
@@ -241,16 +162,6 @@ func unquote(path string) string {
 		case 'v':
 			b.WriteByte('\v')
 		case '0', '1', '2', '3', '4', '5', '6', '7':
-			// A three-digit octal escape, which is how git writes a byte it
-			// will not print. Anything shorter is not one, and is written back
-			// as it was found rather than guessed at.
-			//
-			// ParseUint over exactly those three bytes is the whole test as
-			// well as the decoding: a digit that is not octal and a value past
-			// 255 are the same refusal and have the same answer, so a
-			// digits-are-octal check in front of it would be a second spelling
-			// of a rule this call already applies -- and one whose halves no
-			// path could tell apart.
 			if i+2 < len(body) {
 				if value, err := strconv.ParseUint(body[i:i+3], 8, 8); err == nil {
 					b.WriteByte(byte(value))
@@ -260,8 +171,6 @@ func unquote(path string) string {
 			}
 			b.WriteByte(c)
 		default:
-			// Covers `\"` and `\\`, and leaves an escape nobody defined as the
-			// character it escaped.
 			b.WriteByte(c)
 		}
 	}

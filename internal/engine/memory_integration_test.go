@@ -16,36 +16,8 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// runawayMemoryBound is what the `memorybound` fixture's mutants are allowed.
-//
-// It is explicit rather than derived, and that is the point of running it here
-// at all. The derived bound is a gibibyte at its floor, and a test that had to
-// watch a process allocate one to prove anything would be a test that costs the
-// machine a gibibyte on every run of the suite. Explicit is a documented path —
-// `test.memory` replaces a derived bound exactly as `test.timeout` replaces a
-// derived timeout — so this exercises the enforcement without exercising the
-// arithmetic, which [TestMemoryBoundIsDerivedFromTheBaselinePeak] does for
-// nothing.
-//
-// A quarter of a gibibyte is comfortably above what the fixture's own test
-// binary needs — a three-row table over a countdown — and comfortably below
-// anything that could inconvenience a machine.
 const runawayMemoryBound = 256 << 20
 
-// TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout is the incident,
-// reproduced and then stopped.
-//
-// PR #58 widened this repository's own dogfood gate to `internal/config`, and
-// two of the mutants it brought in never return and allocate without bound. One
-// of them reached eleven gigabytes in twelve seconds locally and took a GitHub
-// runner down entirely — the job did not fail, it *vanished*, with "The runner
-// has received a shutdown signal" — because the per-mutant timeout is derived
-// from a suite that finishes in milliseconds and is therefore ten seconds, and
-// ten seconds is a very long time to allocate for.
-//
-// So the assertions are about which of the two budgets settled it. The outcome
-// alone would be `killed` either way, and a run whose timeout had done the work
-// would look identical in the score.
 func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -70,9 +42,6 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 			outcome.Memory, outcome.MemorySource, runawayMemoryBound, MemorySourceExplicit)
 	}
 
-	// The event stream first, because it is what a console renders and what a
-	// user sees. Exactly one mutant is expected to reach the bound; the fixture
-	// documents which and why.
 	var bounded []MutantResult
 	for _, e := range events {
 		if finished, ok := e.(MutantFinished); ok && finished.Result.MemoryExceeded {
@@ -98,10 +67,6 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 		t.Errorf("the bounded mutant was measured under %d, want the run's %d", killed.MemoryLimit, runawayMemoryBound)
 	}
 
-	// It was the bound and not the deadline. A mutant that reached the timeout
-	// would have been retried serially and settled as a timeout or as
-	// inconclusive, so this is two claims at once: the duration is well under
-	// the budget, and no mutant in the run timed out at all.
 	if killed.Duration >= outcome.Timeout {
 		t.Errorf("the bounded mutant took %s against a %s timeout: the deadline could have been what stopped it",
 			killed.Duration, outcome.Timeout)
@@ -116,8 +81,6 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 		}
 	}
 
-	// And the report says the same thing, which is the half that outlives the
-	// run: `memory_exceeded` on the execution row, beside an outcome of killed.
 	if outcome.Report == nil {
 		t.Fatal("the run published no report")
 	}
@@ -143,9 +106,6 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 		t.Errorf("the report carries %d executions with memory_exceeded, want 1", rows)
 	}
 
-	// The recording is the third place the same fact has to appear, because it
-	// is the one a person reaches for when a run on somebody else's machine did
-	// something they cannot reproduce.
 	recorded := 0
 	for _, e := range sink.Events() {
 		if e.Type == trace.TypeMutantExec && e.Mutant != nil && e.Mutant.MemoryExceeded {
@@ -160,9 +120,6 @@ func TestARunawayMutantIsKilledByTheMemoryBoundNotTheTimeout(t *testing.T) {
 	}
 }
 
-// TestAnOrdinaryRunReportsAPeakForEveryExecutionAndBoundsNone pins the other
-// side of the measurement: every mutant a run executes says what it cost,
-// whether or not anything stopped it, and a run nobody bounded stops nothing.
 func TestAnOrdinaryRunReportsAPeakForEveryExecutionAndBoundsNone(t *testing.T) {
 	t.Parallel()
 
@@ -199,14 +156,6 @@ func TestAnOrdinaryRunReportsAPeakForEveryExecutionAndBoundsNone(t *testing.T) {
 	}
 }
 
-// TestTheBaselineItselfIsNeverBounded pins the one command the bound may not
-// apply to.
-//
-// The bound is derived from what the baseline runs cost, so bounding them would
-// be deriving a budget from a measurement taken under that budget. It is also
-// the one measurement that has to be allowed to be as large as the project
-// really is: a suite that legitimately needs four gigabytes gets a sixteen
-// gigabyte bound, and it can only get there by having been measured unbounded.
 func TestTheBaselineItselfIsNeverBounded(t *testing.T) {
 	t.Parallel()
 
@@ -215,9 +164,6 @@ func TestTheBaselineItselfIsNeverBounded(t *testing.T) {
 	sink := trace.NewMemorySink(0)
 	opts.TraceSink = sink
 
-	// A one-mebibyte bound is below what any Go test binary needs, so a
-	// baseline that were bounded by it could not finish. That the run gets as
-	// far as publishing is itself half the assertion.
 	if _, _, err := collect(t, t.Context(), opts); err != nil {
 		t.Fatalf("Run: %v; a bounded baseline could not have completed", err)
 	}
@@ -235,8 +181,6 @@ func TestTheBaselineItselfIsNeverBounded(t *testing.T) {
 	}
 }
 
-// TestTheMemoryBoundIsPublishedOnceBesideTheBaseline pins where in the stream
-// the budget's second half arrives.
 func TestTheMemoryBoundIsPublishedOnceBesideTheBaseline(t *testing.T) {
 	t.Parallel()
 
@@ -274,16 +218,6 @@ func TestTheMemoryBoundIsPublishedOnceBesideTheBaseline(t *testing.T) {
 	}
 }
 
-// TestAMemoryKillIsNotReusedByARunWithADifferentBound is the cache half of the
-// bound, and it is the failure that would have been silent.
-//
-// A memory kill is settled as `killed`, so the cache stores it like any other
-// kill. The bound is deliberately not in the key — a derived bound follows the
-// baseline peak, so keying on it would give every machine a cache of its own —
-// which leaves exactly one thing standing between a correct run and a wrong
-// one: the rule that an entry is only evidence about a compatible bound. This
-// drives it both ways round with a mutant whose verdict really does depend on
-// the number.
 func TestAMemoryKillIsNotReusedByARunWithADifferentBound(t *testing.T) {
 	t.Parallel()
 
@@ -294,7 +228,6 @@ func TestAMemoryKillIsNotReusedByARunWithADifferentBound(t *testing.T) {
 	root := testkit.Copy(t, "memorybound")
 	cacheRoot := t.TempDir()
 
-	// A tight bound: the runaway mutant is killed by it, and the entry says so.
 	tight := cacheOptions(t, root, cacheRoot)
 	tight.Config.Test.Memory = runawayMemoryBound
 	cold := runCached(t, tight)
@@ -304,17 +237,6 @@ func TestAMemoryKillIsNotReusedByARunWithADifferentBound(t *testing.T) {
 	}
 	killed := bounded[0]
 
-	// The same workspace under a larger bound. Every other mutant is adopted —
-	// the key did not move — and the one the bound killed is measured again,
-	// because twice the memory might have let it finish.
-	//
-	// Twice, and not the thirty times that would make the point more loudly.
-	// This test *runs* the runaway mutant under whatever number is written
-	// here, so a generous bound is a licence to allocate that much on the
-	// machine running the suite — which is the incident this whole feature is
-	// about, reproduced by its own regression test. The rule the cache applies
-	// is `>`, so any larger bound is a miss and 512 MiB proves it as well as
-	// eight gibibytes would.
 	loose := cacheOptions(t, root, cacheRoot)
 	loose.Config.Test.Memory = 2 * runawayMemoryBound
 	warm := runCached(t, loose)
@@ -336,9 +258,6 @@ func TestAMemoryKillIsNotReusedByARunWithADifferentBound(t *testing.T) {
 		}
 	}
 
-	// And the other direction. An entry measured under a large bound is not
-	// evidence about a smaller one, because the smaller one might have killed
-	// it for its memory before it reached any verdict.
 	tighter := cacheOptions(t, root, cacheRoot)
 	tighter.Config.Test.Memory = runawayMemoryBound
 	third := runCached(t, tighter)
@@ -349,7 +268,6 @@ func TestAMemoryKillIsNotReusedByARunWithADifferentBound(t *testing.T) {
 	}
 }
 
-// memoryKilledIDs names every mutant a run reported as stopped by the bound.
 func memoryKilledIDs(t *testing.T, r *report.Report) []string {
 	t.Helper()
 	var out []string
@@ -364,14 +282,6 @@ func memoryKilledIDs(t *testing.T, r *report.Report) []string {
 	return out
 }
 
-// TestACachedMemoryKillReadsLikeAMeasuredOne is the round trip C6 exists for.
-//
-// A memory kill is stored as an ordinary kill, so a warm run adopts it — and
-// everything that made it legible lives on the execution rows, which a cached
-// mutant does not have. Without the entry carrying the peak and the report
-// carrying both facts at mutant level, the second run says "killed" and nothing
-// else about a mutant no test failed on, which is the state `explain` exists to
-// resolve.
 func TestACachedMemoryKillReadsLikeAMeasuredOne(t *testing.T) {
 	t.Parallel()
 
@@ -394,7 +304,6 @@ func TestACachedMemoryKillReadsLikeAMeasuredOne(t *testing.T) {
 		t.Fatalf("the measured mutant reports no peak, so there is nothing for the cache to keep")
 	}
 
-	// The same bound, so the entry is evidence about this run too.
 	warm := cacheOptions(t, root, cacheRoot)
 	warm.Config.Test.Memory = runawayMemoryBound
 	second := runCached(t, warm)
@@ -413,7 +322,6 @@ func TestACachedMemoryKillReadsLikeAMeasuredOne(t *testing.T) {
 	}
 }
 
-// mutantByID2 finds one mutant in a report, failing the test when it is absent.
 func mutantByID2(t *testing.T, r *report.Report, id string) report.Mutant {
 	t.Helper()
 	for _, m := range r.Mutants {

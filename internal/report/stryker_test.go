@@ -14,11 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// The fixture workspace is three files chosen for what their bytes do to a
-// coordinate: one pure ASCII, one whose mutants sit after a two-byte rune and
-// an astral emoji on the same line, and one written with CRLF endings. The
-// files are never compiled — the projection reads them as text — so they are
-// short and say what they are for.
 const (
 	alphaProjPath = "internal/alpha/alpha.go"
 	betaProjPath  = "internal/beta/beta.go"
@@ -54,9 +49,6 @@ func Log(w io.Writer, a, b int) {
 }
 `
 
-// betaProjSource puts a two-byte rune and a four-byte one in front of the
-// mutant on line 5, which is the case a byte column and a rune column both get
-// wrong and in opposite directions.
 const betaProjSource = `package beta
 
 // Ready reports whether the party is this one.
@@ -70,8 +62,6 @@ func Level(n int) bool {
 }
 `
 
-// crlfProjSource is the same kind of file written on Windows. The '\r' is an
-// ordinary character on the line it terminates; see TestUTF16PositionOnCRLF.
 const crlfProjSource = "package crlf\r\n" +
 	"\r\n" +
 	"// Even reports whether n is even.\r\n" +
@@ -79,8 +69,6 @@ const crlfProjSource = "package crlf\r\n" +
 	"\treturn n%2 == 0\r\n" +
 	"}\r\n"
 
-// projectionWorkspace writes the fixture files into a temporary tree and
-// returns its root.
 func projectionWorkspace(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -100,12 +88,6 @@ func projectionWorkspace(t *testing.T) string {
 	return root
 }
 
-// span locates a unique piece of text in a fixture source and returns its
-// half-open byte range, which is exactly what discovery would have recorded.
-//
-// Uniqueness is required rather than assumed: a fixture whose needle matched
-// twice would silently pin the projection against the wrong half of a file, and
-// the golden would then be a record of the mistake.
 func span(t *testing.T, source, needle string) (uint32, uint32) {
 	t.Helper()
 	i := strings.Index(source, needle)
@@ -118,9 +100,6 @@ func span(t *testing.T, source, needle string) (uint32, uint32) {
 	return uint32(i), uint32(i + len(needle))
 }
 
-// projectionMutant is one row of the fixture, written the way a person can read
-// it. The span is derived from the source rather than written down, so the
-// fixture cannot drift from the files it describes.
 type projectionMutant struct {
 	displayID   string
 	path        string
@@ -133,8 +112,6 @@ type projectionMutant struct {
 	notRun      report.NotRunReason
 }
 
-// projectionFixture covers every outcome the document can carry, in every file
-// shape, plus the one row that is not a mutant at all: a rejection.
 func projectionFixture(t *testing.T) *report.Report {
 	t.Helper()
 	rows := []projectionMutant{
@@ -159,8 +136,6 @@ func projectionFixture(t *testing.T) *report.Report {
 			needle: "a < b", replacement: "a <= b", outcome: report.OutcomeKilled,
 		},
 		{
-			// A multi-line original, which is what a statement deletion of a
-			// wrapped call looks like, and an empty replacement.
 			displayID: "d4e5f607", path: alphaProjPath, source: alphaProjSource,
 			family: "statement-deletion", rule: "delete-call-statement",
 			needle:  "fmt.Fprintf(w,\n\t\t\"%d %d\", a, b)",
@@ -217,11 +192,9 @@ func projectionFixture(t *testing.T) *report.Report {
 		SchemaVersion: report.SchemaVersion,
 		Mutants:       mutants,
 		Rejected: []report.Rejected{{
-			ID:        strings.Repeat("29", 32),
-			DisplayID: "293a4b5c",
-			Path:      betaProjPath,
-			// The `3` in `n >= 3`, whose line is pure ASCII, so the coordinate
-			// a rejection carries needs no conversion to be checkable by eye.
+			ID:         strings.Repeat("29", 32),
+			DisplayID:  "293a4b5c",
+			Path:       betaProjPath,
 			Line:       10,
 			Column:     14,
 			Rule:       "return-zero-numeric",
@@ -230,13 +203,6 @@ func projectionFixture(t *testing.T) *report.Report {
 	}
 }
 
-// TestProjectionGolden pins the whole document, byte for byte.
-//
-// It is a golden rather than a set of field assertions because every part of
-// this file is a promise to somebody else's tool: the key order, the status
-// spellings, the shape of a location, and the two-space indentation are all
-// things a reader of `mutation.json` can see, and a golden is the only kind of
-// test that notices when one of them moves.
 func TestProjectionGolden(t *testing.T) {
 	t.Parallel()
 
@@ -255,15 +221,11 @@ func TestProjectionGolden(t *testing.T) {
 	}
 	testkit.Golden(t, "mutation-report.golden.json", got)
 
-	// The same bytes, through the vendored schema. A golden that matched a
-	// document the format refuses would be a very precise record of a mistake.
 	if err = report.ValidateProjection(got); err != nil {
 		t.Fatalf("the golden projection does not validate: %v", err)
 	}
 }
 
-// TestProjectionIsDeterministic proves two projections of one run are the same
-// file, which is what makes `mutation.json` diffable between runs.
 func TestProjectionIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -275,9 +237,6 @@ func TestProjectionIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestProjectionCoordinatesAreUTF16 reads the two coordinates out of the
-// document that a byte column would get wrong, and states the arithmetic in the
-// failure message.
 func TestProjectionCoordinatesAreUTF16(t *testing.T) {
 	t.Parallel()
 
@@ -287,10 +246,6 @@ func TestProjectionCoordinatesAreUTF16(t *testing.T) {
 		t.Fatalf("the projection has no %s; it has %v", betaProjPath, fileNames(doc))
 	}
 	mutant := findMutant(t, beta, "e5f60718")
-	// Line 5 is "\treturn \"¥🎉\" != s". Before the '!' stand a tab, `return`,
-	// a space, a quote, ¥ (one UTF-16 unit, two bytes), 🎉 (two units, four
-	// bytes), a quote, and a space: fourteen units, so the column is 15. A byte
-	// column would say 18 and a rune column 14.
 	if mutant.Location.Start.Line != 5 || mutant.Location.Start.Column != 15 {
 		t.Errorf("the mutant after ¥🎉 starts at %d:%d, want 5:15 (bytes would say 5:18, runes 5:14)",
 			mutant.Location.Start.Line, mutant.Location.Start.Column)
@@ -301,8 +256,6 @@ func TestProjectionCoordinatesAreUTF16(t *testing.T) {
 	}
 }
 
-// TestProjectionOnCRLF pins that a file written on Windows projects to the same
-// coordinates a viewer splitting it on '\n' would compute.
 func TestProjectionOnCRLF(t *testing.T) {
 	t.Parallel()
 
@@ -311,8 +264,6 @@ func TestProjectionOnCRLF(t *testing.T) {
 	if !ok {
 		t.Fatalf("the projection has no %s; it has %v", crlfProjPath, fileNames(doc))
 	}
-	// "\treturn n%2 == 0\r\n" is line 5: tab, `return`, space, `n`, `%`, `2`,
-	// space — the `==` starts at column 13.
 	mutant := findMutant(t, crlf, "0718293a")
 	if mutant.Location.Start.Line != 5 || mutant.Location.Start.Column != 13 {
 		t.Errorf("the CRLF mutant starts at %d:%d, want 5:13",
@@ -323,8 +274,6 @@ func TestProjectionOnCRLF(t *testing.T) {
 	}
 }
 
-// TestProjectionMapsEveryOutcome states the whole status mapping in one place,
-// including the two that need a reason to be worth reading.
 func TestProjectionMapsEveryOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -340,12 +289,12 @@ func TestProjectionMapsEveryOutcome(t *testing.T) {
 		"1a2b3c4d": "Killed",
 		"b2c3d4e5": "Survived",
 		"c3d4e5f6": "Timeout",
-		"d4e5f607": "Ignored",      // not run: out of selection
-		"e5f60718": "Ignored",      // inconclusive
-		"f6071829": "RuntimeError", // the harness failed
-		"0718293a": "Ignored",      // not run: interrupted
-		"18293a4b": "Ignored",      // not run: another shard
-		"293a4b5c": "CompileError", // the rejection
+		"d4e5f607": "Ignored",
+		"e5f60718": "Ignored",
+		"f6071829": "RuntimeError",
+		"0718293a": "Ignored",
+		"18293a4b": "Ignored",
+		"293a4b5c": "CompileError",
 	} {
 		m, ok := byID[id]
 		if !ok {
@@ -355,7 +304,6 @@ func TestProjectionMapsEveryOutcome(t *testing.T) {
 		if m.Status != want {
 			t.Errorf("mutant %s has status %q, want %q", id, m.Status, want)
 		}
-		// Every status a reader cannot act on says why, and no other one does.
 		hasReason := m.StatusReason != ""
 		wantsReason := want == "Ignored" || want == "CompileError"
 		if hasReason != wantsReason {
@@ -364,8 +312,6 @@ func TestProjectionMapsEveryOutcome(t *testing.T) {
 	}
 }
 
-// TestProjectionRefusesDriftedSource is the check that turns a silently wrong
-// document into a refusal: a file edited while the run was in flight.
 func TestProjectionRefusesDriftedSource(t *testing.T) {
 	t.Parallel()
 
@@ -384,10 +330,6 @@ func TestProjectionRefusesDriftedSource(t *testing.T) {
 	}
 }
 
-// TestProjectionRefusesMissingSource proves the empty string is never
-// substituted for a file that is not there. A viewer given an empty source
-// shows blank code with mutants pointing into nothing, which looks like a bug
-// in the tests rather than a missing file.
 func TestProjectionRefusesMissingSource(t *testing.T) {
 	t.Parallel()
 
@@ -405,10 +347,6 @@ func TestProjectionRefusesMissingSource(t *testing.T) {
 	}
 }
 
-// TestProjectionRefusesAPathOutsideTheWorkspace covers the one way a document
-// could be made to read a file nobody meant to publish. A report is a file, a
-// file can be edited, and `../../.ssh/id_rsa` in a path is not something to
-// find out about after the projection has embedded it.
 func TestProjectionRefusesAPathOutsideTheWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -424,9 +362,6 @@ func TestProjectionRefusesAPathOutsideTheWorkspace(t *testing.T) {
 	}
 }
 
-// TestValidateProjectionRefusesTheWrongSchemaVersion is the trap the vendored
-// schema exists to catch, written down as a test so that nobody "fixes" the
-// version to match the npm package it was vendored from.
 func TestValidateProjectionRefusesTheWrongSchemaVersion(t *testing.T) {
 	t.Parallel()
 
@@ -445,8 +380,6 @@ func TestValidateProjectionRefusesTheWrongSchemaVersion(t *testing.T) {
 	}
 }
 
-// TestValidateProjectionRefusesAMissingLocation covers the other half: a
-// document whose required fields are gone.
 func TestValidateProjectionRefusesAMissingLocation(t *testing.T) {
 	t.Parallel()
 
@@ -461,8 +394,6 @@ func TestValidateProjectionRefusesAMissingLocation(t *testing.T) {
 	}
 }
 
-// TestValidateProjectionRefusesNonJSON proves the validator says what is wrong
-// rather than panicking on input that never reached the encoder.
 func TestValidateProjectionRefusesNonJSON(t *testing.T) {
 	t.Parallel()
 
@@ -471,8 +402,6 @@ func TestValidateProjectionRefusesNonJSON(t *testing.T) {
 	}
 }
 
-// TestProjectRefusesNoReport is the caller's slip, diagnosed rather than
-// dereferenced.
 func TestProjectRefusesNoReport(t *testing.T) {
 	t.Parallel()
 
@@ -481,7 +410,6 @@ func TestProjectRefusesNoReport(t *testing.T) {
 	}
 }
 
-// marshalProjection projects and encodes a report, failing the test on either.
 func marshalProjection(t *testing.T, r *report.Report, root string) []byte {
 	t.Helper()
 	projection, err := report.Project(report.ProjectionOptions{
@@ -497,8 +425,6 @@ func marshalProjection(t *testing.T, r *report.Report, root string) []byte {
 	return data
 }
 
-// decodeProjection reads an encoded projection back, which is what a consumer
-// of the file does and therefore the only honest way to assert about it.
 func decodeProjection(t *testing.T, data []byte) report.Projection {
 	t.Helper()
 	var doc report.Projection
@@ -508,7 +434,6 @@ func decodeProjection(t *testing.T, data []byte) report.Projection {
 	return doc
 }
 
-// findMutant returns the projected mutant with an id, or fails.
 func findMutant(t *testing.T, file *report.ProjectionFile, id string) report.ProjectionMutant {
 	t.Helper()
 	for _, m := range file.Mutants {
@@ -520,7 +445,6 @@ func findMutant(t *testing.T, file *report.ProjectionFile, id string) report.Pro
 	return report.ProjectionMutant{}
 }
 
-// fileNames lists the projected files, for a failure message.
 func fileNames(doc report.Projection) []string {
 	names := make([]string, 0, len(doc.Files))
 	for name := range doc.Files {

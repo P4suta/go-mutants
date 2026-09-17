@@ -9,14 +9,6 @@ import (
 	"testing"
 )
 
-// TestBuildInfoFromReadsEveryShapeBuildInfoCanTake is the whole of the
-// identity contract, written against hand-built build information because
-// every interesting shape — a replacement, a modified working tree, a module
-// named twice — is one no single test run can produce.
-//
-// The claim in every row is the same one: what this module reports about
-// itself is what build information actually says, and `Auditable` is true only
-// when what it says names one immutable set of sources.
 func TestBuildInfoFromReadsEveryShapeBuildInfoCanTake(t *testing.T) {
 	const (
 		revision     = "21b55cdc95bcf1a2f0dd3c9dbb0e6a04c7a0f9d1"
@@ -245,10 +237,6 @@ func TestBuildInfoFromReadsEveryShapeBuildInfoCanTake(t *testing.T) {
 			want:   BuildInfo{Version: "v0.4.1", Sum: "h1:installed", Main: true, Auditable: true},
 		},
 		{
-			// The shape go1.24 and later stamp for a main module built out of a
-			// git checkout with an edit in it, measured rather than imagined:
-			// go build writes the pseudo-version of the last commit and appends
-			// "+dirty". It looks like a version and no proxy will ever serve it.
 			name: "main module stamped from an edited checkout",
 			info: &debug.BuildInfo{
 				Main: debug.Module{Path: ModulePath, Version: dirtyVersion},
@@ -266,9 +254,6 @@ func TestBuildInfoFromReadsEveryShapeBuildInfoCanTake(t *testing.T) {
 			},
 		},
 		{
-			// Build information contradicting itself: the "+dirty" suffix and
-			// vcs.modified are stamped from the same status, so a clean setting
-			// beside a dirty version is not a reason to believe the setting.
 			name: "main module stamped dirty beside a clean vcs setting",
 			info: &debug.BuildInfo{
 				Main: debug.Module{Path: ModulePath, Version: dirtyVersion},
@@ -320,16 +305,6 @@ func TestBuildInfoFromReadsEveryShapeBuildInfoCanTake(t *testing.T) {
 	}
 }
 
-// TestAuditableRefusesEveryVersionNobodyCanFetchAgain is the rule itself,
-// tested on values rather than through buildInfoFrom, because two of its
-// clauses cannot be reached from any build information a toolchain writes.
-//
-// The vocabulary matters more than it looks. A version with build metadata —
-// anything after a "+" — is not a version the module proxy can serve, with the
-// single exception of "+incompatible", which is a real published version of a
-// v2+ module without a go.mod. Everything else there is local: go1.24 and
-// later stamp "+dirty" onto a main module built from an edited checkout, and
-// that string is exactly the build this field exists to refuse.
 func TestAuditableRefusesEveryVersionNobodyCanFetchAgain(t *testing.T) {
 	const revision = "21b55cdc95bcf1a2f0dd3c9dbb0e6a04c7a0f9d1"
 
@@ -364,10 +339,6 @@ func TestAuditableRefusesEveryVersionNobodyCanFetchAgain(t *testing.T) {
 			want: false,
 		},
 		{
-			// The Main guard, which buildInfoFrom cannot exercise because it
-			// only reads the VCS settings for a main module. A revision on a
-			// dependency would be the main module's revision wearing somebody
-			// else's name, and it says nothing about the dependency's sources.
 			name: "revision on a module that is not the main one",
 			info: BuildInfo{Version: develVersion, VCSRevision: revision},
 			want: false,
@@ -381,10 +352,6 @@ func TestAuditableRefusesEveryVersionNobodyCanFetchAgain(t *testing.T) {
 	}
 }
 
-// TestVersionOfNamesTheBuildOrSaysItCannot pins the one string a caller that
-// wants a label rather than a decision gets, including the two ways of having
-// no answer: no build information, and build information that does not name
-// this module.
 func TestVersionOfNamesTheBuildOrSaysItCannot(t *testing.T) {
 	for _, testCase := range []struct {
 		name string
@@ -406,28 +373,12 @@ func TestVersionOfNamesTheBuildOrSaysItCannot(t *testing.T) {
 	}
 }
 
-// TestVersionNeverPanicsAndAlwaysSaysSomething is the guarantee a caller
-// putting the string into a report header relies on: there is no build in
-// which reading it fails or yields nothing to print.
 func TestVersionNeverPanicsAndAlwaysSaysSomething(t *testing.T) {
 	if got := Version(); got == "" {
 		t.Error("Version() is empty; every build has a name, even \"unknown\"")
 	}
 }
 
-// TestReadBuildInfoUnderGoTestNamesTheMainModule reads the real thing once.
-//
-// This test binary is built from this module, so go-mutants is its main module
-// and not one of its dependencies — the one shape the table above cannot prove
-// a real toolchain produces.
-//
-// Auditable is false here whatever the checkout, and that is measured, not
-// hoped for: the go command does not stamp VCS settings into a *test* binary —
-// `go version -m` on one shows no vcs.revision even in a clean git checkout —
-// so the main module's version stays "(devel)", which names no sources, and
-// there is no clean revision to fall back on. A run out of a git worktree, the
-// way this project develops, could not be stamped anyway: the go command wants
-// .git to be a directory, and in a worktree it is a file.
 func TestReadBuildInfoUnderGoTestNamesTheMainModule(t *testing.T) {
 	info, ok := ReadBuildInfo()
 	if !ok {
@@ -450,9 +401,6 @@ func TestReadBuildInfoUnderGoTestNamesTheMainModule(t *testing.T) {
 	}
 }
 
-// TestReadBuildInfoIsReadOnceAndSharedSafely pins the caching: build
-// information cannot change while a process runs, so it is read once, and
-// every caller — concurrent ones included — gets the same answer as the first.
 func TestReadBuildInfoIsReadOnceAndSharedSafely(t *testing.T) {
 	want, wantOK := ReadBuildInfo()
 	wantVersion := Version()

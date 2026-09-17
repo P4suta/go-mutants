@@ -11,18 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/glob"
 )
 
-// The reference matcher below is the specification written the obvious way:
-// plain recursion, one decision per call, no table and no memo. It is
-// deliberately the algorithm the package refuses to ship, because a reference
-// that shared the dynamic program's structure would agree with it for the same
-// wrong reasons. Fuzzing the two against each other is what turns "the DP is
-// equivalent to the naive reading" from a comment into a checked claim.
-//
-// Being non-memoized, it is exponential on nested wildcards, which is why the
-// fuzz target only consults it on small inputs.
-
-// referenceMatch is the naive reading of Pattern.Match. The pattern is assumed
-// to have already compiled, so only the path needs validating here.
 func referenceMatch(pattern, path string) bool {
 	pathElements := strings.Split(path, "/")
 	for _, element := range pathElements {
@@ -33,8 +21,6 @@ func referenceMatch(pattern, path string) bool {
 	return referenceElements(strings.Split(pattern, "/"), pathElements)
 }
 
-// referenceElements walks the element lists, branching on "**" the obvious
-// way: try consuming nothing, otherwise swallow one more path element.
 func referenceElements(pattern, path []string) bool {
 	if len(pattern) == 0 {
 		return len(path) == 0
@@ -54,8 +40,6 @@ func referenceElements(pattern, path []string) bool {
 	return referenceElements(pattern[1:], path[1:])
 }
 
-// referenceElement is the naive reading of one non-"**" element against one
-// path element, byte by byte.
 func referenceElement(pattern, element string) bool {
 	if pattern == "" {
 		return element == ""
@@ -73,10 +57,6 @@ func referenceElement(pattern, element string) bool {
 	}
 }
 
-// referenceIsAffordable keeps the exponential reference away from the inputs
-// that would make it run for minutes. Every star in a pattern is a branch the
-// reference re-explores whenever the answer is false, so the star budget
-// matters more than the raw length.
 func referenceIsAffordable(pattern, path string) bool {
 	const (
 		maxLength = 20
@@ -87,9 +67,6 @@ func referenceIsAffordable(pattern, path string) bool {
 		strings.Count(pattern, "*") <= maxStars
 }
 
-// TestReferenceMatchesContractTable checks the checker. The reference is only
-// worth fuzzing against if it independently reproduces the documented
-// semantics, so it runs the same contract table the implementation does.
 func TestReferenceMatchesContractTable(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range matchCases {
@@ -100,15 +77,6 @@ func TestReferenceMatchesContractTable(t *testing.T) {
 	}
 }
 
-// FuzzMatch asserts three things at once: Compile and Match never panic on
-// arbitrary bytes, a rejected pattern always comes back as a *SyntaxError
-// pointing inside the pattern, and an accepted pattern matches exactly what
-// the naive reference says it should.
-//
-// The seed corpus is the f.Add set below: every row of the contract table,
-// every rejected pattern, and a handful of shapes chosen to be awkward for a
-// matcher rather than for a reader. Native Go fuzzing treats those seeds as
-// the corpus, so there is no testdata/fuzz directory to keep in sync.
 func FuzzMatch(f *testing.F) {
 	for _, testCase := range matchCases {
 		f.Add(testCase.pattern, testCase.path)
@@ -149,8 +117,6 @@ func FuzzMatch(f *testing.F) {
 			if syntaxErr.Pattern != pattern {
 				t.Fatalf("SyntaxError.Pattern = %q, want %q", syntaxErr.Pattern, pattern)
 			}
-			// The empty pattern has no byte to blame, so it points at the
-			// column a first byte would have occupied.
 			highest := len(pattern)
 			if highest == 0 {
 				highest = 1

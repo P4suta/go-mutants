@@ -17,32 +17,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// The committed documents the fixture runs must marshal to, byte for byte. The
-// second is a coverage-guided run, which publishes two fields an `off` run
-// leaves out entirely.
-//
-// They are names rather than paths because [testkit.Golden] resolves them
-// against testdata/, and the comparison, the diff on a mismatch and the single
-// repository-wide `-update` flag all live there. This package used to register
-// an `-update` flag of its own; internal/instrument registered a second, and a
-// third in any package linking either would have panicked "flag redefined"
-// before a test ran.
 const (
-	goldenReport         = "run-report.golden.json"
-	goldenCoverageReport = "run-report-coverage.golden.json"
-	// goldenTestCoverageReport is the coverage-guided report narrowed one
-	// step further, to tests: the same three mutants, with the tests that
-	// reach each of them named and every pass narrowed to them.
+	goldenReport             = "run-report.golden.json"
+	goldenCoverageReport     = "run-report-coverage.golden.json"
 	goldenTestCoverageReport = "run-report-tests.golden.json"
 )
 
-// TestGoldenReport pins every byte of a complete run report.
-//
-// A byte-exact fixture is the right assertion here rather than a field-by-field
-// comparison. The document is a published format: field order, indentation, the
-// spelling of every enumerated value, and the difference between `[]` and
-// `null` are all part of what somebody's decoder sees, and none of them would
-// be caught by asserting that the values are equal.
 func TestGoldenReport(t *testing.T) {
 	t.Parallel()
 
@@ -53,8 +33,6 @@ func TestGoldenReport(t *testing.T) {
 	testkit.Golden(t, goldenReport, got)
 }
 
-// TestGoldenReportValidates checks the committed document against the published
-// schema, through the same validator a consumer would use.
 func TestGoldenReportValidates(t *testing.T) {
 	t.Parallel()
 
@@ -64,14 +42,6 @@ func TestGoldenReportValidates(t *testing.T) {
 	}
 }
 
-// TestGoldenCoverageReport pins the second shape of the document: the one a
-// coverage-guided run publishes.
-//
-// It is a golden of its own rather than a field-by-field check for the reason
-// [TestGoldenReport] is: `coverage.binaries` and `coverage.mutants_uncovered`
-// are *absent* from an off-mode document and present here, and the difference
-// between an absent key and a zero-valued one is exactly what a consumer's
-// decoder sees and exactly what no equality assertion would notice.
 func TestGoldenCoverageReport(t *testing.T) {
 	t.Parallel()
 
@@ -87,11 +57,6 @@ func TestGoldenCoverageReport(t *testing.T) {
 	}
 }
 
-// TestGoldenTestCoverageReport pins every byte of a test-narrowed run report,
-// and checks it against the schema, for the reason the coverage golden is:
-// `covering_tests`, `executions[].tests` and `coverage.tests` are a published
-// shape, and the only way `mode: "test"` can be additive is for every older
-// key to stay exactly where it was.
 func TestGoldenTestCoverageReport(t *testing.T) {
 	t.Parallel()
 
@@ -107,11 +72,6 @@ func TestGoldenTestCoverageReport(t *testing.T) {
 	}
 }
 
-// TestTestCoverageBlockNamesTheTestsUnderneathIt is the test-narrowed twin of
-// [TestCoverageBlockDescribesTheMutantsUnderneathIt]: the block says `test`
-// and counts the tests, every covered mutant names the tests that reach it,
-// every pass names the tests it was narrowed to, and the uncovered mutant
-// names none of either.
 func TestTestCoverageBlockNamesTheTestsUnderneathIt(t *testing.T) {
 	t.Parallel()
 
@@ -143,14 +103,6 @@ func TestTestCoverageBlockNamesTheTestsUnderneathIt(t *testing.T) {
 	}
 }
 
-// TestCoverageBlockDescribesTheMutantsUnderneathIt reads the two summary
-// numbers back out of the document and checks them against the rows they
-// summarise.
-//
-// `mutants_uncovered` is counted by the builder rather than passed in, which is
-// what makes this checkable at all: the assertion is that the number a consumer
-// would branch on and the rows a consumer would count agree, which is the one
-// way a summary can quietly stop being one.
 func TestCoverageBlockDescribesTheMutantsUnderneathIt(t *testing.T) {
 	t.Parallel()
 
@@ -171,8 +123,6 @@ func TestCoverageBlockDescribesTheMutantsUnderneathIt(t *testing.T) {
 			continue
 		}
 		counted++
-		// The three things `uncovered` claims, each of which the builder
-		// refuses to publish without.
 		if m.Outcome != report.OutcomeSurvived {
 			t.Errorf("uncovered mutant %s is %s, want %s", m.DisplayID, m.Outcome, report.OutcomeSurvived)
 		}
@@ -192,8 +142,6 @@ func TestCoverageBlockDescribesTheMutantsUnderneathIt(t *testing.T) {
 	}
 }
 
-// TestCoverageOffStatesNoNumbersItDidNotMeasure is the other half of the same
-// contract, in Go rather than in JSON Schema.
 func TestCoverageOffStatesNoNumbersItDidNotMeasure(t *testing.T) {
 	t.Parallel()
 
@@ -214,8 +162,6 @@ func TestCoverageOffStatesNoNumbersItDidNotMeasure(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesACoverageBlockTheMutantsContradict walks the combinations the
-// builder must never publish.
 func TestBuildRefusesACoverageBlockTheMutantsContradict(t *testing.T) {
 	t.Parallel()
 
@@ -280,13 +226,6 @@ func TestBuildRefusesACoverageBlockTheMutantsContradict(t *testing.T) {
 	}
 }
 
-// TestDocumentIdentityMatchesTheSchema holds the two spellings of the document
-// type together.
-//
-// This package writes the string and internal/schemas registers it, and neither
-// imports the other: the validator would otherwise be linked into the shipped
-// binary for the sake of one constant. This test is what makes that duplication
-// safe.
 func TestDocumentIdentityMatchesTheSchema(t *testing.T) {
 	t.Parallel()
 
@@ -298,13 +237,6 @@ func TestDocumentIdentityMatchesTheSchema(t *testing.T) {
 	}
 }
 
-// TestMarshalIsDeterministic proves that the same inputs produce the same
-// bytes, twice, from two independently built reports.
-//
-// Determinism is not a nicety here. Two shards of one run have to agree that
-// they saw one catalogue, `report merge` compares documents, and a report that
-// moved a field or reordered an array between two identical runs would make
-// every one of those comparisons noise.
 func TestMarshalIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -323,8 +255,6 @@ func TestMarshalIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestSkipsAreSortedWhateverOrderTheyArriveIn proves the builder imposes the
-// order rather than inheriting it.
 func TestSkipsAreSortedWhateverOrderTheyArriveIn(t *testing.T) {
 	t.Parallel()
 
@@ -353,8 +283,6 @@ func TestSkipsAreSortedWhateverOrderTheyArriveIn(t *testing.T) {
 	}
 }
 
-// TestWarningsKeepPublicationOrder proves the one array that is deliberately
-// not sorted stays in the order the run published it.
 func TestWarningsKeepPublicationOrder(t *testing.T) {
 	t.Parallel()
 
@@ -364,12 +292,6 @@ func TestWarningsKeepPublicationOrder(t *testing.T) {
 	}
 }
 
-// TestSummaryCountsTheFixture pins the arithmetic the score rests on.
-//
-// Expected survivors are excluded from the denominator, which is the whole
-// point of the expectations ledger: the fixture has two survivors, one of them
-// predicted, so the score is over one killed, one confirmed timeout, and one
-// unexpected survivor.
 func TestSummaryCountsTheFixture(t *testing.T) {
 	t.Parallel()
 
@@ -400,16 +322,11 @@ func TestSummaryCountsTheFixture(t *testing.T) {
 	if s.ScorePercent == nil {
 		t.Fatal("score_percent is null for a run with a denominator")
 	}
-	// (1 killed + 2 confirmed timeouts) / (3 detections + 1 unexpected
-	// survivor), computed the way [mutation.Score] computes it: the report must
-	// carry that number and not a differently rounded one.
 	if want := float64(3) / float64(4) * 100; *s.ScorePercent != want {
 		t.Errorf("score_percent = %v, want %v", *s.ScorePercent, want)
 	}
 }
 
-// TestScoreIsNullWhenNothingWasMeasured proves the undefined score is a null
-// rather than a flattering or a damning number.
 func TestScoreIsNullWhenNothingWasMeasured(t *testing.T) {
 	t.Parallel()
 
@@ -438,14 +355,6 @@ func TestScoreIsNullWhenNothingWasMeasured(t *testing.T) {
 	}
 }
 
-// TestTallyRoundTripsThroughTheDocument proves the document is lossless where
-// losslessness is least obvious.
-//
-// The summary counts survivors as one number while the score's denominator
-// needs them split, and the split is recovered by joining the expectations
-// ledger. If that join were wrong, a consumer recomputing the score from the
-// file would disagree with the file's own score_percent — so the tally the
-// report reconstructs is compared against the one the run counted.
 func TestTallyRoundTripsThroughTheDocument(t *testing.T) {
 	t.Parallel()
 
@@ -475,9 +384,6 @@ func TestTallyRoundTripsThroughTheDocument(t *testing.T) {
 	}
 }
 
-// TestOutcomeSpellingsAreTotalAndReversible holds the two vocabularies
-// together: every core outcome has a document spelling, and every document
-// spelling resolves back to the outcome it came from.
 func TestOutcomeSpellingsAreTotalAndReversible(t *testing.T) {
 	t.Parallel()
 
@@ -507,18 +413,6 @@ func TestOutcomeSpellingsAreTotalAndReversible(t *testing.T) {
 	}
 }
 
-// TestEverySkipReasonIsInTheSchema is the drift guard between the reasons
-// discovery emits and the enumeration the schema publishes.
-//
-// The builder deliberately copies a reason through rather than checking it, so
-// that a new reason cannot fail a run at the very end of it. This is where that
-// choice is paid for: a reason added to internal/discover without being added
-// to the schema fails here, in the commit that adds it.
-//
-// The reasons come from [discover.AllSkipReasons] and not from a list typed out
-// here, so that the guard covers whatever that package declares today rather
-// than whatever it declared when this test was written. Discovery's own tests
-// hold that list to the Skip* constants it really declares.
 func TestEverySkipReasonIsInTheSchema(t *testing.T) {
 	t.Parallel()
 
@@ -534,8 +428,6 @@ func TestEverySkipReasonIsInTheSchema(t *testing.T) {
 			t.Errorf("the schema rejects the skip reason %q that discovery emits: %v", reason, err)
 		}
 	}
-	// The reserved reasons instrumentation will emit are in the enumeration
-	// too, so that landing them is a code change and not a schema change.
 	for _, reserved := range []string{"struct-tag", "label-or-goto", "unnameable-decl-type"} {
 		doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
 		doc["skips"] = []any{map[string]any{"path": "x.go", "reason": reserved, "count": 1.0}}
@@ -548,18 +440,6 @@ func TestEverySkipReasonIsInTheSchema(t *testing.T) {
 	}
 }
 
-// TestEveryEnumeratedValueIsInTheSchema is the same drift guard for the two
-// enumerations this package declares itself.
-//
-// [report.SelectionModes] and [report.NotRunReasons] are what the builder will
-// write, and the schema is what a consumer will branch on. A value added to one
-// and not the other is a document go-mutants writes and its own schema refuses,
-// which the run only finds out about at the very end — so it is found out about
-// here instead, in the commit that adds the value.
-//
-// The not-run reason is checked on the fixture's one not-run mutant rather than
-// on an invented row, because the schema only allows a reason there: the
-// biconditional is part of what is being checked.
 func TestEveryEnumeratedValueIsInTheSchema(t *testing.T) {
 	t.Parallel()
 
@@ -567,8 +447,6 @@ func TestEveryEnumeratedValueIsInTheSchema(t *testing.T) {
 		doc := mutantkit.DecodeJSON(t, mutantkit.MustMarshal(t, buildFixture(t)))
 		selection := object(doc, "selection")
 		selection["mode"] = string(mode)
-		// The two modes that come with a fact attached carry it, since the
-		// schema is entitled to expect one.
 		if mode == report.ModeShard {
 			doc["shard"] = map[string]any{"index": 1.0, "total": 2.0, "assignment": mutation.ShardAssignment}
 		}
@@ -598,13 +476,6 @@ func TestEveryEnumeratedValueIsInTheSchema(t *testing.T) {
 	}
 }
 
-// TestSchemaRejects walks one violation of each class through the validator and
-// checks that the failure is located where a person would look for it.
-//
-// The cases are made by editing a document that is known to be valid, so that
-// each one differs from a passing document in exactly one way. Every case
-// asserts the JSON pointer as well as the failure, because "the report is
-// invalid" is not a diagnosis.
 func TestSchemaRejects(t *testing.T) {
 	t.Parallel()
 
@@ -688,9 +559,6 @@ func TestSchemaRejects(t *testing.T) {
 			mutate:  func(doc map[string]any) { object(doc, "coverage")["mode"] = "line" },
 		},
 		{
-			// The `else` half of the conditional: a run that narrowed nothing
-			// must not carry the numbers that describe narrowing, because a
-			// reader cannot tell a measured zero from a default one.
 			name:    "coverage off carrying a binary count",
 			pointer: "/coverage/binaries",
 			mutate:  func(doc map[string]any) { object(doc, "coverage")["binaries"] = 2.0 },
@@ -815,16 +683,11 @@ func TestSchemaRejects(t *testing.T) {
 			mutate:  func(doc map[string]any) { doc["merge"] = map[string]any{"shards": 0.0} },
 		},
 		{
-			// An attempt that took less than no time is not a slow measurement,
-			// it is a clock nobody may reason about.
 			name:    "an execution that took a negative time",
 			pointer: "/mutants/1/executions/0/duration_ms",
 			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["duration_ms"] = -1.0 },
 		},
 		{
-			// A quantity of memory, so a negative one is not a small budget: it
-			// is a number nothing could have measured, and every comparison a
-			// consumer makes against it comes out the wrong way round.
 			name:    "an execution that reached a negative peak",
 			pointer: "/mutants/1/executions/0/peak_memory_bytes",
 			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["peak_memory_bytes"] = -1.0 },
@@ -835,13 +698,7 @@ func TestSchemaRejects(t *testing.T) {
 			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["memory_exceeded"] = "yes" },
 		},
 		{
-			// The cross-field rule the whole vocabulary rests on: a bound
-			// settles a mutant as killed and as nothing else, so a survivor
-			// claiming one describes a pass that both was and was not stopped.
-			name: "an execution that survived and says a bound stopped it",
-			// The rejection lands on the outcome rather than on the flag,
-			// because the flag is what the schema branches on and the outcome is
-			// what it then requires.
+			name:    "an execution that survived and says a bound stopped it",
 			pointer: "/mutants/1/executions/0/outcome",
 			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["memory_exceeded"] = true },
 		},
@@ -861,17 +718,11 @@ func TestSchemaRejects(t *testing.T) {
 			mutate:  func(doc map[string]any) { delete(testFacts(doc), "memory_bytes") },
 		},
 		{
-			name: "a run with no bound that reports one anyway",
-			// The whole `test` object, because "these two keys may not both be
-			// here" is a statement about the object rather than about either of
-			// them.
+			name:    "a run with no bound that reports one anyway",
 			pointer: "/test",
 			mutate:  func(doc map[string]any) { testFacts(doc)["memory_source"] = "unavailable" },
 		},
 		{
-			// `additionalProperties: false` inside the new rows too: a typo'd
-			// key is a bug, and the moment it is cheap to catch is before the
-			// file is written.
 			name:    "an unknown key inside an execution",
 			pointer: "/mutants/1/executions/0/attempt_number",
 			mutate:  func(doc map[string]any) { execution(doc, 1, 0)["attempt_number"] = 1.0 },
@@ -906,8 +757,6 @@ func TestSchemaRejects(t *testing.T) {
 	}
 }
 
-// marshal builds and marshals in one step, for the tests that only compare
-// bytes.
 func marshal(t *testing.T, opts report.Options) []byte {
 	t.Helper()
 	r, err := report.Build(opts)
@@ -917,29 +766,22 @@ func marshal(t *testing.T, opts report.Options) []byte {
 	return mutantkit.MustMarshal(t, r)
 }
 
-// workspace returns the workspace object of a decoded document.
 func workspace(doc map[string]any) map[string]any {
 	return doc["workspace"].(map[string]any)
 }
 
-// mutant returns one row of the decoded mutants array.
 func mutant(doc map[string]any, i int) map[string]any {
 	return doc["mutants"].([]any)[i].(map[string]any)
 }
 
-// testFacts returns the decoded document's `test` object, which is where the
-// run's own budgets live.
 func testFacts(doc map[string]any) map[string]any {
 	return doc["test"].(map[string]any)
 }
 
-// execution returns one execution of one decoded mutant.
 func execution(doc map[string]any, mutantIndex, i int) map[string]any {
 	return mutant(doc, mutantIndex)["executions"].([]any)[i].(map[string]any)
 }
 
-// object returns a named object of a decoded document, or, when an index is
-// given, one element of a named array.
 func object(doc map[string]any, name string, index ...int) map[string]any {
 	if len(index) == 0 {
 		return doc[name].(map[string]any)

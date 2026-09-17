@@ -8,16 +8,6 @@ import (
 	"testing"
 )
 
-// TestParseSizeReadsBinaryUnitsAndRefusesTheDecimalOnes is the whole of the
-// size vocabulary in one table.
-//
-// The refusals matter more than the acceptances. `GB` is not read as `GiB`
-// because the two differ by 7%, and a bound that is quietly 7% tighter than it
-// reads is a bound that kills a legitimate suite for reasons nobody can see; it
-// is also not read as a *decimal* gigabyte, because a person writing a memory
-// budget in a Go project means the number their machine's task manager shows
-// them. Refusing it and naming the accepted spellings is the only answer that
-// cannot be wrong in silence.
 func TestParseSizeReadsBinaryUnitsAndRefusesTheDecimalOnes(t *testing.T) {
 	t.Parallel()
 
@@ -52,10 +42,6 @@ func TestParseSizeReadsBinaryUnitsAndRefusesTheDecimalOnes(t *testing.T) {
 		}
 	}
 
-	// A negative size is representable, so it is *read* here and refused by the
-	// validator — which is the same division `test.timeout` makes, and the
-	// reason a bad value in a file is reported at the line it was written on
-	// rather than as a nameless conversion failure.
 	for _, negative := range []string{"-1", "-2GiB"} {
 		size, err := parseSize(negative)
 		if err != nil {
@@ -71,23 +57,13 @@ func TestParseSizeReadsBinaryUnitsAndRefusesTheDecimalOnes(t *testing.T) {
 	}
 }
 
-// A number that parses, is finite, and is still bigger than an int64 is its own
-// refusal, separate from every other one above: `1e400` is caught by
-// strconv.ParseFloat, and `1e19` is not. The guard between them is written as a
-// division so the comparison itself cannot overflow, and it is the branch that
-// stands between a configured bound and math.MinInt64 — a negative bound every
-// process is over, which would kill every mutant a run started.
 func TestParseSizeRefusesASizeLargerThanAnyMachineHas(t *testing.T) {
 	t.Parallel()
 
 	for _, text := range []string{
 		"1e19",
-		// The scale is applied to the comparison as well, so a number small
-		// enough on its own is still refused once its unit is read.
 		"1e19KiB",
 		"10000000000TiB",
-		// float64(math.MaxInt64) rounds *up* to 2^63, which is the one value
-		// that would pass a `>` test and then convert to math.MinInt64.
 		"9223372036854775808",
 	} {
 		got, err := parseSize(text)
@@ -101,15 +77,6 @@ func TestParseSizeRefusesASizeLargerThanAnyMachineHas(t *testing.T) {
 	}
 }
 
-// formatSize is the other half of the vocabulary, and it has one promise:
-// what it prints, parseSize reads back. That promise is what lets a bound
-// quoted in a diagnostic be pasted into the configuration that produced it, and
-// it is the only reason this renders `1KiB` rather than `1024B`.
-//
-// The table is the unit boundaries and nothing else, because the boundaries are
-// where every mistake this function can make lives: one byte either side of
-// 1 KiB, the exact power where a unit gives way to the next, and the size past
-// the last unit the list holds.
 func TestFormatSizePrintsWhatParseSizeReadsBack(t *testing.T) {
 	t.Parallel()
 
@@ -119,20 +86,14 @@ func TestFormatSizePrintsWhatParseSizeReadsBack(t *testing.T) {
 	}{
 		{0, "0B"},
 		{1, "1B"},
-		// Bytes hold right up to the boundary, and the boundary itself is the
-		// first size that is not bytes.
 		{1023, "1023B"},
 		{1 << 10, "1KiB"},
 		{1536, "1.5KiB"},
 		{(1 << 20) - 1, "1023.9990234375KiB"},
-		// Each exact power is the smallest size its unit names, which is the
-		// off-by-one the loop's break condition decides.
 		{1 << 20, "1MiB"},
 		{1 << 30, "1GiB"},
 		{1 << 40, "1TiB"},
 		{3 << 39, "1.5TiB"},
-		// TiB is the last suffix, so a larger size keeps counting in it rather
-		// than losing its unit.
 		{1 << 50, "1024TiB"},
 	} {
 		got := formatSize(c.size)
@@ -152,20 +113,11 @@ func TestFormatSizePrintsWhatParseSizeReadsBack(t *testing.T) {
 	}
 }
 
-// The one place formatSize is read by a user is the refusal of a bound that
-// leaves no room, and a refusal that quotes the value back has to quote it in
-// the spelling the file accepts. Nothing else in this package asserts that
-// sentence, so an empty rendering — or one in the wrong unit — would be a
-// diagnostic nobody could act on and a test nobody would see fail.
 func TestANonPositiveMemoryBoundIsQuotedBackInItsOwnUnits(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct{ text, quoted string }{
 		{"-1", "-1B"},
-		// A negative is below the byte boundary, so it is quoted in bytes
-		// however it was written. That is not a rounding of the truth: the
-		// unit loop divides, and dividing a negative would name a unit the
-		// value does not have.
 		{"-2GiB", "-2147483648B"},
 		{"0", "0B"},
 	} {
@@ -190,8 +142,6 @@ func TestANonPositiveMemoryBoundIsQuotedBackInItsOwnUnits(t *testing.T) {
 	}
 }
 
-// TestParseMemoryIsTheFlagsDoorIntoTheSameRule pins that `--memory` is judged by
-// the validator the file is judged by, and reports the same two codes.
 func TestParseMemoryIsTheFlagsDoorIntoTheSameRule(t *testing.T) {
 	t.Parallel()
 
@@ -212,13 +162,6 @@ func TestParseMemoryIsTheFlagsDoorIntoTheSameRule(t *testing.T) {
 	}
 }
 
-// TestMemoryIsUnsetAtZeroLikeTheTimeout pins the one thing a new setting in
-// `[test]` most easily gets wrong.
-//
-// Zero means "derive it" for the timeout and for this, so the round trip from a
-// resolved [Config] back to an [Overlay] has to leave it unset — otherwise
-// [Defaults] would not validate against its own validator, and every run would
-// refuse to start.
 func TestMemoryIsUnsetAtZeroLikeTheTimeout(t *testing.T) {
 	t.Parallel()
 

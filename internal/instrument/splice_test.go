@@ -15,9 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// spliceAt builds a splice that replaces src[start:end], taking Original from
-// the source so that the tests exercise the success path rather than the
-// mismatch check.
 func spliceAt(src string, start, end uint32, replacement string) instrument.Splice {
 	return instrument.Splice{
 		Span:        mutation.Span{StartByte: start, EndByte: end},
@@ -164,9 +161,6 @@ func TestApply(t *testing.T) {
 	}
 }
 
-// TestApplyDoesNotAliasTheSource guards a subtle hazard: a caller that keeps
-// the pristine bytes to compare against would otherwise be comparing against
-// bytes the splicer had already edited.
 func TestApplyDoesNotAliasTheSource(t *testing.T) {
 	t.Parallel()
 
@@ -306,9 +300,6 @@ func TestApplyErrors(t *testing.T) {
 	}
 }
 
-// TestApplyIsOrderIndependent pins the determinism the catalogue depends on:
-// the same set of splices produces the same bytes however discovery happened
-// to order them.
 func TestApplyIsOrderIndependent(t *testing.T) {
 	t.Parallel()
 
@@ -337,27 +328,16 @@ func TestApplyIsOrderIndependent(t *testing.T) {
 	}
 }
 
-// A failReporter is the part of *testing.T that the shared assertions below use.
-// *rapid.T offers the same two methods without being a *testing.T, so stating
-// the requirement as an interface lets the table tests and the property test
-// share one set of assertions instead of two drifting copies.
 type failReporter interface {
 	Errorf(format string, args ...any)
 	Fatalf(format string, args ...any)
 }
 
-// A region is one splice's footprint in both coordinate systems, worked out
-// from the splices alone. Recomputing it here rather than asking the map is
-// what makes the assertions below a check of the map instead of a restatement
-// of it.
 type region struct {
 	origStart, origEnd uint32
 	outStart, outEnd   uint32
 }
 
-// sortedSplices returns the splices in the order Apply must use, so that the
-// tests can talk about "the first splice" without depending on how the caller
-// listed them.
 func sortedSplices(splices []instrument.Splice) []instrument.Splice {
 	sorted := slices.Clone(splices)
 	slices.SortFunc(sorted, func(a, b instrument.Splice) int { return a.Span.Compare(b.Span) })
@@ -382,15 +362,9 @@ func regionsOf(splices []instrument.Splice) []region {
 	return regions
 }
 
-// checkOffsetMap asserts every guarantee the map makes, for every offset in
-// both coordinate systems.
 func checkOffsetMap(t failReporter, src, out []byte, splices []instrument.Splice, m instrument.OffsetMap) {
 	regions := regionsOf(splices)
 
-	// Covered offsets are the ones a splice wrote over or wrote in; their
-	// bytes are not shared between the two buffers, so the byte-identity
-	// property says nothing about them. Interior offsets are the strictly
-	// inner ones, where the map promises no exact answer.
 	covered := func(off uint32, start, end func(region) uint32) bool {
 		for _, r := range regions {
 			if start(r) <= off && off < end(r) {
@@ -429,11 +403,6 @@ func checkOffsetMap(t failReporter, src, out []byte, splices []instrument.Splice
 			t.Errorf("ToOutput(%d) = %d, which holds %q, want %q",
 				off, got, out[got], src[off])
 		}
-		// An offset no splice covered addresses a byte that survived into the
-		// output, so the round trip returns exactly it. Covered offsets
-		// addressed bytes that are gone, and there the two directions each
-		// answer with the nearest surviving anchor instead of inverting one
-		// another — see ToOriginal's documentation.
 		if !covered(off, origStart, origEnd) {
 			if back, ok := m.ToOriginal(got); !ok || back != off {
 				t.Errorf("ToOriginal(ToOutput(%d)) = %d, %v; want %d, true", off, back, ok, off)
@@ -458,8 +427,6 @@ func checkOffsetMap(t failReporter, src, out []byte, splices []instrument.Splice
 			!covered(off, outStart, outEnd) && out[off] != src[got] {
 			t.Errorf("ToOriginal(%d) = %d, which holds %q, want %q", off, got, src[got], out[off])
 		}
-		// The mirror of the round trip above: an output offset outside every
-		// replacement addresses a byte that came from the source unchanged.
 		if !covered(off, outStart, outEnd) {
 			if there, ok := m.ToOutput(got); !ok || there != off {
 				t.Errorf("ToOutput(ToOriginal(%d)) = %d, %v; want %d, true", off, there, ok, off)
@@ -491,8 +458,6 @@ func TestOffsetMapOutOfRange(t *testing.T) {
 func TestOffsetMapMapSpan(t *testing.T) {
 	t.Parallel()
 
-	// "abcdefghij" with [4,6) replaced by a longer run, so that a span
-	// enclosing the splice has to grow by the difference.
 	const src = "abcdefghij"
 	_, m, err := instrument.Apply([]byte(src), []instrument.Splice{spliceAt(src, 4, 6, "XYZ!")})
 	if err != nil {
@@ -571,11 +536,6 @@ func TestOffsetMapMapSpan(t *testing.T) {
 	}
 }
 
-// TestMapSpanWithInsertionOnABoundary pins the rule MapSpan documents for the
-// one ambiguous case: inserted text sits at an offset rather than over a range,
-// so a span ending exactly there has to either take it or leave it. The rule is
-// that an insertion attaches to the text before it, which makes it part of the
-// span that ends at its offset and not part of the one that starts there.
 func TestMapSpanWithInsertionOnABoundary(t *testing.T) {
 	t.Parallel()
 
@@ -591,7 +551,7 @@ func TestMapSpanWithInsertionOnABoundary(t *testing.T) {
 	cases := []struct {
 		name string
 		in   mutation.Span
-		want string // the text the mapped span covers in the output
+		want string
 	}{
 		{name: "span ending at the insertion takes it", in: mutation.Span{StartByte: 0, EndByte: 4}, want: "abcd<"},
 		{name: "span starting at the insertion leaves it", in: mutation.Span{StartByte: 4, EndByte: 8}, want: "efgh"},
@@ -617,15 +577,12 @@ func TestMapSpanWithInsertionOnABoundary(t *testing.T) {
 	}
 }
 
-// TestMapSpanTracksNestedRewrites is the case the interval forest depends on:
-// an enclosing site is spliced after the sites nested inside it have already
-// moved, and its span must still cover the same text.
 func TestMapSpanTracksNestedRewrites(t *testing.T) {
 	t.Parallel()
 
 	const src = "if a && b {\n\tf(x)\n}"
 	site := mutation.Span{StartByte: 0, EndByte: uint32(len(src))}
-	inner := spliceAt(src, 5, 7, "||") // the condition's connective
+	inner := spliceAt(src, 5, 7, "||")
 
 	out, m, err := instrument.Apply([]byte(src), []instrument.Splice{inner})
 	if err != nil {
@@ -657,7 +614,7 @@ func TestCountLines(t *testing.T) {
 		{"a\nb", 1},
 		{"a\r\nb\r\n", 2},
 		{"\n\n\n", 3},
-		{"a\rb", 0}, // a lone carriage return is not a line break
+		{"a\rb", 0},
 	}
 	for _, tc := range cases {
 		if got := instrument.CountLines([]byte(tc.in)); got != tc.want {
@@ -685,9 +642,6 @@ func TestLinePreserving(t *testing.T) {
 		},
 		{
 			name: "guard around a multi-line statement keeps its line breaks",
-			// The Form S shape: the mutated copy is folded onto one line and
-			// the original is reproduced verbatim in the else branch, so the
-			// replacement contains exactly as many line breaks as it replaced.
 			splices: []instrument.Splice{{
 				Original:    []byte("f(\n\ta,\n)"),
 				Replacement: []byte("if __gm.M[7] { g(a,) } else { f(\n\ta,\n) }"),
@@ -730,23 +684,15 @@ func TestLinePreserving(t *testing.T) {
 	}
 }
 
-// lineOf returns the 1-based line number of a byte offset.
 func lineOf(b []byte, off uint32) int {
 	return 1 + instrument.CountLines(b[:off])
 }
 
-// TestLinePreservingMeansLinesAreActuallyPreserved connects the predicate to
-// the property it stands for. LinePreserving is an assertion callers make
-// about splices they are about to apply, so its meaning has to be checked
-// against the bytes rather than assumed from its definition.
 func TestLinePreservingMeansLinesAreActuallyPreserved(t *testing.T) {
 	t.Parallel()
 
 	const src = "package p\n\nfunc f(a, b int) int {\n\tif a > b {\n\t\treturn a\n\t}\n\treturn f(\n\t\ta,\n\t\tb,\n\t)\n}\n"
 
-	// Two guards on the same file: one around a single-line statement, one
-	// around a statement spanning three lines whose original is reproduced
-	// verbatim inside the guard.
 	inner := uint32(strings.Index(src, "return a"))
 	outerStart := uint32(strings.Index(src, "return f("))
 	outerEnd := outerStart + uint32(len("return f(\n\t\ta,\n\t\tb,\n\t)"))
@@ -778,8 +724,6 @@ func TestLinePreservingMeansLinesAreActuallyPreserved(t *testing.T) {
 		}
 	}
 
-	// And the negative: a splice that folds a multi-line statement onto one
-	// line is rejected by the predicate, and does move later lines.
 	folding := []instrument.Splice{spliceAt(src, outerStart, outerEnd, "return f(b,a,)")}
 	if instrument.LinePreserving(folding) {
 		t.Fatalf("LinePreserving = true for a splice that removes three line breaks")
@@ -798,10 +742,6 @@ func TestLinePreservingMeansLinesAreActuallyPreserved(t *testing.T) {
 	}
 }
 
-// --- property test ---
-
-// spliceSetGen draws a source and a set of splices that Apply must accept:
-// ascending, non-overlapping, and never two insertions at one offset.
 func spliceSetGen() *rapid.Generator[struct {
 	Src     string
 	Splices []instrument.Splice
@@ -820,8 +760,6 @@ func spliceSetGen() *rapid.Generator[struct {
 		for range rapid.IntRange(0, 5).Draw(t, "count") {
 			gap := rapid.Uint32Range(0, 4).Draw(t, "gap")
 			length := rapid.Uint32Range(0, 4).Draw(t, "length")
-			// Two insertions at the same offset have no defined order, and
-			// Apply rejects them; the generator stays on the success path.
 			if gap == 0 && length == 0 && (prevEmpty || first) && !first {
 				gap = 1
 			}
@@ -841,10 +779,6 @@ func spliceSetGen() *rapid.Generator[struct {
 	})
 }
 
-// TestApplyInvariants states what Apply guarantees for any legal set of
-// splices, rather than re-deriving the output the way Apply does: the length
-// arithmetic, every replacement present where the map says it is, every
-// untouched byte reachable through the map, and order independence.
 func TestApplyInvariants(t *testing.T) {
 	t.Parallel()
 
@@ -865,12 +799,6 @@ func TestApplyInvariants(t *testing.T) {
 			rt.Fatalf("output is %d bytes, want %d", len(out), wantLen)
 		}
 
-		// Every replacement sits where the independently computed regions say
-		// it does, and the map agrees about the offsets around it. A splice's
-		// own start offset maps to the start of its replacement, except for an
-		// insertion, where it maps past the inserted text: an empty span has
-		// nothing of its own to point at, and the offset belongs to the byte
-		// that was there before.
 		for i, r := range regionsOf(splices) {
 			replacement := sortedSplices(splices)[i].Replacement
 			if !bytes.HasPrefix(out[r.outStart:], replacement) {
@@ -917,18 +845,6 @@ func TestApplyInvariants(t *testing.T) {
 	})
 }
 
-// TestAnOverlapNamesBothProducers pins the sentence a conflict is allowed to
-// be, and it is here because of how long the alternative took.
-//
-// A real overlap once reported "splice 71 at [4942,4942) overlaps splice 6 at
-// [4232,5675)". Every word of it was true and none of it was actionable: Apply
-// knows splices by their position in a slice, so the two indices named nothing
-// a reader could look at, and the message could not say which file it was even
-// in. Finding out which two producers had collided meant keeping the run's
-// temporary tree and reading bytes out of it by hand.
-//
-// The index stays, because it is what finds the splice in a dump. What is added
-// is who made it.
 func TestAnOverlapNamesBothProducers(t *testing.T) {
 	t.Parallel()
 
@@ -960,10 +876,6 @@ func TestAnOverlapNamesBothProducers(t *testing.T) {
 	}
 }
 
-// TestAnUnnamedSpliceIsStillReportedByIndex keeps the other half true: Apply is
-// the mechanism for every edit this package makes, including the internal ones
-// where a name would be noise, and an overlap between two of those has to stay
-// reportable rather than becoming a sentence with a hole in it.
 func TestAnUnnamedSpliceIsStillReportedByIndex(t *testing.T) {
 	t.Parallel()
 

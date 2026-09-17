@@ -16,11 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestSessionCoveringTestsNamesTheTestsBehindEachMutant is CoveringTests against
-// the killable fixture: clamp.go is exercised only by TestClamp, and untested.go
-// by nothing. So the mutant in clamp.go is reported covered by exactly TestClamp,
-// and the mutant in untested.go is absent — no test reaches it, which is the
-// honest answer rather than an empty list of covering tests.
 func TestSessionCoveringTestsNamesTheTestsBehindEachMutant(t *testing.T) {
 	t.Parallel()
 
@@ -67,8 +62,6 @@ func TestSessionCoveringTestsNamesTheTestsBehindEachMutant(t *testing.T) {
 		t.Errorf("untested mutant is covered by %v, want it absent: no test reaches its line", got)
 	}
 
-	// Every covering entry names a real, accepted mutant and a test of the one
-	// module: the mapping does not invent ids or tests.
 	accepted := make(map[string]bool)
 	for _, m := range session.Catalog().Mutants {
 		if m.Accepted {
@@ -90,8 +83,6 @@ func TestSessionCoveringTestsNamesTheTestsBehindEachMutant(t *testing.T) {
 	}
 }
 
-// TestSessionCoveringTestsAfterCloseIsRefused: a closed session measures
-// nothing, and says so with the sentinel every other closed-session call uses.
 func TestSessionCoveringTestsAfterCloseIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -120,10 +111,6 @@ func TestSessionCoveringTestsAfterCloseIsRefused(t *testing.T) {
 	}
 }
 
-// TestSessionCoveringTestsIsSafeForConcurrentCalls: CoveringTests holds only a
-// read lock, so two calls can run at once; each must build and profile in a
-// directory of its own and return the same mapping rather than reading the
-// other's coverage.
 func TestSessionCoveringTestsIsSafeForConcurrentCalls(t *testing.T) {
 	t.Parallel()
 
@@ -164,8 +151,6 @@ func TestSessionCoveringTestsIsSafeForConcurrentCalls(t *testing.T) {
 			t.Fatalf("call %d: %v", i, errs[i])
 		}
 	}
-	// Every call agrees: the mapping is a fact about the prepared session, not
-	// about which goroutine measured it.
 	for i := 1; i < workers; i++ {
 		if len(results[i]) != len(results[0]) {
 			t.Fatalf("call %d mapped %d mutants, call 0 mapped %d", i, len(results[i]), len(results[0]))

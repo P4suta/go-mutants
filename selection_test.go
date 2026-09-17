@@ -10,22 +10,6 @@ import (
 	"testing"
 )
 
-// TestSelectionNormalisesAndRejectsRanges is the whole of what a caller's
-// [Selection] goes through before a catalogue is narrowed by it.
-//
-// Normalisation is not tidiness. [Catalog.Selection] hands the value back, a
-// consumer diffs two of them to ask whether two runs selected the same lines,
-// and the intersection rule reads the ranges once per mutant — so a selection
-// that arrived as "lines 5-7, 1-3 and 4" and one that arrived as "lines 1-7"
-// have to become the same value or the answer to "did anything change?" is
-// about the order somebody appended their hunks in.
-//
-// The refusals are the other half. Every one of them names a request that
-// *looks* like a narrowing and would silently select nothing: a path spelled
-// with backslashes, a path that escapes the module, a range starting at line
-// zero, a range that runs backwards. Failing them closed is the rule
-// `--changed` follows for the same reason — a selection nobody can satisfy
-// reports a perfect score for a run that measured nothing.
 func TestSelectionNormalisesAndRejectsRanges(t *testing.T) {
 	t.Parallel()
 
@@ -192,19 +176,9 @@ func TestSelectionNormalisesAndRejectsRanges(t *testing.T) {
 	}
 }
 
-// TestSelectionMarksMutantsWhoseLinesAreTouched is the intersection rule, over
-// a catalogue built by hand so that the multi-line cases are actually present.
-//
-// The rule is `[Line, EndLine] ∩ [First, Last] ≠ ∅` per path, and it is the one
-// `go-mutants run --changed` applies to a diff. The rows that matter are the
-// ones a Line-only comparison would get wrong: a range touching the *last* line
-// of a three-line condition and not its first selects that condition, because a
-// multi-line expression edited anywhere is an edited expression.
 func TestSelectionMarksMutantsWhoseLinesAreTouched(t *testing.T) {
 	t.Parallel()
 
-	// One single-line mutant on line 10, one spanning lines 10 to 12, and one
-	// in another file entirely.
 	mutants := func() []Mutant {
 		return []Mutant{
 			{ID: "single", Path: "a.go", Line: 10, EndLine: 10, Original: "=="},
@@ -289,14 +263,6 @@ func TestSelectionMarksMutantsWhoseLinesAreTouched(t *testing.T) {
 	}
 }
 
-// TestSelectionInACatalogueIsACopyNobodyElseHolds is the same promise
-// [Session.Catalog] makes about the rest of the value, for the one field that
-// is a pointer to a map of slices.
-//
-// A caller may keep and edit the catalogue it is handed. If the selection
-// travelled by reference, editing that copy would rewrite what the *session*
-// says it selected — and the session's own answer is what a second call to
-// Catalog would report and what a consumer diffs a later run against.
 func TestSelectionInACatalogueIsACopyNobodyElseHolds(t *testing.T) {
 	t.Parallel()
 
@@ -317,10 +283,6 @@ func TestSelectionInACatalogueIsACopyNobodyElseHolds(t *testing.T) {
 		t.Error("cloneSelection(nil) invented a selection; nil means everything is selected")
 	}
 
-	// And the same claim through [cloneCatalog], which is what [Session.Catalog]
-	// actually calls. The clone of the field is one line there and deleting it
-	// leaves every other assertion in this package passing, because nothing else
-	// hands out two catalogues from one session and edits the first.
 	held := Catalog{Selection: &Selection{Lines: map[string][]LineRange{"x.go": {{First: 1, Last: 2}}}}}
 	handed := cloneCatalog(held)
 	handed.Selection.Lines["x.go"][0].Last = 999

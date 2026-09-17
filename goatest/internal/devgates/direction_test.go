@@ -16,32 +16,12 @@ import (
 )
 
 const (
-	// enginePrefix is the engine's module path.
-	enginePrefix = "github.com/P4suta/go-mutants"
-	// runnerPrefix is this module's, which is a path *under* the engine's --
-	// which is why every check here compares against the runner's first.
-	runnerPrefix = enginePrefix + "/goatest"
-	// engineInternal is the half of the engine this module may not reach.
+	enginePrefix   = "github.com/P4suta/go-mutants"
+	runnerPrefix   = enginePrefix + "/goatest"
 	engineInternal = enginePrefix + "/internal/"
-	// sharedHarness is the one package under it that a test may.
-	sharedHarness = enginePrefix + "/internal/testkit"
+	sharedHarness  = enginePrefix + "/internal/testkit"
 )
 
-// TestTheRunnerReachesTheEngineThroughItsPublicAPI enforces ADR 0036.
-//
-// Go's `internal/` rule is a path-prefix test, so this module *may* import the
-// engine's internals: `github.com/P4suta/go-mutants/goatest/...` sits under
-// `github.com/P4suta/go-mutants/`, and the loader asks nothing else. Before the
-// two products shared a repository the module boundary refused it, and
-// `internal/mutationbridge` exists because of that refusal -- one file, one
-// door, the whole contract frozen behind it. The refusal is gone; only the
-// habit is left, and a habit is not a rule.
-//
-// It matters beyond layering. `docs/library.md` is the contract the engine
-// publishes and its synthetic consumer is what proves the contract compiles;
-// the reason both are worth their cost is that this module is the contract's
-// first and largest consumer. A runner that reached past it would leave the
-// contract proved only by the test written to prove it.
 func TestTheRunnerReachesTheEngineThroughItsPublicAPI(t *testing.T) {
 	t.Parallel()
 
@@ -51,11 +31,6 @@ func TestTheRunnerReachesTheEngineThroughItsPublicAPI(t *testing.T) {
 			if !strings.HasPrefix(imported, engineInternal) {
 				continue
 			}
-			// A test may share the harness and nothing else. The harness is
-			// already test-only and already imports nothing from either
-			// product, which is what makes sharing it cost nothing; sharing
-			// anything else would make this module depend on the engine's
-			// private shape.
 			if test && (imported == sharedHarness || strings.HasPrefix(imported, sharedHarness+"/")) {
 				continue
 			}
@@ -71,28 +46,9 @@ func TestTheRunnerReachesTheEngineThroughItsPublicAPI(t *testing.T) {
 	}
 }
 
-// TestTheEngineDoesNotImportTheRunner is the direction the language already
-// refuses, written down so that the refusal is a rule rather than a build
-// error somebody works around.
-//
-// A cyclic `require` does not build, so this cannot be violated by accident.
-// It can be violated on purpose with a `replace`, and the person reaching for
-// one would be reading a message about modules rather than about design.
 func TestTheEngineDoesNotImportTheRunner(t *testing.T) {
 	t.Parallel()
 
-	// The engine is the nearest ancestor holding a go.mod, found by walking up
-	// rather than by taking the parent: the parent is right in this repository
-	// and wrong in a snapshot, where it would be whatever sits beside the copy
-	// and this gate would answer about somebody else's files.
-	//
-	// Absent, it is out of scope rather than unchecked. goatest verifies this
-	// module by copying it into a tree of its own, and the engine is not in
-	// that tree -- so there is no import here to be pointed the wrong way. A
-	// `t.Skip` would be a finding the moment `mise run dogfood-runner` ran, and
-	// rightly: a skipped target is a claim nobody checked. Returning after
-	// establishing which tree this is keeps the target running and asserting in
-	// both.
 	engine, found := engineRoot(t)
 	if !found {
 		if _, err := os.Stat(filepath.Join(moduleRoot(t), "go.mod")); err != nil {
@@ -118,8 +74,6 @@ func TestTheEngineDoesNotImportTheRunner(t *testing.T) {
 	}
 }
 
-// moduleRoot is this module's directory, found from this file rather than from
-// the working directory.
 func moduleRoot(t testing.TB) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -138,12 +92,6 @@ func moduleRoot(t testing.TB) string {
 	}
 }
 
-// walkGoFiles visits every Go file under a root, with its import paths and
-// whether it is a test file.
-//
-// The imports are parsed rather than grepped: a path inside a string literal or
-// a comment is not an import, and a gate that could not tell the difference
-// would be one somebody learns to word around.
 func walkGoFiles(t testing.TB, root string, visit func(path string, test bool, imports []string)) {
 	t.Helper()
 	skip := map[string]bool{".git": true, "testdata": true, "fixtures": true, "dist": true}
@@ -184,7 +132,6 @@ func walkGoFiles(t testing.TB, root string, visit func(path string, test bool, i
 	}
 }
 
-// engineRoot is the nearest module above this one, and whether there is one.
 func engineRoot(t testing.TB) (string, bool) {
 	t.Helper()
 	dir := moduleRoot(t)

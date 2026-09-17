@@ -19,9 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
-// TestClosedWorkspaceErrorsAreSentinels is the first half of the claim a
-// consumer needs: a refusal that is a fact about the lifecycle is recognisable
-// with errors.Is, and its message is exactly the one it always was.
 func TestClosedWorkspaceErrorsAreSentinels(t *testing.T) {
 	t.Parallel()
 
@@ -42,12 +39,6 @@ func TestClosedWorkspaceErrorsAreSentinels(t *testing.T) {
 		t.Errorf("Prepare message = %q, want %q", got, want)
 	}
 
-	// A workspace whose preparation failed and was then closed carries both
-	// facts, and only the order of the two checks decides which sentinel comes
-	// out. So the order is a contract and this is what pins it. A consumer
-	// whose workspace is gone must be told that it is gone; "the preparation
-	// failed" would send it to open another workspace for a preparation this
-	// one could no longer make either way.
 	preparedThenClosed := &Workspace{closed: true, prepareStarted: true, prepareFailed: true}
 	_, closedErr := preparedThenClosed.Exec(t.Context(), Command{Argv: []string{"go", "version"}})
 	if !errors.Is(closedErr, ErrWorkspaceClosed) {
@@ -62,10 +53,6 @@ func TestClosedWorkspaceErrorsAreSentinels(t *testing.T) {
 	}
 }
 
-// TestSecondPrepareIsErrWorkspacePrepared pins the other lifecycle refusal. It
-// is a different condition from a closed workspace and so a different sentinel:
-// a caller that retried a preparation has to be able to tell "this workspace is
-// spent" from "this workspace is gone".
 func TestSecondPrepareIsErrWorkspacePrepared(t *testing.T) {
 	t.Parallel()
 
@@ -82,17 +69,6 @@ func TestSecondPrepareIsErrWorkspacePrepared(t *testing.T) {
 	}
 }
 
-// TestExecAfterAFailedPrepareIsErrPrepareFailed pins the third lifecycle
-// refusal, and it is a third sentinel for the same reason the second is a
-// second: the three conditions have three different answers. A closed workspace
-// is gone, a prepared one may still be executed against, and one whose
-// preparation failed is spent — the caller has to open another.
-//
-// A preparation that began and failed records itself, rather than being
-// inferred from a session that is not there. It is the state Prepare leaves
-// behind when it stops part-way, which may be with the instrumented sources
-// still in the tree, so the command that would run there is refused rather than
-// allowed to compile a program nobody wrote.
 func TestExecAfterAFailedPrepareIsErrPrepareFailed(t *testing.T) {
 	t.Parallel()
 
@@ -110,20 +86,6 @@ func TestExecAfterAFailedPrepareIsErrPrepareFailed(t *testing.T) {
 	}
 }
 
-// TestExecAfterASuccessfulPrepareIsNotRefused is the other side of the same
-// state, and the one the lifecycle changed: a workspace holding a session was
-// prepared successfully, its tree is the snapshot Open froze, and a command
-// against it is ordinary work rather than a refusal.
-//
-// The command is deliberately malformed, so that the assertion is about the
-// lifecycle gate alone: reaching the argument check is proof that nothing above
-// it refused, without this unit test having to start a process.
-//
-// The session is here because it is what a successful preparation leaves, and
-// not because Exec reads it: what Exec asks is whether the workspace is closed
-// and whether a preparation failed, and a workspace holding a session answers
-// no to both. The value makes the state a real one rather than a shape the
-// engine never produces.
 func TestExecAfterASuccessfulPrepareIsNotRefused(t *testing.T) {
 	t.Parallel()
 
@@ -137,9 +99,6 @@ func TestExecAfterASuccessfulPrepareIsNotRefused(t *testing.T) {
 	}
 }
 
-// TestClosedSessionErrorsAreSentinels covers the four calls a session refuses
-// once it is closed. All four carry one sentinel, because a consumer that has
-// lost its session has one thing to do about it whichever call noticed.
 func TestClosedSessionErrorsAreSentinels(t *testing.T) {
 	t.Parallel()
 
@@ -169,20 +128,6 @@ func TestClosedSessionErrorsAreSentinels(t *testing.T) {
 	}
 }
 
-// TestControlRefusalsNameTheControlCall drives [Session.Control] itself for the
-// one thing a table over helper functions cannot establish: that the call
-// passes its own name down.
-//
-// [sessionTargetArgs] and [selectTestPackages] both take the call as an
-// argument, so a test that calls them with "control" proves only that they were
-// told. What a consumer acts on is `Call` on the error *Session.Control
-// returned*, and a Control that had been wired to say "exec" would pass every
-// other test in this repository — the refusal is the same type, the same
-// sentinel and, but for one word, the same sentence.
-//
-// It is in the unit tier because it needs no toolchain: a hand-built session
-// with a scratch directory reaches both refusals before anything is compiled or
-// started.
 func TestControlRefusalsNameTheControlCall(t *testing.T) {
 	t.Parallel()
 
@@ -215,11 +160,6 @@ func TestControlRefusalsNameTheControlCall(t *testing.T) {
 	}
 }
 
-// TestMutantSelectionErrors is the four ways a request can name a mutant the
-// session will not run, and the one type that says which.
-//
-// The messages are the ones the API always produced; what is new is that the
-// caller can tell a typo from a rejection without reading them.
 func TestMutantSelectionErrors(t *testing.T) {
 	t.Parallel()
 
@@ -263,9 +203,6 @@ func TestMutantSelectionErrors(t *testing.T) {
 
 	t.Run("ambiguous prefix", func(t *testing.T) {
 		t.Parallel()
-		// The catalogue's own resolution is what reports the ambiguity; what
-		// this session adds is the list a caller can act on, in an order that
-		// does not depend on catalogue order.
 		session := &Session{publicCatalog: Catalog{Mutants: []Mutant{
 			{ID: "beef2222" + strings.Repeat("0", 56), DisplayID: "beef2222"},
 			{ID: "beef1111" + strings.Repeat("0", 56), DisplayID: "beef1111"},
@@ -319,15 +256,6 @@ func TestMutantSelectionErrors(t *testing.T) {
 	})
 }
 
-// TestDriftErrorRendersEveryKind pins all three message shapes and all three
-// kind words. The words are the snapshot layer's, and they are asserted against
-// it rather than copied, because the two vocabularies are deliberately
-// different: a snapshot's file "changed" while a session's file is "modified",
-// and the message a user has been reading for a release is the snapshot's.
-//
-// Two of the shapes name a command as the suspect, because a command is not
-// instrumentation and "outside instrumentation" would send a reader looking in
-// the wrong place. The third is every check around instrumentation.
 func TestDriftErrorRendersEveryKind(t *testing.T) {
 	t.Parallel()
 
@@ -358,9 +286,6 @@ func TestDriftErrorRendersEveryKind(t *testing.T) {
 		}
 	}
 
-	// A drift with nothing in it is not a failure the engine reports, and the
-	// header alone is what a hand-built value has to print: a message ending in
-	// a newline reaches a log with a hole in it.
 	for stage, want := range map[string]string{
 		"commands":     "gomutants: prepare commands changed the frozen snapshot:",
 		"discovery":    "gomutants: prepare commands changed the snapshot during discovery:",
@@ -383,11 +308,6 @@ func TestDriftErrorRendersEveryKind(t *testing.T) {
 	}
 }
 
-// TestReservedErrorsRenderTheExistingText covers the flags and the variables a
-// session owns. Three of the four messages are the ones the engine has always
-// printed; `-test.timeout` is the deliberate change, refused here rather than
-// four layers down as GOM7511, so that the two halves of the timeout pairing
-// are refused in one place with one sentence.
 func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 	t.Parallel()
 
@@ -424,9 +344,6 @@ func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 		}
 	}
 
-	// The same three flags refused for the session's third call, which is why
-	// the call names itself: a consumer composing arguments for a mutant run and
-	// handing them to the control beside it has to be told which one said no.
 	for _, c := range flags {
 		_, err := sessionTargetArgs([]string{c.argument}, scratch, "control", false)
 		var reserved *ReservedError
@@ -443,11 +360,6 @@ func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 		}
 	}
 
-	// The fourth flag, which is the only one reserved *conditionally*: it
-	// belongs to the request exactly while the request asked for a test log,
-	// and passes through untouched when it did not. The message is new and it
-	// is the same sentence the other three are written in, so a consumer that
-	// renders one renders all four.
 	const testLogFlagArgument = "-test.testlogfile=/tmp/caller.log"
 	for _, call := range []string{"exec", "probe", "control"} {
 		_, err := sessionTargetArgs([]string{testLogFlagArgument}, scratch, call, true)
@@ -489,9 +401,6 @@ func TestReservedErrorsRenderTheExistingText(t *testing.T) {
 	}
 }
 
-// TestDiagnosticCodeReadsInternalCodes is the one thing a consumer cannot do
-// for itself: the codes live in packages it cannot import, and a code parsed
-// out of a message is a code that breaks the day the message is reworded.
 func TestDiagnosticCodeReadsInternalCodes(t *testing.T) {
 	t.Parallel()
 
@@ -548,21 +457,12 @@ func TestDiagnosticCodeReadsInternalCodes(t *testing.T) {
 		t.Errorf("message = %q, want the cause's own %q", got, wrapped.Error())
 	}
 
-	// An error carrying no code at all is returned as it was, so that a caller
-	// reading the message of a failure that never named a build sees the failure
-	// and not a wrapper around it.
 	plain := errors.New("gomutants: prepare discovery: no")
 	if got := buildError(PreparePhaseDiscovery, plain); got != plain {
 		t.Errorf("buildError of an untyped cause = %v, want it unchanged", got)
 	}
 }
 
-// TestBuildErrorFromAValidationCarriesWhatTheSeamKnows is the shape of the
-// other build failure, and the one whose absences are deliberate: a validation
-// phase reaches this layer through the seam the bisection search is faked
-// behind, which answers whether a subset compiled and not with what status, so
-// the code and the compiler's output are there and the exit status and the argv
-// are not.
 func TestBuildErrorFromAValidationCarriesWhatTheSeamKnows(t *testing.T) {
 	t.Parallel()
 
@@ -591,11 +491,6 @@ func TestBuildErrorFromAValidationCarriesWhatTheSeamKnows(t *testing.T) {
 	}
 }
 
-// TestBuildErrorTypesAnyCodeItIsGiven covers the failure that reaches a phase
-// without one of the three shapes around it — a toolchain probe, or a process
-// that could not be supervised, surfacing straight through discovery. The code
-// is the part a consumer reports, so it is kept rather than dropped for want of
-// a wrapper this function recognises.
 func TestBuildErrorTypesAnyCodeItIsGiven(t *testing.T) {
 	t.Parallel()
 
@@ -622,20 +517,6 @@ func TestBuildErrorTypesAnyCodeItIsGiven(t *testing.T) {
 	}
 }
 
-// TestExecutionErrorNamesTheFailingPackage is the difference between a request
-// and a failure.
-//
-// [ExecRequest.Package] is a *selector*: it may be a module-relative directory,
-// and it is empty for the request that measures every prepared binary — which
-// is the ordinary one. The failure knows better than that, because the
-// execution phase names the binary it could not start, so the concrete import
-// path is what a caller is told when there is one. The selector is the fallback
-// for the failures that are about the pass rather than about one binary.
-//
-// The middle case is the one that pins the rule rather than a symptom of it: a
-// selector that is present *and disagrees* has to lose. An implementation that
-// merely filled in a blank would satisfy the first case and still hand a caller
-// a directory pattern where it asked which package broke.
 func TestExecutionErrorNamesTheFailingPackage(t *testing.T) {
 	t.Parallel()
 
@@ -711,10 +592,6 @@ func TestExecutionErrorNamesTheFailingPackage(t *testing.T) {
 	}
 }
 
-// TestHandBuiltErrorsSayWhatTheyAreWithoutACause pins what a value a consumer
-// constructed — in a double, in a table of its own — prints. Neither type may
-// panic on a nil cause, and neither may print the wire spelling of a phase at
-// somebody who is reading a sentence.
 func TestHandBuiltErrorsSayWhatTheyAreWithoutACause(t *testing.T) {
 	t.Parallel()
 
@@ -735,9 +612,6 @@ func TestHandBuiltErrorsSayWhatTheyAreWithoutACause(t *testing.T) {
 	}
 }
 
-// catalogOfOne catalogues a single candidate, which is how a resolution is
-// tested without a toolchain: the catalogue is a pure value and discovery is
-// not what these assertions are about.
 func catalogOfOne(t *testing.T) *mutation.Catalog {
 	t.Helper()
 	builder := mutation.NewBuilder()

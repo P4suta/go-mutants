@@ -117,11 +117,6 @@ cleaned looks like one that was never traced.
 Deleting a recording loses a diagnostic and never a measurement. The reports and
 the outcome cache are untouched; those are ` + "`report clean`" + `'s and ` + "`cache clean`" + `'s.`
 
-// newTraceCommand builds the `trace` command tree.
-//
-// The parent prints help and succeeds, exactly as `report` and `cache` do:
-// somebody typing `go-mutants trace` to find out what it can do has done
-// nothing wrong.
 func newTraceCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trace",
@@ -139,7 +134,6 @@ func newTraceCommand() *cobra.Command {
 	return cmd
 }
 
-// newTraceListCommand builds `trace list`.
 func newTraceListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -150,17 +144,12 @@ func newTraceListCommand() *cobra.Command {
 	}
 }
 
-// The column widths of the `trace list` table. They are constants rather than
-// measurements of the data, for the reason `report list`'s are: every value has
-// a fixed shape, so a listing of one recording and a listing of a hundred line
-// up with each other and two listings a week apart can be diffed.
 const (
 	recordedWidth = len("2026-08-18T10:15:00Z")
 	eventsWidth   = len("EVENTS")
 	statusWidth   = len("incomplete")
 )
 
-// runTraceList is `trace list`'s body.
 func runTraceList(cmd *cobra.Command, _ []string) error {
 	root, err := workspaceTraceRoot()
 	if err != nil {
@@ -184,8 +173,6 @@ func runTraceList(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(&b, "%-*s  %-*s  %*s  %-*s  %s\n",
 		runIDWidth, "RUN", recordedWidth, "RECORDED", eventsWidth, "EVENTS", statusWidth, "STATUS", "SIZE")
 	var total int64
-	// Newest first, which is the order `report list` uses and the order
-	// somebody who has just made a run wants.
 	for _, name := range slices.Backward(names) {
 		directory := filepath.Join(root, name)
 		size := directorySize(directory)
@@ -203,13 +190,6 @@ func runTraceList(cmd *cobra.Command, _ []string) error {
 	return emit(cmd.OutOrStdout(), b.String())
 }
 
-// completeness is the one word a reader has to see before trusting a count.
-//
-// Two different things can be wrong with a recording and they are worth telling
-// apart: one that was interrupted stops early and its last events are simply
-// not there, while a lossy one is missing an unknown number from the middle. A
-// question like "how many times did this run compile" has no answer in either,
-// and the second is the one that looks like it does.
 func completeness(summary trace.Summary) string {
 	switch {
 	case !summary.HasRunEnd:
@@ -221,9 +201,6 @@ func completeness(summary trace.Summary) string {
 	}
 }
 
-// recordedAt reads the moment out of a run id, which is what it was minted
-// from. A name that does not carry one is reported as unknown rather than as a
-// zero time nobody can tell from a real one.
 func recordedAt(runID string) string {
 	stamp, _, ok := strings.Cut(runID, "-")
 	if !ok {
@@ -236,7 +213,6 @@ func recordedAt(runID string) string {
 	return formatMoment(at)
 }
 
-// newTraceSummaryCommand builds `trace summary`.
 func newTraceSummaryCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "summary [RUN-ID|PATH]",
@@ -247,7 +223,6 @@ func newTraceSummaryCommand() *cobra.Command {
 	}
 }
 
-// runTraceSummary is `trace summary`'s body.
 func runTraceSummary(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		return usagef("trace summary takes at most one recording, as in `go-mutants trace summary 20260907T120000Z-a1b2` (got %d)", len(args))
@@ -277,7 +252,6 @@ func runTraceSummary(cmd *cobra.Command, args []string) error {
 	return emit(cmd.OutOrStdout(), b.String())
 }
 
-// newTraceDiffCommand builds `trace diff`.
 func newTraceDiffCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "diff BEFORE AFTER",
@@ -288,7 +262,6 @@ func newTraceDiffCommand() *cobra.Command {
 	}
 }
 
-// runTraceDiff is `trace diff`'s body.
 func runTraceDiff(cmd *cobra.Command, args []string) error {
 	if len(args) != 2 {
 		return usagef("trace diff takes two recordings, as in `go-mutants trace diff 20260901T120000Z-a1b2 20260907T120000Z-c3d4` (got %d)", len(args))
@@ -319,7 +292,6 @@ func runTraceDiff(cmd *cobra.Command, args []string) error {
 	return emit(cmd.OutOrStdout(), b.String())
 }
 
-// newTraceValidateCommand builds `trace validate`.
 func newTraceValidateCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate FILE",
@@ -330,14 +302,6 @@ func newTraceValidateCommand() *cobra.Command {
 	}
 }
 
-// runTraceValidate is `trace validate`'s body.
-//
-// Both checks are made, for the reason `report validate` makes both: the schema
-// is what a consumer relies on, and this build's own reader is what `trace
-// summary` will use on the same file. A recording that satisfies one and not the
-// other is worth knowing about now rather than at the summary — and the reader
-// enforces what a schema cannot, since it validates one line at a time and where
-// a line sits in a stream is the reader's to judge.
 func runTraceValidate(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return usagef("trace validate takes exactly one file, as in `go-mutants trace validate reports/mutation/trace/20260907T120000Z-a1b2/trace.jsonl` (got %d)", len(args))
@@ -361,8 +325,6 @@ func runTraceValidate(cmd *cobra.Command, args []string) error {
 		summary.Path, trace.SchemaV1, countNoun(summary.Events, "event"), completeness(summary)))
 }
 
-// validateTraceLines checks every line of a recording against the published
-// schema, naming the line a violation was on.
 func validateTraceLines(path string) error {
 	stream := streamPath(path)
 	file, err := os.Open(stream)
@@ -400,13 +362,11 @@ func validateTraceLines(path string) error {
 	return nil
 }
 
-// cleanOptions holds the flag destinations for one `trace clean`.
 type cleanOptions struct {
 	keep int
 	all  bool
 }
 
-// newTraceCleanCommand builds `trace clean`.
 func newTraceCleanCommand() *cobra.Command {
 	o := &cleanOptions{}
 	cmd := &cobra.Command{
@@ -423,14 +383,6 @@ func newTraceCleanCommand() *cobra.Command {
 	return cmd
 }
 
-// checkCleanScope refuses `--all` alongside `--keep`.
-//
-// Each is a complete answer and they contradict each other: `--keep` says leave
-// some behind, `--all` says spare nothing. Resolving that silently would make
-// the meaning of a command line that deletes depend on a rule nobody wrote
-// down. It is a worded refusal rather than cobra's flag-group message for the
-// reason `--json` with `--quiet` is one: neither flag is wrong on its own, so
-// the remedy is to drop one rather than to fix a value.
 func checkCleanScope(keep, all bool) error {
 	if !keep || !all {
 		return nil
@@ -443,19 +395,6 @@ func checkCleanScope(keep, all bool) error {
 	}
 }
 
-// execute is `trace clean`'s body.
-//
-// What was deleted is reported even when the sweep stopped part way through,
-// and then the failure is returned — the shape `report clean` and `cache gc`
-// use, for the same reason: deleting is the whole of what this command does, so
-// one that could not delete must not exit 0, and one that removed two
-// recordings before hitting a locked third should still say so.
-//
-// The failure travels out with the code [sweepRoot] gave it, and is never
-// re-coded here. A root that cannot be read and a recording that will not go
-// away are different problems with different remedies, and only one of them is
-// about deleting: wrapping the first as "a recording could not be removed: …
-// cannot be read" sends a reader looking for a locked file that does not exist.
 func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	if o.keep < 0 {
 		return usagef("--keep takes a number of recordings to keep, and %d is not one", o.keep)
@@ -472,12 +411,6 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	var b strings.Builder
 	var failure error
 	for i, r := range roots {
-		// The trace root is always reported, because it is the root the command
-		// is named after and silence there would read as a command that did not
-		// run. The diagnostics root is reported only when it holds something: a
-		// workspace that has never failed a run has no bundles, and two lines
-		// saying so under every `trace clean` would be noise in the one place a
-		// reader is looking for what went.
 		if sweepErr := sweepRoot(&b, r, keep, i == 0); sweepErr != nil && failure == nil {
 			failure = sweepErr
 		}
@@ -488,17 +421,6 @@ func (o *cleanOptions) execute(cmd *cobra.Command, _ []string) error {
 	return failure
 }
 
-// sweepRoot collects one root and writes what it did into b.
-//
-// always asks for the root to be reported whatever it holds, which is the trace
-// root's arrangement; a root that holds nothing and was not asked for says
-// nothing at all.
-//
-// The two failures it can return are coded here and differently, because they
-// are different problems: a root that cannot be read is [CodeUnreadableTrace]
-// and is fixed by looking at the directory, while something that would not
-// delete is [CodeTraceNotRemoved] and is fixed by finding whatever is holding
-// it. The caller returns whichever it is unchanged.
 func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool) error {
 	found, err := planSweep(r, keep)
 	if err != nil {
@@ -511,17 +433,10 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 	if !always && found.held == 0 {
 		return nil
 	}
-	// Measured before the sweep, because a directory that has been removed
-	// cannot be sized, and totalled afterwards over what actually went — so a
-	// sweep that stopped part way through reports the bytes it really took back
-	// rather than the bytes it had meant to.
 	sizes := make(map[string]int64, len(found.stale))
 	for _, name := range found.stale {
 		sizes[name] = directorySize(filepath.Join(r.path, name))
 	}
-	// The plan that was just measured, rather than a fresh one: every count in
-	// the report below — what was held, what was a candidate, what went, and
-	// what it took up — then describes one look at the directory. See [prune].
 	removed, removeErr := prune(r, found)
 
 	fmt.Fprintf(b, "%s root: %s\n", r.label, r.path)
@@ -535,16 +450,9 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 	case found.held == 0:
 		fmt.Fprintf(b, "nothing to remove: no %s in %s\n", r.noun, r.path)
 	case found.candidates == 0:
-		// The retention rule doing its job, which is worth a sentence of its
-		// own: a plain `trace clean` over a root of interrupted runs has removed
-		// nothing on purpose, and without the reason that is indistinguishable
-		// from a command that did not work.
 		fmt.Fprintf(b, "nothing to remove: no %s in %s %s; --all removes those too\n",
 			r.noun, r.path, r.unfinished)
 	default:
-		// Kept by --keep, which is the only other way to collect nothing from a
-		// root that holds something. Saying "nothing here" would tell somebody
-		// their recordings are gone while they are still on the disk.
 		fmt.Fprintf(b, "nothing to remove: every %s in %s is kept\n", r.noun, r.path)
 	}
 	if removeErr != nil {
@@ -554,22 +462,10 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 			Err:     removeErr,
 		}
 	}
-	// And the directory itself, once the last thing in it has gone, so that a
-	// workspace somebody has cleaned looks like one that was never traced.
-	// Emptiness is not tested for: the removal refuses a directory with anything
-	// left in it, which is exactly the directory that has to stay — and it
-	// refuses anything that is not a directory this command may delete, which is
-	// what keeps a root replaced under the collector, by a file or by a link,
-	// from being the thing that goes. See [removeDirectory].
 	switch err := removeDirectory(r.path); {
 	case err == nil:
 		fmt.Fprintf(b, "removed the empty %s directory %s\n", r.label, r.path)
 	case errors.Is(err, errNotDirectory), errors.Is(err, errIsALink):
-		// Reported rather than passed over, both of them. Somebody whose root is
-		// a link has had every recording in it collected and is entitled to know
-		// why the directory itself stayed; somebody whose root is a file has had
-		// something replaced under a command that deletes, and that is the whole
-		// of what this refusal exists to catch.
 		return &Error{
 			Code:    CodeUnreadableTrace,
 			Message: "the " + r.label + " directory " + r.path + " cannot be read",
@@ -579,10 +475,6 @@ func sweepRoot(b *strings.Builder, r retentionRoot, keep retention, always bool)
 	return nil
 }
 
-// workspaceTraceRoot is where a run started in this directory would record.
-//
-// It reads `report.directory` from the workspace's own configuration, so that
-// these commands look exactly where a run here would have written.
 func workspaceTraceRoot() (string, error) {
 	dir, cfg, err := workspaceConfig()
 	if err != nil {
@@ -591,9 +483,6 @@ func workspaceTraceRoot() (string, error) {
 	return traceRoot(dir, cfg.Report.Directory, traceDefaultDirectory)
 }
 
-// workspaceRoots is both directories a run started in this one fills, in the
-// order `trace clean` reports them: the recordings first, because that is what
-// the command is named after.
 func workspaceRoots() ([]retentionRoot, error) {
 	dir, cfg, err := workspaceConfig()
 	if err != nil {
@@ -610,8 +499,6 @@ func workspaceRoots() ([]retentionRoot, error) {
 	return []retentionRoot{traceRootAt(recordings), diagnosticsRootAt(bundles)}, nil
 }
 
-// workspaceConfig is this directory and the configuration a run started here
-// would resolve.
 func workspaceConfig() (string, config.Config, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -628,14 +515,6 @@ func workspaceConfig() (string, config.Config, error) {
 	return dir, cfg, nil
 }
 
-// readRecording resolves what the user named and reads it.
-//
-// Three things can be named and each has its own answer. Nothing at all is the
-// newest recording in this workspace, which is the run somebody has just made. A
-// run id is one of this workspace's own, and is reported as missing rather than
-// as an unreadable path when there is none. Anything else is a path — a
-// colleague's bug report, a CI artefact — and may be the run directory or the
-// stream inside it.
 func readRecording(name string) (trace.Summary, string, error) {
 	path, title, err := resolveRecording(name)
 	if err != nil {
@@ -662,8 +541,6 @@ func readRecording(name string) (trace.Summary, string, error) {
 	return summary, title, nil
 }
 
-// resolveRecording turns what the user named into a path and the name to print
-// it under.
 func resolveRecording(name string) (path, title string, err error) {
 	if name == "" || recordingName.MatchString(name) {
 		root, rootErr := workspaceTraceRoot()
@@ -694,7 +571,6 @@ func resolveRecording(name string) (path, title string, err error) {
 	return name, name, nil
 }
 
-// missingRecording is the refusal for a path that names no recording.
 func missingRecording(path string) error {
 	return &Error{
 		Code:    CodeUnreadableTrace,
@@ -703,9 +579,6 @@ func missingRecording(path string) error {
 	}
 }
 
-// streamPath is the file inside a recording, whether the run directory or the
-// stream itself was named. It is [trace.Read]'s own rule, applied here so that
-// a violation can be reported against a line of a named file.
 func streamPath(path string) string {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return filepath.Join(path, trace.FileName)
@@ -713,7 +586,6 @@ func streamPath(path string) string {
 	return path
 }
 
-// argAt is the argument at i, or the empty string when there is none.
 func argAt(args []string, i int) string {
 	if i >= len(args) {
 		return ""
@@ -721,7 +593,6 @@ func argAt(args []string, i int) string {
 	return args[i]
 }
 
-// orUnknown is what a recording with no verdict in it says instead.
 func orUnknown(verdict string) string {
 	if verdict == "" {
 		return "unknown"
@@ -729,8 +600,6 @@ func orUnknown(verdict string) string {
 	return verdict
 }
 
-// signed renders a delta with its sign, so that a column of them reads as
-// changes rather than as counts.
 func signed(n int64) string {
 	if n >= 0 {
 		return "+" + strconv.FormatInt(n, 10)
@@ -738,8 +607,6 @@ func signed(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
-// writeDurations prints one section of a summary's totals, in name order, and
-// nothing at all when there are none.
 func writeDurations(b *strings.Builder, heading string, totals map[string]int64) {
 	if len(totals) == 0 {
 		return
@@ -750,7 +617,6 @@ func writeDurations(b *strings.Builder, heading string, totals map[string]int64)
 	}
 }
 
-// writeCounts prints one section of a summary's tallies, in name order.
 func writeCounts(b *strings.Builder, heading string, counts map[string]int) {
 	if len(counts) == 0 {
 		return
@@ -761,9 +627,6 @@ func writeCounts(b *strings.Builder, heading string, counts map[string]int) {
 	}
 }
 
-// writeExecTallies prints the commands a recording holds, by kind. It is the
-// section a performance question is asked of: where a run went is answered by
-// what it started, not by how many events that produced.
 func writeExecTallies(b *strings.Builder, tallies map[string]trace.ExecTally) {
 	if len(tallies) == 0 {
 		return
@@ -774,7 +637,6 @@ func writeExecTallies(b *strings.Builder, tallies map[string]trace.ExecTally) {
 	}
 }
 
-// writeCountDeltas prints one section of a diff, skipping what did not move.
 func writeCountDeltas(b *strings.Builder, heading string, deltas map[string]int) {
 	rows := make([]string, 0, len(deltas))
 	for _, key := range sortedKeys(deltas) {
@@ -785,8 +647,6 @@ func writeCountDeltas(b *strings.Builder, heading string, deltas map[string]int)
 	writeSection(b, heading, rows)
 }
 
-// writeDurationDeltas prints one section of a diff's timings, skipping what did
-// not move.
 func writeDurationDeltas(b *strings.Builder, heading string, deltas map[string]int64) {
 	rows := make([]string, 0, len(deltas))
 	for _, key := range sortedKeys(deltas) {
@@ -797,7 +657,6 @@ func writeDurationDeltas(b *strings.Builder, heading string, deltas map[string]i
 	writeSection(b, heading, rows)
 }
 
-// writeExecDeltas prints the commands that moved between two recordings.
 func writeExecDeltas(b *strings.Builder, deltas map[string]trace.ExecTally) {
 	rows := make([]string, 0, len(deltas))
 	for _, kind := range sortedKeys(deltas) {
@@ -810,8 +669,6 @@ func writeExecDeltas(b *strings.Builder, deltas map[string]trace.ExecTally) {
 	writeSection(b, "exec", rows)
 }
 
-// writeSection prints a heading and its rows, and nothing when there are none:
-// an empty heading in a diff says "this changed" of something that did not.
 func writeSection(b *strings.Builder, heading string, rows []string) {
 	if len(rows) == 0 {
 		return
@@ -822,8 +679,6 @@ func writeSection(b *strings.Builder, heading string, rows []string) {
 	}
 }
 
-// sortedKeys is the keys of a map in name order, so that two summaries of two
-// runs are comparable line by line.
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for key := range m {

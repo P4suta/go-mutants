@@ -10,87 +10,40 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// An Overlay is a partial configuration: every setting that a layer may
-// override, each recording whether that layer actually set it.
-//
-// The shape is deliberately flat rather than mirroring [Config]'s sections. A
-// flag overlay is built one field at a time from pflag, and a flat struct
-// makes that a list of assignments with no intermediate structs to allocate
-// and no section that exists only because one of its fields was set:
-//
-//	var o config.Overlay
-//	o.Jobs = config.When(flags.Changed("jobs"), jobs)
-//	o.Profile = config.When(flags.Changed("profile"), profile)
-//
-// The same type carries what a file contributed, so [Merge] applies both
-// layers with one rule instead of two.
 type Overlay struct {
-	// Version is `version`. Files carry it; flags never set it.
 	Version Set[int]
 
-	// Include is `mutation.include`, overridden by repeating --include.
-	Include Set[[]string]
-	// Exclude is `mutation.exclude`, overridden by repeating --exclude.
-	Exclude Set[[]string]
-	// Operators is `mutation.operators`, overridden by repeating --operator.
+	Include   Set[[]string]
+	Exclude   Set[[]string]
 	Operators Set[[]string]
-	// Profile is `mutation.profile`, overridden by --profile.
-	Profile Set[mutation.Tier]
-	// Expect is the `[[mutation.expect]]` ledger. There is no flag for it: an
-	// expectation carries a written reason, which is not something to type on
-	// a command line.
-	Expect Set[[]Expectation]
+	Profile   Set[mutation.Tier]
+	Expect    Set[[]Expectation]
 
-	// TestCommand is `test.command`, overridden by the argv after `--`.
-	TestCommand Set[[]string]
-	// Timeout is `test.timeout`, overridden by --timeout.
-	Timeout Set[time.Duration]
-	// Memory is `test.memory` in bytes, overridden by --memory.
-	Memory Set[int64]
-	// BaselineRuns is `test.baseline_runs`.
+	TestCommand  Set[[]string]
+	Timeout      Set[time.Duration]
+	Memory       Set[int64]
 	BaselineRuns Set[int]
-	// Narrowing is `test.narrowing`.
-	Narrowing Set[Narrowing]
-	// Probing is `test.probing`.
-	Probing Set[Probing]
+	Narrowing    Set[Narrowing]
+	Probing      Set[Probing]
 
-	// Jobs is `execution.jobs`, overridden by -j/--jobs.
-	Jobs Set[int]
-	// Isolate is `execution.isolate`, overridden by --isolate.
+	Jobs    Set[int]
 	Isolate Set[bool]
 
-	// CacheMode is `cache.mode`, overridden by --cache.
-	CacheMode Set[CacheMode]
-	// CacheDirectory is `cache.directory`.
+	CacheMode      Set[CacheMode]
 	CacheDirectory Set[string]
 
-	// Strict is `policy.strict`, overridden by --strict/--no-strict.
-	Strict Set[bool]
-	// MinimumScore is `policy.minimum_score`.
-	MinimumScore Set[float64]
-	// RequireMutants is `policy.require_mutants`.
+	Strict         Set[bool]
+	MinimumScore   Set[float64]
 	RequireMutants Set[bool]
 
-	// ReportDirectory is `report.directory`.
 	ReportDirectory Set[string]
-	// ReportFormats is `report.formats`, overridden by --report.
-	ReportFormats Set[[]ReportFormat]
-	// ReportHigh is `report.high`.
-	ReportHigh Set[int]
-	// ReportLow is `report.low`.
-	ReportLow Set[int]
+	ReportFormats   Set[[]ReportFormat]
+	ReportHigh      Set[int]
+	ReportLow       Set[int]
 }
 
-// IsEmpty reports whether the overlay sets nothing at all, which is what an
-// absent configuration file and an invocation with no flags both produce.
-//
-// It is spelled out field by field rather than compared against the zero
-// Overlay because a Set of a slice is not comparable; the compiler would
-// reject `o == Overlay{}`, and a reflect.DeepEqual would quietly start
-// answering "no" the day a field is given a non-nil zero value.
 func (o Overlay) IsEmpty() bool { return !o.setsAnything() }
 
-// setsAnything reports whether any field of the overlay was set.
 func (o Overlay) setsAnything() bool {
 	return o.Version.IsSet() ||
 		o.Include.IsSet() ||
@@ -117,21 +70,6 @@ func (o Overlay) setsAnything() bool {
 		o.ReportLow.IsSet()
 }
 
-// Merge resolves the three layers into one configuration: defaults first, then
-// whatever the file set, then whatever the flags set.
-//
-// Each set field replaces the value below it whole. Arrays are not appended
-// to, and sections are not deep merged, because both would make a
-// configuration impossible to narrow from the command line: with append
-// semantics there is no way to say "only this include pattern", and with a
-// deep merge there is no way to say "no exclude patterns at all".
-//
-// Merge does not validate. A configuration is checked where it was written, so
-// that an error can point at the line that caused it; the cross-field rules
-// that can only be judged after merging live in [Config.Validate], which every
-// caller runs before acting on the result.
-//
-// The result shares no slice with any argument.
 func Merge(defaults Config, file FileConfig, flags Overlay) Config {
 	c := defaults.Clone()
 	apply(&c, file.Overlay)
@@ -139,8 +77,6 @@ func Merge(defaults Config, file FileConfig, flags Overlay) Config {
 	return c
 }
 
-// MergeOverlays is [Merge] for callers holding a bare overlay rather than a
-// parsed file, such as tests and `init --dry-run`.
 func MergeOverlays(defaults Config, layers ...Overlay) Config {
 	c := defaults.Clone()
 	for _, layer := range layers {
@@ -149,9 +85,6 @@ func MergeOverlays(defaults Config, layers ...Overlay) Config {
 	return c
 }
 
-// apply writes one layer's set fields over c, copying every slice so that the
-// resulting configuration cannot be changed by mutating the overlay it came
-// from.
 func apply(c *Config, o Overlay) {
 	if v, ok := o.Version.Get(); ok {
 		c.Version = v
@@ -230,17 +163,6 @@ func apply(c *Config, o Overlay) {
 	}
 }
 
-// canonicalDirectory puts a configured directory into the one spelling the
-// rest of go-mutants uses: forward slashes, cleaned, and relative. It is
-// [mutation.NormalizePath], the same normalization mutant identities are built
-// from, so "reports\out" and "reports/out" name one directory here for exactly
-// the reason they name one file there.
-//
-// It runs during the merge rather than during decoding, so that a directory
-// reaches a resolved [Config] in one spelling no matter which layer set it. A
-// path that cannot be normalized at all is handed back exactly as written,
-// which leaves the validator quoting what its author typed rather than a
-// half-cleaned version of it.
 func canonicalDirectory(directory string) string {
 	canonical, err := relativeDirectory(directory)
 	if err != nil {
@@ -249,12 +171,6 @@ func canonicalDirectory(directory string) string {
 	return canonical
 }
 
-// overlay renders a resolved configuration back as a fully set overlay, so
-// that [Config.Validate] can run exactly the same per-value checks the file
-// and the flags went through instead of a second, drifting copy of them.
-//
-// The two settings whose zero value means "unset" — a derived timeout and a
-// default cache directory — are left unset, because that is what they mean.
 func (c Config) overlay() Overlay {
 	o := Overlay{
 		Version:         Explicit(c.Version),

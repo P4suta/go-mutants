@@ -142,7 +142,6 @@ func serveGet(layers Layers, message request, stats *Stats, hooks serveHooks) re
 		stats.Misses++
 		return response{ID: message.ID, Err: err.Error()}
 	}
-	//exhaustive:total A get that named no layer is a miss, which is what the default counts.
 	switch source {
 	case SourceScratch:
 		stats.HitsScratch++
@@ -151,7 +150,7 @@ func serveGet(layers Layers, message request, stats *Stats, hooks serveHooks) re
 	case SourceNative:
 		stats.HitsNative++
 		stats.NativeBytes += entry.Size
-	default:
+	case SourceNone:
 		stats.Misses++
 		return response{ID: message.ID, Miss: true}
 	}

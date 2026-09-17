@@ -98,10 +98,6 @@ func TestRedigestDetectsDrift(t *testing.T) {
 			}},
 		},
 		{
-			// Redigest applies no exclusion patterns: everything under the
-			// snapshot root belongs to this run, and a directory that would
-			// have been skipped on the way in is all the more surprising when
-			// it appears afterwards.
 			name: "something appeared in an excluded path",
 			mutate: func(t *testing.T, root string) {
 				overwrite(t, filepath.Join(root, "reports", "mutation", "report.json"), "{}\n")
@@ -114,8 +110,6 @@ func TestRedigestDetectsDrift(t *testing.T) {
 			}},
 		},
 		{
-			// Sorted by path, one kind each, so the report reads as a list of
-			// files rather than as three lists.
 			name: "everything at once",
 			mutate: func(t *testing.T, root string) {
 				overwrite(t, filepath.Join(root, "a", "one.go"), "package a\n")
@@ -169,7 +163,6 @@ func TestRedigestDetectsDrift(t *testing.T) {
 					t.Errorf("drift[%d] = %+v, want %+v", i, got[i], tt.want[i])
 				}
 			}
-			// The source tree is never what drifted.
 			if got := readFile(t, filepath.Join(src, "a", "one.go")); got != "package a\n\nvar N = 1\n" {
 				t.Errorf("the source tree changed: %q", got)
 			}
@@ -177,10 +170,6 @@ func TestRedigestDetectsDrift(t *testing.T) {
 	}
 }
 
-// TestRedigestRejectsSymlink pins the documented choice: a link that appears
-// inside the snapshot is a refusal, not a drift entry. It is not a file whose
-// contents moved, it is a tree that has grown a shape this package will not
-// reason about, and the caller sees the same failed run either way.
 func TestRedigestRejectsSymlink(t *testing.T) {
 	t.Parallel()
 
@@ -196,9 +185,6 @@ func TestRedigestRejectsSymlink(t *testing.T) {
 	}
 }
 
-// TestRedigestIgnoresEmptyDirectories follows from directories being absent
-// from the manifest: creating one is not drift, because nothing a build reads
-// has changed.
 func TestRedigestIgnoresEmptyDirectories(t *testing.T) {
 	t.Parallel()
 
@@ -212,12 +198,6 @@ func TestRedigestIgnoresEmptyDirectories(t *testing.T) {
 	}
 }
 
-// TestRedigestNamesTheRootThatIsGone covers the one walk failure that has no
-// relative path to report: the root directory itself. A caller that deferred
-// Cleanup and then asked for drift reaches it, and "cannot read the directory"
-// with an empty path names nothing at all — the absolute root is the only
-// location there is, and [Error.Path] documents that this is the case where it
-// is absolute.
 func TestRedigestNamesTheRootThatIsGone(t *testing.T) {
 	t.Parallel()
 
@@ -225,7 +205,6 @@ func TestRedigestNamesTheRootThatIsGone(t *testing.T) {
 	writeTree(t, src, map[string]string{"a/one.go": "package a\n"})
 	snap := create(t, src, Options{})
 	root := snap.Root
-	// Cleanup is idempotent, so the helper's deferred second call still passes.
 	if err := snap.Cleanup(); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
@@ -276,8 +255,4 @@ func overwrite(t *testing.T, abs, content string) {
 	}
 }
 
-// digestOf spells a content digest through internal/mutation rather than
-// through this package's own hashing, so a mistake in one cannot hide a
-// mistake in the other. Both must agree on what the SHA-256 of a file is:
-// mutant identities and manifests are compared against each other constantly.
 func digestOf(content string) string { return mutation.DigestString(content) }

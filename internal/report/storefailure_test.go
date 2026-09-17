@@ -18,39 +18,13 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// What happens when the filesystem says no.
-//
-// Every write in this package is a temporary file, a flush, and a rename, and
-// every step of it carries a message written for somebody whose disk has just
-// filled up. history_test.go and artifacts_test.go prove the happy paths and
-// the two rollbacks; this file proves that each of those failures is reported
-// rather than swallowed, and reported with the file's name in it.
-//
-// Two kinds of failure are staged here. The ones the operating system will
-// produce on demand — a directory where a file has to go, a parent that is not
-// a directory, a path under one — are staged for real, because a real ENOTDIR
-// is worth more than an injected one. The three it will not produce on demand —
-// a write, a flush and a close that fail on a file it has just created — go
-// through [report.FailTempFiles]; see the seam's own comment for why it exists.
-// Tests that use it cannot be parallel.
-
-// TestWriteReportsEveryStepItCouldNotTake walks the four places
-// [report.History.Write] can stop, in the order it reaches them.
-//
-// Each of them leaves the store in a different state, and the state is the
-// point: the run document and the pointer are written in that order precisely
-// so that a failure on the second leaves a history with a stale pointer rather
-// than one with a missing run.
 func TestWriteReportsEveryStepItCouldNotTake(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
-		// stage prepares the store and returns the report to write.
-		stage func(t *testing.T, root string) *report.Report
-		code  report.Code
-		says  string
-		// wantRunPath is whether the run document's path comes back beside the
-		// failure, which is what says the run itself was filed.
+		stage       func(t *testing.T, root string) *report.Report
+		code        report.Code
+		says        string
 		wantRunPath bool
 	}{
 		"a document that cannot be encoded": {
@@ -125,13 +99,6 @@ func TestWriteReportsEveryStepItCouldNotTake(t *testing.T) {
 	}
 }
 
-// TestWriteFileIsTheStoresWriteWithoutTheStore covers [report.WriteFile], which
-// is what `report merge --output` publishes with.
-//
-// It has the same three answers as the store's own write and none of its
-// ownership machinery: no report at all is the caller's slip, a document that
-// cannot be encoded is refused before anything is created, and a destination
-// nothing can be staged in is reported with the directory in the message.
 func TestWriteFileIsTheStoresWriteWithoutTheStore(t *testing.T) {
 	t.Parallel()
 
@@ -146,8 +113,6 @@ func TestWriteFileIsTheStoresWriteWithoutTheStore(t *testing.T) {
 		if got := readFile(t, path); string(got) != string(want) {
 			t.Error("WriteFile did not write the marshalled report")
 		}
-		// Nothing is left beside it: the staging file is renamed into place,
-		// never copied.
 		entries, err := os.ReadDir(filepath.Dir(path))
 		if err != nil {
 			t.Fatalf("listing the destination: %v", err)
@@ -193,17 +158,6 @@ func TestWriteFileIsTheStoresWriteWithoutTheStore(t *testing.T) {
 	})
 }
 
-// TestWriteTempReportsWhichStepTheFileRefused is the three failures the
-// operating system will not produce on demand.
-//
-// They are three separate messages because they are three separate things to do
-// about it: a write that failed is usually a full disk, a flush that failed is
-// usually the device, and a close that failed is a write that had been buffered
-// and is now lost. A report file that is correctly named and full of nothing is
-// worse than no report file, which is why each of them is a failure rather than
-// a shrug.
-//
-// It cannot be parallel; see [report.FailTempFiles].
 func TestWriteTempReportsWhichStepTheFileRefused(t *testing.T) {
 	for name, tc := range map[string]struct {
 		step report.TempFileStep
@@ -230,8 +184,6 @@ func TestWriteTempReportsWhichStepTheFileRefused(t *testing.T) {
 			if !errors.Is(err, report.ErrInjectedIO) {
 				t.Error("the cause is not reachable through errors.Is")
 			}
-			// Nothing is left behind under either name: a half-written file
-			// that survives is the thing the temporary-file dance is for.
 			entries, readErr := os.ReadDir(dir)
 			if readErr != nil {
 				t.Fatalf("listing the destination: %v", readErr)
@@ -243,9 +195,6 @@ func TestWriteTempReportsWhichStepTheFileRefused(t *testing.T) {
 	}
 }
 
-// TestClaimReportsWhatItCouldNotClaim covers the ownership claim's own
-// failures, which come before anything at all is written into a directory
-// go-mutants does not yet own.
 func TestClaimReportsWhatItCouldNotClaim(t *testing.T) {
 	t.Parallel()
 
@@ -296,18 +245,11 @@ func TestClaimReportsWhatItCouldNotClaim(t *testing.T) {
 	})
 }
 
-// TestClaimReportsAMarkerItCouldNotWrite is the claim's other half: the
-// directory is go-mutants' to take and the marker will not go into it.
-//
-// It cannot be parallel; see [report.FailTempFiles].
 func TestClaimReportsAMarkerItCouldNotWrite(t *testing.T) {
 	for name, tc := range map[string]struct {
 		step report.TempFileStep
 		says string
 	}{
-		// The staging file's own messages, not the marker's: a claim that
-		// cannot stage its marker must not fall through to creating the name in
-		// place, because the name would then be there with nothing behind it.
 		"a write that failed": {report.TempWrite, "the workspace marker could not be written to "},
 		"a flush that failed": {report.TempSync, "could not be flushed to disk"},
 		"a close that failed": {report.TempClose, "could not be closed"},
@@ -325,9 +267,6 @@ func TestClaimReportsAMarkerItCouldNotWrite(t *testing.T) {
 			if !strings.Contains(err.Error(), tc.says) {
 				t.Errorf("the failure does not say %q: %v", tc.says, err)
 			}
-			// The directory keeps no marker, so the next run may still claim
-			// it: a name with nothing behind it would refuse the directory to
-			// everybody for ever.
 			dir := filepath.Join(root, report.WorkspacesDirName, report.WorkspaceKey(fixtureDigest))
 			if _, statErr := os.Stat(filepath.Join(dir, report.MarkerFileName)); !errors.Is(statErr, fs.ErrNotExist) {
 				t.Errorf("a marker was left behind by a claim that failed: %v", statErr)
@@ -336,17 +275,6 @@ func TestClaimReportsAMarkerItCouldNotWrite(t *testing.T) {
 	}
 }
 
-// TestTheFallbackClaimWritesAndFlushesTheMarker is the other create path, on
-// the filesystems that will not hard-link.
-//
-// The exclusive create is only half of what a claim has to do: the name has to
-// have the contents behind it before anybody reads it, and the contents have to
-// be on the device before the process that wrote them goes away. Both are
-// checked here because the fallback is unreachable on the machines these tests
-// run on — nothing local refuses a hard link — so the only way to know it works
-// is to call it.
-//
-// It cannot be parallel; see [report.FailTempFiles].
 func TestTheFallbackClaimWritesAndFlushesTheMarker(t *testing.T) {
 	const content = "go-mutants-workspace-v1\n" + "cafe"
 
@@ -396,14 +324,6 @@ func TestTheFallbackClaimWritesAndFlushesTheMarker(t *testing.T) {
 	})
 }
 
-// TestReadMarkerRefusesWhatIsNotAMarker walks the marker's shape check.
-//
-// The two-line file is the whole of the ownership proof, and every one of these
-// is a directory in somebody's cache that go-mutants must not write to or
-// delete. The truncated file is the one worth spelling out: a marker whose
-// second line was never written is not a marker naming nothing, it is a file
-// that must be left alone — and reading it has to survive there being no second
-// line at all.
 func TestReadMarkerRefusesWhatIsNotAMarker(t *testing.T) {
 	t.Parallel()
 
@@ -453,13 +373,6 @@ func TestReadMarkerRefusesWhatIsNotAMarker(t *testing.T) {
 	}
 }
 
-// TestReadMarkerReportsAMarkerItCouldNotRead is the one answer that is neither
-// "this directory is ours" nor "this directory is not ours".
-//
-// A file called `go-mutants.marker` that this build cannot read means something
-// is there that nobody should be deleting, and the walks that ask about every
-// directory in the cache root have to be told that rather than shown an empty
-// digest they would read as "no marker".
 func TestReadMarkerReportsAMarkerItCouldNotRead(t *testing.T) {
 	t.Parallel()
 
@@ -482,17 +395,8 @@ func TestReadMarkerReportsAMarkerItCouldNotRead(t *testing.T) {
 	}
 }
 
-// TestTheDefaultStoreIsUnderTheCacheDirectory covers the one branch of the
-// store's root that every real run takes and no other test does: the empty
-// Root, which means the operating system's cache directory.
-//
-// Nothing is created — [report.History.WorkspaceDir] derives a path and does not
-// touch the disk — so this asks only where the answer is, and where it is when
-// the operating system will not say.
 func TestTheDefaultStoreIsUnderTheCacheDirectory(t *testing.T) {
 	withCacheDir(t, t.TempDir())
-	// Asked of the operating system after the move rather than assumed: on
-	// macOS the cache directory is Library/Caches under the home, not the home.
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		t.Fatalf("UserCacheDir under the moved home: %v", err)
@@ -511,13 +415,6 @@ func TestTheDefaultStoreIsUnderTheCacheDirectory(t *testing.T) {
 	}
 }
 
-// TestAMachineWithNoCacheDirectoryIsToldSo is the other answer, and it has to
-// travel through everything that asks for a root.
-//
-// A run on a machine whose cache directory cannot be determined is a run that
-// cannot be kept in the history, and each of these has to say that rather than
-// fall back to a path it made up — a store rooted at "" would file somebody's
-// run history in whatever directory the process happened to be started in.
 func TestAMachineWithNoCacheDirectoryIsToldSo(t *testing.T) {
 	withoutCacheDir(t)
 
@@ -543,14 +440,6 @@ func TestAMachineWithNoCacheDirectoryIsToldSo(t *testing.T) {
 	}
 }
 
-// TestArtifactsReportEveryStepTheyCouldNotTake walks the places
-// [report.WriteArtifacts] can stop before it has published anything.
-//
-// The order is the contract, and each of these proves one step of it happened
-// before the next: a threshold the format refuses costs nothing and creates no
-// directory, a directory that cannot be made is reported rather than written
-// around, and a `mutation.json` that cannot be read is never overwritten —
-// because a file that cannot be read cannot be put back.
 func TestArtifactsReportEveryStepTheyCouldNotTake(t *testing.T) {
 	t.Parallel()
 
@@ -605,14 +494,6 @@ func TestArtifactsReportEveryStepTheyCouldNotTake(t *testing.T) {
 	}
 }
 
-// TestArtifactsReportAStagingFailure is the write itself refusing, which the
-// operating system will not do on demand.
-//
-// The message has to name the directory rather than only the file: a staging
-// failure is almost always the directory — full, read-only, gone — and the file
-// it was for is the part a reader already knows.
-//
-// It cannot be parallel; see [report.FailTempFiles].
 func TestArtifactsReportAStagingFailure(t *testing.T) {
 	opts := artifactOptions(t, config.FormatJSON, config.FormatHTML)
 	dir := filepath.Join(opts.WorkspaceRoot, filepath.FromSlash(config.DefaultReportDirectory))
@@ -637,16 +518,6 @@ func TestArtifactsReportAStagingFailure(t *testing.T) {
 	exists(t, filepath.Join(dir, report.HTMLFileName), false)
 }
 
-// TestAFailedRollbackIsTheMoreUrgentFact is the house rule at its worst
-// moment: the page would not write, and putting the document back failed too.
-//
-// What a caller gets then is the rollback's failure rather than the render's,
-// because a half-published pair is what they have to act on and "the HTML could
-// not be written" would not tell them that `mutation.json` is now this run's
-// while `mutation.html` is last week's. The original failure stays reachable
-// through errors.Is, so nothing is lost by choosing.
-//
-// It cannot be parallel; see [report.FailTempFiles].
 func TestAFailedRollbackIsTheMoreUrgentFact(t *testing.T) {
 	opts := artifactOptions(t, config.FormatJSON, config.FormatHTML)
 	dir := filepath.Join(opts.WorkspaceRoot, filepath.FromSlash(config.DefaultReportDirectory))
@@ -656,10 +527,6 @@ func TestAFailedRollbackIsTheMoreUrgentFact(t *testing.T) {
 	const previous = `{"schemaVersion":"2","note":"last week's document"}`
 	writeFile(t, filepath.Join(dir, report.ProjectionFileName), previous)
 
-	// The page never gets as far as being written: the viewer check refuses,
-	// which is the failure that leaves the projection published on its own. The
-	// first staging is this run's `mutation.json` and is allowed through; the
-	// second is the rollback putting the old one back, and is refused.
 	restoreViewer := report.BreakVendoredViewer(errors.New("the embedded bundle hashes to something else"))
 	restore := report.FailTempFiles(report.TempCreate, 1)
 	written, err := report.WriteArtifacts(opts)
@@ -681,8 +548,6 @@ func TestAFailedRollbackIsTheMoreUrgentFact(t *testing.T) {
 	}
 }
 
-// TestARollbackThatRemovesReportsWhatItCouldNotRemove is the other rollback,
-// where there was no previous document and the one just written has to go.
 func TestARollbackThatRemovesReportsWhatItCouldNotRemove(t *testing.T) {
 	t.Parallel()
 
@@ -710,9 +575,6 @@ func TestARollbackThatRemovesReportsWhatItCouldNotRemove(t *testing.T) {
 	exists(t, filepath.Join(dir, report.ProjectionFileName), false)
 }
 
-// TestAPageOnItsOwnHasNothingToRollBack is the third answer [report.WriteArtifacts]
-// can give a failed render: when no document was published beside it, the
-// render's own failure is the whole story.
 func TestAPageOnItsOwnHasNothingToRollBack(t *testing.T) {
 	t.Parallel()
 
@@ -735,9 +597,6 @@ func TestAPageOnItsOwnHasNothingToRollBack(t *testing.T) {
 	}
 }
 
-// unencodableReport is a report the JSON encoder refuses, which is the only way
-// to ask what a writer does when the document will not encode. See
-// TestMarshalRefusesADocumentJSONCannotHold.
 func unencodableReport(t *testing.T) *report.Report {
 	t.Helper()
 	r := buildFixture(t)
@@ -746,8 +605,6 @@ func unencodableReport(t *testing.T) *report.Report {
 	return r
 }
 
-// claimWorkspace creates one workspace directory with its marker and returns
-// its path, so that a test can put something in the way of the next step.
 func claimWorkspace(t *testing.T, root, digest string) string {
 	t.Helper()
 	dir, err := report.History{Root: root}.Claim(digest)
@@ -757,7 +614,6 @@ func claimWorkspace(t *testing.T, root, digest string) string {
 	return dir
 }
 
-// writeFile writes one file, creating the directories above it.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -768,9 +624,6 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// makeDir puts a non-empty directory where a file has to go, which is the
-// failure every platform go-mutants targets produces for a read and for a
-// rename onto it.
 func makeDir(t *testing.T, path, inner string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
@@ -779,8 +632,6 @@ func makeDir(t *testing.T, path, inner string) {
 	writeFile(t, filepath.Join(path, inner), "so that it cannot be replaced")
 }
 
-// withCacheDir points os.UserCacheDir at dir for the duration of the test. A
-// test that uses it cannot be parallel.
 func withCacheDir(t *testing.T, dir string) {
 	t.Helper()
 	switch runtime.GOOS {
@@ -794,13 +645,6 @@ func withCacheDir(t *testing.T, dir string) {
 	}
 }
 
-// withoutCacheDir makes os.UserCacheDir fail, which is the one way this
-// package's root resolution can. A test that uses it cannot be parallel.
-//
-// macOS derives the cache directory from $HOME alone and appends
-// "Library/Caches" to it, so an empty HOME is the only spelling of "there is
-// none" there; elsewhere both the XDG variable and the home directory have to
-// be empty before the answer is a failure rather than a default.
 func withoutCacheDir(t *testing.T) {
 	t.Helper()
 	switch runtime.GOOS {
@@ -814,19 +658,6 @@ func withoutCacheDir(t *testing.T) {
 	}
 }
 
-// TestARollbackThatCannotRemoveTheDocumentSaysSo is the removing half of the
-// rollback failing.
-//
-// A first run that publishes `mutation.json` and then cannot render its page
-// has to take the document away again — a lone `mutation.json` looks like a
-// successful publication — and the one thing it must not do is report that it
-// did when it did not. The two failures are told apart on purpose: a file that
-// is already gone is a rollback that has nothing left to do, and anything else
-// is a half-published pair somebody has to be told about.
-//
-// The moment between the two artefacts is not a moment a test can otherwise be
-// at, so the viewer check is where the staging happens; see
-// [report.UseVendoredViewerCheck].
 func TestARollbackThatCannotRemoveTheDocumentSaysSo(t *testing.T) {
 	tampered := errors.New("the embedded bundle hashes to something else")
 
@@ -836,8 +667,6 @@ func TestARollbackThatCannotRemoveTheDocumentSaysSo(t *testing.T) {
 		path := filepath.Join(dir, report.ProjectionFileName)
 
 		restore := report.UseVendoredViewerCheck(func() (string, error) {
-			// The projection is published and the page is not. Something takes
-			// the document's name for a directory it will not give up.
 			if err := os.Remove(path); err != nil {
 				t.Errorf("removing the published document: %v", err)
 			}
@@ -867,8 +696,6 @@ func TestARollbackThatCannotRemoveTheDocumentSaysSo(t *testing.T) {
 		path := filepath.Join(dir, report.ProjectionFileName)
 
 		restore := report.UseVendoredViewerCheck(func() (string, error) {
-			// Somebody else's cleaner got there first. The rollback wanted the
-			// file gone and it is gone, which is not a failure.
 			if err := os.Remove(path); err != nil {
 				t.Errorf("removing the published document: %v", err)
 			}
@@ -890,23 +717,11 @@ func TestARollbackThatCannotRemoveTheDocumentSaysSo(t *testing.T) {
 	})
 }
 
-// TestAClaimReadsBackTheMarkerThatWonTheRace is the race the ownership marker
-// exists to settle, staged at the one instant it happens.
-//
-// Between the read that finds no marker and the create that would make one,
-// another process may claim the same directory. The claim does not go through a
-// rename precisely so that exactly one racer creates the file — and the losers
-// then have to read back what the winner left. A marker that appeared in that
-// window and cannot be read is not a directory anybody may write to.
-//
-// It cannot be parallel; see [report.BeforeTempFile].
 func TestAClaimReadsBackTheMarkerThatWonTheRace(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, report.WorkspacesDirName, report.WorkspaceKey(fixtureDigest))
 	marker := filepath.Join(dir, report.MarkerFileName)
 
-	// The claim has read the directory and found no marker. This is the moment
-	// before it creates one.
 	restore := report.BeforeTempFile(0, func() { makeDir(t, marker, "in the way") })
 	_, err := report.History{Root: root}.Claim(fixtureDigest)
 	restore()
@@ -917,25 +732,12 @@ func TestAClaimReadsBackTheMarkerThatWonTheRace(t *testing.T) {
 	if want := "the workspace marker " + marker + " could not be read back"; !strings.Contains(err.Error(), want) {
 		t.Errorf("the failure does not say %q: %v", want, err)
 	}
-	// The cause travels with the sentence: a marker that is a directory fails
-	// to read with the operating system's own error, and a caller that wants
-	// to know which failure it was can still reach it.
 	var pathErr *fs.PathError
 	if !errors.As(err, &pathErr) {
 		t.Errorf("the failure does not wrap the read's own error: %v", err)
 	}
 }
 
-// TestAClaimFallsBackWhenTheTemporaryFileIsSweptAway is the other half of
-// [createMarker]: the hard link is not the only way to make the name.
-//
-// The temporary file is created under a deliberately recognisable pattern —
-// "anything matching it is this package's leftovers and is safe to delete" —
-// which is an invitation for somebody's cache cleaner to take it. When the link
-// then has nothing to link, the claim has to create the marker in place rather
-// than report a directory it could have claimed as unclaimable.
-//
-// It cannot be parallel; see [report.FailTempFiles].
 func TestAClaimFallsBackWhenTheTemporaryFileIsSweptAway(t *testing.T) {
 	root := t.TempDir()
 
@@ -951,23 +753,11 @@ func TestAClaimFallsBackWhenTheTemporaryFileIsSweptAway(t *testing.T) {
 	if want := "go-mutants-workspace-v1\n" + fixtureDigest + "\n"; string(got) != want {
 		t.Errorf("the marker holds %q, want %q", got, want)
 	}
-	// And the claim is a claim: a second one over the same workspace agrees,
-	// and one over another workspace is refused.
 	if _, err = (report.History{Root: root}).Claim(fixtureDigest); err != nil {
 		t.Errorf("a second claim of the same workspace = %v, want nil", err)
 	}
 }
 
-// TestUndoChoosesWhichFailureToReport states the rule the artefact pair is
-// published under, over all four shapes its rollback can have.
-//
-// The original failure is what a user acts on when the rollback worked, and the
-// rollback's own failure is the more urgent fact when it did not — a
-// half-published pair is worse than a page that would not render. Either way
-// the other one stays reachable through errors.Is, which is what makes choosing
-// safe. The last case is the one no caller can produce: every rollback this
-// package hands over returns a coded error or nothing, and an uncoded one has
-// no message to append to, so both are joined instead.
 func TestUndoChoosesWhichFailureToReport(t *testing.T) {
 	t.Parallel()
 

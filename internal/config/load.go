@@ -18,39 +18,19 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// A FileConfig is what one .go-mutants.toml contributed, already decoded and
-// validated on its own terms.
-//
-// It keeps the positions it was parsed with, so a caller can still underline a
-// setting after the fact — `doctor` explaining where a value came from, `init
-// --check` reporting on a file it did not write.
 type FileConfig struct {
-	// Path is the file as the caller spelled it, kept even when the file was
-	// not there so that a message can say which path was looked at.
-	Path string
-	// Present reports whether the file existed. A false here is not a
-	// failure; see [LoadFile].
+	Path    string
 	Present bool
-	// Overlay is what the file set. It is empty when Present is false.
 	Overlay Overlay
 
-	// positions locates each key that was written, by the same path the
-	// validators use. It is nil for an absent file.
 	positions map[string]Position
 }
 
-// Position returns where a key was written, by the dotted-and-indexed path
-// the diagnostics use ("report.low", "mutation.expect[1].id"). The second
-// result is false when the key was not in the file, or when the file was not
-// there at all.
 func (f FileConfig) Position(key string) (Position, bool) {
 	position, ok := f.positions[key]
 	return position, ok
 }
 
-// Keys returns every key path the file wrote, sorted. The order is fixed
-// rather than map order so that anything printing it — `doctor` listing what a
-// project configured — is the same on two runs and diffable between them.
 func (f FileConfig) Keys() []string {
 	keys := make([]string, 0, len(f.positions))
 	for key := range f.positions {
@@ -60,13 +40,6 @@ func (f FileConfig) Keys() []string {
 	return keys
 }
 
-// Load is the whole sequence in one call: read the file, check the flags,
-// merge over the built-in defaults, and check the result. It is what the CLI
-// calls, and the shortest correct way to obtain a [Config].
-//
-// The flags are checked before the merge so that a mistake the user has just
-// typed is reported as the flag they typed, ahead of anything the file has to
-// say.
 func Load(path string, flags Overlay) (Config, error) {
 	file, err := LoadFile(path)
 	if err != nil {
@@ -82,13 +55,6 @@ func Load(path string, flags Overlay) (Config, error) {
 	return resolved, nil
 }
 
-// LoadFile reads and validates a configuration file.
-//
-// A file that is not there is not an error: it yields an empty, valid
-// FileConfig with Present false, so that go-mutants works out of the box in a
-// project that has never configured it. Everything else about the path is an
-// error — a directory, a permission failure, an unreadable device — because
-// those mean the user meant to configure something and did not get it.
 func LoadFile(path string) (FileConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -105,8 +71,6 @@ func LoadFile(path string) (FileConfig, error) {
 	return Parse(path, data)
 }
 
-// ioMessage strips the *fs.PathError wrapper from a read failure, which would
-// otherwise repeat the path this package already prints.
 func ioMessage(err error) string {
 	var pathErr *fs.PathError
 	if errors.As(err, &pathErr) && pathErr.Err != nil {
@@ -115,21 +79,9 @@ func ioMessage(err error) string {
 	return err.Error()
 }
 
-// Parse decodes and validates a configuration document that is already in
-// memory. path is used only to locate diagnostics and may name a file that
-// does not exist, which is what makes this the entry point for tests and for
-// `init --check` on generated content.
-//
-// The result is Present, because the bytes were there to parse.
 func Parse(path string, data []byte) (FileConfig, error) {
 	file := FileConfig{Path: path, Present: true}
 
-	// The version is read first, on its own, and deliberately without strict
-	// mode. A file written against a later schema is full of keys this build
-	// has never heard of, and answering it with "unknown key mutation.foo"
-	// would send someone hunting a typo that is not there. The one true
-	// sentence about such a file is that its version is not one this build
-	// reads, and that sentence is only available before strictness has a say.
 	var preamble struct {
 		Version *int64 `toml:"version"`
 	}
@@ -157,9 +109,6 @@ func Parse(path string, data []byte) (FileConfig, error) {
 
 	var document document
 	decoder := toml.NewDecoder(bytes.NewReader(data))
-	// Strictness is the point. Without it a key one letter off its intended
-	// spelling is accepted, ignored, and reported nowhere, which is how a
-	// project ends up believing it excludes a directory it does not.
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&document); err != nil {
 		return file, decodeError(path, err)
@@ -171,12 +120,6 @@ func Parse(path string, data []byte) (FileConfig, error) {
 	return file, join(problems)
 }
 
-// decodeError converts go-toml's failures into this package's codes, keeping
-// the position and the key path it worked out.
-//
-// Strict-mode failures are reported together: go-toml collects every unknown
-// field in document order, and a file with three typos should cost one round
-// trip to fix, not three.
 func decodeError(path string, err error) error {
 	var strict *toml.StrictMissingError
 	if errors.As(err, &strict) {
@@ -217,26 +160,6 @@ func decodeError(path string, err error) error {
 	}
 }
 
-// decodeMessage states in this package's own words why a value was refused.
-//
-// go-toml explains a type mismatch by naming the Go field it was decoding
-// into: "cannot decode TOML string into struct field config.documentReport.High
-// of type int64". That sentence cannot be the one a user reads. It asks them to
-// think about `config.documentReport.High`, a type this package does not export
-// and nobody can act on, and it makes the wording of GOM3002 — a code that
-// means one thing forever — hostage to the name of an unexported struct field,
-// so that a rename nobody reviewed as a user-facing change would become one. A
-// mismatch is therefore restated from the schema: the type the key takes, and
-// the kind of value that was actually written, which is the value the reported
-// position underlines in both the whole-value and the array-element case.
-//
-// Everything else the decoder refuses is a complaint about the file in the
-// file's own vocabulary — an unterminated table header, a bad escape, a key
-// defined twice. Those are already the sentence this package would write, so
-// they pass through unchanged. The two prefixes below are every message
-// go-toml's unmarshaler can reach with this schema that names a Go type; the
-// rest of what it reports comes from the TOML parser and names nothing but
-// TOML.
 func decodeMessage(key, message string) string {
 	kind, mismatch := mismatchKind(message)
 	if !mismatch {
@@ -249,29 +172,17 @@ func decodeMessage(key, message string) string {
 	case known:
 		return "must be " + expected
 	case kind != "":
-		// A key the schema does not define, reached by writing a dotted key or
-		// a header through a value that is not a table: `version.x = 1` makes
-		// `version` a table, and the thing worth saying is that it cannot be.
 		return kind + " cannot be written here"
 	default:
 		return "the value written here does not fit the key it was written under"
 	}
 }
 
-// mismatchKind reports whether a decode failure is a type mismatch and, when
-// the message named the kind of value that was written, what that kind was.
-//
-// Reading one word out of the library's sentence is a small and bounded
-// coupling: the words are TOML's own, the set is closed, and anything outside
-// it is dropped rather than repeated. An upstream rewording can therefore cost
-// a clause of a diagnostic; it cannot leak a Go identifier into one.
 func mismatchKind(message string) (kind string, mismatch bool) {
 	if rest, ok := strings.CutPrefix(message, "cannot decode TOML "); ok {
 		name, _, _ := strings.Cut(rest, " into ")
 		return tomlKinds[name], true
 	}
-	// A `[header]` or `[[header]]` naming a key the schema holds something
-	// other than a table in.
 	if rest, ok := strings.CutPrefix(message, "cannot store "); ok {
 		switch {
 		case strings.HasPrefix(rest, "a table in "):
@@ -284,9 +195,6 @@ func mismatchKind(message string) (kind string, mismatch bool) {
 	return "", false
 }
 
-// tomlKinds renders each kind of value go-toml can name as this package says
-// it. The vocabulary is the TOML specification's, because that is the document
-// the reader has open.
 var tomlKinds = map[string]string{
 	"string":         "a string",
 	"integer":        "an integer",
@@ -301,14 +209,6 @@ var tomlKinds = map[string]string{
 	"inline table":   "an inline table",
 }
 
-// expectedTypes names the kind of value each key of the schema takes, in the
-// vocabulary of the file rather than of Go. It is what a type mismatch is
-// reported against, and it is why a GOM3002 message survives a rename of any of
-// the unexported structs below.
-//
-// Every key the schema defines has an entry, tables included, and the package
-// tests walk those structs to prove it: a field added without an entry here
-// would quietly degrade to a vaguer sentence rather than fail anything.
 var expectedTypes = map[string]string{
 	"version": "an integer",
 
@@ -349,18 +249,6 @@ var expectedTypes = map[string]string{
 	"report.low":       "an integer",
 }
 
-// SchemaKeys returns every key the configuration schema defines, dotted and
-// sorted: the tables as well as the settings written inside them.
-//
-// It is exported for the one job outside this package that has to enumerate the
-// schema rather than read a file against it. `go-mutants init` writes a starter
-// configuration with every setting in it, set or shown as a commented example,
-// and a key added here that nobody remembered to write there would be a setting
-// the generated file silently leaves out — which is exactly the file a project
-// adopts as its record of what can be configured. The keys are the ones
-// [expectedTypes] describes, and the package's own tests walk the decoded
-// document to prove that map is the schema rather than a hand-kept copy of it;
-// see TestExpectedTypesCoversTheSchema.
 func SchemaKeys() []string {
 	keys := make([]string, 0, len(expectedTypes))
 	for key := range expectedTypes {
@@ -370,23 +258,13 @@ func SchemaKeys() []string {
 	return keys
 }
 
-// positionOf reads a decode error's one-based position.
 func positionOf(decode *toml.DecodeError) Position {
 	line, column := decode.Position()
 	return Position{Line: line, Column: column}
 }
 
-// keyPath renders go-toml's key parts the way this package names settings.
 func keyPath(key toml.Key) string { return strings.Join(key, ".") }
 
-// document is the decoded shape of .go-mutants.toml.
-//
-// Every field is a pointer, or a slice for the repeated tables, so that "the
-// key was written" and "the key was written with a zero value" stay
-// distinguishable. That distinction is not academic: `formats = []` is the
-// documented way to turn project reports off, and `strict = false` in a file
-// has to beat a default that is already false in order to survive a future
-// change to that default.
 type document struct {
 	Version   *int64             `toml:"version"`
 	Mutation  *documentMutation  `toml:"mutation"`
@@ -442,14 +320,6 @@ type documentReport struct {
 	Low       *int64    `toml:"low"`
 }
 
-// overlay converts the decoded document into the layer [Merge] consumes,
-// together with the problems that only conversion can find.
-//
-// Only the conversions that cannot be represented at all are reported here: a
-// profile name that is not a tier and a timeout that is not a duration have no
-// value to carry forward. Everything else keeps the user's spelling and is
-// judged by the validator, so that one check exists per rule rather than one
-// per entry point.
 func (d *document) overlay(report reporter) (Overlay, []error) {
 	var overlay Overlay
 	var problems []error
@@ -574,9 +444,6 @@ func (d *document) overlay(report reporter) (Overlay, []error) {
 	return overlay, problems
 }
 
-// derefString reads an optional string, treating an absent key as empty. The
-// emptiness is then rejected by the validator with a position, which is a
-// better message than "expected a string".
 func derefString(s *string) string {
 	if s == nil {
 		return ""
@@ -584,12 +451,6 @@ func derefString(s *string) string {
 	return *s
 }
 
-// toInt narrows a decoded TOML integer, saturating rather than truncating.
-//
-// TOML integers are 64 bit and Go's int is not, on every platform. A truncating
-// conversion would let `jobs = 4294967297` arrive as 1 on a 32-bit build:
-// accepted, in range, and nothing like what was written. Saturating keeps an
-// absurd number absurd, so the range check refuses it everywhere.
 func toInt(v int64) int {
 	if v > int64(maxInt) {
 		return maxInt

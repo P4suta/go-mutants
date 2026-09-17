@@ -1,18 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The architecture page's claim about instrumenting once, against the counts
-// that make it one.
-//
-// The claim — "the build is effectively performed once, not once per mutant" —
-// is the reason this engine is shaped the way it is, and it was a sentence with
-// nothing under it for as long as the counts sat in a golden nobody's prose
-// pointed at. The numbers were there; what was missing was anything saying they
-// were the evidence for that sentence, which is the same as the sentence being
-// unsupported.
-//
-// This is the unit tier: a golden and a page are two files, and comparing them
-// starts nothing.
 package engine
 
 import (
@@ -26,14 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// TestTheArchitecturePageQuotesTheCountsTheGoldenFixes pins the two numbers the
-// page states against the golden they are read out of.
-//
-// Both directions matter and only one of them is obvious. A page quoting a
-// number the golden does not have is a page that will mislead; a golden that
-// moved without the page moving is the same page, arriving at the same place by
-// the other road. Goldens move on purpose here — `mise run golden-update`
-// rewrites them and the diff is the review — so the road is open.
 func TestTheArchitecturePageQuotesTheCountsTheGoldenFixes(t *testing.T) {
 	t.Parallel()
 
@@ -61,7 +41,6 @@ func TestTheArchitecturePageQuotesTheCountsTheGoldenFixes(t *testing.T) {
 	}
 }
 
-// countedKind is how many commands of one kind the golden records for a module.
 func countedKind(t *testing.T, golden, module, kind string) int {
 	t.Helper()
 
@@ -84,7 +63,6 @@ func countedKind(t *testing.T, golden, module, kind string) int {
 	return 0
 }
 
-// indexOfModule locates one module's block in the golden.
 func indexOfModule(t *testing.T, golden, module string) int {
 	t.Helper()
 
@@ -99,12 +77,6 @@ func indexOfModule(t *testing.T, golden, module string) int {
 	return 0
 }
 
-// quotedCounts is the two bolded numbers the page states for one module, in the
-// order it states them.
-//
-// Bold rather than backticks, because the page writes the counts as emphasis
-// and the kinds as code, and reading the emphasis is what keeps this from
-// matching the kind names themselves.
 var boldNumber = regexp.MustCompile(`\*\*(\d+)\*\*`)
 
 func quotedCounts(t *testing.T, page, module string) []int {
@@ -121,8 +93,6 @@ func quotedCounts(t *testing.T, page, module string) []int {
 	if end := strings.Index(sentence, "\n\n"); end >= 0 {
 		sentence = sentence[:end]
 	}
-	// The next module's sentence is in the same paragraph, and its numbers are
-	// not this one's. Cutting at the next "A run of" keeps each claim to itself.
 	if end := strings.Index(sentence[1:], "A run of "); end >= 0 {
 		sentence = sentence[:end+1]
 	}
@@ -138,7 +108,6 @@ func quotedCounts(t *testing.T, page, module string) []int {
 	return counts
 }
 
-// readFile reads one file of the repository, as text.
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 
@@ -149,12 +118,6 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// TestTheCountReadersReadNumbersTheyWereGiven is the other half of
-// [TestTheArchitecturePageQuotesTheCountsTheGoldenFixes].
-//
-// That test passes when two readings agree, and two readings that both stopped
-// finding numbers would agree too. So each reader is given text this repository
-// does not contain, and has to come back with what is in it.
 func TestTheCountReadersReadNumbersTheyWereGiven(t *testing.T) {
 	t.Parallel()
 

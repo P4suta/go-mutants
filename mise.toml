@@ -1,23 +1,6 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# The dotfiles-managed global mise configuration intentionally contains no
-# language runtimes, so the Go toolchain and every quality gate are pinned
-# here. CI installs exactly this list, which is why a green `mise run check`
-# locally and a green CI job mean the same thing.
-#
-# Two of them name their backend. mise's default registry resolves `committed`
-# and `goreleaser` through aqua, whose package definitions hand an arm64 Mac the
-# x86_64 build -- which worked for as long as Rosetta was there to run it and
-# stopped the day macOS dropped it:
-#
-#   sh: .../committed: Bad CPU type in executable
-#
-# `committed` is the commit-msg hook, so that is every commit on the machine
-# refused, with a message about CPUs. Both projects publish an
-# aarch64-apple-darwin asset; ubi picks by platform and finds it. The pin is the
-# same version either way -- this changes which file is fetched, not which
-# release -- and ubi resolves the same way on Linux, which is what CI runs.
 [tools]
 go = "1.26.6"
 golangci-lint = "2.12.2"
@@ -31,6 +14,7 @@ taplo = "0.10.0"
 gitleaks = "8.30.1"
 yamllint = "1.38.0"
 rumdl = "0.2.43"
+"cargo:ocomment" = "0.1.0"
 
 [tasks.bootstrap]
 description = "Install the pinned toolchain, download modules, and install hooks"
@@ -40,28 +24,6 @@ run = ["mise install", "go mod download", "lefthook install"]
 description = "Build every package and run the vet gate"
 run = ["go build ./... ./goatest/...", "go vet ./... ./goatest/..."]
 
-# The same two modules, each alone, which is the shape everybody outside this
-# repository gets.
-#
-# [tasks.build] goes through go.work, so the runner there is compiled against
-# the engine in the tree next door. Nobody else ever builds it that way: `go
-# install`, goreleaser and `mise run dogfood-runner` all resolve the engine from
-# the version goatest/go.mod pins, and a pinned version is by definition not
-# this tree. The two builds are two different programs.
-#
-# Nothing said so, and it cost a whole afternoon: a runner change that named a
-# symbol the engine had just gained compiled green under `mise run check` and
-# failed under `mise run dogfood-runner` with `undefined: gomutants.DefaultJobs`
-# -- the runner's own gate, and the last place anybody looks. A `replace` would
-# close the gap and is not available: `go help install` refuses a module whose
-# go.mod carries one, and `go install .../goatest/cmd/goatest@latest` is a
-# promise this repository keeps. So the pin is the mechanism, moved with
-# `go get github.com/P4suta/go-mutants@<pushed sha>` when the runner needs
-# something new, and this task is what makes forgetting it a failure here
-# instead of an hour into the runner's gate.
-#
-# `go -C` rather than a `dir` on the task, because the point is that both
-# happen: a task per module would let one of them be skipped.
 [tasks.build-published]
 description = "Build each module on its own, the way a consumer gets it"
 env = { GOWORK = "off" }
@@ -73,220 +35,30 @@ run = [
 ]
 
 [tasks.test]
-# The tier a developer runs on every save, and the one CI runs on three
-# operating systems: everything that needs a compiler and nothing else. What
-# needs a real toolchain -- a `go build`, a `go test -c`, a mutation run --
-# carries `//go:build integration` and is [tasks.test-integration] below.
-#
-# The split is worth stating because it was not free to get wrong. Forty
-# toolchain-driving tests sat in this tier until the root suite was tiered, and
-# nothing about that failed: the tests passed, on every platform, and only the
-# clock said anything. The root package alone went from 28 seconds to 0.2.
-# internal/testkit/tiers_test.go is what keeps it that way -- one test asks the
-# root package's unit-tier binary which tests it contains, and the other scans
-# every `_test.go` in the tree for a `go` command started outside the tag.
-#
-# Deliberately not wrapped in `testcache exec`: this task compiles go-mutants
-# itself, and that belongs in the developer's own build cache like every other
-# `go test` they run. The suites' *child* `go` commands still go to the test
-# cache, because internal/testkit points GOCACHE there in every environment it
-# composes -- which is where the bloat came from in the first place.
-#
-# 15m is the whole run's budget rather than a target. This tier is seconds on a
-# warm machine and a couple of minutes cold; the alarm exists so that a suite
-# that hangs is reported as a suite that hung, in under a quarter of an hour,
-# rather than as a job the runner cancelled after six.
 description = "Run the unit test suite"
 run = "go test -timeout 15m ./... ./goatest/..."
 
 [tasks.test-race]
-# The unit tier under the race detector.
-#
-# It had never been run. That is the entire justification: this repository
-# schedules mutants across a worker pool, fans a snapshot copy out over
-# goroutines, merges coverage from concurrent readers and cancels process trees
-# from a supervisor -- and the one tool that finds a data race in any of it was
-# not part of any gate. A race that only shows up under load is otherwise found
-# by a user, once, in a report nobody can reproduce.
-#
-# Ubuntu only in CI, and the reason is cgo rather than taste: -race links the
-# C runtime, so it needs a working C toolchain, and the Windows runner's is a
-# different compiler with different behaviour to debug when it breaks. A race
-# is a property of the Go code and not of the platform, so one platform proves
-# it and three would only cost three times as much.
-#
-# 30m rather than 15m because instrumentation costs a factor of two to ten in
-# both compilation and execution, and a budget that fits the uninstrumented run
-# would turn a slow job into a red one.
 description = "Run the unit test suite under the race detector"
 run = "go test -race -timeout 30m ./... ./goatest/..."
 
 [tasks.test-integration]
-# The engine's integration suite alone runs 8-10 minutes of real toolchain
-# work; Go's default per-package 10m alarm fires under load, so the budget
-# is stated explicitly.
-#
-# The `testcache exec` wrapper is what keeps this suite's rubble out of
-# ~/.cache/go-build. It exports GOCACHE and GO_MUTANTS_TEST_GOCACHE into the
-# child -- the first for every `go` command below it, the second so that a test
-# composing a hermetic environment of its own resolves the same directory
-# instead of falling back to the default -- prints the size and the growth to
-# stderr when the suite ends, and exits with the suite's own status, so the gate
-# is exactly as strict as it was without it. (`go run` reports any non-zero
-# status as 1, as it does for every other `go run` task here, so what reaches
-# mise is "the suite failed" rather than the suite's exact code.)
-#
-# Why one persistent dedicated cache rather than either obvious alternative:
-#
-#   not the user's cache  The suites drive thousands of child `go build`,
-#                         `go test -c` and `go list` commands against fixtures,
-#                         synthesized modules and instrumented snapshots, each
-#                         living at an absolute path that exists for a single
-#                         run -- so every entry is keyed on a path nothing will
-#                         ever look up again. That took ~/.cache/go-build to
-#                         14 GB and filled the disk twice.
-#   not a cache per test  A GOCACHE under t.TempDir() is hermetic and
-#                         recompiles the standard library once per test binary,
-#                         which is minutes per package.
-#
-# --budget 4GiB is the ceiling that makes the persistent directory safe to keep:
-# the cache is emptied *after* a run, and only when it is over the budget, so
-# the run that paid to fill it is the run that benefits from it and no machine
-# grows an unbounded one. `mise run test-cache-status` says where it is and how
-# big it is; `mise run test-clean` empties it.
 description = "Run the toolchain-backed integration suite"
 run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -tags integration -timeout 40m ./... ./goatest/..."
 
 [tasks.test-integration-race]
-# The integration tier under the race detector, which is the pairing that finds
-# what neither half finds alone.
-#
-# The unit tier's races are in pure code and [tasks.test-race] finds them in
-# minutes. The ones that matter most in this repository are not there: they are
-# in the scheduler that runs mutants concurrently, the copier that fans a
-# snapshot out over goroutines, the supervisor that kills a process tree while
-# its output is still being read. All of that only runs when a real toolchain
-# does, which is this tier -- and instrumenting it costs the better part of an
-# hour, which is why this is a nightly job rather than a pull-request gate.
-#
-# 90m for the same reason [tasks.test-race] takes 30m, applied to a suite that
-# already takes 40. Through `testcache exec` for the same reason
-# [tasks.test-integration] is: an instrumented run compiles everything twice
-# over and is the last run anybody wants filling their own build cache.
 description = "Run the integration suite under the race detector"
 run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -race -tags integration -timeout 90m ./... ./goatest/..."
 
 [tasks.test-cost]
-# The unit tier, with a table saying where its time went and what did not run.
-#
-# The command underneath is exactly [tasks.test], so this is not a second gate:
-# internal/devtools/testcost reads the machine-readable form of the same run,
-# prints one Markdown table sorted by elapsed time, and exits with the run's own
-# verdict.
-#
-# testcost *runs* `go test` rather than being piped its output, and that is the
-# difference between a gate and a formatter. A pipeline reports its last
-# command's status in every shell there is, so a report on the end of one turns
-# a red suite green -- and `set -o pipefail` is not an answer here, because
-# these two tasks run under `sh` on Linux and macOS and under `cmd /c` on
-# Windows, where the pipeline's status is the report's and nothing else.
-# Worse than the shell: the only failures a piped reader can see are the ones
-# cmd/go wrote into the stream, and a `go` command that fell over before it
-# started testing -- a module it cannot resolve, a toolchain it cannot download
-# -- writes plain text on stderr and nothing on stdout. The verdict would then
-# be "nothing failed" about a run that never happened. Starting the child means
-# its status is read rather than discarded, and the two verdicts are combined:
-# the task fails if `go test` failed *or* if the stream carried a failure.
-#
-# One `run` string rather than an array for the same reason: mise runs a task's
-# script under `set -e` and stops an array after the first failing entry, so a
-# red suite would take the report with it.
-#
-# It exists because both of the numbers that decide what a suite costs are
-# invisible in an ordinary log. `ok <pkg> <elapsed>` is printed once per
-# package, interleaved with forty others, so a package that grew from two
-# seconds to ninety is noticed months later by somebody complaining about CI.
-# And a skip prints nothing at all without -v, so a test that quietly stopped
-# running -- a missing tool, an unset variable, a symlink the filesystem
-# refused -- reads exactly like a test that passed.
-#
-# -count=1 because this task measures. A cached package emits no test events at
-# all -- cmd/go replays `ok <pkg> (cached)` and nothing else -- so without it the
-# table would report zero tests in zero seconds for every package that had not
-# changed, which is a truthful answer to a question nobody asked and a useless
-# one to "what does this suite cost".
-#
-# In CI the table is appended to $GITHUB_STEP_SUMMARY and rendered on the run's
-# own page; here it goes to stdout.
-#
-# --no-skips is *not* passed, here or in CI, and that is a decision rather than
-# an omission. The flag exists -- `mise run test-cost` piped through it by hand
-# is the audit -- but as a gate it would be red on every platform for reasons
-# that are facts about the runner: a `t.Skip` grep over this repository finds
-# about twenty-five call sites and every one of them is a platform-capability
-# guard (a symlink or a named pipe the filesystem refuses, a read-only mode,
-# running as root, Windows job objects against POSIX process groups) or a fuzz
-# body rejecting an input. At least one fires on each of the three operating
-# systems, ubuntu included. The skips this gate was really wanted for are the
-# ones where a *tool* is missing, and those are already fatal in CI through
-# GO_MUTANTS_TEST_REQUIRE_TOOLS=1. So the table names every skipped test
-# instead, which makes a new one visible on the summary page the day it appears
-# rather than invisible until somebody greps for it.
 description = "Run the unit test suite and print a per-package cost table"
 run = "go run ./internal/devtools/testcost -- go test -json -count=1 -timeout 15m ./... ./goatest/..."
 
 [tasks.test-cost-integration]
-# [tasks.test-cost] over the integration tier, through `testcache exec` for the
-# same reason [tasks.test-integration] is.
-#
-# This is the table that is actually worth reading: the unit tier is seconds
-# and the integration tier is tens of minutes, so it is the one that says which
-# suite to look at when a job starts timing out.
-#
-# The nesting reads oddly and is the right way round. `testcache exec` exports
-# GOCACHE into everything below it, so it has to be outermost; testcost is next,
-# because it is the one that has to see `go test` exit; and `go test` is the
-# child. Two `--` separators, one per wrapper, each meaning "everything after
-# this is the command". The wrapper's size and growth lines go to stderr and the
-# run's JSON to stdout, so neither is in the other's way.
 description = "Run the integration suite and print a per-package cost table"
 run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./internal/devtools/testcost -- go test -json -count=1 -tags integration -timeout 40m ./... ./goatest/..."
 
 [tasks.cover]
-# Coverage of the unit tier: a profile, a browsable HTML rendering, and the one
-# total line worth pasting into a pull request.
-#
-# It is a signal and never a gate, and the distinction is the reason this task
-# has no threshold in it. A coverage percentage is a measure of which lines ran,
-# not of which behaviour is checked, and a number defended by a gate is a number
-# people write tests for. This repository already has a gate on whether the
-# tests *catch* anything, and it is a far stricter one: `mise run dogfood` runs
-# go-mutants against go-mutants with --strict, so an undeclared survivor fails
-# the build. Coverage is here to answer "what did nobody even run", which
-# mutation cannot answer cheaply -- a line no test executes produces mutants
-# nothing can kill, and reading the HTML is faster than reading the survivors.
-#
-# -covermode=atomic rather than the default `set`, because the counters are
-# incremented from several goroutines in this repository's own tests, and the
-# non-atomic modes are documented as unsafe there.
-#
-# The `|| echo` on the first line is the whole difference between a coverage
-# task and a second test gate, and it is written out rather than left to a `;`
-# because mise runs a task's script under `set -e`: a bare `a; b; c` stops at a
-# failing `a` just as `a && b && c` would. `go test` writes the profile whether
-# or not the suite passed, and a red suite is exactly when somebody wants to see
-# what ran -- so stopping there would withhold the rendering at the only moment
-# it was interesting, and would do it silently.
-#
-# So a red suite is tolerated *here* and said out loud. It is not tolerated
-# anywhere that matters: `mise run test` and CI's platform-tests job are where a
-# failing suite fails the build, and this task's own CI job carries no verdict
-# at all (`continue-on-error`). What still fails this task is a profile that
-# could not be rendered, which is a real failure of the thing it is for.
-#
-# `tail` makes this task POSIX-only, which matches where it runs: the CI
-# coverage job is ubuntu, like the race jobs, because there is nothing
-# platform-specific about which lines a test executed.
 description = "Measure unit-tier coverage and render it, as a signal and never a gate"
 run = [
   "go test -covermode=atomic -coverprofile=cover.out -timeout 15m ./... ./goatest/... || echo 'cover: the suite failed; the profile below is of the run that failed' >&2",
@@ -295,22 +67,6 @@ run = [
 ]
 
 [tasks.cover-integration]
-# [tasks.cover] over the integration tier, which is where most of this
-# repository's lines are actually executed.
-#
-# -coverpkg=./... is what makes the number mean anything here. Without it a
-# package is credited only for the lines its own tests ran, and the integration
-# tier's whole shape is one package's test driving five other packages through
-# a real toolchain -- so the engine's suite would report nothing at all for
-# internal/instrument, internal/execute or internal/validate, which is exactly
-# what it exercises hardest.
-#
-# A red suite is tolerated and reported for the same reason as [tasks.cover].
-#
-# One honest limitation, worth knowing before reading the HTML: this measures
-# the *test process*. A suite that starts a child `go test` -- and this tier is
-# full of them -- gets no credit for what that child ran, because the child is
-# a different binary with no counters in it. So the number is a floor.
 description = "Measure integration-tier coverage across every package"
 run = [
   "go run ./internal/devtools/testcache exec --budget 4GiB -- go test -covermode=atomic -coverprofile=cover.out -coverpkg=./...,./goatest/... -tags integration -timeout 90m ./... ./goatest/... || echo 'cover-integration: the suite failed; the profile below is of the run that failed' >&2",
@@ -319,96 +75,18 @@ run = [
 ]
 
 [tasks.bench]
-# The three packages with benchmarks, into a file the nightly job keeps.
-#
-# Named one by one rather than `./...` for the same reason [tasks.golden-update]
-# names its packages: `-bench .` over the whole tree would compile and link
-# every test binary in the repository to discover that most of them have no
-# benchmarks, and the two minutes that costs are two minutes of nothing.
-#
-# -run '^$' keeps the tests out of the measurement -- `go test -bench` runs both
-# by default, and a benchmark file's neighbours are not what is being timed.
-# -benchmem because every one of these three is about allocation as much as
-# time: the glob matcher and the TOML parser are on the hot path of a run, and
-# internal/snapshot copies a repository.
-#
-# bench.txt rather than stdout because the numbers are only useful compared with
-# yesterday's, and `benchstat old.txt new.txt` is how that comparison is made.
-# The nightly job uploads it; the file is git-ignored.
 description = "Run the benchmarks and write bench.txt"
 run = "go test -run '^$' -bench . -benchmem ./internal/glob ./internal/config ./internal/snapshot > bench.txt"
 
 [tasks.test-cache-status]
-# The last line of a long run, and the first thing to look at when a disk fills.
-# It prints both directories the harness owns outside a temporary directory: the
-# shared build cache, and the root a kept-on-failure scratch directory is filed
-# under. Both are named by GO_MUTANTS_TEST_GOCACHE and GO_MUTANTS_TEST_KEEP_DIR
-# when those are set, and both live under <os.UserCacheDir()>/go-mutants-test
-# otherwise, so a developer who wants everything this harness ever wrote can
-# delete that one parent.
 description = "Print where the test-owned build cache is and how much it holds"
 run = "go run ./internal/devtools/testcache status"
 
 [tasks.test-clean]
-# `go clean -cache` against the test-owned GOCACHE, then a removal of whatever
-# the go command leaves behind, then the kept scratch root. The go command's own
-# eviction runs first because it takes the cache's lock, so a `go build`
-# finishing in another terminal sees an emptied cache rather than a tree being
-# deleted underneath it.
-#
-# Two things can stop a directory being emptied, and they end this task
-# differently on purpose:
-#
-#   refused, exit 1   The directory does not carry the harness's marker file, so
-#                     it is not emptied at all -- not even partly, and
-#                     `go clean -cache` is not run against it either.
-#                     `GO_MUTANTS_TEST_GOCACHE=$HOME` is an absolute path like
-#                     any other, so ownership is a file rather than a promise:
-#                     the harness writes it when a test resolves the cache, and
-#                     this task reports and fails rather than deleting something
-#                     it cannot show it made. `mise run test-cache-status` says
-#                     which directories are stamped.
-#   unfinished, exit 0  A file the removal could not unlink -- an antivirus
-#                     scanner, a test binary Windows has not finished unmapping
-#                     -- is retried once, then reported, and the task still
-#                     succeeds. A collector that fails a run because a directory
-#                     it wanted to delete is still there has done more damage
-#                     than the directory ever would.
-#
-# So a non-zero exit from this task means "I was pointed at something that is
-# not mine", and never "the disk was busy". Both cases print what happened.
 description = "Empty the test-owned build cache and the kept scratch root"
 run = "go run ./internal/devtools/testcache clean"
 
 [tasks.golden-update]
-# Rewrite every committed golden file, then read the diff before committing it.
-#
-# The packages are named one by one rather than with `./...`, and that list is
-# the whole point of the task. There is one `-update` flag in this repository —
-# it is registered in internal/testkit, so it is the same flag in every test
-# binary that links the harness — and `go test -update ./...` would therefore
-# regenerate every golden in the tree in one command, including the ones nobody
-# was looking at. A golden regenerated without being read is a golden that
-# records a bug.
-#
-# internal/testkit/golden_test.go::TestGoldenPackagesAreNamedByTheUpdateTask
-# parses these lines and fails when a package holding a `testdata/*.golden*`
-# file is missing from them, so the list cannot go stale in silence.
-#
-# It is two commands rather than one because internal/engine's goldens are run
-# reports of real runs, so the test that records them is
-# `//go:build integration`-tagged. A `go test ./internal/engine -update` without
-# the tag compiles a package with no golden test in it, passes, and rewrites
-# nothing — the task would name the package and regenerate none of it. The
-# second command is checked by
-# TestGoldenUpdateTaskHandlesTaggedPackages, which requires every
-# integration-only golden package to be reached with the tag.
-#
-# The packages come *before* `-update` in both, which is not a style choice.
-# cmd/go knows its own test flags and nothing else; on an unrecognised one it
-# stops parsing and hands the rest of the command line to the test binary, so
-# `go test -update ./internal/report` runs the package in the working directory
-# with two arguments it ignores — silently, and with every golden left alone.
 description = "Rewrite the committed golden files, to be read before committing"
 run = [
   "go test ./internal/cli ./internal/console ./internal/instrument ./internal/report ./internal/tui ./trace -update",
@@ -416,30 +94,6 @@ run = [
 ]
 
 [tasks.fmt]
-# `gofmt -l` exits 0 even when it lists files, so the offenders have to be
-# turned into a non-zero exit explicitly on both shells.
-#
-# taplo names its files rather than finding them, and that is not tidiness.
-# Bare `taplo fmt --check` walks the filesystem, which puts every TOML anybody's
-# run happens to drop under the tree in front of a formatter nobody asked about
-# it -- a stray `fixtures/x/stray.toml` takes this task from 7 files to 8 and
-# fails the first step of `check` on a file the developer never wrote. It is the
-# defect .gitleaks.toml exists for, one task earlier, and it fails sooner and
-# reads worse because `fmt` runs before anything else.
-#
-# The list is the same one [tasks.lint] gives `taplo check`, and
-# internal/devgates holds both of them to `git ls-files '*.toml'` so that a new
-# TOML file cannot be checked by one and missed by the other.
-#
-# `gofmt -l .` above walks the filesystem too, and a stray .go file under the
-# tree fails this task the same way -- measured, not assumed. It is left alone,
-# and the difference is not the exposure. taplo had *two* call sites answering
-# two different questions about the same files, one naming them and one finding
-# them, so a file added to the named list was checked by one and missed by the
-# other: the inconsistency was the defect and the list already existed. gofmt
-# has one call site and no list, so naming its files would mean deriving one
-# from `git ls-files` -- which would make formatting a question only a git
-# checkout can answer, for an exposure nobody has hit.
 description = "Check Go and TOML formatting without rewriting any file"
 run = [
   'test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }',
@@ -453,16 +107,9 @@ run_windows = [
 [tasks.lint]
 description = "Run the Go, spelling, TOML, workflow, YAML, secret, and doc linters"
 
-# gomutants-vet is first because it is ours and it is the only one here that
-# reads types. Everything else in this list is somebody else's opinion about Go
-# or about a file format; this is the opinion this repository formed about
-# itself, and a check that needs the type checker cannot be written as one of
-# the scans under internal/devgates -- see cmd/gomutants-vet.
-#
-# Both modules by name, for the reason every other whole-tree pattern here
-# names both: `./...` walks past a nested module without a word.
 run = [
   "go run ./cmd/gomutants-vet ./... ./goatest/...",
+  "git ls-files | grep -vE '^(fixtures/|vendor-assets/|LICENSES/)|/testdata/|[.]go$' | tr '\\n' '\\0' | xargs -0 ocomment check --policy legal",
   "golangci-lint run",
   "typos",
   "taplo check mise.toml .go-mutants.toml .typos.toml REUSE.toml committed.toml .rumdl.toml .gitleaks.toml goatest/.goatest.toml goatest/REUSE.toml goatest/.gitleaks.toml",
@@ -481,279 +128,13 @@ run = [
   "mise run test",
   "mise run lint",
 ]
-# GOWORK=off and nothing else would not do it, and that is worth stating where
-# somebody will look for it. internal/discover reads go.work as a *file* inside
-# the snapshot -- DetectWorkspace joins it to the root and os.ReadFile's it --
-# so a run pointed at this directory finds the workspace whatever the
-# environment says, and refuses it with GOM4102: a single-module discovery has
-# no module for its mutants to be relative to and no one baseline to measure
-# against. The refusal is right. What is wrong is pointing it here.
-#
-# The engine can measure a workspace -- `go-mutants/workspace-report` is a
-# document type it publishes -- and this task deliberately does not ask for one.
-# The seventy-five [[mutation.expect]] rows below are identities minted in a
-# single-module domain, and a workspace run re-mints every one of them. Two
-# ledgers for one gate is the cost, and ADR 0012 already says so. So this
-# measures the engine's own module, from inside it, and dogfood-runner measures
-# the runner's from inside that.
 [tasks.dogfood]
-# go-mutants against go-mutants. The scope, the measured score and the floor
-# all live in .go-mutants.toml, next to the settings they justify; only the two
-# things that cannot be expressed in that file live here.
-#
-# The budget this job is sized against, in counted quantities rather than in
-# seconds: 4396 mutants catalogued at profile balanced, 4321 of them detected,
-# 836 tests profiled across 17 test binaries, three that never return and are
-# settled by a counted loop rather than by the clock, 75 declared rows of which
-# 27 are uncovered, and no recorded refusal at all. Those are the numbers that decide what this job costs, and
-# every one of them is the same on any machine. What a machine then takes to
-# get through them is the machine's business; the timing narrative below is
-# history rather than a budget, and each figure in it is labelled with the
-# scope that produced it.
-#
-# The 2549-mutant figure this note used to open with is the ancestor of that
-# count: it was the scope at 100.00% under the default test-level narrowing
-# (2026-09-08), which runs each mutant against the tests that reach it rather
-# than every binary that does. Warm, at --jobs 4
-# against a test-owned build cache with the derived timeout at its 10s floor,
-# it measured about 5m10s on the shared machine under a load average near five (survivors pay a whole-binary confirmation, ADR 0010);
-# the 2497-mutant, 6m13s-6m30s figures the package-level default recorded
-# before this change are kept in the timing narrative below as its ancestor.
-# Cold on GitHub's ubuntu runner is what this PR's own CI first measures under
-# the new default. Cold is what CI measures, because the dogfood
-# job points GO_MUTANTS_TEST_GOCACHE at the runner's temporary directory and
-# never restores it. .go-mutants.toml records all of that under [policy], next
-# to the scope it is a measurement of.
-#
-# What the gate cost before is history, and every figure is labelled with the
-# scope that produced it, because a duration without its scope reads as a
-# contradiction of the one above rather than as its ancestor:
-#
-#   2 files, 16 mutants          7m08s   every mutant ran every test binary in
-#                                        the module, internal/discover's
-#                                        toolchain-driving one included.
-#   1 file + 2 packages, 121     48-50s  a `test.command` naming package
-#                                        patterns began to scope the *test
-#                                        binaries* and not only the baseline,
-#                                        so a mutant runs the suites that
-#                                        cover it.
-#   3 packages, 566              ~9s     internal/mutation's own suites grew
-#                                        the tests that let the scope take
-#                                        that whole package.
-#   6 packages, 600              ~10s    internal/testflag,
-#                                        internal/operatorselect and
-#                                        internal/drift joined the floor with
-#                                        no survivor to kill.
-#   8 packages, 835              24-30s  internal/coverage and internal/schemas
-#                                        joined, and one of their mutants loops
-#                                        forever.
-#   9 packages, 1260             78-79s  internal/config joined, and four more
-#                                        of its mutants never return. Before
-#                                        the memory bound.
-#   9 packages, 1296             52-58s  every mutant is bounded in memory as
-#                                        well as in time, so the two that
-#                                        allocate are killed in a second and a
-#                                        half instead of waiting out two
-#                                        timeouts each. The catalogue grew by
-#                                        36 in the same step, because
-#                                        `test.memory` and the size vocabulary
-#                                        that reads it are mutated too.
-#   10 packages, 1402        1m28-1m38s  internal/gocmd joined, and the row
-#                                        above was rerun beside it and measured
-#                                        1m07-1m33s: the 52-58s is a different
-#                                        machine, and only the pair is a
-#                                        comparison.
-#   11 packages, 2497        6m13-6m30s  internal/report joined: what a run
-#                                        writes down, and the first package in
-#                                        the scope that writes files. Nearly
-#                                        as many mutants again, and a fourth
-#                                        mutant that never returns. The range
-#                                        is the two runs on the 10s floor; two
-#                                        more on the same machine read 8m42s
-#                                        and 9m02s while it had other work,
-#                                        and the tally was the same on all.
-#
-# Every row is a warm cache. The last is the exception in a second way: every
-# other row was measured against a machine doing nothing else, which is what
-# makes them comparable with each other and not with it. The middle two were
-# measured back to back on one idle machine; the fifth was measured on the same machine with other work on
-# it, which is why it is a range and why it is not three times the row above it
-# in any strict sense; the sixth and seventh were measured on a different
-# machine, which also reran the fifth and got 24-28s; and the eighth was
-# measured on a third, shared one, which also reran the seventh and got
-# 1m07-1m33s. So the pairs to compare are the fifth with the sixth, the sixth
-# with the seventh, and the seventh with the last -- each against the rerun
-# written beside it rather than against the number in the row above. Only the
-# ratios travel.
-#
-# A good part of the difference between the fourth and fifth rows is one mutant
-# rather than the other two hundred and thirty-four, and almost all of the
-# difference between the fifth and the sixth is four mutants rather than the
-# other four hundred and twenty-one. Negating ParseTextfmt's scanner loop makes
-# an empty document loop forever, and negating either loop of internal/config's
-# position walk does the same to a TOML document. The only way to catch that is
-# to wait out the per-mutant timeout, twice, because a timeout is measured again
-# before it is believed.
-#
-# The seventh row is that cost being paid down rather than tolerated. Two of
-# those five did not spin, they allocated -- lineStarts, negated or with its
-# stride turned into a subtraction, appends instead of advancing -- and a mutant
-# is now bounded in memory as well as in time, so those two are killed at about
-# 1.1 GiB after a second and a half rather than waiting twice. Sixty seconds of
-# waiting where there were a hundred, and a scope 36 mutants larger that
-# finishes 25 seconds sooner. The timeout is itself max(10s, slowest baseline
-# x 5) and the bound is max(1GiB, largest baseline peak x 4); both grow with the
-# machine, and .go-mutants.toml says so where the numbers live. Both readings
-# are also from before the tree could count what a loop does: a mutant that
-# never returns is ended by its own counter in milliseconds now, so the sixty
-# seconds this row paid down the next one stopped paying at all.
-#
-# The last row is the same arithmetic reaching a different answer, and it is the
-# one worth reading before the next widening. 106 more mutants cost about
-# nothing warm -- the pair beside it overlaps -- and the three that never return
-# still cost sixty seconds, because a warm baseline leaves the timeout at its
-# 10s floor. Cold, they cost far more: the first of the three baseline runs is
-# the one doing the compiling, so `slowest baseline x 5` is set by a build, and
-# a tenth package took that run from 4.0s to 5.5s and the timeout from 20.1s to
-# 27.7s. Three mutants pay that twice each. A widening's cold cost is therefore
-# mostly a question about the *baseline*, not about the catalogue, which is why
-# internal/gocmd's own would-be fourth spinner was turned into a kill rather
-# than accepted -- see .go-mutants.toml under [mutation].
-#
-# Both of those readings are from before the budget learned to tell a baseline
-# run from a cache lookup. `go test` without `-count=1` reprints a passing
-# result, so of three runs in a fresh snapshot only the first runs the tests --
-# the copied files carry timestamps the cache has never seen -- and the rule
-# that takes the runs after the first was taking the lookups. A mutant run never
-# hits that cache, so the budget is now taken from the runs that ran, which here
-# was the first one. The "10s floor" above is therefore history: this gate's
-# timeout is now `slowest run that ran x 5`, and the counted quantity that
-# changed is the verdicts, not the clock -- a scoped measurement of four files
-# in internal/discover read eight timeouts and fourteen inconclusive verdicts
-# out of 174 mutants before, and none of either after.
-#
-# "Which here was the first one" is history too, and the fix went the other way:
-# every baseline run after the first is now given `-count=1` through GOFLAGS, so
-# `baseline_runs = 3` buys three measurements rather than one and two lookups,
-# and the rule that prefers the runs after the first has runs to prefer. The
-# first is left as the user wrote it -- it is the run that proves the suite
-# green, and the compiling one either way. Measured here: 8.2s, 4.9s, 6.7s where
-# it read 13.4s, 1.7s, 1.7s, a derived timeout of 33.7s where the same machine
-# derived 66.8s, and the same tally to the mutant. Three mutants never return
-# and each pays that budget twice, so the difference is most of what this gate
-# spends past its executions.
-#
-# --strict is passed rather than written into the file because the gate belongs
-# to the caller: policy.strict stays false so that `go-mutants run` on a
-# developer's machine reports a survivor instead of failing on it, and this
-# task is the caller that insists. That flag is the whole difference between
-# the two runs, and it is the only thing that fails this job on one survivor --
-# policy.minimum_score = 99 is compared either way and, at this size, does not
-# fail until fourteen.
-# --profile balanced is redundant with the file and stated anyway, so that a
-# change to the file's profile shows up as a conflict to resolve rather than as
-# a silently different gate.
-#
-# The one variable is load-bearing:
-#
-#   RAPID_SEED=1      pgregory.net/rapid draws a fresh random seed per process
-#                     unless one is pinned, and internal/interval's property
-#                     suite is part of what kills these mutants. Unpinned, a
-#                     marginal mutant could be killed on one run and survive on
-#                     the next, which would make the score -- and therefore the
-#                     minimum_score gate -- a coin flip. Nightly re-explores
-#                     with random seeds and a far bigger budget instead. It is a
-#                     variable rather than a test.command argument because rapid
-#                     reads it with os.LookupEnv in its own init() (engine.go),
-#                     where it becomes the default for -rapid.seed, and
-#                     internal/execute hands this process's environment to every
-#                     per-mutant test binary -- which is what a test.command
-#                     argument would not reach.
-#
-# This task used to export GOFLAGS=-vet=off as well, and no longer does, because
-# no user should have to. The instrumented snapshot is generated code that
-# splices every mutant of an expression in beside the original, so
-# `x == "." && x == ".."` is a normal shape in it and vet's `bools` analyzer
-# rejects exactly that; the engine now merges `-vet=off` into GOFLAGS itself for
-# the two commands it issues against that tree -- the instrumented baseline and
-# the per-package `go test -c` -- and leaves the pristine baseline vetted, so a
-# real finding in this repository's own source still fails this job.
-#
-# The run goes through `testcache exec` for the same reason the integration
-# suite does, and rather more urgently: a mutation run compiles a per-package
-# test binary for every mutant it schedules, each against a snapshot at an
-# absolute path that exists for that run alone, so it is the single biggest
-# producer of cache entries nothing will ever look up again. The wrapper exports
-# GOCACHE and GO_MUTANTS_TEST_GOCACHE into the run, prints the size and the
-# growth to stderr when it ends, empties the cache if the run left it over
-# 4GiB, and exits with the run's own status -- so --strict still fails this job
-# on one undeclared survivor.
-#
-# One consequence is worth stating rather than discovering: the inner
-# `go run ./cmd/go-mutants` compiles go-mutants *itself* into the test cache,
-# which is exactly what the note on [tasks.test] above says that task avoids.
-# The trade is accepted here because the alternative is worse in both
-# directions. Compiling the CLI into the developer's own cache while its
-# thousands of grandchildren compile into the test one would split a single run
-# across two caches, so a `test-clean` would leave half of it behind and the
-# reported growth would be missing its first hundred megabytes; and there is no
-# way to point only the grandchildren at a different GOCACHE, because they
-# inherit the environment this process is started with. go-mutants' own
-# compilation is a rounding error next to what the run then does, and the whole
-# lot is trimmed by the same budget.
 description = "Mutation-test this repository with go-mutants itself"
 env = { RAPID_SEED = "1" }
 run = "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./cmd/go-mutants run --strict --profile balanced"
 
 [tasks.dogfood-audit]
 description = "Dogfood with a recording, then re-derive the report from it"
-# The audit nothing was running.
-#
-# internal/devtools/traceaudit reads a run report and the recording beside it
-# and re-derives one from the other, without importing a line of the code that
-# wrote either. It has existed, with its own tests, while no task and no CI job
-# ever started it -- and its own doc comment gave a command that does not work,
-# which is what a command nobody runs looks like after a while.
-#
-# What it answers is not what dogfood answers. dogfood asks whether the tests
-# catch a mutant; this asks whether the document saying so agrees with the
-# account of what ran. A report is written by the same run it describes, so the
-# run is the only witness to its own honesty until something reads the two
-# separately.
-#
-# A finding the recording cannot settle is counted apart from a disagreement --
-# "I cannot check this" is neither "this is fine" nor "this is broken" -- and
-# only disagreements change the exit code.
-#
-# The recording goes under the report directory because a bare --trace puts it
-# there, and the audit is handed that directory rather than a file: the run id
-# in the path is minted while the run happens, so a command line written here
-# cannot contain it.
-#
-# The report is asked for rather than picked up off disk. `reports/mutation/
-# mutation.json` is published beside the recording and is *not* the document
-# this audits: it is the Stryker projection, which is lossy by design and
-# carries schemaVersion instead of document_type. The lossless account is the
-# run-report the history store keeps, and `report latest --json` is how a
-# command line asks for it. Writing this task against the file that was simply
-# there is the mistake this line exists to have already made.
-#
-# Measured, after being wired up rather than before -- which is the mistake this
-# line exists to have already made. On one machine, this repository, the full
-# scope:
-#
-#   dogfood        (no --trace)   baseline 9.1s / 6.7s     whole run ~20m
-#   dogfood-audit  (--trace)      baseline 3m0s / 2m27s    whole run 27m31s, 103 MiB
-#
-# The baseline is twenty times slower and the whole run is about a third
-# slower, because the recorder writes one file per exec and the baseline runs
-# seventeen packages' tests three times while a mutant run is one test. Quoting
-# the twenty without that mechanism is what a borrowed number looks like: a
-# number carries what it measured, and a different subject makes it a claim.
-#
-# That is why this is not the CI gate. The audit answers a question worth
-# asking -- whether the document agrees with the account of what ran -- and not
-# one worth asking on every push at a third again of the longest job.
 run = [
   "go run ./internal/devtools/testcache exec --budget 4GiB -- go run ./cmd/go-mutants run --strict --profile balanced --trace",
   "go run ./cmd/go-mutants report latest --json > reports/mutation/latest-run-report.json",
@@ -762,24 +143,6 @@ run = [
 
 
 [tasks.package]
-# Snapshot artifacts, so that the packaging path is exercised on every CI run
-# rather than for the first time on a tag. The release workflow drives the same
-# .goreleaser.yaml without --snapshot.
-#
-# The smoke is not `--version; echo ok`. A build whose `-X` missed its target
-# links and runs perfectly and prints the compiled-in default, so the check
-# asserts that what came out is the version goreleaser stamped rather than
-# internal/cli's own fallback. That is the one packaging mistake nothing else
-# in this repository would catch.
-#
-# The fallback is read out of the source with `go run` rather than written here
-# as a literal, so that bumping internal/cli.Version cannot quietly turn this
-# check into one that passes for an unstamped build.
-#
-# `doctor --json` is deliberately not part of the smoke. It probes for a Go
-# toolchain, which is a fact about the machine unpacking the archive rather
-# than about the archive, and a packaging gate that fails because a bare
-# container has no `go` fails for the wrong reason.
 description = "Build unpublished snapshot artifacts and smoke-test the binary"
 run = ["goreleaser release --snapshot --clean", '''
   set -eu
@@ -812,26 +175,6 @@ description = "Install the git pre-commit and commit-msg hooks"
 run = "lefthook install"
 
 [tasks.dogfood-runner]
-# goatest measuring goatest, from the root of this repository.
-#
-# `dir` is what makes it work at all. The runner refuses a workspace on purpose
-# -- `internal/golang` rejects more than one main module, and its own
-# limitations page says workspace aggregation is deliberately deferred -- so a
-# run started from here would be started in exactly the layout it declines.
-# GOWORK=off is the other half: DetectWorkspace reads go.work as a *file* and
-# walks up to find it, so unsetting the variable is not enough.
-#
-# It is the runner's own gate, carried across whole rather than folded into
-# [tasks.dogfood]. The two measure different products with different tools, and
-# a task that did both would report one verdict over two questions.
-#
-# Leave the tree alone while it runs. This takes an hour and a half over the
-# whole module, and goatest watches the repository it is measuring: a commit, a
-# checkout or a merge underneath it ends the run with `repository changed during
-# verification; refusing stale evidence` and nothing is published. That is the
-# right refusal -- evidence gathered against a tree that no longer exists is
-# evidence about nothing -- and it is written here because the cost of learning
-# it is ninety minutes.
 dir = "goatest"
 description = "Run goatest against its own module"
 env = { GOWORK = "off" }
@@ -843,10 +186,6 @@ run_windows = [
   "go build -o ./dist/dogfood/goatest.exe ./cmd/goatest",
   '.\dist\dogfood\goatest.exe verify --ui=plain',
 ]
-
-# The runner's own tasks, carried across from goatest/mise.toml with `dir` and
-# GOWORK=off: the runner refuses a workspace on purpose, so every one of these
-# has to be started in the module rather than above it.
 
 
 [tasks.test-audit]
@@ -888,17 +227,6 @@ if ($LASTEXITCODE -ne 0) { $auditExit = 1 }
 exit $auditExit
 """
 
-# Two scopes, because they answer to different readers.
-#
-# `dogfood` measures the whole project, which is the run whose verdict means
-# something: ASSURED is defined over a full scope and nothing else. It is also
-# over an hour of work on this repository - the mutation phase evaluates every
-# mutant of 2591 tests - so it belongs to a developer who asked for it, or to a
-# schedule, and not to a check that has to answer a pull request.
-#
-# `dogfood-changed` measures what a change touched. That is the scope
-# docs/ci.md recommends to anybody using goatest in a workflow, and the one this
-# repository's own workflow should therefore be seen using.
 [tasks.dogfood-changed]
 dir = "goatest"
 env = { GOWORK = "off" }
@@ -926,21 +254,7 @@ env = { GOWORK = "off" }
 description = "Compare two assurance reports: verdict, accounting, mutant transitions, and lost kills"
 run = "go run ./internal/devtools/reportdiff"
 
-# Takes arguments, and says so.
-#
-# It read `mise run proof-audit` with no arguments until the day somebody ran
-# it, which printed a usage message and exited 2 - a task that had never worked
-# and could not, because the tool needs a recording and a directory of coverage
-# profiles and neither has a default. A description that implies a task runs is
-# a description that will be believed.
 
-# Takes arguments, and says so.
-#
-# It read `mise run proof-audit` with no arguments until the day somebody ran
-# it, which printed a usage message and exited 2 - a task that had never worked
-# and could not, because the tool needs a recording and a directory of coverage
-# profiles and neither has a default. A description that implies a task runs is
-# a description that will be believed.
 [tasks.proof-audit]
 dir = "goatest"
 env = { GOWORK = "off" }

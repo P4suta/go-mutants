@@ -794,8 +794,8 @@ could not be built or read.
 ## Recording what a target touched
 
 ```go
-request.RecordTestLog = true          // Exec, Probe and Control alike
-result.TestLogs                       // one per binary started, in launch order
+request.RecordTestLog = true
+result.TestLogs
 ```
 
 A Go test binary can be told to write down what it consults, and the go command
@@ -1034,7 +1034,7 @@ repository, the request or the machine.
 ### `DiagnosticCode`
 
 ```go
-func DiagnosticCode(err error) string   // "GOM7505", or "" when it carries none
+func DiagnosticCode(err error) string
 ```
 
 The codes are the one part of a failure promised to stay put, and they live in
@@ -1324,7 +1324,6 @@ never existed and there is nothing to read it from.
 
 ```go
 ws, err := gomutants.Open(ctx, root, gomutants.OpenOptions{Trace: mySink})
-// …or, with no sink at all:
 defer func() { publish(ws.Recording()) }()
 ```
 
@@ -1590,7 +1589,6 @@ hashes. A consumer storing mutation evidence needs both halves, and the second
 one is here:
 
 ```go
-// gomutants.ModulePath is the module path it looks for.
 info, ok := gomutants.ReadBuildInfo()
 ```
 
@@ -1674,7 +1672,6 @@ contributes all two hundred. The line-level rule has been the engine's since
 ```go
 session, err := workspace.Prepare(ctx, gomutants.PrepareOptions{
 	Selection: &gomutants.Selection{Lines: map[string][]gomutants.LineRange{
-		// Module-relative, '/'-separated. Ranges are 1-based and inclusive.
 		"internal/clamp/clamp.go": {{First: 41, Last: 48}, {First: 90, Last: 90}},
 	}},
 })
@@ -1792,9 +1789,7 @@ comes from — and each answer was one more thing to get wrong on its own.
 
 ```go
 module, err := workspace.Module(ctx, gomutants.ModuleQuery{
-	// Module-relative patterns as go list reads them. Empty means "./...".
 	Packages: []string{"./..."},
-	// Build tags are the consumer's own; go-mutants invents none.
 	Tags: []string{"integration"},
 })
 if err != nil {
@@ -1804,7 +1799,6 @@ for _, pkg := range module.Packages {
 	if !pkg.HasTests {
 		continue
 	}
-	// pkg.Dir is absolute and inside the frozen snapshot, so it may be read.
 	fmt.Println(pkg.ImportPath, pkg.Dir, pkg.GoFiles)
 }
 ```

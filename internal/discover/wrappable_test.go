@@ -8,18 +8,6 @@ import (
 	"testing"
 )
 
-// The three type gates the form staircase climbs, and the name index a
-// completion has to dodge.
-//
-// Each gate asks a different question of the same expression -- is this a value
-// at all, is it the universe bool, is it boolean underneath but not that -- and
-// the order they are asked in is what keeps an existing candidate on the form
-// it already uses. A gate that widened would move candidates between forms,
-// which changes the bytes of the instrumented tree for no gain; one that
-// narrowed would turn a site into a skip.
-
-// TestTheThreeTypeGatesAskThreeDifferentQuestions is the staircase's type half,
-// asked directly rather than through the form a site came out as.
 func TestTheThreeTypeGatesAskThreeDifferentQuestions(t *testing.T) {
 	t.Parallel()
 
@@ -72,10 +60,6 @@ func TestTheThreeTypeGatesAskThreeDifferentQuestions(t *testing.T) {
 		})
 	}
 
-	// A type expression is recorded by the checker and is not a value, which
-	// is the one shape all three gates have to refuse for the same reason: a
-	// form that wrapped it would be selecting between two types rather than
-	// between two values.
 	t.Run("a type expression", func(t *testing.T) {
 		t.Parallel()
 
@@ -96,8 +80,6 @@ func TestTheThreeTypeGatesAskThreeDifferentQuestions(t *testing.T) {
 		}
 	})
 
-	// And an expression the checker recorded nothing for, which is what a gate
-	// meets when it is asked about a node from another file.
 	t.Run("an expression with no entry", func(t *testing.T) {
 		t.Parallel()
 
@@ -107,8 +89,6 @@ func TestTheThreeTypeGatesAskThreeDifferentQuestions(t *testing.T) {
 		}
 	})
 
-	// And with no record at all, which is the fail-closed path every gate
-	// spells out for itself.
 	t.Run("no record at all", func(t *testing.T) {
 		t.Parallel()
 
@@ -120,12 +100,6 @@ func TestTheThreeTypeGatesAskThreeDifferentQuestions(t *testing.T) {
 	})
 }
 
-// TestAGateRefusesAValueInAPositionNoFormCanUse is the other half of each
-// gate: a type it accepts in a slot it does not.
-//
-// The two halves are separate questions and both are load-bearing. An
-// assignment target is a perfectly ordinary bool and a guard there would be an
-// assignment to a parenthesised expression, which is not Go.
 func TestAGateRefusesAValueInAPositionNoFormCanUse(t *testing.T) {
 	t.Parallel()
 
@@ -164,15 +138,6 @@ func TestAGateRefusesAValueInAPositionNoFormCanUse(t *testing.T) {
 	}
 }
 
-// TestEveryNameACompletionMayNotBindIsIndexed pins [guardResolver.indexTakenNames].
-//
-// Three scopes, and each of them is wrong in a different way if it is missed. A
-// local variable sharing the name shadows the import for exactly the statements
-// a guard sits in. An existing import binds a name no identifier node spells,
-// because a plain `import "time"` writes `time` nowhere. And a name in the
-// *package* block is not shadowing at all: Go forbids one name appearing in a
-// file block and in the package block of the same package, so a `var carrier`
-// in a sibling file makes `import carrier "…"` here a hard error.
 func TestEveryNameACompletionMayNotBindIsIndexed(t *testing.T) {
 	t.Parallel()
 
@@ -182,11 +147,11 @@ func TestEveryNameACompletionMayNotBindIsIndexed(t *testing.T) {
 		"func probe() {\n\tlocalName := time.Now()\n\t_ = localName\n\t_ = clock.Mutex{}\n}\n")
 
 	for _, name := range []string{
-		"localName",    // an identifier in the file
-		"probe",        // one the file declares
-		"time",         // the implicit name of a plain import, spelled by no node
-		"clock",        // an aliased import's name
-		"packageLevel", // the package block, which the checker has already built
+		"localName",
+		"probe",
+		"time",
+		"clock",
+		"packageLevel",
 	} {
 		if !g.taken[name] {
 			t.Errorf("the index does not hold %q, which a completion must not bind", name)
@@ -199,9 +164,6 @@ func TestEveryNameACompletionMayNotBindIsIndexed(t *testing.T) {
 		t.Error("the index holds a name nothing in the file binds")
 	}
 
-	// And with no package information, which is what a scan over a file the
-	// checker refused looks like: the two scopes that can still be read are
-	// still read.
 	partial := newGuardResolver(parseProbe(t, "package pkg\n\nimport \"time\"\n\nfunc probe() {\n\tlocal := 1\n\t_ = local\n}\n"),
 		nil, nil, nil, nil)
 	for _, name := range []string{"local", "time", "probe"} {
@@ -211,15 +173,6 @@ func TestEveryNameACompletionMayNotBindIsIndexed(t *testing.T) {
 	}
 }
 
-// TestTheParentIndexIsCompleteAndCorrect pins [guardResolver.indexParents],
-// which every outward walk in this file reads.
-//
-// The index is built with a stack that pushes on each node and pops on the nil
-// visit that closes it, and that is the only shape that stays balanced:
-// ast.Inspect skips the closing visit for a node whose callback returned false,
-// so a walk that pruned anywhere would leave the stack short and give every node
-// after it the wrong parent. A wrong parent is not a wrong verdict -- it is a
-// guard written around the wrong bytes.
 func TestTheParentIndexIsCompleteAndCorrect(t *testing.T) {
 	t.Parallel()
 
@@ -232,9 +185,6 @@ func TestTheParentIndexIsCompleteAndCorrect(t *testing.T) {
 
 	g := guardOver(t, src)
 
-	// Every node but the file itself has a parent, and every parent really
-	// encloses its child. Walking the tree a second way -- ast.Inspect's own
-	// order -- is what makes this a check rather than a restatement.
 	var counted int
 	for node, parent := range g.parent {
 		counted++
@@ -250,8 +200,6 @@ func TestTheParentIndexIsCompleteAndCorrect(t *testing.T) {
 		t.Fatal("the parent index is empty")
 	}
 
-	// And the chain from the deepest leaf reaches the file, which is what
-	// every outward walk in this package relies on to terminate.
 	depth, reachedFile := 0, false
 	for node := ast.Node(deepestLeaf(t, g)); node != nil; node = g.parent[node] {
 		depth++
@@ -267,8 +215,6 @@ func TestTheParentIndexIsCompleteAndCorrect(t *testing.T) {
 	}
 }
 
-// deepestLeaf is the last identifier of the fixture in source order, which the
-// fixtures here put inside a function literal inside a function body.
 func deepestLeaf(t *testing.T, g *guardResolver) ast.Node {
 	t.Helper()
 
@@ -288,15 +234,6 @@ func deepestLeaf(t *testing.T, g *guardResolver) ast.Node {
 	return found
 }
 
-// TestWhichImportsSupplyANameATypeCanBeWrittenWith pins
-// [guardResolver.indexImports].
-//
-// Three import forms supply no name a type can be written with, and the
-// difference between them matters to the answer rather than to the wording: a
-// blank import binds nothing, a dot import binds the package's *contents*
-// rather than the package, and an aliased one binds the alias. A path imported
-// twice keeps the first usable spelling, so that the answer is the file's own
-// source order rather than a map iteration.
 func TestWhichImportsSupplyANameATypeCanBeWrittenWith(t *testing.T) {
 	t.Parallel()
 
@@ -311,9 +248,9 @@ func TestWhichImportsSupplyANameATypeCanBeWrittenWith(t *testing.T) {
 		")\n"), nil, nil, nil, nil)
 
 	for path, want := range map[string]string{
-		"time": "",      // no alias: the caller resolves it to the package's own name
-		"sync": "clock", // an alias, which is the name to write
-		"os":   "first", // the first usable spelling, in source order
+		"time": "",
+		"sync": "clock",
+		"os":   "first",
 	} {
 		got, indexed := g.imports[path]
 		if !indexed {

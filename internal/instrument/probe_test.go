@@ -25,16 +25,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestProbeRuntimeGolden pins the generated probe package for the same
-// three-mutant catalogue the activation runtime's fixture uses.
-//
-// The fixture is the whole contract of the probe half in one file: the name a
-// probe form will call, the environment variable that turns recording on, the
-// exit status that stands in for silence, and the header line every reader of
-// the log matches against. Each of those is read somewhere else — by the
-// rewriter, by the runner, by [instrument.ReadInfectionLog] — so a change to
-// any of them has to arrive as a diff somebody justifies rather than as a
-// consumer that quietly stops agreeing.
 func TestProbeRuntimeGolden(t *testing.T) {
 	t.Parallel()
 
@@ -73,36 +63,17 @@ func TestProbeRuntimeGolden(t *testing.T) {
 		}
 	}
 
-	// The catalogue's IDs are the activation runtime's business and nobody
-	// else's: a probe tree activates nothing, so a table from ID to index in it
-	// would be a second copy of a mapping only the other runtime reads.
 	for _, m := range catalog.Mutants() {
 		if bytes.Contains(out, []byte(m.ID)) {
 			t.Errorf("the generated probe runtime carries mutant %s's full ID, which nothing in a probe tree resolves", m.DisplayID)
 		}
 	}
 
-	// Two exports and no third. Infect is what a form calls once it has decided
-	// its site's two readings disagree; Differs makes that decision for the one
-	// form that holds both as values. Everything else a probe tree could reach
-	// for -- the log, the guard array, the header -- stays unexported.
 	if got, want := exportedNames(t, generated, out), []string{"Differs", "Infect"}; !equalStrings(got, want) {
 		t.Errorf("the generated probe runtime exports %v, want %v", got, want)
 	}
 }
 
-// TestMutantRuntimeExportsWhatItsTreeSpells is the other half of that
-// assertion, and the reason the two runtimes can share a package name at all.
-//
-// They are generated into different snapshots, so the names never meet; what
-// keeps that true is that neither package grew an export nothing in its own
-// tree spells. The activation runtime's three are exactly the three names the
-// mutant rewrite writes: M, which a guard reads; Limit, which a counted loop
-// reads once on the way in; and Over, which that loop calls when its counter
-// passes the ceiling. The probe runtime has none of them and they have none of
-// its. The fixture is asserted here a second time on purpose: "the mutant tree
-// is what it was but for the counters" is the claim that has to survive every
-// change to the generator beside it.
 func TestMutantRuntimeExportsWhatItsTreeSpells(t *testing.T) {
 	t.Parallel()
 
@@ -122,11 +93,6 @@ func TestMutantRuntimeExportsWhatItsTreeSpells(t *testing.T) {
 	}
 }
 
-// TestProbeRuntimeIsGeneratedForAnEmptyCatalogue keeps the probe runtime one
-// shape rather than two, for the reason the activation runtime is: a run whose
-// filters selected nothing is a real case, `var probeSeen [0]uint32` is legal
-// Go that no index can address, and a header claiming zero mutants would be a
-// log no reader could ever accept a line of.
 func TestProbeRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 	t.Parallel()
 
@@ -148,18 +114,6 @@ func TestProbeRuntimeIsGeneratedForAnEmptyCatalogue(t *testing.T) {
 	}
 }
 
-// TestProbeRuntimeWritesOneLinePerDistinctMutant runs a real instrumented
-// program and reads back what it recorded.
-//
-// Everything the log format promises is a statement about processes rather than
-// about bytes, so only processes can establish it. Four goroutines report the
-// same two sites twice each and one line per site comes out, which is the
-// compare-and-swap doing its job; a child process re-executing the same binary
-// appends a third to the same file, which is the shape a probe pass actually
-// runs in — one log per target, several test binaries writing it — and the
-// proof that O_APPEND keeps two processes' lines whole. The header appearing
-// once per process rather than once per file is the same fact seen from the
-// other side, and it is why the reader has to accept a repeat.
 func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 	t.Parallel()
 
@@ -172,10 +126,6 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 	}
 
 	data := testkit.ReadFile(t, log)
-	// The fixture's catalogue holds three mutants, so the array width the header
-	// carries and the catalogue size the reader is handed are the same number
-	// here. They part company only for an empty catalogue, which is
-	// [TestReadInfectionLogBoundsIndicesByTheCatalogueSize]'s business.
 	header := "gomutants-infection-v1 " + fixture.digest + " " + strconv.Itoa(fixture.mutants)
 	var headers int
 	var indices []string
@@ -189,8 +139,6 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 		}
 		indices = append(indices, line)
 	}
-	// Two processes wrote this file and each wrote its header once, which is
-	// the whole invariant: not once per file, and not once per report.
 	if headers != 2 {
 		t.Errorf("the log holds %d header lines, want 2: one from the parent process and one from the child", headers)
 	}
@@ -208,20 +156,10 @@ func TestProbeRuntimeWritesOneLinePerDistinctMutant(t *testing.T) {
 	}
 }
 
-// TestProbeRuntimeIsSilentWithoutTheProbeVariable pins what the probe runtime
-// costs a process that is not probing.
-//
-// The same tree is built once and run many times, so the runtime is linked into
-// binaries no probe pass is watching. With nothing in the environment it must
-// open nothing, write nothing, say nothing and change no exit status: a
-// diagnostic on a run nobody asked to probe would be noise in somebody's test
-// output, and a file appearing beside their tests would be worse.
 func TestProbeRuntimeIsSilentWithoutTheProbeVariable(t *testing.T) {
 	t.Parallel()
 
 	fixture := newProbeFixture(t)
-	// Nothing is written here; the directory is watched precisely because a
-	// runtime that invented a path would have to put the file somewhere.
 	quiet := testkit.Scratch(t)
 
 	stdout, stderr, code := runProbe(t, quiet, fixture.binary)
@@ -240,14 +178,6 @@ func TestProbeRuntimeIsSilentWithoutTheProbeVariable(t *testing.T) {
 	}
 }
 
-// TestProbeRuntimeExitsWhenTheLogCannotBeOpened is the reason the exit status
-// exists at all.
-//
-// A probe that cannot write its log has proved nothing, and an empty log reads
-// exactly like a run in which no site was ever infected — which is the reading
-// that licenses skipping tests. So the process refuses to start, with a status
-// the runner can tell apart from a test failure and a diagnostic naming the
-// path, because the only way to fix this is to look at that path.
 func TestProbeRuntimeExitsWhenTheLogCannotBeOpened(t *testing.T) {
 	t.Parallel()
 
@@ -265,14 +195,6 @@ func TestProbeRuntimeExitsWhenTheLogCannotBeOpened(t *testing.T) {
 	}
 }
 
-// TestInfectIsRaceFree runs Infect from many goroutines at once under the race
-// detector.
-//
-// A probe tree is instrumented test code, and test code is concurrent: the same
-// site is evaluated from several goroutines of one suite, and the first of them
-// to see a difference writes the index. The compare-and-swap and the append are
-// what make that safe, and the race detector is the only thing that can say so
-// — a plain run of the same program would pass with a torn guard.
 func TestInfectIsRaceFree(t *testing.T) {
 	t.Parallel()
 
@@ -320,18 +242,6 @@ func TestInfectIsRaceFree(t *testing.T) {
 	}
 }
 
-// TestProbeModeRewritesOnlyWhereItHasAProbeForm pins what a probe tree does
-// with a catalogue it cannot measure.
-//
-// A file whose every mutant is unprobed comes out as the file the user wrote —
-// no rewrite, no import, and no entry in the result. That is worth asserting
-// rather than leaving implied: a mode that rewrote a file by accident would
-// produce a tree whose sites are guarded and whose runtime activates none of
-// them, which is a program that looks instrumented and proves nothing.
-//
-// The fixture declares its one comparison unprobeable, which is how a mutant of
-// a boolean site ends up with no form: the site is measured by evaluating both
-// readings of it, so one holding an effect or a possible panic is refused.
 func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	t.Parallel()
 
@@ -366,8 +276,6 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 		t.Errorf("probe mode did not generate a probe runtime:\n%s", generated)
 	}
 
-	// The zero value of the new field is the mode every existing caller passes,
-	// and it has to keep producing exactly the package it always did.
 	mutantRoot := testkit.Scratch(t)
 	testkit.WriteFile(t, filepath.Join(mutantRoot, sampleFile), []byte(runtimeSample))
 	mutantResult := instrumentSnapshot(t, mutantRoot, catalogOf(t, threeAlternatives(t, []byte(runtimeSample))))
@@ -378,13 +286,6 @@ func TestProbeModeRewritesOnlyWhereItHasAProbeForm(t *testing.T) {
 	}
 }
 
-// TestProbeAndMutantRuntimesShareTheDirectoryName keeps the two trees' runtimes
-// interchangeable to everything above them.
-//
-// They are generated into different snapshots, so one name and one collision
-// rule mean an import path a caller can predict from the mode-independent
-// [instrument.Result] alone — and mean that a directory the user's own tree
-// already holds is stepped around identically whichever tree is being built.
 func TestProbeAndMutantRuntimesShareTheDirectoryName(t *testing.T) {
 	t.Parallel()
 
@@ -420,27 +321,11 @@ func TestProbeAndMutantRuntimesShareTheDirectoryName(t *testing.T) {
 	}
 }
 
-// probeSnapshot runs the instrumenter over a snapshot in probe mode and fails
-// the test if it refuses.
-//
-// The hints are derived from the snapshot itself, exactly as the mutant tree's
-// [instrumentSnapshot] derives them. A probe tree needs them for the same
-// reason the mutant tree does — a hint is what says which rewrite a candidate
-// takes, and a probe tree rewrites the `return` statements the return-value
-// family points at — and a catalogue this index does not cover is refused in
-// either mode rather than quietly under-instrumented.
 func probeSnapshot(t *testing.T, root string, catalog *mutation.Catalog) instrument.Result {
 	t.Helper()
 	return probeSnapshotWith(t, root, catalog, hintOptions{})
 }
 
-// exportedNames returns every identifier a generated package declares at the
-// top level and exports, sorted.
-//
-// It walks the declarations rather than searching the bytes because "exactly
-// one export" is a claim about the package's API, and a grep for a capital
-// letter would answer a different question: a comment naming M, a string
-// holding Infect, and a genuine second export all look alike to it.
 func exportedNames(t *testing.T, path string, src []byte) []string {
 	t.Helper()
 
@@ -475,24 +360,12 @@ func exportedNames(t *testing.T, path string, src []byte) []string {
 	return out
 }
 
-// A probeFixture is a built command whose runtime is a probe runtime, together
-// with what a reader of its log has to be told.
 type probeFixture struct {
-	// binary is the built command.
-	binary string
-	// digest identifies the catalogue the runtime was generated from.
-	digest string
-	// mutants is how many mutants that catalogue holds, which is what the
-	// reader of the log is handed.
+	binary  string
+	digest  string
 	mutants int
 }
 
-// newProbeFixture instruments a mini module as a probe tree and builds a
-// command against it.
-//
-// One build per test, as the rest of this package's toolchain-backed tests do:
-// the fixtures are two files and the module has no dependencies, so a build is
-// cheap and a shared one would make the tests order-dependent for nothing.
 func newProbeFixture(t *testing.T) probeFixture {
 	t.Helper()
 
@@ -510,8 +383,6 @@ func newProbeFixture(t *testing.T) probeFixture {
 	catalog := catalogOf(t, candidates)
 	result := probeSnapshot(t, root, catalog)
 
-	// The command is written after the pass rather than before it, because the
-	// path it calls Infect through is the one the pass chose.
 	testkit.WriteFile(t, filepath.Join(root, filepath.FromSlash("cmd/mini/main.go")),
 		[]byte(fmt.Sprintf(probeMain, result.RuntimeImport)))
 
@@ -524,9 +395,6 @@ func newProbeFixture(t *testing.T) probeFixture {
 	return probeFixture{binary: binary, digest: catalog.Digest(), mutants: catalog.Len()}
 }
 
-// probeMain is the command the probe fixture builds, with the generated
-// runtime's import path spliced in. It reports two sites from four goroutines,
-// twice each, and re-executes itself to report a third from a second process.
 const probeMain = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -577,9 +445,6 @@ func main() {
 }
 `
 
-// probePackage is the package the race test lives in. A directory holding only
-// an external test file is not a package the go tool will build, so the test
-// needs something to be the test of.
 const probePackage = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -587,8 +452,6 @@ const probePackage = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 package probe
 `
 
-// probeRaceTest is the test binary the race detector is pointed at, with the
-// generated runtime's import path spliced in.
 const probeRaceTest = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -618,10 +481,6 @@ func TestInfectFromManyGoroutines(t *testing.T) {
 }
 `
 
-// raceUnavailable reports whether a failed build failed because this toolchain
-// or this platform cannot build with -race at all, which is a reason to skip
-// rather than to fail: the guard it exercises is the same on every platform,
-// and a machine without cgo can still run every other test here.
 func raceUnavailable(out string) bool {
 	if !strings.Contains(out, "-race") && !strings.Contains(out, "race detector") {
 		return false
@@ -634,16 +493,6 @@ func raceUnavailable(out string) bool {
 	return false
 }
 
-// runProbe executes a built binary in dir with the given environment
-// assignments appended, returning its streams separately and its exit status.
-//
-// The streams are separate because one of these tests asserts that nothing at
-// all was said, and [instrument.ProbeEnv] is stripped from the inherited
-// environment first: "unset" has to mean unset even when the developer running
-// the suite happens to be probing something else. The working directory is the
-// caller's because one of these tests watches it: a runtime that invented a
-// relative path would put the file there, and a binary left to run wherever
-// the test process happens to be would keep that file out of sight.
 func runProbe(t *testing.T, dir, binary string, env ...string) (string, string, int) {
 	t.Helper()
 

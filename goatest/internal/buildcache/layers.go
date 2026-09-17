@@ -22,7 +22,6 @@ const (
 )
 
 func (source Source) String() string {
-	//exhaustive:total SourceNone is the zero value and its name is the default.
 	switch source {
 	case SourceScratch:
 		return "scratch"
@@ -30,9 +29,10 @@ func (source Source) String() string {
 		return "base"
 	case SourceNative:
 		return "native"
-	default:
+	case SourceNone:
 		return "none"
 	}
+	return "none"
 }
 
 type Layers struct {

@@ -11,397 +11,157 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// Schema constants of the v1 configuration.
 const (
-	// Version is the only schema version this build reads. It is required in
-	// every file: a configuration that does not say which schema it is written
-	// against cannot be migrated later without guessing.
 	Version = 1
 
-	// FileName is the configuration file's fixed name. There is no search up
-	// the directory tree and no alternative spelling.
 	FileName = ".go-mutants.toml"
 )
 
-// Ranges and defaults for the numeric settings. Each bound is a decision, not
-// a technical limit, and each is stated once here so that the validator, the
-// help text, and the documentation cannot drift apart.
 const (
-	// MinJobs is the smallest worker count. Zero would mean "do nothing",
-	// which `--jobs` should never be able to say by accident.
-	MinJobs = 1
-	// MaxJobs is the largest worker count. Mutation runs are dominated by
-	// process starts and file system contention, so far beyond this the extra
-	// workers cost more than they buy; the ceiling exists to catch a typo such
-	// as `--jobs 320` before it forks a machine into swap.
-	MaxJobs = 32
-	// DefaultJobCap is the ceiling the default worker count is clamped to.
-	// The default is deliberately not "every core": a mutation run is a
-	// background chore that should leave a laptop usable.
-	//
-	// Measured on an 18-core machine (6 performance, 12 efficiency), over the
-	// runner's own suite, counting mutants finished per minute in a four-minute
-	// window: 4 workers 78, 8 workers 174, 16 workers 152. Sixteen is *slower*
-	// than eight, and the CPU sat above 60% idle at both -- the run is bound by
-	// process starts and file system contention rather than by cores, exactly as
-	// [MaxJobs] says. So the ceiling is not only the polite number, it is at or
-	// past the knee, and raising it would cost a laptop its responsiveness in
-	// exchange for a slower run.
+	MinJobs       = 1
+	MaxJobs       = 32
 	DefaultJobCap = 8
 
-	// MinBaselineRuns is the smallest number of baseline observations. One is
-	// enough to prove the tests pass, which is the baseline's first job.
-	MinBaselineRuns = 1
-	// MaxBaselineRuns is the largest. The baseline is measured before any
-	// mutant runs, so every extra repetition is latency the user waits
-	// through; ten is already far past the point where another sample changes
-	// the derived timeout.
-	MaxBaselineRuns = 10
-	// DefaultBaselineRuns is the shipped number of baseline observations.
-	// Three is the smallest count that can show a spread rather than a point.
+	MinBaselineRuns     = 1
+	MaxBaselineRuns     = 10
 	DefaultBaselineRuns = 3
 
-	// MinPercent and MaxPercent bound every percentage setting.
 	MinPercent = 0
 	MaxPercent = 100
 
-	// DefaultReportDirectory is where project reports are written, relative to
-	// the workspace root.
 	DefaultReportDirectory = "reports/mutation"
-	// DefaultReportHigh and DefaultReportLow are the HTML colouring
-	// thresholds. They affect nothing but colour; see [Report].
-	DefaultReportHigh = 80
-	DefaultReportLow  = 60
+	DefaultReportHigh      = 80
+	DefaultReportLow       = 60
 )
 
-// A CacheMode says whether proven outcomes may be reused between runs.
 type CacheMode string
 
-// The cache modes.
 const (
-	// CacheAuto reuses cached outcomes when the cache key matches and the
-	// environment looks reproducible. It is the default.
 	CacheAuto CacheMode = "auto"
-	// CacheOn always reuses matching cached outcomes.
-	CacheOn CacheMode = "on"
-	// CacheOff never reads and never writes the cache.
-	CacheOff CacheMode = "off"
+	CacheOn   CacheMode = "on"
+	CacheOff  CacheMode = "off"
 )
 
-// CacheModes returns the modes in the order they are documented.
 func CacheModes() []CacheMode { return []CacheMode{CacheAuto, CacheOn, CacheOff} }
 
-// Valid reports whether m is one of the defined modes.
 func (m CacheMode) Valid() bool {
 	return m == CacheAuto || m == CacheOn || m == CacheOff
 }
 
-// String returns the mode as it is written in TOML.
 func (m CacheMode) String() string { return string(m) }
 
-// A Narrowing says how far coverage narrows what each mutant is measured
-// against.
-//
-// It is a choice about cost, not about meaning: whichever is chosen, a run
-// reaches the same verdicts. Narrowing to tests is the default because it is
-// the cheaper one on every project where a package's tests are one binary —
-// which is every project — and the controls that keep it sound are the
-// engine's, not the user's.
 type Narrowing string
 
-// The narrowings.
 const (
-	// NarrowingTest measures each mutant against only the tests whose own
-	// coverage reaches its lines, each test binary started with those tests
-	// selected. It is the default.
-	NarrowingTest Narrowing = "test"
-	// NarrowingPackage measures each mutant against every test binary whose
-	// coverage reaches its lines, each binary run whole.
+	NarrowingTest    Narrowing = "test"
 	NarrowingPackage Narrowing = "package"
 )
 
-// Narrowings returns the narrowings in the order they are documented.
 func Narrowings() []Narrowing { return []Narrowing{NarrowingTest, NarrowingPackage} }
 
-// Valid reports whether n is one of the defined narrowings.
 func (n Narrowing) Valid() bool {
 	return n == NarrowingTest || n == NarrowingPackage
 }
 
-// String returns the narrowing as it is written in TOML.
 func (n Narrowing) String() string { return string(n) }
 
-// A Probing says whether a run proves, before executing anything, which
-// executions it does not have to make.
-//
-// It is a choice about cost, not about meaning, exactly as [Narrowing] is:
-// whichever is chosen, a run reaches the same verdicts. What differs is the
-// arithmetic, and unlike narrowing the arithmetic can come out either way. A
-// probing run pays a second snapshot of the module, a second instrumentation, a
-// second validation, a second build of every test binary, and one suite run per
-// binary; what it buys is every execution it can prove unnecessary. On a module
-// whose tests are quick and whose mutants are thinly covered that is thousands
-// of executions for a handful of suite runs; on one whose every test touches
-// everything it is a handful of suite runs for nothing.
-//
-// So it is off by default, and off is the honest default: an optimisation
-// nobody can predict the sign of is one the project has to choose. It has no
-// flag for [Test.Narrowing]'s reason -- it is a decision about how a project is
-// measured rather than about one invocation.
 type Probing string
 
-// The probing modes.
 const (
-	// ProbingOff makes no probe tree and measures every selected mutant. It is
-	// the default.
 	ProbingOff Probing = "off"
-	// ProbingOn builds a probe tree, runs one pass over each test binary, and
-	// settles every mutant no covering binary could observe.
-	ProbingOn Probing = "on"
+	ProbingOn  Probing = "on"
 )
 
-// Probings returns the probing modes in the order they are documented.
 func Probings() []Probing { return []Probing{ProbingOff, ProbingOn} }
 
-// Valid reports whether p is one of the defined probing modes.
 func (p Probing) Valid() bool { return p == ProbingOff || p == ProbingOn }
 
-// String returns the probing mode as it is written in TOML.
 func (p Probing) String() string { return string(p) }
 
-// A ReportFormat is one project report artefact.
 type ReportFormat string
 
-// The report formats.
 const (
-	// FormatJSON is the lossless RunReport, the source of truth.
 	FormatJSON ReportFormat = "json"
-	// FormatHTML is the self-contained human report.
 	FormatHTML ReportFormat = "html"
 )
 
-// ReportFormats returns the formats in the order they are documented.
 func ReportFormats() []ReportFormat { return []ReportFormat{FormatJSON, FormatHTML} }
 
-// Valid reports whether f is one of the defined formats.
 func (f ReportFormat) Valid() bool { return f == FormatJSON || f == FormatHTML }
 
-// String returns the format as it is written in TOML.
 func (f ReportFormat) String() string { return string(f) }
 
-// An Expectation is one row of the `[[mutation.expect]]` ledger: a mutant that
-// is expected to survive, and why.
-//
-// An expectation is evidence to check, not a skip list. The mutant still runs,
-// survival fulfils the expectation, a kill means the ledger is lying, and an
-// id that has disappeared from the catalogue is stale. This package only
-// checks that the row is well formed; internal/engine decides what it means.
 type Expectation struct {
-	// ID is the full 64 lowercase hex mutant id. Prefixes are not accepted
-	// here even though `--mutant` accepts them: a ledger entry outlives the
-	// run that produced it, and a prefix that is unique today can become
-	// ambiguous after one commit.
-	ID string
-	// Reason is why this mutant is expected to survive, in the author's own
-	// words. It is required because an unexplained expectation is
-	// indistinguishable from a mistake six months later.
+	ID     string
 	Reason string
 }
 
-// Mutation is the `[mutation]` section: what to mutate and with what.
-//
-// In a resolved [Config], a nil slice and an empty slice mean the same thing
-// in every field here, and consumers must not distinguish them: no include
-// patterns and no exclude patterns and no operator names each say "this list
-// constrains nothing". The difference that does carry meaning — whether a
-// layer set a list at all — lives in [Set] and is spent by the time [Merge]
-// returns. Anything serialising a Config should therefore emit `[]` for both,
-// rather than letting `null` leak into a report as a third state.
 type Mutation struct {
-	// Include lists the glob patterns a source file must match to be
-	// considered.
-	Include []string
-	// Exclude lists the patterns that remove a file again. Excludes apply
-	// after includes.
-	Exclude []string
-	// Operators narrows the selection to these operator families or rules.
-	// Empty means "whatever Profile selects", which is what `init` writes and
-	// what keeps a configuration honest when a new family lands.
+	Include   []string
+	Exclude   []string
 	Operators []string
-	// Profile is the tier of operators to run. Tiers are monotonically
-	// inclusive: balanced ⊂ strong ⊂ all.
-	Profile mutation.Tier
-	// Expect is the expectations ledger, in file order.
-	Expect []Expectation
+	Profile   mutation.Tier
+	Expect    []Expectation
 }
 
-// Test is the `[test]` section: how to run the project's tests.
 type Test struct {
-	// Command is the argv vector that runs the tests. It is executed
-	// directly, never through a shell, so no element is ever word-split,
-	// glob-expanded, or variable-substituted.
-	Command []string
-	// Timeout is the per-mutant timeout. Zero means "derive it", as
-	// max(10s, slowest baseline × 5).
-	//
-	// Derivation is a file-level choice, and v1 has no flag that restores it:
-	// `--timeout` can only replace a derived timeout with a fixed one, never
-	// the other way around. A project that wants derivation back removes
-	// `test.timeout` from its configuration.
-	Timeout time.Duration
-	// Memory is the per-mutant memory bound in bytes. Zero means "derive it",
-	// as max(1 GiB, largest baseline peak × 4).
-	//
-	// It is the timeout's twin, down to the direction of the flag: `--memory`
-	// can replace a derived bound with a fixed one and never the other way
-	// round, and a project that wants derivation back removes `test.memory`
-	// from its configuration.
-	//
-	// It is bytes rather than a string because a resolved configuration holds
-	// resolved values; the spelling a person writes — `"2GiB"` — is the file's
-	// and the flag's, and both are read by the same rule.
-	Memory int64
-	// BaselineRuns is how many times the unmutated tests are measured before
-	// any mutant runs. Every observation is kept in the report, not just the
-	// slowest.
+	Command      []string
+	Timeout      time.Duration
+	Memory       int64
 	BaselineRuns int
-	// Narrowing says whether coverage narrows each mutant to the tests that
-	// reach it or to the test binaries that do. It has no flag: it is a
-	// choice about how a project's suite behaves, not about one run.
-	Narrowing Narrowing
-	// Probing says whether the run proves which executions it can skip before
-	// making any of them. It has no flag, for Narrowing's reason, and it is off
-	// by default because the saving it buys can be smaller than what it costs.
-	Probing Probing
+	Narrowing    Narrowing
+	Probing      Probing
 }
 
-// Execution is the `[execution]` section.
 type Execution struct {
-	// Jobs is the number of mutants executed concurrently.
 	Jobs int
 
-	// Isolate gives every worker its own copy of the instrumented tree, and
-	// puts that copy back between mutants.
-	//
-	// It is off by default, and the default is the right one: a copy per
-	// worker is the tree's size times the worker count on disk, and a walk of
-	// that copy after every mutant. What it buys is the only way to measure a
-	// project whose tests legitimately write into the package directory they
-	// run in -- a golden file they update, a database they create in testdata,
-	// a test that chdirs and writes relative. Those projects cannot run at all
-	// without it: the drift gate stops the run, correctly, because every
-	// mutant after the first would be measured against a tree the one before
-	// it edited.
-	//
-	// It is a key as well as a flag, unlike most of what a flag can override,
-	// and for the reason `execution.jobs` is both: a project whose suite always
-	// writes needs the answer written down rather than remembered, while a user
-	// who has just met the drift gate once wants to get past it without editing
-	// a file.
 	Isolate bool
 }
 
-// Cache is the `[cache]` section.
 type Cache struct {
-	// Mode says whether proven outcomes may be reused.
-	Mode CacheMode
-	// Directory overrides where the cache lives. It is relative and resolves
-	// under the OS cache root, never under the workspace. Empty means the
-	// default location.
+	Mode      CacheMode
 	Directory string
 }
 
-// Report is the `[report]` section.
 type Report struct {
-	// Directory is where project reports are written, relative to the
-	// workspace root.
 	Directory string
-	// Formats are the artefacts to write. An empty slice writes none, which
-	// is a supported way to turn project reports off without deleting the
-	// files a previous run produced. As in [Mutation], a nil slice and an
-	// empty one say the same thing.
-	Formats []ReportFormat
-	// High and Low are the HTML colouring thresholds, as percentages. They
-	// are deliberately independent of [Config.Policy]: making a report
-	// prettier must never change whether CI passes.
-	High int
-	Low  int
+	Formats   []ReportFormat
+	High      int
+	Low       int
 }
 
-// A Config is a fully resolved configuration: defaults, file, and flags
-// merged, with every value present.
-//
-// It is plain data. Nothing here remembers which layer a value came from,
-// because by the time a run acts on a configuration that question has no
-// bearing on what it should do. Diagnostics that need the answer are raised
-// earlier, where the layer is still known.
 type Config struct {
-	// Version is the schema version, always [Version] in a valid Config.
-	Version int
-	// Mutation is `[mutation]`.
-	Mutation Mutation
-	// Test is `[test]`.
-	Test Test
-	// Execution is `[execution]`.
+	Version   int
+	Mutation  Mutation
+	Test      Test
 	Execution Execution
-	// Cache is `[cache]`.
-	Cache Cache
-	// Policy is `[policy]`, shared with internal/mutation so that the gate
-	// this package validates is literally the one internal/mutation applies.
-	Policy mutation.Policy
-	// Report is `[report]`.
-	Report Report
+	Cache     Cache
+	Policy    mutation.Policy
+	Report    Report
 }
 
-// DefaultJobs returns the default worker count: min(logical CPUs, 8).
-//
-// It is a function rather than a constant because it depends on the machine,
-// and it is exported because the help text has to print the number the user
-// will actually get.
 func DefaultJobs() int {
 	return min(runtime.NumCPU(), DefaultJobCap)
 }
 
-// DefaultTestCommand returns the argv vector used when a project does not name
-// one.
 func DefaultTestCommand() []string { return []string{"go", "test", "./..."} }
 
-// DefaultInclude returns the default include patterns: every Go file in the
-// module.
-//
-// Narrowing this further is the user's call. Test files are not excluded here
-// because they are already excluded structurally — discovery builds and runs
-// _test.go files but never mutates them — and an exclude that repeats a
-// structural rule only creates a second place for it to be wrong.
 func DefaultInclude() []string { return []string{"**/*.go"} }
 
-// Defaults returns the built-in configuration: the bottom layer of the
-// precedence stack, and a complete, valid configuration on its own.
-//
-// Every call returns freshly allocated slices, so a caller may mutate the
-// result without affecting anybody else's defaults.
 func Defaults() Config {
 	return Config{
 		Version: Version,
 		Mutation: Mutation{
-			Include: DefaultInclude(),
-			// No default excludes and no default operators: the profile
-			// decides which operators run, and adding a pattern here that
-			// nobody asked for would silently shrink a run.
+			Include:   DefaultInclude(),
 			Exclude:   nil,
 			Operators: nil,
 			Profile:   mutation.TierBalanced,
 			Expect:    nil,
 		},
 		Test: Test{
-			Command: DefaultTestCommand(),
-			// Zero means derive from the baseline, which is a better default
-			// than any fixed number: the right timeout depends on how slow
-			// this project's tests actually are.
-			Timeout: 0,
-			// Zero means derive from the baseline, for the reason Timeout's
-			// does: the right bound depends on how much this project's tests
-			// actually need, and no fixed number is right for every project.
+			Command:      DefaultTestCommand(),
+			Timeout:      0,
 			Memory:       0,
 			BaselineRuns: DefaultBaselineRuns,
 			Narrowing:    NarrowingTest,
@@ -419,7 +179,6 @@ func Defaults() Config {
 	}
 }
 
-// Clone returns a deep copy: the result shares no slice with the receiver.
 func (c Config) Clone() Config {
 	c.Mutation.Include = slices.Clone(c.Mutation.Include)
 	c.Mutation.Exclude = slices.Clone(c.Mutation.Exclude)

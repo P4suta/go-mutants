@@ -14,97 +14,30 @@ import (
 	"strings"
 )
 
-// CatalogDomain is the domain separator for the catalogue digest. Like the
-// mutant ID domain it carries a version, so a future catalogue encoding
-// cannot be confused with this one.
 const CatalogDomain = "go-mutants-catalog-v1"
 
-// Errors reported while building or querying a catalogue.
 var (
-	// ErrOriginalLengthMismatch reports a candidate whose original text is
-	// not the length of its span.
 	ErrOriginalLengthMismatch = errors.New("mutation: original text length does not match the span")
-	// ErrNoOpReplacement reports a candidate whose replacement is
-	// byte-identical to the original, which would splice the source back
-	// into itself instead of mutating it.
-	ErrNoOpReplacement = errors.New("mutation: replacement is identical to the original")
-	// ErrSourceDigestConflict reports two candidates that claim different
-	// digests for the same file.
-	ErrSourceDigestConflict = errors.New("mutation: conflicting source digests for one path")
-	// ErrOriginalConflict reports two candidates that claim different
-	// original text for the same span of one file.
-	ErrOriginalConflict = errors.New("mutation: conflicting original text for one span")
-	// ErrModulePathMixed reports a catalogue holding both candidates that name
-	// a module and candidates that do not.
-	//
-	// The module path is what decides which recipe mints a mutant's identity,
-	// so a mix is a catalogue whose mutants were minted under two different
-	// domains. No run produces one: a workspace run gives every module a path
-	// and a single-module run gives none. See [Identity.ModulePath].
-	ErrModulePathMixed = errors.New("mutation: some candidates name a module and some do not")
-	// ErrCatalogTooLarge reports a catalogue that cannot be addressed by the
-	// uint32 runtime index.
-	ErrCatalogTooLarge = errors.New("mutation: catalogue exceeds the uint32 index space")
-	// ErrInvalidPrefix reports an ID prefix that is too short, too long, or
-	// not lowercase hex.
-	ErrInvalidPrefix = errors.New("mutation: invalid mutant id prefix")
-	// ErrMutantNotFound reports a prefix that matches no mutant.
-	ErrMutantNotFound = errors.New("mutation: no mutant matches that id prefix")
-	// ErrAmbiguousPrefix reports a prefix that matches more than one mutant.
-	ErrAmbiguousPrefix = errors.New("mutation: ambiguous mutant id prefix")
+	ErrNoOpReplacement        = errors.New("mutation: replacement is identical to the original")
+	ErrSourceDigestConflict   = errors.New("mutation: conflicting source digests for one path")
+	ErrOriginalConflict       = errors.New("mutation: conflicting original text for one span")
+	ErrModulePathMixed        = errors.New("mutation: some candidates name a module and some do not")
+	ErrCatalogTooLarge        = errors.New("mutation: catalogue exceeds the uint32 index space")
+	ErrInvalidPrefix          = errors.New("mutation: invalid mutant id prefix")
+	ErrMutantNotFound         = errors.New("mutation: no mutant matches that id prefix")
+	ErrAmbiguousPrefix        = errors.New("mutation: ambiguous mutant id prefix")
 )
 
-// Candidate is one proposed edit: replace the bytes of Span in Path with
-// Replacement. It is the unit discovery produces and the catalogue consumes.
-//
-// Original and Replacement are byte strings, not printable text. They are
-// spliced verbatim, so the original keeps whatever whitespace, comments, and
-// line endings the file had.
 type Candidate struct {
-	// ModulePath is the import path of the module [Candidate.Path] is relative
-	// to, and is empty for every run that is not a workspace run.
-	//
-	// It is a coordinate rather than a label. Two modules of one workspace can
-	// each hold an `app.go`, and nothing says they may not: without this, one
-	// path names two files, and the catalogue would report them as
-	// contradicting each other about the digest, deduplicate one edit away as
-	// a repeat of the other, and mint one identity for both. See
-	// [Identity.ModulePath] for what it does to the identity.
-	ModulePath string
-	// Path is the module-relative source path with forward slashes.
-	Path string
-	// Rule is the operator that proposed the edit.
-	Rule Rule
-	// Span is the byte range being replaced.
-	Span Span
-	// Original is exactly the bytes Span covers in the source file.
-	Original string
-	// Replacement is what those bytes become. Empty for a deletion, and
-	// never equal to Original: replacing bytes with themselves is not a
-	// mutation. See Validate.
-	Replacement string
-	// SourceDigest is the lowercase hex SHA-256 of the whole source file.
+	ModulePath   string
+	Path         string
+	Rule         Rule
+	Span         Span
+	Original     string
+	Replacement  string
 	SourceDigest string
 }
 
-// Validate reports whether the candidate is internally coherent.
-//
-// Two checks carry the weight, and both exist so that a broken discovery rule
-// is caught here rather than three phases later, after instrumentation and the
-// runner have each spent a build on it.
-//
-// The length check proves the span and the original text were taken from the
-// same file at the same moment. An off-by-one in a discovery rule would
-// otherwise mint a perfectly valid looking ID for an edit that splices
-// garbage.
-//
-// The no-op check proves the edit is an edit at all. A replacement identical
-// to the original hashes to a well formed ID and then splices bytes the source
-// already had, so it compiles by construction and is guaranteed to survive
-// every test: it would inflate the score's denominator and trip
-// `policy.strict` for a mutation that does not exist. An empty span is still a
-// legal insertion point, so what this rejects is exactly the pair that changes
-// nothing, deletions of nothing included.
 func (c Candidate) Validate() error {
 	if err := c.Rule.Validate(); err != nil {
 		return err
@@ -123,8 +56,6 @@ func (c Candidate) Validate() error {
 	return nil
 }
 
-// Identity returns the identity this candidate hashes to, digesting the
-// original and replacement text.
 func (c Candidate) Identity() Identity {
 	return Identity{
 		ModulePath:        c.ModulePath,
@@ -138,15 +69,8 @@ func (c Candidate) Identity() Identity {
 	}
 }
 
-// ID computes the candidate's stable mutant ID.
 func (c Candidate) ID() (string, error) { return c.Identity().ID() }
 
-// Where names the file this candidate edits, the way a reader can find it.
-//
-// Outside a workspace that is the module-relative path and nothing else, which
-// is what every message said before workspaces existed. Inside one the path is
-// relative to a module that is not the only module, so the module is named
-// too: "app.go" in a message about a workspace is a sentence about two files.
 func (c Candidate) Where() string {
 	if c.ModulePath == "" {
 		return c.Path
@@ -154,73 +78,38 @@ func (c Candidate) Where() string {
 	return c.ModulePath + " " + c.Path
 }
 
-// Mutant is a catalogued candidate: identified, deduplicated, and assigned
-// its dense runtime index.
 type Mutant struct {
-	// Index is the position in the generated runtime's activation array. It
-	// is the catalogue's own order, densely assigned from zero.
-	Index uint32
-	// ID is the full 64 hex character stable identity.
-	ID string
-	// DisplayID is the short form, proven unique within this catalogue.
+	Index     uint32
+	ID        string
 	DisplayID string
-	// Candidate is the edit itself.
 	Candidate
 }
 
-// DuplicateReason explains why a candidate lost deduplication.
 type DuplicateReason string
 
-// The v1 duplicate reasons.
 const (
-	// DuplicateIdentical means the same rule proposed the same edit twice;
-	// both candidates carry the same mutant ID.
 	DuplicateIdentical DuplicateReason = "identical-candidate"
-	// DuplicateShadowed means a different rule proposed the same byte edit
-	// at the same span, and the more local rule won.
-	DuplicateShadowed DuplicateReason = "shadowed-by-more-local-rule"
+	DuplicateShadowed  DuplicateReason = "shadowed-by-more-local-rule"
 )
 
-// Duplicate records a candidate that the catalogue dropped. Duplicates are
-// kept rather than discarded so `--explain` can answer "why is there no
-// mutant for this rule here?" without re-running discovery.
 type Duplicate struct {
-	// Reason is why the candidate lost.
-	Reason DuplicateReason
-	// Dropped is the losing candidate.
-	Dropped Candidate
-	// DroppedID is the losing candidate's mutant ID. For an identical
-	// duplicate it equals WinnerID.
-	DroppedID string
-	// WinnerID is the ID of the mutant that was kept.
-	WinnerID string
-	// WinnerRule is the rule that won.
+	Reason     DuplicateReason
+	Dropped    Candidate
+	DroppedID  string
+	WinnerID   string
 	WinnerRule Rule
 }
 
-// DisplayCollision is one short ID shared by several mutants.
 type DisplayCollision struct {
-	// DisplayID is the colliding short form.
 	DisplayID string
-	// IDs are the colliding full IDs, sorted.
-	IDs []string
+	IDs       []string
 }
 
-// DisplayCollisionError reports that truncating full IDs to the display
-// length would produce an ambiguous short form.
-//
-// This is returned, never panicked: a collision among 20 hex characters is
-// astronomically unlikely but not impossible, and the honest response is a
-// diagnosable error rather than a crash or a silently ambiguous `--mutant`
-// selector.
 type DisplayCollisionError struct {
-	// Length is the display length that collided.
-	Length int
-	// Collisions are the colliding short forms, sorted by short form.
+	Length     int
 	Collisions []DisplayCollision
 }
 
-// Error implements error.
 func (e *DisplayCollisionError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mutation: %d display id collision(s) at %d hex characters", len(e.Collisions), e.Length)
@@ -230,26 +119,14 @@ func (e *DisplayCollisionError) Error() string {
 	return b.String()
 }
 
-// Builder accumulates candidates and produces a catalogue.
-//
-// Build is a pipeline, in this order: validate, identify, deduplicate, sort
-// canonically, assign dense indices, then check display IDs. Deduplication
-// has to precede the display check, otherwise two identical candidates from
-// one rule would be reported as a hash collision instead of as the duplicate
-// they are.
 type Builder struct {
 	registry   *Registry
 	candidates []Candidate
 	displayLen int
-	// digests remembers one source digest per path, and originals remembers
-	// one original text per (path, span), so contradictions are caught where
-	// they are introduced instead of surfacing as an unexplainable ID.
-	digests   map[fileKey]string
-	originals map[originalKey]string
+	digests    map[fileKey]string
+	originals  map[originalKey]string
 }
 
-// fileKey is what makes two candidates talk about one file: the path, under
-// the module it is relative to.
 type fileKey struct {
 	module string
 	path   string
@@ -260,11 +137,8 @@ type originalKey struct {
 	span Span
 }
 
-// NewBuilder returns a builder backed by the canonical v1 registry.
 func NewBuilder() *Builder { return NewBuilderWithRegistry(nil) }
 
-// NewBuilderWithRegistry returns a builder backed by the given registry. A
-// nil registry means the canonical one.
 func NewBuilderWithRegistry(r *Registry) *Builder {
 	if r == nil {
 		r = CanonicalRegistry()
@@ -277,19 +151,13 @@ func NewBuilderWithRegistry(r *Registry) *Builder {
 	}
 }
 
-// setDisplayLength overrides the display ID length. It exists so the tests
-// can force the collision path that real SHA-256 output will not produce; no
-// production caller changes it.
 func (b *Builder) setDisplayLength(n int) *Builder {
 	b.displayLen = n
 	return b
 }
 
-// Len returns the number of candidates added so far, before deduplication.
 func (b *Builder) Len() int { return len(b.candidates) }
 
-// Add validates a candidate and queues it. Insertion order does not affect
-// the resulting catalogue.
 func (b *Builder) Add(c Candidate) error {
 	if err := c.Validate(); err != nil {
 		return err
@@ -297,11 +165,6 @@ func (b *Builder) Add(c Candidate) error {
 	if err := b.registry.Verify(c.Rule); err != nil {
 		return err
 	}
-	// Whether a candidate names a module is compared against the first one
-	// accepted, rather than against a bool remembered on the side. A remembered
-	// bool would be derived here and compared only with itself, so inverting
-	// how it is derived would change nothing anybody could observe -- an
-	// equivalent mutant, manufactured by the code rather than found in it.
 	if len(b.candidates) > 0 && (b.candidates[0].ModulePath == "") != (c.ModulePath == "") {
 		first := b.candidates[0]
 		return fmt.Errorf("%w: %s names %q and %s names %q",
@@ -324,7 +187,6 @@ func (b *Builder) Add(c Candidate) error {
 	return nil
 }
 
-// AddAll adds candidates in order, stopping at the first invalid one.
 func (b *Builder) AddAll(cs []Candidate) error {
 	for _, c := range cs {
 		if err := b.Add(c); err != nil {
@@ -334,14 +196,12 @@ func (b *Builder) AddAll(cs []Candidate) error {
 	return nil
 }
 
-// entry is a candidate with everything Build needs to order it.
 type entry struct {
 	candidate Candidate
 	id        string
 	position  int
 }
 
-// Build produces the catalogue.
 func (b *Builder) Build() (*Catalog, error) {
 	if uint64(len(b.candidates)) > math.MaxUint32 {
 		return nil, fmt.Errorf("%w: %d candidates", ErrCatalogTooLarge, len(b.candidates))
@@ -359,9 +219,6 @@ func (b *Builder) Build() (*Catalog, error) {
 		entries = append(entries, entry{candidate: c, id: id, position: position})
 	}
 
-	// Canonical order first, so that everything downstream — deduplication,
-	// dense indices, the catalogue digest — is a pure function of the set of
-	// candidates and never of the order they were discovered in.
 	slices.SortFunc(entries, compareEntries)
 
 	kept, duplicates := dedup(entries)
@@ -394,18 +251,6 @@ func (b *Builder) Build() (*Catalog, error) {
 	return c, nil
 }
 
-// compareEntries is the canonical catalogue order: by module, then by path,
-// then by span, then by registry position, then by replacement, then by ID.
-// Paths are compared byte-wise; no locale or Unicode collation is involved
-// anywhere, because the order has to be identical on every machine that runs a
-// shard.
-//
-// The module comes first so that a module's mutants are contiguous, in the
-// catalogue and in the dense index assigned from it. A workspace run is N
-// module runs under one run id, and a run that had to scan the whole catalogue
-// to find its own would be a run whose indices say nothing about who they
-// belong to. Outside a workspace every module path is empty and the comparison
-// is the one it always was.
 func compareEntries(x, y entry) int {
 	if c := strings.Compare(x.candidate.ModulePath, y.candidate.ModulePath); c != 0 {
 		return c
@@ -428,23 +273,12 @@ func compareEntries(x, y entry) int {
 	return strings.Compare(x.id, y.id)
 }
 
-// dedupKey is what makes two candidates the same edit: the same bytes
-// replaced by the same bytes in the same file. The rule that proposed the
-// edit is deliberately not part of the key.
 type dedupKey struct {
 	file        fileKey
 	span        Span
 	replacement string
 }
 
-// dedup keeps one candidate per distinct edit and records the rest.
-//
-// The winner is the candidate that comes first in canonical order, which for
-// one edit means the lowest registry position: the earlier row of the
-// operator table. That is the v1 reading of "the more local rule wins" —
-// operator families are listed from the most local edit (a boolean literal)
-// to the least local (deleting a whole statement), so table position is a
-// usable, explainable, and above all stable proxy for locality.
 func dedup(sorted []entry) ([]entry, []Duplicate) {
 	winners := make(map[dedupKey]entry, len(sorted))
 	kept := make([]entry, 0, len(sorted))
@@ -476,9 +310,6 @@ func dedup(sorted []entry) ([]entry, []Duplicate) {
 	return kept, duplicates
 }
 
-// effectiveDisplayLength is the display length Build will actually use. An
-// out-of-range value falls back to the default, and the catalogue records the
-// length it really proved unique rather than the one it was asked for.
 func (b *Builder) effectiveDisplayLength() int {
 	if b.displayLen <= 0 || b.displayLen > IDHexLength {
 		return DisplayIDLength
@@ -486,7 +317,6 @@ func (b *Builder) effectiveDisplayLength() int {
 	return b.displayLen
 }
 
-// assignDisplayIDs fills in the short IDs and proves they are unambiguous.
 func assignDisplayIDs(mutants []Mutant, length int) error {
 	byPrefix := make(map[string][]string, len(mutants))
 	for i := range mutants {
@@ -512,13 +342,8 @@ func assignDisplayIDs(mutants []Mutant, length int) error {
 	return &DisplayCollisionError{Length: length, Collisions: collisions}
 }
 
-// catalogDigest hashes the catalogue's identity: the ordered list of mutant
-// IDs. Shard merging and the outcome cache both need a single value that
-// answers "are these two runs looking at the same set of mutants?".
 func catalogDigest(mutants []Mutant) string {
 	h := sha256.New()
-	// Errors are impossible here: every field is a short, fixed-width hex
-	// string, far below the 32-bit length prefix limit.
 	_ = WriteLengthPrefixed(h, CatalogDomain)
 	_ = WriteLengthPrefixed(h, strconv.Itoa(len(mutants)))
 	for _, m := range mutants {
@@ -527,12 +352,6 @@ func catalogDigest(mutants []Mutant) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Catalog is the immutable, ordered set of mutants for one run.
-//
-// Catalogue order is canonical rather than chronological: it is a pure
-// function of the candidate set, so two discovery passes over the same
-// workspace produce the same order, the same dense indices, and therefore the
-// same generated runtime array.
 type Catalog struct {
 	mutants     []Mutant
 	duplicates  []Duplicate
@@ -542,28 +361,18 @@ type Catalog struct {
 	digest      string
 }
 
-// Len returns the number of mutants.
 func (c *Catalog) Len() int { return len(c.mutants) }
 
-// Empty reports whether the catalogue holds no mutants.
 func (c *Catalog) Empty() bool { return len(c.mutants) == 0 }
 
-// Mutants returns every mutant in catalogue order.
 func (c *Catalog) Mutants() []Mutant { return slices.Clone(c.mutants) }
 
-// Duplicates returns the candidates deduplication dropped, in catalogue
-// order of the dropped candidate.
 func (c *Catalog) Duplicates() []Duplicate { return slices.Clone(c.duplicates) }
 
-// DisplayLength returns the display ID length this catalogue proved unique.
 func (c *Catalog) DisplayLength() int { return c.displayLen }
 
-// Digest returns the catalogue digest: a SHA-256 over the domain separator,
-// the mutant count, and every mutant ID in order, all length-prefixed exactly
-// as in the mutant ID recipe.
 func (c *Catalog) Digest() string { return c.digest }
 
-// At returns the mutant at a catalogue position.
 func (c *Catalog) At(i int) (Mutant, bool) {
 	if i < 0 || i >= len(c.mutants) {
 		return Mutant{}, false
@@ -571,7 +380,6 @@ func (c *Catalog) At(i int) (Mutant, bool) {
 	return c.mutants[i], true
 }
 
-// ByIndex returns the mutant with the given dense runtime index.
 func (c *Catalog) ByIndex(index uint32) (Mutant, bool) {
 	if uint64(index) >= uint64(len(c.mutants)) {
 		return Mutant{}, false
@@ -579,7 +387,6 @@ func (c *Catalog) ByIndex(index uint32) (Mutant, bool) {
 	return c.mutants[index], true
 }
 
-// ByID returns the mutant with the given full ID.
 func (c *Catalog) ByID(id string) (Mutant, bool) {
 	i, ok := c.byID[id]
 	if !ok {
@@ -588,7 +395,6 @@ func (c *Catalog) ByID(id string) (Mutant, bool) {
 	return c.mutants[i], true
 }
 
-// ByDisplayID returns the mutant with the given short ID.
 func (c *Catalog) ByDisplayID(displayID string) (Mutant, bool) {
 	i, ok := c.byDisplayID[displayID]
 	if !ok {
@@ -597,10 +403,6 @@ func (c *Catalog) ByDisplayID(displayID string) (Mutant, bool) {
 	return c.mutants[i], true
 }
 
-// ResolvePrefix resolves a user-supplied ID prefix, as accepted by
-// `--mutant`. It resolves against the whole catalogue regardless of which
-// profile selected which rules, and it refuses to guess: a prefix matching
-// two mutants is an error naming both, never the first match.
 func (c *Catalog) ResolvePrefix(prefix string) (Mutant, error) {
 	if len(prefix) < MinPrefixLength || len(prefix) > IDHexLength || !isLowerHexPrefix(prefix) {
 		return Mutant{}, fmt.Errorf("%w: %q must be %d to %d lowercase hex characters",

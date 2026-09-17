@@ -1,32 +1,6 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# Commit-message policy enforced by `committed` (the lefthook commit-msg hook
-# and the CI lint job). Aim for subjects of at most 72 characters; 80 is the
-# hard ceiling. Conventional-commit prefixes are not required here, but they
-# are the house habit, so lowercase `type:` subjects must pass.
-#
-# Two of these were relaxed when the runner's history came into this repository,
-# and both relaxations are about history that already exists rather than about
-# history somebody is about to write.
-#
-# `merge_commit` is true because the import is a merge: the runner's hundred
-# commits were joined with `--allow-unrelated-histories --no-ff` so that
-# `git log -- goatest/x.go`, `git blame` and `git log -S` keep reaching, which a
-# squash would have ended. main stays linear apart from the merges ADR 0035
-# names, and that record names the commit.
-#
-# The two lengths are raised for the same reason: thirteen imported subjects run
-# to 97 characters and four imported bodies to 212, written under a policy that
-# had neither ceiling. The alternative to raising them is rewriting somebody
-# else's commit messages, which would change every hash the `Goatest-origin`
-# trailers were just made verifiable against -- paying in the one property the
-# import exists to preserve, to tidy prose nobody will read again.
-#
-# The guidance for a commit written here is unchanged and is not these numbers:
-# aim for a subject of 72, keep it under 80, and wrap the body at 72. These are
-# the ceilings a gate refuses at, and they now sit above the worst line this
-# repository holds rather than above the worst line anybody should write.
 subject_length = 100
 subject_capitalized = false
 line_length = 220

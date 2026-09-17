@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// Form F exists because two of Go's statement slots hold a *simple* statement
-// rather than any statement. `for i := 0; i < n; if __gm.M[3] { … }` does not
-// parse, and neither does an `if` whose initialiser is a block -- so every edit
-// in a `for` post statement or an `if`, `switch` or `for` initialiser was a
-// recorded refusal, which over this repository was most of them. A call is an
-// expression, an expression alone is an expression statement, and an expression
-// statement is simple: the guard goes inside a closure and the closure is
-// called where the statement was.
-
-// TestAForPostStatementIsNowASite is the slot the form was written for, and the
-// one that held the most refusals.
 func TestAForPostStatementIsNowASite(t *testing.T) {
 	t.Parallel()
 
@@ -52,8 +41,6 @@ func Sum(values []int) int {
 	}
 }
 
-// TestAnAssignmentInAnInitialiserIsNowASite is the other slot, and it is the
-// commonest shape in real Go of the two: `if err = f(); err != nil`.
 func TestAnAssignmentInAnInitialiserIsNowASite(t *testing.T) {
 	t.Parallel()
 
@@ -104,10 +91,6 @@ func Run(values []int, n int) int {
 	}
 }
 
-// TestACommunicationClauseIsNotAFormFSite pins the one slot that refuses a call
-// as well as a block. A `case` of a `select` has to be a send or a receive, and
-// a call is neither -- so the *statement* is no site of this form, and what
-// carries an edit inside it is the expression, through Form E.
 func TestACommunicationClauseIsNotAFormFSite(t *testing.T) {
 	t.Parallel()
 
@@ -133,9 +116,6 @@ func Send(ch chan int, n int) string {
 	}
 }
 
-// TestAnOrdinaryStatementStillUsesFormS is the ordering promise: Form F is
-// reached only where a block is not legal, so every statement a block *is*
-// legal for is covered by exactly the form that covered it before.
 func TestAnOrdinaryStatementStillUsesFormS(t *testing.T) {
 	t.Parallel()
 

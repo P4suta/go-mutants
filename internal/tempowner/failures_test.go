@@ -1,19 +1,6 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// What this package does when the filesystem refuses.
-//
-// Every one of these is an error path the ordinary tests never reach, and every
-// one of them decides something: whether a claim that could not be marked
-// leaves a lock behind, whether a sweep that could not read a directory deletes
-// it anyway, whether a failure is reported or swallowed. A package whose whole
-// job is to decide what may be deleted has to be measured on the paths where it
-// cannot see.
-//
-// The refusals are made with permissions rather than with a fake filesystem,
-// because the question is what the operating system does: a mock would be a
-// second implementation of the thing under test. Each one probes for its own
-// enforcement and skips where a platform or a user is not stopped by it.
 package tempowner
 
 import (
@@ -28,13 +15,6 @@ import (
 	"time"
 )
 
-// readOnlyDir makes dir refuse new files, and skips the test where it cannot.
-//
-// A directory that refuses creation is how every "the marker could not be
-// written" case below is produced. Root ignores the mode, and Windows does not
-// express this permission at all, so both are skipped rather than asserted
-// against -- a test that passed because nothing was enforced would be a test
-// that proved nothing.
 func readOnlyDir(t *testing.T, dir string) {
 	t.Helper()
 
@@ -49,7 +29,6 @@ func readOnlyDir(t *testing.T, dir string) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	// Proof that the mode is enforced here, before anything depends on it.
 	probe := filepath.Join(dir, "probe")
 	if err := os.WriteFile(probe, []byte("x"), 0o600); err == nil {
 		_ = os.Remove(probe)
@@ -57,15 +36,6 @@ func readOnlyDir(t *testing.T, dir string) {
 	}
 }
 
-// readOnlyFile makes one existing file refuse writes, and skips the test where
-// it cannot.
-//
-// It cannot release what the caller is holding. A skip from here runs the
-// caller's cleanups and stops, so a caller that has claimed a directory must
-// have registered its release before calling this -- on Windows an open lock
-// file is one t.TempDir cannot unlink, and the skip is then reported as a
-// failure about a temporary directory. It is [readOnlyDir]'s argument applied to a file that is already
-// there, which a read-only directory does not cover.
 func readOnlyFile(t *testing.T, path string) {
 	t.Helper()
 
@@ -84,13 +54,6 @@ func readOnlyFile(t *testing.T, path string) {
 	}
 }
 
-// TestClaimSaysWhichHalfOfItFailed pins the two failures a claim can have, and
-// they are different failures with different consequences.
-//
-// A lock that cannot be taken leaves nothing behind: there is no directory
-// state to undo. A marker that cannot be written leaves a lock that must be
-// released, because a claim that returned an error and kept the lock would make
-// the directory immortal -- every later sweep would read it as live.
 func TestClaimSaysWhichHalfOfItFailed(t *testing.T) {
 	t.Parallel()
 
@@ -114,8 +77,6 @@ func TestClaimSaysWhichHalfOfItFailed(t *testing.T) {
 		t.Parallel()
 
 		dir := t.TempDir()
-		// The lock file has to exist before the directory refuses creation, or
-		// the lock is the half that fails and the marker is never reached.
 		lock, held, err := Acquire(LockPath(dir))
 		if err != nil || !held {
 			t.Fatalf("seeding the lock file: held=%v err=%v", held, err)
@@ -135,8 +96,6 @@ func TestClaimSaysWhichHalfOfItFailed(t *testing.T) {
 		if !strings.Contains(err.Error(), "marking "+dir) {
 			t.Errorf("the failure does not say which half failed: %v", err)
 		}
-		// And the lock is gone, which is the half a reader cannot see in the
-		// error: a second claim would be refused by a lock nobody holds.
 		_, held, err = Acquire(LockPath(dir))
 		if err != nil {
 			t.Fatalf("re-acquiring after a failed claim: %v", err)
@@ -147,12 +106,6 @@ func TestClaimSaysWhichHalfOfItFailed(t *testing.T) {
 	})
 }
 
-// TestKeepReportsAFailureAndStillReleases is the same shape one level on.
-//
-// `Keep` is what a run calls when it wants the directory to survive, so a
-// failure here is a directory that will be swept later. Releasing anyway is the
-// decision: a lock held by a process that has given up is worse than a
-// directory that is collected, because nothing will ever collect it.
 func TestKeepReportsAFailureAndStillReleases(t *testing.T) {
 	t.Parallel()
 
@@ -161,17 +114,7 @@ func TestKeepReportsAFailureAndStillReleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	// Released whatever happens next, because what happens next may be a skip.
-	// [readOnlyFile] gives up on Windows, and a skip runs the cleanups and
-	// stops -- so without this the lock file stays open, t.TempDir's own
-	// cleanup cannot unlink it, and the test reports a failure about a
-	// temporary directory instead of a skip about a file mode. The error is
-	// dropped because the Release this test is really about is asserted below,
-	// and cleanups run after it.
 	t.Cleanup(func() { _ = owner.Release() })
-	// The marker file itself, not the directory: Claim has already written it,
-	// and a read-only *directory* still admits a write to a file that is
-	// already in it.
 	readOnlyFile(t, MarkerPath(dir))
 
 	if err := owner.Keep(); err == nil {
@@ -184,10 +127,6 @@ func TestKeepReportsAFailureAndStillReleases(t *testing.T) {
 	}
 }
 
-// TestReadMarkerRefusesWhatIsNotOne keeps the two ways a marker is unreadable
-// apart, because the sweep branches on exactly that difference: a marker that
-// is *absent* sends a directory to the legacy age rule, and a marker that is
-// *malformed* does not.
 func TestReadMarkerRefusesWhatIsNotOne(t *testing.T) {
 	t.Parallel()
 
@@ -215,13 +154,6 @@ func TestReadMarkerRefusesWhatIsNotOne(t *testing.T) {
 	}
 }
 
-// TestSweepOfAParentItCannotReadIsAFailureRatherThanAnEmptyResult is the
-// difference between "there is nothing here" and "I could not look".
-//
-// A missing parent is the first and is reported as an empty sweep, which is
-// what the ordinary test pins. A parent that exists and cannot be read is the
-// second, and a sweep that reported it as empty would tell a caller its
-// temporary directories were already gone.
 func TestSweepOfAParentItCannotReadIsAFailureRatherThanAnEmptyResult(t *testing.T) {
 	t.Parallel()
 
@@ -258,13 +190,6 @@ func TestSweepOfAParentItCannotReadIsAFailureRatherThanAnEmptyResult(t *testing.
 	}
 }
 
-// TestSweepSparesADirectoryWhoseLockItCannotTake is the fail-closed rule the
-// whole package exists for: what cannot be proved dead is left alone.
-//
-// A lock file that cannot be opened is not evidence of anything. The sweep
-// reports the failure and spares the directory, because the alternative --
-// treating "I could not ask" as "nobody answered" -- is how a running
-// workspace gets deleted.
 func TestSweepSparesADirectoryWhoseLockItCannotTake(t *testing.T) {
 	t.Parallel()
 
@@ -273,13 +198,9 @@ func TestSweepSparesADirectoryWhoseLockItCannotTake(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatalf("making the directory: %v", err)
 	}
-	// A marker that is present and does not say kept, so the verdict reaches
-	// the lock rather than the legacy age rule.
 	if err := os.WriteFile(MarkerPath(dir), []byte(`{"schema":1,"pid":1}`), 0o600); err != nil {
 		t.Fatalf("writing the marker: %v", err)
 	}
-	// A *directory* where the lock file goes: os.OpenFile refuses it, which is
-	// the "the filesystem would not answer" case without a permission trick.
 	if err := os.Mkdir(LockPath(dir), 0o700); err != nil {
 		t.Fatalf("making the lock path a directory: %v", err)
 	}
@@ -299,13 +220,6 @@ func TestSweepSparesADirectoryWhoseLockItCannotTake(t *testing.T) {
 	}
 }
 
-// TestTheLegacyRuleIsAnAgeAndTheBoundaryBelongsToTheOld pins the one comparison
-// a directory with no marker is judged by.
-//
-// The rule spares what is *younger* than [LegacyMaxAge], so a directory exactly
-// one cut-off old is collected. Which side of the line the boundary falls on is
-// the only thing the comparison decides, and it is invisible from anywhere
-// else: `<` and `<=` agree about every other age there is.
 func TestTheLegacyRuleIsAnAgeAndTheBoundaryBelongsToTheOld(t *testing.T) {
 	t.Parallel()
 
@@ -326,14 +240,6 @@ func TestTheLegacyRuleIsAnAgeAndTheBoundaryBelongsToTheOld(t *testing.T) {
 			if err := os.Mkdir(dir, 0o700); err != nil {
 				t.Fatalf("making the directory: %v", err)
 			}
-			// The clock is derived from the directory rather than the other
-			// way round, and both halves of that matter. A fixed `now` keeps
-			// the age from being the age plus however long the test took to
-			// get here; reading the modification time *back* keeps it from
-			// being the age plus whatever the filesystem rounded away, which on
-			// a second-granularity one is up to a second. The boundary is the
-			// whole subject, so an age that is approximately right is an age
-			// that tests the other case.
 			aged := time.Now().Add(-tc.age)
 			if err := os.Chtimes(dir, aged, aged); err != nil {
 				t.Fatalf("ageing the directory: %v", err)
@@ -355,14 +261,6 @@ func TestTheLegacyRuleIsAnAgeAndTheBoundaryBelongsToTheOld(t *testing.T) {
 	}
 }
 
-// TestAcquireKeepsTheThreeAnswersApart is the contract the whole sweep rests
-// on, asserted at the one function that produces it.
-//
-// "I took the lock", "somebody else holds it" and "the filesystem would not
-// answer" are three different answers and only the first two are facts about an
-// owner. A caller that read the third as the second would delete a running
-// workspace; a caller that read it as the first would take a lock it does not
-// hold.
 func TestAcquireKeepsTheThreeAnswersApart(t *testing.T) {
 	t.Parallel()
 
@@ -398,8 +296,6 @@ func TestAcquireKeepsTheThreeAnswersApart(t *testing.T) {
 		if lock != nil {
 			t.Error("a failed acquire returned a lock")
 		}
-		// The file is closed on the way out, which is what stops a refused
-		// acquire from leaking a descriptor per swept directory.
 		if _, statErr := os.Stat(path); statErr != nil {
 			t.Errorf("the lock file is gone: %v", statErr)
 		}
@@ -428,14 +324,6 @@ func TestAcquireKeepsTheThreeAnswersApart(t *testing.T) {
 	})
 }
 
-// TestReleaseCarriesUpAnUnlockFailure is the other syscall, and the reason it
-// is reported rather than swallowed.
-//
-// The close that follows drops the lock whatever the unlock did, so a caller
-// could be told nothing went wrong and would usually be right. It is told
-// anyway: an unlock that fails is a kernel disagreeing with this package about
-// a descriptor it holds, and a run that swallowed that would be a run whose
-// next sweep reads a directory nobody can explain.
 func TestReleaseCarriesUpAnUnlockFailure(t *testing.T) {
 	t.Parallel()
 
@@ -448,20 +336,11 @@ func TestReleaseCarriesUpAnUnlockFailure(t *testing.T) {
 	if err := lock.Release(); !errors.Is(err, refused) {
 		t.Errorf("Release = %v, want the syscall's own failure", err)
 	}
-	// And it is still idempotent: the second release has nothing to unlock and
-	// says so with nil, whatever the first one reported.
 	if err := lock.Release(); err != nil {
 		t.Errorf("the second Release = %v, want nil", err)
 	}
 }
 
-// TestCloseAfterPrefersTheCauseItWasGiven pins the rule the two syscall paths
-// share, at the function that decides it.
-//
-// A close failure is real and is reported when there is nothing else to report.
-// A cause wins over it, because the cause is what went wrong and the close is
-// what this package did about it -- and a caller handed the close failure
-// instead would be told the descriptor was the problem.
 func TestCloseAfterPrefersTheCauseItWasGiven(t *testing.T) {
 	t.Parallel()
 
@@ -490,14 +369,6 @@ func TestCloseAfterPrefersTheCauseItWasGiven(t *testing.T) {
 	}
 }
 
-// TestLegacyReportsAnEntryItCannotStat is the directory that went away between
-// the listing and the question about it.
-//
-// A sweep reads a directory's entries and then asks each one how old it is, and
-// a run finishing in between is ordinary rather than exceptional. Vanished is
-// spared and silent -- there is nothing left to remove and nothing to report --
-// and every other failure is spared and reported, because "I could not ask" is
-// never "nobody answered".
 func TestLegacyReportsAnEntryItCannotStat(t *testing.T) {
 	t.Parallel()
 
@@ -526,13 +397,6 @@ func TestLegacyReportsAnEntryItCannotStat(t *testing.T) {
 	}
 }
 
-// TestDirectorySizeAnswersForATreeItCannotWalk keeps a measurement from being a
-// reason not to reclaim a directory.
-//
-// The number is for a log line. A directory that cannot be walked at all, or a
-// file that cannot be stat-ed inside one, is an answer of zero rather than a
-// failure -- and never a panic, which is what a walk that read its error as a
-// live entry would produce.
 func TestDirectorySizeAnswersForATreeItCannotWalk(t *testing.T) {
 	t.Parallel()
 
@@ -552,8 +416,6 @@ func TestDirectorySizeAnswersForATreeItCannotWalk(t *testing.T) {
 	}
 }
 
-// openThenClose is a file that is already closed, so that closing it again
-// fails the way a descriptor the operating system has taken back does.
 func openThenClose(t *testing.T) *os.File {
 	t.Helper()
 
@@ -567,8 +429,6 @@ func openThenClose(t *testing.T) *os.File {
 	return file
 }
 
-// A failingEntry is an fs.DirEntry that cannot say anything about itself, which
-// is what a directory removed between the listing and the question looks like.
 type failingEntry struct{ err error }
 
 func (e failingEntry) Name() string               { return "go-mutants-gone" }
@@ -576,17 +436,6 @@ func (e failingEntry) IsDir() bool                { return true }
 func (e failingEntry) Type() fs.FileMode          { return fs.ModeDir }
 func (e failingEntry) Info() (fs.FileInfo, error) { return nil, e.err }
 
-// TestClaimRefusesAClockItCannotWriteDown is the marker's own encoding failure,
-// and the reason the lock does not outlive it.
-//
-// A Marker is four fields and three of them cannot fail to encode. The fourth
-// is a time.Time, and RFC 3339 -- which is what encoding/json writes one as --
-// has no year outside [0,9999], so a caller handing Claim a clock that far out
-// gets an error from json.Marshal rather than a file. That is the only way this
-// package's marshal can fail, and it is worth having a test for precisely
-// because the failure arrives *between* the lock being taken and the marker
-// being written: a Claim that returned the error and kept the lock would leave
-// a directory that every later sweep reads as live and nothing ever releases.
 func TestClaimRefusesAClockItCannotWriteDown(t *testing.T) {
 	t.Parallel()
 
@@ -605,9 +454,6 @@ func TestClaimRefusesAClockItCannotWriteDown(t *testing.T) {
 		t.Errorf("a marker was written anyway: %v", statErr)
 	}
 
-	// And the lock went back. A second claim from this same process is the
-	// proof: flock is per open file description, so a descriptor the first
-	// claim had left open would refuse this one with ErrOwned.
 	second, err := Claim(dir, time.Now())
 	if err != nil {
 		t.Fatalf("the claim after it = %v, want the lock to have been released", err)
@@ -615,16 +461,6 @@ func TestClaimRefusesAClockItCannotWriteDown(t *testing.T) {
 	t.Cleanup(func() { _ = second.Release() })
 }
 
-// TestDirectorySizeSkipsAFileItCannotStat is the other half of
-// [TestDirectorySizeAnswersForATreeItCannotWalk]: not a tree the walk cannot
-// enter, but one file inside a tree it can.
-//
-// A directory that is readable and not searchable is exactly that shape --
-// os.ReadDir lists the names and lstat of any of them is refused -- and it is
-// the case where reading the error as a live entry costs more than a wrong
-// number: fs.DirEntry.Info returns a nil FileInfo beside its error, so a size
-// added up without checking would panic inside the walk of a directory this
-// package is about to reclaim.
 func TestDirectorySizeSkipsAFileItCannotStat(t *testing.T) {
 	t.Parallel()
 
@@ -641,20 +477,11 @@ func TestDirectorySizeSkipsAFileItCannotStat(t *testing.T) {
 	}
 	unsearchableDir(t, inner)
 
-	// Four, not twelve: the readable file is counted and the one that cannot be
-	// stat-ed is passed over, which is what "best effort" has to mean here.
 	if got := directorySize(dir); got != 4 {
 		t.Errorf("directorySize = %d, want the one file it could stat", got)
 	}
 }
 
-// unsearchableDir makes dir list its names and refuse to stat any of them, and
-// skips the test where it cannot.
-//
-// It is [readOnlyDir]'s argument for the other permission bit: read without
-// execute is what separates "which files are here" from "what is this file",
-// and it is the only way to make fs.DirEntry.Info fail without racing a file
-// removal.
 func unsearchableDir(t *testing.T, dir string) {
 	t.Helper()
 
@@ -669,8 +496,6 @@ func unsearchableDir(t *testing.T, dir string) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	// Proof that both halves are enforced here, before anything depends on
-	// either: the names are still readable, and stat-ing one is refused.
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) == 0 {
 		t.Skipf("this filesystem does not list an unsearchable directory: %v", err)
@@ -680,18 +505,6 @@ func unsearchableDir(t *testing.T, dir string) {
 	}
 }
 
-// TestSweepSparesADirectoryWhoseLockItCannotRelease is the second half of the
-// fail-closed rule [TestSweepSparesADirectoryWhoseLockItCannotTake] states.
-//
-// The lock is released *before* the removal rather than after it, because on
-// Windows the open handle inside a directory is itself what would refuse the
-// delete. That ordering puts one more syscall between "this directory is
-// abandoned" and "remove it", and the answer to it has to be read the same way
-// as the first: a lock this package cannot give back is a lock it does not know
-// the state of, and a directory it does not know the state of is not one to
-// delete. The failure is reported, the directory stays, and nothing is counted
-// -- a spared directory is not a live one, and saying otherwise would put a
-// number in Result that nothing on disk backs up.
 func TestSweepSparesADirectoryWhoseLockItCannotRelease(t *testing.T) {
 	t.Parallel()
 

@@ -12,26 +12,6 @@ import (
 	"testing"
 )
 
-// What a branch proof rests on: the claim that evaluating a condition does
-// nothing a test could observe.
-//
-// The proof published for a narrowing edit says that a test during which none
-// of the guarded body ran could not have told the two programs apart. That is
-// only true if evaluating the condition itself is invisible -- no effect, no
-// panic, no non-termination -- so [fileScan.inert] is the load-bearing half of
-// the record, and every expression kind it admits is one the proof is staked
-// on. These are written as questions about expressions rather than as
-// assertions about a fixture's candidates, because the interesting shapes are
-// the refusals and a fixture holds only what somebody thought to put in it.
-
-// probed is a type-checked file built around one expression, and the expression
-// itself.
-//
-// Every predicate in this package reads the checker's record of what a name
-// denotes, what a selection selects and what a call calls, so an expression
-// assembled by hand has no record and every question about it would be answered
-// from the syntax alone. Building the file is the only honest way to ask, and
-// the same file answers for [fileScan] and for [guardResolver] alike.
 type probed struct {
 	file    *ast.File
 	info    *types.Info
@@ -40,21 +20,12 @@ type probed struct {
 	expr    ast.Expr
 }
 
-// probeSource type-checks `decls` and one expression, and returns both.
-//
-// The expression is the right-hand side of the one assignment in a function
-// named probe, which is how it is found again without counting nodes.
 func probeSource(t *testing.T, decls, expr string) probed {
 	t.Helper()
 
 	return probeIn(t, decls, "()", expr)
 }
 
-// probeIn is [probeSource] with a signature of the caller's own, which is how a
-// fixture reaches the shapes only a generic function can hold: a field selected
-// from a type parameter whose constraint has a core struct type is a field
-// selection whose base has an interface underneath, and no ordinary function
-// can be written to produce one.
 func probeIn(t *testing.T, decls, signature, expr string) probed {
 	t.Helper()
 
@@ -84,12 +55,10 @@ func probeIn(t *testing.T, decls, signature, expr string) probed {
 	}
 }
 
-// resolver is the guard resolver for the probed file.
 func (p probed) resolver() *guardResolver {
 	return newGuardResolver(p.file, p.info, p.pkg, p.tokFile, nil)
 }
 
-// inertProbe answers [fileScan.inert] for the probed expression.
 func inertProbe(t *testing.T, decls, expr string) bool {
 	t.Helper()
 
@@ -97,11 +66,6 @@ func inertProbe(t *testing.T, decls, expr string) bool {
 	return (&fileScan{info: p.info}).inert(p.expr)
 }
 
-// parseProbe parses a probe fixture, which is a whole file the caller wrote.
-//
-// Comments are kept: one of this package's own decisions is read off them, and
-// a fixture parsed without them would be a file that looks handwritten
-// whatever it says at the top.
 func parseProbe(t *testing.T, src string) *ast.File {
 	t.Helper()
 
@@ -112,7 +76,6 @@ func parseProbe(t *testing.T, src string) *ast.File {
 	return file
 }
 
-// probeBody is the body of the function named probe.
 func probeBody(t *testing.T, file *ast.File) []ast.Stmt {
 	t.Helper()
 
@@ -125,7 +88,6 @@ func probeBody(t *testing.T, file *ast.File) []ast.Stmt {
 	return nil
 }
 
-// probedExpr is the right-hand side of the assignment in `probe`.
 func probedExpr(t *testing.T, file *ast.File) ast.Expr {
 	t.Helper()
 
@@ -144,13 +106,6 @@ func probedExpr(t *testing.T, file *ast.File) ast.Expr {
 	return nil
 }
 
-// TestWhatCanBeEvaluatedWithoutTheProgramNoticing is the allowlist itself, one
-// row per shape it admits and one per shape it refuses.
-//
-// The refusals are the half that matters. Admitting an expression that panics,
-// blocks or allocates would publish a proof that is simply false, and the
-// failure mode is silent: a consumer that trusted it would skip a mutant a test
-// really could have told apart.
 func TestWhatCanBeEvaluatedWithoutTheProgramNoticing(t *testing.T) {
 	t.Parallel()
 
@@ -170,17 +125,12 @@ func TestWhatCanBeEvaluatedWithoutTheProgramNoticing(t *testing.T) {
 		{name: "a receive", decls: "var ch chan int", expr: "<-ch"},
 		{name: "an address", decls: "var n int", expr: "&n"},
 
-		// Selections. The checker leaves a qualified identifier out of its
-		// selection table, which is the only way this phase can tell one from a
-		// field read written the same way.
 		{name: "a qualified constant", decls: `import "time"`, expr: "time.Nanosecond", want: true},
 		{name: "a field of a value", decls: "var s struct{ n int }", expr: "s.n", want: true},
 		{name: "a field through a pointer", decls: "var p *struct{ n int }", expr: "p.n"},
 		{name: "a field of a call's result", decls: "func f() struct{ n int } { return struct{ n int }{} }", expr: "f().n"},
 		{name: "a method value", decls: "import \"time\"\n\nvar d time.Duration", expr: "d.String"},
 
-		// Arithmetic. Total on every operand type the compiler admits, except
-		// where a run-time value can make it trap.
 		{name: "addition of names", decls: "var a, b int", expr: "a + b", want: true},
 		{name: "division by a constant", decls: "var a int", expr: "a / 2", want: true},
 		{name: "division by a name", decls: "var a, b int", expr: "a / b"},
@@ -189,7 +139,6 @@ func TestWhatCanBeEvaluatedWithoutTheProgramNoticing(t *testing.T) {
 		{name: "a shift by a name", decls: "var a int\n\nvar k uint", expr: "a << k"},
 		{name: "an ordering comparison", decls: "var a, b int", expr: "a < b", want: true},
 
-		// Equality, which is where a comparison of interface values can panic.
 		{name: "a comparison against nil", decls: "var e error", expr: "e == nil", want: true},
 		{name: "a comparison of ints", decls: "var a, b int", expr: "a == b", want: true},
 		{name: "a comparison of pointers", decls: "var p, q *int", expr: "p == q", want: true},
@@ -201,8 +150,6 @@ func TestWhatCanBeEvaluatedWithoutTheProgramNoticing(t *testing.T) {
 		{name: "a comparison of structs holding ints", decls: "var a, b struct{ n int }", expr: "a == b", want: true},
 		{name: "a comparison of arrays of interfaces", decls: "var a, b [2]any", expr: "a == b"},
 
-		// Calls. A conversion computes a value; everything else runs code this
-		// phase cannot see.
 		{name: "a conversion to a basic type", decls: "var n int", expr: "int64(n)", want: true},
 		{name: "a conversion to an array", decls: "var xs []int", expr: "[4]int(xs)"},
 		{name: "a conversion to a pointer to an array", decls: "var xs []int", expr: "(*[4]int)(xs)"},
@@ -212,15 +159,11 @@ func TestWhatCanBeEvaluatedWithoutTheProgramNoticing(t *testing.T) {
 		{name: "a builtin over a call's result", decls: "func f() []int { return nil }", expr: "len(f())"},
 		{name: "an ordinary call", decls: "func f() int { return 0 }", expr: "f()"},
 		{
-			// The name is the builtin's; the object is not. A package that
-			// declares its own `len` gets an ordinary call, and an ordinary call
-			// runs code.
 			name:  "a call of a function the package named after a builtin",
 			decls: "func len(xs []int) int { return 0 }\n\nvar xs []int",
 			expr:  "len(xs)",
 		},
 
-		// And the shapes nobody taught it, refused by falling off the end.
 		{name: "an index", decls: "var xs []int", expr: "xs[0]"},
 		{name: "a slice", decls: "var xs []int", expr: "xs[1:]"},
 		{name: "a type assertion", decls: "var v any", expr: "v.(int)"},
@@ -237,13 +180,6 @@ func TestWhatCanBeEvaluatedWithoutTheProgramNoticing(t *testing.T) {
 	}
 }
 
-// TestAnExpressionThatIsNotThereIsNotInert is what the walk's refusal rests on.
-//
-// [fileScan.gatedBody] says "no proof" by returning the nil condition, and the
-// caller puts every condition through inert without asking first. That is only
-// a refusal because the allowlist has no case for an absent expression, so it
-// is pinned here rather than left to be rediscovered by whoever adds the
-// fiftieth case to the switch.
 func TestAnExpressionThatIsNotThereIsNotInert(t *testing.T) {
 	t.Parallel()
 
@@ -252,16 +188,6 @@ func TestAnExpressionThatIsNotThereIsNotInert(t *testing.T) {
 	}
 }
 
-// TestWhichTypesCanBeComparedWithoutAPanic is [comparableWithoutPanic] over the
-// types a file cannot easily be written to produce.
-//
-// Three of them are unreachable from source through [fileScan.safelyComparable]
-// -- the absent type, the type of an untyped `nil`, and the invalid type are
-// all screened off before the question is put -- and one, a type parameter, is
-// reachable only from a generic function. They are asked directly because the
-// predicate is recursive: an array of a struct of a type parameter reaches all
-// of them, and a test that could only build the types Go lets it compare would
-// be testing the language rather than the predicate.
 func TestWhichTypesCanBeComparedWithoutAPanic(t *testing.T) {
 	t.Parallel()
 
@@ -294,14 +220,6 @@ func TestWhichTypesCanBeComparedWithoutAPanic(t *testing.T) {
 	}
 }
 
-// TestWhichTypesMayTurnOutToBeAnArray is [mayBeArray], which is the whole of
-// what [inertConversion] refuses.
-//
-// It fails towards "yes" on purpose: a conversion to an array checks the length
-// of the slice it came from and panics when it is short, so a type this phase
-// cannot rule an array out of has to be treated as one. The two rows a file
-// cannot produce -- the absent type and a type parameter -- are the two rows
-// that say so.
 func TestWhichTypesMayTurnOutToBeAnArray(t *testing.T) {
 	t.Parallel()
 
@@ -327,9 +245,6 @@ func TestWhichTypesMayTurnOutToBeAnArray(t *testing.T) {
 		})
 	}
 
-	// And the conversion predicate over the same types, which is where the
-	// pointer case earns its line: `(*[4]int)(xs)` panics for exactly the reason
-	// `[4]int(xs)` does, one indirection later.
 	for _, c := range []struct {
 		name   string
 		target types.Type

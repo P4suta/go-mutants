@@ -15,10 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// The fabricated history these tests read. The documents are written by hand
-// rather than built, because what is under test is the reading: a listing must
-// hold up against whatever is on disk, including a file that a run being killed
-// half way through a write would have left.
 const (
 	historyModule = "example.com/history"
 	otherModule   = "example.com/elsewhere"
@@ -27,9 +23,6 @@ const (
 	brokenRun     = "20260220T110000Z-3333"
 )
 
-// historyDigest and elsewhereDigest name two workspace directories. Two runs of
-// one module land in different directories whenever the tree changed between
-// them, so the listing has to gather them by module path.
 var (
 	historyDigest   = strings.Repeat("ab", 32)
 	editedDigest    = strings.Repeat("a1", 32)
@@ -37,10 +30,6 @@ var (
 	unmarkedDigest  = strings.Repeat("ef", 32)
 )
 
-// runDocument is a run report with the fields a listing reads, and nothing
-// else. It is deliberately not a whole document: the enumeration decodes only
-// what it prints, and a test that had to build a full report to prove that
-// would not be proving it.
 func runDocument(runID, module, finished string, score float64) string {
 	return `{
   "document_type": "go-mutants/run-report",
@@ -61,13 +50,6 @@ func runDocument(runID, module, finished string, score float64) string {
 `
 }
 
-// isolatedHistory points os.UserCacheDir at a temporary directory and puts the
-// working directory in a module of its own, returning the store root.
-//
-// The redirection is [testsupport.CacheDir]'s rather than this package's,
-// because which variable os.UserCacheDir reads is a property of the operating
-// system and not of these tests; see its documentation for what a partial
-// redirection costs, which these tests paid on macOS.
 func isolatedHistory(t *testing.T) string {
 	t.Helper()
 	base := testsupport.CacheDir(t)
@@ -81,9 +63,6 @@ func isolatedHistory(t *testing.T) string {
 	return filepath.Join(base, report.DirName)
 }
 
-// seedWorkspace claims a workspace directory and files documents in it, keyed
-// by file name. A name of "latest.json" is written beside `runs/` rather than
-// in it, which is where the store keeps the pointer to the newest run.
 func seedWorkspace(t *testing.T, root, digest string, documents map[string]string) string {
 	t.Helper()
 	dir, err := report.History{Root: root}.Claim(digest)
@@ -93,8 +72,6 @@ func seedWorkspace(t *testing.T, root, digest string, documents map[string]strin
 	return writeDocuments(t, dir, documents)
 }
 
-// writeDocuments files documents under one workspace directory, creating
-// `runs/` as needed.
 func writeDocuments(t *testing.T, dir string, documents map[string]string) string {
 	t.Helper()
 	runs := filepath.Join(dir, report.RunsDirName)
@@ -113,10 +90,6 @@ func writeDocuments(t *testing.T, dir string, documents map[string]string) strin
 	return dir
 }
 
-// seedHistory is the fabricated store every test below reads: two runs of this
-// module in two workspace directories, one truncated document beside the
-// newest, a pointer to the newest, and one run of a different module that must
-// never be listed or deleted.
 func seedHistory(t *testing.T, root string) {
 	t.Helper()
 	newest := runDocument(secondRun, historyModule, "2026-02-19T10:15:42Z", 91.5)
@@ -134,9 +107,6 @@ func seedHistory(t *testing.T, root string) {
 	})
 }
 
-// TestReportListGathersThisModulesRunsNewestFirst is the whole of `report
-// list`: the two runs of this module, in order, from the two directories an
-// edit between them filed them in — and nothing belonging to anybody else.
 func TestReportListGathersThisModulesRunsNewestFirst(t *testing.T) {
 	root := isolatedHistory(t)
 	seedHistory(t, root)
@@ -165,8 +135,6 @@ func TestReportListGathersThisModulesRunsNewestFirst(t *testing.T) {
 	if !strings.Contains(stdout, "2 runs in 2 workspace directories") {
 		t.Errorf("the listing does not count what it found:\n%s", stdout)
 	}
-	// The truncated document is named rather than dropped, and it did not stop
-	// the run beside it from being listed.
 	if !strings.Contains(stdout, brokenRun) {
 		t.Errorf("the damaged document is not reported:\n%s", stdout)
 	}
@@ -175,9 +143,6 @@ func TestReportListGathersThisModulesRunsNewestFirst(t *testing.T) {
 	}
 }
 
-// TestReportListAlignsItsColumns. The table is meant to be read down the page
-// and diffed between two days, so every row's columns start where the header's
-// do.
 func TestReportListAlignsItsColumns(t *testing.T) {
 	root := isolatedHistory(t)
 	seedHistory(t, root)
@@ -204,9 +169,6 @@ func TestReportListAlignsItsColumns(t *testing.T) {
 	}
 }
 
-// TestReportListOfAModuleWithNoRunsIsNotAFailure. An empty listing is a true
-// answer to the question, and a non-zero status for it would break a script
-// that checks the history before deciding to run.
 func TestReportListOfAModuleWithNoRunsIsNotAFailure(t *testing.T) {
 	root := isolatedHistory(t)
 	seedWorkspace(t, root, elsewhereDigest, map[string]string{
@@ -222,10 +184,6 @@ func TestReportListOfAModuleWithNoRunsIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestHistoryCommandsNeedAModuleRoot. A run is filed under the module it
-// measured, so outside one there is nothing to say which history is being
-// asked about — and for `clean`, which deletes, guessing would be the worst
-// possible answer.
 func TestHistoryCommandsNeedAModuleRoot(t *testing.T) {
 	for _, args := range [][]string{{"report", "list"}, {"report", "latest"}, {"report", "clean"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -243,7 +201,6 @@ func TestHistoryCommandsNeedAModuleRoot(t *testing.T) {
 	}
 }
 
-// TestReportLatestSummarisesTheNewestRunAndNamesItsFile.
 func TestReportLatestSummarisesTheNewestRun(t *testing.T) {
 	root := isolatedHistory(t)
 	seedHistory(t, root)
@@ -270,9 +227,6 @@ func TestReportLatestSummarisesTheNewestRun(t *testing.T) {
 	}
 }
 
-// TestReportLatestJSONIsTheStoredDocument. The command prints an archive, and
-// an archive re-encoded on its way out is not an archive: a document written by
-// an earlier release must come back exactly as that release wrote it.
 func TestReportLatestJSONIsTheStoredDocument(t *testing.T) {
 	root := isolatedHistory(t)
 	seedHistory(t, root)
@@ -292,8 +246,6 @@ func TestReportLatestJSONIsTheStoredDocument(t *testing.T) {
 	}
 }
 
-// TestReportLatestWithNoHistoryIsAnError, unlike an empty listing: this
-// command's whole output is one document, and there is none.
 func TestReportLatestWithNoHistoryIsAnError(t *testing.T) {
 	isolatedHistory(t)
 
@@ -309,7 +261,6 @@ func TestReportLatestWithNoHistoryIsAnError(t *testing.T) {
 	}
 }
 
-// TestReportCleanRemovesThisModulesHistoryAndNothingElse.
 func TestReportCleanRemovesThisModulesHistoryAndNothingElse(t *testing.T) {
 	root := isolatedHistory(t)
 	seedHistory(t, root)
@@ -318,8 +269,6 @@ func TestReportCleanRemovesThisModulesHistoryAndNothingElse(t *testing.T) {
 	if code != int(mutation.ExitOK) {
 		t.Fatalf("exit = %d, want 0\n%s%s", code, stdout, stderr)
 	}
-	// Five documents: two runs, two pointers to the newest, and the truncated
-	// file beside one of them, which is this module's leftover too.
 	if !strings.Contains(stdout, "removed 5 stored documents") {
 		t.Errorf("the sweep does not say what it removed:\n%s", stdout)
 	}
@@ -336,9 +285,6 @@ func TestReportCleanRemovesThisModulesHistoryAndNothingElse(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, report.LatestFileName)); !os.IsNotExist(err) {
 			t.Errorf("%s still holds a pointer to the newest run: %v", dir, err)
 		}
-		// The marker stays: the directory's identity outlives its contents, and
-		// a claim that vanished would let the next run adopt a directory
-		// something else may still be writing to.
 		if _, err := os.Stat(filepath.Join(dir, report.MarkerFileName)); err != nil {
 			t.Errorf("the ownership marker in %s was deleted: %v", dir, err)
 		}
@@ -348,17 +294,11 @@ func TestReportCleanRemovesThisModulesHistoryAndNothingElse(t *testing.T) {
 		t.Errorf("another module's history was deleted: %v", err)
 	}
 
-	// And the listing agrees with the sweep.
 	if _, stdout, _ = execute(t, "report", "list"); !strings.Contains(stdout, "no run is recorded") {
 		t.Errorf("runs survived the clean:\n%s", stdout)
 	}
 }
 
-// TestReportCleanNamesWhatItCouldNotAttribute. "Nothing to remove" while
-// history is still on the disk is the worst answer this command can give, so a
-// directory whose documents cannot be read is named rather than passed over in
-// silence — and left exactly as it was, since nothing in it can prove whose it
-// is.
 func TestReportCleanNamesWhatItCouldNotAttribute(t *testing.T) {
 	root := isolatedHistory(t)
 	seedWorkspace(t, root, historyDigest, map[string]string{
@@ -385,16 +325,10 @@ func TestReportCleanNamesWhatItCouldNotAttribute(t *testing.T) {
 	}
 }
 
-// TestReportCleanRefusesADirectoryWithNoMarker is the safety property that
-// makes deleting files in the operating system's cache directory acceptable at
-// all: whatever the documents inside say, a directory that cannot prove it is
-// go-mutants' own is reported and left alone.
 func TestReportCleanRefusesADirectoryWithNoMarker(t *testing.T) {
 	root := isolatedHistory(t)
 	seedHistory(t, root)
 
-	// A directory holding what looks exactly like this module's history, with
-	// no marker on it.
 	unmarked := filepath.Join(root, report.WorkspacesDirName, report.WorkspaceKey(unmarkedDigest))
 	writeDocuments(t, unmarked, map[string]string{
 		"20260222T120000Z-5555.json": runDocument("20260222T120000Z-5555", historyModule, "2026-02-22T12:00:00Z", 50),
@@ -411,8 +345,6 @@ func TestReportCleanRefusesADirectoryWithNoMarker(t *testing.T) {
 	if _, err := os.Stat(survivor); err != nil {
 		t.Errorf("a directory with no marker was cleaned: %v", err)
 	}
-	// It is not listed either: a document nothing can prove the provenance of
-	// is not this module's history just because it says so.
 	_, stdout, _ = execute(t, "report", "list")
 	if strings.Contains(stdout, "20260222T120000Z-5555") {
 		t.Errorf("an unmarked directory's run is listed as this module's:\n%s", stdout)

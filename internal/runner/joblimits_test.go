@@ -10,36 +10,10 @@ import (
 	"testing"
 )
 
-// fitsUnderTheCeiling reports whether a bound of limit bytes leaves a line
-// above it inside a uintptr, which is the rule [kernelJobMemoryLimit] states
-// and the one case in this file whose answer is not the same on every build.
-//
-// A 32-bit uintptr tops out three orders of magnitude below an int64, so a
-// bound near the top of that range has no line above it to give and the kernel
-// is asked for none — while the same bound on a 64-bit build fits with room to
-// spare. The rows below derive their expectation from this rather than typing a
-// literal, because a literal could only be right on one word size and the gate
-// this file is part of runs on both.
 func fitsUnderTheCeiling(limit int64) bool {
 	return limit > 0 && uint64(limit) < uint64(^uintptr(0))
 }
 
-// TestJobLimitsPairEveryFlagWithTheValueItNames is the arithmetic underneath
-// the Windows job object, checked on every platform because it is not a
-// Windows fact.
-//
-// SetInformationJobObject answers ERROR_INVALID_PARAMETER for a
-// JOBOBJECT_EXTENDED_LIMIT_INFORMATION whose LimitFlags names a limit the
-// structure does not carry a value for — and for the reverse, a value with no
-// flag naming it, which is worse than an error because it is silently ignored
-// and the job runs unbounded. Both are decided here, in ordinary integer code
-// that a Linux `go test` can run, rather than on the one platform where getting
-// it wrong is a failed run nobody can reproduce.
-//
-// Kill-on-close is in every set, and that is the case easiest to lose:
-// [setJobLimits] replaces the whole structure, so a call that carried only the
-// memory line would take the backstop away — and the backstop is what the
-// package's promise to kill a whole tree rests on.
 func TestJobLimitsPairEveryFlagWithTheValueItNames(t *testing.T) {
 	t.Parallel()
 
@@ -52,10 +26,6 @@ func TestJobLimitsPairEveryFlagWithTheValueItNames(t *testing.T) {
 		{"a negative bound", -1, false},
 		{"an ordinary bound", 1 << 30, true},
 		{"a bound of one byte", 1, true},
-		// The one row whose answer is a property of the build rather than of
-		// the arithmetic: a 64-bit uintptr has room above math.MaxInt64 and a
-		// 32-bit one is three orders of magnitude below it, so there the kernel
-		// is asked for no line at all and the sampler is the whole bound.
 		{
 			fmt.Sprintf("the largest bound an int64 holds, which only a 64-bit uintptr can sit above "+
 				"(this build has %d)", bits.UintSize),
@@ -82,8 +52,6 @@ func TestJobLimitsPairEveryFlagWithTheValueItNames(t *testing.T) {
 					"a flag without its value is refused and a value without its flag is ignored",
 					limits.Flags, named, limits.JobMemory)
 			}
-			// Unsigned, because the kernel's line is a uintptr and the
-			// headroom above a bound near the top of an int64 is not one.
 			if named && uint64(limits.JobMemory) <= uint64(c.memoryLimit) {
 				t.Errorf("JobMemoryLimit = %d, which is not strictly above the sampler's line %d",
 					limits.JobMemory, c.memoryLimit)
@@ -96,21 +64,6 @@ func TestJobLimitsPairEveryFlagWithTheValueItNames(t *testing.T) {
 	}
 }
 
-// TestTheKernelsMemoryLineSitsAboveTheSamplers is the one claim about the
-// Windows bound that is not a claim about Windows at all, which is why it runs
-// everywhere.
-//
-// JOB_OBJECT_LIMIT_JOB_MEMORY does not kill a job that reaches its limit: it
-// makes the offending commit *fail*, and it caps the job's own accounting at
-// the limit while doing so. Set the kernel's line to the sampler's number and
-// PeakJobMemoryUsed can never exceed it, so `used > limit` is never true, the
-// tree is never killed by go-mutants, and the child dies of a failed allocation
-// with a non-zero status and no `memory_exceeded` anywhere — the whole
-// user-visible half of this feature, silently absent on one platform.
-//
-// So the kernel's line sits a quarter above the sampler's. The sampler is what
-// reports; the kernel is the backstop for a sampler that somehow stopped, and a
-// backstop that fires first is not a backstop.
 func TestTheKernelsMemoryLineSitsAboveTheSamplers(t *testing.T) {
 	t.Parallel()
 
@@ -142,12 +95,6 @@ func TestTheKernelsMemoryLineSitsAboveTheSamplers(t *testing.T) {
 		})
 	}
 
-	// And the invariant itself, over the whole range and on either word size:
-	// either the kernel is not asked for a line at all, or the line it is given
-	// is strictly above the sampler's. A headroom that overflows the field is
-	// clamped to the field's ceiling, which is still above every bound the
-	// field can hold; a bound the field cannot hold at all is left to the
-	// sampler, because no line above it exists to give.
 	for _, limit := range []int64{1, 4096, 1 << 20, 1 << 30, math.MaxInt64 / 2, math.MaxInt64} {
 		got, set := kernelJobMemoryLimit(limit)
 		if !set {

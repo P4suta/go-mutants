@@ -12,18 +12,6 @@ import (
 	"testing"
 )
 
-// Where a guard may stand, decided by the parent rather than by the node.
-//
-// Every form this file chooses between rewrites an expression or a statement
-// into something of the same shape, and whether that is legal Go is a fact
-// about the slot rather than about what is in it. `x` is an ordinary expression
-// in `_ = x` and an addressable operand in `x++`; a call is a value in
-// `n := f()` and a statement in `defer f()`. A hint the instrumenter cannot use
-// is worse than no candidate -- the rewrite fails at compile time, in a
-// generated tree, with a message about a program nobody wrote -- so each of
-// these refusals is what keeps a candidate from being proposed at all.
-
-// guardOver type-checks a whole file and returns the resolver over it.
 func guardOver(t *testing.T, src string) *guardResolver {
 	t.Helper()
 
@@ -46,9 +34,6 @@ func guardOver(t *testing.T, src string) *guardResolver {
 	return newGuardResolver(file, info, pkg, fset.File(file.Package), nil)
 }
 
-// namedTarget is the identifier every position fixture puts in the slot under
-// test. Naming it rather than counting nodes is what keeps a fixture readable
-// and a failure legible.
 func namedTarget(t *testing.T, g *guardResolver) ast.Expr {
 	t.Helper()
 
@@ -68,14 +53,6 @@ func namedTarget(t *testing.T, g *guardResolver) ast.Expr {
 	return found
 }
 
-// TestWhereABooleanSelectorMayStand is [guardResolver.wrappablePosition], one
-// row per slot.
-//
-// Form C renders `(M && (MUT) || !M && (ORIG))`, which is a value and nothing
-// else. So every slot that needs more than a value refuses it -- an address, an
-// assignment target, an operand of `++`, a field name, a struct literal's key --
-// and so does every slot that holds no value at all, which is the three
-// statement positions a call can appear in.
 func TestWhereABooleanSelectorMayStand(t *testing.T) {
 	t.Parallel()
 
@@ -111,7 +88,6 @@ func TestWhereABooleanSelectorMayStand(t *testing.T) {
 	}
 }
 
-// positionFixture wraps a body in the declarations every row draws on.
 func positionFixture(body string) string {
 	return "package pkg\n\n" +
 		"type wrapper struct{ ok bool }\n\n" +
@@ -122,9 +98,6 @@ func positionFixture(body string) string {
 		"func probe() {\n\tvar target bool\n\t_ = target\n" + body + "\n}\n"
 }
 
-// TestWhereABooleanSelectorMayNotStandBecauseTheSlotHoldsNoValue is the second
-// kind of refusal, which needs a fixture of its own: the target is a call
-// rather than a name, because a bare `bool` is not a statement.
 func TestWhereABooleanSelectorMayNotStandBecauseTheSlotHoldsNoValue(t *testing.T) {
 	t.Parallel()
 
@@ -151,13 +124,6 @@ func TestWhereABooleanSelectorMayNotStandBecauseTheSlotHoldsNoValue(t *testing.T
 	}
 }
 
-// TestAFieldNameIsNotAnExpression is the pair of refusals that look like
-// ordinary expressions and are not: the name after the dot, and the key of a
-// struct literal.
-//
-// Both are identifiers the parser records in expression position, and neither
-// denotes a value. A guard in either would select from a boolean or name a
-// field the struct does not have.
 func TestAFieldNameIsNotAnExpression(t *testing.T) {
 	t.Parallel()
 
@@ -184,9 +150,6 @@ func TestAFieldNameIsNotAnExpression(t *testing.T) {
 	t.Run("the key of an array literal", func(t *testing.T) {
 		t.Parallel()
 
-		// An index rather than a field name, and refused for the same reason:
-		// it is a constant the compiler reads as a position, not a value the
-		// program evaluates.
 		g := guardOver(t, "package pkg\n\nconst target = 2\n\nfunc probe() {\n\t_ = [4]int{target: 1}\n}\n")
 		if g.wrappablePosition(namedTarget(t, g)) {
 			t.Error("wrappablePosition = true for the index of an array literal, want false")
@@ -194,13 +157,6 @@ func TestAFieldNameIsNotAnExpression(t *testing.T) {
 	})
 }
 
-// TestWhichSlotsHoldASimpleStatementAndWhichHoldABlock is the pair of
-// statement-slot predicates, which decide between Form S and Form F.
-//
-// They are not each other's negation and the difference is the whole point: a
-// `for` post slot holds a simple statement, so a closure call is legal there
-// and a block is not; a `select` communication clause holds neither. Asking one
-// question and inverting it would put a block in a `for` header.
 func TestWhichSlotsHoldASimpleStatementAndWhichHoldABlock(t *testing.T) {
 	t.Parallel()
 
@@ -223,8 +179,6 @@ func TestWhichSlotsHoldASimpleStatementAndWhichHoldABlock(t *testing.T) {
 			simple: true,
 		},
 		{
-			// A different name from the initialiser's, so that the row names
-			// the post slot and not the first assignment it happens to find.
 			name:   "a for post statement",
 			body:   "\tfor n = 0; n < 3; m = m + 1 {\n\t}",
 			find:   assignTo("m"),
@@ -270,7 +224,6 @@ func TestWhichSlotsHoldASimpleStatementAndWhichHoldABlock(t *testing.T) {
 	}
 }
 
-// assignTo finds the assignment to a name that sits directly in a header slot.
 func assignTo(name string) func(ast.Node) bool {
 	return func(node ast.Node) bool {
 		assign, isAssign := node.(*ast.AssignStmt)
@@ -282,7 +235,6 @@ func assignTo(name string) func(ast.Node) bool {
 	}
 }
 
-// findStmt returns the first statement of the fixture the predicate accepts.
 func findStmt(t *testing.T, g *guardResolver, want func(ast.Node) bool) ast.Stmt {
 	t.Helper()
 
@@ -302,10 +254,6 @@ func findStmt(t *testing.T, g *guardResolver, want func(ast.Node) bool) ast.Stmt
 	return found
 }
 
-// TestACommunicationClauseHoldsNeitherAStatementNorABlock is the one slot both
-// predicates refuse, and it is refused for a reason neither of them shares with
-// the headers: a `select` case must be a send or a receive, so a block is not
-// Go there and neither is a call.
 func TestACommunicationClauseHoldsNeitherAStatementNorABlock(t *testing.T) {
 	t.Parallel()
 
@@ -320,9 +268,6 @@ func TestACommunicationClauseHoldsNeitherAStatementNorABlock(t *testing.T) {
 	}
 }
 
-// TestWhichStatementsAClosureMayHold is [FormFStatement], which is
-// [FormSStatement]'s list minus the three that change meaning inside a closure
-// and the one that could not reach the slot anyway.
 func TestWhichStatementsAClosureMayHold(t *testing.T) {
 	t.Parallel()
 
@@ -360,14 +305,6 @@ func TestWhichStatementsAClosureMayHold(t *testing.T) {
 	}
 }
 
-// TestABodyBlockIsNotAHeaderSlot is the other side of every row above: the same
-// parent statement, and a child that is its *body* rather than its header.
-//
-// The two predicates answer oppositely there, and they have to. A block is
-// legal where a block already is, and a call is not a simple statement slot's
-// occupant merely because the slot's owner has one somewhere else. Reading
-// either question as "is my parent a `for`" would put a closure call where a
-// body belongs and a block in a header.
 func TestABodyBlockIsNotAHeaderSlot(t *testing.T) {
 	t.Parallel()
 
@@ -384,8 +321,6 @@ func TestABodyBlockIsNotAHeaderSlot(t *testing.T) {
 			t.Parallel()
 
 			g := guardOver(t, "package pkg\n\nvar n, m int\n\nfunc probe() {\n"+c.body+"\n}\n")
-			// The innermost block: the outer one is the function's body, whose
-			// parent is the declaration rather than the statement under test.
 			var body ast.Stmt
 			for node := range g.parent {
 				block, isBlock := node.(*ast.BlockStmt)
@@ -410,16 +345,6 @@ func TestABodyBlockIsNotAHeaderSlot(t *testing.T) {
 	}
 }
 
-// TestTheSearchForAStatementStopsAtTheFunctionAndAtTheFile pins
-// [guardResolver.statementSite]'s two ways of finding nothing.
-//
-// The first statement found decides: a candidate whose nearest statement is a
-// `switch` tag is not covered by wrapping some statement further out, it is a
-// site no statement form rewrites. So the search has to stop, and there are two
-// places it can: at the function, for an edit in a signature rather than in a
-// body, and at the file, for an edit in a package-level declaration. Both
-// answer "no statement form", which is what sends the search on to the
-// expression forms rather than wrapping something that is not there.
 func TestTheSearchForAStatementStopsAtTheFunctionAndAtTheFile(t *testing.T) {
 	t.Parallel()
 
@@ -434,9 +359,6 @@ func TestTheSearchForAStatementStopsAtTheFunctionAndAtTheFile(t *testing.T) {
 			want: true,
 		},
 		{
-			// An array length in a parameter type. The walk passes the field,
-			// the field list and the function type without meeting a statement,
-			// and stops at the declaration.
 			name: "an edit in a function's signature",
 			src:  "package pkg\n\nconst n = 2 * 2\n\nfunc probe(xs [2 * 2]int) {\n\t_ = xs\n}\n",
 		},
@@ -476,22 +398,12 @@ func TestTheSearchForAStatementStopsAtTheFunctionAndAtTheFile(t *testing.T) {
 	}
 }
 
-// TestThePositionsThatNeedMoreThanAValue is the rest of
-// [guardResolver.wrappablePosition], for the slots whose fixture cannot be a
-// bare bool.
-//
-// An operand of `++` has to be addressable and a `range` clause's key and value
-// are assignment targets, so a selector in either would be an assignment to a
-// parenthesised expression -- which is not Go. The thing being *ranged over* is
-// an ordinary value in the same statement, and that is the row that makes the
-// rule about the slot rather than about the statement.
 func TestThePositionsThatNeedMoreThanAValue(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range []struct {
 		name string
 		body string
-		// find picks the expression under test out of the statement.
 		find func(ast.Stmt) ast.Expr
 		want bool
 	}{
@@ -565,15 +477,6 @@ func TestThePositionsThatNeedMoreThanAValue(t *testing.T) {
 	}
 }
 
-// TestWhichStatementsABlockMayBeWrappedAround is [FormSStatement], the list
-// Form S buries its site in a block for.
-//
-// It is exported because internal/instrument asks the same question again,
-// independently, and a test there holds the two implementations to each other
-// over every statement kind Go has. What is asserted here is the list itself,
-// and the one entry in it that is a *syntactic* rather than a semantic
-// exclusion: `fallthrough` has to be the final statement of a case clause, and
-// a statement inside an `if` block is not that.
 func TestWhichStatementsABlockMayBeWrappedAround(t *testing.T) {
 	t.Parallel()
 
@@ -591,8 +494,6 @@ func TestWhichStatementsABlockMayBeWrappedAround(t *testing.T) {
 			want: true,
 		},
 		{
-			// A short declaration takes the name out of scope for everything
-			// after the block, which is what Form D exists to hoist back out.
 			name: "a short variable declaration",
 			stmt: &ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent("n")}, Tok: token.DEFINE, Rhs: []ast.Expr{ast.NewIdent("m")}},
 		},
@@ -618,15 +519,6 @@ func TestWhichStatementsABlockMayBeWrappedAround(t *testing.T) {
 	}
 }
 
-// TestANameASiblingFileBindsIsTakenToo is the third scope
-// [guardResolver.indexTakenNames] reads, and the only one that is not shadowing
-// at all.
-//
-// Go forbids one name appearing in a file block and in the package block of the
-// same package, so a `var carrier` in a *sibling* file makes `import carrier
-// "…"` here a hard error -- not a shadowed import, a compile error. The name is
-// nowhere in the file being rewritten, so nothing but the checker's package
-// scope can supply it.
 func TestANameASiblingFileBindsIsTakenToo(t *testing.T) {
 	t.Parallel()
 
@@ -661,13 +553,7 @@ func TestANameASiblingFileBindsIsTakenToo(t *testing.T) {
 		}
 	}
 
-	// And with no package information there is no package block to read, so the
-	// universe's own names must not be taken either: a completion refused
-	// because something called `int` exists would be a completion nobody could
-	// predict.
 	partial := newGuardResolver(rewritten, nil, nil, nil, nil)
-	// Names the file itself does not spell: `int` is in its signature and
-	// would be taken for that reason alone.
 	for _, name := range []string{"error", "true", "append", "recover"} {
 		if partial.taken[name] {
 			t.Errorf("without package information the index holds the universe name %q", name)
@@ -678,14 +564,6 @@ func TestANameASiblingFileBindsIsTakenToo(t *testing.T) {
 	}
 }
 
-// TestWhichImportsTheResolverCanReadAtAll is the import index over specs the
-// parser would not produce, which is how its two refusals are reached.
-//
-// A path that will not unquote and an empty one are both bytes an import spec
-// can hold and go/parser will not put there. They are refused for the same
-// reason importsOf refuses them a file away: a name this file cannot resolve is
-// not an edge a completion may draw on, and carrying one into the index would
-// mean rendering a qualifier nothing imports.
 func TestWhichImportsTheResolverCanReadAtAll(t *testing.T) {
 	t.Parallel()
 

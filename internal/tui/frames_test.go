@@ -16,26 +16,9 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// dashboardFrames are the states of a run worth being able to look at.
-//
-// Every other test in this package asserts a substring or a shape of a frame --
-// that the numbers are there, that nothing is wider than the terminal -- which
-// is the right way to state a rule and the wrong way to notice a rendering. A
-// row that stopped being drawn, a column that lost its alignment, a label that
-// changed: each passes every substring assertion in this package and is the
-// first thing a user would see.
-//
-// These are goldens of the **stripped** frame on the ASCII theme, which is the
-// distinction view_test.go's own doc comment draws and this file keeps. A
-// byte-exact golden of a *styled* frame would be a test of lipgloss's escape
-// sequences, regenerated on every release of it; the stripped ASCII frame is
-// this package's layout and nothing else.
 var dashboardFrames = []struct {
-	name  string
-	width int
-	// height is the terminal's, and is part of the state rather than a detail:
-	// what gives way when there is not enough of it is a decision this package
-	// makes.
+	name   string
+	width  int
 	height int
 	build  func(*testing.T) *harness
 }{
@@ -93,7 +76,6 @@ var dashboardFrames = []struct {
 	},
 }
 
-// TestTheDashboardLooksLikeThis records what a user sees.
 func TestTheDashboardLooksLikeThis(t *testing.T) {
 	t.Parallel()
 
@@ -106,9 +88,6 @@ func TestTheDashboardLooksLikeThis(t *testing.T) {
 		}
 		fmt.Fprintf(&rendered, "== %s (%dx%d)\n", state.name, state.width, state.height)
 		for _, line := range lines {
-			// Trailing spaces are how a frame pads to its width, and a golden
-			// full of them is one no editor leaves alone. The width is checked
-			// by the tests that check widths.
 			fmt.Fprintf(&rendered, "|%s\n", strings.TrimRight(line, " "))
 		}
 		rendered.WriteString("\n")

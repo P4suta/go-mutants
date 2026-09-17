@@ -9,19 +9,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// TestTheJobObjectCarriesTheMemoryLimitAndKeepsKillOnClose is the one claim
-// about the Windows bound that no observation of a finished [Run] can make.
-//
-// The sampler would kill a runaway tree on this platform whether or not the
-// kernel had been told anything, so a behavioural test proves only that *one*
-// of the two mechanisms works. This looks at the job object itself: the limit
-// is there, the flag that enforces it is there, and — the part that is easy to
-// lose, because the limit is set by replacing the whole structure — the
-// kill-on-close backstop the package's central promise rests on is still there
-// beside it.
-//
-// It is an internal test because a job handle is not, and must not become, part
-// of this package's API.
 func TestTheJobObjectCarriesTheMemoryLimitAndKeepsKillOnClose(t *testing.T) {
 	t.Parallel()
 
@@ -42,8 +29,6 @@ func TestTheJobObjectCarriesTheMemoryLimitAndKeepsKillOnClose(t *testing.T) {
 		t.Fatalf("querying the job object: %v", err)
 	}
 
-	// The job carries the *kernel's* line, which sits above the sampler's; see
-	// [kernelJobMemoryLimit] for why they may not be the same number.
 	want, set := kernelJobMemoryLimit(limit)
 	if !set {
 		t.Fatalf("kernelJobMemoryLimit(%d) declined to set a line at all", limit)
@@ -65,10 +50,6 @@ func TestTheJobObjectCarriesTheMemoryLimitAndKeepsKillOnClose(t *testing.T) {
 	}
 }
 
-// TestAnUnboundedJobObjectAsksTheKernelForNoLimit is the other half: a run with
-// no bound must leave the job exactly as it was before the bound existed, so
-// that the thousands of unbounded commands a run issues are not quietly given
-// one.
 func TestAnUnboundedJobObjectAsksTheKernelForNoLimit(t *testing.T) {
 	t.Parallel()
 

@@ -16,27 +16,19 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// mutantIDs are well-formed ids for the store tests: 64 lowercase hex
-// characters, which is what the store insists on before it will name a file.
 var mutantIDs = []string{
 	strings.Repeat("a1", 32),
 	strings.Repeat("b2", 32),
 	strings.Repeat("c3", 32),
 }
 
-// open opens a cache rooted in a temporary directory, so that no test ever
-// reaches the developer's own.
 func open(t *testing.T, root string, ctx cache.Context) *cache.Cache {
 	t.Helper()
 	return openWithin(t, root, ctx, testTimeout)
 }
 
-// testTimeout is the per-mutant bound the store tests run under. It is
-// comfortably above every duration they record, so that [cache.Entry.UsableUnder]
-// is not what any of them is measuring — except the one that is.
 const testTimeout = 10 * time.Second
 
-// openWithin is [open] with a bound of the caller's choosing.
 func openWithin(t *testing.T, root string, ctx cache.Context, timeout time.Duration) *cache.Cache {
 	t.Helper()
 	store, err := cache.Open(cache.Options{Root: root, Context: ctx, Timeout: timeout})
@@ -46,7 +38,6 @@ func openWithin(t *testing.T, root string, ctx cache.Context, timeout time.Durat
 	return store
 }
 
-// killedEntry is one settled outcome to store.
 func killedEntry() cache.Entry {
 	return cache.Entry{
 		Outcome:    mutation.OutcomeKilled,
@@ -57,8 +48,6 @@ func killedEntry() cache.Entry {
 	}
 }
 
-// TestAStoredOutcomeComesBack is the round trip: everything a run needs to
-// report a mutant without executing it survives the file.
 func TestAStoredOutcomeComesBack(t *testing.T) {
 	t.Parallel()
 
@@ -89,15 +78,11 @@ func TestAStoredOutcomeComesBack(t *testing.T) {
 		t.Errorf("the entry names mutant %q, want %q", entry.ID, mutantIDs[0])
 	case entry.Context != store.ContextKey():
 		t.Errorf("the entry names context %q, want %q", entry.Context, store.ContextKey())
-	// The full key, not the truncation: it is the only field that can tell two
-	// contexts sharing a directory apart. See [TestATruncationCollisionIsRefused].
 	case entry.Key != store.Key():
 		t.Errorf("the entry names key %q, want %q", entry.Key, store.Key())
 	}
 }
 
-// TestAnUnknownMutantIsAnOrdinaryMiss covers the answer a cache gives most
-// often, and the one that must never look like a failure.
 func TestAnUnknownMutantIsAnOrdinaryMiss(t *testing.T) {
 	t.Parallel()
 
@@ -111,11 +96,6 @@ func TestAnUnknownMutantIsAnOrdinaryMiss(t *testing.T) {
 	}
 }
 
-// TestOneContextCannotReadAnother is the whole reason the key is a directory.
-//
-// A run that differs in anything the context covers looks somewhere else and
-// finds nothing; nothing has to be invalidated, and there is no window in which
-// yesterday's answer is still reachable.
 func TestOneContextCannotReadAnother(t *testing.T) {
 	t.Parallel()
 
@@ -134,37 +114,24 @@ func TestOneContextCannotReadAnother(t *testing.T) {
 	if _, found, err := second.Lookup(mutantIDs[0]); found || err != nil {
 		t.Errorf("the edited workspace read the old outcome (found=%t, err=%v)", found, err)
 	}
-	// And the first cache still has it: an edit does not invalidate, it moves
-	// the question somewhere else.
 	if _, found, _ := first.Lookup(mutantIDs[0]); !found {
 		t.Error("the original context lost its own entry")
 	}
 }
 
-// TestAnEntryThatIsNotAnEntryIsAMiss is the corruption contract: a truncated,
-// misfiled, or out-of-date file is read as "measure it again" and reported,
-// never adopted and never fatal.
 func TestAnEntryThatIsNotAnEntryIsAMiss(t *testing.T) {
 	t.Parallel()
 
-	// {key}, {context} and {id} are filled in with this store's own values, so
-	// that every field a case does not deliberately break is correct and the
-	// refusal can only have come from the one it did.
 	cases := map[string]string{
 		"truncated JSON":  `{"version":2,"outcome":"kil`,
 		"not JSON at all": "the antivirus quarantined this file",
 		"a future version": `{"version":3,"key":"{key}","context":"{context}","id":"{id}","outcome":"killed",` +
 			`"duration_ms":1,"timeout_ms":10000,"attempts":1}`,
-		// The version this build wrote before the full key was recorded. It is
-		// refused as the version miss it is rather than as a key mismatch,
-		// which would read as a collision that never happened.
 		"a version 1 entry left by an older build": `{"version":1,"context":"{context}","id":"{id}",` +
 			`"outcome":"killed","duration_ms":1,"timeout_ms":10000,"attempts":1}`,
 		"another mutant's outcome": `{"version":2,"key":"{key}","context":"{context}","id":"` +
 			`0000000000000000000000000000000000000000000000000000000000000000","outcome":"killed",` +
 			`"duration_ms":1,"timeout_ms":10000,"attempts":1}`,
-		// A file misfiled by hand: the directory says one context and the
-		// document says another.
 		"another context's outcome": `{"version":2,"key":"{key}","context":"0000000000000000","id":"{id}",` +
 			`"outcome":"killed","duration_ms":1,"timeout_ms":10000,"attempts":1}`,
 		"an outcome no run may reuse": `{"version":2,"key":"{key}","context":"{context}","id":"{id}",` +
@@ -201,20 +168,6 @@ func TestAnEntryThatIsNotAnEntryIsAMiss(t *testing.T) {
 	}
 }
 
-// TestATruncationCollisionIsRefused is the one thing the directory layout
-// cannot do for itself, and the failure this package must never have.
-//
-// A context directory is named by the first [cache.ContextKeyLength] characters
-// of the key, so two contexts that agree over that prefix and disagree
-// afterwards are filed in one directory. Nothing about the path distinguishes
-// them, and neither does the truncated `context` field, because the collision
-// is precisely that the two truncations are equal — so the entry has to carry
-// the full key and the read has to compare it.
-//
-// A real collision needs about 2^32 contexts on one machine and cannot be
-// produced in a test, so the entry is written by hand: the same directory, the
-// same truncated context, and a full key that is one character different. That
-// is exactly what the second of two colliding runs would find.
 func TestATruncationCollisionIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -224,8 +177,6 @@ func TestATruncationCollisionIsRefused(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	// The other context's key: identical through the truncation that names the
-	// directory, different in the half the directory name threw away.
 	other := store.Key()
 	colliding := other[:cache.ContextKeyLength] +
 		strings.Repeat("0", cache.KeyHexLength-cache.ContextKeyLength)
@@ -251,9 +202,6 @@ func TestATruncationCollisionIsRefused(t *testing.T) {
 	}
 }
 
-// TestCacheableIsTheWholeRule pins the three outcomes a later run may reuse and
-// the three it may not. It is the rule the whole store's soundness rests on, so
-// it is stated here as a table rather than left implicit in the callers.
 func TestCacheableIsTheWholeRule(t *testing.T) {
 	t.Parallel()
 
@@ -276,15 +224,6 @@ func TestCacheableIsTheWholeRule(t *testing.T) {
 	}
 }
 
-// TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleBound is the whole of what
-// keeping the timeout out of the key costs, and what buys the soundness back.
-//
-// It matters because a derived bound is max(10s, slowest baseline × 5) — a
-// wall-clock measurement — so on any project whose tests take more than two
-// seconds it is a slightly different number every run. Keying on it would give
-// every run its own empty directory; judging each entry against it instead
-// keeps the whole cache reachable and refuses exactly the entries that would
-// have been wrong.
 func TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleBound(t *testing.T) {
 	t.Parallel()
 
@@ -346,9 +285,6 @@ func TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleBound(t *testing.T) {
 	}
 }
 
-// TestPutRefusesWhatNoRunMayReuse checks that a caller getting the rule wrong is
-// told rather than quietly ignored: a Put that silently did nothing would make
-// the bug invisible.
 func TestPutRefusesWhatNoRunMayReuse(t *testing.T) {
 	t.Parallel()
 
@@ -373,9 +309,6 @@ func TestPutRefusesWhatNoRunMayReuse(t *testing.T) {
 	}
 }
 
-// TestAnIDThatIsNotAnIDNamesNoFile is the path-traversal guard. The alphabet the
-// check accepts has no separator, no dot and no drive letter in it, so an entry
-// can only ever be a file in its own directory.
 func TestAnIDThatIsNotAnIDNamesNoFile(t *testing.T) {
 	t.Parallel()
 
@@ -396,9 +329,6 @@ func TestAnIDThatIsNotAnIDNamesNoFile(t *testing.T) {
 	}
 }
 
-// TestALongOutputTailIsTruncated keeps one pathological test suite from filling
-// somebody's cache directory, and keeps the end of the output — where the
-// failing assertion is.
 func TestALongOutputTailIsTruncated(t *testing.T) {
 	t.Parallel()
 
@@ -423,10 +353,6 @@ func TestALongOutputTailIsTruncated(t *testing.T) {
 	}
 }
 
-// TestOpenRefusesAWorkspaceThatBelongsToSomethingElse is the ownership marker
-// doing its job. The cache shares a directory with the run history and with
-// every other tool on the machine, and a truncated workspace key is the one
-// thing that could put two projects in one directory.
 func TestOpenRefusesAWorkspaceThatBelongsToSomethingElse(t *testing.T) {
 	t.Parallel()
 
@@ -451,8 +377,6 @@ func TestOpenRefusesAWorkspaceThatBelongsToSomethingElse(t *testing.T) {
 	}
 }
 
-// TestOpenClaimsTheSameMarkerTheHistoryDoes proves the two stores share one
-// directory and one claim rather than two implementations of the same dance.
 func TestOpenClaimsTheSameMarkerTheHistoryDoes(t *testing.T) {
 	t.Parallel()
 
@@ -472,16 +396,11 @@ func TestOpenClaimsTheSameMarkerTheHistoryDoes(t *testing.T) {
 	if store.Dir() != want {
 		t.Errorf("entries are filed in %s, want %s", store.Dir(), want)
 	}
-	// A second open of the same workspace is not a collision: the marker
-	// already names it, which is the answer the claim was asking for.
 	if _, err = cache.Open(cache.Options{Root: root, Context: ctx}); err != nil {
 		t.Errorf("re-opening the same workspace failed: %v", err)
 	}
 }
 
-// TestRootResolvesUnderTheOperatingSystemCache checks the two shapes
-// `cache.directory` can take, without depending on which directory this machine
-// calls its cache.
 func TestRootResolvesUnderTheOperatingSystemCache(t *testing.T) {
 	base := testsupport.CacheDir(t)
 
@@ -499,15 +418,11 @@ func TestRootResolvesUnderTheOperatingSystemCache(t *testing.T) {
 	if want := filepath.Join(base, "team", "cache"); moved != want {
 		t.Errorf("the configured root is %s, want %s", moved, want)
 	}
-	// internal/config has already refused an escaping directory by the time a
-	// run gets here, and this refuses it again rather than trusting that.
 	if _, err = cache.Root("../elsewhere"); err == nil {
 		t.Error("a directory climbing out of the cache root was accepted")
 	}
 }
 
-// write puts a file on disk, creating its directory, and fails the test if it
-// cannot.
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -518,23 +433,6 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleMemoryBound is the memory
-// twin of [TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleBound], and it is
-// the reason keeping the bound out of the key costs nothing.
-//
-// Without it the cache is unsound in a way the clock's rule was written to
-// prevent. A memory kill is settled as `killed`, so it is stored like any other
-// kill; the bound is deliberately not in the key, and it *moves* — a derived
-// bound follows the baseline peak, and an explicit one is whatever the caller
-// passed today. So run 1 at 256 MiB caches `killed` and run 2 at 8 GiB adopts
-// it, having never asked whether the mutant would have finished with thirty
-// times the memory. It would not: it would have survived.
-//
-// The rule is the timeout's, reflected. An entry killed *by* the bound is not
-// evidence about a larger one; an entry that reached a verdict inside a bound
-// is not evidence about a smaller one, because a smaller one might have killed
-// it first. A plain kill is the exception and is evidence about any bound: a
-// tighter bound could only have killed it sooner, and a kill is a kill.
 func TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleMemoryBound(t *testing.T) {
 	t.Parallel()
 
@@ -625,8 +523,6 @@ func TestAnEntryIsOnlyEvidenceAboutARunWithACompatibleMemoryBound(t *testing.T) 
 	}
 }
 
-// openBounded is [open] with a memory bound of the caller's choosing and a
-// timeout that is never the thing under test.
 func openBounded(t *testing.T, root string, ctx cache.Context, memory int64) *cache.Cache {
 	t.Helper()
 	store, err := cache.Open(cache.Options{
@@ -638,14 +534,6 @@ func openBounded(t *testing.T, root string, ctx cache.Context, memory int64) *ca
 	return store
 }
 
-// TestTheMemoryBoundIsRecordedOnTheEntryAndNotInTheKey pins both halves of the
-// arrangement at once.
-//
-// In the key, the bound would give every machine whose baseline measured
-// slightly differently a cache of its own — the whole reason the timeout is not
-// in the key either. Off the entry, there would be nothing to judge a lookup
-// against, which is the unsoundness above. So it is on the entry and not in the
-// key, exactly as `test.timeout` is.
 func TestTheMemoryBoundIsRecordedOnTheEntryAndNotInTheKey(t *testing.T) {
 	t.Parallel()
 
@@ -670,15 +558,6 @@ func TestTheMemoryBoundIsRecordedOnTheEntryAndNotInTheKey(t *testing.T) {
 	}
 }
 
-// TestAStoredMemoryKillKeepsWhatItCost is what makes a cached memory kill
-// legible a week later.
-//
-// Without the peak the entry says a bound settled the mutant and not what it
-// reached, so `explain` on a cached run can say "killed by memory" and nothing
-// a person could act on — no number to compare against the bound, no way to
-// tell a mutant that wanted a gigabyte from one that wanted a hundred. The
-// duration is stored for exactly the same reason and nobody would think of
-// leaving it out.
 func TestAStoredMemoryKillKeepsWhatItCost(t *testing.T) {
 	t.Parallel()
 
@@ -709,8 +588,6 @@ func TestAStoredMemoryKillKeepsWhatItCost(t *testing.T) {
 	}
 }
 
-// TestAnEntryCannotClaimAPeakItCouldNotHaveReached refuses the two shapes a
-// hand-edited or half-written entry can take.
 func TestAnEntryCannotClaimAPeakItCouldNotHaveReached(t *testing.T) {
 	t.Parallel()
 

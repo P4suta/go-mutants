@@ -747,9 +747,9 @@ matters:
 
 ```go
 f := mutantkit.FakeGo(t)
-f.Version("1.99.0")                       // `go version`
-f.On("list").Stdout(listing)              // every `go list`
-f.On("list", "-e").Exit(1).Stderr(oops)   // except the scope resolution
+f.Version("1.99.0")
+f.On("list").Stdout(listing)
+f.On("list", "-e").Exit(1).Stderr(oops)
 ```
 
 At least one argument is required: a rule matching everything would be the silent
@@ -1261,8 +1261,6 @@ A switch whose default really is the right answer for every word says so
 immediately above itself:
 
 ```go
-//exhaustive:total a colour is a rendering, and an unstyled new outcome is the
-// right thing to render
 switch outcome {
 ```
 

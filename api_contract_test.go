@@ -18,28 +18,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// This file is the engine API's own contract test: the invariants a consumer is
-// entitled to assume about every value the API hands out, checked against real
-// prepared sessions rather than against hand-built structs.
-//
-// It is separate from api_integration_test.go because the two ask different
-// questions. That file asks whether the engine measured the right thing; this
-// one asks whether the answer is well formed whatever it says — every ID a full
-// digest, every index its own position, every rejected mutant unaccepted, every
-// probed mutant accepted. A consumer that reads a catalogue without checking
-// any of it is not being careless: it is relying on this file.
-//
-// Every test here reuses the sessions api_integration_test.go prepares once for
-// the whole package. Preparing another would cost a minute to re-establish
-// facts the shared ones already carry.
-
-// assertCatalogInvariants checks everything [gomutants.Catalog] promises,
-// against the workspace that produced it.
-//
-// The workspace is a parameter rather than a field of the catalogue because one
-// of the claims spans the two: a catalogue names the toolchain it was prepared
-// with, and it has to be the toolchain the workspace located. A consumer that
-// keys a cache on Catalog.Toolchain is entitled to that.
 func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Workspace) {
 	t.Helper()
 
@@ -58,10 +36,6 @@ func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Wor
 	if len(c.TestPackages) == 0 {
 		t.Error("the catalogue names no test packages; a session with no binary can measure nothing")
 	}
-	// None of the three shared sessions is prepared with a selection, and the
-	// claim for that case is the one every consumer that never narrows depends
-	// on: the field is nil and every mutant is Selected, so a caller reading
-	// Selected without ever having asked for a narrowing reads "yes".
 	if c.Selection != nil {
 		t.Errorf("the catalogue carries Selection %+v for a preparation that asked for none;"+
 			" nil is what says every mutant is selected", c.Selection)
@@ -109,7 +83,6 @@ func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Wor
 		if m.Line < 1 || m.Column < 1 {
 			t.Errorf("mutant %s is at %d:%d, want 1-based coordinates", m.DisplayID, m.Line, m.Column)
 		}
-		// This implies EndLine >= Line, since a newline count is never negative.
 		if want := m.Line + strings.Count(m.Original, "\n"); m.EndLine != want {
 			t.Errorf("mutant %s has EndLine %d and covers %q from line %d, which ends on line %d;"+
 				" a consumer selecting by line range applies exactly this rule and would miss it",
@@ -160,9 +133,6 @@ func assertCatalogInvariants(t *testing.T, c gomutants.Catalog, w *gomutants.Wor
 	}
 }
 
-// isDigest64 reports whether s is what every identity in this API is: 64
-// lowercase hex characters. Uppercase is refused deliberately — a consumer
-// comparing digests as strings has to be able to.
 func isDigest64(s string) bool {
 	if len(s) != 64 {
 		return false
@@ -175,8 +145,6 @@ func isDigest64(s string) bool {
 	return true
 }
 
-// moduleRelativeSlashPath reports whether path is what the API promises a
-// source path is: relative, '/'-separated, and inside the module.
 func moduleRelativeSlashPath(path string) bool {
 	if path == "" || strings.HasPrefix(path, "/") || strings.Contains(path, `\`) {
 		return false
@@ -189,17 +157,6 @@ func moduleRelativeSlashPath(path string) bool {
 	return true
 }
 
-// TestModuleInvariants checks everything [gomutants.Module] promises, against
-// the workspace of a session that is already prepared.
-//
-// A prepared workspace is the interesting one to ask. The tree a successful
-// preparation leaves is byte for byte the one Open froze, so the listing is the
-// same listing a caller would have taken before Prepare — and every claim here
-// is one a consumer reads off the value without checking it: that the packages
-// are in one order so two listings can be diffed, that a Dir may be opened,
-// that HasTests is the file lists and not a second opinion about them, and that
-// the module's own identity is the go.mod in the frozen tree rather than
-// whatever the repository holds now.
 func TestModuleInvariants(t *testing.T) {
 	t.Parallel()
 
@@ -237,17 +194,6 @@ func TestModuleInvariants(t *testing.T) {
 		if !filepath.IsAbs(pkg.Dir) {
 			t.Errorf("%s has Dir %q, which is not absolute", pkg.ImportPath, pkg.Dir)
 		}
-		// Inside the parent that holds the workspace's snapshots, which is what
-		// makes the directory one a consumer may read: the tree the caller
-		// handed Open is never touched, and a path pointing back at it would
-		// send a consumer to the repository instead.
-		//
-		// Asked through underRoot rather than as a string prefix, because the
-		// two sides are not spelled the same. A temporary directory is reached
-		// through a symlink on macOS — TMPDIR sits under /var, which is
-		// /private/var — and the go command reports the resolved path while
-		// t.TempDir hands back the one it was given, so a prefix test would
-		// report every package as outside a parent it is plainly inside.
 		if !underRoot(t, prepared.parent, pkg.Dir) {
 			t.Errorf("%s has Dir %q, which is not inside the workspace's temporary parent %q",
 				pkg.ImportPath, pkg.Dir, prepared.parent)
@@ -261,9 +207,6 @@ func TestModuleInvariants(t *testing.T) {
 		}
 	}
 
-	// The go directive of the go.mod in the frozen tree, which is where
-	// GoVersion is read from and the one file a consumer cannot check for
-	// itself without knowing the snapshot's path.
 	root := ""
 	for _, pkg := range module.Packages {
 		if pkg.ImportPath == module.Path {
@@ -282,17 +225,6 @@ func TestModuleInvariants(t *testing.T) {
 	}
 }
 
-// TestCatalogInvariants checks the catalogue of all three shared sessions.
-//
-// The probe option is the one preparation flag that changes what a catalogue
-// says about a mutant, so a claim that held only for the session that happens
-// to build a probe tree would be a claim about that option rather than about
-// the type. The third row is there for a different reason: probeable's three
-// mutants all compile, so every clause about a rejection is *vacuous* over it —
-// rejection IDs are unique because there are none, and "not accepted implies
-// rejected" holds because everything is accepted. fixtures/rejectable holds
-// three candidates whose mutated copy is not a program beside sixteen that
-// compile, which is what makes those clauses bite.
 func TestCatalogInvariants(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -308,10 +240,6 @@ func TestCatalogInvariants(t *testing.T) {
 			t.Parallel()
 			prepared := test.fixture(t)
 			assertCatalogInvariants(t, prepared.catalog, prepared.workspace)
-			// Otherwise the row that exists to make the rejection clauses bite
-			// could quietly stop doing so — a rule the fixture depends on being
-			// selected, a compiler that started accepting a trap — and the
-			// clauses would go on passing over nothing.
 			if test.wantRejections && len(prepared.catalog.Rejections) == 0 {
 				t.Error("the fixture chosen for its rejections produced none, so every" +
 					" clause about one held vacuously")
@@ -320,22 +248,6 @@ func TestCatalogInvariants(t *testing.T) {
 	}
 }
 
-// TestProbeResultInvariants checks the shape of a measured pass.
-//
-// The content and the shape are different claims and both are load-bearing.
-// TestProbeReportsTheMutantsATestInfected says the right mutants are named;
-// this one says the set is one a consumer can index the catalogue with directly
-// — ascending, distinct, in range, and never naming a mutant nothing could have
-// recorded, or one no execution will ever run — which is what lets a caller
-// skip a bounds check it would otherwise have to write and would otherwise get
-// wrong.
-//
-// The whole package is probed rather than one test, because "strictly
-// ascending" is a claim about a pair and a one-element set cannot break it. The
-// fixture's two probed mutants are infected by two different tests, so a
-// package-wide pass is the cheapest set with two indices in it. probeOf has
-// already established that the pass was measured and that Infected is a set
-// rather than nil.
 func TestProbeResultInvariants(t *testing.T) {
 	t.Parallel()
 	prepared := probeable(t)
@@ -375,23 +287,6 @@ func TestProbeResultInvariants(t *testing.T) {
 	}
 }
 
-// TestMutantResultInvariants checks the shape of the kill
-// TestEveryKillIsPrecededByAnInfection establishes the meaning of, and of a
-// survivor beside it.
-//
-// KilledBy is the field the pair exists for. It is a promise with two
-// directions — a killed or timed-out result names the package that decided it,
-// and every other outcome names nothing — and a consumer rendering "killed by"
-// from an empty string, or ignoring the one it was given, needs both halves.
-//
-// Output has the same two-directional shape and is checked here for the same
-// reason: a kill carries the deciding binary's capture, and a survivor carries
-// nothing at all. The survivor half is the one worth a test at this level. It
-// is not an accident of the execution phase that a caller may stop relying on —
-// it is a promise about memory, because a survivor's output is thousands of
-// lines of nothing having gone wrong multiplied by every mutant in a run, and
-// the day it starts arriving is the day a consumer holding every result runs a
-// machine out of it.
 func TestMutantResultInvariants(t *testing.T) {
 	t.Parallel()
 	prepared := probeable(t)
@@ -415,10 +310,6 @@ func TestMutantResultInvariants(t *testing.T) {
 			if err != nil {
 				t.Fatalf("executing %s: %v", test.mutant.DisplayID, err)
 			}
-			// Before the expected-outcome check rather than after it: a result
-			// carrying something outside the vocabulary is exactly the case the
-			// expectation would fail on, and reporting it as "wanted killed" would
-			// hide the more interesting half of what went wrong.
 			if !slices.Contains([]gomutants.Outcome{
 				gomutants.OutcomeNotRun,
 				gomutants.OutcomeKilled,
@@ -472,14 +363,6 @@ func TestMutantResultInvariants(t *testing.T) {
 	}
 }
 
-// TestResultsCarryTraceSeqAndBinaries pins the join and the measurement.
-//
-// The shape is the claim here, not any particular run's numbers: a consumer
-// reads `TraceSeq` to find the event that explains a result and `Binaries` to
-// know what the result was measured against, and both are read by name from
-// outside this module.
-// TestAPreparedSessionRecordsSnapshotPrepareBuildsExecAttemptsAndProbePasses is
-// where the values are checked against the events they point at.
 func TestResultsCarryTraceSeqAndBinaries(t *testing.T) {
 	t.Parallel()
 
@@ -492,9 +375,6 @@ func TestResultsCarryTraceSeqAndBinaries(t *testing.T) {
 	pinType[[]int64](gomutants.ControlResult{}.ExecSeqs)
 	pinType[int64](gomutants.ControlResult{}.TraceSeq)
 
-	// Zero and nil are what a call that never reached an execution reports, and
-	// they are the values a consumer has to be able to tell from a real one: a
-	// sequence of zero is not a sequence anything can be found at.
 	for name, seq := range map[string]int64{
 		"CommandResult": gomutants.CommandResult{}.TraceSeq,
 		"MutantResult":  gomutants.MutantResult{}.TraceSeq,
@@ -511,14 +391,6 @@ func TestResultsCarryTraceSeqAndBinaries(t *testing.T) {
 	}
 }
 
-// TestTestLogSurfaceIsPinned names every field of the recorded action log, on
-// all three requests and all three results at once.
-//
-// A consumer reads these by name and keeps what it finds beside a verdict, so a
-// rename is a breaking change whatever shape the struct keeps. The zero values
-// are pinned beside them for the one distinction the field exists to make: nil
-// TestLogs is "nothing was recorded", while an empty slice would say "these
-// binaries touched nothing" — which is the sentence a consumer acts on.
 func TestTestLogSurfaceIsPinned(t *testing.T) {
 	t.Parallel()
 
@@ -551,21 +423,9 @@ func TestTestLogSurfaceIsPinned(t *testing.T) {
 	}
 }
 
-// TestVocabulariesArePinned writes out every string constant a consumer may
-// have serialized, so that changing one is a decision rather than an accident.
-//
-// A renamed constant is a compile error for a consumer; a changed *value* is
-// not. It is a run that reads back a cache written yesterday, sees an outcome
-// it has no case for, and reports something else — which is why the literals
-// are spelled here rather than compared to the constants they came from.
 func TestVocabulariesArePinned(t *testing.T) {
 	t.Parallel()
 
-	// The API's outcome vocabulary is snake_case. run-report-v1 spells the same
-	// two multi-word outcomes not-run and timed-out, in kebab-case, and a
-	// consumer moving a value between the live API and a published report has
-	// to translate rather than assume. The difference is deliberate and both
-	// spellings are frozen.
 	for name, pair := range map[string][2]string{
 		"OutcomeNotRun":       {string(gomutants.OutcomeNotRun), "not_run"},
 		"OutcomeKilled":       {string(gomutants.OutcomeKilled), "killed"},
@@ -590,9 +450,6 @@ func TestVocabulariesArePinned(t *testing.T) {
 		"ChangeRemoved":  {string(gomutants.ChangeRemoved), "removed"},
 		"ChangeModified": {string(gomutants.ChangeModified), "modified"},
 
-		// The action-log operations are package os's own spellings, written
-		// into a file by the testing package and read back by the engine
-		// verbatim. A consumer switching on them is switching on these.
 		"TestLogGetenv": {string(gomutants.TestLogGetenv), "getenv"},
 		"TestLogOpen":   {string(gomutants.TestLogOpen), "open"},
 		"TestLogStat":   {string(gomutants.TestLogStat), "stat"},
@@ -627,21 +484,6 @@ func TestVocabulariesArePinned(t *testing.T) {
 	}
 }
 
-// TestKnownPreparePhasesMatchWhatPrepareEmits keeps the list and the engine in
-// step.
-//
-// [gomutants.KnownPreparePhases] is a promise about this build, and the only
-// way it can be wrong is by drifting from the code that emits the events. A
-// phase added to Prepare and not to the list would leave every consumer that
-// pinned the list — which is what the doc tells them to do — refusing a phase
-// the engine really emits, and it would do so at their users rather than here.
-//
-// Both shared preparations are checked, because the list is documented as what
-// a consumer sees for *every* preparation and not only for a fully configured
-// one. The session prepared without a probe tree skips five of the nine, and a
-// skip is emitted as a start immediately followed by a finish — so if a skipped
-// phase were ever silently dropped instead, that row would catch it while the
-// probe row could not.
 func TestKnownPreparePhasesMatchWhatPrepareEmits(t *testing.T) {
 	t.Parallel()
 	known := gomutants.KnownPreparePhases()
@@ -665,7 +507,6 @@ func TestKnownPreparePhasesMatchWhatPrepareEmits(t *testing.T) {
 	}
 }
 
-// phaseProgress is how far one phase has got through its two events.
 type phaseProgress int
 
 const (
@@ -674,17 +515,6 @@ const (
 	phaseClosed
 )
 
-// phaseEventProblems walks one preparation's events and reports the order the
-// phases started in, together with everything wrong with the sequence.
-//
-// It tracks a state per phase rather than the position of the latest event of
-// each kind, and the difference is the whole of what it checks. Positions
-// overwrite: a phase that started, finished, and started again would leave a
-// start position and a finish position both recorded, and read as a complete
-// phase — while its live start has no finish and any consumer timing the phase
-// from these events is left holding a stopwatch that never stops. Counting
-// transitions instead makes each of the three malformed shapes — a second
-// start, a second finish, a start after a finish — a state it has no edge for.
 func phaseEventProblems(events []gomutants.PrepareEvent) ([]gomutants.PreparePhase, []string) {
 	progress := make(map[gomutants.PreparePhase]phaseProgress, len(events))
 	var order []gomutants.PreparePhase
@@ -717,8 +547,6 @@ func phaseEventProblems(events []gomutants.PrepareEvent) ([]gomutants.PreparePha
 			note("event %d carries state %q, which is neither started nor finished", i, event.State)
 		}
 	}
-	// Over order rather than over the map, so the problems a caller prints come
-	// out in the same sequence on every run.
 	for _, phase := range order {
 		if progress[phase] != phaseClosed {
 			note("phase %s started and never finished", phase)
@@ -727,18 +555,6 @@ func phaseEventProblems(events []gomutants.PrepareEvent) ([]gomutants.PreparePha
 	return order, problems
 }
 
-// TestPhaseEventsAreOneStartAndOneFinishEachPhase pins what
-// TestKnownPreparePhasesMatchWhatPrepareEmits reads a real preparation with.
-//
-// The claim in the doc is that a phase starts once and finishes once, and the
-// sequences that break it are the ones no fixture will produce on demand: a
-// doubled start, a doubled finish, a start after a finish. A checker that
-// merely remembered the latest position of each would accept all three — the
-// second start would overwrite the first and the already-recorded finish would
-// still be there — so the phase would read as complete while its last start had
-// no finish at all. That is the shape a consumer's own timers would break on,
-// and it is why the walk is a separate function: a synthetic slice can state
-// the case that a fixture cannot.
 func TestPhaseEventsAreOneStartAndOneFinishEachPhase(t *testing.T) {
 	t.Parallel()
 
@@ -764,8 +580,6 @@ func TestPhaseEventsAreOneStartAndOneFinishEachPhase(t *testing.T) {
 			wantOrder: []gomutants.PreparePhase{one, two},
 		},
 		{
-			// Overlap is legal and deliberate: the binary build starts before
-			// the probe phases and finishes after them.
 			name:      "two phases open at once",
 			events:    []gomutants.PrepareEvent{start(one), start(two), finish(two), finish(one)},
 			wantOrder: []gomutants.PreparePhase{one, two},
@@ -818,16 +632,6 @@ func TestPhaseEventsAreOneStartAndOneFinishEachPhase(t *testing.T) {
 	}
 }
 
-// TestPreparedDigestDiffersWithProbe is the difference between the two
-// catalogue digests, stated over two real preparations of one tree.
-//
-// The pair is the whole argument for [gomutants.Catalog.PreparedDigest]
-// existing. Both sessions catalogue the same three mutants, so `Digest` — which
-// is the mutant set and nothing else — is identical, and a consumer keying its
-// evidence on it would carry facts from the probed session into the unprobed
-// one. But `Mutant.Probed` is what tells that consumer whether a mutant's
-// absence from a measurement is a fact or a silence, so the two sessions are
-// not interchangeable, and the prepared digest is what says so.
 func TestPreparedDigestDiffersWithProbe(t *testing.T) {
 	t.Parallel()
 
@@ -839,9 +643,6 @@ func TestPreparedDigestDiffersWithProbe(t *testing.T) {
 			" the claim below is about two preparations of one set",
 			probed.catalog.Digest, unprobed.catalog.Digest)
 	}
-	// Otherwise the difference below could hold for a reason that has nothing to
-	// do with the probe tree, and the day probing stopped changing the catalogue
-	// this test would go on passing.
 	differs := false
 	for i, mutant := range probed.catalog.Mutants {
 		if mutant.Probed != unprobed.catalog.Mutants[i].Probed {
@@ -866,16 +667,6 @@ func TestPreparedDigestDiffersWithProbe(t *testing.T) {
 	}
 }
 
-// TestPreparedDigestIsStableAcrossTwoPreparationsOfOneTree is the other half:
-// a digest that moved between two identical preparations would be a cache key
-// that never hits, and a consumer would go on re-measuring what it already
-// knows while believing the session had changed.
-//
-// The two preparations are over two copies of one fixture in two temporary
-// directories, which is the case that matters: every consumer prepares in a
-// path of the day. Nothing in the recipe is a path — the workspace digest names
-// contents, the test packages are import paths — and this is where that is
-// established rather than argued.
 func TestPreparedDigestIsStableAcrossTwoPreparationsOfOneTree(t *testing.T) {
 	t.Parallel()
 

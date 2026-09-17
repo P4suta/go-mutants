@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-// Form C' is the bool selector with a conversion at each end, and it exists
-// because Form C requires the site to be *exactly* the universe `bool`. A
-// condition of a named boolean type is perfectly mutable Go -- `!` applies to
-// any boolean type, and so does every rule that writes a boolean constant --
-// and until this form landed every such condition was a recorded refusal.
-
-// TestANamedBooleanConditionIsNowASite is the shape the form was written for.
-//
-// Three rules want that site: the negation and both settlements. All three used
-// to be refused there, at one coordinate, which is what made the refusal
-// impossible to miss.
 func TestANamedBooleanConditionIsNowASite(t *testing.T) {
 	t.Parallel()
 
@@ -47,10 +36,6 @@ func Use(f Flag, v int) int {
 	}
 }
 
-// TestAFormCPrimeSiteCarriesTheTypeToConvertBackTo is the part of the hint that
-// is new, and the part the instrumenter cannot work out for itself: it parses
-// the snapshot without type checking it, so the name of the type has to travel
-// with the site.
 func TestAFormCPrimeSiteCarriesTheTypeToConvertBackTo(t *testing.T) {
 	t.Parallel()
 
@@ -80,14 +65,6 @@ func Use(f Flag, v int) int {
 	}
 }
 
-// TestTheUniverseBoolStillUsesFormC is the property that makes this form safe
-// to add at all.
-//
-// Form C' is tried last, after Form C and after both statement forms, so a site
-// either of them already covered is covered by exactly what covered it before.
-// If it were a loosened gate inside Form C instead, every ordinary boolean
-// condition in every tree would start rendering with two conversions around it
-// -- different bytes in the instrumented tree, for nothing.
 func TestTheUniverseBoolStillUsesFormC(t *testing.T) {
 	t.Parallel()
 
@@ -112,10 +89,6 @@ func Use(ok bool, v int) int {
 	}
 }
 
-// TestANamedBooleanInAStatementStillUsesThatStatement is the other half of the
-// ordering promise: a statement form that already covered a site goes on
-// covering it, even though the expression inside it is now a Form C' candidate
-// in its own right.
 func TestANamedBooleanInAStatementStillUsesThatStatement(t *testing.T) {
 	t.Parallel()
 
@@ -144,14 +117,6 @@ func Set(a, b int) Flag {
 	}
 }
 
-// TestABooleanTypeThisFileCannotNameIsStillRefused is the refusal that remains,
-// and it is the same one Form D makes about a declared type: go-mutants knows
-// what it would write and cannot say it in Go.
-//
-// A dot import binds a package's names without binding a name for the package,
-// so `Flag` is in scope and `Flag(...)` is a conversion this file could write
-// -- but the speller will not claim a qualification it cannot check, and
-// guessing is what it exists not to do.
 func TestABooleanTypeThisFileCannotNameIsStillRefused(t *testing.T) {
 	t.Parallel()
 
@@ -166,10 +131,6 @@ func Use(r *Replacer, v int) int {
 	return 0
 }
 `)
-	// The comparison is the universe bool, so this file's own condition is an
-	// ordinary Form C site. What matters is that nothing here claims a
-	// spelling: every candidate either has no SiteType or has one the file
-	// really binds.
 	for _, candidate := range got.candidates {
 		if candidate.Guard.SiteType == "Replacer" {
 			t.Errorf("%s claims to spell a dot-imported type", candidate.Rule.Name)

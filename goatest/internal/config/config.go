@@ -147,27 +147,17 @@ type configWritableFile interface {
 	Close() error
 }
 
-// writeHooks are the operations writing this file performs.
-//
-// The zero value is production. These were five package-level variables, and a
-// test replacing any one of them owned internal/config for as long as it ran -
-// twenty-one tests, most of which touch none of the five.
 type writeHooks struct {
-	// open creates the file Init writes, refusing one that already exists.
 	open func(name string, flag int, mode os.FileMode) (configWritableFile, error)
 
-	// createTemp makes the temporary a rewrite is staged in.
 	createTemp func(directory, pattern string) (configWritableFile, error)
 
-	// marshal encodes the document.
 	marshal func(any) ([]byte, error)
 
-	// remove and rename finish the rewrite, and clean up after one that failed.
 	remove func(string) error
 	rename func(oldpath, newpath string) error
 }
 
-// resolved fills every operation this value leaves unset.
 func (hooks writeHooks) resolved() writeHooks {
 	if hooks.open == nil {
 		hooks.open = func(name string, flag int, mode os.FileMode) (configWritableFile, error) {
@@ -375,7 +365,6 @@ func Init(root string) error {
 	return initWithHooks(root, writeHooks{})
 }
 
-// initWithHooks is Init with the operations it performs passed in.
 func initWithHooks(root string, hooks writeHooks) error {
 	hooks = hooks.resolved()
 	path := filepath.Join(root, FileName)
@@ -430,7 +419,6 @@ func save(root string, input Config) error {
 	return saveWithHooks(root, input, writeHooks{})
 }
 
-// saveWithHooks is save with the operations it performs passed in.
 func saveWithHooks(root string, input Config, hooks writeHooks) error {
 	hooks = hooks.resolved()
 	raw := rawConfig{

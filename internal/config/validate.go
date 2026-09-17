@@ -14,35 +14,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// Validate checks a flag overlay and names the flags that carry the problems.
-//
-// The CLI calls it before merging, so that `--jobs 99` is refused as `--jobs`
-// rather than as `execution.jobs`, which would send the user editing a file
-// they never touched.
 func (o Overlay) Validate() error { return validateOverlay(o, flagReporter()) }
 
-// Validate checks a resolved configuration: every per-value rule again, plus
-// the rules that can only be judged once the layers are merged.
-//
-// Re-checking values that were already checked in their own layer is
-// deliberate. A Config can be built by hand, and the merged value is what the
-// run will actually use; a validator that trusted its inputs would be a
-// validator that only runs when it is not needed.
-//
-// Errors name TOML keys, because the file is where a value can be corrected
-// for good, and carry no position: after merging, a value has no single place
-// in any file to point at.
 func (c Config) Validate() error {
 	report := mergedReporter()
 	problems := []error{validateOverlay(c.overlay(), report)}
 
-	// Cross-field rules go here and only here. This one cannot live with
-	// either threshold: low may come from the file and high from a flag, so
-	// neither layer can see the pair.
-	//
-	// It is skipped when either end is already out of range, so a file with
-	// `high = 120` gets the one error that explains it rather than a second,
-	// derived one about an ordering that was never the real problem.
 	if inPercentRange(c.Report.Low) && inPercentRange(c.Report.High) && c.Report.Low > c.Report.High {
 		problems = append(problems, report.errorf(CodeThresholdsInverted, "report.low",
 			"report.low %d is above report.high %d: the low threshold marks the bottom of the range, not the top",
@@ -52,12 +29,6 @@ func (c Config) Validate() error {
 	return join(problems)
 }
 
-// validateOverlay checks every value a layer set, in document order, and
-// reports all of the problems rather than the first.
-//
-// One rule per setting, one place. Both entry points — a parsed file and a
-// flag overlay — and the post-merge check all come through here, so a rule
-// cannot be enforced in one path and forgotten in another.
 func validateOverlay(o Overlay, report reporter) error {
 	var problems []error
 
@@ -151,9 +122,6 @@ func validateOverlay(o Overlay, report reporter) error {
 	return join(problems)
 }
 
-// validatePatterns compiles every glob so that a pattern which cannot match
-// anything is refused where it was written rather than silently selecting
-// nothing.
 func validatePatterns(patterns []string, key string, report reporter) []error {
 	var problems []error
 	for i, pattern := range patterns {
@@ -170,13 +138,6 @@ func validatePatterns(patterns []string, key string, report reporter) []error {
 	return problems
 }
 
-// validateOperators checks each name against the frozen catalogue.
-//
-// Both a family name and a rule name are accepted. docs/configuration.md
-// documents families only, and families are what `init` writes, but a name is
-// unambiguous either way — no rule in the v1 table shares a name with a family
-// — and refusing "eq-to-neq" while accepting "comparison" would be an
-// arbitrary distinction to explain.
 func validateOperators(operators []string, report reporter) []error {
 	registry := mutation.CanonicalRegistry()
 	var problems []error
@@ -203,12 +164,6 @@ func validateOperators(operators []string, report reporter) []error {
 	return problems
 }
 
-// validateExpectations checks the ledger rows.
-//
-// A prefix is refused even though `--mutant` accepts one: a ledger outlives
-// the run that produced it, and a prefix that resolves uniquely today can
-// become ambiguous after a single commit, at which point the row would either
-// silence the wrong mutant or fail for a reason nobody could read off the file.
 func validateExpectations(expectations []Expectation, report reporter) []error {
 	var problems []error
 	seen := make(map[string]int, len(expectations))
@@ -241,12 +196,6 @@ func validateExpectations(expectations []Expectation, report reporter) []error {
 	return problems
 }
 
-// validateCommand checks the test argv vector.
-//
-// Only the program name is required to be non-blank. Later elements are passed
-// through untouched and an empty one can be meaningful — `-run ""` selects
-// every test — so rejecting every empty element would refuse a legitimate
-// command to catch a typo that the program name check already catches.
 func validateCommand(command []string, report reporter) []error {
 	if len(command) == 0 {
 		return []error{report.errorf(CodeEmptyTestCommand, "test.command",
@@ -259,8 +208,6 @@ func validateCommand(command []string, report reporter) []error {
 	return nil
 }
 
-// validateFormats checks the report formats, rejecting a repeat as well as an
-// unknown name: writing one artefact twice is never what was meant.
 func validateFormats(formats []ReportFormat, report reporter) []error {
 	var problems []error
 	seen := make(map[ReportFormat]int, len(formats))
@@ -281,41 +228,26 @@ func validateFormats(formats []ReportFormat, report reporter) []error {
 	return problems
 }
 
-// relativeDirectory canonicalises a configured directory and refuses anything
-// that is not a relative path staying inside the tree it is resolved against.
-//
-// It is [mutation.NormalizePath], which is also what mutant identities are
-// built from, so "reports\mutation" and "reports/mutation" are one directory
-// here for exactly the same reason they are one file there.
 func relativeDirectory(directory string) (string, error) {
 	return mutation.NormalizePath(directory)
 }
 
-// directoryRule is the one sentence every directory diagnostic ends with.
 func directoryRule() string {
 	return "give a relative path that stays inside the tree it is resolved against"
 }
 
-// elementKey names one element of an array setting.
 func elementKey(key string, index int) string {
 	return key + "[" + strconv.Itoa(index) + "]"
 }
 
-// inPercentRange reports whether an integer percentage is in range.
 func inPercentRange(v int) bool { return v >= MinPercent && v <= MaxPercent }
 
-// inPercentRangeFloat reports whether a fractional percentage is in range. The
-// comparison is written so that a NaN, which compares false against
-// everything, is rejected rather than accepted.
 func inPercentRangeFloat(v float64) bool { return v >= MinPercent && v <= MaxPercent }
 
-// formatScore renders a score floor the way the exit policy renders it, so the
-// number in a configuration error matches the number in a failure message.
 func formatScore(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
-// tierList renders the profile names for a diagnostic.
 func tierList() string {
 	names := make([]string, 0, len(mutation.Tiers()))
 	for _, tier := range mutation.Tiers() {
@@ -324,7 +256,6 @@ func tierList() string {
 	return strings.Join(names, ", ")
 }
 
-// narrowingList renders the narrowings for a diagnostic.
 func narrowingList() string {
 	names := make([]string, 0, len(Narrowings()))
 	for _, narrowing := range Narrowings() {
@@ -333,7 +264,6 @@ func narrowingList() string {
 	return strings.Join(names, ", ")
 }
 
-// probingList renders the probing modes for a diagnostic.
 func probingList() string {
 	names := make([]string, 0, len(Probings()))
 	for _, probing := range Probings() {
@@ -342,7 +272,6 @@ func probingList() string {
 	return strings.Join(names, ", ")
 }
 
-// cacheModeList renders the cache modes for a diagnostic.
 func cacheModeList() string {
 	names := make([]string, 0, len(CacheModes()))
 	for _, mode := range CacheModes() {
@@ -351,7 +280,6 @@ func cacheModeList() string {
 	return strings.Join(names, ", ")
 }
 
-// formatList renders the report formats for a diagnostic.
 func formatList() string {
 	names := make([]string, 0, len(ReportFormats()))
 	for _, format := range ReportFormats() {
@@ -360,7 +288,6 @@ func formatList() string {
 	return strings.Join(names, ", ")
 }
 
-// familyList renders the operator families for a diagnostic.
 func familyList(registry *mutation.Registry) string {
 	families := registry.Families()
 	names := make([]string, 0, len(families))
@@ -370,14 +297,6 @@ func familyList(registry *mutation.Registry) string {
 	return strings.Join(names, ", ")
 }
 
-// The Parse* helpers turn the text a flag carries into the typed value an
-// [Overlay] field holds, failing with this package's codes so that a bad
-// `--profile` and a bad `mutation.profile` are the same diagnostic with the
-// same code. They name flags, since a flag is the only way their input
-// arrives; the file path through [Parse] does the same conversions against
-// TOML keys.
-
-// ParseProfile resolves a profile name to its tier.
 func ParseProfile(name string) (mutation.Tier, error) {
 	tier, err := mutation.ParseTier(name)
 	if err != nil {
@@ -391,7 +310,6 @@ func ParseProfile(name string) (mutation.Tier, error) {
 	return tier, nil
 }
 
-// ParseCacheMode resolves a cache mode name.
 func ParseCacheMode(name string) (CacheMode, error) {
 	mode := CacheMode(name)
 	if !mode.Valid() {
@@ -404,14 +322,6 @@ func ParseCacheMode(name string) (CacheMode, error) {
 	return mode, nil
 }
 
-// ParseReportFormats resolves the value of `--report`: a comma-separated list
-// of formats, or "none" for no project reports at all.
-//
-// "none" exists because an empty flag value is indistinguishable from an
-// unset one on a command line, while `formats = []` says the same thing
-// unambiguously in a file. The returned slice is non-nil and empty for "none",
-// which is what makes it an explicit choice that beats the default rather than
-// an absence that does not.
 func ParseReportFormats(value string) ([]ReportFormat, error) {
 	if strings.TrimSpace(value) == "none" {
 		return []ReportFormat{}, nil
@@ -427,14 +337,6 @@ func ParseReportFormats(value string) ([]ReportFormat, error) {
 	return formats, nil
 }
 
-// ParseMemory resolves the value of `--memory`.
-//
-// It is the flag's door into the rule the file goes through, so that `2GB` is
-// refused in both places with the same sentence and a bound written either way
-// means exactly the same number. It exists — unlike [ParseTimeout], which the
-// command line does not need — because pflag has a duration type and no
-// byte-size one, so `--memory` is a string the command line has to resolve
-// itself before it can build an overlay.
 func ParseMemory(value string) (int64, error) {
 	size, err := parseSize(value)
 	if err != nil {
@@ -456,7 +358,6 @@ func ParseMemory(value string) (int64, error) {
 	return size, nil
 }
 
-// ParseTimeout resolves the value of `--timeout`.
 func ParseTimeout(value string) (time.Duration, error) {
 	timeout, err := time.ParseDuration(value)
 	if err != nil {

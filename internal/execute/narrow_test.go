@@ -16,8 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// testRunOf is the `-test.run` value a call was given, or "" when it was given
-// none.
 func testRunOf(c call) string {
 	for _, a := range c.Argv {
 		if rest, ok := strings.CutPrefix(a, "-test.run="); ok {
@@ -27,18 +25,9 @@ func testRunOf(c call) string {
 	return ""
 }
 
-// TestRunOneSelectsOnlyTheNamedTestsOfEachBinary is the whole of test-level
-// narrowing as this package sees it: a binary the run names tests for is
-// started with exactly those tests selected, by an anchored alternation of
-// their escaped names, and a binary it names none for runs whole. The
-// selection is placed with the harness-owned flags, ahead of the caller's
-// arguments, and what was selected is reported back on the attempt.
 func TestRunOneSelectsOnlyTheNamedTestsOfEachBinary(t *testing.T) {
 	t.Parallel()
 
-	// The second selected binary kills, so this is a kill rather than a
-	// survivor and no whole-binary confirmation follows (see RunOne): the
-	// argv this pins is the narrowed pass's own.
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if c.program() == "example.com/c.test" {
 			return failed("--- FAIL: TestSomething\n")
@@ -82,11 +71,6 @@ func TestRunOneSelectsOnlyTheNamedTestsOfEachBinary(t *testing.T) {
 	}
 }
 
-// TestRunOneRefusesTestSelectionsItCannotHonour pins the two ways a selection
-// can be wrong, and that both are refused before anything starts: a selection
-// for a binary the run does not start would describe a measurement never made,
-// and an empty selection would start a binary that runs nothing and passes —
-// the same flattering green an empty binary set is refused for.
 func TestRunOneRefusesTestSelectionsItCannotHonour(t *testing.T) {
 	t.Parallel()
 
@@ -106,16 +90,11 @@ func TestRunOneRefusesTestSelectionsItCannotHonour(t *testing.T) {
 			want:  "example.com/a",
 		},
 		{
-			// An empty name would anchor to nothing, and the binary would
-			// pass having run nothing.
 			name:  "an empty name",
 			tests: map[string][]string{"example.com/a": {"TestOne", ""}},
 			want:  `""`,
 		},
 		{
-			// A subtest is selected through its parent; inside the anchored
-			// alternation the binary's own splitting of -test.run at the
-			// slash would never find it.
 			name:  "a subtest",
 			tests: map[string][]string{"example.com/a": {"TestOne/case_3"}},
 			want:  `"TestOne/case_3"`,
@@ -148,11 +127,6 @@ func TestRunOneRefusesTestSelectionsItCannotHonour(t *testing.T) {
 	}
 }
 
-// TestRunOneRefusesACallerSuppliedTestRunWhileNarrowing: two selections on one
-// command line would compose as the test binary's flag package composes them —
-// the last one wins — and whichever won, the measurement would not be the one
-// the selection described. Without a selection the flag stays the caller's to
-// pass, as it always has been.
 func TestRunOneRefusesACallerSuppliedTestRunWhileNarrowing(t *testing.T) {
 	t.Parallel()
 
@@ -174,8 +148,6 @@ func TestRunOneRefusesACallerSuppliedTestRunWhileNarrowing(t *testing.T) {
 	}
 }
 
-// TestRunControlSelectsTheNamedTests: a control of a narrowed measurement runs
-// the same tests the measurement ran, or it is a control of something else.
 func TestRunControlSelectsTheNamedTests(t *testing.T) {
 	t.Parallel()
 
@@ -211,19 +183,10 @@ func TestRunControlSelectsTheNamedTests(t *testing.T) {
 	}
 }
 
-// TestScheduleRecordsTheTestsOfEveryAttempt: the recording names the tests an
-// attempt was narrowed to, as `<import path> <name>` labels in one order, and
-// says nothing for an attempt that ran its binaries whole.
 func TestScheduleRecordsTheTestsOfEveryAttempt(t *testing.T) {
 	t.Parallel()
 
-	// The narrowed mutant is killed by its first binary, so its attempt keeps
-	// the selection it ran; a survivor would be confirmed against the whole
-	// binary and record no tests.
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
-		// Binary a passes so the run reaches b; b kills, so the mutant is
-		// killed rather than survived and no whole-binary confirmation
-		// follows -- its attempt keeps both binaries' selections.
 		if activeOf(c) == "narrowed" && c.program() == "example.com/b.test" {
 			return failed("--- FAIL: TestB\n")
 		}
@@ -252,19 +215,10 @@ func TestScheduleRecordsTheTestsOfEveryAttempt(t *testing.T) {
 	}
 }
 
-// TestRunOneConfirmsANarrowedSurvivorAgainstTheWholeBinary is the soundness
-// step ADR 0010 turns on: a mutant whose covering test passes can still be
-// killed by a test that does not cover its line but observes, through shared
-// state, that the covering test behaved differently under the mutant. RunOne
-// re-runs a narrowed survivor against the whole binary, so that kill is not
-// lost — and the attempt it returns is the whole-binary one, naming no tests.
 func TestRunOneConfirmsANarrowedSurvivorAgainstTheWholeBinary(t *testing.T) {
 	t.Parallel()
 
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
-		// The narrowed run selects one test and passes; the whole-binary run,
-		// which selects none, fails — the shared-state kill the narrowing could
-		// not see.
 		if testRunOf(c) != "" {
 			return passed()
 		}
@@ -292,9 +246,6 @@ func TestRunOneConfirmsANarrowedSurvivorAgainstTheWholeBinary(t *testing.T) {
 	}
 }
 
-// TestRunOneDoesNotConfirmAKilledNarrowedRun: only survival needs the whole
-// binary. A narrowed run that kills has already run the test that decided it,
-// so RunOne returns it without a second pass — and keeps its test selection.
 func TestRunOneDoesNotConfirmAKilledNarrowedRun(t *testing.T) {
 	t.Parallel()
 
@@ -317,8 +268,6 @@ func TestRunOneDoesNotConfirmAKilledNarrowedRun(t *testing.T) {
 	}
 }
 
-// TestRunOneConfirmsAWholeBinarySurvivor: a narrowed survivor the whole binary
-// also survives stays a survivor, reported as the whole-binary attempt.
 func TestRunOneConfirmsAWholeBinarySurvivor(t *testing.T) {
 	t.Parallel()
 

@@ -11,13 +11,8 @@ import (
 	"testing"
 )
 
-// toolProbeEnv names the tool the probe child asks for. It does not begin with
-// GO_MUTANTS_, because the environment policy strips that whole prefix.
 const toolProbeEnv = "TESTKIT_TOOL_PROBE"
 
-// TestToolProbeProcess is not a test. It is the child
-// TestGoBinarySkipsOrFailsByPolicy starts: the only way to observe whether a
-// helper skipped or failed is to run it in a process whose result can be read.
 func TestToolProbeProcess(t *testing.T) {
 	switch os.Getenv(toolProbeEnv) {
 	case "go":
@@ -25,26 +20,11 @@ func TestToolProbeProcess(t *testing.T) {
 	case "git":
 		t.Logf("git is at %s", GitBinary(t))
 	case "go-after-env":
-		// The order CI actually runs: the environment is redirected first, which
-		// removes every GO_MUTANTS_ variable from the process, and the tool is
-		// looked up afterwards.
 		Env(t)
 		t.Logf("go is at %s", GoBinary(t))
 	}
 }
 
-// TestGoBinaryAnswersTheVersionProbe proves the lookup returns a toolchain
-// rather than a file called `go`: the harness executes what it hands back
-// thousands of times per run, and a path that cannot answer `go version` is
-// worth finding out about here rather than in whichever suite runs first.
-//
-// It cannot be made to fail by emptying PATH from a shell, and that is a
-// property of `go test` rather than of this package: since the toolchain puts
-// its own $GOROOT/bin at the front of the PATH every test binary inherits, `go`
-// is on PATH in any test the go command is running. The skip-or-fail decision
-// for a missing `go` is therefore proven in a child process whose PATH this
-// package controls — TestGoBinarySkipsOrFailsByPolicy — and the shell-level
-// version of that check is the git one below, because git is not in GOROOT/bin.
 func TestGoBinaryAnswersTheVersionProbe(t *testing.T) {
 	t.Parallel()
 
@@ -54,10 +34,6 @@ func TestGoBinaryAnswersTheVersionProbe(t *testing.T) {
 	RequireOutput(t, result, "`go version`", "go version go")
 }
 
-// TestGitBinaryAnswersTheVersionProbe is the same assertion for git, and it is
-// the one a shell can drive: `GO_MUTANTS_TEST_REQUIRE_TOOLS=1 PATH=/nonexistent
-// go test ./internal/testkit -run TestGitBinary` fails here and names the
-// variable, which is the arrangement every CI job runs in.
 func TestGitBinaryAnswersTheVersionProbe(t *testing.T) {
 	t.Parallel()
 
@@ -67,17 +43,6 @@ func TestGitBinaryAnswersTheVersionProbe(t *testing.T) {
 	RequireOutput(t, result, "`git --version`", "git version")
 }
 
-// TestGoBinarySkipsOrFailsByPolicy pins the one decision every toolchain-driven
-// test in this repository inherits.
-//
-// A developer without `go` on PATH — which happens, because the unit tier is
-// meant to run without one — should see the toolchain tests skip rather than
-// fail. A CI job without `go` on PATH is a broken job, and a suite that quietly
-// narrowed itself to the tests that need no toolchain would report green for a
-// run that proved almost nothing. Both are the same helper, and the variable is
-// what tells them apart — so the failure names the variable, because somebody
-// who set it deliberately needs to recognise its work, and somebody who
-// inherited it from a workflow needs to find it.
 func TestGoBinarySkipsOrFailsByPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -85,8 +50,6 @@ func TestGoBinarySkipsOrFailsByPolicy(t *testing.T) {
 		t.Run(tool, func(t *testing.T) {
 			t.Parallel()
 
-			// An empty directory is a PATH with nothing on it that is still a
-			// valid PATH, which an empty string is not on every platform.
 			base := withEntries(Compose(t, t.TempDir()),
 				"PATH="+t.TempDir(),
 				toolProbeEnv+"="+tool,
@@ -107,17 +70,6 @@ func TestGoBinarySkipsOrFailsByPolicy(t *testing.T) {
 	}
 }
 
-// TestTheToolRequirementSurvivesTheEnvironmentPolicy covers the interaction
-// between two rules that are each right on their own.
-//
-// [Env] removes every GO_MUTANTS_ variable from the process, because a
-// developer's exported GO_MUTANTS_ACTIVE would otherwise turn an instrumented
-// baseline into a mutant — and [RequireToolsEnv] wears the same prefix. A test
-// that redirected its environment and then reached for a toolchain would have
-// silently turned CI's requirement off, which is the failure mode the
-// requirement exists to prevent, so the value the process started with is what
-// answers once the variable is gone. This is the arrangement CI runs in, so it
-// is proven in a child process rather than reasoned about.
 func TestTheToolRequirementSurvivesTheEnvironmentPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -135,13 +87,6 @@ func TestTheToolRequirementSurvivesTheEnvironmentPolicy(t *testing.T) {
 	RequireNoOutput(t, result, "the probe", "--- SKIP")
 }
 
-// TestRequireToolsReadsThePolicyVariable states how the variable is spelled,
-// which spellings of "yes" and "no" a person can type into a workflow file or a
-// shell, and that the answer survives [Env] removing the variable along with the
-// rest of the GO_MUTANTS_ namespace. The workflow-level form of the same rule —
-// a value the process started with rather than one a test set — is
-// TestTheToolRequirementSurvivesTheEnvironmentPolicy's subject, because a
-// t.Setenv cannot reach back before the process began.
 func TestRequireToolsReadsThePolicyVariable(t *testing.T) {
 	for _, value := range []string{"1", "true", "yes"} {
 		t.Setenv(RequireToolsEnv, value)
@@ -166,15 +111,6 @@ func TestRequireToolsReadsThePolicyVariable(t *testing.T) {
 	}
 }
 
-// TestGitInitCommitsDeterministically is why the identity and the dates in the
-// environment policy are constants.
-//
-// A commit's hash is derived from its tree, its parents, its message, its author
-// and its committer — dates included — so two runs of the same test produce the
-// same repository, and two copies of the same fixture produce the same commit.
-// Without that, nothing about a commit can be asserted: every test that uses
-// `--changed`, a merge base or a diff would have to discover the hash it just
-// created and could never state one.
 func TestGitInitCommitsDeterministically(t *testing.T) {
 	t.Parallel()
 	GitBinary(t)
@@ -189,9 +125,6 @@ func TestGitInitCommitsDeterministically(t *testing.T) {
 	}
 }
 
-// TestGitInitCommitsTheWholeTreeOnMain states the two facts a caller depends on
-// without asking: everything the tree held is in the commit, and the branch is
-// called `main` whatever the machine's init.defaultBranch says.
 func TestGitInitCommitsTheWholeTreeOnMain(t *testing.T) {
 	t.Parallel()
 	GitBinary(t)
@@ -214,8 +147,6 @@ func TestGitInitCommitsTheWholeTreeOnMain(t *testing.T) {
 	}
 }
 
-// TestGitCommitReportsTheCommitItMade covers the second commit, which is what
-// every test about a diff, a merge base or an upstream needs.
 func TestGitCommitReportsTheCommitItMade(t *testing.T) {
 	t.Parallel()
 	GitBinary(t)
@@ -239,15 +170,6 @@ func TestGitCommitReportsTheCommitItMade(t *testing.T) {
 	}
 }
 
-// TestGitReturnsWhatTheCommandPrintedRatherThanWhatItSaid is why [Git] reads
-// stdout rather than the merged streams.
-//
-// Almost every caller parses what comes back as data — a hash, a branch name, a
-// porcelain listing — and git writes hints, advice and progress to stderr
-// whenever it feels the need: a repository with no init.defaultBranch, a
-// detached head, a checkout. A helper returning the two concatenated hands the
-// caller a "hash" with three lines of advice on the front, and the failure it
-// eventually causes is nowhere near the command that caused it.
 func TestGitReturnsWhatTheCommandPrintedRatherThanWhatItSaid(t *testing.T) {
 	t.Parallel()
 	GitBinary(t)
@@ -255,8 +177,6 @@ func TestGitReturnsWhatTheCommandPrintedRatherThanWhatItSaid(t *testing.T) {
 	root := Copy(t, "simple")
 	head := GitInit(t, root)
 
-	// `checkout --detach` says "HEAD is now at ..." and prints the detached-head
-	// advice, all of it on stderr and none of it on stdout.
 	if got := Git(t, root, "checkout", "--detach", "HEAD"); got != "" {
 		t.Errorf("`git checkout --detach` returned %q, which is what it wrote to stderr", got)
 	}
@@ -271,16 +191,7 @@ func TestGitReturnsWhatTheCommandPrintedRatherThanWhatItSaid(t *testing.T) {
 	}
 }
 
-// TestGitIgnoresTheRepositoryVariablesInTheEnvironment covers the developer who
-// is in the middle of a rebase, or whose shell exports GIT_DIR from a wrapper.
-//
-// git reads GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY and
-// GIT_COMMON_DIR before it looks at `-C`, so an exported one silently points
-// every command a test runs at somebody else's repository — which is, in the
-// worst case, this one.
 func TestGitIgnoresTheRepositoryVariablesInTheEnvironment(t *testing.T) {
-	// t.Setenv, so no t.Parallel: the point of the test is what the process's
-	// own environment carries.
 	GitBinary(t)
 
 	elsewhere := Copy(t, "simple")
@@ -299,13 +210,6 @@ func TestGitIgnoresTheRepositoryVariablesInTheEnvironment(t *testing.T) {
 	}
 }
 
-// TestGitLeavesNothingInTheRepositoryItWasGiven keeps the harness's own
-// scaffolding out of the tree under test.
-//
-// The absent configuration files are named under a directory of the test's own
-// rather than under the repository, because a run that ever created one — or a
-// git that decided to write a config — would put an untracked file in the
-// working tree, and half of what these tests assert is what `git status` says.
 func TestGitLeavesNothingInTheRepositoryItWasGiven(t *testing.T) {
 	t.Parallel()
 	GitBinary(t)
@@ -322,10 +226,6 @@ func TestGitLeavesNothingInTheRepositoryItWasGiven(t *testing.T) {
 	}
 }
 
-// TestGitIgnoresTheDevelopersOwnConfiguration keeps a machine's `~/.gitconfig`
-// out of what these tests observe. A developer with `commit.gpgsign=true`, an
-// `init.defaultBranch` of their own or a `core.autocrlf` would otherwise get
-// different results from the same test than CI does.
 func TestGitIgnoresTheDevelopersOwnConfiguration(t *testing.T) {
 	t.Parallel()
 	GitBinary(t)
@@ -344,9 +244,6 @@ func TestGitIgnoresTheDevelopersOwnConfiguration(t *testing.T) {
 	}
 }
 
-// TestGoEnvUnderTheHermeticEnvironmentAgreesWithThePolicy is the end-to-end half
-// of the environment tests: they assert what the policy composed, and this
-// asserts that a real `go` command reads it.
 func TestGoEnvUnderTheHermeticEnvironmentAgreesWithThePolicy(t *testing.T) {
 	e := Env(t)
 	gobin := GoBinary(t)

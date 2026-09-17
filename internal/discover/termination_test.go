@@ -9,24 +9,13 @@ import (
 	"testing"
 )
 
-// terminationCases are loops and the edits that do or do not stop them
-// stopping.
-//
-// Every `want` here is reasoned about rather than observed, which is the point:
-// the whole reason to prove this is that observing it costs a per-mutant budget
-// twice. A case whose answer somebody had to run to find out would be a case
-// this table cannot state.
 var terminationCases = []struct {
-	name string
-	// rule and original identify the candidate in the scan, so that a source
-	// holding several mutants can be asked about one.
+	name     string
 	rule     string
 	original string
 	source   string
 	want     string
-	// absent says the phase should prove nothing, which is the honest answer
-	// for a loop it does not recognise.
-	absent bool
+	absent   bool
 }{
 	{
 		name: "a negated counting condition runs away from its bound",
@@ -271,7 +260,6 @@ func Stride(n int) int {
 	},
 }
 
-// TestTerminationIsProvedRatherThanTimedOut is the table.
 func TestTerminationIsProvedRatherThanTimedOut(t *testing.T) {
 	t.Parallel()
 
@@ -315,11 +303,6 @@ func TestTerminationIsProvedRatherThanTimedOut(t *testing.T) {
 	}
 }
 
-// TestEveryProofNamesTheLoopItIsAbout keeps the coordinates usable.
-//
-// A proof a reader cannot point at is one they have to take on trust, and the
-// whole reason to publish this rather than keep it internal is that somebody
-// meeting a timeout should be able to see which loop it was.
 func TestEveryProofNamesTheLoopItIsAbout(t *testing.T) {
 	t.Parallel()
 
@@ -352,17 +335,6 @@ func Sum(n int) int {
 	}
 }
 
-// TestReversingOrDeletingTheStepIsUnbounded is the step arm's arithmetic,
-// asked directly.
-//
-// It calls the decision rather than driving a scan, and it used to do that
-// because a scan could not reach a `for` post statement at all. Form F changed
-// that, and the rows it was standing in for are now in terminationCases above,
-// where a real candidate carries a real proof. What is left here is the
-// arithmetic itself, over shapes including ones no single rule produces -- a
-// stride of four reversed, a step of nothing -- because the predicate is four
-// lines of sign comparison and a transposed row in it would produce a proof
-// that is confidently wrong.
 func TestReversingOrDeletingTheStepIsUnbounded(t *testing.T) {
 	t.Parallel()
 
@@ -393,7 +365,6 @@ func TestReversingOrDeletingTheStepIsUnbounded(t *testing.T) {
 	}
 }
 
-// comparisonToken reads one operator the way the table spells it.
 func comparisonToken(t *testing.T, spelling string) token.Token {
 	t.Helper()
 	switch spelling {
@@ -411,12 +382,6 @@ func comparisonToken(t *testing.T, spelling string) token.Token {
 	}
 }
 
-// TestANegationAndAMirrorAreEachOthersInverse pins the two tables the decision
-// is made of.
-//
-// They are four lines each and the sort of thing a reader skims, which is why
-// they are checked: a negation table with one row transposed produces a proof
-// that is confidently wrong, and a confidently wrong proof is worse than none.
 func TestANegationAndAMirrorAreEachOthersInverse(t *testing.T) {
 	t.Parallel()
 
@@ -427,8 +392,6 @@ func TestANegationAndAMirrorAreEachOthersInverse(t *testing.T) {
 		if got := mirrored(mirrored(op)); got != op {
 			t.Errorf("mirroring %s twice gives %s", op, got)
 		}
-		// Negating an ordering has to produce an ordering, or the loop reader
-		// would refuse a condition it had itself produced.
 		if !isOrdering(negatedComparison(op)) {
 			t.Errorf("negating %s gives %s, which is not an ordering", op, negatedComparison(op))
 		}
@@ -440,18 +403,6 @@ func TestANegationAndAMirrorAreEachOthersInverse(t *testing.T) {
 	}
 }
 
-// TestATaglessSwitchCaseIsProvedLikeAnIf is the other half of the case-label
-// change.
-//
-// A tagless switch's label is exactly `bool` -- the implicit tag is the typed
-// constant `true` -- so it is a condition in the same sense an `if`'s is, and
-// the branch proof's lemma holds over it unchanged: a narrowing edit makes the
-// clause fire less often, so a test during which none of its statements ran
-// could not have told the two programs apart.
-//
-// The span is the clause's statements rather than a pair of braces, because a
-// case clause has none. That is the same promise -- what a consumer does with
-// the span is ask whether anything inside it ran.
 func TestATaglessSwitchCaseIsProvedLikeAnIf(t *testing.T) {
 	t.Parallel()
 
@@ -475,7 +426,6 @@ func Pick(a, b int) int {
 		if proof == nil {
 			t.Fatalf("a narrowing edit on a tagless switch label carries no branch proof")
 		}
-		// `return 1` is on line 6 and is the whole of the clause's body.
 		if proof.BodyStartLine != 6 || proof.BodyEndLine != 6 {
 			t.Errorf("the proof spans lines %d..%d, and the clause's body is line 6 alone",
 				proof.BodyStartLine, proof.BodyEndLine)
@@ -490,11 +440,6 @@ func Pick(a, b int) int {
 	}
 }
 
-// TestACaseClauseWithNoBodyIsNotProved keeps the empty-body refusal at the
-// clause too.
-//
-// An empty clause gates nothing, so there is no body a test could have failed
-// to enter and nothing the lemma can say.
 func TestACaseClauseWithNoBodyIsNotProved(t *testing.T) {
 	t.Parallel()
 

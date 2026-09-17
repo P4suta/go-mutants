@@ -15,27 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// TestTheLicenceGateReadsWhatADecoderReads is the strict half of a gate whose
-// cheap half runs on every push.
-//
-// [testkit.ReusePaths] reads the lines of REUSE.toml because the harness may
-// not link a TOML decoder -- every test binary in this repository would compile
-// it -- and the licence gate has to stay in the unit tier, because a licensing
-// manifest checked only where the toolchain runs is one that drifts between the
-// pushes that do not check it. Both of those are right, and together they leave
-// a gate that depends on how the file is formatted rather than on what it says.
-//
-// Nothing links this package, so this one may decode. It does not replace the
-// cheap reader; it holds the cheap reader to the decoder's answer, which is the
-// pattern this repository takes wherever a first line of defence is worth
-// keeping and is not the whole of the question.
-//
-// The failure it exists for is silent. A formatter is free to fold a `path`
-// array onto one line or to break it across several, and a line reader that
-// then returned fewer patterns would excuse fewer files -- which the licence
-// gate reports loudly -- or, if the folding went the other way and a stray
-// quoted string on a `path` line were picked up, would excuse one more, which
-// nothing else in the repository would ever mention.
 func TestTheLicenceGateReadsWhatADecoderReads(t *testing.T) {
 	t.Parallel()
 
@@ -52,14 +31,6 @@ func TestTheLicenceGateReadsWhatADecoderReads(t *testing.T) {
 	}
 }
 
-// TestTheDecoderSeesAPathTheLineReaderWouldMiss is the counterpart, and the
-// shape it feeds is the exact one that broke a reader in this repository.
-//
-// A comparison of two readers passes trivially when both are wrong the same
-// way, so the claim worth pinning is that the decoder is the stricter of the
-// two: given a manifest whose `path` array is folded onto one line, it still
-// reads every entry. If this ever stops being true, the test above becomes two
-// line readers agreeing with each other.
 func TestTheDecoderSeesAPathTheLineReaderWouldMiss(t *testing.T) {
 	t.Parallel()
 
@@ -73,7 +44,6 @@ func TestTheDecoderSeesAPathTheLineReaderWouldMiss(t *testing.T) {
 	}
 }
 
-// decodedReusePaths is every annotated path, read as TOML rather than as text.
 func decodedReusePaths(t testing.TB, root string) []string {
 	t.Helper()
 	text := readFile(t, filepath.Join(root, testkit.ReuseFile))

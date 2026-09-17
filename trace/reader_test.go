@@ -15,7 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// writeStream writes the given lines as a recording and returns its path.
 func writeStream(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), trace.FileName)
@@ -29,7 +28,6 @@ func writeStream(t *testing.T, lines ...string) string {
 	return path
 }
 
-// scriptedLines is the scripted recording as the lines of a stream.
 func scriptedLines(t *testing.T) []string {
 	t.Helper()
 	lines := make([]string, 0, fixtureScriptedCount)
@@ -43,9 +41,6 @@ func scriptedLines(t *testing.T) []string {
 	return lines
 }
 
-// lineOfType returns the first line of a recording carrying the given type.
-// Looking a line up by what it is rather than by where it sits keeps the
-// rejection table from breaking every time the scripted recording grows.
 func lineOfType(t *testing.T, lines []string, eventType string) string {
 	t.Helper()
 	for _, line := range lines {
@@ -71,8 +66,6 @@ func TestReadReturnsTheRecordingItWasGiven(t *testing.T) {
 	if !slices.Equal(seqsOf(events), seqsOf(scriptedEvents(t))) {
 		t.Error("Read returned the events out of order")
 	}
-	// A directory names its stream, which is what lets a caller pass the run
-	// directory a sink reported rather than reconstruct the file name.
 	fromDirectory, err := trace.Read(filepath.Dir(path))
 	if err != nil {
 		t.Fatalf("Read of a directory: %v", err)
@@ -87,11 +80,6 @@ func TestReadRejectsUnknownFieldsTrailingDataAndTwoPayloads(t *testing.T) {
 
 	valid := scriptedLines(t)
 	cases := map[string]string{
-		// The three rules the docs state and the schema cannot: the schema
-		// validates one line at a time, so a rule about where a line sits in
-		// the stream is the reader's to enforce.
-		// Both lines below have increasing sequence numbers, so the only thing
-		// wrong with either is where it sits.
 		"a run-start after the first line": `{"seq":1,"type":"note","timestamp":"2026-09-06T12:00:00Z","elapsed_ms":0,"note":{"kind":"warning"}}` + "\n" +
 			`{"seq":2,"type":"run-start","schema":"gomutants-trace-v1","timestamp":"2026-09-06T12:00:01Z","elapsed_ms":1000,"start":{"kind":"run","tool_version":"0.1.0-dev","pid":1,"root":"/x"}}`,
 		"an event after run-end": `{"seq":1,"type":"run-end","timestamp":"2026-09-06T12:00:00Z","elapsed_ms":0,"run":{"events_emitted":0,"events_dropped":0}}` + "\n" +
@@ -124,10 +112,6 @@ func TestReadRejectsUnknownFieldsTrailingDataAndTwoPayloads(t *testing.T) {
 		})
 	}
 
-	// The one case the two readers answer differently. "There is no recording
-	// for that run" is an answer a summary can give, and [Summary.Missing] is
-	// where it gives it; Read has no such field, so a caller who mistyped a
-	// path would read the empty slice as a run that recorded nothing.
 	t.Run("a recording that does not exist", func(t *testing.T) {
 		t.Parallel()
 		path := filepath.Join(t.TempDir(), trace.FileName)
@@ -170,7 +154,6 @@ func TestReadSummaryReportsMissingIncompleteAndLossyRecordings(t *testing.T) {
 		if summary.Events != 0 || summary.HasRunEnd {
 			t.Errorf("a missing recording holds %d events, run-end %v", summary.Events, summary.HasRunEnd)
 		}
-		// The maps are never nil, so a caller may index them without a branch.
 		if summary.Counts == nil || summary.ExecByKind == nil || summary.StageDurationMS == nil {
 			t.Error("a missing recording returned nil maps")
 		}
@@ -223,8 +206,6 @@ func TestReadSummaryReportsMissingIncompleteAndLossyRecordings(t *testing.T) {
 		if summary.EventsDropped != 3 {
 			t.Errorf("EventsDropped = %d, want 3", summary.EventsDropped)
 		}
-		// The ring dropped the first events, so the recording begins partway
-		// through and the gap is counted rather than glossed over.
 		if summary.MissingSequences != 3 {
 			t.Errorf("MissingSequences = %d, want 3", summary.MissingSequences)
 		}
@@ -276,17 +257,12 @@ func TestReadSummaryTalliesExecByKindAndStageDurations(t *testing.T) {
 	if tally.Count != 1 {
 		t.Errorf("ExecByKind[%q].Count = %d, want 1", trace.ExecKindMutantRun, tally.Count)
 	}
-	// One command of each labelled kind the scripted recording runs, which is
-	// the tally a performance question is asked of.
 	if len(summary.ExecByKind) != 3 {
 		t.Errorf("ExecByKind holds %d kinds, want 3: %v", len(summary.ExecByKind), summary.ExecByKind)
 	}
 	if got := summary.ExecByKind[trace.ExecKindValidateBuild]; got.DurationMS == 0 {
 		t.Errorf("ExecByKind[%q] = %+v, want its duration summed", trace.ExecKindValidateBuild, got)
 	}
-	// A stage is keyed by its phase and its name together, because the same
-	// stage name appears in more than one phase and two spans that share a key
-	// would be added together.
 	if got, want := summary.StageDurationMS[trace.PhaseMutate+"/"+fixtureStageName], fixtureTick.Milliseconds(); got != want {
 		t.Errorf("StageDurationMS[%s/%s] = %d, want %d", trace.PhaseMutate, fixtureStageName, got, want)
 	}
@@ -312,14 +288,10 @@ func TestDiffReportsDeltasPerTypePhaseAndStage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A second recording of the same script plus one more mutant execution and
-	// one more command, closed with a different verdict.
 	sink := trace.NewMemorySink(0)
 	recorder := trace.New(sink, fixtureClock(), fixtureStartRecord())
 	endPhase := recorder.PhaseStart(trace.PhaseMutate)
 	recorder.Stage(fixtureStageName, fixtureStageDetail)(trace.ResultSucceeded)
-	// The same number of commands as the recording before it, one of which
-	// changed kind: a per-type count cannot see that, and ExecByKind can.
 	moved := fixtureExecRecord()
 	moved.Kind = trace.ExecKindGoTestC
 	recorder.Exec(moved)
@@ -360,8 +332,6 @@ func TestDiffReportsDeltasPerTypePhaseAndStage(t *testing.T) {
 	if diff.CountDelta[trace.TypeExec] != 0 {
 		t.Errorf("CountDelta[exec] = %d, want 0", diff.CountDelta[trace.TypeExec])
 	}
-	// One command moved from one kind to another, which a per-type count could
-	// never show.
 	if got := diff.ExecDelta[trace.ExecKindMutantRun]; got.Count != -1 {
 		t.Errorf("ExecDelta[mutant-run].Count = %d, want -1", got.Count)
 	}
@@ -389,8 +359,6 @@ func TestDiffReportsDeltasPerTypePhaseAndStage(t *testing.T) {
 func TestReadRefusesALineTooLongToBeAnEvent(t *testing.T) {
 	t.Parallel()
 
-	// A stream is read with a bounded buffer, because a diagnostic reader must
-	// not be a way to exhaust memory on a file somebody else wrote.
 	path := writeStream(t, `{"seq":1,"type":"note","timestamp":"2026-09-06T12:00:00Z","elapsed_ms":0,"note":{"kind":"warning","detail":"`+
 		strings.Repeat("x", 17<<20)+`"}}`)
 	if _, err := trace.Read(path); err == nil {

@@ -15,14 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// shardDocument is a complete, valid shard report with an empty catalogue.
-//
-// It is written out rather than built through internal/report because these
-// tests are about the command line: what `report merge` does with the files it
-// is handed, and what it says when they cannot be merged. The document has no
-// mutants in it on purpose — a merge of two empty shards is still a merge, and
-// everything about combining rows is proven in internal/report against the
-// fixture that has one of every outcome.
 const shardDocument = `{
   "document_type": "go-mutants/run-report",
   "schema_version": 1,
@@ -77,10 +69,8 @@ const shardDocument = `{
 }
 `
 
-// testDigest is a real 64 hex characters, which the schema insists on.
 var testDigest = strings.Repeat("ab", 32)
 
-// writeShard writes one shard document into dir and returns its path.
 func writeShard(t *testing.T, dir string, index, total int, digest string) string {
 	t.Helper()
 	path := filepath.Join(dir, fmt.Sprintf("shard-%d.json", index))
@@ -114,8 +104,6 @@ func TestReportMergeWritesTheWholeRun(t *testing.T) {
 	if merged.Selection.Mode != report.ModeAll {
 		t.Errorf("selection.mode = %q, want %q", merged.Selection.Mode, report.ModeAll)
 	}
-	// The merged document is a document in its own right, so its id is its own
-	// and is not borrowed from a shard.
 	if merged.RunID == "20260218T091501Z-3f9c" {
 		t.Error("the merged document kept a shard's run id")
 	}
@@ -225,8 +213,6 @@ func TestReportValidateReportsTheFirstViolation(t *testing.T) {
 	dir := t.TempDir()
 	path := writeShard(t, dir, 1, 2, testDigest)
 
-	// A document that parses and is not valid: the shard index is below one,
-	// which only the schema refuses.
 	var doc map[string]any
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -287,9 +273,6 @@ func TestReportWithNoSubcommandPrintsHelp(t *testing.T) {
 	}
 }
 
-// TestRunRefusesExplainWithJSON and its `list` twin hold the one flag conflict
-// this phase adds. It is a semantic check rather than cobra's mutual exclusion
-// so that it carries a code and a remedy; see [checkExplain].
 func TestRunRefusesExplainWithJSON(t *testing.T) {
 	err := runWith(t, "--explain", "--json")
 	var coded *Error
@@ -340,8 +323,6 @@ func TestRunRefusesAShardThatIsNotOne(t *testing.T) {
 	}
 }
 
-// TestChangedNeedsAnEqualsSign covers pflag's rule for an optional-value flag,
-// which is the one way a correct-looking `--changed` command line goes wrong.
 func TestChangedNeedsAnEqualsSign(t *testing.T) {
 	err := runWith(t, "--changed", "origin/main")
 	var coded *Error
@@ -353,10 +334,6 @@ func TestChangedNeedsAnEqualsSign(t *testing.T) {
 	}
 }
 
-// TestChangedWithAnEqualsSignIsAccepted proves the flag parses in the form the
-// hint recommends, and that the bare form is accepted too. Neither reaches the
-// engine here: what happens next needs a repository, and internal/gitdiff owns
-// that half.
 func TestChangedIsAcceptedInBothForms(t *testing.T) {
 	for _, args := range [][]string{{"--changed"}, {"--changed=origin/main"}} {
 		cmd := newRunCommand()

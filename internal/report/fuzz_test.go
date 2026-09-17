@@ -13,24 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// FuzzParseDocument is the promise this package makes about a document it may
-// not have written.
-//
-// A run report is read back in three places and none of them is a round trip
-// within one process: `report merge` reads the shards a CI matrix published,
-// `report render` reads a document somebody kept, and the history store reads
-// what an earlier version of this tool filed. So the bytes may be truncated by
-// a killed job, edited by somebody, or written by a build that declared a field
-// this one does not -- and the decoder is strict on purpose, because a field
-// quietly dropped on the way in is a field missing from the merged document
-// with nothing to say it was ever there.
-//
-// Three properties:
-//
-//   - it never panics, whatever the file holds;
-//   - a refusal is a typed error carrying a code, never a bare JSON error;
-//   - a document it accepts survives being written back out and read again,
-//     which is what `report merge` does to every shard it is given.
 func FuzzParseDocument(f *testing.F) {
 	f.Add(`{"schema_version":1,"document_type":"go-mutants/run-report"}`)
 	f.Add(`{}`)
@@ -66,9 +48,6 @@ func FuzzParseDocument(f *testing.F) {
 			t.Fatal("Parse accepted the document and returned nothing")
 		}
 
-		// What `report merge` does to every shard: encode the value it decoded
-		// and decode it again. A field the decoder accepted and the encoder
-		// cannot write is a field that would vanish from a merged document.
 		encoded, err := json.Marshal(parsed)
 		if err != nil {
 			t.Fatalf("a document Parse accepted will not encode: %v", err)
@@ -87,20 +66,10 @@ func FuzzParseDocument(f *testing.F) {
 	})
 }
 
-// FuzzParseShardSpec is the promise this package makes about a value a user
-// types on a command line.
-//
-// `--shard 1/4` is written by hand in a CI configuration, and the failure it
-// guards against is silent: a specification misread as a different shard would
-// run one part of the catalogue twice and another not at all, and the merged
-// document would say it covered everything. So the parser refuses rather than
-// interprets, and the two properties below are what "refuses" has to mean.
 func FuzzParseShardSpec(f *testing.F) {
 	for _, seed := range []string{
 		"1/4", " 1 / 4 ", "1/1", "4/4", "0/4", "5/4", "-1/4", "1/0", "1/-4",
 		"", "/", "1/", "/4", "1", "1/4/9", "a/b", "1/4x", "+1/+4",
-		// Arabic-Indic digits, written as escapes: a digit `strconv.Atoi`
-		// refuses is a spec this parser has to refuse rather than round.
 		"\u0661/\u0664",
 		"01/04", "1/99999999999999999999", "\n1/4\n",
 	} {
@@ -129,8 +98,6 @@ func FuzzParseShardSpec(f *testing.F) {
 		if shard.Assignment == "" {
 			t.Fatalf("ParseShard(%q) named no assignment function, so nobody can recompute the partition", spec)
 		}
-		// And the spec is what it says it is: a value that parsed has both
-		// numbers in it, in that order.
 		index, total, ok := strings.Cut(strings.TrimSpace(spec), "/")
 		if !ok {
 			t.Fatalf("ParseShard accepted %q, which holds no slash", spec)

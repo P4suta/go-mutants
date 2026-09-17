@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// Package operatorselect resolves mutation profiles, family names, and rule
-// names against the canonical registry. It is shared by the command engine and
-// the public reusable session so their catalogs cannot diverge.
+// Package operatorselect resolves profiles, families and rule names.
 package operatorselect
 
 import "github.com/P4suta/go-mutants/internal/mutation"
 
-// Select returns rules in canonical registry order. When names is empty, tier
-// selects its monotonic profile. Otherwise each name is a family or a rule and
-// tier is ignored. unknown is the first unrecognised name.
 func Select(tier mutation.Tier, names []string) (rules []mutation.Rule, unknown string) {
 	registry := mutation.CanonicalRegistry()
 	if len(names) == 0 {
@@ -35,7 +30,6 @@ func Select(tier mutation.Tier, names []string) (rules []mutation.Rule, unknown 
 	return rules, ""
 }
 
-// Resolve expands one family name or resolves one exact rule name.
 func Resolve(registry *mutation.Registry, name string) ([]mutation.Rule, bool) {
 	if _, ok := registry.FamilyPosition(mutation.Family(name)); ok {
 		return registry.FamilyRules(mutation.Family(name)), true

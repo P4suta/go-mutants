@@ -20,17 +20,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestOpenOptionsTraceIsPartOfTheContract pins the recording surface by name
-// and by type.
-//
-// A consumer joining its own recording to the engine's writes against exactly
-// these five things: the sink it hands over, the ring it reads back when it
-// hands over none, the two overlay manifests that let it reproduce a run by
-// hand, and the sequence numbers on the results. A rename is a compile error
-// for that consumer, which is what this is for;
-// [TestExternalModuleCompilesAgainstTheEngineAPI] states the same claim from
-// outside the module, where it is checked against a build that cannot see any
-// of this package's own test helpers.
 func TestOpenOptionsTraceIsPartOfTheContract(t *testing.T) {
 	t.Parallel()
 
@@ -39,39 +28,19 @@ func TestOpenOptionsTraceIsPartOfTheContract(t *testing.T) {
 	pinType[func(*gomutants.Session) string]((*gomutants.Session).OverlayManifest)
 	pinType[func(*gomutants.Session) string]((*gomutants.Session).ProbeOverlayManifest)
 
-	// A sink of the consumer's own is the point of the field being an interface
-	// rather than a directory: a recording goes wherever the embedder already
-	// sends its own.
 	var sink trace.Sink = trace.NewMemorySink(trace.DefaultRingCapacity)
 	options := gomutants.OpenOptions{Trace: sink}
 	if options.Trace == nil {
 		t.Error("OpenOptions.Trace did not keep the sink it was given")
 	}
 
-	// Nil is the ring rather than silence, and that is a documented default a
-	// consumer relies on: it is what makes "read the recording of the run that
-	// went wrong" possible without having asked for one in advance.
 	if (gomutants.OpenOptions{}).Trace != nil {
 		t.Error("the zero OpenOptions carries a sink")
 	}
 }
 
-// pinType states that a value has exactly the type named here, and nothing
-// weaker.
-//
-// It is a call rather than a typed variable declaration because the two are not
-// the same claim to a reader. A declaration whose type could be inferred reads
-// as noise everywhere else in a Go file, and a tool that offers to remove it is
-// right everywhere else — while here the type *is* the assertion, and removing
-// it would delete the test while leaving something that still compiles.
 func pinType[T any](T) {}
 
-// workspaceArtifactKinds are the artifact kinds a workspace's recording can
-// carry, and workspaceNoteKinds the notes.
-//
-// They are written out rather than derived, because that is the point: the list
-// is what this build records, and a kind added to the code without a paragraph
-// explaining it is a label a reader of a recording cannot act on.
 var (
 	workspaceArtifactKinds = []string{
 		trace.ArtifactOverlayManifest,
@@ -84,15 +53,6 @@ var (
 	workspaceNoteKinds = []string{trace.NotePrepareFailed, trace.NoteControl}
 )
 
-// TestEveryNewArtifactAndNoteKindIsInTheSchemaAndTheDocs keeps the vocabulary,
-// the contract and the page that explains them from drifting apart.
-//
-// An artifact or a note is the one place a recording says what a run wrote or
-// could not do, and its `kind` is what a reader branches on. A kind that exists
-// in the code and nowhere else is a string somebody has to guess at; one the
-// schema constrains and the docs do not is a validation failure with no
-// explanation attached. So both directions are checked here, against the
-// published files rather than against a copy of them.
 func TestEveryNewArtifactAndNoteKindIsInTheSchemaAndTheDocs(t *testing.T) {
 	t.Parallel()
 
@@ -115,10 +75,6 @@ func TestEveryNewArtifactAndNoteKindIsInTheSchemaAndTheDocs(t *testing.T) {
 				t.Errorf("docs/trace-v1.md never mentions the %s kind %q, so a reader of a"+
 					" recording carrying it has nothing to look it up in", payload, kind)
 			}
-			// The schema deliberately leaves both kinds open — a recording made
-			// by a newer build stays readable by an older reader — so the claim
-			// is conditional. The day one of them is closed, this is what says
-			// so rather than a run failing validation.
 			if enumerated != nil && !slices.Contains(enumerated, kind) {
 				t.Errorf("the schema enumerates %s kinds and %q is not among them: %v",
 					payload, kind, enumerated)
@@ -127,8 +83,6 @@ func TestEveryNewArtifactAndNoteKindIsInTheSchemaAndTheDocs(t *testing.T) {
 	}
 }
 
-// schemaKindEnum is the enumeration the schema constrains one payload's `kind`
-// with, or nil when it constrains it only as a non-empty string.
 func schemaKindEnum(t *testing.T, document map[string]any, payload string) []string {
 	t.Helper()
 	defs, ok := document["$defs"].(map[string]any)
@@ -162,19 +116,6 @@ func schemaKindEnum(t *testing.T, document map[string]any, payload string) []str
 	return enumerated
 }
 
-// TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch is the
-// recording under the load it is actually used at.
-//
-// Three things write to a workspace's recording at once — the executions, the
-// probe passes, and the housekeeping each of them does when a keep is in force
-// — and a fourth reads it while they do. Every existing concurrency test in
-// this suite runs without KeepTemp, so the two structures a keep introduces
-// (the kept-directory list and the artifact recorded beside each execution)
-// have never been under a race detector at all.
-//
-// It lives in the untagged tier deliberately: `go test -race .` is the gate
-// that would catch a data race here, and a test behind a build tag that gate
-// does not set is a test that never runs under it.
 func TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch(t *testing.T) {
 	const workspaceCommands = 8
 	const sessionCalls = 6
@@ -192,9 +133,6 @@ func TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch(t *testi
 		t.Fatalf("opening workspace: %v", err)
 	}
 
-	// A reader for as long as the writers run. Recording() is documented as
-	// safe at any point in a workspace's life, and "any point" is exactly the
-	// point at which fourteen goroutines are recording into it.
 	reading := make(chan struct{})
 	read := make(chan int, 1)
 	go func() {
@@ -265,7 +203,6 @@ func TestConcurrentExecutionsUnderKeepTempRecordAndPreserveEveryScratch(t *testi
 		t.Fatalf("closing workspace: %v", err)
 	}
 
-	// Every directory that was kept is named once, recorded once, and there.
 	preserved := workspace.Preserved()
 	var scratch []string
 	for _, event := range workspace.Recording() {

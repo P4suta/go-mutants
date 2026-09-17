@@ -17,9 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The two mutants the golden run measures. Their ids are longer than the eight
-// characters a result line prints, which is the point: the truncation is part
-// of the format and a test using short ids would not exercise it.
 var (
 	killed = engine.MutantResult{
 		ID:          strings.Repeat("1a2b3c4d", 8),
@@ -47,7 +44,6 @@ var (
 	}
 )
 
-// summary is the closing block of the golden run.
 func summary() engine.RunSummary {
 	return engine.RunSummary{
 		RunID:    "20260819T101112Z-a1b2",
@@ -62,8 +58,6 @@ func summary() engine.RunSummary {
 	}
 }
 
-// stream is the event sequence of a successful run, in the order the engine
-// publishes it.
 func stream() []engine.Event {
 	block := summary()
 	return []engine.Event{
@@ -97,9 +91,6 @@ func stream() []engine.Event {
 	}
 }
 
-// closing is the summary block every golden below ends with. It is written once
-// because --quiet drops the live half of the output and keeps this half whole,
-// which is the property the two goldens exist to hold in place.
 const closing = "SURVIVED   9f8e7d6c  untested.go:9:12  neq-to-eq  != -> ==  (176ms)\n" +
 	"    - !=\n" +
 	"    + ==\n" +
@@ -112,7 +103,6 @@ const closing = "SURVIVED   9f8e7d6c  untested.go:9:12  neq-to-eq  != -> ==  (17
 const published = "report run: /cache/go-mutants/workspaces/1a2b/runs/20260819T101112Z-a1b2.json\n" +
 	"report latest: /cache/go-mutants/workspaces/1a2b/latest.json\n"
 
-// render feeds events through a renderer and returns what it wrote.
 func render(t *testing.T, r *PlainRenderer, events []engine.Event) string {
 	t.Helper()
 	var out bytes.Buffer
@@ -159,10 +149,6 @@ func TestPlainRendererIsByteExact(t *testing.T) {
 }
 
 func TestQuietKeepsWhatMatters(t *testing.T) {
-	// The survivor and its diff survive --quiet, because they arrive again in
-	// the closing block. That is the whole reason the block repeats them: a
-	// user who asked for less output must not thereby lose the one thing a
-	// mutation run exists to tell them.
 	const want = "baseline ok: avg 170ms, slowest 210ms, timeout 10s (derived)\n" +
 		"warning GOM4040: the snapshot directory could not be removed: access denied\n" +
 		published +
@@ -191,9 +177,6 @@ func TestInterruptedRunWithoutAReportRendersItsStatus(t *testing.T) {
 	}
 }
 
-// TestInterruptedRunSaysSoRatherThanGuessingAnExitCode pins the one place the
-// summary block deliberately does not print a number: only the command line
-// knows whether a signal was 130 or 143, so the engine never claims to.
 func TestInterruptedRunSaysSoRatherThanGuessingAnExitCode(t *testing.T) {
 	block := summary()
 	block.Notable = nil
@@ -234,13 +217,6 @@ func TestUndefinedScoreSaysSoRatherThanPrintingZero(t *testing.T) {
 	}
 }
 
-// TestFailedGateIsNamedInTheBlock is the one line that makes the silent
-// standard error defensible.
-//
-// Three of the six gates leave no trace in the numbers above them — an empty
-// catalogue, a stale expectations ledger, a mutant the harness could not run —
-// so without this a user on exit 2 has a status code and nothing that names the
-// reason.
 func TestFailedGateIsNamedInTheBlock(t *testing.T) {
 	block := summary()
 	if got := renderBlock(t, block); strings.Contains(got, "failed ") {
@@ -264,8 +240,6 @@ func TestFailedGateIsNamedInTheBlock(t *testing.T) {
 	if !strings.HasSuffix(got, "run 20260819T101112Z-a1b2  exit 1\n") {
 		t.Errorf("output = %q, want the gate named directly above the exit status", got)
 	}
-	// An interrupted run drops it: nothing the gates are about finished being
-	// measured, and the exit status is the signal's rather than the verdict's.
 	interrupted := render(t, NewPlain(nil, "0.1.0-dev", false, false),
 		[]engine.Event{engine.RunCompleted{Status: engine.StatusInterrupted, Run: &block}})
 	if strings.Contains(interrupted, "failed no-mutants") {
@@ -273,8 +247,6 @@ func TestFailedGateIsNamedInTheBlock(t *testing.T) {
 	}
 }
 
-// TestExpectationsLineAppearsOnlyWithALedger keeps the block from growing a
-// line of zeroes for the projects — most of them — that have no expectations.
 func TestExpectationsLineAppearsOnlyWithALedger(t *testing.T) {
 	block := summary()
 	if got := renderBlock(t, block); strings.Contains(got, "expectations") {
@@ -286,16 +258,12 @@ func TestExpectationsLineAppearsOnlyWithALedger(t *testing.T) {
 	}
 }
 
-// renderBlock renders one closing summary on its own.
 func renderBlock(t *testing.T, block engine.RunSummary) string {
 	t.Helper()
 	return render(t, NewPlain(nil, "0.1.0-dev", false, false),
 		[]engine.Event{engine.RunCompleted{Status: engine.StatusOK, Run: &block}})
 }
 
-// TestNotRunMutantsGetNoResultLine pins the decision behind the five outcome
-// labels: a mutant the run reached and abandoned is a number in the counts, not
-// a line claiming a result it does not have.
 func TestNotRunMutantsGetNoResultLine(t *testing.T) {
 	abandoned := survivor
 	abandoned.Outcome = mutation.OutcomeNotRun
@@ -330,8 +298,6 @@ func TestOutcomeLabelsFitTheColumn(t *testing.T) {
 	}
 }
 
-// TestResultLineQuotesWhatWouldBreakTheLine covers the one place a mutant's own
-// bytes reach the output: a statement deletion whose original is several lines.
 func TestResultLineQuotesWhatWouldBreakTheLine(t *testing.T) {
 	deletion := engine.MutantResult{
 		DisplayID:   "abcdef0123456789abcd",
@@ -359,12 +325,8 @@ func TestColorOnlyChangesBytesWhenEnabled(t *testing.T) {
 	plain := render(t, NewPlain(nil, "0.1.0-dev", false, false), stream())
 	colored := render(t, NewPlain(nil, "0.1.0-dev", true, false), stream())
 	if plain == colored {
-		// lipgloss may legitimately fall back to no styling when it decides the
-		// environment has no colour profile, so this is a soft signal rather
-		// than a hard requirement.
 		t.Log("colour produced identical bytes; lipgloss found no colour profile in this environment")
 	}
-	// Whatever styling did or did not happen, the information must survive.
 	for _, needle := range []string{"baseline ok:", "warning GOM4040:", "untested.go:9:12", "run 20260819T101112Z-a1b2"} {
 		if !strings.Contains(colored, needle) {
 			t.Errorf("coloured output lost %q", needle)
@@ -372,8 +334,6 @@ func TestColorOnlyChangesBytesWhenEnabled(t *testing.T) {
 	}
 }
 
-// failingWriter refuses every write, so that a renderer's error path can be
-// exercised against a sender that is still producing events.
 type failingWriter struct{ err error }
 
 func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
@@ -383,8 +343,6 @@ func TestRunReportsAWriteFailureWithoutDeadlocking(t *testing.T) {
 	r := NewPlain(failingWriter{err: boom}, "0.1.0-dev", false, false)
 
 	events := stream()
-	// Unbuffered: a renderer that stopped reading would deadlock the sender,
-	// which is exactly the failure this test is about.
 	ch := make(chan engine.Event)
 	go func() {
 		for _, e := range events {
@@ -399,8 +357,6 @@ func TestRunReportsAWriteFailureWithoutDeadlocking(t *testing.T) {
 	}
 }
 
-// syncBuffer is a bytes.Buffer safe to read from the test goroutine while the
-// renderer writes from its own.
 type syncBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -419,9 +375,6 @@ func (s *syncBuffer) String() string {
 }
 
 func TestLinesAppearBeforeTheStreamCloses(t *testing.T) {
-	// A renderer that buffered the whole run would pass every byte-exact test
-	// above and still show a user nothing until the run was over, which is the
-	// opposite of what a progress banner is for.
 	out := &syncBuffer{}
 	r := NewPlain(out, "0.1.0-dev", false, false)
 
@@ -430,9 +383,6 @@ func TestLinesAppearBeforeTheStreamCloses(t *testing.T) {
 	go func() { done <- r.Run(context.Background(), events) }()
 
 	events <- engine.RunPlanned{RunID: "20260819T101112Z-a1b2", Workers: 8}
-	// A second event, unbuffered, cannot be accepted until the first has been
-	// taken off the channel and rendered — so by the time this send returns,
-	// the header has been through Run's loop.
 	events <- engine.PhaseChanged{Phase: engine.PhaseDiscover, Detail: "copying the workspace"}
 
 	if got := out.String(); !strings.Contains(got, "go-mutants 0.1.0-dev (run 20260819T101112Z-a1b2)") {
@@ -508,13 +458,6 @@ func TestColorEnabledRefusesNonFiles(t *testing.T) {
 	}
 }
 
-// TestEveryEventIsAccountedFor is the guard against an event type that nothing
-// decided about. The list has to be extended by hand when the sealed interface
-// grows, which is the point: adding a case to the renderer and adding a row
-// here are the same review.
-//
-// Three rows say "prints nothing", and each is a decision rather than an
-// omission — see [PlainRenderer.line] for all three.
 func TestEveryEventIsAccountedFor(t *testing.T) {
 	block := summary()
 	rows := []struct {
@@ -549,15 +492,6 @@ func TestEveryEventIsAccountedFor(t *testing.T) {
 	}
 }
 
-// TestDirectoryKeptRendersAsKeptKindPath pins the one line a `--keep-temp` run
-// adds to a console.
-//
-// It is a path the run produced, so it reads like the other paths a run prints
-// — a label, a colon, and the path — and it is unstyled for the same reason the
-// report block is: these are paths to be selected with a mouse and pasted into
-// a shell, and colour in the middle of one is noise. It survives --quiet
-// because a directory the user asked to keep and cannot find is the one thing
-// --quiet must not take away.
 func TestDirectoryKeptRendersAsKeptKindPath(t *testing.T) {
 	const snapshotDir = "/tmp/go-mutants-snap-1a2b/tree"
 	const scratchDir = "/tmp/go-mutants-tmp-3c4d"
@@ -584,15 +518,6 @@ func TestDirectoryKeptRendersAsKeptKindPath(t *testing.T) {
 	}
 }
 
-// TestPlainRendererPrintsNothingForTracedEventsByDefault keeps the diagnostic
-// stream off a console nobody asked to see it on.
-//
-// A traced run publishes one [engine.Traced] per recorded event — thousands of
-// them for a run of any size — and one [engine.PhaseCompleted] per phase. At the
-// default verbosity both are accounting rather than findings, and printing
-// either would bury the survivors under the account of the run that found them.
-// They are rendered by `-vv` and `-v`, which arrive with those flags; until then
-// the renderer is byte-identical whether or not a run was traced.
 func TestPlainRendererPrintsNothingForTracedEventsByDefault(t *testing.T) {
 	r := NewPlain(nil, "0.1.0-dev", false, false)
 	var out bytes.Buffer
@@ -616,8 +541,6 @@ func TestPlainRendererPrintsNothingForTracedEventsByDefault(t *testing.T) {
 	}
 }
 
-// uncoveredSurvivor is the fixture's survivor with the reason attached: no test
-// binary reaches its line, so the run never executed it.
 func uncoveredSurvivor() engine.MutantResult {
 	m := survivor
 	m.ID = strings.Repeat("0c1d2e3f", 8)
@@ -628,13 +551,6 @@ func uncoveredSurvivor() engine.MutantResult {
 	return m
 }
 
-// TestACachedResultSaysSoBesideItsDuration.
-//
-// The marker goes inside the duration's parentheses because the two facts
-// belong together: "(181ms cached)" says that the number is real and that an
-// earlier run measured it, which is exactly what somebody wondering how a
-// thousand mutants finished in four seconds needs to know. A column of its own
-// would have moved every result line for a fact that is absent from most runs.
 func TestACachedResultSaysSoBesideItsDuration(t *testing.T) {
 	reused := killed
 	reused.Cached = true
@@ -645,8 +561,6 @@ func TestACachedResultSaysSoBesideItsDuration(t *testing.T) {
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
-	// And a measured one is unchanged, which is what keeps the marker from being
-	// a format change for every run that does not use the cache.
 	plain := render(t, NewPlain(nil, "0.1.0-dev", false, false),
 		[]engine.Event{engine.MutantFinished{Result: killed}})
 	if strings.Contains(plain, "cached") {
@@ -654,11 +568,6 @@ func TestACachedResultSaysSoBesideItsDuration(t *testing.T) {
 	}
 }
 
-// TestTheClosingBlockCountsReusedOutcomesOnlyWhenTheCacheWasOn. "cached 0" from
-// a run whose cache was on is a real measurement — the cache is cold, or the
-// code has moved on — while a run with the cache off states nothing rather than
-// a zero nobody went looking for. It is the treatment `uncovered` gets, for the
-// same reason.
 func TestTheClosingBlockCountsReusedOutcomesOnlyWhenTheCacheWasOn(t *testing.T) {
 	block := summary()
 	block.Cache = engine.CacheOn
@@ -677,13 +586,6 @@ func TestTheClosingBlockCountsReusedOutcomesOnlyWhenTheCacheWasOn(t *testing.T) 
 	}
 }
 
-// TestUncoveredSurvivorSaysWhyItSurvived pins the label, which is the one place
-// the two kinds of survivor are told apart in the live output.
-//
-// A covered survivor means a test runs the line and did not notice the edit,
-// which is a test to sharpen. An uncovered one means nothing runs the line at
-// all, which is a test to write — and it is worth eleven characters of overflow
-// to say which, because the two call for different work.
 func TestUncoveredSurvivorSaysWhyItSurvived(t *testing.T) {
 	got := render(t, NewPlain(nil, "0.1.0-dev", false, false),
 		[]engine.Event{engine.MutantFinished{Result: uncoveredSurvivor()}})
@@ -694,21 +596,11 @@ func TestUncoveredSurvivorSaysWhyItSurvived(t *testing.T) {
 	if got != want {
 		t.Errorf("rendered\n%q\nwant\n%q", got, want)
 	}
-	// The diff is still there. An uncovered mutant is still an edit somebody has
-	// to look at, and dropping the two lines under it because nothing ran would
-	// take away the only part of the block that says what the edit was.
 	if !strings.Contains(got, "    - !=") {
 		t.Error("the uncovered survivor lost its diff")
 	}
 }
 
-// TestResultLabelOnlyQualifiesASurvivor keeps the qualifier attached to the one
-// outcome it can honestly describe.
-//
-// An uncovered mutant is never executed, so survived is the only outcome it can
-// have. A killed one carrying the flag would be a contradiction, and printing
-// "KILLED (uncovered)" would put that contradiction in front of a user rather
-// than in front of a maintainer.
 func TestResultLabelOnlyQualifiesASurvivor(t *testing.T) {
 	if got, want := ResultLabel(mutation.OutcomeSurvived, true), "SURVIVED (uncovered)"; got != want {
 		t.Errorf("ResultLabel(survived, true) = %q, want %q", got, want)
@@ -729,8 +621,6 @@ func TestResultLabelOnlyQualifiesASurvivor(t *testing.T) {
 	}
 }
 
-// TestCountsLineStatesUncoveredOnlyWhenItWasMeasured is the difference between
-// a number and a zero nobody went looking for.
 func TestCountsLineStatesUncoveredOnlyWhenItWasMeasured(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -750,9 +640,6 @@ func TestCountsLineStatesUncoveredOnlyWhenItWasMeasured(t *testing.T) {
 			want:      "mutants 4  killed 3  survived 1  timeout 0  inconclusive 0  errored 0  not-run 0  rejected 0  uncovered 1\n",
 		},
 		{
-			// Zero is a measurement here: it says the run profiled the binaries
-			// and found every mutant reachable, which is a different statement
-			// from having never asked.
 			name:      "a coverage-guided run with nothing to skip still states it",
 			coverage:  engine.CoveragePackage,
 			uncovered: 0,
@@ -775,9 +662,6 @@ func TestCountsLineStatesUncoveredOnlyWhenItWasMeasured(t *testing.T) {
 	}
 }
 
-// TestCoverageMappedLineNamesWhatWillBeSkipped pins the one line the coverage
-// phase prints, which is where a user learns how much of the run is about to
-// not happen.
 func TestCoverageMappedLineNamesWhatWillBeSkipped(t *testing.T) {
 	tests := []struct {
 		event engine.CoverageMapped
@@ -798,8 +682,6 @@ func TestCoverageMappedLineNamesWhatWillBeSkipped(t *testing.T) {
 			t.Errorf("rendered %q, want %q", got, test.want)
 		}
 	}
-	// Quiet drops it with the other progress lines: the counts line keeps the
-	// number, so nothing actionable is lost.
 	quiet := render(t, NewPlain(nil, "0.1.0-dev", false, true),
 		[]engine.Event{engine.CoverageMapped{Binaries: 2, Covered: 2, Uncovered: 1}})
 	if quiet != "" {
@@ -807,9 +689,6 @@ func TestCoverageMappedLineNamesWhatWillBeSkipped(t *testing.T) {
 	}
 }
 
-// TestUncoveredSurvivorsSortAfterCoveredOnesInTheBlock is the renderer's half of
-// an ordering the engine decides: the summary lists what it is given, in order,
-// so this asserts that the two kinds arrive as two runs rather than interleaved.
 func TestUncoveredSurvivorsSortAfterCoveredOnesInTheBlock(t *testing.T) {
 	block := summary()
 	block.Coverage = engine.CoveragePackage
@@ -827,14 +706,6 @@ func TestUncoveredSurvivorsSortAfterCoveredOnesInTheBlock(t *testing.T) {
 	}
 }
 
-// TestReportPublishedNamesEveryArtefactThatExists is the report block a user
-// reads to find the files.
-//
-// One labelled path per line, so the block can be read by a person and cut up
-// by a script — a CI step that attaches the page greps for `report html:` and
-// takes the rest of the line. A format that was not asked for prints nothing at
-// all rather than a label with no path after it, which would be a line about a
-// file that does not exist.
 func TestReportPublishedNamesEveryArtefactThatExists(t *testing.T) {
 	for name, tc := range map[string]struct {
 		event engine.ReportPublished
@@ -870,11 +741,6 @@ func TestReportPublishedNamesEveryArtefactThatExists(t *testing.T) {
 			want: "report run: /c/runs/a.json\nreport latest: /c/latest.json\n" +
 				"report html: /w/reports/mutation/mutation.html\n",
 		},
-		// A recording is one more path the run produced, so it is one more
-		// labelled line in the same block — last, because it is what somebody
-		// reaches for after the documents rather than instead of them. An
-		// untraced run has none and prints none, on exactly the terms a format
-		// nobody asked for prints none.
 		"with a recording": {
 			event: engine.ReportPublished{
 				RunPath: "/c/runs/a.json", LatestPath: "/c/latest.json",
@@ -895,14 +761,6 @@ func TestReportPublishedNamesEveryArtefactThatExists(t *testing.T) {
 	}
 }
 
-// TestReportPublishedSurvivesQuiet keeps the one thing --quiet promises about
-// this block: where the report went is what a quiet run still needs.
-//
-// The recording is in it on the same terms as the documents, which is the whole
-// reason it is carried on this event rather than printed by whoever opened it: a
-// path that obeyed a different rule about --quiet would be a second rule to keep
-// in step, and the run that most wants its recording named is the awkward one
-// somebody is already running quietly in CI.
 func TestReportPublishedSurvivesQuiet(t *testing.T) {
 	got := render(t, NewPlain(nil, "0.1.0-dev", false, true), []engine.Event{
 		engine.ReportPublished{

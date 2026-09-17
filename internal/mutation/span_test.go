@@ -140,7 +140,6 @@ func TestSpanLenAndEmpty(t *testing.T) {
 	if !(Span{StartByte: 4, EndByte: 4}).IsEmpty() {
 		t.Error("an equal-bounds span should be empty")
 	}
-	// A reversed span is invalid; Len must not underflow into four billion.
 	if got := (Span{StartByte: 9, EndByte: 4}).Len(); got != 0 {
 		t.Errorf("reversed Len() = %d, want 0", got)
 	}
@@ -159,10 +158,6 @@ func TestSpanSlice(t *testing.T) {
 		t.Errorf("Slice() = %q, want %q", got, "==")
 	}
 
-	// The span is half-open, so a span that ends on the last byte ends at
-	// len(src) and is in range. That boundary is the whole difference between
-	// "reaches past the end" and "reaches the end": off by one here would
-	// refuse to slice the final mutation site of every file.
 	end := uint32(len(src))
 	whole, err := (Span{StartByte: 0, EndByte: end}).Slice(src)
 	if err != nil {

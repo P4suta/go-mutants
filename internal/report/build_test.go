@@ -18,20 +18,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestBuildRefuses walks every way a caller can hand [report.Build] something
-// that would produce a document nobody should trust.
-//
-// Each case starts from the fixture and breaks exactly one thing, and each
-// asserts the diagnostic code rather than the message: the codes are the
-// interface, and a message can be reworded without a release note.
 func TestBuildRefuses(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		want report.Code
-		// break_ edits the otherwise valid options. It is given the fixture's
-		// catalogue order, which is what the mutant indices below refer to.
+		name   string
+		want   report.Code
 		break_ func(t *testing.T, opts *report.Options, mutants []mutation.Mutant)
 	}{
 		{
@@ -70,14 +62,6 @@ func TestBuildRefuses(t *testing.T) {
 			},
 		},
 		{
-			// The other half of the same guard, and the half that is not
-			// implied by the row above. A missing *finish* is caught twice
-			// over -- the zero time is also before the start -- so the row
-			// above passes even against a build that only asked whether both
-			// were missing. A missing *start* is caught once: the zero time is
-			// not after the finish, so nothing downstream objects, and the
-			// document would go out claiming a run that began at the zero
-			// instant of the year 1.
 			name: "no start time",
 			want: report.CodeInvalidTimestamps,
 			break_: func(_ *testing.T, o *report.Options, _ []mutation.Mutant) {
@@ -229,8 +213,6 @@ func TestBuildRefuses(t *testing.T) {
 	}
 }
 
-// TestBuildFillsInWhatItCan checks the defaults that are safe to have, and the
-// wording of the ones that stand in for a fact the run does not know.
 func TestBuildFillsInWhatItCan(t *testing.T) {
 	t.Parallel()
 
@@ -267,8 +249,6 @@ func TestBuildFillsInWhatItCan(t *testing.T) {
 	}
 }
 
-// TestTimeoutSourceFollowsTheConfiguration proves the one default that could
-// mislabel a fact: a configured timeout is never reported as a derived one.
 func TestTimeoutSourceFollowsTheConfiguration(t *testing.T) {
 	t.Parallel()
 
@@ -289,11 +269,6 @@ func TestTimeoutSourceFollowsTheConfiguration(t *testing.T) {
 	}
 }
 
-// TestPolicyFailureIsTheFirstReason walks the gates that can fail a run and
-// checks the one named in the document.
-//
-// The verdict is computed from the report's own tally, so this is also the test
-// that the number a user reads and the gate that read it cannot disagree.
 func TestPolicyFailureIsTheFirstReason(t *testing.T) {
 	t.Parallel()
 
@@ -375,8 +350,6 @@ func TestPolicyFailureIsTheFirstReason(t *testing.T) {
 	}
 }
 
-// TestEmptyRunIsAWholeDocument proves that a run with nothing in it still
-// produces a complete, valid document rather than one full of nulls.
 func TestEmptyRunIsAWholeDocument(t *testing.T) {
 	t.Parallel()
 
@@ -412,20 +385,16 @@ func TestEmptyRunIsAWholeDocument(t *testing.T) {
 	}
 }
 
-// TestOptionalStringsAreNullNotEmpty proves that "the harness named no test" is
-// written as null rather than as a name that is not a name.
 func TestOptionalStringsAreNullNotEmpty(t *testing.T) {
 	t.Parallel()
 
 	r := buildFixture(t)
 	var killed, notRun *report.Mutant
 	for i := range r.Mutants {
-		//exhaustive:total This test wants one killed mutant and one not-run one out of the fixture.
-		// The rest of it is not this test's subject.
-		switch r.Mutants[i].Outcome {
-		case report.OutcomeKilled:
+		if r.Mutants[i].Outcome == report.OutcomeKilled {
 			killed = &r.Mutants[i]
-		case report.OutcomeNotRun:
+		}
+		if r.Mutants[i].Outcome == report.OutcomeNotRun {
 			notRun = &r.Mutants[i]
 		}
 	}
@@ -447,9 +416,6 @@ func TestOptionalStringsAreNullNotEmpty(t *testing.T) {
 	}
 }
 
-// TestRejectedMutantsAreNotCounted proves a mutant that cannot compile stays
-// out of the summary entirely: it is neither an error nor a survivor, and it
-// must not reach the denominator of a score.
 func TestRejectedMutantsAreNotCounted(t *testing.T) {
 	t.Parallel()
 
@@ -474,13 +440,10 @@ func TestRejectedMutantsAreNotCounted(t *testing.T) {
 	}
 }
 
-// TestCatalogueOrderIsTheDocumentOrder proves the arrays are the catalogue's
-// own order rather than a second opinion about it.
 func TestCatalogueOrderIsTheDocumentOrder(t *testing.T) {
 	t.Parallel()
 
 	opts := fixtureOptions(t)
-	// Discovery's own output order must not matter: the catalogue decides.
 	opts.Located = slices.Clone(opts.Located)
 	slices.Reverse(opts.Located)
 	opts.Results = slices.Clone(opts.Results)
@@ -503,8 +466,6 @@ func TestCatalogueOrderIsTheDocumentOrder(t *testing.T) {
 	}
 }
 
-// clearErrors turns the fixture's errored mutant into a survivor, so that a
-// test about the policy gates is not answered by the harness tier first.
 func clearErrors(t *testing.T, opts *report.Options) {
 	t.Helper()
 	results := slices.Clone(opts.Results)
@@ -520,13 +481,9 @@ func clearErrors(t *testing.T, opts *report.Options) {
 		t.Fatal("the fixture no longer has an errored mutant")
 	}
 	opts.Results = results
-	// The unfulfilled row names a killed mutant, which is a contract failure of
-	// its own and would answer before any policy gate.
 	opts.Config.Mutation.Expect = nil
 }
 
-// discoverNothing empties the options of everything one discovery pass
-// produced, for the run that found no mutants at all.
 func discoverNothing(t *testing.T, opts *report.Options) {
 	t.Helper()
 	catalog, err := discover.BuildCatalog(discover.Result{})

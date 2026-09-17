@@ -13,27 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The return probe hint, which is the second thing a return-value candidate
-// carries away from this phase and the first that is allowed to be absent.
-//
-// [Guard] answers "how does the instrumenter write this mutant into the mutant
-// tree". [ProbeSite] answers a different question for a different tree: how
-// does it write, into the probe tree, the test that says whether this mutant's
-// value would have differed here. The answer needs the declared result type of
-// every value the statement returns — not the type of the expression, the type
-// the `return` converts it to — which is why it is computed in the phase that
-// owns the type checker and travels down as data like everything else.
-//
-// The fixtures below are whole modules rather than packages of testdata/mainmod
-// on purpose. Every one of them is about a shape that has to be *refused*, and
-// adding refusal shapes to the shared module would move every entry of its
-// pinned candidate and skip tables for a fact that has nothing to do with them.
-
-// probeHintModule wraps one package's source in a module the loader will
-// accept, alongside whatever other files the fixture needs.
-//
-// The `go` directive is deliberately older than anything these fixtures use, so
-// they load under whatever toolchain is on PATH rather than only the pinned one.
 func probeHintModule(source string, extra map[string]string) map[string]string {
 	const header = "// SPDX-FileCopyrightText: 2026 go-mutants contributors\n" +
 		"// SPDX-License-Identifier: MIT OR Apache-2.0\n\n"
@@ -48,8 +27,6 @@ func probeHintModule(source string, extra map[string]string) map[string]string {
 	return files
 }
 
-// discoverProbeModule writes a fixture module and discovers it, failing the
-// test on anything the loader or the walk refuses.
 func discoverProbeModule(t *testing.T, source string, extra map[string]string) ([]Located, string) {
 	t.Helper()
 
@@ -62,8 +39,6 @@ func discoverProbeModule(t *testing.T, source string, extra map[string]string) (
 	return result.Candidates, files["sample.go"]
 }
 
-// spanOf locates one snippet of a fixture's source, insisting it occurs once so
-// that naming it names a site.
 func spanOf(t *testing.T, src, snippet string) mutation.Span {
 	t.Helper()
 
@@ -77,8 +52,6 @@ func spanOf(t *testing.T, src, snippet string) mutation.Span {
 	return mutation.Span{StartByte: uint32(start), EndByte: uint32(start + len(snippet))}
 }
 
-// candidateWithOriginal returns the one candidate of a rule that replaces
-// particular bytes, which is what tells two candidates of one rule apart.
 func candidateWithOriginal(t *testing.T, candidates []Located, rule, original string) Located {
 	t.Helper()
 
@@ -95,14 +68,6 @@ func candidateWithOriginal(t *testing.T, candidates []Located, rule, original st
 	return found[0]
 }
 
-// TestProbeSiteNamesEveryResultTypeOfTheStatement is the hint's central claim:
-// the probe has to declare a temporary for *every* value the statement returns,
-// not only the one being mutated, because the rewrite evaluates the operands
-// once each and hands them all to one `return`.
-//
-// Two candidates of one statement is also the case where the hint has to say
-// two different things about the same bytes: they share a span and a type list
-// and differ only in which result the edit replaces.
 func TestProbeSiteNamesEveryResultTypeOfTheStatement(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
@@ -136,19 +101,6 @@ func measure(s string) (int, error) { return 0, nil }
 	}
 }
 
-// TestProbeSiteSpellsTheDeclaredResultTypeNotTheOperands pins the type the
-// hint carries.
-//
-// The rewrite declares `var r0 T = E0`, and T has to be the *result* type: that
-// is the conversion the `return` itself performs, and it is the type the mutant
-// would have converted its constant to. Taking the operand's type instead would
-// declare `var r0 int = 1` in a function returning int64 — a different program
-// that happens to compile — and would compare the wrong value against the wrong
-// constant.
-//
-// The float case that used to stand here is gone on purpose: a floating-point
-// result is refused outright now, and
-// [TestProbeSiteRefusesAFloatingResult] is where it is stated.
 func TestProbeSiteSpellsTheDeclaredResultTypeNotTheOperands(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
@@ -182,9 +134,6 @@ func Count() (n Level) { return 1 }
 	}
 }
 
-// returnSiteInside returns the one return site of a candidate whose statement
-// lies inside a snippet of the fixture, which is how two candidates of one rule
-// in one file are told apart.
 func returnSiteInside(t *testing.T, candidates []Located, src, snippet string) *ProbeSite {
 	t.Helper()
 
@@ -202,26 +151,6 @@ func returnSiteInside(t *testing.T, candidates []Located, src, snippet string) *
 	return found[0]
 }
 
-// TestProbeSiteIsNilWhenAResultTypeCannotBeSpelled covers the refusal that
-// keeps the hint honest.
-//
-// The rewrite writes the result types into the file it rewrites, so a type that
-// file cannot name is a probe that cannot be written. What is left of that
-// refusal is `unsafe.Pointer`: a basic type that still needs an import, and one
-// no import makes writable, so it is refused whatever the file holds.
-//
-// A dot-imported type used to be here beside it and is not any more. It was the
-// *qualifier* half of the refusal — a dot import binds a package's contents
-// rather than the package, so there was no name to write — and that is exactly
-// what import completion supplies; [TestADotImportedResultTypeIsNowSpellable]
-// is the same fixture asserting the other answer.
-//
-// A refused hint costs the probe and never the mutant: every candidate here is
-// still catalogued, still mutated, and still guarded in the mutant tree. Nor
-// does it cost the *measurement*, any more, and that is the second thing
-// asserted below: the value form measures the operand rather than the
-// statement, so a result type nothing can spell no longer takes the mutant
-// beside it down with it.
 func TestProbeSiteIsNilWhenAResultTypeCannotBeSpelled(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -248,9 +177,6 @@ func Ptr(p unsafe.Pointer) (int, unsafe.Pointer) { return 1, p }
 			if site != nil && site.Form == ProbeFormReturn {
 				t.Errorf("return site = %+v, want none: the file cannot spell every result type", site)
 			}
-			// The operand the mutant replaces is an `int`, which the value form
-			// can spell and compare, so the candidate is measured after all --
-			// at the expression rather than at the statement.
 			if site == nil || site.Form != ProbeFormValue {
 				t.Errorf("probe site = %+v, want the value form over the operand", site)
 			}
@@ -261,14 +187,6 @@ func Ptr(p unsafe.Pointer) (int, unsafe.Pointer) { return 1, p }
 	}
 }
 
-// TestADotImportedResultTypeIsNowSpellable is the other half of the refusal
-// above, and the smallest observable consequence of import completion.
-//
-// A dot import brings a package's contents into the file's own scope and binds
-// no name for the package itself, so there was nothing to qualify `Kind` with
-// and the probe could not be written. The package is imported all the same —
-// the edge is in the graph — so a completion may give this file a name for it,
-// and the hint that was refused is now a hint that names the import it needs.
 func TestADotImportedResultTypeIsNowSpellable(t *testing.T) {
 	candidates, _ := discoverProbeModule(t, `package sample
 
@@ -293,27 +211,11 @@ func Pair(a int) (int, Kind) { return a, Zero }
 	if !slices.Equal(site.Imports, want) {
 		t.Errorf("Imports = %+v, want %+v", site.Imports, want)
 	}
-	// The import belongs to the probe tree and not to the mutant tree: the
-	// guard here is a statement form, which writes no type at all, and an
-	// import the mutant tree carried unused would not compile.
 	if len(got.Guard.Imports) != 0 {
 		t.Errorf("Guard.Imports = %+v, and the mutant tree's rewrite spells no type", got.Guard.Imports)
 	}
 }
 
-// TestTheReturnFormRefusesATypeParameterResult refuses the shape the compiler
-// might refuse.
-//
-// The return form declares a temporary per result and compares one against a
-// constant, and a value of a type parameter's type need not be comparable with
-// one: the constraint decides, and this phase does not reason about
-// constraints. The bisection would find such a site and drop that one mutant's
-// probe, which is exactly the mechanism that exists for the cases nobody
-// foresaw — spending a build on a case that is foreseen is not what it is for.
-//
-// The value form is not refused, and the contrast is the reason it exists. It
-// declares one temporary, of the *operand's* own type, and the operand here is
-// an `int`: the type parameter is the result beside it and is never named.
 func TestTheReturnFormRefusesATypeParameterResult(t *testing.T) {
 	candidates, _ := discoverProbeModule(t, `package sample
 
@@ -334,9 +236,6 @@ func Pair[T any](a int, t T) (int, T) { return a, t }
 	}
 }
 
-// candidatesInside returns every candidate whose span lies within a snippet of
-// the fixture, which is how a claim about a whole statement is made: the site is
-// refused for all of its candidates or for none of them.
 func candidatesInside(t *testing.T, candidates []Located, src, snippet string) []Located {
 	t.Helper()
 
@@ -350,8 +249,6 @@ func candidatesInside(t *testing.T, candidates []Located, src, snippet string) [
 	return found
 }
 
-// describe renders candidates as the rule and the bytes each replaces, which is
-// what names one in a fixture small enough to read.
 func describe(candidates []Located) []string {
 	out := make([]string, 0, len(candidates))
 	for _, c := range candidates {
@@ -360,35 +257,12 @@ func describe(candidates []Located) []string {
 	return out
 }
 
-// TestProbeSiteRefusesAStatementWithAnEffectfulOperand is the first of the
-// three conditions the hint rests on, and the only one that is a property of the
-// whole statement rather than of one result.
-//
-// A Form S mutant of `return E0, E1` at result 0 is `return K, E1`, and it never
-// evaluates E0 at all. Two separate things follow. The effects of E0 are effects
-// the mutant does not have, so `return compute(), nil` mutated to `return 0,
-// nil` skips whatever compute did and can be killed by a test watching for it,
-// while the probe — which does evaluate compute — reports that the site never
-// differed. And the rewrite fixes an evaluation order the compiler does not use:
-// the spec leaves the order of a plain variable read relative to a call in
-// another operand unspecified and gc performs the read *after* the calls, so for
-// `return x, f()` where f writes to x the probe compares a value the original
-// never returned.
-//
-// One rule answers both. No operand of the statement may have an effect — no
-// call, no receive, no append — and then every order yields the same values and
-// the probe's execution is the original's. So the refusal is stated over every
-// candidate of the statement, including the ones whose own operand is a plain
-// identifier.
 func TestProbeSiteRefusesAStatementWithAnEffectfulOperand(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		source string
-		// stmt is the statement whose every candidate must go out unprobed.
-		stmt string
-		// want is what that statement catalogues, so that a fixture which stopped
-		// producing candidates cannot pass this test by producing none.
-		want []string
+		stmt   string
+		want   []string
 	}{{
 		name: "a call in the mutated operand",
 		source: `package sample
@@ -464,31 +338,14 @@ func Read(c counter) (int, error) { return c.Load(), nil }
 	}
 }
 
-// TestProbeSiteRefusesTheResultWhoseOperandCanPanic is the second condition,
-// and the first that is decided per result.
-//
-// If the probed operand panics, the mutant that replaced it with a constant does
-// not: the two programs diverge, and the comparison the probe would have drawn
-// its conclusion from is never reached. Nothing is recorded, which reads exactly
-// like "the value never differed" — and that reading is what licenses skipping
-// the test. The test itself passed, so the panic was recovered somewhere, and
-// the run is not fail-closed either.
-//
-// Every fixture below returns the error beside the refused operand, and the
-// error keeps its hint. That is the claim in both directions at once: the
-// statement is effect-free, so it was not refused for the reason above, and the
-// operand that cannot panic is still probed while the one that can is not.
 func TestProbeSiteRefusesTheResultWhoseOperandCanPanic(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		source string
 		stmt   string
-		// rule and bytes name the candidate that must go out unprobed.
-		rule  string
-		bytes string
-		// types is what the statement's results are spelled as, for the sibling
-		// that keeps its hint.
-		types []string
+		rule   string
+		bytes  string
+		types  []string
 	}{{
 		name: "a field of a pointer",
 		source: `package sample
@@ -580,10 +437,6 @@ func Head(b []byte, err error) (*[4]byte, error) { return (*[4]byte)(b), err }
 		stmt: "return (*[4]byte)(b), err", rule: ruleReturnNil, bytes: "(*[4]byte)(b)",
 		types: []string{"*[4]byte", "error"},
 	}, {
-		// Beyond the shapes the design listed, and found by asking what else in
-		// the grammar can panic: building a map whose key type is an interface
-		// hashes the key, and hashing a slice, map or function value is a
-		// run-time panic rather than a compile error.
 		name: "a map literal keyed by an interface",
 		source: `package sample
 
@@ -614,16 +467,6 @@ func Keyed(k any, err error) (map[any]int, error) { return map[any]int{k: 1}, er
 	}
 }
 
-// TestProbeSiteAcceptsEveryEffectFreeShape is the other half of the two
-// grammars: what a probed operand is still allowed to be.
-//
-// The rules are refusals, and a refusal is only as good as what it leaves
-// standing. Every shape here computes a value and does nothing else — reads a
-// variable, a constant, a field of a struct value; takes an address; builds a
-// composite; converts; asks a builtin for a length; folds two of those together
-// with an operator that cannot fail. Between them they are what the measured
-// return-value survivors are actually made of, which is why the sound rule costs
-// the layer nothing it could have discharged.
 func TestProbeSiteAcceptsEveryEffectFreeShape(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
@@ -727,19 +570,6 @@ func Both(ok, found bool) bool { return ok && found }
 	}
 }
 
-// TestProbeSiteRefusesAFloatingResult is the third condition, and the one that
-// is about the comparison rather than about the operand.
-//
-// `-0.0 != 0` is false. A `return-zero-numeric` mutant at a float result whose
-// value is negative zero is therefore recorded as *not* infected, which is the
-// answer that skips the test — while `math.Signbit` and `1/x` both tell the two
-// values apart, so a test really can kill that mutant. NaN is the other way
-// round and needs no rule: `NaN != 0` is true, so the site is reported infected,
-// which is only ever the safe answer.
-//
-// Complex results go with them, for the same reason in two dimensions, and the
-// int beside one keeps its hint: the refusal is about the result being compared,
-// not about the statement it sits in.
 func TestProbeSiteRefusesAFloatingResult(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
@@ -777,18 +607,6 @@ func Wave(n int, z complex128) (int, complex128) { return n, z }
 	})
 }
 
-// TestTheReturnFormIsKeptToTheFamilyItDescribes is what the form field is for.
-//
-// The return rewrite replaces a returned value with a constant and tests
-// whether the value differs. That is a statement about the return-value rules
-// and about nothing else: an operator swap inside the same statement changes a
-// value that hint says nothing about, and a probe built from it for that mutant
-// would report an infection for the wrong one.
-//
-// The swap is not unprobed, and that is the point of asserting all three
-// together: it gets the *boolean* form, which measures the comparison where it
-// stands rather than the value the function returns. One statement, two forms,
-// and each candidate carries the one that speaks for it.
 func TestTheReturnFormIsKeptToTheFamilyItDescribes(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 
@@ -820,9 +638,6 @@ func Above(a, b int) bool { return a > b }
 	}
 }
 
-// TestProbeSiteDoesNotDisturbTheMutantSide is the compatibility claim in the
-// smallest form that can hold it: the hint rides beside the guard, and the
-// guard is what it was.
 func TestProbeSiteDoesNotDisturbTheMutantSide(t *testing.T) {
 	candidates, src := discoverProbeModule(t, `package sample
 

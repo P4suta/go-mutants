@@ -23,17 +23,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// hexID is a syntactically valid full mutant id: the shortest way to write one
-// that IsID accepts.
 func hexID(fill string) string { return strings.Repeat(fill, mutation.IDHexLength/len(fill)) }
 
-// Every fixture below is written with explicit \n so that the asserted columns
-// mean the same thing on a machine that checks out CRLF. A column is a byte
-// offset into a line, and a stray carriage return would move every one of them.
-
-// decodeCase is one document that must be refused, with the exact place the
-// refusal points at. The position is the whole point of choosing a TOML
-// library that reports one, so it is asserted rather than merely printed.
 type decodeCase struct {
 	name    string
 	source  string
@@ -41,7 +32,7 @@ type decodeCase struct {
 	key     string
 	line    int
 	column  int
-	message string // the whole message when exact is set, a substring otherwise
+	message string
 	exact   bool
 }
 
@@ -85,8 +76,6 @@ func TestParseRejects(t *testing.T) {
 			exact:   true,
 		},
 		{
-			// The caret is under the element, and "not an integer" describes
-			// exactly the value it is under.
 			name:    "array of the wrong element type",
 			source:  "version = 1\n\n[mutation]\ninclude = [1, 2]\n",
 			code:    CodeInvalidTOML,
@@ -278,8 +267,6 @@ func TestParseRejects(t *testing.T) {
 			message: "outside 1..10",
 		},
 		{
-			// "binary" is the word a reader might reach for; the answer names
-			// the two spellings there are.
 			name:    "an unknown narrowing",
 			source:  "version = 1\n\n[test]\nnarrowing = \"binary\"\n",
 			code:    CodeUnknownNarrowing,
@@ -437,21 +424,8 @@ func TestParseRejects(t *testing.T) {
 	}
 }
 
-// assertNoImplementationDetail refuses a diagnostic that quotes the Go types
-// the document decodes into.
-//
-// Those types are unexported and unactionable: nobody can look up
-// config.documentReport.High, and renaming it would silently change what a
-// GOM code — documented to mean one thing forever — prints. This runs on every
-// row of the table above rather than on the rows that once got it wrong,
-// because the row that gets it wrong next has not been written yet.
 func assertNoImplementationDetail(t *testing.T, message string) {
 	t.Helper()
-	// Each of these is a fragment of a go-toml unmarshaler sentence rather than
-	// a word this package would write, so one appearing means an upstream
-	// message was passed through with its Go type still in it. Naming the
-	// fragments rather than the type names keeps the check from firing on a
-	// diagnostic that legitimately quotes a user's own text.
 	for _, leak := range []string{"struct field", " of type ", "cannot decode TOML", "cannot store "} {
 		if strings.Contains(message, leak) {
 			t.Errorf("message %q repeats the decoder's own wording (%q)", message, leak)
@@ -459,13 +433,6 @@ func assertNoImplementationDetail(t *testing.T, message string) {
 	}
 }
 
-// A type mismatch is described from the schema, so the sentence a user reads
-// depends on the file they wrote and on nothing else.
-//
-// The corners below are the ones that reach the decoder by a different route
-// than a plain scalar does — a table header, an array-of-tables header, a
-// dotted key written through a value that is not a table — and each of them
-// has its own leaking sentence upstream.
 func TestParseDescribesTypeMismatchesFromTheSchema(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -497,16 +464,10 @@ func TestParseDescribesTypeMismatchesFromTheSchema(t *testing.T) {
 			"version = 1\n[test]\ntimeout = 5\n", "test.timeout", "must be a string, not an integer",
 		},
 		{
-			// A size is a string too, for the reason a duration is: `2GiB` is
-			// not a number, and a bare integer would be a byte count nobody
-			// meant to write in bytes.
 			"a number where a size belongs",
 			"version = 1\n[test]\nmemory = 5\n", "test.memory", "must be a string, not an integer",
 		},
 		{"a string inside the ledger", "version = 1\n[[mutation.expect]]\nid = 5\n", "mutation.expect.id", "must be a string, not an integer"},
-		// A key the schema does not define, reached by dotting through one it
-		// does. There is no expected type to name, so the sentence says the
-		// one true thing instead of quoting the Go field it failed against.
 		{"a dotted key through a scalar", "version = 1\n[report]\nhigh.y = 2\n", "report.high.y", "a table cannot be written here"},
 	}
 
@@ -530,8 +491,6 @@ func TestParseDescribesTypeMismatchesFromTheSchema(t *testing.T) {
 			if !got.Position.Known() {
 				t.Errorf("the mismatch was reported without a position")
 			}
-			// The library's error stays reachable underneath: the message is
-			// this package's, the cause is still go-toml's.
 			var decode *toml.DecodeError
 			if !errors.As(err, &decode) {
 				t.Errorf("errors.As did not reach the *toml.DecodeError")
@@ -540,8 +499,6 @@ func TestParseDescribesTypeMismatchesFromTheSchema(t *testing.T) {
 	}
 }
 
-// A complaint about the file itself is already written in the file's own
-// vocabulary, so it is passed through rather than replaced by something vaguer.
 func TestParseKeepsTOMLLevelMessages(t *testing.T) {
 	for _, test := range []struct{ name, source, message string }{
 		{"unterminated header", "version = 1\n[mutation\n", "expected ']' to close table name"},
@@ -561,25 +518,15 @@ func TestParseKeepsTOMLLevelMessages(t *testing.T) {
 	}
 }
 
-// Every branch of decodeMessage but the first is only reachable when go-toml
-// says something this package's vocabulary does not cover, which is what an
-// upstream rewording looks like from in here. The contract is that such a
-// rewording costs a clause and never leaks a Go identifier into a diagnostic,
-// so each degraded answer is asserted rather than left to the day it happens.
 func TestDecodeMessageDegradesRatherThanLeakingAGoType(t *testing.T) {
 	for _, test := range []struct{ name, key, message, want string }{
 		{
-			// The one shape that is reachable through Parse, and the one
-			// TestParseDescribesTypeMismatchesFromTheSchema exercises.
 			name:    "a known key and a kind this package names",
 			key:     "report.high",
 			message: "cannot decode TOML string into struct field config.documentReport.High of type int64",
 			want:    "must be an integer, not a string",
 		},
 		{
-			// A mismatch whose kind go-toml worded some other way: the key is
-			// still in the schema, so the sentence still says what the key
-			// takes and simply stops short of naming what was written.
 			name:    "a known key and a kind this package does not name",
 			key:     "report.high",
 			message: "cannot store a rune array in report.high",
@@ -592,16 +539,12 @@ func TestDecodeMessageDegradesRatherThanLeakingAGoType(t *testing.T) {
 			want:    "a table cannot be written here",
 		},
 		{
-			// Neither half is available, so the sentence says the one thing
-			// that is still true rather than quoting the library.
 			name:    "an unknown key and a kind this package does not name",
 			key:     "report.high.y",
 			message: "cannot store a rune array in report.high",
 			want:    "the value written here does not fit the key it was written under",
 		},
 		{
-			// Not a mismatch at all: a complaint about the file, in the
-			// file's own vocabulary, passes through untouched.
 			name:    "a complaint about the document itself",
 			key:     "",
 			message: "key version is already defined",
@@ -618,10 +561,6 @@ func TestDecodeMessageDegradesRatherThanLeakingAGoType(t *testing.T) {
 	}
 }
 
-// Every failure go-toml can reach through this schema is a *toml.DecodeError
-// or a strict-mode failure, so the last branch of decodeError is the one that
-// has to hold the day it reaches something else: still GOM3002, still naming
-// the file, still carrying the cause, and with no position it cannot know.
 func TestDecodeErrorKeepsAFailureItDoesNotRecognise(t *testing.T) {
 	cause := errors.New("the reader gave up")
 	err := decodeError(FileName, cause)
@@ -644,10 +583,6 @@ func TestDecodeErrorKeepsAFailureItDoesNotRecognise(t *testing.T) {
 	}
 }
 
-// SchemaKeys is walked by `go-mutants init` to write a starter configuration
-// with every setting in it, so it has to be the whole schema and in a fixed
-// order: a key it leaves out is a setting the generated file — the file a
-// project adopts as its record of what can be configured — silently omits.
 func TestSchemaKeysAreTheWholeSchemaInAFixedOrder(t *testing.T) {
 	keys := SchemaKeys()
 	if len(keys) != len(expectedTypes) {
@@ -661,17 +596,11 @@ func TestSchemaKeysAreTheWholeSchemaInAFixedOrder(t *testing.T) {
 			t.Errorf("SchemaKeys() named %q, which the schema does not define", key)
 		}
 	}
-	// The tables are in it as well as the settings, which is what makes it
-	// the schema rather than a list of leaves.
 	if !slices.Contains(keys, "mutation") || !slices.Contains(keys, "mutation.include") {
 		t.Errorf("SchemaKeys() is missing a section or a setting: %v", keys)
 	}
 }
 
-// The schema and the sentences that describe it have to stay in step. A key
-// added to the structs below without an entry in expectedTypes would quietly
-// degrade to a vaguer message, and a stale entry would describe a key that no
-// longer exists; neither would fail anything else.
 func TestExpectedTypesCoversTheSchema(t *testing.T) {
 	schema := make(map[string]bool)
 	collectSchemaKeys(t, reflect.TypeOf(document{}), "", schema)
@@ -690,14 +619,6 @@ func TestExpectedTypesCoversTheSchema(t *testing.T) {
 	}
 }
 
-// collectSchemaKeys records the dotted path of every key the decoded document
-// defines, by the same TOML tags the decoder reads, and checks that each one is
-// described as the type it actually holds.
-//
-// Completeness alone would not be enough. A field that changed from an integer
-// to a string while its entry went on saying "an integer" would leave every
-// test passing and every message about it false, which is the same silent drift
-// that describing mismatches from the schema exists to prevent.
 func collectSchemaKeys(t *testing.T, typ reflect.Type, prefix string, out map[string]bool) {
 	t.Helper()
 	for i := range typ.NumField() {
@@ -724,8 +645,6 @@ func collectSchemaKeys(t *testing.T, typ reflect.Type, prefix string, out map[st
 	}
 }
 
-// schemaPhrase is how expectedTypes has to describe a field of a given Go
-// shape, in the vocabulary a configuration file is written in.
 func schemaPhrase(typ reflect.Type) string {
 	element := schemaElement(typ)
 	if schemaRepeats(typ) {
@@ -746,9 +665,6 @@ func schemaPhrase(typ reflect.Type) string {
 	case reflect.Int64:
 		return "an integer"
 	case reflect.Float64:
-		// TOML integers decode into a float64 too, so the sentence has to
-		// accept the `minimum_score = 80` a user is at least as likely to
-		// write as `80.0`.
 		return "a number"
 	case reflect.Bool:
 		return "a boolean"
@@ -757,8 +673,6 @@ func schemaPhrase(typ reflect.Type) string {
 	}
 }
 
-// schemaRepeats reports whether a field holds a list of values rather than one,
-// looking through the pointer that only records whether the key was written.
 func schemaRepeats(typ reflect.Type) bool {
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
@@ -766,8 +680,6 @@ func schemaRepeats(typ reflect.Type) bool {
 	return typ.Kind() == reflect.Slice
 }
 
-// schemaElement strips the pointers and slices a schema field is wrapped in,
-// which carry optionality and repetition rather than a key of their own.
 func schemaElement(typ reflect.Type) reflect.Type {
 	for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice {
 		typ = typ.Elem()
@@ -775,9 +687,6 @@ func schemaElement(typ reflect.Type) reflect.Type {
 	return typ
 }
 
-// A file written against a later schema is full of keys this build has never
-// heard of. Answering it with "unknown key" would send someone hunting a typo
-// that is not there, so the version is read before strictness has a say.
 func TestParseReportsTheVersionBeforeUnknownKeys(t *testing.T) {
 	source := "version = 2\n\n[mutation]\nprofile = \"balanced\"\n\n[telemetry]\nendpoint = \"https://example.invalid\"\n"
 	_, err := Parse(".go-mutants.toml", []byte(source))
@@ -790,8 +699,6 @@ func TestParseReportsTheVersionBeforeUnknownKeys(t *testing.T) {
 	}
 }
 
-// A version of the wrong type is a decoding failure, not a version failure:
-// there is no number to compare against.
 func TestParseRejectsANonNumericVersion(t *testing.T) {
 	_, err := Parse(".go-mutants.toml", []byte("version = \"1\"\n"))
 	got := only(t, err)
@@ -803,17 +710,12 @@ func TestParseRejectsANonNumericVersion(t *testing.T) {
 	}
 }
 
-// The three misspelled keys below are spliced together rather than written
-// out, because the repository's spelling linter would otherwise correct the
-// very typos this test exists to report.
 const (
-	typoProfile = "prof" + "il"  // "profile" with its last letter dropped
-	typoInclude = "inc" + "udes" // "includes" without its l
-	typoHigh    = "hi" + "hg"    // "high" with two letters swapped
+	typoProfile = "prof" + "il"
+	typoInclude = "inc" + "udes"
+	typoHigh    = "hi" + "hg"
 )
 
-// Several typos cost one round trip, not one each, so unknown keys are
-// reported together and in document order.
 func TestParseReportsEveryUnknownKey(t *testing.T) {
 	source := "version = 1\n\n[mutation]\n" + typoProfile + " = \"balanced\"\n" + typoInclude + " = []\n\n" +
 		"[report]\n" + typoHigh + " = 80\n"
@@ -839,8 +741,6 @@ func TestParseReportsEveryUnknownKey(t *testing.T) {
 	}
 }
 
-// Value problems are collected too: three bad values are three diagnostics
-// from one parse.
 func TestParseReportsEveryBadValue(t *testing.T) {
 	source := "version = 1\n\n[execution]\njobs = 99\n\n[report]\nhigh = 120\nformats = [\"pdf\"]\n"
 	_, err := Parse(".go-mutants.toml", []byte(source))
@@ -911,8 +811,6 @@ func TestParseAccepts(t *testing.T) {
 	}
 }
 
-// An empty document that says nothing but its version sets nothing at all, so
-// every default survives.
 func TestParseEmptyDocument(t *testing.T) {
 	file, err := Parse(".go-mutants.toml", []byte("version = 1\n"))
 	if err != nil {
@@ -928,11 +826,6 @@ func TestParseEmptyDocument(t *testing.T) {
 	}
 }
 
-// A directory reaches a resolved configuration in one spelling whichever layer
-// set it, so that a Windows-flavoured path is not a second directory.
-//
-// The overlay keeps the author's own text, which is what lets a diagnostic
-// quote what was written; canonicalisation happens on the way into the Config.
 func TestDirectoriesAreCanonicalisedOnce(t *testing.T) {
 	source := "version = 1\n\n[report]\ndirectory = \"./out\\\\mutation\"\n\n[cache]\ndirectory = \"team//cache\"\n"
 	file, err := Parse(".go-mutants.toml", []byte(source))
@@ -951,9 +844,6 @@ func TestDirectoriesAreCanonicalisedOnce(t *testing.T) {
 		t.Errorf("cache.directory from the file = %q, want %q", got, "team/cache")
 	}
 
-	// The same value set by a flag, or by a hand-built Config, has to land on
-	// the same spelling: one logical directory cannot have two forms
-	// depending on which door it came through.
 	fromFlags := Merge(Defaults(), FileConfig{}, Overlay{
 		ReportDirectory: Explicit(`./out\mutation`),
 		CacheDirectory:  Explicit("team//cache"),
@@ -968,11 +858,6 @@ func TestDirectoriesAreCanonicalisedOnce(t *testing.T) {
 	}
 }
 
-// A directory that cannot be normalised at all is handed back exactly as its
-// author wrote it, so that the validator quotes what was typed rather than a
-// half-cleaned version of it. That is a rule about the merge rather than about
-// either layer: the same spelling has to survive whichever door it came
-// through, and it is the merged value the diagnostic is built from.
 func TestUncanonicalisableDirectoriesReachTheValidatorVerbatim(t *testing.T) {
 	const (
 		absolute = "/absolute/out"
@@ -989,21 +874,16 @@ func TestUncanonicalisableDirectoriesReachTheValidatorVerbatim(t *testing.T) {
 		t.Errorf("cache.directory = %q, want the author's own %q", got, escaping)
 	}
 
-	// And this is what it buys: the sentence quotes the path that was written.
 	got := problems(t, resolved.Validate())
 	if len(got) != 2 {
 		t.Fatalf("want 2 problems, got %d: %v", len(got), got)
 	}
 	for _, problem := range got {
-		var written string
-		//exhaustive:total This test is about two codes. Any other is the failure the default
-		// reports, which is what makes it a test rather than a switch.
-		switch problem.Code {
-		case CodeInvalidReportDirectory:
-			written = absolute
-		case CodeInvalidCacheDirectory:
-			written = escaping
-		default:
+		written, named := map[Code]string{
+			CodeInvalidReportDirectory: absolute,
+			CodeInvalidCacheDirectory:  escaping,
+		}[problem.Code]
+		if !named {
 			t.Errorf("unexpected problem: %s", problem)
 			continue
 		}
@@ -1013,7 +893,6 @@ func TestUncanonicalisableDirectoriesReachTheValidatorVerbatim(t *testing.T) {
 	}
 }
 
-// Not having configured go-mutants is not a configuration error.
 func TestLoadFileAbsent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 	file, err := LoadFile(path)
@@ -1034,8 +913,6 @@ func TestLoadFileAbsent(t *testing.T) {
 	}
 }
 
-// A path that exists but is not a readable file is a different thing from a
-// path that is not there, and has to be reported rather than shrugged off.
 func TestLoadFileUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, FileName)
@@ -1050,10 +927,6 @@ func TestLoadFileUnreadable(t *testing.T) {
 	if got.Code != CodeUnreadable {
 		t.Errorf("code = %s, want %s (%v)", got.Code, CodeUnreadable, err)
 	}
-	// The *Error already carries File, and the console prints it, so the
-	// message must not print it a second time. That is what stripping the
-	// *fs.PathError buys, and the only way to see it is to look at the
-	// sentence rather than at the code.
 	if got.File != path {
 		t.Errorf("File = %q, want %q", got.File, path)
 	}
@@ -1063,8 +936,6 @@ func TestLoadFileUnreadable(t *testing.T) {
 	if !strings.HasPrefix(got.Message, "the configuration file could not be read: ") {
 		t.Errorf("message = %q", got.Message)
 	}
-	// Whatever the operating system called it, the message ends with the
-	// operating system's own words and nothing else.
 	var pathErr *fs.PathError
 	if !errors.As(err, &pathErr) {
 		t.Fatalf("errors.As did not reach the *fs.PathError: %v", err)
@@ -1074,22 +945,15 @@ func TestLoadFileUnreadable(t *testing.T) {
 	}
 }
 
-// ioMessage is what strips the wrapper, and the branch it chooses is invisible
-// from outside: both spellings are a sentence about the same failure, and only
-// one of them says the path twice. Its three inputs are one call each, because
-// os.ReadFile only ever produces the first.
 func TestIOMessageStripsThePathWrapperAndNothingElse(t *testing.T) {
 	inner := errors.New("is a directory")
 	wrapped := &fs.PathError{Op: "read", Path: filepath.Join("project", FileName), Err: inner}
 	if got := ioMessage(wrapped); got != "is a directory" {
 		t.Errorf("ioMessage of a *fs.PathError = %q, want %q", got, "is a directory")
 	}
-	// errors.As walks the chain, so a wrapped read failure is stripped too.
 	if got := ioMessage(fmt.Errorf("reading configuration: %w", wrapped)); got != "is a directory" {
 		t.Errorf("ioMessage of a wrapped *fs.PathError = %q, want %q", got, "is a directory")
 	}
-	// An error that is not a *fs.PathError at all has no wrapper to remove,
-	// so it is printed exactly as it stands.
 	plain := errors.New("the device is not ready")
 	if got := ioMessage(plain); got != "the device is not ready" {
 		t.Errorf("ioMessage of a plain error = %q, want %q", got, "the device is not ready")
@@ -1132,8 +996,6 @@ func TestLoadFileReads(t *testing.T) {
 	}
 }
 
-// errors.Is has to reach the cause behind a value error, so that a caller can
-// ask what kind of failure it was without parsing a message.
 func TestErrorsWrapTheirCause(t *testing.T) {
 	_, err := Parse(".go-mutants.toml", []byte("version = 1\n\n[mutation]\ninclude = [\"a//b\"]\n"))
 	var syntax *glob.SyntaxError

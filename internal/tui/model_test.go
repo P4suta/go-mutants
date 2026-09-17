@@ -16,25 +16,17 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// harness is a model, its clock, and how many times Ctrl-C cancelled the run.
-//
-// The clock is the shared one: a stopped time source a test moves by hand, so
-// that an assertion about an elapsed duration does not have to wait for one.
 type harness struct {
 	model     model
 	clock     *testkit.Clock
 	cancelled int
 }
 
-// newHarness builds a model with a stopped clock and no styling at all, which
-// is what an assertion about the layout wants.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	return newThemedHarness(t, asciiTheme())
 }
 
-// newThemedHarness builds a model on a given theme, so that a test can draw the
-// frame the way production draws it: with the escape sequences in it.
 func newThemedHarness(t *testing.T, th theme) *harness {
 	t.Helper()
 	h := &harness{clock: testkit.NewClock(time.Date(2026, 8, 19, 10, 11, 12, 0, time.UTC))}
@@ -47,8 +39,6 @@ func newThemedHarness(t *testing.T, th theme) *harness {
 	return h
 }
 
-// send folds messages into the model and returns the command the last one
-// produced, so that a test can assert on what bubbletea was asked to do.
 func (h *harness) send(t *testing.T, msgs ...tea.Msg) tea.Cmd {
 	t.Helper()
 	var cmd tea.Cmd
@@ -63,7 +53,6 @@ func (h *harness) send(t *testing.T, msgs ...tea.Msg) tea.Cmd {
 	return cmd
 }
 
-// events folds engine events, which is what most of these tests send.
 func (h *harness) events(t *testing.T, list ...engine.Event) tea.Cmd {
 	t.Helper()
 	msgs := make([]tea.Msg, 0, len(list))
@@ -73,7 +62,6 @@ func (h *harness) events(t *testing.T, list ...engine.Event) tea.Cmd {
 	return h.send(t, msgs...)
 }
 
-// isQuit reports whether a command is [tea.Quit].
 func isQuit(cmd tea.Cmd) bool {
 	if cmd == nil {
 		return false
@@ -82,9 +70,6 @@ func isQuit(cmd tea.Cmd) bool {
 	return ok
 }
 
-// The mutants the synthetic run measures. The display ids are longer than the
-// eight characters the dashboard shows, which is the point: the truncation is
-// part of the format.
 var (
 	killedResult = engine.MutantResult{
 		ID:          strings.Repeat("1a2b3c4d", 8),
@@ -121,19 +106,12 @@ var (
 		Rule:        "true-to-false",
 		Original:    "true",
 		Replacement: "false",
-		// No test binary reaches this one, so it was never executed. There is
-		// no "uncovered" outcome in the engine's vocabulary and no uncovered
-		// counter: the engine reports it as a survivor with the qualifier set —
-		// nothing ran it, so nothing could have caught it — which is the only
-		// shape engine.MutantResult.Uncovered is ever seen in. Duration is zero
-		// because there were no child processes to time.
-		Outcome:   mutation.OutcomeSurvived,
-		Uncovered: true,
-		Worker:    2,
+		Outcome:     mutation.OutcomeSurvived,
+		Uncovered:   true,
+		Worker:      2,
 	}
 )
 
-// planned is the opening of every synthetic run.
 func planned(workers int) []engine.Event {
 	return []engine.Event{
 		engine.RunPlanned{RunID: "20260819T101112Z-a1b2", Workers: workers},
@@ -150,7 +128,6 @@ func planned(workers int) []engine.Event {
 	}
 }
 
-// started is the event that fills a worker slot for a result.
 func started(r engine.MutantResult) engine.MutantStarted {
 	return engine.MutantStarted{
 		ID: r.ID, DisplayID: r.DisplayID, Path: r.Path, Line: r.Line, Rule: r.Rule, Worker: r.Worker,
@@ -183,9 +160,6 @@ func TestTheStreamMovesTheCountersAndTheSlots(t *testing.T) {
 			wantSurvivors: 1,
 		},
 		{
-			// An uncovered mutant is a survivor the run never executed, and it
-			// is counted with the survivors it cannot be told apart from by
-			// outcome alone. The label in the feed is what tells them apart.
 			name: "an uncovered mutant is counted as a survivor",
 			events: append(planned(3),
 				started(uncoveredResult),
@@ -238,11 +212,6 @@ func TestTheStreamMovesTheCountersAndTheSlots(t *testing.T) {
 	}
 }
 
-// withOutcome copies a result with a different verdict.
-//
-// The uncovered qualifier does not survive the change: the engine only ever
-// sets it alongside a survivor, because an uncovered mutant is one nothing ran,
-// and a copy carrying it onto a timeout would be a shape no run can produce.
 func withOutcome(r engine.MutantResult, o mutation.Outcome) engine.MutantResult {
 	r.Outcome = o
 	r.Uncovered = r.Uncovered && o == mutation.OutcomeSurvived
@@ -255,8 +224,6 @@ func TestTheWorkerTableIsSizedByThePlanAndNeverGrows(t *testing.T) {
 	if got := len(h.model.slots); got != 3 {
 		t.Fatalf("slots = %d, want 3", got)
 	}
-	// A worker index the plan did not promise is ignored rather than growing
-	// the table under the reader.
 	h.events(t, engine.MutantStarted{DisplayID: "deadbeef", Path: "a.go", Line: 1, Rule: "r", Worker: 9})
 	if got := len(h.model.slots); got != 3 {
 		t.Fatalf("slots = %d after an out-of-range worker, want 3", got)
@@ -269,12 +236,9 @@ func TestTheWorkerTableIsSizedByThePlanAndNeverGrows(t *testing.T) {
 }
 
 func TestARetriedMutantReleasesTheSlotItWasClaimedIn(t *testing.T) {
-	// A timeout is retried serially on worker 0, so the settled result reports
-	// a different worker from the one that first claimed the mutant. Releasing
-	// by worker index would leave worker 1 looking busy for the rest of the run.
 	h := newHarness(t)
 	h.events(t, planned(3)...)
-	h.events(t, started(survivorResult)) // worker 1
+	h.events(t, started(survivorResult))
 	retry := survivorResult
 	retry.Worker = 0
 	h.events(t, started(retry), engine.MutantFinished{Result: withOutcome(retry, mutation.OutcomeTimedOut)})
@@ -300,14 +264,10 @@ func TestTheLiveScoreIsUndefinedUntilSomethingIsMeasured(t *testing.T) {
 	if got := h.model.score().String(); got != "50.00%" {
 		t.Errorf("score = %q after one kill and one survivor, want %q", got, "50.00%")
 	}
-	// An uncovered mutant is a survivor and moves the score exactly as one: the
-	// engine counts it in the denominator, because a line no test reaches is
-	// precisely what a mutation score is meant to report.
 	h.events(t, engine.MutantFinished{Result: uncoveredResult})
 	if got := h.model.score().String(); got != "33.33%" {
 		t.Errorf("score = %q after an uncovered survivor, want %q", got, "33.33%")
 	}
-	// A not-run mutant is outside the denominator, so it cannot move the score.
 	h.events(t, engine.MutantFinished{Result: withOutcome(killedResult, mutation.OutcomeNotRun)})
 	if got := h.model.score().String(); got != "33.33%" {
 		t.Errorf("score = %q after a not-run mutant, want it unchanged at %q", got, "33.33%")
@@ -362,8 +322,6 @@ func TestCtrlCCancelsTheRunAndWaitsForIt(t *testing.T) {
 		t.Fatal("the model did not enter its stopping state")
 	}
 
-	// Events keep arriving while the engine unwinds, and none of them may end
-	// the program before the run says it is over.
 	cmd = h.events(t, engine.MutantFinished{Result: killedResult}, engine.Warning{Code: "GOM7520", Message: "interrupted"})
 	if isQuit(cmd) {
 		t.Fatal("the dashboard quit while the run was still unwinding")
@@ -384,9 +342,6 @@ func TestASecondCtrlCQuitsImmediately(t *testing.T) {
 	if !isQuit(cmd) {
 		t.Fatal("the second ctrl+c did not quit")
 	}
-	// The run is cancelled once. The second press is about the terminal, not
-	// about the run, and cancelling an already-cancelled context twice would be
-	// harmless but would say the wrong thing about what the key means.
 	if h.cancelled != 1 {
 		t.Errorf("the run was cancelled %d times, want 1", h.cancelled)
 	}
@@ -417,11 +372,6 @@ func TestTheClockTicksUntilTheRunEnds(t *testing.T) {
 	}
 }
 
-// TestTheCoveragePassIsFoldedRatherThanDropped is the event that was added to
-// the stream after this package was written, which is exactly the case
-// [model.fold]'s default arm quietly swallows. How much of a run coverage is
-// about to skip is the single most useful number a coverage-guided run has, and
-// the plain renderer prints it.
 func TestTheCoveragePassIsFoldedRatherThanDropped(t *testing.T) {
 	h := newHarness(t)
 	h.events(t, planned(2)...)
@@ -436,13 +386,10 @@ func TestTheCoveragePassIsFoldedRatherThanDropped(t *testing.T) {
 	if got := h.model.coverage; got != want {
 		t.Errorf("coverage line = %q, want %q", got, want)
 	}
-	// It is a fact about a different thing from the validated line, arrives
-	// after it, and does not replace it.
 	if got := h.model.discovery; got != "validated 47 mutants, 2 rejections" {
 		t.Errorf("the coverage pass overwrote the validated line, leaving %q", got)
 	}
 
-	// One binary is one binary, not one binaries.
 	h.events(t, engine.CoverageMapped{Binaries: 1, Covered: 1, Uncovered: 0})
 	if got, want := h.model.coverage, "coverage: 1 test binary, 1 of 1 mutants covered, 0 uncovered"; got != want {
 		t.Errorf("coverage line = %q, want %q", got, want)
@@ -461,27 +408,6 @@ func TestWarningsAreCountedRatherThanDrawn(t *testing.T) {
 	}
 }
 
-// TestUnknownEventsAreIgnored is what the missing default case in [model.fold]
-// is worth: an event the dashboard has no drawing for changes nothing about the
-// frame.
-//
-// [engine.Traced], [engine.PhaseCompleted], [engine.DirectoryKept] and
-// [engine.MemoryDerived] are the four that arrive today, and all four belong to
-// the plain renderer — a dashboard that redrew on every recorded subprocess
-// would repaint thousands of times for facts nobody can read at that speed, a
-// kept directory's path is a line to copy out of a scrollback rather than a
-// number on a live frame, and a bound that is checked ten times a second and
-// reported only when it fires has nothing to show while nothing is firing.
-//
-// Ignored here is not dropped, and the difference matters for exactly one of
-// them: [Renderer.keep] holds [engine.DirectoryKept] for [Renderer.Final], so a
-// `--keep-temp` run at a terminal still prints where its directories went once
-// the alternate screen is gone. See
-// [TestRunDrawsTheStreamAndKeepsWhatOutlivesTheScreen].
-//
-// What is asserted is the whole model rather than one field: an event that is
-// ignored has to leave the counters, the slots and the feed exactly as they
-// were, and the run has to go on being foldable afterwards.
 func TestUnknownEventsAreIgnored(t *testing.T) {
 	h := newHarness(t)
 	h.events(t, planned(2)...)
@@ -507,8 +433,6 @@ func TestUnknownEventsAreIgnored(t *testing.T) {
 		t.Error("an ignored event ended the run")
 	}
 
-	// And the stream still folds: the ignored events did not leave the model in
-	// a state a later event cannot be applied to.
 	h.events(t, engine.CoverageMapped{Binaries: 1, Covered: 4, Uncovered: 1})
 	if got, want := h.model.coverage, "coverage: 1 test binary, 4 of 5 mutants covered, 1 uncovered"; got != want {
 		t.Errorf("coverage line = %q, want %q", got, want)

@@ -3,15 +3,6 @@
 
 //go:build integration
 
-// The consumer-side contract: a different module compiling and running against
-// the published API.
-//
-// It writes a module, points it at this checkout with a replace directive and
-// runs a real `go test` inside it, which is the only way to prove that the
-// bridge is usable without an internal package — and is a full toolchain
-// invocation per test, so it belongs in the integration tier. The file was
-// named external_contract_test.go until the tiering.
-
 package gomutants_test
 
 import (
@@ -25,11 +16,6 @@ import (
 	"testing"
 )
 
-// TestExternalModuleCompilesAgainstTheEngineAPI is the consumer-side contract:
-// the bridge must be usable from a different module without importing an
-// internal package or relying on an in-repository test-only symbol. GOPROXY is
-// disabled so this test also proves that compiling the bridge does not perform
-// an implicit network operation once the module's declared dependencies exist.
 func TestExternalModuleCompilesAgainstTheEngineAPI(t *testing.T) {
 	goBinary, err := exec.LookPath("go")
 	if err != nil {
@@ -511,16 +497,6 @@ func TestPublicDataTypes(t *testing.T) {
 	})
 }
 
-// TestTracePackageIsPartOfThePublicContract is the same claim for the trace
-// package.
-//
-// It is a separate consumer module rather than a few more lines in the one
-// above, because the two surfaces are used by different callers for different
-// reasons: an embedder reaches for the engine API, and a consumer that wants
-// one timeline across two tools reaches for a trace sink. GOPROXY is disabled
-// here too, which is also how the leaf claim is checked: the trace package is
-// stdlib plus the embedded schema, so a dependency added to it would fail this
-// test rather than somebody's build.
 func TestTracePackageIsPartOfThePublicContract(t *testing.T) {
 	goBinary, err := exec.LookPath("go")
 	if err != nil {
@@ -684,18 +660,6 @@ func TestPublicTraceTypes(t *testing.T) {
 	})
 }
 
-// TestABuiltConsumerNamesTheEngineItLinked is the identity contract, proved
-// the only way it can be: by building a consumer program and running it.
-//
-// A test binary names no dependency (see
-// TestTheEngineIsAbsentFromAConsumerTestBinary), so an assertion made inside
-// one would hold just as well against a stub that returned nothing. This
-// builds a real program against a directory replacement -- the way every
-// consumer develops against an unreleased engine -- and reads what it says
-// about itself. That case is also the one the contract is sharpest about: the
-// require line names v0.0.0 and the code that compiled is a working tree, so
-// the engine must report the replacement and refuse to call itself auditable,
-// leaving the identity of the running bytes to the consumer.
 func TestABuiltConsumerNamesTheEngineItLinked(t *testing.T) {
 	goBinary, err := exec.LookPath("go")
 	if err != nil {
@@ -763,10 +727,6 @@ func main() {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	// -buildvcs=false: what the consumer program says about *itself* is not
-	// under test, and a temporary directory that happens to sit under somebody
-	// else's repository would otherwise make this a test of that repository's
-	// VCS status.
 	build := exec.CommandContext(t.Context(), goBinary, "build", "-mod=mod", "-buildvcs=false", "-o", binary, "./cmd/identity")
 	build.Dir = consumer
 	build.Env = consumerEnvironment()
@@ -808,8 +768,6 @@ func main() {
 	if !sameDirectory(identity.ReplacePath, repository) {
 		t.Errorf("ReplacePath = %q, want %q", identity.ReplacePath, repository)
 	}
-	// A directory has no version of its own, and the go command writes its
-	// placeholder rather than an empty string.
 	if identity.ReplaceVersion != "(devel)" {
 		t.Errorf("ReplaceVersion = %q, want (devel)", identity.ReplaceVersion)
 	}
@@ -827,10 +785,6 @@ func main() {
 	}
 }
 
-// sameDirectory compares two paths the way a test on three operating systems
-// has to: the go command records a cleaned absolute path, and a temporary
-// directory reached through a symlink (macOS /var, for one) is the same
-// directory under two names.
 func sameDirectory(recorded, want string) bool {
 	recorded = filepath.Clean(filepath.FromSlash(recorded))
 	want = filepath.Clean(want)
@@ -842,9 +796,6 @@ func sameDirectory(recorded, want string) bool {
 	return recordedErr == nil && wantErr == nil && resolvedRecorded == resolvedWant
 }
 
-// consumerEnvironment is what every synthetic consumer builds under. GOPROXY
-// is disabled so that a compile which needed a download fails here rather than
-// in somebody's pipeline.
 func consumerEnvironment() []string {
 	return append(os.Environ(),
 		"GOWORK=off",
@@ -854,8 +805,6 @@ func consumerEnvironment() []string {
 	)
 }
 
-// writeConsumer writes a synthetic consumer module into a temporary directory
-// and returns it. File names are slash-separated and may name a subdirectory.
 func writeConsumer(t *testing.T, files map[string]string) string {
 	t.Helper()
 	consumer := t.TempDir()
@@ -871,9 +820,6 @@ func writeConsumer(t *testing.T, files map[string]string) string {
 	return consumer
 }
 
-// compileConsumer writes a synthetic consumer module and runs its tests with
-// the module proxy disabled, so that a compile which needed a download fails
-// here rather than in somebody's pipeline.
 func compileConsumer(t *testing.T, goBinary string, files map[string]string) {
 	t.Helper()
 	consumer := writeConsumer(t, files)

@@ -18,21 +18,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// The probe tree's return form.
-//
-// A probe tree runs the original program and, for each mutant, records the
-// first time the value at its site differed from the constant the mutant would
-// have returned. The rewrite that says so for a `return` is
-//
-//	{ var r0 T0 = E0; var r1 T1 = E1; …; if r1 != K { __gm.Infect(i) }; return r0, r1, … }
-//
-// and everything below is about the two things that have to be true of it: it
-// is the original program — every operand evaluated once, in order, converted
-// to the declared result type it was always converted to — and it fits on the
-// line the statement started on.
-
-// probeSnapshotHinted runs the instrumenter over a snapshot in probe mode with
-// hints the caller assembled, and fails the test if it refuses.
 func probeSnapshotHinted(
 	t *testing.T,
 	root string,
@@ -54,8 +39,6 @@ func probeSnapshotHinted(
 	return result
 }
 
-// probeSnapshotWith is [probeSnapshotHinted] for a snapshot whose hints are
-// derived from the files it holds.
 func probeSnapshotWith(
 	t *testing.T,
 	root string,
@@ -66,33 +49,15 @@ func probeSnapshotWith(
 	return probeSnapshotHinted(t, root, catalog, hintsFor(t, root, catalog, opts))
 }
 
-// A probeCase is one fixture rendered in probe mode.
 type probeCase struct {
-	// name is the golden's base name, which is also the subtest's.
-	name string
-	// input is the fixture file the rewrite is composed from.
-	input string
-	// candidates is the fixture's catalogue. Unlike the mutant tree's fixtures
-	// these are always stated, because a probe tree rewrites nothing for a
-	// catalogue of comparisons and a golden of the original file would prove
-	// nothing.
+	name       string
+	input      string
 	candidates func(*testing.T, []byte) []mutation.Candidate
-	// hints are what the fixture's guard hints need beyond its own syntax.
-	hints hintOptions
-	// sites is the expected number of probe sites, which is not the number of
-	// mutants: two candidates of one `return` share one rewrite.
-	sites int
-	// extra asserts whatever else this fixture exists to prove.
-	extra func(t *testing.T, in, out []byte)
+	hints      hintOptions
+	sites      int
+	extra      func(t *testing.T, in, out []byte)
 }
 
-// probeCases is every fixture with a probe golden.
-//
-// Between them they cover each thing the rewrite has to get right: a statement
-// with two results and two mutants, a named result type and a boolean one,
-// operands spanning lines, a result type the operand does not have, a probe
-// site nested inside another, and a file that has already taken the names the
-// temporaries want.
 func probeCases() []probeCase {
 	return []probeCase{{
 		name:       "probe-reach",
@@ -101,12 +66,7 @@ func probeCases() []probeCase {
 		hints:      hintOptions{valueTypes: map[string]string{"total + i": "int"}},
 		sites:      3,
 		extra: func(t *testing.T, _, out []byte) {
-			// Nothing is evaluated twice and nothing is compared: the statement
-			// runs as it always did, with the call in front of it.
 			assertContains(t, out, "{ __gm.Infect(0); note(i) }")
-			// And a statement whose expression has a form of its own carries
-			// both, one inside the other: the deletion records that the
-			// statement ran, the operand records whether its value differed.
 			assertContains(t, out, "{ __gm.Infect(1); total = func() int { var __gm_r0 int = (total + i);"+
 				" if __gm_r0 != (total-i) { __gm.Infect(2) }; return __gm_r0 }() }")
 		},
@@ -120,17 +80,10 @@ func probeCases() []probeCase {
 		},
 		sites: 2,
 		extra: func(t *testing.T, _, out []byte) {
-			// The closure's result type is the expression's own, spelled, so a
-			// named type is written out rather than collapsed to its
-			// underlying one — which is what makes the value legal where it
-			// stood.
 			assertContains(t, out, "func() Kind { var __gm_r0 Kind = (Kind(a + b));")
-			// Two mutants of one expression are two comparisons over one
-			// temporary, and the original is evaluated once whatever they are.
 			assertContains(t, out, "var __gm_r0 int = (a*b + a);"+
 				" if __gm_r0 != (a/b+a) { __gm.Infect(1) };"+
 				" if __gm_r0 != (a*b-a) { __gm.Infect(2) }; return __gm_r0 }()")
-			// No mutant is ever active in a probe tree.
 			if bytes.Contains(out, []byte(".M[")) {
 				t.Errorf("the probe tree reads an activation flag:\n%s", out)
 			}
@@ -141,22 +94,10 @@ func probeCases() []probeCase {
 		candidates: probeBoolEdits,
 		sites:      4,
 		extra: func(t *testing.T, _, out []byte) {
-			// Each half of the conjunction is its own site, measured through
-			// its own call, and the conjunction is a site around them: the
-			// original reading it compares against is the one carrying both
-			// inner calls, while its own mutated reading is the pristine
-			// bytes with one edit -- so an inner mutant is recorded once, from
-			// the reading the program actually evaluates.
 			assertContains(t, out, "__gm.Differs(1, "+
 				"(__gm.Differs(0, (v > lo), (v>=lo)) && __gm.Differs(2, (v < hi), (v<=hi))), "+
 				"(v>lo||v<hi))")
-			// Two mutants of one site chain, innermost first, and each call
-			// yields its second argument -- so what the expression evaluates to
-			// is the original whatever the chain around it records. Each
-			// mutated reading comes back from Flatten, which is why they carry
-			// no spaces while the original does.
 			assertContains(t, out, "__gm.Differs(4, __gm.Differs(3, (a == b), (!(a==b))), (a!=b))")
-			// No mutant is ever active in a probe tree.
 			if bytes.Contains(out, []byte(".M[")) {
 				t.Errorf("the probe tree reads an activation flag:\n%s", out)
 			}
@@ -167,17 +108,10 @@ func probeCases() []probeCase {
 		candidates: probeStatementEdits,
 		sites:      2,
 		extra: func(t *testing.T, _, out []byte) {
-			// One statement, two results, two mutants: one block, one
-			// temporary per result whatever is mutated, and one `if` per
-			// mutant. The error is compared with nil and the count with zero,
-			// each against the constant its own rule would have returned.
 			assertContains(t, out, "{ var __gm_r0 int = count; var __gm_r1 error = err; "+
 				"if __gm_r0 != 0 { __gm.Infect(0) }; if __gm_r1 != nil { __gm.Infect(1) }; "+
 				"return __gm_r0, __gm_r1 }")
-			// A single result declares one temporary and returns it.
 			assertContains(t, out, "{ var __gm_r0 int = total; if __gm_r0 != 0 { __gm.Infect(2) }; return __gm_r0 }")
-			// No mutant is ever active in a probe tree, so nothing in it reads
-			// an activation flag and nothing carries a mutated copy.
 			if bytes.Contains(out, []byte(".M[")) {
 				t.Errorf("the probe tree reads an activation flag:\n%s", out)
 			}
@@ -189,10 +123,6 @@ func probeCases() []probeCase {
 		hints:      hintOptions{namedBool: namedBoolExprs()},
 		sites:      2,
 		extra: func(t *testing.T, _, out []byte) {
-			// The declared result type is a named boolean, so that is what the
-			// temporary is declared as — and both constants compare against it
-			// without a conversion anybody has to write. Two mutants of one
-			// result are two `if` lines over one temporary, in catalogue order.
 			assertContains(t, out, "{ var __gm_r0 Flag = x>y; if __gm_r0 != true { __gm.Infect(0) }; "+
 				"if __gm_r0 != false { __gm.Infect(1) }; return __gm_r0 }")
 		},
@@ -202,16 +132,7 @@ func probeCases() []probeCase {
 		candidates: probeMultilineEdits,
 		sites:      2,
 		extra: func(t *testing.T, in, out []byte) {
-			// The whole rewrite is on the statement's first line and the lines
-			// it used to occupy are left empty, so every byte after it keeps
-			// its line. Lines 6 (the package clause, which took the import),
-			// 11 and 19 are the ones written; 12, 13 and 20 are the emptied
-			// remainder of the two statements.
 			assertLinesUntouched(t, in, out, 5, 10, 11, 12, 18, 19)
-			// The operand is folded onto that line by the flattener, which
-			// cannot keep a line comment — there is no second branch here
-			// holding the original bytes, so this is the one place the probe
-			// tree is not the user's own text.
 			assertContains(t, out, "var __gm_r0 bool = x<=limit;")
 		},
 	}, {
@@ -220,9 +141,6 @@ func probeCases() []probeCase {
 		candidates: probeTypedEdits,
 		sites:      3,
 		extra: func(t *testing.T, _, out []byte) {
-			// The declared result type and not the operand's: an untyped
-			// constant returned as a float32 is declared float32, which is the
-			// conversion the `return` itself performs.
 			assertContains(t, out, "{ var __gm_r0 float32 = 1; if __gm_r0 != 0 { __gm.Infect(0) }; return __gm_r0 }")
 			assertContains(t, out, "{ var __gm_r0 Level = 1; if __gm_r0 != 0 { __gm.Infect(1) }; return __gm_r0 }")
 			assertContains(t, out, `{ var __gm_r0 string = s; if __gm_r0 != "" { __gm.Infect(2) }; return __gm_r0 }`)
@@ -233,10 +151,6 @@ func probeCases() []probeCase {
 		candidates: probeNestedEdits,
 		sites:      2,
 		extra: func(t *testing.T, _, out []byte) {
-			// The inner rewrite is composed first and folded into the operand
-			// that holds it, which is then folded onto one line: one statement,
-			// one block, two Infect calls, and the literal's own `return`
-			// rewritten inside it.
 			assertContains(t, out, "var __gm_r0 func() int = func()int{{var __gm_r0 int=a+b;"+
 				"if __gm_r0!=0{__gm.Infect(0)};return __gm_r0};};")
 			assertContains(t, out, "if __gm_r1 != nil { __gm.Infect(1) }; return __gm_r0, __gm_r1 }")
@@ -247,11 +161,6 @@ func probeCases() []probeCase {
 		candidates: probeNameEdits,
 		sites:      1,
 		extra: func(t *testing.T, _, out []byte) {
-			// The file binds __gm_r0 and __gm_r1 already, so the temporaries
-			// bump past both. The second operand still reads the package-level
-			// __gm_r0 rather than the first temporary, which is the whole point
-			// of checking: a name declared by the first `var` is in scope for
-			// the second one's initialiser.
 			assertContains(t, out, "{ var __gm_r1_0 int = a; var __gm_r1_1 int = __gm_r0; "+
 				"if __gm_r1_0 != 0 { __gm.Infect(0) }; return __gm_r1_0, __gm_r1_1 }")
 			if bytes.Contains(out, []byte("var __gm_r0 int =")) || bytes.Contains(out, []byte("var __gm_r1 int =")) {
@@ -261,15 +170,6 @@ func probeCases() []probeCase {
 	}}
 }
 
-// TestProbeGolden pins the probe tree of every shape the return form has to
-// handle.
-//
-// Byte-exact fixtures for the same reason the mutant tree has them: the output
-// has to compile, preserve lines, and change nothing it did not mean to, and a
-// test that re-derived what it expected would re-derive the same mistake. The
-// difference here is that there is no branch holding the original bytes — the
-// probe *is* the original program, rewritten — so the fixture is the only place
-// a reader can check that claim by eye.
 func TestProbeGolden(t *testing.T) {
 	t.Parallel()
 
@@ -301,16 +201,6 @@ func TestProbeGolden(t *testing.T) {
 	}
 }
 
-// TestProbeTreePreservesLines is the invariant every fixture holds at once:
-// line N of the probe tree is line N of the file the user wrote, wherever the
-// probe did not write.
-//
-// It is the sharp form of the equal-line-count check. The rewrite folds a
-// statement onto its own first line and leaves the rest of its lines empty, so
-// the only lines that may differ are the ones the statement occupied and the
-// one the runtime import was injected on — and a coverage record, a panic
-// trace, and a reported mutant coordinate all rest on that being the whole
-// list.
 func TestProbeTreePreservesLines(t *testing.T) {
 	t.Parallel()
 
@@ -335,9 +225,6 @@ func TestProbeTreePreservesLines(t *testing.T) {
 	}
 }
 
-// probeWrittenLines is every line a probe pass is allowed to have written: the
-// lines each rewritten statement occupied, and the one carrying the injected
-// import.
 func probeWrittenLines(
 	t *testing.T,
 	in, out []byte,
@@ -358,9 +245,6 @@ func probeWrittenLines(
 			written[line] = true
 		}
 	}
-	// The import is an insertion holding no line break, so it lands on a line
-	// that already existed; it is found rather than computed because which line
-	// that is depends on the shape of the file's import section.
 	for i, line := range lines(out) {
 		if strings.Contains(line, testModule+"/gomutants_rt") {
 			written[i] = true
@@ -369,14 +253,6 @@ func probeWrittenLines(
 	return slices.Sorted(maps.Keys(written))
 }
 
-// TestProbeModeLeavesTheMutantGoldensAlone is the compatibility claim this
-// change has to keep: adding a second tree changed nothing about the first.
-//
-// Every fixture is rendered in both modes from one catalogue and one set of
-// hints. The mutant tree's bytes are compared against the golden that was
-// committed before the probe form existed, and the probe tree is rendered
-// beside it only to prove that doing so does not disturb it — a shared site
-// index, a shared alias, a shared splicer, and one mode field between them.
 func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 	t.Parallel()
 
@@ -428,14 +304,6 @@ func TestProbeModeLeavesTheMutantGoldensAlone(t *testing.T) {
 	}
 }
 
-// TestProbeSkipsAMutantWithoutAProbeSite pins what a probe tree does with the
-// families whose probe form is not written yet.
-//
-// It does not probe them, and it does not touch the file they are in. A file
-// rewritten for no site would carry an import nothing uses, which does not
-// compile; a file rewritten with a guard would be a mutant tree pretending to
-// be a probe one. Doing nothing is the only answer that is honest about the
-// mutant simply not being measured.
 func TestProbeSkipsAMutantWithoutAProbeSite(t *testing.T) {
 	t.Parallel()
 
@@ -444,10 +312,6 @@ func TestProbeSkipsAMutantWithoutAProbeSite(t *testing.T) {
 	testkit.WriteFile(t, filepath.Join(root, sampleFile), in)
 
 	catalog := catalogOf(t, candidatesFor(t, nil, in))
-	// The comparison is declared unprobeable, which is what the fixture stands
-	// for: its own operands are inert, but a site the boolean form may not
-	// evaluate twice is the ordinary way a mutant of one ends up unprobed, and
-	// a file made only of those has to come out untouched.
 	result := probeSnapshotWith(t, root, catalog, hintOptions{unprobedSites: []string{"a > b"}})
 
 	if got := testkit.ReadFile(t, filepath.Join(root, sampleFile)); !bytes.Equal(got, in) {
@@ -459,13 +323,6 @@ func TestProbeSkipsAMutantWithoutAProbeSite(t *testing.T) {
 	}
 }
 
-// TestProbeRefusesAnUnspellableResultType is the same refusal one statement at
-// a time.
-//
-// Discovery hands down no site for a `return` whose result types it cannot
-// spell in the file, and the instrumenter's answer has to be to leave that
-// statement exactly as it is while its neighbours are still probed. Anything
-// else would mean one unspellable type costing a whole file its measurement.
 func TestProbeRefusesAnUnspellableResultType(t *testing.T) {
 	t.Parallel()
 
@@ -489,9 +346,6 @@ func TestProbeRefusesAnUnspellableResultType(t *testing.T) {
 	}
 }
 
-// TestProbeIsDeterministic is the probe tree's half of the promise the mutant
-// tree makes: the same snapshot and the same catalogue produce the same bytes,
-// down to the alias, the temporaries, and the order of the Infect calls.
 func TestProbeIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -528,14 +382,6 @@ func TestProbeIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestProbeTreeCompiles builds every probe fixture against a real toolchain.
-//
-// The goldens prove the bytes are what they were yesterday; only the compiler
-// proves they are Go. Everything the return form promises is a typing claim —
-// that a temporary of the declared result type accepts the operand, that the
-// constant compares against it, that a block ending in `return` is still a
-// terminating statement, that the temporaries collide with nothing — and each
-// of those is invisible to a parse and to a byte-exact fixture.
 func TestProbeTreeCompiles(t *testing.T) {
 	t.Parallel()
 
@@ -564,15 +410,6 @@ func TestProbeTreeCompiles(t *testing.T) {
 		0, "`go build ./...` over the probe tree")
 }
 
-// TestProbeCapturesEveryResultOfAReturn runs a probe tree and reads back what
-// it recorded, which is the only place the whole mechanism is visible at once.
-//
-// Div returns `(0, ErrZero)` for a zero divisor and `(a/b, nil)` otherwise, and
-// each of its two mutants is observable through exactly one of those paths. A
-// suite that takes both records both; a suite that only ever divides zero by
-// something records neither, because the count really is zero and the error
-// really is nil — which is the fact the whole probe pass exists to establish,
-// and the one that licenses not running a test against a mutant.
 func TestProbeCapturesEveryResultOfAReturn(t *testing.T) {
 	t.Parallel()
 
@@ -630,8 +467,6 @@ func TestProbeCapturesEveryResultOfAReturn(t *testing.T) {
 	}
 }
 
-// divideSource is the package the probe fixture measures: one function, two
-// returns, and one mutant reachable through each.
 const divideSource = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -652,8 +487,6 @@ func Div(a, b int) (int, error) {
 }
 `
 
-// divideTest is the suite the probe tree runs, in two halves so that a test can
-// ask for one path at a time.
 const divideTest = `// SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -685,21 +518,6 @@ func TestNothingDiffers(t *testing.T) {
 }
 `
 
-// assertProbeWellFormed runs the invariants every probe tree must hold,
-// whatever the fixture.
-//
-// The mutant tree's [assertWellFormed] asks a question this one cannot: it
-// checks that every mutant's own bytes are still on the line they were written
-// on, because a guard keeps the original in one of its branches. A probe tree
-// keeps no branch — the statement is rewritten into the program it always was,
-// with its operands folded onto one line — so what is asserted here is that the
-// rewrite parses, holds its lines, and names every mutant exactly once.
-//
-// "Names" rather than "calls Infect for", because the two forms report through
-// different calls: the return form writes the comparison itself and calls
-// Infect, while the boolean form hands both readings to Differs and lets it
-// decide. Either way the mutant's index appears in exactly one call, which is
-// what a reader of the log depends on.
 func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catalog) {
 	t.Helper()
 
@@ -723,12 +541,6 @@ func assertProbeWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catal
 	}
 }
 
-// The catalogues of the probe fixtures. Each states the rule, the bytes it
-// replaces located by a snippet that holds them, and what it writes — exactly
-// as internal/discover's return-value family would have proposed them.
-
-// probeReachEdits catalogues the reachability fixture: two deleted statements,
-// one of them also holding an operand a stronger form measures.
 func probeReachEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -738,8 +550,6 @@ func probeReachEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeValueEdits catalogues the value fixture: an operand of a named type, and
-// one expression carrying two mutants at once.
 func probeValueEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -749,8 +559,6 @@ func probeValueEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeBoolEdits catalogues the boolean fixture: a conjunction and each of its
-// halves, and a comparison carrying two mutants of one site.
 func probeBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -762,8 +570,6 @@ func probeBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeStatementEdits catalogues the statement fixture: a `return` carrying two
-// families at once over two results, and a single-result `return` beside it.
 func probeStatementEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -773,8 +579,6 @@ func probeStatementEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeNamedBoolEdits catalogues the named boolean fixture: the two boolean
-// replacements of one result, whose declared type is not the universe bool.
 func probeNamedBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -784,8 +588,6 @@ func probeNamedBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeMultilineEdits catalogues the multi-line fixture: operands written
-// across lines, one of them with a comment inside it.
 func probeMultilineEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -795,8 +597,6 @@ func probeMultilineEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeTypedEdits catalogues the fixture whose results are not the types of
-// their operands.
 func probeTypedEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -806,8 +606,6 @@ func probeTypedEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeNestedEdits catalogues the nested fixture: the outer return's error and
-// the literal's own return, which sits inside the operand beside it.
 func probeNestedEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -816,8 +614,6 @@ func probeNestedEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// probeNameEdits catalogues the fixture whose file has taken the temporaries'
-// names.
 func probeNameEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,

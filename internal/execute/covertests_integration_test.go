@@ -21,17 +21,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// perTestModule is a module whose one test binary holds tests with different
-// reach, which is the situation test-level narrowing exists for and the one
-// the corpus fixtures cannot show: each of theirs has one test per package, so
-// "the tests that reach it" and "the binaries that reach it" are the same
-// answer there.
 const perTestModule = "fixture.example/pertest"
 
-// perTestSource is the program. Each function holds one comparison on a line
-// of its own, and each comparison's text is unique in the file, which is how
-// the test names a line without counting them: the discovery pass says where
-// each comparison is.
 const perTestSource = `package pertest
 
 // Positive is reached by TestPositive alone.
@@ -50,11 +41,6 @@ func Unreached(v int) bool {
 }
 `
 
-// perTestSuite is the test file: two tests with different reach, a benchmark
-// that `-test.list` names and no run can select, and a pair of tests where
-// the second passes only after the first ran — the order dependence a
-// per-test pass has to notice, because a test that fails alone cannot be
-// the sole witness of anything.
 const perTestSuite = `package pertest
 
 import "testing"
@@ -90,12 +76,6 @@ func TestSecond(t *testing.T) {
 }
 `
 
-// TestCollectTestCoverageTellsTheTestsOfOneBinaryApart is the pass against a
-// real toolchain: the binary really lists its tests, each test really runs
-// alone and leaves a profile, and the profiles really tell the tests apart —
-// a mutant reached by one test of the binary is mapped to that test and not
-// to the binary's other tests. It is also where the order-dependent test is
-// shown to be reported rather than believed.
 func TestCollectTestCoverageTellsTheTestsOfOneBinaryApart(t *testing.T) {
 	t.Parallel()
 
@@ -141,7 +121,6 @@ func TestCollectTestCoverageTellsTheTestsOfOneBinaryApart(t *testing.T) {
 		t.Fatalf("the per-test coverage pass: %v\n%s", err, execute.OutputOf(err))
 	}
 
-	// What the binary listed, in source order, without the benchmark.
 	var names []string
 	for _, data := range collected {
 		names = append(names, data.Name)
@@ -164,9 +143,6 @@ func TestCollectTestCoverageTellsTheTestsOfOneBinaryApart(t *testing.T) {
 		}
 	}
 
-	// The profiles of the tests that passed alone, read the way the engine
-	// reads them: the binary wrote the text format itself, so there is nothing
-	// between the run and the document.
 	profiles := make(map[coverage.TestKey]coverage.Profile)
 	for _, data := range collected {
 		if !data.Passed {
@@ -191,10 +167,6 @@ func TestCollectTestCoverageTellsTheTestsOfOneBinaryApart(t *testing.T) {
 		Profiles:   profiles,
 	})
 
-	// Every mutant of a comparison is covered by exactly the test that
-	// reaches it, and the unreached comparison's by nothing at all. The
-	// comparisons are named by their text and located by discovery, so the
-	// SPDX header the module builder prefixes does not enter into it.
 	expect := map[string][]coverage.TestKey{
 		"v > 0":  {{ImportPath: perTestModule, Name: "TestPositive"}},
 		"v < 0":  {{ImportPath: perTestModule, Name: "TestNegative"}},
@@ -218,7 +190,6 @@ func TestCollectTestCoverageTellsTheTestsOfOneBinaryApart(t *testing.T) {
 	}
 }
 
-// lineOf is the line discovery found the candidate replacing original on.
 func lineOf(t *testing.T, found discover.Result, original string) int {
 	t.Helper()
 	for _, c := range found.Candidates {
@@ -231,8 +202,6 @@ func lineOf(t *testing.T, found discover.Result, original string) int {
 	return 0
 }
 
-// spans turns the catalogue into the coverage package's spans and indexes
-// the mutant ids by the line they start on.
 func spans(t *testing.T, catalog *mutation.Catalog, found discover.Result) ([]coverage.Mutant, map[int][]string) {
 	t.Helper()
 	type key struct {

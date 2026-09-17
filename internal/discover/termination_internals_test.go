@@ -13,23 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// The readers a termination proof is built out of, asked as questions about
-// loops.
-//
-// termination_test.go drives the whole phase over fixtures and asserts which
-// mutants are proved to run away. That is the contract, and it is the right
-// test for it. It is the wrong test for these: every refusal here is a loop
-// shape the proof declines to reason about, and a fixture holds only the shapes
-// somebody thought to write. A reader that admitted one shape too many would
-// publish `unbounded` for a loop that terminates -- a claim about somebody's
-// code, published in two JSON documents -- and the way to keep that from
-// happening is to state every refusal.
-
-// loopIn parses a function body and returns the `for` statement in it.
-//
-// Nothing here consults the type checker: an induction loop is recognised from
-// the syntax, which is the whole point of deciding termination before anything
-// runs. So the fixture is parsed and not checked, and may name anything.
 func loopIn(t *testing.T, body string) *ast.ForStmt {
 	t.Helper()
 
@@ -47,15 +30,6 @@ func loopIn(t *testing.T, body string) *ast.ForStmt {
 	return found
 }
 
-// TestWhichLoopsHaveAMeasureThisPhaseCanRead is [readInductionLoop], which is
-// the gate every proof passes through.
-//
-// The shape it recognises is `for …; v OP bound; v STEP`, and each of the five
-// ways a loop can fail to be one is a different fact: no step at all, a step
-// that does not move, a condition that is not an ordering of the variable
-// against something else, a body that moves the variable itself, and a bound
-// the body assigns. A loop it declines yields no proof, which is the silence
-// the phase is designed around.
 func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 	t.Parallel()
 
@@ -84,9 +58,6 @@ func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 			want: true, variable: "i", step: -3, comparison: token.GEQ,
 		},
 		{
-			// The bound written first. It is normalised so that the variable is
-			// always on the left, which is what lets one rule decide the
-			// direction rather than two.
 			name: "the bound on the left", body: "\tfor i := 0; n > i; i++ {\n\t}",
 			want: true, variable: "i", step: 1, comparison: token.LSS,
 		},
@@ -95,15 +66,11 @@ func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 			want: true, variable: "i", step: -1, comparison: token.GTR,
 		},
 		{
-			// A bound that is an expression rather than a name, which is fine as
-			// long as the body does not move what it is made of.
 			name: "a computed bound", body: "\tfor i := 0; i < len(xs)-1; i++ {\n\t}",
 			want: true, variable: "i", step: 1, comparison: token.LSS,
 		},
 
 		{
-			// The shape most Go loops with a measure are written in: a
-			// condition, and the step in the body rather than in a post slot.
 			name: "a condition with the step in the body",
 			body: "\tfor i > 0 {\n\t\ttotal += i\n\t\ti--\n\t}",
 			want: true, variable: "i", step: -1, comparison: token.GTR,
@@ -116,14 +83,10 @@ func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 		{name: "a bare loop", body: "\tfor {\n\t}"},
 		{name: "a loop with a condition and no step", body: "\tfor i < n {\n\t}"},
 		{
-			// The step is not reached on every iteration, so the measure is not
-			// one this phase can follow.
 			name: "a step in the body behind a condition",
 			body: "\tfor i < n {\n\t\tif ok {\n\t\t\ti++\n\t\t}\n\t}",
 		},
 		{
-			// `continue` jumps past the step, which is the same hazard written
-			// the other way round.
 			name: "a step in the body a continue can skip",
 			body: "\tfor i < n {\n\t\tif ok {\n\t\t\tcontinue\n\t\t}\n\t\ti++\n\t}",
 		},
@@ -143,10 +106,6 @@ func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 		{name: "a step of zero", body: "\tfor i := 0; i < n; i += 0 {\n\t}"},
 		{name: "a step that is not a literal", body: "\tfor i := 0; i < n; i += k {\n\t}"},
 		{
-			// A literal the parser accepts and strconv will not. This phase
-			// reads syntax before anything has type-checked it, so a step of
-			// more than nine quintillion arrives here as an ordinary
-			// `*ast.BasicLit` rather than as the compile error it would be.
 			name: "a step larger than an int",
 			body: "\tfor i := 0; i < n; i += 99999999999999999999 {\n\t}",
 		},
@@ -184,12 +143,6 @@ func TestWhichLoopsHaveAMeasureThisPhaseCanRead(t *testing.T) {
 	}
 }
 
-// TestAMeasureProgressesWhenTheStepAgreesWithTheComparison is the lemma itself,
-// stated over the four orderings and the two directions of travel.
-//
-// The proof rests on one claim: the loop stops because each iteration moves the
-// variable towards the bound the condition tests. A step that moves away never
-// reaches it, and that is what `unbounded` means.
 func TestAMeasureProgressesWhenTheStepAgreesWithTheComparison(t *testing.T) {
 	t.Parallel()
 
@@ -206,13 +159,9 @@ func TestAMeasureProgressesWhenTheStepAgreesWithTheComparison(t *testing.T) {
 		{token.GEQ, -1, true},
 		{token.GTR, 1, false},
 		{token.GEQ, 1, false},
-		// Neither direction: a comparison that is not an ordering orders
-		// nothing, so no step agrees with it.
 		{token.EQL, 1, false},
 		{token.NEQ, -1, false},
 		{token.ILLEGAL, 1, false},
-		// And a step of zero, which moves the variable nowhere however the
-		// condition is written.
 		{token.LSS, 0, false},
 		{token.GTR, 0, false},
 	} {
@@ -228,7 +177,6 @@ func TestAMeasureProgressesWhenTheStepAgreesWithTheComparison(t *testing.T) {
 	}
 }
 
-// stepName names a step for a subtest.
 func stepName(step int) string {
 	switch {
 	case step > 0:
@@ -240,8 +188,6 @@ func stepName(step int) string {
 	}
 }
 
-// TestTheReadersUnderneathTheLoopReader is each small question on its own, for
-// the answers the loop shapes above reach only in combination.
 func TestTheReadersUnderneathTheLoopReader(t *testing.T) {
 	t.Parallel()
 
@@ -325,9 +271,6 @@ func TestTheReadersUnderneathTheLoopReader(t *testing.T) {
 	t.Run("a condition that is not a comparison is a bound that moves", func(t *testing.T) {
 		t.Parallel()
 
-		// The refusal is written that way round on purpose: boundMoves is asked
-		// only about loops whose measure has been read, and a condition it
-		// cannot take apart is one it cannot vouch for.
 		loop := loopIn(t, "\tfor i := 0; ok; i++ {\n\t}")
 		if !boundMoves(loop, nil) {
 			t.Error("boundMoves(a condition that is not a comparison) = false, want true")
@@ -335,11 +278,6 @@ func TestTheReadersUnderneathTheLoopReader(t *testing.T) {
 	})
 }
 
-// terminationProbe is a file scan over a parsed fixture, which is everything a
-// termination proof reads: the parent index the walk outward uses, and the
-// token file the loop's position comes from. No type information at all, which
-// is the point -- whether a loop stops is decided from the syntax, before
-// anything is built.
 func terminationProbe(t *testing.T, src string) *fileScan {
 	t.Helper()
 
@@ -352,8 +290,6 @@ func terminationProbe(t *testing.T, src string) *fileScan {
 	return &fileScan{tokFile: tokFile, guard: newGuardResolver(file, nil, nil, tokFile, nil)}
 }
 
-// firstNode finds the first node of the fixture that satisfies a predicate,
-// which is how a test names the thing an edit is anchored to without counting.
 func firstNode(t *testing.T, s *fileScan, want func(ast.Node) bool) ast.Node {
 	t.Helper()
 
@@ -369,13 +305,6 @@ func firstNode(t *testing.T, s *fileScan, want func(ast.Node) bool) ast.Node {
 	return found
 }
 
-// TestWhatOneEditDoesToALoopsMeasure is [fileScan.applyToLoop], which is where
-// a rule name becomes a claim about termination.
-//
-// Three groups, and the third is the one worth stating: a rule that touches
-// neither the condition nor the step leaves the measure alone, and a loop whose
-// measure is untouched still stops. Saying nothing there would lose every
-// arithmetic mutant in a loop body, which is most of them.
 func TestWhatOneEditDoesToALoopsMeasure(t *testing.T) {
 	t.Parallel()
 
@@ -495,12 +424,6 @@ func TestWhatOneEditDoesToALoopsMeasure(t *testing.T) {
 	}
 }
 
-// TestAnEditIsInsideTheNodeItsPositionsLieWithin pins [fileScan.editsNode],
-// which is how a rule name is matched to the part of the loop it touches.
-//
-// The absent node is the case that matters: `for i := 0; i < n; ` has no post
-// statement, and asking whether an edit is inside one has to be answered rather
-// than dereferenced.
 func TestAnEditIsInsideTheNodeItsPositionsLieWithin(t *testing.T) {
 	t.Parallel()
 
@@ -522,14 +445,6 @@ func TestAnEditIsInsideTheNodeItsPositionsLieWithin(t *testing.T) {
 	}
 }
 
-// TestTheWalkOutwardStopsAtTheFunctionItIsIn pins
-// [fileScan.enclosingInductionLoop]: the nearest enclosing `for`, and nothing
-// past the function boundary.
-//
-// A function literal is a boundary as much as a declaration is. A loop outside
-// a closure does not bound what runs inside it — the closure may be called
-// anywhere, any number of times — so an edit in the closure's body is an edit
-// the loop says nothing about.
 func TestTheWalkOutwardStopsAtTheFunctionItIsIn(t *testing.T) {
 	t.Parallel()
 
@@ -570,12 +485,6 @@ func TestTheWalkOutwardStopsAtTheFunctionItIsIn(t *testing.T) {
 	}
 }
 
-// TestEveryBoundaryMovingRuleNamesTheOperatorItProduces pins [movedComparison]
-// against the rule names the registry holds, in both directions of each pair.
-//
-// The four are written out rather than derived, so a rule renamed in the
-// registry and not here answers ILLEGAL — which the caller reads as a loop
-// whose measure it cannot follow, rather than as a wrong answer.
 func TestEveryBoundaryMovingRuleNamesTheOperatorItProduces(t *testing.T) {
 	t.Parallel()
 
@@ -593,14 +502,6 @@ func TestEveryBoundaryMovingRuleNamesTheOperatorItProduces(t *testing.T) {
 	}
 }
 
-// TestNoProofIsMadeAboutALoopThisPhaseCannotRead is
-// [fileScan.terminationProof]'s refusal, from the side that has no loop at all.
-//
-// Every refusal here is silent, which is the whole design: a proof is an
-// optimisation a consumer may use, so its absence is not a decision anybody
-// looks up. What the silence must not be is a proof about a loop that was never
-// read -- an edit outside any loop has no measure, and reasoning about the zero
-// value of one would be reasoning about a loop that does not exist.
 func TestNoProofIsMadeAboutALoopThisPhaseCannotRead(t *testing.T) {
 	t.Parallel()
 
@@ -641,14 +542,6 @@ func TestNoProofIsMadeAboutALoopThisPhaseCannotRead(t *testing.T) {
 	}
 }
 
-// TestAProofNamesTheLoopsOwnCoordinates is the other half of the same call, and
-// the half a `//line` directive can move.
-//
-// The coordinate published is the unadjusted one, exactly as every other
-// coordinate this package reports: a directive relocates a *compiler*
-// diagnostic, and what a consumer of this proof has in front of it is the file
-// the snapshot holds. A proof pointing at the generator's input would name a
-// line nobody can open.
 func TestAProofNamesTheLoopsOwnCoordinates(t *testing.T) {
 	t.Parallel()
 
@@ -668,8 +561,6 @@ func TestAProofNamesTheLoopsOwnCoordinates(t *testing.T) {
 	if proof.Verdict != TerminationBounded {
 		t.Errorf("verdict = %q, want %q", proof.Verdict, TerminationBounded)
 	}
-	// The `for` is the fifth line of the file as it is written, and the
-	// directive claims the file is a different one starting at 100.
 	if proof.LoopLine != 5 {
 		t.Errorf("the proof names line %d, want the line the snapshot holds", proof.LoopLine)
 	}

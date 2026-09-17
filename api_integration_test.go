@@ -3,20 +3,6 @@
 
 //go:build integration
 
-// The engine API's toolchain-backed suite, and the shared sessions the rest of
-// the tagged root files read.
-//
-// Every test in this file opens a workspace, which snapshots a module, probes a
-// `go` toolchain and compiles it; most of them go on to prepare a session,
-// which instruments two trees, validates both and builds four test binaries.
-// None of it can run on a machine without Go, and all of it is measured in tens
-// of seconds — so it is the integration tier, and `go test .` is the compiler
-// alone.
-//
-// TestMain lives here and moves with the tag, which is correct rather than
-// convenient: the only thing it does is release the sessions this file prepares,
-// so a unit tier without those sessions needs no TestMain at all.
-
 package gomutants_test
 
 import (
@@ -39,189 +25,34 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// TestMain releases the sessions the probe tests share.
-//
-// They are prepared lazily and once, rather than per test, because preparing
-// one is the expensive thing this file does — a snapshot, a discovery pass, two
-// instrumented trees, two compile validations and four test binaries — while
-// every probe assertion below is about the answers *one* prepared session
-// gives. Sharing them means the file cannot use t.Cleanup to release them, so
-// the release happens here, after the last test that could still reach one.
-// workspaceBarrierEnv switches the barrier subprocess on. Its presence, not its
-// value, is what [testkit.HelperEnabled] reads.
 const workspaceBarrierEnv = "WORKSPACE_EXEC_BARRIER_HELPER"
 
 func TestMain(m *testing.M) {
-	// The suite runs through [mutantkit.Main] rather than through m.Run
-	// directly, and both halves of that matter. This binary is also the
-	// scripted `go` that fakego_test.go runs — that file is untagged, so it is
-	// in this tier's binary too — and Main is what dispatches to it. It is also
-	// what publishes the private coverage root every re-executed child of this
-	// binary needs, so a suite that called m.Run itself would leave the fake
-	// with nowhere to write coverage output and it would refuse to answer.
 	code := mutantkit.Main(m)
-	// A fake process never reached a test, so there is nothing prepared for it
-	// to release.
 	if mutantkit.IsFakeGo() {
 		os.Exit(code)
 	}
-	// The status rather than a boolean of this file's own, because it is the
-	// only thing here that knows whether anything failed: the sessions are
-	// shared, so no test owns one, and the keep policy's "on failure" has to be
-	// answered for the package as a whole.
 	releasePreparedFixtures(code != 0)
 	os.Exit(code)
 }
 
-// sessionBlockEnv switches the injected fixture's blocking test on. Its value,
-// not merely its presence, is what the test reads, so that an inherited
-// SESSION_BLOCK= from some other tool cannot turn it on by accident.
-//
-// The gate is the same pattern fixtures/probeable uses for its own TestBlocks,
-// and for the same reason. Two of the executions below want a target that
-// outlives its timeout, and the only way to write one is a sleep — but an
-// ungated sleep is paid by everything else that runs the package: the baseline
-// `go test ./...` at the top of this file, the verification run inside Prepare,
-// and every whole-package target. Ten seconds bought twice over, so that two
-// assertions about a timeout could have a target to time out.
-//
-// The gate is also what lets the sleep be a full minute rather than the ten
-// seconds it was. Nothing pays for it now except the two executions that ask,
-// and both of those kill it inside a second — so the length is free, and a long
-// one is what gives [cleanupBound] somewhere to sit.
 const sessionBlockEnv = "SESSION_BLOCK"
 
-// sessionBlockPIDFileEnv names a file the blocking target writes its own pid
-// into, which is how this file proves a target was killed rather than merely
-// waited for.
-//
-// It is written from the fixture's init() rather than from the test function,
-// because init() is the earliest point at which a Go program can do anything at
-// all: it runs before the testing package parses a flag, so the pid is on disk
-// well before the supervisor's budget expires. Recording it inside
-// TestSessionBlocks would race the very timeout the target exists to overrun.
-//
-// The variable is only set by the two executions that need the proof, so every
-// other run of this package — the baseline, the verification, every
-// whole-package target — writes nothing.
 const sessionBlockPIDFileEnv = "SESSION_BLOCK_PIDFILE"
 
-// expectCleanEnv and writeSnapshotEnv are the injected fixture's other two
-// gates, both read by TestSessionEnvironment.
-//
-// They were literals until a test ran the fixture's *whole* suite through
-// Workspace.Exec, which is when it stopped mattering that only one call at a
-// time ever set them. Under `EXPECT_CLEAN=yes` inherited from the host the
-// target asserts things no ordinary run supplies and goes red; under
-// `WRITE_SNAPSHOT=yes` it writes a file into whatever tree it is running in,
-// which for a shared session is that session's prepared snapshot — so an
-// exported variable would not merely fail the test that noticed, it would move
-// the tree every later test in the package measures against. Both are named
-// here and stripped by [hostEnvWithoutFixtureGates] for the same reason the
-// other two are, and both are still supplied per call by the tests that want
-// them.
 const (
 	expectCleanEnv   = "EXPECT_CLEAN"
 	writeSnapshotEnv = "WRITE_SNAPSHOT"
 )
 
-// targetDeathBound is how long a killed target is given to actually be gone.
-//
-// A kill is asynchronous with respect to the wait that returned: internal/runner
-// signals a process group, or ends a job object, and the operating system tears
-// the tree down on its own schedule. Five seconds is far more than that takes
-// and far less than the minute the target would otherwise sleep, so a survivor
-// is still caught with room to spare.
 const targetDeathBound = 5 * time.Second
 
-// targetDeathPoll is how often the probe asks. Fifty milliseconds is short
-// enough that the ordinary case costs one or two reads and long enough not to
-// spin.
 const targetDeathPoll = 50 * time.Millisecond
 
-// cleanupBound is how long a target that was cut off — by its own timeout, or
-// by its caller walking away — may take to come back.
-//
-// It is a promptness check and not a cleanup proof, and the difference is worth
-// stating because the two used to be confused here. What this bound rules out is
-// a call that *returned late*: a supervisor that waited for a tree it should
-// have killed, or a cancellation that stopped being delivered. What it cannot
-// rule out is the tree surviving. If SIGKILL or TerminateJobObject silently
-// stopped working, Exec would still come back inside
-// [runner.TerminationGrace] + [runner.IODrainGrace] — Cmd.WaitDelay closes the
-// pipe whatever the child is doing — while the target went on sleeping for the
-// rest of its minute, and every elapsed check below would pass. That is what
-// [requireTargetIsGone] is for: it asks the operating system whether the pid the
-// target recorded still exists.
-//
-// It is the supervisor's own worst case plus room to start a process, written
-// as that sum rather than as a round number, because a round number cannot say
-// what it rules out. internal/runner gives a process group
-// [runner.TerminationGrace] after SIGTERM before it sends SIGKILL, and then
-// bounds the wait for the output pipe to reach EOF by [runner.IODrainGrace] —
-// which is Cmd.WaitDelay, so it is enforced rather than hoped for. A target
-// that came back later than those two together did not come back late because
-// the supervisor let it: it came back because nothing killed it and it ran to
-// its own end.
-//
-// The two numbers are the two failures it has to sit between, and both of them
-// moved to make room:
-//
-//	twenty seconds of margin  A process start is not free on a loaded Windows
-//	                          runner — Defender reads a fresh binary before it
-//	                          runs — and this bound is not about how fast a
-//	                          process starts. Three seconds put it near enough
-//	                          to that noise for one Windows job to fail on it
-//	                          and the next to pass.
-//	a sixty-second sleep      The failure being ruled out is a target nothing
-//	                          killed, which runs to its own end. Ten seconds
-//	                          left no room above the noise, so the injected
-//	                          TestSessionBlocks now sleeps for a minute — free,
-//	                          because it is gated and nothing else runs it.
-//
-// So 24 seconds is far above any process start and far below the minute an
-// unkilled target costs, which is the gap this assertion lives in. It is also
-// below the 30-second budget the cancelled execution below carries, so a
-// cancellation that stopped working is caught by the same line.
-//
-// Every number this replaces was wrong in one direction or the other. Fifteen
-// seconds was past the old ten-second sleep, so it ruled out nothing whatsoever;
-// five was 750 ms above the escalation ceiling, so it measured the runner's load
-// whenever SIGTERM was actually ignored.
 const cleanupBound = runner.TerminationGrace + runner.IODrainGrace + 20*time.Second
 
-// fixtureGateEnv are every variable [killableExtraTests] reads to switch a
-// target's non-default behaviour on: [sessionBlockEnv] for the minute-long
-// sleeper, [controlFailEnv] for the test that is red on the original program,
-// [expectCleanEnv] for the assertions only a control supplies the conditions
-// for, and [writeSnapshotEnv] for the target that writes into its own tree.
-//
-// They are listed in one place so that adding a gate to [killableExtraTests]
-// and forgetting to strip it is a change to this slice rather than a failure
-// three tests away. A gate is only a gate while nothing else can set it — and
-// the fixture's whole suite is run through Workspace.Exec, so every one of them
-// is reachable by an ordinary `go test ./...` and not only by the call that
-// meant to set it.
 var fixtureGateEnv = []string{sessionBlockEnv, controlFailEnv, expectCleanEnv, writeSnapshotEnv}
 
-// hostEnvWithoutFixtureGates is this process's environment with every
-// [fixtureGateEnv] variable taken out of it.
-//
-// gomutants.Open freezes an environment — the one it is handed, or os.Environ()
-// when it is handed none — and every command and target the workspace goes on to
-// run inherits that frozen copy. So a developer who exported one of these once,
-// or a runner that inherited it from some other tool, would have the gated
-// target run in every execution that did not ask for it: the baseline
-// `go test ./...`, the verification inside Prepare, and every whole-package
-// target. SESSION_BLOCK costs a minute each time and turns the ungated half of
-// TestSessionBlocksOnlyWhenAsked into the gated one; CONTROL_FAIL is worse,
-// because it turns the fixture's suite *red* — the baseline fails, Prepare's
-// verification fails, and nothing in the output would mention why.
-//
-// Removing the entry rather than appending an empty one, because "the last
-// duplicate wins" is a rule about os/exec that this file should not have to
-// rely on. The comparison folds case because the Windows environment does: a
-// `session_block` set in a shell there is the same variable os.Getenv finds.
 func hostEnvWithoutFixtureGates() []string {
 	return slices.DeleteFunc(os.Environ(), func(entry string) bool {
 		name, _, _ := strings.Cut(entry, "=")
@@ -231,18 +62,6 @@ func hostEnvWithoutFixtureGates() []string {
 	})
 }
 
-// requireTargetIsGone is the cleanup proof: the process the target recorded is
-// no longer running.
-//
-// It polls rather than asking once, because the kill is asynchronous with
-// respect to the wait that returned — internal/runner signals a process group or
-// ends a job object, and the tree comes down on the operating system's schedule,
-// not before Exec's last statement.
-//
-// A missing pid file is reported rather than passed over. It means the target
-// was cut off before it executed a single line of Go, which is not a failure of
-// cleanup — but a proof that quietly skipped itself is the exact shape of defect
-// this whole file is about, so it says so instead.
 func requireTargetIsGone(t *testing.T, pidFile, what string) {
 	t.Helper()
 
@@ -277,30 +96,8 @@ func requireTargetIsGone(t *testing.T, pidFile, what string) {
 	}
 }
 
-// blockGateBound is how long the same target may take when nothing asked it to
-// block.
-//
-// Five seconds rather than a tighter number for the same reason: what this
-// rules out is a target that slept when nothing asked it to, and any bound
-// comfortably between a process start and the session's own ten-second default
-// budget proves the gate held. The *first* start of a freshly linked binary is
-// not such a process start — macOS hashes the whole image, which has measured
-// eight and a half seconds on a loaded machine — so the test pays that once in
-// a throwaway execution before it starts the clock. A two-second bound would additionally assert
-// that the runner was not busy, which is not a claim about go-mutants. It is
-// deliberately unmoved by the minute the gated sleep now lasts: an ungated
-// target that slept would be cut off at that default long before the minute
-// was up, and would fail this line either way.
 const blockGateBound = 5 * time.Second
 
-// killableExtraTests is the source fixtures/killable is extended with for the
-// tests below.
-//
-// It lives here rather than in the fixture because these targets are about the
-// *API* — the environment a session composes, the fuzz artefacts it captures,
-// the output budget it honours — and not about the mutants the fixture exists
-// to prove killable. It is one string rather than one per test so that the
-// package a session prepares is the same package whichever test prepared it.
 const killableExtraTests = `package killable
 
 import (
@@ -401,8 +198,6 @@ func TestControlFails(t *testing.T) {
 }
 `
 
-// killableRoot copies fixtures/killable into a directory of the test's own and
-// adds [killableExtraTests] to it.
 func killableRoot(t *testing.T) string {
 	t.Helper()
 	root := copyFixture(t, "killable")
@@ -416,10 +211,6 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 	root := killableRoot(t)
 
 	parent := t.TempDir()
-	// Without the fixture's gate variables, for the reason spelled out on
-	// hostEnvWithoutFixtureGates: an inherited SESSION_BLOCK would be paid a
-	// minute at a time by the baseline below and by the verification inside
-	// Prepare, and an inherited CONTROL_FAIL would make both of them red.
 	env := append(hostEnvWithoutFixtureGates(),
 		"GO_MUTANTS_ACTIVE=must-be-scrubbed",
 		"FROZEN_AT_OPEN=before",
@@ -486,25 +277,6 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 		t.Fatalf("freshly prepared snapshot already changed: %+v", changes)
 	}
 
-	// The binary is run once before anything is timed, and the reason is the
-	// whole of why the two proofs below were flaky.
-	//
-	// Both of them need the target to reach its own `init` -- that is where it
-	// records its pid, and without a pid the cleanup proof is vacuous rather
-	// than failing. What stands between `exec` and `init` is the loader, and on
-	// the two platforms that inspect a freshly written executable the first time
-	// anything runs it -- macOS hashing the whole image for its signature,
-	// Windows scanning it -- that cost is a fact about the machine and its load
-	// rather than about this code. It was measured here at over two seconds
-	// under a full parallel suite, which is how a budget of two seconds came to
-	// decide whether a proof about process cleanup ran at all.
-	//
-	// So the cost is paid outside the window: `-test.run=^$` builds nothing,
-	// runs no test, and exits at once, leaving the image warm. What the budget
-	// below then has to cover is the target's own first few instructions, which
-	// is not a number that varies with the machine. This is the same discipline
-	// internal/testkit's step alarm states at length -- a bound may end a hang
-	// and must never decide whether something was fast enough.
 	if _, warmErr := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:  untested.ID,
 		Package: ".",
@@ -514,13 +286,6 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 		t.Fatalf("warming the prepared test binary: %v", warmErr)
 	}
 
-	// Each blocking execution gets a pid file of its own, so that the second
-	// proof cannot be satisfied by what the first target wrote.
-	//
-	// Two seconds rather than the quarter of one this used to allow, because the
-	// target still has something to do before it is cut off, and the warm-up
-	// above is what keeps that something from being the loader. It is two orders
-	// below the minute the target sleeps for.
 	const blockingBudget = 2 * time.Second
 	timeoutPIDFile := filepath.Join(t.TempDir(), "timed-out.pid")
 	cancelPIDFile := filepath.Join(t.TempDir(), "cancelled.pid")
@@ -592,15 +357,6 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 			"-test.fuzz=^FuzzSessionClamp$",
 			"-test.fuzztime=5s",
 		},
-		// Six times the fuzz budget, stated here rather than inherited from the
-		// session, because this is the one execution in the file whose target
-		// has a budget of its own. `-test.fuzztime=5s` is five seconds of
-		// *fuzzing*, and the binary still has to start, seed the corpus,
-		// schedule its workers and write the crasher it finds; on a loaded CI
-		// runner that overhead put the whole thing past a tighter bound and the
-		// step failed with `context deadline exceeded` rather than with
-		// anything about mutation (PR #21, run 34030895957). A timeout whose
-		// margin is a guess belongs next to the number it is a margin over.
 		Timeout: 30 * time.Second,
 	})
 	if err != nil {
@@ -689,14 +445,6 @@ func TestPublicSessionReusesOnePreparedSnapshot(t *testing.T) {
 	}
 }
 
-// TestWorkspaceExecReportsTruncation pins the fact a consumer had to guess at:
-// whether a command's output is all of it.
-//
-// Before this, the only sign was the notice line, so a consumer that cared had
-// to match a string go-mutants formats for humans — which turns a diagnostic
-// into a wire format that cannot be reworded. `Truncated` is the fact and
-// `TotalBytes` is the size; the prefix stays exported for the renderers and for
-// the consumers that were matching it, but nothing has to.
 func TestWorkspaceExecReportsTruncation(t *testing.T) {
 	root := killableRoot(t)
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
@@ -739,14 +487,6 @@ func TestWorkspaceExecReportsTruncation(t *testing.T) {
 	}
 }
 
-// TestSessionExecHonoursOutputLimit is the same claim for a mutant execution,
-// plus the one that made this worth an API change: a caller can now say how
-// much output it is willing to hold.
-//
-// A mutant run silently used the runner's one-mebibyte default, which is both
-// far more than a console wants and far less than a consumer archiving the
-// evidence of a kill might. `OutputTail` is unchanged and stays the fifty-line
-// summary; `Output` is the whole of what the budget kept, and the two agree.
 func TestSessionExecHonoursOutputLimit(t *testing.T) {
 	root := killableRoot(t)
 	parent := t.TempDir()
@@ -778,16 +518,6 @@ func TestSessionExecHonoursOutputLimit(t *testing.T) {
 
 	const limit = 4096
 	clamp := mutantkit.APIMutantAt(t, session.Catalog(), "clamp.go", "lt-to-le")
-	// The two targets together: one prints far past the budget and the other is
-	// what turns the suite red, so the capture that comes back is a *deciding*
-	// binary's and not merely a chatty one's.
-	//
-	// And both of them have to run. An execution stops at the first test that
-	// fails, and the one that fails here is registered first -- clamp_test.go
-	// sorts before session_test.go, which is the order a test binary registers
-	// its tests in -- so the chatty one would never start. Turning that off is
-	// what a caller does when it wants the whole binary anyway, and the flag
-	// lands after the engine's own, which is the documented way to say so.
 	result, err := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:      clamp.ID,
 		Package:     "fixture.example/killable",
@@ -815,17 +545,6 @@ func TestSessionExecHonoursOutputLimit(t *testing.T) {
 	}
 }
 
-// lastLines is the rule docs/library.md documents OutputTail by: the last n
-// lines of a capture, with the carriage returns stripped.
-//
-// It is written from that sentence rather than transcribed from the trimming
-// helper inside internal/execute, which is the whole point of having it. A copy
-// of the implementation would agree with the implementation by construction and
-// would go on agreeing with it through any change to either; this states what a
-// consumer was promised, and disagreeing with it is the failure worth having.
-//
-// The trailing newline a stream ends with is a terminator and not an empty last
-// line, which is the one place the sentence needs reading carefully.
 func lastLines(output []byte, n int) string {
 	text := strings.TrimRight(string(output), "\n")
 	if text == "" {
@@ -841,33 +560,8 @@ func lastLines(output []byte, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// TestSessionBlocksOnlyWhenAsked is the gate on the injected sleep, as a fact
-// rather than as a comment.
-//
-// fixtures/killable gets a test that sleeps for a minute, because two of the
-// assertions above need a target that outlives its timeout and a sleep is the
-// only way to write one. Every other execution of that package would pay for it
-// unless it is gated — the baseline, the verification inside Prepare, every
-// whole-package target — which is where a third of this file's minutes used to
-// go, and a deleted `if` would put them straight back without failing anything.
-//
-// So both directions are asserted. Without the variable the target returns
-// promptly and the mutant survives; with it, the same target and the same
-// mutant time out. A gate that was removed fails the first half, and a gate
-// whose variable was renamed on one side fails the second.
-//
-// The session is prepared without verification, which is what keeps this test
-// affordable: nothing here needs the fixture's own suite to have been run
-// against the instrumented tree, only a binary to execute.
 func TestSessionBlocksOnlyWhenAsked(t *testing.T) {
 	root := killableRoot(t)
-	// A hostile host environment, set on purpose. Open freezes an environment
-	// at the moment it is called and every execution below inherits it, so a
-	// developer or a runner with SESSION_BLOCK already exported would turn the
-	// ungated half of this test into the gated one — and it would read as the
-	// engine failing to kill a target rather than as an inherited variable.
-	// Setting it here is what makes hostEnvWithoutFixtureGates' removal a
-	// claim this test can fail rather than a precaution nobody exercises.
 	t.Setenv(sessionBlockEnv, "yes")
 
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{
@@ -888,18 +582,6 @@ func TestSessionBlocksOnlyWhenAsked(t *testing.T) {
 	t.Cleanup(func() { _ = session.Close() })
 	mutant := mutantkit.APIMutantAt(t, session.Catalog(), "untested.go", "neq-to-eq")
 
-	// One throwaway execution first, selecting no test at all, so that the
-	// timed one below is not also paying for the first exec of a freshly
-	// linked binary.
-	//
-	// It is not a precaution about a slow machine. A test binary this session
-	// compiled has never been run, and on macOS the kernel hashes the whole
-	// image the first time one is — tens of megabytes of it — which measured
-	// eight and a half seconds here against a bound of five. What this test is
-	// about is whether a sleep happened, and a bound that a process start can
-	// exhaust cannot tell the two apart. The warm-up asserts nothing, on
-	// purpose: what it is for is the clock, and any claim about it would be a
-	// claim about the machine.
 	if _, warmErr := session.Exec(t.Context(), gomutants.ExecRequest{
 		Mutant:  mutant.ID,
 		Package: ".",
@@ -941,9 +623,6 @@ func TestSessionBlocksOnlyWhenAsked(t *testing.T) {
 	}
 }
 
-// TestWorkspaceExecBarrierHelper is the subprocess body used below. Reusing
-// the already-built test executable keeps this concurrency test independent
-// of a platform's Go build-cache scheduling and cold compilation speed.
 func TestWorkspaceExecBarrierHelper(t *testing.T) {
 	if !testkit.HelperEnabled(workspaceBarrierEnv) {
 		return
@@ -966,12 +645,6 @@ func TestWorkspaceExecBarrierHelper(t *testing.T) {
 	}
 }
 
-// TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories pins the
-// contract baseline collectors depend on. Both commands must enter the helper
-// before either is released; a serialized Workspace would leave the second
-// marker absent. The value in each marker is that command's TMPDIR, which must
-// also be distinct so concurrency cannot turn temporary files into shared
-// state.
 func TestWorkspaceExecRunsConcurrentlyWithPrivateTemporaryDirectories(t *testing.T) {
 	root := copyFixture(t, "simple")
 	workspace, err := gomutants.Open(t.Context(), root, gomutants.OpenOptions{TempDirectory: t.TempDir()})
@@ -1078,10 +751,6 @@ func TestWriteSnapshot(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "commands changed the frozen snapshot:\nadded command-artifact.txt") {
 		t.Fatalf("Prepare after drift = %v", err)
 	}
-	// The message is the half a user reads; this is the half a consumer acts
-	// on. A tree that moved under the engine is the one preparation failure
-	// whose remedy belongs to the caller — it wrote the file — so the paths and
-	// the kinds are carried rather than only printed.
 	var drift *gomutants.DriftError
 	if !errors.As(err, &drift) {
 		t.Fatalf("Prepare after drift = %v, want a *DriftError", err)
@@ -1104,22 +773,6 @@ func TestWriteSnapshot(t *testing.T) {
 	}
 }
 
-// TestPrepareRefusesDriftFromTheBaselineItself is the same refusal as
-// [TestPrepareRefusesDriftFromAWorkspaceCommand] with the other author.
-//
-// There the caller ran a command that wrote into the frozen tree, and the
-// remedy was plainly theirs. Here nobody ran anything: preparation's own
-// verification pass runs the module's tests once against pristine files with
-// the instrumented builds in place, and the module's tests write a file into
-// the package directory they run in. That is an ordinary thing for a test suite
-// to do — a golden regenerated on the way past, a generator run as a test — and
-// it is exactly as fatal, because every mutant afterwards would be measured
-// against a tree the baseline never saw.
-//
-// The stage is the assertion that separates the two. A `*DriftError` naming
-// "commands" would send a consumer looking for a command it never ran; naming
-// "verification" says the suite did it, which is the only thing that leads
-// anywhere.
 func TestPrepareRefusesDriftFromTheBaselineItself(t *testing.T) {
 	root := copyFixture(t, "selfwriting")
 	workspace, err := gomutants.Open(t.Context(), root)
@@ -1128,8 +781,6 @@ func TestPrepareRefusesDriftFromTheBaselineItself(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workspace.Close() })
 
-	// The default PrepareOptions: `go test ./...` as the verification command,
-	// which is what makes this the *baseline's* drift rather than a caller's.
 	if _, err = workspace.Prepare(t.Context(), gomutants.PrepareOptions{}); err == nil {
 		t.Fatal("Prepare accepted a module whose own tests write into the snapshot")
 	}
@@ -1153,23 +804,11 @@ func TestPrepareRefusesDriftFromTheBaselineItself(t *testing.T) {
 	}
 }
 
-// copyFixture copies one corpus module into a directory of the test's own.
-//
-// It is [testkit.Copy]: the fixtures are checked in and `git status --porcelain
-// fixtures/` is a CI gate, while a workspace opened here writes a snapshot, a
-// report directory and scratch beside the module it was pointed at. The harness
-// also ages the copy, which is not cosmetic — cmd/go indexes a package directory
-// only when every file in it is at least two seconds old, so a tree copied a
-// moment ago is a different input from the same tree on a user's disk.
 func copyFixture(t *testing.T, name string) string {
 	t.Helper()
 	return testkit.Copy(t, name)
 }
 
-// copyFixtureTree is [copyFixture] without a testing.T, so that a fixture can
-// also be copied for a session prepared once for the whole package rather than
-// once per test. It stays hand-written for exactly that reason: every helper in
-// the harness takes a [testing.TB], and the shared session has none.
 func copyFixtureTree(name, destination string) error {
 	source := filepath.Join("fixtures", name)
 	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -1192,29 +831,8 @@ func copyFixtureTree(name, destination string) error {
 	})
 }
 
-// The probe session, against fixtures/probeable.
-//
-// The fixture holds three mutants and nothing else: two return-value mutants
-// that a probe tree can speak for, and one boolean literal it cannot. Every
-// assertion below is about one of the two directions the layer has to get
-// right — a probed mutant a test infected is reported, and everything the
-// measurement cannot vouch for is reported as no facts rather than as nothing
-// infected.
-
-// probeableModule is the fixture's import path, as ProbeRequest.Package takes
-// it.
 const probeableModule = "fixture.example/probeable"
 
-// probeableRules names the fixture's mutants by the rule that produced each,
-// which is how every test below picks one out of the catalogue: no two
-// functions in the fixture share an operator, so a rule names exactly one
-// mutant whatever order the catalogue settles on.
-//
-// doubledRule is the unprobed specimen. Its statement's operands are calls, so
-// no probe form may evaluate them a second time or skip one on the mutant's
-// behalf -- which is why it is the right mutant to state the "absence carries
-// no information" invariant against, and why it stays the right one as forms
-// are added.
 const (
 	widthRule   = "return-zero-numeric"
 	labelRule   = "return-empty-string"
@@ -1222,13 +840,6 @@ const (
 	doubledRule = "add-to-sub"
 )
 
-// A preparedFixture is one workspace and session prepared over
-// fixtures/probeable, together with the temporary directory holding both
-// snapshots.
-//
-// The parent is kept because two of the tests are about what is *in* it: a
-// session prepared with Probe carries a second snapshot beside the mutant one,
-// and a session prepared without it must carry no such thing.
 type preparedFixture struct {
 	parent    string
 	release   func(failed bool)
@@ -1238,32 +849,9 @@ type preparedFixture struct {
 	events    []gomutants.PrepareEvent
 	err       error
 
-	// keepTemp is what the workspace was opened with, which under the keep
-	// policy is true — see [prepareFixtureWith]. It is carried here because it
-	// changes what a per-call temporary directory does after the call returns,
-	// and [expectScratchAfterCall] is where that difference is stated.
 	keepTemp bool
 }
 
-// expectScratchAfterCall is what a shared session's per-call temporary
-// directories look like after one call, under either policy.
-//
-// The two answers are both correct and the difference is not a detail. A
-// session opened without KeepTemp removes each per-call scratch as the call
-// ends, so the right expectation is that the set is exactly what it was: a
-// session that leaked one per call would fill a machine over a run, and a count
-// could be satisfied by a leak and a removal cancelling out.
-//
-// Under the keep policy the shared sessions are opened *with* KeepTemp, because
-// that is the only way a kept package scratch holds the trees the sessions
-// actually ran in rather than the fixture copy alone — and KeepTemp keeps every
-// per-execution scratch by design, that being the directory the target's TMPDIR
-// pointed at and where anything it wrote went. So the expectation becomes
-// exactly one new directory: the one this call ran in, kept on purpose.
-//
-// Anything the call *removed* is wrong under both policies and is reported
-// separately, because a call tidying up somebody else's directory is a
-// different defect from one leaking its own.
 func expectScratchAfterCall(t *testing.T, prepared *preparedFixture, before, after []string) {
 	t.Helper()
 
@@ -1301,30 +889,17 @@ func expectScratchAfterCall(t *testing.T, prepared *preparedFixture, before, aft
 }
 
 var (
-	// probedFixture and unprobedFixture are the two probeable sessions this file
-	// shares, each prepared at most once and only if a test asks for it.
 	probedFixture   = sync.OnceValue(func() *preparedFixture { return prepareProbeable(true) })
 	unprobedFixture = sync.OnceValue(func() *preparedFixture { return prepareProbeable(false) })
 
-	// rejectedFixture is the third: fixtures/rejectable, whose candidates
-	// include three whose mutated copy is not a program. It is the only shared
-	// session with a non-empty Catalog.Rejections, and every contract claim
-	// about a rejection is vacuous without one. It asks for no probe tree and no
-	// verification, because nothing needs this session to measure anything —
-	// only to have rejected something.
 	rejectedFixture = sync.OnceValue(func() *preparedFixture {
 		return prepareFixture("rejectable", gomutants.PrepareOptions{SkipVerify: true})
 	})
 
-	// preparedMu guards the register TestMain releases. A sync.OnceValue cannot
-	// be asked whether it ever ran, and preparing a session just to close it
-	// would cost the suite the very minute the sharing saves.
 	preparedMu       sync.Mutex
 	preparedFixtures []*preparedFixture
 )
 
-// prepareProbeable prepares one probeable session with or without the probe
-// tree.
 func prepareProbeable(probe bool) *preparedFixture {
 	return prepareFixture("probeable", gomutants.PrepareOptions{
 		Probe:              probe,
@@ -1334,28 +909,10 @@ func prepareProbeable(probe bool) *preparedFixture {
 	})
 }
 
-// prepareFixture copies the named fixture, opens a workspace over it, and
-// prepares one session with the given options. PrepareOptions.Trace is supplied
-// here rather than by the caller, because the recorded events are one of the
-// things the shared value carries.
-//
-// It takes no testing.T because it runs under a sync.Once that outlives the
-// test that triggered it; a failure is carried in the value and reported by
-// whichever test asks for it first.
 func prepareFixture(name string, options gomutants.PrepareOptions) *preparedFixture {
 	return prepareFixtureWith(name, nil, gomutants.OpenOptions{}, options)
 }
 
-// prepareFixtureWith is [prepareFixture] for a caller that also has something
-// to say about how the workspace is opened. TempDirectory is not among those
-// things: the parent is this helper's, because it is what the value carries and
-// what releasing one removes.
-//
-// inject is source written into the copy before the workspace is opened, keyed
-// by module-relative path. It is how a shared session gets the targets a test
-// needs without those targets living in `fixtures/`, which is a checked-in tree
-// a CI gate requires to stay clean — and without any test being able to add a
-// file to a session that is already prepared.
 func prepareFixtureWith(
 	name string, inject map[string]string, open gomutants.OpenOptions, options gomutants.PrepareOptions,
 ) *preparedFixture {
@@ -1364,9 +921,6 @@ func prepareFixtureWith(
 	preparedFixtures = append(preparedFixtures, prepared)
 	preparedMu.Unlock()
 
-	// testkit.PackageScratch rather than os.MkdirTemp: under the keep policy a
-	// package whose tests failed keeps this directory instead of removing it,
-	// and prints where it is.
 	parent, release := testkit.PackageScratch(name + "-fixture")
 	prepared.parent = parent
 	prepared.release = release
@@ -1381,18 +935,6 @@ func prepareFixtureWith(
 		return prepared
 	}
 	open.TempDirectory = parent
-	// KeepTemp under the keep policy, and it is what makes a kept directory
-	// worth opening. Close removes the engine's own temporary tree — the
-	// snapshot the session ran, the probe tree beside it, the per-execution
-	// scratch — and TestMain closes each workspace before releasing its
-	// directory, which is the right order: a directory somebody is reading must
-	// not still be written to. Without this the kept parent held the fixture
-	// copy and nothing else, and the fixture copy is the one part of a failed
-	// session a reader can already get from `fixtures/`.
-	//
-	// It costs nothing when nothing is being kept, and when the policy is on and
-	// the package passes, `release(false)` removes the parent with the kept
-	// trees inside it.
 	open.KeepTemp = testkit.KeepPolicy() != testkit.KeepNever
 	prepared.keepTemp = open.KeepTemp
 	workspace, err := gomutants.Open(context.Background(), root, open)
@@ -1415,14 +957,6 @@ func prepareFixtureWith(
 	return prepared
 }
 
-// writeInjected writes the injected sources into a fixture copy.
-//
-// The directories above each file are created first, because an injected path
-// is module-relative and nothing says it is at the top of the module: a fixture
-// that needs a target in `nested/dir/` would otherwise fail with a "no such file
-// or directory" naming a path the caller wrote perfectly correctly, from inside
-// a sync.Once whose error surfaces in whichever test asked for the session
-// first.
 func writeInjected(root string, inject map[string]string) error {
 	for path, source := range inject {
 		target := filepath.Join(root, filepath.FromSlash(path))
@@ -1436,14 +970,6 @@ func writeInjected(root string, inject map[string]string) error {
 	return nil
 }
 
-// TestInjectedSourceReachesADirectoryThatDoesNotExistYet is the one claim
-// [writeInjected] makes that a caller cannot see for itself.
-//
-// Every injection in this package writes to the top of the module today, so a
-// writer that could not make a directory looked perfectly correct — until the
-// first fixture that needs a target in a package of its own, where the failure
-// arrives as a prepared session that could not be prepared, out of a sync.Once,
-// in whichever test happened to ask for it first.
 func TestInjectedSourceReachesADirectoryThatDoesNotExistYet(t *testing.T) {
 	t.Parallel()
 
@@ -1541,14 +1067,6 @@ func TestPrepareTraceReportsEveryPhaseInOrder(t *testing.T) {
 	}
 }
 
-// releasePreparedFixtures closes every session this file prepared and releases
-// the directories they lived in, keeping them when the package failed and the
-// policy says to.
-//
-// The workspace is closed first in either case: closing is what removes the
-// engine's own temporary tree and what a KeepTemp is measured against, and a
-// directory kept with a session still open would be a directory being written
-// to while somebody read it.
 func releasePreparedFixtures(failed bool) {
 	preparedMu.Lock()
 	defer preparedMu.Unlock()
@@ -1563,8 +1081,6 @@ func releasePreparedFixtures(failed bool) {
 	preparedFixtures = nil
 }
 
-// probeable returns the shared session prepared with a probe tree, failing the
-// calling test if preparing it did not work.
 func probeable(t *testing.T) *preparedFixture {
 	t.Helper()
 	prepared := probedFixture()
@@ -1574,7 +1090,6 @@ func probeable(t *testing.T) *preparedFixture {
 	return prepared
 }
 
-// unprobeable returns the shared session prepared without one.
 func unprobeable(t *testing.T) *preparedFixture {
 	t.Helper()
 	prepared := unprobedFixture()
@@ -1584,8 +1099,6 @@ func unprobeable(t *testing.T) *preparedFixture {
 	return prepared
 }
 
-// rejectable returns the shared session over the fixture whose validation
-// rejects, which is the only one whose catalogue carries rejections.
 func rejectable(t *testing.T) *preparedFixture {
 	t.Helper()
 	prepared := rejectedFixture()
@@ -1595,9 +1108,6 @@ func rejectable(t *testing.T) *preparedFixture {
 	return prepared
 }
 
-// snapshotDirectories counts the snapshot directories under a temporary parent.
-// A probe tree is a second snapshot beside the mutant one, so the count is how
-// a test says whether one was built without reaching into the session.
 func snapshotDirectories(t *testing.T, parent string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(parent)
@@ -1613,8 +1123,6 @@ func snapshotDirectories(t *testing.T, parent string) []string {
 	return snapshots
 }
 
-// probeOf runs one target against the shared probe tree and fails the test if
-// the pass could not be made at all.
 func probeOf(t *testing.T, session *gomutants.Session, request gomutants.ProbeRequest) gomutants.ProbeResult {
 	t.Helper()
 	result, err := session.Probe(t.Context(), request)
@@ -1631,23 +1139,6 @@ func probeOf(t *testing.T, session *gomutants.Session, request gomutants.ProbeRe
 	return result
 }
 
-// TestPrepareWithProbeMarksProbedMutants pins which mutants the probe tree
-// speaks for.
-//
-// The distinction is the whole safety of the layer. A mutant with a form had
-// its site compiled into the probe tree, so its absence from an infection log
-// is a fact. `add-to-sub` on a statement whose operands are calls has no form
-// and never will: a probe stands in for a mutant by evaluating what the
-// original evaluates, and an operand with an effect is one no rewrite may
-// evaluate twice or skip on the mutant's behalf. The file holding it comes out
-// of the probe pass with nothing written for it, so it can never be recorded,
-// and a consumer reading its absence as "not infected" would skip the test that
-// kills it. Probed is what tells the two apart, and a validation that merely
-// accepted every mutant would say nothing about it.
-//
-// The rule rather than the family decides, which is what the boolean form
-// changed: `true-to-false` is not a return-value rule and is measured all the
-// same, where it stands.
 func TestPrepareWithProbeMarksProbedMutants(t *testing.T) {
 	catalog := probeable(t).catalog
 	if len(catalog.Mutants) != 4 {
@@ -1669,13 +1160,6 @@ func TestPrepareWithProbeMarksProbedMutants(t *testing.T) {
 	}
 }
 
-// TestPrepareWithoutProbeBuildsNoProbeTree is the other half of the option: a
-// session that did not ask for a probe tree pays for none.
-//
-// The assertion is about the directory rather than about the clock, because
-// "Prepare was not slower" is not something a test can state; a second snapshot
-// beside the first is exactly what building a probe tree leaves behind, and no
-// mutant may claim to be probed without one.
 func TestPrepareWithoutProbeBuildsNoProbeTree(t *testing.T) {
 	prepared := unprobeable(t)
 	if snapshots := snapshotDirectories(t, prepared.parent); len(snapshots) != 1 {
@@ -1689,9 +1173,6 @@ func TestPrepareWithoutProbeBuildsNoProbeTree(t *testing.T) {
 	}
 }
 
-// TestProbeWithoutPreparationIsAnError pins the refusal a consumer has to be
-// able to recognise: a session with no probe tree cannot answer the question at
-// all, and must say so rather than answer it emptily.
 func TestProbeWithoutPreparationIsAnError(t *testing.T) {
 	prepared := unprobeable(t)
 	result, err := prepared.session.Probe(t.Context(), gomutants.ProbeRequest{
@@ -1709,13 +1190,6 @@ func TestProbeWithoutPreparationIsAnError(t *testing.T) {
 	}
 }
 
-// TestProbeReportsTheMutantsATestInfected is the measurement itself: a test
-// that reached a probed site with a differing value names that mutant, and a
-// test that never called the function does not.
-//
-// Both halves are needed. A pass that reported every probed mutant for every
-// test would satisfy the first on its own and would license nothing, and one
-// that reported none would satisfy the second and would license everything.
 func TestProbeReportsTheMutantsATestInfected(t *testing.T) {
 	prepared := probeable(t)
 	width := mutantkit.APIByRule(t, prepared.catalog, widthRule)
@@ -1753,15 +1227,6 @@ func TestProbeReportsTheMutantsATestInfected(t *testing.T) {
 	}
 }
 
-// TestProbeNeverReportsAnUnprobedMutant pins the invariant a consumer's
-// fallback rests on: an unprobed mutant is absent from every measurement, so
-// its absence carries no information and the consumer has to treat it as
-// infected by every test.
-//
-// The generated runtime can only record a site it compiled a call for, so this
-// is a statement about the whole pipeline rather than about the reader: a
-// version that ever wrote an unprobed index would make the absence of one
-// meaningful, and the fallback would silently stop being conservative.
 func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 	prepared := probeable(t)
 	unprobed := mutantkit.APIByRule(t, prepared.catalog, doubledRule)
@@ -1769,8 +1234,6 @@ func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 		t.Fatalf("the fixture's effectful statement %s is probed; it is the specimen for the unprobed case",
 			unprobed.DisplayID)
 	}
-	// And the literal beside it is probed, so that "unprobed" here is a fact
-	// about this mutant rather than about a build in which nothing is probed.
 	if ready := mutantkit.APIByRule(t, prepared.catalog, readyRule); !ready.Probed {
 		t.Fatalf("the fixture's boolean literal %s is not probed either, so the contrast is gone",
 			ready.DisplayID)
@@ -1797,16 +1260,6 @@ func TestProbeNeverReportsAnUnprobedMutant(t *testing.T) {
 	}
 }
 
-// TestEveryKillIsPrecededByAnInfection is the soundness statement of the whole
-// layer, over every (mutant, test) pair the fixture has.
-//
-// If a test kills a mutant, then that test observed a value the mutant would
-// have changed, so a probe of that test has to name it. The consumer's rule is
-// what is checked, which is the rule that licenses skipping an execution: a
-// mutant is a candidate for skipping only when it is probed *and* absent from
-// the measurement, so an unprobed mutant satisfies it however it was killed. A
-// pair failing this is an execution a consumer would have dropped and a kill it
-// would then never have found.
 func TestEveryKillIsPrecededByAnInfection(t *testing.T) {
 	prepared := probeable(t)
 	tests := []string{"TestWidth", "TestLabel", "TestReady", "TestDoubled", "TestFlagged"}
@@ -1846,15 +1299,6 @@ func TestEveryKillIsPrecededByAnInfection(t *testing.T) {
 	}
 }
 
-// TestProbeOfAFailingTestCarriesNoFacts pins the first of the three no-fact
-// outcomes.
-//
-// The probe tree is semantics-preserving, so a target that fails there is a
-// flaky test or a bug in go-mutants, and either way the run it produced cannot
-// be trusted to have reached every site it would have reached. Reporting the
-// indices it happened to record before it failed is exactly what a smaller,
-// wrong answer looks like, and a smaller answer here is a test that is skipped
-// when it should have run.
 func TestProbeOfAFailingTestCarriesNoFacts(t *testing.T) {
 	prepared := probeable(t)
 	result, err := prepared.session.Probe(t.Context(), gomutants.ProbeRequest{
@@ -1897,10 +1341,6 @@ func TestProbeReturnsSuccessfulOutputAndCoverage(t *testing.T) {
 	}
 }
 
-// TestProbeHonoursOutputLimit is [TestSessionExecHonoursOutputLimit] for the
-// probe tree. The two calls take one request vocabulary, so a caller that
-// bounded an execution has to be able to bound a pass the same way and be told
-// the same thing about what was dropped.
 func TestProbeHonoursOutputLimit(t *testing.T) {
 	prepared := probeable(t)
 	const limit = 4096
@@ -1972,9 +1412,6 @@ func TestPreparedExecutionsPropagateOverlayToChildGoTest(t *testing.T) {
 	}
 }
 
-// TestProbeOfATimedOutTestCarriesNoFacts is the second: a target the supervisor
-// had to kill did not finish, so the sites it had not reached yet are
-// indistinguishable from the sites it would never have reached.
 func TestProbeOfATimedOutTestCarriesNoFacts(t *testing.T) {
 	prepared := probeable(t)
 	started := time.Now()
@@ -1998,14 +1435,6 @@ func TestProbeOfATimedOutTestCarriesNoFacts(t *testing.T) {
 	}
 }
 
-// TestProbeOfABinaryWithoutTheRuntimeMeasuresNothing is the one missing-log
-// case that is a fact rather than a failure.
-//
-// The probe runtime writes its header in init, before any test code runs, so a
-// log that is not there is a process that never linked a probe — and a process
-// that never linked a probe cannot have run a probed site. The empty set is
-// therefore the truth about it, and it has to be an empty set rather than nil,
-// because nil is what every no-fact outcome above carries.
 func TestProbeOfABinaryWithoutTheRuntimeMeasuresNothing(t *testing.T) {
 	prepared := probeable(t)
 	result := probeOf(t, prepared.session, gomutants.ProbeRequest{
@@ -2016,10 +1445,6 @@ func TestProbeOfABinaryWithoutTheRuntimeMeasuresNothing(t *testing.T) {
 	}
 }
 
-// TestProbeRefusesTheSameRequestsAsExec keeps one request vocabulary for the
-// two calls. A caller that composed a request for Exec must be able to hand the
-// same package, arguments and environment to Probe and be refused for the same
-// reasons rather than answered differently.
 func TestProbeRefusesTheSameRequestsAsExec(t *testing.T) {
 	prepared := probeable(t)
 	cases := []struct {
@@ -2062,12 +1487,6 @@ func TestProbeRefusesTheSameRequestsAsExec(t *testing.T) {
 	}
 }
 
-// TestProbeIsSafeConcurrently pins the property a consumer running eight jobs
-// depends on: probing and executing share a session and nothing else, so
-// neither can observe the other's scratch directory, environment or log.
-//
-// Run under -race, which is where the claim is actually established; the
-// assertions here only make sure every goroutine really did the work.
 func TestProbeIsSafeConcurrently(t *testing.T) {
 	prepared := probeable(t)
 	width := mutantkit.APIByRule(t, prepared.catalog, widthRule)
@@ -2124,9 +1543,6 @@ func TestProbeIsSafeConcurrently(t *testing.T) {
 	}
 }
 
-// TestCloseRemovesTheProbeTree pins the probe tree's lifetime: it is a second
-// disposable snapshot, and closing the session that owns it removes it exactly
-// as closing releases the binaries built from it.
 func TestCloseRemovesTheProbeTree(t *testing.T) {
 	root := copyFixture(t, "probeable")
 	parent := t.TempDir()
@@ -2163,39 +1579,10 @@ func TestCloseRemovesTheProbeTree(t *testing.T) {
 	}
 }
 
-// keptSessionTarget is the subtest the test below re-runs to see what a kept
-// package scratch holds.
-//
-// It is the one test in this package that reads only the rejectable fixture, so
-// running it prepares exactly one shared session — the cheapest of the three,
-// since it asks for no probe tree and no verification — instead of all of them.
 const keptSessionTarget = "TestCatalogInvariants/with_rejections"
 
-// keptSessionTimeout bounds the child. Preparing one session is a snapshot, a
-// discovery pass, an instrumented tree, a compile validation and four test
-// binaries: seconds on a warm cache and minutes on a cold one, where the
-// harness's own minute would be a flake that reads like the failure this test
-// reports.
 const keptSessionTimeout = 5 * time.Minute
 
-// TestAKeptPackageScratchHoldsTheSessionsTrees is the difference between keeping
-// a directory and keeping the evidence in it.
-//
-// The shared sessions live under one [testkit.PackageScratch], and TestMain
-// closes each workspace before releasing it — which is right, because a
-// directory being read must not still be written to. But Close is also what
-// removes the engine's own temporary tree: the snapshot, the probe tree and the
-// per-execution scratch. So a kept parent used to hold the fixture copy and
-// nothing else, which is the one part of a failed session a reader can already
-// get from `fixtures/`.
-//
-// Under the keep policy the workspaces are therefore opened with KeepTemp, and
-// this asserts the consequence a reader cares about: the snapshot the session
-// actually ran is there afterwards.
-//
-// It is asserted through a child because the sessions are prepared once for the
-// whole package, under whatever policy the process started with, and a test
-// cannot change that for itself.
 func TestAKeptPackageScratchHoldsTheSessionsTrees(t *testing.T) {
 	t.Parallel()
 
@@ -2204,8 +1591,6 @@ func TestAKeptPackageScratchHoldsTheSessionsTrees(t *testing.T) {
 		t.Fatalf("resolving the test build cache for the child: %v", err)
 	}
 	kept := filepath.Join(testkit.Scratch(t), "kept")
-	// Composed rather than inherited, and then handed back the three variables
-	// the composition strips because all three begin with the prefix it removes.
 	env := append(testkit.Compose(t, testkit.Scratch(t)),
 		testkit.KeepEnv+"=always",
 		testkit.KeepDirEnv+"="+kept,

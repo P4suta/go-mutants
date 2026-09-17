@@ -16,22 +16,10 @@ import (
 	vendorassets "github.com/P4suta/go-mutants/vendor-assets"
 )
 
-// The HTML report makes three promises that are invisible from the outside
-// until they are broken in somebody's browser: it runs exactly two scripts and
-// says so by hash, it holds the projection as data rather than as markup, and
-// it fetches nothing. Each of the three is pinned here, and each is read *out
-// of the rendered page* rather than recomputed from the constants that produced
-// it — a test that hashed the same constants the renderer hashed would agree
-// with itself while the assembly between them inserted a newline and broke the
-// page.
-
-// cspPattern extracts the policy from the rendered meta element.
 var cspPattern = regexp.MustCompile(`<meta http-equiv="Content-Security-Policy" content="([^"]*)">`)
 
-// hashPattern finds every sha256 source expression in a policy.
 var hashPattern = regexp.MustCompile(`'sha256-([A-Za-z0-9+/=]+)'`)
 
-// renderFixture renders the page for the fixture projection.
 func renderFixture(t *testing.T) (page string, document []byte) {
 	t.Helper()
 	document = marshalProjection(t, projectionFixture(t), projectionWorkspace(t))
@@ -42,12 +30,6 @@ func renderFixture(t *testing.T) (page string, document []byte) {
 	return string(rendered), document
 }
 
-// executableScripts returns the text content of every <script> the browser
-// would run, in document order.
-//
-// The JSON island is deliberately not among them: its opening tag carries a
-// type, so it does not match, which is the same reason the browser treats it as
-// a data block and never asks the policy about it.
 func executableScripts(t *testing.T, page string) []string {
 	t.Helper()
 	var scripts []string
@@ -67,15 +49,6 @@ func executableScripts(t *testing.T, page string) []string {
 	}
 }
 
-// TestHTMLPolicyHashesTheScriptsThePageActuallyRuns is the assertion that
-// catches an assembly mistake.
-//
-// The hashes are computed from the text the parser would execute — everything
-// between `<script>` and `</script>` in the rendered output — and compared with
-// the policy in the rendered `<meta>`. A stray newline after the opening tag, a
-// bundle that picked up a trailing byte, a bootstrap that was reformatted and
-// not rehashed: all of them produce a page a browser refuses to run, and all of
-// them fail here.
 func TestHTMLPolicyHashesTheScriptsThePageActuallyRuns(t *testing.T) {
 	t.Parallel()
 
@@ -99,20 +72,14 @@ func TestHTMLPolicyHashesTheScriptsThePageActuallyRuns(t *testing.T) {
 				i, len(script), head(script), hash, policy)
 		}
 	}
-	// The second script is the bootstrap, byte for byte: it is the one this
-	// package wrote, and the one a reviewer checks against the hash by hand.
 	if scripts[1] != report.Bootstrap {
 		t.Errorf("the page's own script is not the bootstrap constant:\n%q", scripts[1])
 	}
-	// The first is the vendored viewer, byte for byte.
 	if scripts[0] != string(vendorassets.Bundle()) {
 		t.Error("the inlined viewer is not the vendored bundle byte for byte")
 	}
 }
 
-// TestHTMLPolicyRefusesEverythingElse reads the rest of the policy, which is
-// what makes "this page fetches nothing" a browser-enforced statement rather
-// than a comment.
 func TestHTMLPolicyRefusesEverythingElse(t *testing.T) {
 	t.Parallel()
 
@@ -138,16 +105,6 @@ func TestHTMLPolicyRefusesEverythingElse(t *testing.T) {
 	}
 }
 
-// TestHTMLFetchesNothing is the same promise stated against the markup rather
-// than against the policy, because the two fail independently: a page can carry
-// a strict policy and still be full of `src` attributes that a browser with the
-// policy stripped would happily fetch.
-//
-// The vendored bundle is cut out before the search. It contains URLs — the SVG
-// namespace, which is a name rather than an address, and documentation links a
-// reader may click — and it is third-party content whose identity is
-// established by digest rather than by grepping it. What is checked here is
-// everything this package wrote.
 func TestHTMLFetchesNothing(t *testing.T) {
 	t.Parallel()
 
@@ -160,8 +117,6 @@ func TestHTMLFetchesNothing(t *testing.T) {
 	}
 	for _, line := range strings.Split(ours, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "<!--") {
-			// The attribution comment names where the bundle came from, which
-			// is the one place a URL belongs in this file.
 			continue
 		}
 		if strings.Contains(line, "http://") || strings.Contains(line, "https://") {
@@ -170,11 +125,6 @@ func TestHTMLFetchesNothing(t *testing.T) {
 	}
 }
 
-// TestHTMLIslandIsDataAndNotMarkup pins the escaping.
-//
-// The document is full of `<` — every comparison operator go-mutants mutates is
-// one — and a raw `</script>` inside a string would end the element and turn
-// the rest of the report into markup.
 func TestHTMLIslandIsDataAndNotMarkup(t *testing.T) {
 	t.Parallel()
 
@@ -191,8 +141,6 @@ func TestHTMLIslandIsDataAndNotMarkup(t *testing.T) {
 		t.Fatal("the island can close its own element")
 	}
 
-	// The escaped island is still the same document: escaping that changed the
-	// data would be a worse bug than escaping that did nothing.
 	var got, want any
 	if err := json.Unmarshal([]byte(island), &got); err != nil {
 		t.Fatalf("the island is not JSON: %v", err)
@@ -205,7 +153,6 @@ func TestHTMLIslandIsDataAndNotMarkup(t *testing.T) {
 	}
 }
 
-// TestEscapeScriptDataTable states the five characters and nothing else.
 func TestEscapeScriptDataTable(t *testing.T) {
 	t.Parallel()
 
@@ -231,8 +178,6 @@ func TestEscapeScriptDataTable(t *testing.T) {
 	}
 }
 
-// TestHTMLShape checks the handful of elements the page has to have for a
-// browser to make anything of it at all.
 func TestHTMLShape(t *testing.T) {
 	t.Parallel()
 
@@ -248,8 +193,6 @@ func TestHTMLShape(t *testing.T) {
 			t.Errorf("the page does not contain %q", want)
 		}
 	}
-	// The element has to be in the document before the bootstrap looks it up,
-	// and the bundle has to have defined it before the bootstrap assigns to it.
 	app := strings.Index(page, "<mutation-test-report-app>")
 	island := strings.Index(page, `id="report"`)
 	viewer := strings.Index(page, "<script>")
@@ -257,7 +200,6 @@ func TestHTMLShape(t *testing.T) {
 	if app >= island || island >= viewer || viewer >= boot {
 		t.Errorf("the page is out of order: app %d, island %d, viewer %d, bootstrap %d", app, island, viewer, boot)
 	}
-	// The notice names what was inlined and the digest that was checked.
 	if !strings.Contains(page, vendorassets.BundleSHA256) {
 		t.Error("the page does not record the digest of the viewer it inlined")
 	}
@@ -266,8 +208,6 @@ func TestHTMLShape(t *testing.T) {
 	}
 }
 
-// TestHTMLIsDeterministic proves the page is a function of the document, so
-// that two runs over unchanged code produce a file with no diff.
 func TestHTMLIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -285,11 +225,6 @@ func TestHTMLIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestHTMLRefusesATamperedViewer proves the digest check is a gate rather than
-// a warning: when the vendored asset does not match what this build recorded,
-// no page comes back at all.
-//
-// It cannot be parallel; see [report.BreakVendoredViewer].
 func TestHTMLRefusesATamperedViewer(t *testing.T) {
 	tampered := errors.New("the embedded bundle hashes to something else")
 	restore := report.BreakVendoredViewer(tampered)
@@ -308,7 +243,6 @@ func TestHTMLRefusesATamperedViewer(t *testing.T) {
 	}
 }
 
-// extractPolicy returns the policy out of the rendered meta element.
 func extractPolicy(t *testing.T, page string) string {
 	t.Helper()
 	match := cspPattern.FindStringSubmatch(page)
@@ -318,7 +252,6 @@ func extractPolicy(t *testing.T, page string) string {
 	return match[1]
 }
 
-// extractIsland returns the text content of the JSON island.
 func extractIsland(t *testing.T, page string) string {
 	t.Helper()
 	const open = `<script id="report" type="application/json">`
@@ -334,8 +267,6 @@ func extractIsland(t *testing.T, page string) string {
 	return rest[:end]
 }
 
-// withoutVendoredBundle returns the page with the inlined third-party script
-// cut out, so that a search finds only what this package wrote.
 func withoutVendoredBundle(t *testing.T, page string) string {
 	t.Helper()
 	bundle := string(vendorassets.Bundle())
@@ -345,8 +276,6 @@ func withoutVendoredBundle(t *testing.T, page string) string {
 	return strings.Replace(page, bundle, "", 1)
 }
 
-// head is the first 120 characters of a string, for a failure message that has
-// to mention a quarter of a megabyte of minified JavaScript.
 func head(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	if len(s) <= 120 {
@@ -355,29 +284,15 @@ func head(s string) string {
 	return s[:120] + "..."
 }
 
-// jsonEqual compares two decoded documents.
 func jsonEqual(x, y any) bool {
 	left, errLeft := json.Marshal(x)
 	right, errRight := json.Marshal(y)
 	return errLeft == nil && errRight == nil && string(left) == string(right)
 }
 
-// TestHTMLRendersADocumentLargerThanTheViewer is about the one line of
-// arithmetic in [report.RenderHTML] that is not a string.
-//
-// The builder is pre-sized from the two things it is about to hold, and
-// strings.Builder.Grow panics on a negative number rather than ignoring it — so
-// a hint written with the wrong sign is a crash rather than a slow render, and
-// it is a crash that only happens once the report outgrows the quarter of a
-// megabyte of vendored JavaScript beside it. That is an ordinary size for a
-// real repository's `mutation.json` and an extraordinary one for a fixture,
-// which is why nothing else here would ever reach it.
 func TestHTMLRendersADocumentLargerThanTheViewer(t *testing.T) {
 	t.Parallel()
 
-	// One file whose source is comfortably longer than the bundle. It is a real
-	// projection rather than a slab of bytes, so what is rendered is a document
-	// the format accepts.
 	projection := &report.Projection{
 		SchemaVersion: "2",
 		Thresholds:    report.ProjectionThresholds{High: 80, Low: 60},

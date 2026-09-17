@@ -15,15 +15,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/schemas"
 )
 
-// branchRunID is this fixture's own run identity. It is a run of its own rather
-// than a variation of the golden ones, because a branch proof belongs only on
-// an edit that really does narrow a condition, and none of the candidates those
-// fixtures were written around does.
 const branchRunID = "20260218T101500Z-9c3e"
 
-// branchCandidates are two mutants in one file: an edit that narrows the
-// condition of an `if`, which discovery proved a body span for, and one beside
-// it that does not.
 var branchCandidates = []candidate{
 	{
 		path: coreFile, pkg: corePackage, rule: "le-to-lt",
@@ -45,13 +38,6 @@ var branchCandidates = []candidate{
 	},
 }
 
-// TestBranchProofSurvivesIntoTheRunReport carries discovery's proof through
-// [report.Build] and into the published document.
-//
-// The absence is asserted on the encoded bytes rather than on the struct,
-// because `branch` is an optional property: a mutant nothing was proved about
-// has to carry no key at all, and a `null` would be a different document to
-// everybody's decoder.
 func TestBranchProofSurvivesIntoTheRunReport(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +90,6 @@ func TestBranchProofSurvivesIntoTheRunReport(t *testing.T) {
 	}
 }
 
-// buildBranchFixture builds the two-mutant run above.
 func buildBranchFixture(t *testing.T) *report.Report {
 	t.Helper()
 	located, catalog := located(t, branchCandidates)

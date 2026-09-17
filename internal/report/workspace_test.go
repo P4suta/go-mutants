@@ -17,25 +17,15 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// The two modules of the workspace these tests report on. Both hold a file at
-// the same module-relative path, with an edit at the same span by the same
-// rule, because that is the pair a report keyed on a path alone cannot tell
-// apart -- and nothing says two modules of one workspace may not.
 const (
 	firstModule  = "example.com/ws/first"
 	secondModule = "example.com/ws/second"
 	sharedFile   = "app.go"
 
-	// The two modules' sources, which are the bytes the spans below are
-	// measured against and the bytes the projection reads back. They differ
-	// only in the package clause, which is what makes the edit in each of them
-	// the same edit at a different place -- and the reason a projection keyed
-	// on the path alone would make them one file.
 	firstSource  = "package first\n\nfunc Equal(a, b int) bool { return a == b }\n"
 	secondSource = "package second\n\nfunc Equal(a, b int) bool { return a == b }\n"
 )
 
-// sourceOfModule is the file one module of the fixture holds.
 func sourceOfModule(module string) string {
 	if module == secondModule {
 		return secondSource
@@ -43,16 +33,6 @@ func sourceOfModule(module string) string {
 	return firstSource
 }
 
-// TestAWorkspaceReportIsOneModuleOfTheCatalogue pins what a per-module report
-// of a workspace run holds.
-//
-// A workspace is measured as one run over one catalogue that spans its modules
-// -- see ADR 0012 -- and reported one module at a time, because a run report's
-// `workspace.module_path` is required and a workspace has no single answer for
-// it. So the catalogue handed to each report is the whole one and
-// [report.Options.Module] is which module the document is about: the mutants of
-// the others belong to their own documents, and counting them here would make
-// every module's score the workspace's.
 func TestAWorkspaceReportIsOneModuleOfTheCatalogue(t *testing.T) {
 	t.Parallel()
 
@@ -66,9 +46,6 @@ func TestAWorkspaceReportIsOneModuleOfTheCatalogue(t *testing.T) {
 	if len(rep.Mutants) != 1 {
 		t.Fatalf("the report holds %d mutants, want the one of %s", len(rep.Mutants), firstModule)
 	}
-	// The line is what says which module's candidate was looked up: the two
-	// files hold the same edit at the same span, and only their coordinates
-	// differ.
 	if got := rep.Mutants[0].Line; got != 11 {
 		t.Errorf("the mutant is at line %d, want the line %s's candidate reported", got, firstModule)
 	}
@@ -77,8 +54,6 @@ func TestAWorkspaceReportIsOneModuleOfTheCatalogue(t *testing.T) {
 	}
 }
 
-// TestEveryModuleOfAWorkspaceGetsItsOwnMutants is the other half: the two
-// documents partition the catalogue, and neither borrows from the other.
 func TestEveryModuleOfAWorkspaceGetsItsOwnMutants(t *testing.T) {
 	t.Parallel()
 
@@ -100,9 +75,6 @@ func TestEveryModuleOfAWorkspaceGetsItsOwnMutants(t *testing.T) {
 	}
 }
 
-// workspaceOptions is a run over a two-module workspace: one mutant in each,
-// both surviving, both at the same path and span, as the document of one of
-// them sees it.
 func workspaceOptions(t *testing.T, module string) report.Options {
 	t.Helper()
 
@@ -167,8 +139,6 @@ func workspaceOptions(t *testing.T, module string) report.Options {
 	}
 }
 
-// workspaceCandidate is one edit in one module: the same file, the same span
-// and the same rule in both, differing only in the module and the line.
 func workspaceCandidate(t *testing.T, module string, line int) discover.Located {
 	t.Helper()
 
@@ -197,13 +167,6 @@ func workspaceCandidate(t *testing.T, module string, line int) discover.Located 
 	}
 }
 
-// TestAWorkspaceReportAddsUpTheModulesItHolds is what the document exists for:
-// one answer about the project, and the modules' own documents inside it.
-//
-// The aggregate is not a second measurement. It is derived from the same
-// mutants by the same function that derived each module's summary, because two
-// files of one run that disagreed about how many mutants there were would be
-// two runs.
 func TestAWorkspaceReportAddsUpTheModulesItHolds(t *testing.T) {
 	t.Parallel()
 
@@ -237,8 +200,6 @@ func TestAWorkspaceReportAddsUpTheModulesItHolds(t *testing.T) {
 	if counted != doc.Summary.Total {
 		t.Errorf("the modules hold %d mutants and the summary says %d", counted, doc.Summary.Total)
 	}
-	// A workspace document carries no module path, which is the whole reason it
-	// is not a run report.
 	blob, err := doc.Marshal()
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -248,14 +209,6 @@ func TestAWorkspaceReportAddsUpTheModulesItHolds(t *testing.T) {
 	}
 }
 
-// TestAnExpectationGoesToTheModuleWhoseMutantItNames keeps one row from being
-// two answers.
-//
-// A row is evaluated against the mutants of the document it is in, so handing
-// the whole ledger to every module would report every other module's rows as
-// stale in this one and fulfilled in theirs -- the same row, two states, in one
-// run. A row that names no mutant of any module is stale in the one place it
-// can be, which is the workspace document.
 func TestAnExpectationGoesToTheModuleWhoseMutantItNames(t *testing.T) {
 	t.Parallel()
 
@@ -288,8 +241,6 @@ func TestAnExpectationGoesToTheModuleWhoseMutantItNames(t *testing.T) {
 	}
 }
 
-// workspaceRunOptions is [workspaceOptions] for the whole run rather than for
-// one module of it.
 func workspaceRunOptions(t *testing.T) report.WorkspaceOptions {
 	t.Helper()
 
@@ -311,14 +262,6 @@ func workspaceRunOptions(t *testing.T) report.WorkspaceOptions {
 	return report.WorkspaceOptions{Options: base, Modules: modules}
 }
 
-// TestAWorkspaceReportSatisfiesItsSchema is the contract, checked the way every
-// other document this repository writes is checked.
-//
-// It is worth its own test rather than riding on the run report's, because a
-// workspace document is the one that embeds another: `modules[].report` is a
-// `$ref` to the run report schema, so this also proves that the two files
-// compile together and that an embedded report is a whole, valid run report
-// rather than a shape that merely looks like one.
 func TestAWorkspaceReportSatisfiesItsSchema(t *testing.T) {
 	t.Parallel()
 
@@ -333,8 +276,6 @@ func TestAWorkspaceReportSatisfiesItsSchema(t *testing.T) {
 	if err := schemas.Validate(schemas.WorkspaceReportV1, blob); err != nil {
 		t.Fatalf("the workspace report does not satisfy its schema: %v", err)
 	}
-	// And each embedded report on its own, which is the claim that makes
-	// `jq '.modules[0].report'` worth documenting.
 	for _, module := range doc.Modules {
 		if err := schemas.Validate(schemas.RunReportV1, mutantkit.MustMarshal(t, module.Report)); err != nil {
 			t.Errorf("the report of %s does not satisfy the run report schema: %v",
@@ -343,12 +284,6 @@ func TestAWorkspaceReportSatisfiesItsSchema(t *testing.T) {
 	}
 }
 
-// TestBuildWorkspaceRefusesWhatItCannotReportOn is the fail-closed half.
-//
-// A catalogue is what every module's document is built from and a module list
-// is what says whose documents there are, so neither has a defensible default:
-// a workspace report with no modules would be a run that measured a workspace
-// and named none of it.
 func TestBuildWorkspaceRefusesWhatItCannotReportOn(t *testing.T) {
 	t.Parallel()
 
@@ -384,14 +319,6 @@ func TestBuildWorkspaceRefusesWhatItCannotReportOn(t *testing.T) {
 	}
 }
 
-// TestBuildWorkspaceCarriesUpEveryFailureUnderneathIt keeps a refusal from one
-// module's document, or from the run's own rows, out of the workspace's.
-//
-// Three things can fail underneath this call and every one of them is a
-// document nobody may publish: the run's results not indexing, a module's
-// report not building, and the run's own tally not adding up. A workspace
-// report returned alongside any of them would be a document whose numbers came
-// from a step that did not finish.
 func TestBuildWorkspaceCarriesUpEveryFailureUnderneathIt(t *testing.T) {
 	t.Parallel()
 
@@ -401,7 +328,6 @@ func TestBuildWorkspaceCarriesUpEveryFailureUnderneathIt(t *testing.T) {
 		says   string
 	}{
 		{
-			// Two results for one mutant: the run's own rows do not index.
 			name: "a duplicate result",
 			break_: func(o *report.WorkspaceOptions) {
 				o.Results = append(o.Results, o.Results[0])
@@ -409,8 +335,6 @@ func TestBuildWorkspaceCarriesUpEveryFailureUnderneathIt(t *testing.T) {
 			says: "more than one result",
 		},
 		{
-			// A module whose report cannot be built: its selected count is a
-			// claim about a catalogue that does not hold that many mutants.
 			name: "a module that reports more than it has",
 			break_: func(o *report.WorkspaceOptions) {
 				o.Modules[0].Selected = 99
@@ -418,8 +342,6 @@ func TestBuildWorkspaceCarriesUpEveryFailureUnderneathIt(t *testing.T) {
 			says: "selected",
 		},
 		{
-			// An outcome no tally can count, which fails where the run's own
-			// counts are added up rather than where a module's are.
 			name: "an outcome nothing can count",
 			break_: func(o *report.WorkspaceOptions) {
 				o.Results[0].Outcome = mutation.Outcome(200)
@@ -446,9 +368,6 @@ func TestBuildWorkspaceCarriesUpEveryFailureUnderneathIt(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceReportsReportsAreItsModulesInOrder pins the accessor a
-// consumer of a workspace run uses to do what it would have done to a
-// single-module one.
 func TestAWorkspaceReportsReportsAreItsModulesInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -467,14 +386,6 @@ func TestAWorkspaceReportsReportsAreItsModulesInOrder(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceTallyRefusesAModuleItCannotCount is the other end of the
-// aggregate: a document is only as countable as the reports inside it.
-//
-// A module with no report at all is a document that lost one, and a module
-// whose report holds an outcome nothing can count is one that cannot be added
-// up. Either way the answer is a refusal rather than a total that silently
-// leaves a module out -- which would be a smaller denominator and a higher
-// score.
 func TestAWorkspaceTallyRefusesAModuleItCannotCount(t *testing.T) {
 	t.Parallel()
 
@@ -506,13 +417,6 @@ func TestAWorkspaceTallyRefusesAModuleItCannotCount(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceExpectationFailureIsTheLedgerOfTheWholeRun pins the signal the
-// exit code is decided from.
-//
-// The ledger is one file, and a row lands in one of two places: a module's
-// document when it names a mutant of that module, and the workspace's when it
-// names no mutant at all. A run whose exit code read only one of them would
-// pass because nobody owned the other.
 func TestAWorkspaceExpectationFailureIsTheLedgerOfTheWholeRun(t *testing.T) {
 	t.Parallel()
 
@@ -536,10 +440,6 @@ func TestAWorkspaceExpectationFailureIsTheLedgerOfTheWholeRun(t *testing.T) {
 		t.Error("a row naming no mutant of any module is not reported as a failure")
 	}
 
-	// And a row that is a module's: the same ledger, the other place it can
-	// land. This one is unfulfilled rather than stale -- the mutant it declares
-	// a survivor was killed -- which is a failure the module's own document
-	// reports and this one has to carry up.
 	contradicted := workspaceRunOptions(t)
 	killed := contradicted.Catalog.Mutants()[0]
 	for i := range contradicted.Results {
@@ -563,9 +463,6 @@ func TestAWorkspaceExpectationFailureIsTheLedgerOfTheWholeRun(t *testing.T) {
 	}
 }
 
-// TestParsingAWorkspaceReportRefusesEverythingThatIsNotOne is the reader's half
-// of the contract, and every refusal is a file that would otherwise decode into
-// something nobody meant.
 func TestParsingAWorkspaceReportRefusesEverythingThatIsNotOne(t *testing.T) {
 	t.Parallel()
 
@@ -634,12 +531,6 @@ func TestParsingAWorkspaceReportRefusesEverythingThatIsNotOne(t *testing.T) {
 	}
 }
 
-// TestTheDocumentTypeIsReadFromTheDocument pins the one field a command that
-// accepts either kind of document branches on.
-//
-// It is read rather than guessed from the shape, because the discriminator is
-// there so that nobody has to guess -- and a file that carries none is refused
-// rather than assumed to be the common kind.
 func TestTheDocumentTypeIsReadFromTheDocument(t *testing.T) {
 	t.Parallel()
 
@@ -677,14 +568,6 @@ func TestTheDocumentTypeIsReadFromTheDocument(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceReportThatCannotBeEncodedSaysSo is the one encoding failure a
-// document of this type can really have.
-//
-// A workspace report is strings, ints and the run reports inside it — and a run
-// report's `score_percent` is a `*float64`, which is the one field encoding/json
-// can refuse: a non-finite float is a value it has no representation for. So
-// the branch is reachable, and it is reached here rather than declared
-// unreachable as the projection's is.
 func TestAWorkspaceReportThatCannotBeEncodedSaysSo(t *testing.T) {
 	t.Parallel()
 

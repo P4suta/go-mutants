@@ -15,16 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// narrowingModes are the three ways a run decides which test binaries, and
-// which tests inside them, a mutant is measured against.
-//
-// They are the three points of the claim ADR 0010 makes, and the reason to
-// measure all three rather than the two the config enumerates: `package` and
-// `test` are narrowings of different widths, and a custom test command turns
-// coverage off entirely, which is the width of no narrowing at all. If the
-// three ever disagreed, the narrower one would be the one reporting a survivor
-// that is not one -- and the cache does not key on the mode, so a warm run
-// could answer with whichever width happened to run first.
 var narrowingModes = []struct {
 	name   string
 	apply  func(*config.Config)
@@ -43,10 +33,6 @@ var narrowingModes = []struct {
 		},
 	},
 	{
-		// A command go-mutants cannot attribute to its own per-package
-		// binaries. `-count=1` is chosen because it changes nothing about what
-		// the suite asserts -- it only defeats the go test cache -- so the
-		// programs compared are identical and only the narrowing differs.
 		name: "coverage off",
 		apply: func(cfg *config.Config) {
 			cfg.Test.Command = []string{"go", "test", "-count=1", "./..."}
@@ -55,24 +41,6 @@ var narrowingModes = []struct {
 	},
 }
 
-// TestEveryNarrowingReachesTheSameVerdict is the evidence for ADR 0010.
-//
-// The record argues that narrowing a mutant to the tests whose coverage reaches
-// it reaches the same verdicts as running its binaries: a survivor under the
-// tests is a survivor under the binary, a kill is confirmed against a control,
-// a test that fails alone is not used to narrow, and because the outcome does
-// not depend on the mode the cache does not key on it.
-//
-// That last clause is what makes this test necessary rather than nice. The
-// outcome cache is keyed on everything that could change a verdict, and the
-// narrowing mode is deliberately not in the key -- so if the modes ever
-// disagreed, a warm run would answer with whichever width wrote the entry, and
-// nothing would say which one that was. The argument was written down and
-// nothing measured it.
-//
-// The subject is the verdict of every mutant, not the score: two runs can reach
-// the same percentage through different mutants, and a percentage is exactly
-// the summary that would hide a disagreement.
 func TestEveryNarrowingReachesTheSameVerdict(t *testing.T) {
 	t.Parallel()
 
@@ -126,24 +94,8 @@ func TestEveryNarrowingReachesTheSameVerdict(t *testing.T) {
 	}
 }
 
-// differentialCorpus are the corpus modules the three narrowings are compared
-// over.
-//
-// `coverage` is the one that matters and the fixture README says why: it is
-// "the one fixture where the *right* answer and the *fast* answer differ, so a
-// mutant measured against the wrong binary would survive rather than merely
-// cost time". If any narrowing is going to disagree with another, it is here.
-//
-// `families` is the breadth: at least one live candidate for every rule in the
-// registry, so the comparison covers every operator rather than the handful a
-// hand-written module happens to hold. `killable` is the control -- a module
-// with a known split of kills and survivors, where a disagreement would show up
-// as a changed tally as well as a changed verdict.
 var differentialCorpus = []string{"coverage", "families", "killable"}
 
-// TestEveryNarrowingReachesTheSameVerdictOnTheCorpus is the same claim as
-// [TestEveryNarrowingReachesTheSameVerdict], measured over the modules that
-// were built to make narrowing observable.
 func TestEveryNarrowingReachesTheSameVerdictOnTheCorpus(t *testing.T) {
 	t.Parallel()
 
@@ -170,9 +122,6 @@ func TestEveryNarrowingReachesTheSameVerdictOnTheCorpus(t *testing.T) {
 			if len(verdicts[reference]) == 0 {
 				t.Fatalf("%s catalogued no mutants, so it settles nothing", name)
 			}
-			// Equal maps of nothing are equal. Every module in this list has
-			// mutants a suite kills, so a run that killed none measured
-			// nothing, and three runs that measured nothing agree perfectly.
 			killed := 0
 			for _, outcome := range verdicts[reference] {
 				if outcome == report.OutcomeKilled {
@@ -201,13 +150,6 @@ func TestEveryNarrowingReachesTheSameVerdictOnTheCorpus(t *testing.T) {
 	}
 }
 
-// TestTheWidestNarrowingMeasuresTheMostTests is the negative half.
-//
-// Equal verdicts alone would also be produced by three runs that all did the
-// same thing, which is the one way this suite could pass while proving nothing.
-// So the modes are required to *differ* where the design says they do: the
-// test-level pass profiles tests and narrows a clean binary's mutant to one of
-// them, and the coverage-off run narrows nothing at all.
 func TestTheWidestNarrowingMeasuresTheMostTests(t *testing.T) {
 	t.Parallel()
 
@@ -246,7 +188,6 @@ func TestTheWidestNarrowingMeasuresTheMostTests(t *testing.T) {
 	}
 }
 
-// verdictsOf is every catalogued mutant's outcome, by full id.
 func verdictsOf(rep *report.Report) map[string]report.Outcome {
 	out := make(map[string]report.Outcome, len(rep.Mutants))
 	for _, mutant := range rep.Mutants {
@@ -255,7 +196,6 @@ func verdictsOf(rep *report.Report) map[string]report.Outcome {
 	return out
 }
 
-// runWithNarrowing measures the module once at one narrowing.
 func runWithNarrowing(t *testing.T, root string, narrowing config.Narrowing) *report.Report {
 	t.Helper()
 	opts := optionsAt(t, root)
@@ -270,7 +210,6 @@ func runWithNarrowing(t *testing.T, root string, narrowing config.Narrowing) *re
 	return outcome.Report
 }
 
-// runWithCommand measures the module once with a test command of its own.
 func runWithCommand(t *testing.T, root string, command []string) *report.Report {
 	t.Helper()
 	opts := optionsAt(t, root)

@@ -10,14 +10,8 @@ import (
 	"time"
 )
 
-// clockEpoch is an arbitrary instant every test in this file starts from. It is
-// a fixed date rather than time.Now so that a failure reads the same on every
-// machine and in every year.
 var clockEpoch = time.Date(2026, 8, 19, 10, 11, 12, 0, time.UTC)
 
-// TestClockStandsStillUntilItIsMoved is the default, and the one the dashboard's
-// tests depend on: a frame drawn twice without an Advance in between shows the
-// same elapsed time, so an assertion about the layout is about the layout.
 func TestClockStandsStillUntilItIsMoved(t *testing.T) {
 	t.Parallel()
 
@@ -38,14 +32,6 @@ func TestClockStandsStillUntilItIsMoved(t *testing.T) {
 	}
 }
 
-// TestClockTickAdvancesOnEveryRead is the shape a measured span needs.
-//
-// internal/report's prepare trace reads the clock once at the start of a phase
-// and once at its end, and the assertion is about the difference. Writing that
-// as a slice of two instants — which is what the suite did — makes the test
-// depend on how many times the code under test happens to read the clock, so a
-// second phase means a second slice and a refactor means a rewrite. A tick says
-// the thing the test actually means: every span is this long.
 func TestClockTickAdvancesOnEveryRead(t *testing.T) {
 	t.Parallel()
 
@@ -66,21 +52,11 @@ func TestClockTickAdvancesOnEveryRead(t *testing.T) {
 	if !slices.EqualFunc(got, want, time.Time.Equal) {
 		t.Fatalf("Now returned %v, want %v", got, want)
 	}
-	// The instant is the one before the advance, so two consecutive reads
-	// measure exactly one tick — which is what a start/finish pair is.
 	if d := got[1].Sub(got[0]); d != step {
 		t.Errorf("a start/finish pair measured %s, want %s", d, step)
 	}
 }
 
-// TestClockSequenceReturnsEachInstantOnceThenHolds is the other shape: a test
-// that names the instants because the *gaps* are what it is about — a span that
-// opens, is interrupted by a shorter one, and closes after it.
-//
-// The last instant repeats rather than the slice running out, because running
-// out is a panic in a goroutine the test does not control, and "the code read
-// the clock once more than I scripted" should be a wrong duration in a readable
-// assertion rather than an index out of range.
 func TestClockSequenceReturnsEachInstantOnceThenHolds(t *testing.T) {
 	t.Parallel()
 
@@ -101,9 +77,6 @@ func TestClockSequenceReturnsEachInstantOnceThenHolds(t *testing.T) {
 	}
 }
 
-// TestClockSequenceGivesWayToTheInstantItWasSetTo keeps the two modes from
-// being a mystery when a test uses both: whatever was scripted, Set is the
-// clock's new state and reads carry on from there.
 func TestClockSequenceGivesWayToTheInstantItWasSetTo(t *testing.T) {
 	t.Parallel()
 
@@ -117,12 +90,6 @@ func TestClockSequenceGivesWayToTheInstantItWasSetTo(t *testing.T) {
 	}
 }
 
-// TestClockIsSafeUnderConcurrentReads is why the state is behind a mutex.
-//
-// The dashboard reads its clock from the bubbletea update goroutine while the
-// test writes it, and internal/runner supervises children on goroutines of
-// their own. An unguarded time source in a helper is a data race the `-race`
-// job reports in somebody else's package, days later.
 func TestClockIsSafeUnderConcurrentReads(t *testing.T) {
 	t.Parallel()
 

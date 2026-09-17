@@ -13,20 +13,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// repositoryConfig is go-mutants' own .go-mutants.toml, which the repository
-// keeps as the worked example of the whole v1 surface.
 const repositoryConfig = "../../" + FileName
 
-// repositoryExpectations is the ledger the repository's own configuration
-// declares, transcribed row for row.
-//
-// It is spelled out here, id and argument alike, for the reason the ledger
-// exists at all: an expectation is a claim that a mutant cannot be killed, and
-// the way such a claim rots is that somebody quietly deletes or rewords a row
-// to turn a red gate green. Pinning the ids catches a deletion; pinning the
-// reasons catches a row whose argument was replaced by a shrug. The order is
-// the file's order, which internal/report relies on when it tells an author
-// which row has gone stale.
 var repositoryExpectations = []Expectation{
 	{
 		ID: "955ef7519b8fd9e564bf20a0e8c11f7b899298708405716e59b20b7fd50c680f",
@@ -265,11 +253,6 @@ var repositoryExpectations = []Expectation{
 			"requiring an invalid document to come back GOM5003 rather than " +
 			"GOM5004.",
 	},
-	// The four rows this package brought with it, every one of them toInt in
-	// load.go: two comparisons that are equivalent on any word size, and the
-	// two saturating returns behind them, which are dead code on a 64-bit
-	// build and are the reason the rows say "on a 64-bit build" rather than
-	// "unkillable".
 	{
 		ID: "72a676ff09f4a94e5850bc2855a77eed08498a3a9951bf6aafba3d34f8eae199",
 		Reason: "Equivalent on every platform: `v > int64(maxInt)` and " +
@@ -299,8 +282,6 @@ var repositoryExpectations = []Expectation{
 			"the mirror of the maxInt row above, and reachable on the same " +
 			"32-bit GOARCH.",
 	},
-	// The one row internal/gocmd brought with it: a narrowing that cannot
-	// fail, so the forwarding return underneath it cannot be reached.
 	{
 		ID: "46ef76f3f811345c6c702668727f2cedc4c61b27e6fa2bf22bc62a3cf6bcafb3",
 		Reason: "Unreachable: parseVersion has four failure returns and every " +
@@ -308,12 +289,6 @@ var repositoryExpectations = []Expectation{
 			"errors.As above always matches and this forwarding return is " +
 			"reached only by an error kind parseVersion does not produce.",
 	},
-	// internal/report's thirty-four, in the file's five groups: an expression
-	// the rewrite leaves computing the same answer, an error the caller has
-	// already ruled out, a value encoding/json cannot refuse, the vendored
-	// schema's registration and its diagnostic's fallback, and the path
-	// resolution the store's containment check is built on. The arguments are
-	// in .go-mutants.toml beside them.
 	{
 		ID: "fd35bbae14be8dba2102f162903a0fa5a584eb2053e6912dfe699fe7b932d82a",
 		Reason: "Equivalent: strings.Builder.Grow is a capacity hint and the " +
@@ -522,10 +497,6 @@ var repositoryExpectations = []Expectation{
 	},
 }
 
-// The example everyone reads has to be an example that works. A documented
-// surface that the decoder rejects is worse than no example, and this is the
-// one test that would catch the file and the decoder drifting apart — a key
-// renamed here, a section added there, a value that stops being in range.
 func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	path := filepath.FromSlash(repositoryConfig)
 	if _, err := os.Stat(path); err != nil {
@@ -548,24 +519,6 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	want := Config{
 		Version: 1,
 		Mutation: Mutation{
-			// Thirteen whole packages, in the order the file lists them,
-			// which is the order they were added. The gate used to be two
-			// files, because every mutant ran every test binary in the
-			// module, and scoping the test binaries is what made whole
-			// packages affordable. Most arrived by having their survivors
-			// killed first, which is the rule; a few were measured before
-			// the line was added and had no survivor to kill, which is the
-			// only way a package is allowed in without a test being written
-			// for it. The ninth is this package: the file this test reads is
-			// inside the scope that reads it. The tenth, internal/gocmd, is
-			// the first here that starts processes rather than deciding over
-			// values; the eleventh, internal/report, is the first that writes
-			// files; and the thirteenth, internal/tempowner, is the first
-			// that takes a lock.
-			//
-			// The order is the file's order, and it is asserted rather than
-			// sorted for the same reason the expectation ids are: a list
-			// somebody reorders is a list somebody edited.
 			Include: []string{
 				"internal/mutation/*.go",
 				"internal/glob/*.go",
@@ -585,23 +538,12 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"internal/cache/*.go",
 				"internal/validate/*.go",
 			},
-			Exclude: []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
-			// `operators` is deliberately omitted from the file, so the
-			// profile decides and this stays empty.
+			Exclude:   []string{"**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"},
 			Operators: nil,
 			Profile:   mutation.TierBalanced,
-			// The declared mutants, pinned here as well as in the file so that
-			// deleting a ledger entry to make a red gate green shows up as a
-			// failing test. See repositoryExpectations above.
-			Expect: repositoryExpectations,
+			Expect:    repositoryExpectations,
 		},
 		Test: Test{
-			// The command is the run's scope as well as its measurement: these
-			// ten patterns are the only packages a test binary is built for,
-			// and they have to be the ten Include names above. A package that
-			// is mutated but not named here gets no binary, so every mutant in
-			// it is reported `survived (uncovered)` — which is why both lists
-			// are pinned here rather than one of them.
 			Command: []string{
 				"go", "test",
 				"./internal/mutation/...", "./internal/glob/...", "./internal/interval/...",
@@ -616,37 +558,15 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 				"./internal/cache/...",
 				"./internal/validate/...",
 			},
-			// `timeout` is deliberately omitted from the file now that the
-			// binaries are scoped, so it derives from the baseline rather than
-			// clearing internal/discover's toolchain-driving suite, which is no
-			// longer built. Zero is what "derive it" looks like here.
-			Timeout: 0,
-			// `memory` is omitted for the same reason and pinned here for a
-			// sharper one: this scope is why the setting exists, so a number
-			// written into the file would be somebody's guess standing in for
-			// a bound derived from this repository's own baseline.
+			Timeout:      0,
 			Memory:       0,
 			BaselineRuns: 3,
 			Narrowing:    NarrowingTest,
 			Probing:      ProbingOff,
 		},
-		// `jobs` is pinned in the file rather than defaulted, so that a local
-		// run and a GitHub-hosted CI run are the same run; see the comment there
-		// for why it is no longer pinned for correctness.
 		Execution: Execution{Jobs: 4},
 		Cache:     Cache{Mode: CacheAuto, Directory: ""},
-		// The floor has moved twice, by the same rule both times: it goes up
-		// when half a percent -- one percent, before the first move -- buys
-		// more slack than the twenty-one survivors judged too much at 544.
-		// One percent of 2432 was twenty-four, which moved it to 99.5; half a
-		// percent of 4306 is 21.53, which moves it to 99.75. Between those it
-		// stayed put through five widenings, and that was arithmetic rather
-		// than inertia. At 4306 scored mutants a quarter of a percent buys ten
-		// survivors (4296/4306 = 99.77% clears, 4295/4306 = 99.74% does not),
-		// where 99.5 bought twelve when it was set: a floor written as a
-		// survivor count rather than as a percentage of a growing catalogue.
-		// The arithmetic is written out in the file.
-		Policy: mutation.Policy{Strict: false, MinimumScore: 99.75, RequireMutants: true},
+		Policy:    mutation.Policy{Strict: false, MinimumScore: 99.75, RequireMutants: true},
 		Report: Report{
 			Directory: "reports/mutation",
 			Formats:   []ReportFormat{FormatJSON, FormatHTML},
@@ -658,8 +578,6 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 		t.Errorf("the repository's configuration resolves differently than documented (-want +got):\n%s", diff)
 	}
 
-	// The file's own patterns have to compile, which is what makes it a
-	// working example rather than a plausible-looking one.
 	if err := (Overlay{
 		Include: Explicit(resolved.Mutation.Include),
 		Exclude: Explicit(resolved.Mutation.Exclude),
@@ -668,9 +586,6 @@ func TestRepositoryConfigurationRoundTrips(t *testing.T) {
 	}
 }
 
-// Every commented-out key in the worked example has to be a key that would be
-// accepted if it were uncommented. A commented example that no longer decodes
-// is a trap, and it is exactly the kind of thing that rots unnoticed.
 func TestRepositoryConfigurationCommentedKeysDecode(t *testing.T) {
 	uncommented := "version = 1\n\n" +
 		"[mutation]\n" +

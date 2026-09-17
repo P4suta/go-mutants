@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// TestAUsageErrorReachesItsCause is the property the type did not have.
-//
-// It was the only error type this module declares, and errors.Is through it
-// found nothing: Error returned the cause's text and Unwrap did not exist, so a
-// sentinel could be built with care and then be unreachable the moment a usage
-// error wrapped it.
 func TestAUsageErrorReachesItsCause(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("a cause worth recognising")
@@ -26,10 +20,6 @@ func TestAUsageErrorReachesItsCause(t *testing.T) {
 	}
 }
 
-// TestAUsageErrorNamesWhereToLook keeps the remedy separate from the message.
-//
-// A message says what happened and a remedy says what to do. An error-code table
-// has a column for each, and one that mixes them has a column nobody can fill.
 func TestAUsageErrorNamesWhereToLook(t *testing.T) {
 	t.Parallel()
 	if got, want := (usageError{command: CommandTrace}).Hint(), "run 'goatest help trace' for usage"; got != want {

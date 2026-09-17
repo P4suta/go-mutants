@@ -3,22 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of `run`: a real repository, a real module, and the
-// documents the command actually writes.
-//
-// It lives here rather than in internal/engine because what is under test is
-// the whole sentence a user types. The engine can be handed any ref a test
-// likes; only the command line can produce the one the bare flag carries, and
-// the two `--changed` failures this file pins were both invisible from
-// underneath — a report that documented the lookup instead of the comparison,
-// and a selection that could not see a file git had never been told about. The
-// same is true of `--trace`: the engine can be handed a sink, and only the
-// command line decides where that sink writes, whether the directory it wrote
-// into survives the run, and whether writing it changed the tree.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -42,11 +26,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The work this run is meant to notice: a file that has never been added, and
-// the test beside it. A whole new file rather than an edit, because that is the
-// case `git diff` cannot report at all — it has no index entry to be compared
-// against — so every mutant in it is either selected by the untracked scan or
-// by nothing.
 const (
 	freshFile = "fresh.go"
 	freshTest = "fresh_test.go"
@@ -83,13 +62,6 @@ func TestFresh(t *testing.T) {
 `
 )
 
-// branchedModule copies the killable fixture into a temporary directory, commits
-// it, and cuts a branch that tracks the trunk — which is what makes a bare
-// `--changed` a question with an answer. It returns the workspace root and the
-// upstream branch's own name.
-//
-// The environment is redirected first so that nothing here — the snapshot, the
-// report, the history store — reaches the developer's own directories.
 func branchedModule(t *testing.T) (root, upstream string) {
 	t.Helper()
 	fixture, err := filepath.Abs(filepath.Join("..", "..", "fixtures", "killable"))
@@ -121,21 +93,8 @@ func branchedModule(t *testing.T) (root, upstream string) {
 	return root, upstream
 }
 
-// TestBareChangedNamesTheUpstreamAndMeasuresUntrackedWork is both halves of what
-// a bare `--changed` promises, read off the document the command wrote.
-//
-// The two used to fail together and for related reasons — the feature stopping
-// one step short of the tree it claims to read. `changed_ref` recorded
-// `@{upstream}`, which documents a lookup rather than a comparison and makes
-// two shards that diffed different upstreams look congruent; and the selection
-// was taken from `git diff` alone, so an afternoon's work in a file that had
-// never been `git add`ed came back as `0 of N mutants selected`, `score N/A`,
-// and exit 0 — the green that proves nothing, which every other part of this
-// feature fails closed to avoid.
 func TestBareChangedNamesTheUpstreamAndMeasuresUntrackedWork(t *testing.T) {
 	root, upstream := branchedModule(t)
-	// Written into the working tree and left there: never added, never staged,
-	// never committed.
 	for name, source := range map[string]string{freshFile: freshSource, freshTest: freshTestSource} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(source), 0o600); err != nil {
 			t.Fatalf("writing %s: %v", name, err)
@@ -189,20 +148,11 @@ func TestBareChangedNamesTheUpstreamAndMeasuresUntrackedWork(t *testing.T) {
 	if rep.Selection.Selected != measured {
 		t.Errorf("selection.selected = %d and %d mutants were measured", rep.Selection.Selected, measured)
 	}
-	// The tests beside the new file catch some of what it carries, so the run is
-	// a measurement rather than only a selection.
 	if rep.Summary.Killed == 0 {
 		t.Error("nothing in the untracked file was killed, so the run proved nothing about it")
 	}
 }
 
-// inKillableFixture copies the killable fixture into a directory of the test's
-// own and makes it the working directory, with the temporary parent and the
-// cache root redirected so that nothing here reaches the developer's own.
-//
-// A copy, never the corpus module: a run writes `reports/mutation/` into the
-// directory it is started in, and a recording is one more thing it would leave
-// in a checked-in fixture.
 func inKillableFixture(t *testing.T) string {
 	t.Helper()
 	root := testkit.Copy(t, "killable")
@@ -215,9 +165,6 @@ func inKillableFixture(t *testing.T) string {
 	return root
 }
 
-// runReport drives one run and decodes the document it wrote to standard
-// output. --json is what puts the document there; the console lines and the
-// warnings go to standard error beside it.
 func runReport(t *testing.T, args ...string) (*report.Report, string) {
 	t.Helper()
 	code, stdout, stderr := execute(t, append([]string{"run", "--json", "--no-color", "--no-tui"}, args...)...)
@@ -231,21 +178,10 @@ func runReport(t *testing.T, args ...string) (*report.Report, string) {
 	return &rep, stderr
 }
 
-// traceDirectoryOf is where a run of this workspace filed the recording of the
-// run the document describes.
 func traceDirectoryOf(root string, rep *report.Report) string {
 	return filepath.Join(root, filepath.FromSlash(config.DefaultReportDirectory), "trace", rep.RunID)
 }
 
-// TestRunTraceWritesAValidStreamNamedByTheRunIdUnderTheReportDirectory is the
-// whole of what `--trace` promises, checked against the run it recorded.
-//
-// It is one test rather than five because the claim is a single one: the file
-// on disk is the account of the run whose document is on standard output. The
-// interesting failures are the joins — a recording nobody can pair with a
-// report, an event naming an output file that is not there, a stream that
-// stops without saying it stopped — and each of those is invisible from either
-// side alone.
 func TestRunTraceWritesAValidStreamNamedByTheRunIdUnderTheReportDirectory(t *testing.T) {
 	root := inKillableFixture(t)
 	rep, stderr := runReport(t, "--trace")
@@ -263,9 +199,6 @@ func TestRunTraceWritesAValidStreamNamedByTheRunIdUnderTheReportDirectory(t *tes
 		t.Fatal("the run recorded nothing")
 	}
 
-	// Every line of it is a document of the published contract, which is what
-	// keeps a field added in a hurry from producing a recording no consumer can
-	// read.
 	raw, err := os.ReadFile(stream)
 	if err != nil {
 		t.Fatalf("reading the stream: %v", err)
@@ -276,8 +209,6 @@ func TestRunTraceWritesAValidStreamNamedByTheRunIdUnderTheReportDirectory(t *tes
 		}
 	}
 
-	// The recording and the report are one run, said twice. Without this the
-	// two documents a failed run leaves behind cannot be put beside each other.
 	first := events[0]
 	if first.Type != trace.TypeRunStart || first.Start == nil {
 		t.Fatalf("the recording opens with a %s, want a run-start", first.Type)
@@ -289,8 +220,6 @@ func TestRunTraceWritesAValidStreamNamedByTheRunIdUnderTheReportDirectory(t *tes
 		t.Errorf("run-start.kind = %q, want %q", first.Start.Kind, trace.StartKindRun)
 	}
 
-	// The last line is the run-end, which is what tells a reader they have read
-	// the whole run rather than a prefix of one.
 	last := events[len(events)-1]
 	if last.Type != trace.TypeRunEnd || last.Run == nil {
 		t.Fatalf("the recording ends with a %s, want a run-end", last.Type)
@@ -299,9 +228,6 @@ func TestRunTraceWritesAValidStreamNamedByTheRunIdUnderTheReportDirectory(t *tes
 		t.Errorf("the recording dropped %d events", last.Run.EventsDropped)
 	}
 
-	// A mutant execution's output is preserved beside the stream rather than
-	// serialised into it, and the digest in the event is of the whole capture.
-	// Checking the file against it is what makes the two halves one record.
 	var preserved int
 	for _, event := range events {
 		if event.Type != trace.TypeExec || event.Exec.Kind != trace.ExecKindMutantRun {
@@ -329,14 +255,6 @@ func TestRunTraceWritesAValidStreamNamedByTheRunIdUnderTheReportDirectory(t *tes
 	}
 }
 
-// TestRunTraceLandsUnderTheReportDirectoryEvenWithNoReportFormats keeps the two
-// meanings of `report.directory` apart.
-//
-// `--report none` turns off the two documents a run publishes into a workspace;
-// it does not move where a recording goes. The directory is where a trace may
-// live because it is the one place internal/snapshot already excludes from the
-// tree it digests — a fact about the workspace, not about which formats were
-// asked for.
 func TestRunTraceLandsUnderTheReportDirectoryEvenWithNoReportFormats(t *testing.T) {
 	root := inKillableFixture(t)
 	rep, _ := runReport(t, "--trace", "--report", "none")
@@ -345,8 +263,6 @@ func TestRunTraceLandsUnderTheReportDirectoryEvenWithNoReportFormats(t *testing.
 	if _, err := os.Stat(filepath.Join(directory, trace.FileName)); err != nil {
 		t.Fatalf("the recording is not under the report directory: %v", err)
 	}
-	// And the project documents really were suppressed, so this is a run with a
-	// recording and no report rather than one that ignored the flag.
 	reports := filepath.Join(root, filepath.FromSlash(config.DefaultReportDirectory))
 	for _, name := range []string{"mutation.json", "mutation.html"} {
 		if _, err := os.Stat(filepath.Join(reports, name)); err == nil {
@@ -355,13 +271,6 @@ func TestRunTraceLandsUnderTheReportDirectoryEvenWithNoReportFormats(t *testing.
 	}
 }
 
-// TestAnUntracedRunLeavesNoTraceDirectory is goat cleanliness: a run that was
-// not asked for a recording writes no file for one.
-//
-// The ring an untraced run records into is the whole point — the failure nobody
-// expected is the one nobody passed --trace for — and it is only affordable
-// because it costs a bounded amount of memory and not a directory that grows on
-// every run of every project on the machine.
 func TestAnUntracedRunLeavesNoTraceDirectory(t *testing.T) {
 	root := inKillableFixture(t)
 	_, stderr := runReport(t)
@@ -375,15 +284,6 @@ func TestAnUntracedRunLeavesNoTraceDirectory(t *testing.T) {
 	}
 }
 
-// TestRunTraceDoesNotChangeTheSnapshotDigestOrDrift is the invariant the
-// refusal rule exists to protect, checked the only way it can be: by tracing
-// into the workspace and seeing that the workspace did not move.
-//
-// A recording grows while the run measures. If it were written anywhere the
-// snapshot reads, the run would digest a tree that changed under it and report
-// drift it caused itself — a diagnostic that fails the run it is a diagnostic
-// of. Under `report.directory`, which the snapshot excludes, the traced run and
-// the untraced one describe the same workspace.
 func TestRunTraceDoesNotChangeTheSnapshotDigestOrDrift(t *testing.T) {
 	inKillableFixture(t)
 
@@ -395,8 +295,6 @@ func TestRunTraceDoesNotChangeTheSnapshotDigestOrDrift(t *testing.T) {
 		t.Errorf("workspace_digest = %q with a recording and %q without one",
 			traced.Workspace.WorkspaceDigest, untraced.Workspace.WorkspaceDigest)
 	}
-	// And a second traced run, which is the one that finds a recording already
-	// sitting in the tree rather than putting the first one there.
 	if again.Workspace.WorkspaceDigest != untraced.Workspace.WorkspaceDigest {
 		t.Errorf("workspace_digest = %q with a recording already on disk and %q without one",
 			again.Workspace.WorkspaceDigest, untraced.Workspace.WorkspaceDigest)
@@ -407,13 +305,6 @@ func TestRunTraceDoesNotChangeTheSnapshotDigestOrDrift(t *testing.T) {
 	}
 }
 
-// refusingWrites is a stream that refuses its first writes and then behaves.
-//
-// It is how "a disk that will not take a write costs the events and not the
-// run" is produced, and it refuses only the first few rather than all of them
-// so that the recording still reaches its run-end — which is the event that has
-// to say how much of itself is missing. A sink that lost everything could not
-// tell anybody that it had.
 type refusingWrites struct {
 	trace.File
 	remaining int
@@ -427,8 +318,6 @@ func (f *refusingWrites) Write(data []byte) (int, error) {
 	return f.File.Write(data)
 }
 
-// refuseTraceWrites points the recording at a disk that refuses its first n
-// writes, for the length of one test.
 func refuseTraceWrites(t *testing.T, n int) {
 	t.Helper()
 	t.Cleanup(func() { traceFilesystem = trace.Filesystem{} })
@@ -443,21 +332,9 @@ func refuseTraceWrites(t *testing.T, n int) {
 	}
 }
 
-// TestATraceThatCannotBeWrittenCostsTheEventsAndNotTheRun is the invariant the
-// whole feature lives or dies by, checked against a disk that will not take a
-// write.
-//
-// A diagnostic that can fail the run it is a diagnostic of inverts the point of
-// having one. So a sink that refuses events costs exactly those events: the same
-// mutants, the same verdicts, the same exit status — and a recording that says
-// in its own accounting how much of itself is missing, because a lossy recording
-// that looked complete would be worse than no recording at all.
 func TestATraceThatCannotBeWrittenCostsTheEventsAndNotTheRun(t *testing.T) {
 	root := inKillableFixture(t)
 
-	// The cache is off on both runs so that the second measures what the first
-	// measured rather than reusing it, which is what makes the comparison a
-	// comparison of two runs.
 	clean, _ := runReport(t, "--cache", "off")
 
 	const refused = 5
@@ -476,9 +353,6 @@ func TestATraceThatCannotBeWrittenCostsTheEventsAndNotTheRun(t *testing.T) {
 		t.Errorf("the run did not say where it recorded:\n%s", stderr)
 	}
 
-	// And the recording is honest about what it lost. The first events are gone
-	// — a reader sees the run-start missing and a gap before the first sequence
-	// number it has — and the run-end counts them.
 	summary, err := trace.ReadSummary(traceDirectoryOf(root, traced))
 	if err != nil {
 		t.Fatalf("the recording does not read back: %v", err)
@@ -494,15 +368,6 @@ func TestATraceThatCannotBeWrittenCostsTheEventsAndNotTheRun(t *testing.T) {
 	}
 }
 
-// TestTraceIsNamedInTheReportBlockAndObeysQuiet pins where the path is printed
-// from.
-//
-// It is one more path the run produced, so it is one more labelled line in the
-// block that names the others — printed by the renderer, in the renderer's own
-// layout, and kept by --quiet on exactly the terms `report json:` is kept. A
-// line the command printed for itself after the run would have needed a second
-// rule about --quiet, would have been lost when the dashboard closed the
-// alternate screen, and would not have been where a reader looks for paths.
 func TestTraceIsNamedInTheReportBlockAndObeysQuiet(t *testing.T) {
 	inKillableFixture(t)
 

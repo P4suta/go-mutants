@@ -12,21 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestTheTimingIsTheRecordersOwnMeasurement is the reason the recorder's
-// closers return a duration.
-//
-// The report's timing and the recording's `phase-end` and `stage` events
-// describe the same spans, and the integration suite asserts they are equal to
-// the millisecond. Two independent readings of one clock cannot promise that: a
-// phase whose recorder read 88.7 ms and whose engine read 89.1 ms publishes 88
-// in one document and 89 in the other, and the pair fails once in a hundred
-// runs on a busy machine with nothing wrong. So there is one measurement — the
-// recorder's — and the engine stores what the closer returns.
-//
-// The clock here makes the flake certain instead of rare: every reading is one
-// millisecond after the last, so the engine's own pair of readings brackets the
-// recorder's and is two milliseconds wider. Before the closers returned
-// anything, that difference was exactly what the document carried.
 func TestTheTimingIsTheRecordersOwnMeasurement(t *testing.T) {
 	t.Parallel()
 
@@ -83,13 +68,6 @@ func TestTheTimingIsTheRecordersOwnMeasurement(t *testing.T) {
 	}
 }
 
-// TestAnUntracedRunStillTimesItsPhasesAndStages is the other half: the
-// recorder's measurement is the truth when there is a recorder, and a run
-// without one still has to time itself.
-//
-// A nil recorder's closers return a zero duration, which is not a measurement,
-// and a report of an untraced run that said every phase took 0 ms would be
-// worse than one that said nothing.
 func TestAnUntracedRunStillTimesItsPhasesAndStages(t *testing.T) {
 	t.Parallel()
 

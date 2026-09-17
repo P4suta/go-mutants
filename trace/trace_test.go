@@ -19,15 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The committed recordings every scripted event must marshal to, byte for byte:
-// the first for a run that went well, the second for one that went wrong.
-//
-// They are compared and regenerated through [testkit.Golden], which owns this
-// repository's one `-update` flag — `mise run golden-update`. This package used
-// to register a flag of its own, as internal/report and internal/instrument did;
-// three of them in one binary is a "flag redefined" panic before any test runs.
-// The files are the wire contract, so a change to either is a change other tools
-// see: read the diff before committing it.
 const (
 	goldenRecording        = "events.golden.jsonl"
 	goldenFailureRecording = "events-failure.golden.jsonl"
@@ -81,9 +72,6 @@ func TestNilRecorderIsAnInertNoOp(t *testing.T) {
 		t.Fatalf("New(nil) returned %v, want a nil recorder", recorder)
 	}
 	var recorder *trace.Recorder
-	// Every method on the disabled recorder, called for the one reason the nil
-	// recorder exists: a call site records unconditionally, so a nil receiver
-	// that panicked would move the branch back into every caller.
 	recorder.PhaseStart(trace.PhaseMutate)()
 	recorder.Stage(fixtureStageName, fixtureStageDetail)(trace.ResultSucceeded)
 	recorder.Prepare(trace.PreparePhaseDiscovery, trace.StateStarted, "", 0)
@@ -130,8 +118,6 @@ func TestEveryEventTypeIsRecordedOnceInSequenceOrder(t *testing.T) {
 	}
 }
 
-// payloadsOf counts how many payloads an event carries, which the contract says
-// is exactly one for every type.
 func payloadsOf(event trace.Event) int {
 	present := []bool{
 		event.Start != nil, event.Phase != nil, event.Stage != nil, event.Prepare != nil,
@@ -148,14 +134,6 @@ func payloadsOf(event trace.Event) int {
 	return count
 }
 
-// TestRecordedEventsPinTheirJSONFieldNamesAndOrder is the field-name contract.
-//
-// A byte-exact golden is the right assertion rather than a field-by-field
-// comparison: the names, their order, the difference between an absent key and
-// a zero-valued one, and the spelling of every enumerated value are what a
-// consumer's decoder sees, and none of them would be caught by asserting that
-// the values are equal. The names are also how a go-mutants recording joins a
-// goatest one, so a rename here is a rename in somebody else's pipeline.
 func TestRecordedEventsPinTheirJSONFieldNamesAndOrder(t *testing.T) {
 	t.Parallel()
 
@@ -253,8 +231,6 @@ func TestExecReturnsTheSequenceNumberItRecorded(t *testing.T) {
 			t.Fatalf("event %d is %q", event.Seq, event.Type)
 		}
 	}
-	// Nothing is recorded after run-end, so nothing gets a sequence number
-	// either — a caller that stored a zero has a seq that matches no event.
 	recorder.RunEnd(fixtureVerdict, 0, nil)
 	if got := recorder.Exec(fixtureExecRecord()); got != 0 {
 		t.Errorf("Exec after RunEnd returned %d, want 0", got)
@@ -320,15 +296,6 @@ func TestStageFinishedCarriesResultAndDurationAndStartedCarriesNeither(t *testin
 	}
 }
 
-// TestACloserReturnsTheSpanItRecorded is the promise a second document rests
-// on.
-//
-// The engine publishes every phase and every stage twice — once as a recording
-// event and once in the run report's timing — and the two have to be the same
-// number. They are the same number only if there is one measurement, so the
-// closers hand theirs back rather than leaving a caller to take a second pair
-// of readings around the same work. A closer that ran twice answers the same
-// both times, because the span it measured did not change.
 func TestACloserReturnsTheSpanItRecorded(t *testing.T) {
 	t.Parallel()
 
@@ -358,8 +325,6 @@ func TestACloserReturnsTheSpanItRecorded(t *testing.T) {
 	if phase <= 0 || stage <= 0 {
 		t.Errorf("the closers returned %s and %s, want two measured spans", phase, stage)
 	}
-	// The disabled recorder measures nothing and says so, which is what lets a
-	// caller tell "no recording" from "a span of no time".
 	var disabled *trace.Recorder
 	if got := disabled.PhaseStart("x")(); got != 0 {
 		t.Errorf("the nil recorder's phase closer returned %s, want 0", got)
@@ -462,9 +427,6 @@ func typesOf(events []trace.Event) []string {
 func TestRunEndCountsTheEventsTheSinkDropped(t *testing.T) {
 	t.Parallel()
 
-	// A ring of three: run-start, one of the four artifacts, and the slot the
-	// ring holds back for run-end. The two events that fell out are the loss
-	// the accounting has to admit to.
 	sink := trace.NewMemorySink(3)
 	recorder := trace.New(sink, fixtureClock(), fixtureStartRecord())
 	for range 4 {
@@ -516,7 +478,6 @@ func TestConcurrentRecordingKeepsEveryEventAndItsSequenceOrder(t *testing.T) {
 	}
 }
 
-// lockedClock is [fixtureClock] made safe for the concurrent recorder test.
 func lockedClock() func() time.Time {
 	var mutex sync.Mutex
 	clock := fixtureClock()
@@ -550,14 +511,8 @@ func encodeAll(t *testing.T, events []trace.Event) string {
 	return builder.String()
 }
 
-// unifiedDiff renders the difference between two multi-line documents in the
-// familiar `-`/`+` form, so a golden mismatch names the line that moved rather
-// than printing two walls of JSON for a reader to compare by eye.
 func unifiedDiff(want, got string) string {
 	wantLines, gotLines := strings.Split(want, "\n"), strings.Split(got, "\n")
-	// The longest common subsequence of the two line lists, by the standard
-	// table: common[i][j] is the length of the LCS of wantLines[i:] and
-	// gotLines[j:].
 	common := make([][]int, len(wantLines)+1)
 	for i := range common {
 		common[i] = make([]int, len(gotLines)+1)
@@ -596,13 +551,6 @@ func unifiedDiff(want, got string) string {
 	return builder.String()
 }
 
-// TestExecNeverRecordsANullArgumentVector pins the one field of an `exec` event
-// that a reader is entitled to iterate without checking it first.
-//
-// The refusal path is what makes this more than tidiness: an invalid spec is
-// recorded with the argv as it was given, and "as it was given" for a spec with
-// no argv at all is nil. `null` would then be an argument vector a strict
-// decoder rejects, on exactly the event a developer opened the recording for.
 func TestExecNeverRecordsANullArgumentVector(t *testing.T) {
 	t.Parallel()
 
@@ -621,8 +569,6 @@ func TestExecNeverRecordsANullArgumentVector(t *testing.T) {
 	if !strings.Contains(string(encoded), `"argv":[]`) {
 		t.Errorf("the recorded event does not carry an empty argv: %s", encoded)
 	}
-	// And a caller's own slice is cloned rather than kept, so a spec reused for
-	// a retry cannot rewrite the command an earlier event recorded.
 	argv := []string{"go", "version"}
 	recorder.Exec(trace.ExecRecord{Kind: trace.ExecKindGoVersion, Argv: argv})
 	argv[1] = "env"
@@ -631,13 +577,6 @@ func TestExecNeverRecordsANullArgumentVector(t *testing.T) {
 	}
 }
 
-// TestProbeExecAlwaysRecordsTheInfectionSetOfAMeasuredPass is the difference
-// between "measured nothing" and "measured nothing worth recording".
-//
-// A measured pass that infected no mutant is the strongest thing the probe
-// phase says about a binary: nothing it runs can observe any of them. Omitting
-// the empty list would make that claim indistinguishable from a pass that was
-// never measured, so the recorder writes `[]` and the schema requires it.
 func TestProbeExecAlwaysRecordsTheInfectionSetOfAMeasuredPass(t *testing.T) {
 	t.Parallel()
 
@@ -657,9 +596,6 @@ func TestProbeExecAlwaysRecordsTheInfectionSetOfAMeasuredPass(t *testing.T) {
 	if !strings.Contains(string(measured), `"infected":[]`) {
 		t.Errorf("a measured pass that infected nothing does not say so: %s", measured)
 	}
-	// A pass that was not measured says nothing about any mutant, so it carries
-	// no list at all rather than an empty one a reader could mistake for a
-	// measurement.
 	unmeasured, err := json.Marshal(events[2])
 	if err != nil {
 		t.Fatal(err)
@@ -669,13 +605,6 @@ func TestProbeExecAlwaysRecordsTheInfectionSetOfAMeasuredPass(t *testing.T) {
 	}
 }
 
-// TestFailureRecordingPinsItsJSONFieldNamesAndOrder is the second half of the
-// field-name contract.
-//
-// The happy-path golden cannot pin an error string, a timeout, a refused event
-// or a non-zero exit code, because a recording that has them is a recording of
-// a run that went wrong — and those are precisely the fields a reader opens a
-// recording to look at. Regenerate the same way as the first golden.
 func TestFailureRecordingPinsItsJSONFieldNamesAndOrder(t *testing.T) {
 	t.Parallel()
 
@@ -695,23 +624,11 @@ func TestFailureRecordingPinsItsJSONFieldNamesAndOrder(t *testing.T) {
 	if last.Run.EventsDropped != 1 {
 		t.Errorf("events_dropped = %d, want the one event the sink refused", last.Run.EventsDropped)
 	}
-	// The recording is short one line, and the accounting is how a reader
-	// learns that rather than by counting.
 	if want := int64(len(events) - 1); last.Run.EventsEmitted != want {
 		t.Errorf("events_emitted = %d, want %d", last.Run.EventsEmitted, want)
 	}
 }
 
-// TestBinariesAndKilledByNameTestBinariesTheSameWay pins the one join a reader
-// makes inside a single event.
-//
-// A test binary has two names: the file the run executed, and the import path
-// of the package it was built from. `argv` is the first, because it is the
-// command that ran; `binaries`, `killed_by` and `covering` are the second,
-// because that is the name the run report uses and the name that survives a
-// temporary directory being deleted. Mixing them would leave `killed_by`
-// matching nothing in `binaries` on the very event a reader opens to ask what
-// killed a mutant.
 func TestBinariesAndKilledByNameTestBinariesTheSameWay(t *testing.T) {
 	t.Parallel()
 
@@ -730,9 +647,6 @@ func TestBinariesAndKilledByNameTestBinariesTheSameWay(t *testing.T) {
 		case trace.TypeCoverageMap:
 			assertImportPaths(t, "coverage.covering", event.Coverage.Covering)
 		case trace.TypeExec:
-			// The other half of the contract: argv[0] is the file that ran, and
-			// stays a file path — argv itself is the whole vector, that
-			// executable followed by the arguments it was given.
 			argv := event.Exec.Argv
 			if argv == nil {
 				t.Error("exec argv is null")
@@ -748,7 +662,6 @@ func TestBinariesAndKilledByNameTestBinariesTheSameWay(t *testing.T) {
 	}
 }
 
-// assertImportPaths fails for a name that is a file rather than a package.
 func assertImportPaths(t *testing.T, field string, names []string) {
 	t.Helper()
 	for _, name := range names {
@@ -758,13 +671,6 @@ func assertImportPaths(t *testing.T, field string, names []string) {
 	}
 }
 
-// panickingSink is the sink that does the one thing a Sink implementation is
-// never supposed to do. A third-party sink — an uploader, a socket, a ring of
-// somebody else's — is ordinary Go code, and ordinary Go code panics.
-//
-// One event type is spared so that the recording still has its last line: what
-// this fixture is for is the accounting, and the accounting is written in the
-// event a wholly broken sink would also have eaten.
 type panickingSink struct {
 	inner  trace.Sink
 	spared string
@@ -781,16 +687,6 @@ func (sink *panickingSink) Emit(event trace.Event) error {
 
 func (sink *panickingSink) Close() error { return sink.inner.Close() }
 
-// TestASinkThatPanicsCostsTheEventsAndNotTheRun extends the fail-open promise to
-// the failure a sink is least entitled to have and most likely to have anyway.
-//
-// A returned error already costs the event and never the run. A panic used to
-// cost the whole process: it unwound out through the recorder — through the
-// mutex, on whichever goroutine was recording, which during a mutation run is
-// one of the execution workers — and a diagnostic that can kill the run it is a
-// diagnostic of is worse than no diagnostic at all. It is counted exactly as a
-// refusal is, so `events_dropped` still says how much of the recording is
-// missing.
 func TestASinkThatPanicsCostsTheEventsAndNotTheRun(t *testing.T) {
 	t.Parallel()
 
@@ -801,8 +697,6 @@ func TestASinkThatPanicsCostsTheEventsAndNotTheRun(t *testing.T) {
 		t.Fatal("New returned no recorder for a sink that exists")
 	}
 
-	// Every shape of call, from several goroutines at once, because the one that
-	// matters is the one an execution worker makes.
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
@@ -835,8 +729,6 @@ func TestASinkThatPanicsCostsTheEventsAndNotTheRun(t *testing.T) {
 		t.Fatalf("the sink kept %d events, want the one it was told to spare", len(events))
 	}
 	run := events[0].Run
-	// The accounting is taken before the run-end is written, so everything the
-	// sink ate is a drop and nothing was emitted.
 	if want := sink.emits.Load() - 1; run.EventsDropped != want {
 		t.Errorf("run-end reports %d dropped, want %d — every event the sink ate",
 			run.EventsDropped, want)
@@ -846,21 +738,9 @@ func TestASinkThatPanicsCostsTheEventsAndNotTheRun(t *testing.T) {
 	}
 }
 
-// TestNilRecorderCostsNoAllocation is the price of the disabled trace, which is
-// the price nearly every run pays.
-//
-// Call sites record unconditionally, so every one of these is executed on every
-// run whether or not anybody asked for a recording. A record struct big enough
-// to describe a command is 80 to 112 bytes, and taking its address inside the
-// method is enough to move the *caller's* copy to the heap — an allocation per
-// mutant, per cache lookup, per mapped mutant, on a run that records nothing.
-// The nil check therefore lives in a wrapper small enough to inline, and the
-// address is taken in a body that is never inlined into it.
 func TestNilRecorderCostsNoAllocation(t *testing.T) {
 	var recorder *trace.Recorder
 
-	// Built once, outside the measured call: a composite literal holding a fresh
-	// slice would allocate whatever the recorder did with it.
 	exec := fixtureExecRecord()
 	mutant := fixtureMutantRecord()
 	probe := fixtureProbeRecord()

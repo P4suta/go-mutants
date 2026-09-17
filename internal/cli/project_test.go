@@ -12,13 +12,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// TestAProjectIsAModuleOrTheWorkspaceOfSeveral pins what "this directory's
-// history" means, which is the question every history command asks first.
-//
-// A module and the workspace it belongs to are different projects here, and
-// deliberately so: a mutant measured in a workspace and the same mutant
-// measured alone have different identities, so a listing that mixed the two
-// would offer runs whose ids do not mean the same thing. See ADR 0012.
 func TestAProjectIsAModuleOrTheWorkspaceOfSeveral(t *testing.T) {
 	t.Parallel()
 
@@ -82,7 +75,6 @@ func TestAProjectIsAModuleOrTheWorkspaceOfSeveral(t *testing.T) {
 	})
 }
 
-// writeProjectFile writes one file of a tree under test, making its directory.
 func writeProjectFile(t *testing.T, path, content string) {
 	t.Helper()
 
@@ -94,13 +86,6 @@ func writeProjectFile(t *testing.T, path, content string) {
 	}
 }
 
-// TestDoctorNamesAWorkspaceWhereAModuleWouldBe keeps the first command a user
-// runs from telling them go-mutants cannot run where it can.
-//
-// `doctor` is the "can this tool work here" check, and a `go.work` is a tree it
-// works on — as one run over every module the file joins. A check that only
-// knew about `go.mod` would fail on a workspace and send the reader looking for
-// a module that is not supposed to be there.
 func TestDoctorNamesAWorkspaceWhereAModuleWouldBe(t *testing.T) {
 	t.Parallel()
 
@@ -119,8 +104,6 @@ func TestDoctorNamesAWorkspaceWhereAModuleWouldBe(t *testing.T) {
 		}
 	}
 
-	// And a directory that is neither still fails, with the sentence that sends
-	// the reader to a module root.
 	if bare := moduleCheck(t.TempDir()); bare.Status != statusFail {
 		t.Errorf("the module check is %q where there is neither a module nor a workspace", bare.Status)
 	}

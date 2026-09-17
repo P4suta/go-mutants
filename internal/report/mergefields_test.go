@@ -14,37 +14,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// What an entry in [mergedFields] says about the field it names.
 const (
-	// sameAsTheWholeRun means the merged document carries the value the
-	// unsharded run would have written, and [TestMergedShardsAreTheWholeRun]
-	// compares it field for field.
-	sameAsTheWholeRun = "the value the unsharded run would have written"
-	// identityOfTheMerge means the field is about the merge rather than about
-	// the run — the id it was minted with, and the block that marks it merged —
-	// so it is the one thing that legitimately differs from the whole run.
+	sameAsTheWholeRun  = "the value the unsharded run would have written"
 	identityOfTheMerge = "the merged document's own identity"
 )
 
-// mergedFields and droppedFields are the ledger of what `report merge` does
-// with every single field of a run report.
-//
-// Every field of [report.Report], recursively, is in exactly one of them, and
-// [TestEveryFieldOfAReportIsMergedOrDropped] fails on one that is in neither or
-// in both. That is the half a hand-written exemption list cannot give: an
-// exemption list grows a line when somebody remembers to add one, and this
-// fails the moment a field is added to the document without anybody deciding
-// what a merge of four shards should say about it.
-//
-// The ledger is load-bearing in both directions. The dropped entries are what
-// [TestMergedShardsAreTheWholeRun] exempts from its field-for-field comparison
-// — built from this map rather than typed out beside it — and every one of them
-// is separately asserted to be *absent* from a merged document, so reinstating
-// one in `MergeShards` fails here rather than passing quietly.
-//
-// A path is a Go field name, dotted through nested structs, with `[]` marking a
-// slice of them. A path listed here is a leaf: listing `Timing` says nothing
-// about `Timing.Phases`, because the whole block is gone.
 var mergedFields = map[string]string{
 	"DocumentType":  sameAsTheWholeRun,
 	"SchemaVersion": sameAsTheWholeRun,
@@ -147,8 +121,6 @@ var mergedFields = map[string]string{
 	"Warnings[].Message":                sameAsTheWholeRun,
 }
 
-// droppedFields is what a merged document does not say, and why. Every entry is
-// a fact about one run on one machine; see [report.MergeShards].
 var droppedFields = map[string]string{
 	"Shard":                      "a merged document is the whole run and no shard of it",
 	"Timing":                     "four shards are four timelines on four machines",
@@ -163,8 +135,6 @@ var droppedFields = map[string]string{
 	"Mutants[].MemoryExceeded":   "the bound that settled it was that shard's, and a merged document reports no bound",
 }
 
-// TestEveryFieldOfAReportIsMergedOrDropped walks the document's own type and
-// holds the ledger above to it.
 func TestEveryFieldOfAReportIsMergedOrDropped(t *testing.T) {
 	t.Parallel()
 
@@ -187,22 +157,11 @@ func TestEveryFieldOfAReportIsMergedOrDropped(t *testing.T) {
 	}
 }
 
-// A fieldSite is where a listed path was found: the struct that declares the
-// field, and its name in that struct. It is what lets the comparison exemptions
-// be derived from the ledger instead of written out a second time.
 type fieldSite struct {
 	owner reflect.Type
 	name  string
 }
 
-// walkFields visits every field of a report, recursing into anything the ledger
-// has not already ruled on.
-//
-// A listed path is a leaf, which is what makes the ledger readable: a block the
-// merge drops whole is one line rather than one line per field inside it.
-// Anything unlisted that is a struct — through a pointer or a slice, since a
-// document is full of both — is descended into, and anything unlisted that is
-// not is a field nobody has decided about.
 func walkFields(t *testing.T, typ reflect.Type, prefix string, sites map[string]fieldSite) {
 	t.Helper()
 	for i := range typ.NumField() {
@@ -231,14 +190,6 @@ func walkFields(t *testing.T, typ reflect.Type, prefix string, sites map[string]
 	}
 }
 
-// TestAMergedDocumentSaysNothingAboutEveryDroppedField is the value half of the
-// ledger, and the one that bites when somebody reinstates a field.
-//
-// The names alone would let `MergeShards` go on copying the first shard's
-// timing into the merged document for ever: the ledger would still say
-// "dropped" and nothing would check it. So every dropped path is resolved in a
-// real merged document and required to be the zero value — absent, not "the
-// first machine's".
 func TestAMergedDocumentSaysNothingAboutEveryDroppedField(t *testing.T) {
 	t.Parallel()
 
@@ -258,8 +209,6 @@ func TestAMergedDocumentSaysNothingAboutEveryDroppedField(t *testing.T) {
 	}
 }
 
-// valuesAt resolves one ledger path in a document, returning every value it
-// names — one per mutant for a path through `Mutants[]`.
 func valuesAt(t *testing.T, value reflect.Value, path string) []reflect.Value {
 	t.Helper()
 	values := []reflect.Value{value}
@@ -291,13 +240,6 @@ func valuesAt(t *testing.T, value reflect.Value, path string) []reflect.Value {
 	return values
 }
 
-// mergeExemptOptions is what [TestMergedShardsAreTheWholeRun] may ignore,
-// derived from the ledger so that the rule is written once.
-//
-// It is the dropped fields — which a merged document does not carry at all —
-// plus the two that are the merge's own identity. Nothing else is exempt, and a
-// field that stops being compared has to be moved in the ledger, in the commit
-// that stops comparing it.
 func mergeExemptOptions(t *testing.T) []cmp.Option {
 	t.Helper()
 	sites := map[string]fieldSite{}

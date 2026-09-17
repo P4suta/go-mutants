@@ -12,283 +12,46 @@ import (
 	"github.com/P4suta/go-mutants/internal/runner"
 )
 
-// A Code is a stable, user-facing diagnostic code.
-//
-// Codes are part of the command line interface: they appear in error output, in
-// CI logs, and in bug reports, and they are what somebody searches for when the
-// message is not enough. A code therefore means exactly one thing forever, and
-// a retired code is never reused.
-//
-// This package owns the GOM40xx block. It does not re-code the failures of the
-// packages it drives: a snapshot, toolchain, or process failure is returned
-// with the GOM70xx or GOM72xx code its own package gave it, because wrapping it
-// in a second code would mean two identifiers for one condition and a user
-// searching for the wrong one.
 type Code string
 
-// The orchestration codes.
 const (
-	// CodeWorkspaceRoot reports a workspace root that is empty or cannot be
-	// resolved against the current working directory.
 	CodeWorkspaceRoot Code = "GOM4001"
 
-	// GOM4002 is retired and is deliberately not redefined. It reported an
-	// exclude pattern that did not compile, from when this package compiled
-	// `mutation.exclude` for the snapshot walk — which was itself the bug: an
-	// exclude says what is worth mutating and has no business shrinking the
-	// tree that gets built and tested. Compiling those patterns belongs to
-	// discovery, which allocates a code for it in its own block. The number
-	// stays spent, because a code means one thing forever.
-
-	// CodeTestCommand reports an empty test command, or one whose program name
-	// is blank. It is a configuration mistake that only becomes visible when
-	// something tries to run it.
 	CodeTestCommand Code = "GOM4003"
-	// CodeScratchDir reports a per-run scratch directory that could not be
-	// created. The run stops rather than letting children write into the
-	// user's temporary directory, which is the thing the scratch directory
-	// exists to prevent.
-	CodeScratchDir Code = "GOM4004"
-	// CodeRunID reports a caller-supplied [Options.RunID] that is not one:
-	// anything other than [RunIDPattern], which is the form [NewRunID] mints.
-	//
-	// It is refused rather than replaced because the id names files — the run's
-	// own document in the history store, and the directory a recording is
-	// written into — so a value that is not a run id would name them something
-	// else, and a caller that quietly ran under a different id would leave its
-	// own record and the run's unable to find each other.
-	CodeRunID Code = "GOM4005"
+	CodeScratchDir  Code = "GOM4004"
+	CodeRunID       Code = "GOM4005"
 
-	// CodeBaselineBuildFailed reports a snapshot that does not compile. It is
-	// always a fact about the workspace, never about a mutant: no source has
-	// been rewritten at this point.
-	CodeBaselineBuildFailed Code = "GOM4010"
-	// CodeBaselineTestFailed reports an unmutated test run that failed. Every
-	// mutant would be reported as killed by a suite that is already red, so
-	// the run stops instead of producing a flattering score.
-	CodeBaselineTestFailed Code = "GOM4011"
-	// CodeBaselineTimedOut reports a baseline command that did not finish
-	// inside [BaselineCap]. The cap is generous and fixed, because there is no
-	// measurement to derive one from yet.
-	CodeBaselineTimedOut Code = "GOM4012"
-	// CodeInstrumentedBaselineFailed reports the semantic preservation gate:
-	// the instrumented snapshot, with no mutant activated, no longer passes the
-	// tests the pristine one passed a moment earlier. Every guard is supposed
-	// to take the branch holding the original bytes when nothing is active, so
-	// a red suite here is go-mutants having changed the program's meaning — and
-	// every outcome measured afterwards would be a statement about that change
-	// rather than about a mutant.
+	CodeBaselineBuildFailed        Code = "GOM4010"
+	CodeBaselineTestFailed         Code = "GOM4011"
+	CodeBaselineTimedOut           Code = "GOM4012"
 	CodeInstrumentedBaselineFailed Code = "GOM4013"
-	// CodeWorkspaceDrift reports a snapshot that stopped matching its manifest
-	// in a way instrumentation did not cause. Every worker shares one snapshot,
-	// so a test that writes into its own package directory corrupts the tree
-	// each later mutant is measured against; the run stops and names the files
-	// rather than reporting outcomes nobody could reproduce.
-	CodeWorkspaceDrift Code = "GOM4014"
-	// CodeCoverageRender reports a coverage profile that could not be read back
-	// off the disk a profiling run wrote it to. It is the engine's own code
-	// because the engine is what ran the binary that wrote it — internal/coverage
-	// is pure and reads only what it is handed — and it never reaches a user as
-	// an error: the coverage phase turns it into internal/coverage's GOM7602
-	// warning and measures every mutant against every binary instead.
-	//
-	// It used to name a `go tool covdata textfmt` that would not run, which is a
-	// command no run issues any more: the binary writes the text format itself.
-	// The number stays where it was, because what it reports is the same fact
-	// one process earlier.
-	CodeCoverageRender Code = "GOM4015"
+	CodeWorkspaceDrift             Code = "GOM4014"
+	CodeCoverageRender             Code = "GOM4015"
 
-	// CodeTimeoutTooSmall reports an explicit `test.timeout` that is not above
-	// the slowest baseline run. Such a timeout would expire during ordinary
-	// work, so every mutant would be reported as a timeout and the run would
-	// measure nothing.
 	CodeTimeoutTooSmall Code = "GOM4020"
-	// CodeUnknownOperator reports a `mutation.operators` entry that names
-	// neither an operator family nor a rule in the v1 catalogue. internal/config
-	// refuses one wherever it was written, so it is unreachable from the command
-	// line; it is reported rather than assumed away because a Config can also be
-	// built in process, and an unknown name must never quietly select nothing.
 	CodeUnknownOperator Code = "GOM4021"
-	// CodeTestScope reports a `test.command` that go-mutants recognised as
-	// `go test` over package patterns, and whose patterns do not describe a
-	// scope any mutant can be measured in: one that names no package at all, a
-	// `go list` that would not resolve them, or a whole scope in which no
-	// package has a test file.
-	//
-	// It is the one diagnostic in the coverage-and-scoping story that is an
-	// error rather than a warning, and the asymmetry is deliberate. Everything
-	// else there fails *open*: a coverage pass that will not run gives up the
-	// optimisation and measures every mutant against every binary, which is
-	// slower and reaches exactly the same verdicts. There is no such direction
-	// here. The only way to carry on past a scope that resolves to nothing is to
-	// widen it back to `./...`, which would build and run the very test packages
-	// the user's own command excluded — measuring them a second time under a
-	// scope that says they do not count — or to run no binaries at all, in which
-	// case every mutant survives, nothing was executed, and the run reports a
-	// score of zero as though it had looked. Both are fictions, and a typo in a
-	// package pattern is a mistake somebody can fix in a second once they are
-	// told which pattern it was.
-	//
-	// It is raised before the baseline wherever it can be, because a pattern is
-	// checkable the moment the snapshot exists and learning about it after
-	// several minutes of building, testing and instrumenting would be a poor way
-	// to find out.
-	CodeTestScope Code = "GOM4022"
+	CodeTestScope       Code = "GOM4022"
 
-	// CodeInterrupted reports a run stopped by a cancelled context, which in
-	// practice means Ctrl-C or SIGTERM. It is an error so that the sequence
-	// unwinds and the snapshot is cleaned up, and the command line maps it to
-	// exit 130 or 143 rather than to the infrastructure code.
 	CodeInterrupted Code = "GOM4030"
 )
 
-// Warning codes this package emits. They live in the same block as the errors
-// because they are the same kind of promise to the user.
-//
-// GOM0001 is retired and is deliberately not redefined. It reported a run that
-// ended after the baseline because the mutation phases were not implemented,
-// and its own documentation said it would disappear, code and all, when they
-// landed. They have. The number stays spent, because a code means one thing
-// forever.
 const (
-	// CodeSnapshotNotRemoved reports a snapshot directory that survived
-	// cleanup. It is a warning rather than an error: the run's results are
-	// unaffected, and the remedy is to delete a directory in the temporary
-	// area.
-	CodeSnapshotNotRemoved Code = "GOM4040"
-	// CodeScratchNotRemoved reports the same for the per-run scratch
-	// directory.
-	CodeScratchNotRemoved Code = "GOM4041"
-	// CodeReportNotPublished reports a run whose results could not be written
-	// to the history store. It is a warning rather than an error on the
-	// interrupted path only: a partial run that could not be filed has still
-	// told the user everything it learned on the console, and turning a failed
-	// write into the reason the run failed would bury the interruption that
-	// actually ended it.
-	CodeReportNotPublished Code = "GOM4042"
-	// CodeSelectedMutantRejected reports a `--mutant` prefix that resolved
-	// against the catalogue but named a mutant compile validation had refused.
-	//
-	// Nothing is executed in that case, and every other silence is working as
-	// designed: the catalogue is whole, so `policy.require_mutants` is satisfied;
-	// the denominator is empty, so `minimum_score` cannot be missed; there are no
-	// survivors, so `strict` has nothing to fail on. The run therefore exits 0
-	// having measured nothing, which is exactly the shape
-	// [mutation.Policy.RequireMutants] calls the most dangerous kind of green —
-	// and the user who wrote the flag asked a direct question ("why did this one
-	// survive?") that deserves a direct answer.
-	//
-	// It stays a warning rather than becoming an error because a rejection is
-	// data and not a failure: the mutant does not compile once guarded, which is
-	// a true and reportable fact about the catalogue, and it is the same fact a
-	// whole-catalogue run states in `rejected[]` without failing. What was
-	// missing was somebody saying it out loud when it is the only thing the run
-	// had to say.
+	CodeSnapshotNotRemoved     Code = "GOM4040"
+	CodeScratchNotRemoved      Code = "GOM4041"
+	CodeReportNotPublished     Code = "GOM4042"
 	CodeSelectedMutantRejected Code = "GOM4043"
-	// CodeOrphanNotRemoved reports temporary directories left by earlier runs
-	// that this run could not collect.
-	//
-	// It is the same kind of warning as the two above and for the same reason:
-	// the run's results are unaffected and the remedy is a deletion in the
-	// temporary area. It is worth saying out loud because the directories it
-	// names are module-sized, nothing else will ever remove them, and a machine
-	// quietly filling up is a failure that arrives days later as something
-	// else.
-	CodeOrphanNotRemoved Code = "GOM4044"
-	// CodeTemporaryNotKept reports a directory [Options.KeepTemp] asked the run
-	// to preserve, whose owner marker could not be written — so it was removed
-	// instead of being left behind.
-	//
-	// A keep the marker did not record is not a keep. The next run's sweep reads
-	// the marker and finds a lock nobody holds, which is exactly what an
-	// abandoned directory looks like, so an unmarked directory would be
-	// collected minutes later and the answer somebody kept it for would be gone
-	// anyway. Removing it now and saying so is the honest half of that: the user
-	// learns the directory they asked for is not there, at the moment they could
-	// still re-run for it, instead of finding it missing tomorrow.
-	CodeTemporaryNotKept Code = "GOM4045"
-	// CodeDeadlineExceeded reports a run whose context ran out of time.
-	//
-	// It is a failure and not an interruption, and that difference is the whole
-	// reason it has a code of its own rather than sharing [CodeInterrupted]. A
-	// cancellation is somebody's decision, taken at the moment it happened and
-	// needing no explanation. A deadline expiring is the run failing to do what
-	// it was asked inside the time it was given, and "where did the time go" is
-	// answered by the tree and by the account of the run — so such a run reports
-	// [StatusFailed], keeps what `--keep-temp=on-failure` was asked to keep, and
-	// gets the diagnostics bundle every other failure gets. See [Interrupted].
-	//
-	// It is distinct from [CodeBaselineTimedOut], which is go-mutants' own cap on
-	// one command. This one is the caller's budget for the whole run.
-	CodeDeadlineExceeded Code = "GOM4046"
-	// CodeMemoryBoundUnavailable reports a run in which no mutant is bounded in
-	// memory, and says which of the two reasons applies: nothing measured what
-	// the baseline runs cost, or this platform cannot watch a process tree while
-	// it runs and therefore cannot enforce a bound at all.
-	//
-	// It is a warning rather than an error because the run is still a run: every
-	// mutant is still bounded in time, which is what go-mutants did before the
-	// memory bound existed. It is said once, and it is said at all because the
-	// difference matters to somebody deciding whether to trust the run on a CI
-	// machine — a mutant that allocates without bound is stopped on a bounded
-	// run and takes the runner down on an unbounded one, and that is not
-	// something to discover from a job that vanished.
+	CodeOrphanNotRemoved       Code = "GOM4044"
+	CodeTemporaryNotKept       Code = "GOM4045"
+	CodeDeadlineExceeded       Code = "GOM4046"
 	CodeMemoryBoundUnavailable Code = "GOM4047"
-	// CodeBaselineFromTestCache reports a run whose every timed baseline run was
-	// answered out of the toolchain's test result cache, which means nothing
-	// measured what the suite costs and the per-mutant budgets are sized on cache
-	// lookups. `go test` keeps a passing result and reprints it, which is why
-	// every baseline run after the first is given `-count=1` through GOFLAGS --
-	// see [gocmd.CountOnce]. A run that reports this anyway is one whose
-	// `test.command` does not obey GOFLAGS: a wrapper script that composes its
-	// own environment, or a command that is not the go command at all.
-	//
-	// It is a warning rather than an error because the run is still a run and its
-	// verdicts are still verdicts: a budget that is too small turns work into
-	// timeouts, and a confirmed timeout is counted as a detection, so the score
-	// is not inflated by it. What it costs is diagnosis -- a timeout says "this
-	// mutant did not return" where the truth is "the budget was a cache lookup"
-	// -- and that is exactly the kind of thing to be told about rather than to
-	// deduce from a run that looked slower than it should have.
-	CodeBaselineFromTestCache Code = "GOM4048"
-	// CodeLoopCensusUnusable reports a run whose loop census could not be read
-	// or whose ceilings could not be written, so its mutants are bounded in
-	// time alone: the stopwatch and the second measurement, which is what every
-	// run was held to before it could count what a loop does.
-	//
-	// It is a warning rather than an error for the reason the coverage pass
-	// fails open. Counting is an optimisation over the stopwatch and not a
-	// second opinion about a verdict — a mutant that does not return is
-	// detected either way — so a census that cannot be read costs the run time
-	// and precision of diagnosis, never a wrong answer. See ADR 0013.
-	CodeLoopCensusUnusable Code = "GOM4049"
+	CodeBaselineFromTestCache  Code = "GOM4048"
+	CodeLoopCensusUnusable     Code = "GOM4049"
 
-	// CodeChangedTestsUnaccounted is a `--changed` run whose diff edited test
-	// files, whose effect on the verdicts the narrowing cannot see.
-	//
-	// The narrowing keeps the mutants the diff touched, and a `_test.go` file
-	// holds none — internal/discover does not mutate one — so a test edit
-	// narrows nothing towards itself. What it changes instead is which mutants
-	// the suite kills, and the mapping that could name those is built from the
-	// selection this narrowing produces: the answer does not exist yet at the
-	// moment the question is asked.
-	//
-	// Both silent answers are wrong. Reporting the narrowed run without a word
-	// turns "I cannot see this" into "there is nothing there", and a diff of
-	// tests alone then publishes a score over an empty selection. Keeping every
-	// mutant instead turns it into "everything may have moved", and since nearly
-	// every commit edits a test beside the code it tests, that is the flag
-	// switched off for the runs it was built for. So the run narrows as asked and
-	// states the part it did not account for.
 	CodeChangedTestsUnaccounted Code = "GOM4050"
 )
 
-// String returns the code as it is printed.
 func (c Code) String() string { return string(c) }
 
-// codes is every code this package can emit, in numeric order. The package
-// tests assert that the list is complete, unique, and inside the block this
-// package owns, with [CodeMutationPhasesPending] as the documented exception.
 var codes = []Code{
 	CodeWorkspaceRoot,
 	CodeTestCommand,
@@ -317,67 +80,23 @@ var codes = []Code{
 	CodeChangedTestsUnaccounted,
 }
 
-// Codes returns every diagnostic code this package can report, in numeric
-// order, so that `doctor` can print the table without reading the source.
 func Codes() []Code { return slices.Clone(codes) }
 
-// OutputTailLines is how many trailing lines of a failed command's output an
-// [Error] keeps.
-//
-// internal/runner retains a megabyte, which is right for a report and wrong for
-// a terminal: the useful part of a failed `go test` is the last few assertions,
-// and a megabyte of scrollback buries them. Fifty lines is enough for a stack
-// trace plus the failure that caused it.
 const OutputTailLines = 50
 
-// An Error is one orchestration failure carrying a stable [Code].
-//
-// The child process output, when there was one, is kept in [Error.Output]
-// rather than folded into the message. A failure line has to stay one line —
-// that is what makes it greppable and what lets the command line prefix it —
-// while the output underneath it is many, and the two are printed differently.
 type Error struct {
-	// Code is the stable diagnostic code.
-	Code Code
-	// Message states the problem in one line, without the code and without the
-	// output.
+	Code    Code
 	Message string
-	// Output is the tail of the failed command's combined output, already
-	// trimmed to [OutputTailLines] and with trailing carriage returns removed.
-	// It is empty when the failure had no child process behind it.
-	Output string
-	// Err is the underlying cause, or nil. It stays reachable through
-	// errors.Is, which is how the command line recognises a cancellation.
-	Err error
+	Output  string
+	Err     error
 
-	// Invocation is the command the failure was about, or nil when there was no
-	// child process behind it. Where the cause is an internal/runner failure
-	// that already named its command, this is that same value rather than a
-	// second one built from the same spec.
-	//
-	// It is not part of [Error.Error], and deliberately so: the message is a
-	// one-liner two runs of the same failure render identically, while a command
-	// carries absolute paths and a snapshot directory that differ every run. The
-	// renderer asks for it separately and prints it under the message.
 	Invocation *runner.Invocation
 }
 
-// RetainedOutput returns the tail of the failing command's output, or an empty
-// string when the failure had no child process behind it.
-//
-// It is an accessor rather than a bare field so that a renderer can ask any of
-// go-mutants' error types for its output through one interface, without
-// importing every package that produces one. [OutputOf] is the same answer for
-// a caller that has an `error` and knows it came from here.
 func (e *Error) RetainedOutput() string { return e.Output }
 
-// Command returns the command this failure was about, or nil when there was
-// none. It mirrors [runner.Error.Command] so that one renderer can ask every
-// package's error the same question.
 func (e *Error) Command() *runner.Invocation { return e.Invocation }
 
-// Error renders "GOM4011: <message>", with the cause appended when there is
-// one. The output tail is deliberately not part of it.
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString(string(e.Code))
@@ -390,11 +109,8 @@ func (e *Error) Error() string {
 	return b.String()
 }
 
-// Unwrap returns the underlying cause.
 func (e *Error) Unwrap() error { return e.Err }
 
-// CodeOf returns the [Code] carried by err, or the empty Code if err did not
-// come from this package.
 func CodeOf(err error) Code {
 	var e *Error
 	if errors.As(err, &e) {
@@ -403,40 +119,17 @@ func CodeOf(err error) Code {
 	return ""
 }
 
-// A SelectionError reports a `--mutant` prefix that did not resolve to exactly
-// one catalogued mutant: the wrong alphabet, nothing matching, or several
-// matching.
-//
-// It is the one error this package raises that carries no GOM code, and the
-// omission is deliberate rather than an oversight. The mistake is in how the
-// run was invoked, not in the orchestration, and the catalogue it has to be
-// checked against only exists half way through a run — so the engine reports
-// the fact and internal/cli, which owns the invocation vocabulary, codes it in
-// its own GOM10xx block. Giving it a GOM40xx code as well would mean two
-// identifiers for one condition and a user searching for the wrong one.
-//
-// The internal/mutation sentinel stays reachable through errors.Is, so a caller
-// can tell "no such mutant" from "several such mutants" without parsing text.
 type SelectionError struct {
-	// Prefix is the value the user wrote.
 	Prefix string
-	// Err is the underlying [mutation.ErrInvalidPrefix],
-	// [mutation.ErrMutantNotFound], or [mutation.ErrAmbiguousPrefix], with the
-	// catalogue's own explanation attached.
-	Err error
+	Err    error
 }
 
-// Error renders the prefix and what the catalogue said about it.
 func (e *SelectionError) Error() string {
 	return "--mutant " + strconv.Quote(e.Prefix) + " did not select one mutant: " + e.Err.Error()
 }
 
-// Unwrap returns the underlying cause.
 func (e *SelectionError) Unwrap() error { return e.Err }
 
-// OutputOf returns the retained command output carried by err, or "" when
-// there is none. It saves the renderer an errors.As dance for the one field it
-// has to lay out differently from the message.
 func OutputOf(err error) string {
 	var e *Error
 	if errors.As(err, &e) {
@@ -445,13 +138,6 @@ func OutputOf(err error) string {
 	return ""
 }
 
-// tail trims a child's combined output down to what is worth printing: the
-// last [OutputTailLines] lines, without trailing blank lines and without the
-// carriage returns a Windows child leaves behind.
-//
-// Carriage returns are stripped here rather than left for the renderer because
-// a terminal is not the only consumer: the same string goes into a report,
-// where a stray CR is invisible in the diff that finally notices it.
 func tail(output []byte) string {
 	text := strings.TrimRight(string(output), "\r\n \t")
 	if text == "" {

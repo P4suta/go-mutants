@@ -13,16 +13,6 @@ import (
 	"time"
 )
 
-// TestModuleWritesTheGoDirectiveOfThisRepository keeps a synthesized module
-// buildable by the toolchain the repository is pinned to.
-//
-// A `go` directive newer than the toolchain makes every command against the
-// module fail with a toolchain-download request, and GOTOOLCHAIN=local — which
-// the environment policy sets, so no test ever reaches the network for a
-// compiler — turns that request into an error. A directive older than the
-// repository's is not wrong, but it is a second version to keep in step with
-// go.mod by hand. Reading the repository's own answer is the version of this
-// that cannot drift.
 func TestModuleWritesTheGoDirectiveOfThisRepository(t *testing.T) {
 	t.Parallel()
 
@@ -47,16 +37,6 @@ func TestModuleWritesTheGoDirectiveOfThisRepository(t *testing.T) {
 	}
 }
 
-// TestModuleCRLFRewritesEveryLineEndingAndNothingElse is the fixture the corpus
-// cannot hold.
-//
-// `.gitattributes` pins `* -text`, so a CRLF file checked in here would arrive
-// as CRLF on every platform and change every mutant ID that covers it — which is
-// exactly why the instrumenter's byte-preservation claim needs a CRLF module and
-// why that module has to be synthesized. The rewrite is only the line endings:
-// the bytes between them, the file's mode and every file that is not Go source
-// are left as they were, or the module would be a different program rather than
-// the same program with other line endings.
 func TestModuleCRLFRewritesEveryLineEndingAndNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -87,9 +67,6 @@ func TestModuleCRLFRewritesEveryLineEndingAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestModuleCRLFIsIdempotent stops a second call from producing CR CR LF, which
-// is not a line ending on any platform and would be a corrupt fixture that still
-// compiled in most places.
 func TestModuleCRLFIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -104,9 +81,6 @@ func TestModuleCRLFIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestModuleFromAgesTheTree carries [TreeAge]'s rule through the builder: a
-// fixture copied in and then written to is still a tree the go command indexes
-// the way it indexes a real one.
 func TestModuleFromAgesTheTree(t *testing.T) {
 	t.Parallel()
 
@@ -128,10 +102,6 @@ func TestModuleFromAgesTheTree(t *testing.T) {
 	}
 }
 
-// TestModuleCRLFRefusesToRewriteThroughALink is [AgeTree]'s rule for the other
-// walk in this package: os.WriteFile follows a symlink, so a `.go` link in the
-// module would have had CRLF written onto whatever it pointed at — a file outside
-// the module, and quite possibly one of this repository's own sources.
 func TestModuleCRLFRefusesToRewriteThroughALink(t *testing.T) {
 	t.Parallel()
 
@@ -154,14 +124,6 @@ func TestModuleCRLFRefusesToRewriteThroughALink(t *testing.T) {
 	}
 }
 
-// TestModuleFileAgesWhatItWroteWithoutWalkingTheTree keeps the builder linear in
-// the number of writes rather than quadratic.
-//
-// Ageing the whole tree after every write is O(files) per write, and the corpus
-// modules the builder starts from have dozens of them; a module built up file by
-// file would spend its time re-stamping files nothing had touched. What a write
-// can change is the file itself and the modification times of the directories
-// above it, so those are what is aged.
 func TestModuleFileAgesWhatItWroteWithoutWalkingTheTree(t *testing.T) {
 	t.Parallel()
 
@@ -181,16 +143,6 @@ func TestModuleFileAgesWhatItWroteWithoutWalkingTheTree(t *testing.T) {
 	}
 }
 
-// TestASynthesizedModuleBuildsUnderTheHermeticEnvironment is the one test that
-// puts the whole harness together, because every part of it is a claim about
-// what a real `go` command will accept.
-//
-// The `go` directive has to be one the pinned toolchain can use, since
-// GOTOOLCHAIN=local turns a request for another one into an error; the module
-// path has to be resolvable with GOPROXY=off and GOFLAGS=-mod=readonly, which is
-// what "no dependencies, ever" buys the corpus; and the module cache and build
-// cache have to be reachable under a moved HOME. Each of those is asserted as a
-// value elsewhere in this package. This asserts that the go command agrees.
 func TestASynthesizedModuleBuildsUnderTheHermeticEnvironment(t *testing.T) {
 	e := Env(t)
 	gobin := GoBinary(t)
@@ -203,10 +155,6 @@ func TestASynthesizedModuleBuildsUnderTheHermeticEnvironment(t *testing.T) {
 	RequireExit(t, result, 0, "`go build ./...` in the synthesized module")
 }
 
-// TestModuleFileWritesUnderTheRootWithSlashPaths keeps the builder's paths
-// portable: every call site spells a relative path with forward slashes, which
-// is what a Go source file's import path and a `go list` pattern look like, and
-// the builder is the one place that has to turn that into a native path.
 func TestModuleFileWritesUnderTheRootWithSlashPaths(t *testing.T) {
 	t.Parallel()
 

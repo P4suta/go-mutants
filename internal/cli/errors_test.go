@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/P4suta/go-mutants/internal/engine"
-	// Aliased because this package's own tests already spell `execute` the
-	// helper that drives the whole command tree.
 	executepkg "github.com/P4suta/go-mutants/internal/execute"
 	"github.com/P4suta/go-mutants/internal/gocmd"
 	"github.com/P4suta/go-mutants/internal/mutation"
@@ -19,15 +17,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
-// TestRenderErrorPrintsExecuteOutputUnderneathAGOM7505 is the failure this
-// whole change is about.
-//
-// A test binary that will not compile is reported as a go-mutants bug in the
-// instrumented rewrite, and the only evidence for it is what the compiler
-// said — which the renderer used to drop on the floor, because it asked
-// internal/engine for the output and this error is internal/execute's. One line
-// saying "the test binary could not be built" is a bug report nobody can act
-// on.
 func TestRenderErrorPrintsExecuteOutputUnderneathAGOM7505(t *testing.T) {
 	t.Parallel()
 
@@ -45,15 +34,6 @@ func TestRenderErrorPrintsExecuteOutputUnderneathAGOM7505(t *testing.T) {
 	}
 }
 
-// TestRenderErrorPrintsValidateOutputExactlyOnce pins the half of the change
-// that is a removal.
-//
-// internal/validate used to append the compiler's output to its own Error()
-// text, because nothing else would print it. That made every line of a
-// multi-line blob arrive at the renderer as a continuation line and come back
-// out with a GOM7420 in front of it, and it would now be printed twice over —
-// once folded into the message and once by the renderer. The output belongs
-// under the message, once, and it is the renderer's job to put it there.
 func TestRenderErrorPrintsValidateOutputExactlyOnce(t *testing.T) {
 	t.Parallel()
 
@@ -75,16 +55,6 @@ func TestRenderErrorPrintsValidateOutputExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestRenderErrorPrintsTheFailingCommandAndDirectory is why the invocation is
-// carried up at all: a reader who cannot reproduce a failure cannot fix it.
-//
-// The quoting rule is the interesting part, and all three of its cases are
-// here. An element is printed verbatim unless it contains whitespace or a
-// double quote, or is empty: a line that escaped every path would be unreadable
-// for the ninety-nine commands in a hundred that need no escaping, one that
-// escaped nothing would silently turn `-run` `Test A` into three shell words,
-// and an empty argument printed verbatim would vanish along with the argument
-// count.
 func TestRenderErrorPrintsTheFailingCommandAndDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -108,14 +78,6 @@ func TestRenderErrorPrintsTheFailingCommandAndDirectory(t *testing.T) {
 	}
 }
 
-// TestRenderErrorQuotesAWindowsPathWithoutDoublingItsSeparators is the reason
-// the quoting is hand-rolled rather than strconv.Quote's.
-//
-// The one platform whose ordinary paths contain a space is the one whose
-// separator is a backslash, so Go's own quoting turns the single command a user
-// most needs to paste into `"C:\\Program Files\\Go\\bin\\go.exe"` — a path that
-// is correct as a Go string literal and wrong in every shell there is. Only the
-// quote itself is escaped here; everything else goes through as written.
 func TestRenderErrorQuotesAWindowsPathWithoutDoublingItsSeparators(t *testing.T) {
 	t.Parallel()
 
@@ -136,13 +98,6 @@ func TestRenderErrorQuotesAWindowsPathWithoutDoublingItsSeparators(t *testing.T)
 	}
 }
 
-// TestRenderErrorPrintsNoCommandLinesForACommandlessInvocation covers the
-// invocation that names nothing: a spec the runner refused for having no
-// argument vector at all.
-//
-// A `dir:` on its own would be the worst of both answers — it says a command
-// ran somewhere without saying what it was — so the two lines stand or fall
-// together.
 func TestRenderErrorPrintsNoCommandLinesForACommandlessInvocation(t *testing.T) {
 	t.Parallel()
 
@@ -158,15 +113,6 @@ func TestRenderErrorPrintsNoCommandLinesForACommandlessInvocation(t *testing.T) 
 	}
 }
 
-// TestRenderErrorWalksPastAnErrorThatKeptNothing pins half of the precedence
-// rule: an error that could carry an output or a command and does not is walked
-// past, not stopped at.
-//
-// It is the shape a start failure arrives in. internal/engine wraps the
-// runner's error and has no tail of its own, because there was no child to
-// produce one, while the runner's error knows exactly which command it was —
-// and a walk that stopped at the first error merely *capable* of answering
-// would print nothing for it.
 func TestRenderErrorWalksPastAnErrorThatKeptNothing(t *testing.T) {
 	t.Parallel()
 
@@ -192,13 +138,6 @@ func TestRenderErrorWalksPastAnErrorThatKeptNothing(t *testing.T) {
 	}
 }
 
-// TestRenderErrorPrefersTheOutermostErrorThatDecided pins the other half.
-//
-// When both ends of the chain have an answer the outer one wins, because the
-// outer error is the one that decided what a terminal should see: internal/engine
-// and internal/execute trim a fifty-line tail for a console, while the runner
-// retains up to a megabyte for a report. Printing the inner capture as well —
-// or instead — would bury the failure in the scrollback it was trimmed out of.
 func TestRenderErrorPrefersTheOutermostErrorThatDecided(t *testing.T) {
 	t.Parallel()
 
@@ -225,8 +164,6 @@ func TestRenderErrorPrefersTheOutermostErrorThatDecided(t *testing.T) {
 	if got != want {
 		t.Errorf("RenderError:\n got %q\nwant %q", got, want)
 	}
-	// Three times over: the argv, the directory, and the output tail — each of
-	// them the outer error's answer, and none of them the inner one's.
 	if n := strings.Count(got, "outer"); n != 3 {
 		t.Errorf("the outer answer appears %d times, want three:\n%s", n, got)
 	}
@@ -235,14 +172,6 @@ func TestRenderErrorPrefersTheOutermostErrorThatDecided(t *testing.T) {
 	}
 }
 
-// TestRenderErrorPrintsAJoinedErrorsOutputAndCommand is the shape a run that
-// failed and then failed to clean up arrives in.
-//
-// internal/engine joins the run's error with whatever the scratch removal said,
-// and a joined error unwraps to a *slice*: a walk that only followed a single
-// cause reached the join, found no `Unwrap() error` on it, and stopped — losing
-// the compiler's diagnostics and the command for every failure that happened to
-// be joined to a second one.
 func TestRenderErrorPrintsAJoinedErrorsOutputAndCommand(t *testing.T) {
 	t.Parallel()
 
@@ -267,15 +196,6 @@ func TestRenderErrorPrintsAJoinedErrorsOutputAndCommand(t *testing.T) {
 	}
 }
 
-// TestRenderErrorConsultsEveryBranchOfAJoinedError is the same shape with the
-// branches the other way round, and it is the one that catches a walk which
-// merely *starts* branch-aware.
-//
-// The first branch here can answer and has nothing to say — the cleanup failure
-// is coded, so it is a carrier, and it never ran a command — while the second
-// holds the compiler's diagnostics. Following one cause at a time reaches the
-// join, finds no single cause under it, and gives up with the evidence one
-// branch away.
 func TestRenderErrorConsultsEveryBranchOfAJoinedError(t *testing.T) {
 	t.Parallel()
 
@@ -304,13 +224,6 @@ func TestRenderErrorConsultsEveryBranchOfAJoinedError(t *testing.T) {
 	}
 }
 
-// TestRenderErrorPrintsRunnerStartFailureCommand covers the error that names a
-// command and nothing else.
-//
-// A process that could not be started produced no output, so the command is the
-// whole of the diagnosis: "could not start /tmp/.../pkg.test" is a sentence
-// about a path the user has never seen, and the argv and the working directory
-// are what turn it into something reproducible.
 func TestRenderErrorPrintsRunnerStartFailureCommand(t *testing.T) {
 	t.Parallel()
 
@@ -331,10 +244,6 @@ func TestRenderErrorPrintsRunnerStartFailureCommand(t *testing.T) {
 	}
 }
 
-// TestRenderErrorPrintsGocmdProbeOutput is the first failure a new user can
-// hit, and the one where the child's own words matter most: whatever the thing
-// on PATH answered `go version` with is the evidence that it is not a Go
-// toolchain.
 func TestRenderErrorPrintsGocmdProbeOutput(t *testing.T) {
 	t.Parallel()
 
@@ -355,13 +264,6 @@ func TestRenderErrorPrintsGocmdProbeOutput(t *testing.T) {
 	}
 }
 
-// TestRenderErrorStillPrintsNothingForASilentPolicyFailure is the regression
-// guard on everything the new lines must not touch.
-//
-// A failed policy gate prints nothing at all, because the run's own summary
-// already named the survivors and the score. An error carrying neither a
-// command nor an output renders exactly as it did before this change: the coded
-// line, the hint, and nothing else.
 func TestRenderErrorStillPrintsNothingForASilentPolicyFailure(t *testing.T) {
 	t.Parallel()
 

@@ -76,8 +76,6 @@ A switch whose `default` really is the right answer for every word says so
 immediately above itself:
 
 ```go
-//exhaustive:total a colour is a rendering, and an unstyled new outcome is the
-// right thing to render
 switch outcome {
 ```
 

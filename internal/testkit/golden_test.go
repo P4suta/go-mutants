@@ -14,12 +14,6 @@ import (
 	"testing"
 )
 
-// TestGoldenPathIsRelativeToTheTestsOwnPackage states the one convention the
-// helper does not take as an argument.
-//
-// `go test` runs a test binary in its package's source directory, so every
-// golden in this repository is already `testdata/<name>` and a helper that took
-// a whole path would let one package spell it differently from the next.
 func TestGoldenPathIsRelativeToTheTestsOwnPackage(t *testing.T) {
 	t.Parallel()
 
@@ -28,14 +22,6 @@ func TestGoldenPathIsRelativeToTheTestsOwnPackage(t *testing.T) {
 	}
 }
 
-// TestGoldenFailsClosedWhenTheFileIsMissing is the rule that separates a golden
-// file from a cache of whatever the code did last.
-//
-// A helper that recorded a missing golden silently would turn the first run of
-// a new test — and every run after a golden was deleted, moved or renamed by a
-// bad merge — into a green one that pins nothing. The recording has to be a
-// decision somebody made with -update and read the diff of, so an absent file
-// ends the test and says which file and how to create it on purpose.
 func TestGoldenFailsClosedWhenTheFileIsMissing(t *testing.T) {
 	t.Parallel()
 
@@ -56,14 +42,6 @@ func TestGoldenFailsClosedWhenTheFileIsMissing(t *testing.T) {
 	}
 }
 
-// TestGoldenPrintsAUnifiedDiffNotBothDocuments is what a golden failure is for.
-//
-// The goldens in this repository are whole documents — a run report, a
-// generated runtime, a recording of every event — and the four suites that had
-// their own comparison printed `--- got ---` and `--- want ---` in full. In CI
-// that is two thousand lines of identical JSON around the one field that moved,
-// and reading it means saving both halves out of a log and diffing them by
-// hand. The failure has to name the line instead.
 func TestGoldenPrintsAUnifiedDiffNotBothDocuments(t *testing.T) {
 	t.Parallel()
 
@@ -73,7 +51,6 @@ func TestGoldenPrintsAUnifiedDiffNotBothDocuments(t *testing.T) {
 		want = append(want, line)
 		got = append(got, line)
 	}
-	// One line moves, in the middle, with plenty of agreement on both sides.
 	want[10] = `  "score_percent": 66.6,`
 	got[10] = `  "score_percent": 71.4,`
 
@@ -95,17 +72,11 @@ func TestGoldenPrintsAUnifiedDiffNotBothDocuments(t *testing.T) {
 			t.Errorf("the report does not show %s, so it is not a diff of the line that moved:\n%s", needle, report)
 		}
 	}
-	// The claim is the whole point: a line both documents agree on is not in
-	// the report at all, so the report is a diff rather than two documents.
 	if strings.Contains(report, `"filler_00"`) {
 		t.Errorf("the report carries a line both documents share, so it is printing the documents:\n%s", report)
 	}
 }
 
-// TestCompareGoldenRewritesOnlyWhenUpdating pins the two directions of the one
-// flag, because a helper that got this backwards would rewrite the file it was
-// asked to compare against and every golden test in the repository would pass
-// for ever.
 func TestCompareGoldenRewritesOnlyWhenUpdating(t *testing.T) {
 	t.Parallel()
 
@@ -131,13 +102,6 @@ func TestCompareGoldenRewritesOnlyWhenUpdating(t *testing.T) {
 	}
 }
 
-// TestGoldenSaysSoWhenItRewritesAFile pins the one line a -update run prints.
-//
-// A rewrite is silent otherwise: `go test ./internal/report -update` passes
-// whether it regenerated a document or compared against one, and the difference
-// is the whole point of the flag. The log line is what tells the reader there is
-// a diff waiting to be read — and, when a golden did *not* move, that the file
-// they expected to change was not the one this test writes.
 func TestGoldenSaysSoWhenItRewritesAFile(t *testing.T) {
 	t.Parallel()
 
@@ -157,7 +121,6 @@ func TestGoldenSaysSoWhenItRewritesAFile(t *testing.T) {
 		}
 	}
 
-	// And a comparison says nothing, so that a passing run stays quiet.
 	quiet := &recorder{TB: t}
 	goldenAt(quiet, path, []byte("what the code produced\n"), false)
 	if len(quiet.logs) != 0 {
@@ -165,9 +128,6 @@ func TestGoldenSaysSoWhenItRewritesAFile(t *testing.T) {
 	}
 }
 
-// TestCompareGoldenRefusesAMissingFileEvenAtTheErrorLevel keeps the fail-closed
-// rule in the function every other caller composes with, rather than only in
-// the [testing.TB] wrapper above it.
 func TestCompareGoldenRefusesAMissingFileEvenAtTheErrorLevel(t *testing.T) {
 	t.Parallel()
 
@@ -181,16 +141,6 @@ func TestCompareGoldenRefusesAMissingFileEvenAtTheErrorLevel(t *testing.T) {
 	}
 }
 
-// TestGoldenPackagesAreNamedByTheUpdateTask is the ledger that keeps one flag
-// usable.
-//
-// There is exactly one -update flag now, registered in this package, and it is
-// therefore the same flag in every test binary that links the harness. The cost
-// of that is that `go test -update ./...` would rewrite every golden in the
-// repository in one command, including the ones whose diff nobody looked at, so
-// the supported spelling is a task naming the packages explicitly — and a task
-// that names a stale list is worse than no task, because the golden it forgot
-// is the one that silently stops being regenerated.
 func TestGoldenPackagesAreNamedByTheUpdateTask(t *testing.T) {
 	t.Parallel()
 
@@ -213,8 +163,6 @@ func TestGoldenPackagesAreNamedByTheUpdateTask(t *testing.T) {
 	}
 }
 
-// goldenPackages lists every package holding a `testdata/*.golden*` file, as
-// `./`-prefixed slash-separated paths relative to root, sorted.
 func goldenPackages(root string) ([]string, error) {
 	var packages []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -245,14 +193,6 @@ func goldenPackages(root string) ([]string, error) {
 	return packages, nil
 }
 
-// updateTaskPackages reads the package patterns out of mise.toml's
-// golden-update task, sorted.
-//
-// The parse is the handful of lines it needs rather than a TOML library, for
-// the reason every other read in this package is: the harness's import list
-// holds nothing from this module, and outside the standard library only
-// github.com/google/go-cmp, so the tests of the pure packages can use it without
-// pulling a dependency in behind them.
 func updateTaskPackages(path string) ([]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -270,24 +210,9 @@ func updateTaskPackages(path string) ([]string, error) {
 	return packages, nil
 }
 
-// updateTaskCommands reads the golden-update task's `run` value as the list of
-// shell commands it holds, in the order mise would run them.
-//
-// Both TOML spellings are read, and the array one is not a stylistic
-// alternative. `-update` is one flag in one test binary, so the packages have to
-// be named explicitly — and a package whose golden test carries
-// `//go:build integration` is not even compiled by a `go test` without the tag,
-// so a single command cannot regenerate every golden in this repository. It
-// takes two, and a parser that knew only about `run = "…"` would read the first
-// and silently report the second's packages as missing from the task.
 func updateTaskCommands(toml string) ([]string, error) {
 	inTask, inArray := false, false
 	var commands []string
-	// closeArray ends the array, refusing one that named no command at all.
-	// An empty `run = []` parses perfectly and regenerates nothing, and the
-	// ledger above would then report every golden package as missing from a
-	// task that is not broken so much as empty — which is a diff to read rather
-	// than a sentence to act on.
 	closeArray := func() ([]string, error) {
 		if len(commands) == 0 {
 			return nil, errors.New("[tasks.golden-update]'s run array holds no command")
@@ -298,9 +223,6 @@ func updateTaskCommands(toml string) ([]string, error) {
 		found, outside := splitTOMLLine(strings.TrimSpace(line))
 		if inArray {
 			commands = append(commands, found...)
-			// The bracket is looked for in the text *outside* the strings, so a
-			// command holding a `]` of its own does not end the array early and
-			// a `"…"]` with no comma before the bracket does end it.
 			if strings.Contains(outside, "]") {
 				return closeArray()
 			}
@@ -342,20 +264,6 @@ func updateTaskCommands(toml string) ([]string, error) {
 	return nil, errors.New("has no [tasks.golden-update] with a run value")
 }
 
-// splitTOMLLine separates one line into the double-quoted strings it holds and
-// the text outside them, with a `#` comment dropped.
-//
-// The split is what makes the two structural questions above answerable without
-// a TOML parser: a `[` or a `]` or a `#` matters only outside a string, and every
-// one of them is a character a shell command in this task may legitimately
-// contain. Matching them against the raw line is how a comment naming a package
-// pattern gets counted as one, and how a command holding a bracket ends the
-// array.
-//
-// It is deliberately not a TOML implementation. Basic strings with an escaped
-// quote are handled because they cost one branch; single-quoted literal strings,
-// multi-line strings and inline tables are not, because nothing in this task
-// needs them and a half-guessed grammar is worse than a refusal.
 func splitTOMLLine(line string) (found []string, outside string) {
 	var out strings.Builder
 	for i := 0; i < len(line); i++ {
@@ -379,7 +287,6 @@ func splitTOMLLine(line string) (found []string, outside string) {
 	return found, out.String()
 }
 
-// commandPackages lists the Go package patterns one command names.
 func commandPackages(command string) []string {
 	var packages []string
 	for _, field := range strings.Fields(command) {
@@ -390,19 +297,6 @@ func commandPackages(command string) []string {
 	return packages
 }
 
-// TestGoldenUpdateTaskHandlesTaggedPackages is the other half of the ledger
-// above: the task has to *reach* the goldens it names.
-//
-// `internal/engine`'s golden test is `//go:build integration`-tagged, because
-// what it records is a real run of a real fixture through a real toolchain.
-// A `go test ./internal/engine -update` without the tag compiles a package with
-// no golden test in it at all, passes, and rewrites nothing — so the task would
-// name the package, [TestGoldenPackagesAreNamedByTheUpdateTask] would be
-// satisfied, and the golden it was supposed to regenerate would quietly stop
-// being regenerated. That is the failure this test exists to make impossible,
-// and it is checked in both directions: the parser is shown the two TOML
-// spellings, and the real task is required to pass `-tags integration` to every
-// package whose tests are all in the integration tier.
 func TestGoldenUpdateTaskHandlesTaggedPackages(t *testing.T) {
 	t.Parallel()
 
@@ -410,11 +304,9 @@ func TestGoldenUpdateTaskHandlesTaggedPackages(t *testing.T) {
 		t.Parallel()
 
 		for _, test := range []struct {
-			name string
-			toml string
-			want []string
-			// wantErr is the phrase a refusal has to carry. A row with one
-			// expects no commands at all.
+			name    string
+			toml    string
+			want    []string
 			wantErr string
 		}{{
 			name: "one command",
@@ -430,28 +322,16 @@ func TestGoldenUpdateTaskHandlesTaggedPackages(t *testing.T) {
 			toml: "[tasks.golden-update]\nrun = [\"go test ./a -update\", \"go test ./b -update\"]\n",
 			want: []string{"go test ./a -update", "go test ./b -update"},
 		}, {
-			// The bracket closing the array on the last command's own line,
-			// with no comma in front of it. TOML allows it and a parser that
-			// looked for a line *starting* with `]` reads to the end of the
-			// file and reports an array that is never closed.
 			name: "the array closed after the last command",
 			toml: "[tasks.golden-update]\nrun = [\n  \"go test ./a -update\",\n" +
 				"  \"go test ./b -update\"]\n",
 			want: []string{"go test ./a -update", "go test ./b -update"},
 		}, {
-			// A comment on an array line, holding something that looks exactly
-			// like a package pattern. It is not one, and a scan of the raw line
-			// would name `./ignored` in the task's package list — which
-			// TestGoldenPackagesAreNamedByTheUpdateTask compares for equality,
-			// so the comment alone would fail the ledger.
 			name: "a comment naming a pattern",
 			toml: "[tasks.golden-update]\nrun = [\n  \"go test ./a -update\", # not ./ignored\n" +
 				"  \"go test ./b -update\",\n] # nor ./elsewhere\n",
 			want: []string{"go test ./a -update", "go test ./b -update"},
 		}, {
-			// An array that names nothing. It parses, it regenerates nothing,
-			// and an empty answer would be reported by the ledger as every
-			// golden package missing from a task that is merely empty.
 			name:    "an empty array",
 			toml:    "[tasks.golden-update]\nrun = []\n",
 			wantErr: "holds no command",
@@ -475,7 +355,6 @@ func TestGoldenUpdateTaskHandlesTaggedPackages(t *testing.T) {
 				if !slices.Equal(got, test.want) {
 					t.Errorf("commands = %q, want %q", got, test.want)
 				}
-				// And the packages come out of every command, not only the first.
 				path := filepath.Join(t.TempDir(), "mise.toml")
 				WriteFile(t, path, []byte(test.toml))
 				packages, err := updateTaskPackages(path)
@@ -527,27 +406,8 @@ func TestGoldenUpdateTaskHandlesTaggedPackages(t *testing.T) {
 	})
 }
 
-// goldenCall is how a test records or compares a golden file: [Golden],
-// [CompareGolden], and nothing else — [GoldenPath] and [Update] hand back a
-// path and a flag and rewrite no file on their own.
-//
-// It is matched as text rather than resolved, for the reason every other scan
-// in this package is: `go/types` would need the whole module loaded, with a
-// toolchain, in the tier this test belongs to.
 const goldenCall = "Golden("
 
-// goldensRecordedBehindTheTag reports whether any test file in a directory both
-// records a golden and is kept out of the unit tier by the integration tag, and
-// names the files that do.
-//
-// The question is deliberately about the *recording files* rather than about the
-// package. "Every test file in this package is tagged" was the first thing this
-// asked, and it was true of no golden package in the repository — internal/engine
-// has eleven tagged test files and thirteen untagged ones — so the check passed
-// whatever the task said, including with the tag removed from the command
-// altogether. What makes a `-update` run rewrite nothing is narrower and exact:
-// the file holding the [Golden] call is not compiled, whatever else in the
-// package is.
 func goldensRecordedBehindTheTag(dir string) (bool, []string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

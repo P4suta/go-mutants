@@ -12,10 +12,6 @@ import (
 	"testing"
 )
 
-// Source fixtures for the golden vectors. lfSource and crlfSource are the
-// same program with different line endings, which is the whole point of the
-// pair: the mutated bytes, the span, the path, and the rule are identical, so
-// the only thing that can separate their identities is the whole-file digest.
 const (
 	lfSource   = "package score\n\nfunc equal(a, b int) bool {\n\treturn a == b\n}\n"
 	crlfSource = "package score\r\n\r\nfunc equal(a, b int) bool {\r\n\treturn a == b\r\n}\r\n"
@@ -24,15 +20,6 @@ const (
 	deleteSource  = "package discover\n\nfunc walk() {\n\tlogTraversal(\"walk\")\n}\n"
 )
 
-// goldenVector is a frozen input-to-ID mapping.
-//
-// The expected IDs were produced by an independent implementation of the
-// recipe written from the specification prose, not by this package. If a
-// change to id.go moves any of these values, the change has renamed every
-// mutant that go-mutants has ever reported: cached outcomes, `--mutant`
-// selectors, and every `[[mutation.expect]]` entry in every user's
-// configuration file all break at once. The correct way to change the recipe
-// is a new domain separator, "go-mutants-id-v2".
 type goldenVector struct {
 	name        string
 	path        string
@@ -42,10 +29,8 @@ type goldenVector struct {
 	source      string
 	original    string
 	replacement string
-	// modulePath is empty for the nine-field recipe and set for the
-	// ten-field one, which is the only thing that decides between them.
-	modulePath string
-	wantID     string
+	modulePath  string
+	wantID      string
 }
 
 var goldenVectors = []goldenVector{
@@ -61,8 +46,6 @@ var goldenVectors = []goldenVector{
 		wantID:      "e35d4481eff8c1c4e2915152633bbf53eea3c4bc0a05d3f643eb703f88bb2b18",
 	},
 	{
-		// Byte-for-byte the same edit in a CRLF checkout of the same file.
-		// This is why .gitattributes pins `* -text`.
 		name:        "crlf source",
 		path:        "internal/mutation/score.go",
 		ruleName:    "eq-to-neq",
@@ -74,8 +57,6 @@ var goldenVectors = []goldenVector{
 		wantID:      "857f7ce066220e7cc3b9fa0662ec47043e862e7a3e8ba1daefa28d54943a533b",
 	},
 	{
-		// A non-ASCII path proves the length prefix counts UTF-8 bytes and
-		// not runes: "日本語" is three runes and nine bytes.
 		name:        "unicode path",
 		path:        "internal/mutation/日本語/テスト.go",
 		ruleName:    "true-to-false",
@@ -87,9 +68,6 @@ var goldenVectors = []goldenVector{
 		wantID:      "c5dca588af89bef7bba20137ce4f6740591b1b3c9a605bf241cd4ba28f92c6ae",
 	},
 	{
-		// Statement deletion: the replacement is empty, so its field is a
-		// bare four-byte zero prefix and its digest is the SHA-256 of the
-		// empty string. No special case anywhere.
 		name:        "empty replacement",
 		path:        "internal/discover/walk.go",
 		ruleName:    "delete-call-statement",
@@ -101,9 +79,6 @@ var goldenVectors = []goldenVector{
 		wantID:      "c813601416657960efe57a6333d2aaf6da49f367fdd706b8dd9cf860b1fed412",
 	},
 	{
-		// Same edit as the first vector with the rule version bumped. A rule
-		// that changes what it emits must re-mint its mutants rather than
-		// silently inheriting cached outcomes.
 		name:        "rule version bump",
 		path:        "internal/mutation/score.go",
 		ruleName:    "eq-to-neq",
@@ -115,15 +90,6 @@ var goldenVectors = []goldenVector{
 		wantID:      "ee5e971c231e2303c070f53860f12c2f50b5051bac2c3b37171bf923647c67bc",
 	},
 	{
-		// The first vector's edit again, measured as part of a workspace. Every
-		// field it hashes is the same and the identity is not, which is the
-		// whole of what the second domain is for: a path is no longer a
-		// coordinate on its own once two modules can each hold one.
-		//
-		// It is a vector rather than an assertion about inequality because the
-		// bytes are the contract. A reimplementation in another language has to
-		// produce this string, and "different from the other one" is not
-		// something anybody can implement against.
 		name:        "workspace module",
 		path:        "internal/mutation/score.go",
 		ruleName:    "eq-to-neq",
@@ -136,10 +102,6 @@ var goldenVectors = []goldenVector{
 		wantID:      "f7abd7f50982c88c90f9d4c6b2594eb8052651dd3df22944c22e0b40631e9d9d",
 	},
 	{
-		// The same mutant of a *different* module of the same workspace. The
-		// two modules each normalize this file to the same module-relative
-		// path, so without the tenth field these two vectors would be one
-		// string -- which is exactly the collision the domain exists to stop.
 		name:        "workspace sibling module",
 		path:        "internal/mutation/score.go",
 		ruleName:    "eq-to-neq",
@@ -224,8 +186,6 @@ func TestEmptyReplacementDigestIsTheEmptySHA256(t *testing.T) {
 	}
 }
 
-// TestIDFieldsAreUnambiguouslyFramed is the property the length prefixes
-// exist for: no two different field splits may hash to the same identity.
 func TestIDFieldsAreUnambiguouslyFramed(t *testing.T) {
 	t.Parallel()
 
@@ -367,9 +327,6 @@ func TestIdentityValidation(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Validate() error = %v, want %v", err, tc.wantErr)
 			}
-			// An identity that does not validate must not produce an ID
-			// either: a plausible-looking hash over garbage is worse than an
-			// error.
 			if tc.wantErr != nil {
 				if got, err := id.ID(); err == nil {
 					t.Fatalf("ID() = %s for an invalid identity", got)
@@ -399,13 +356,6 @@ func TestNormalizePath(t *testing.T) {
 		{name: "nul byte", in: "internal/sco\x00re.go", wantErr: ErrEmptyPath},
 		{name: "absolute posix", in: "/internal/score.go", wantErr: ErrAbsolutePath},
 		{name: "absolute windows", in: `C:\repo\score.go`, wantErr: ErrAbsolutePath},
-		// A volume name is a letter and a colon, and both halves of that are
-		// checked here rather than assumed. The four letters are the ends of
-		// the two ASCII ranges, because a range that stops one short accepts
-		// `z:\...` as a relative path and mints an identity for a file outside
-		// the module. "1:" is the counter-example: a colon after something
-		// that is not a letter is a directory whose name contains a colon,
-		// which POSIX allows, and rejecting it would refuse a legal path.
 		{name: "bare volume name", in: "c:", wantErr: ErrAbsolutePath},
 		{name: "dot slash before volume name", in: "./A:", wantErr: ErrAbsolutePath},
 		{name: "first lowercase volume name", in: `a:\repo\score.go`, wantErr: ErrAbsolutePath},
@@ -431,8 +381,6 @@ func TestNormalizePath(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("NormalizePath(%q) = %q, want %q", tc.in, got, tc.want)
 			}
-			// Normalization is idempotent, which is what lets Validate
-			// compare a path against its own normal form.
 			again, err := NormalizePath(got)
 			if err != nil || again != got {
 				t.Fatalf("NormalizePath(%q) is not idempotent: %q, %v", got, again, err)
@@ -480,15 +428,6 @@ func TestIsIDAndIsDigest(t *testing.T) {
 	}
 }
 
-// TestTheFrozenRecipeIsUntouchedByTheWorkspaceOne is the promise the second
-// domain was introduced to keep.
-//
-// v1 was frozen, and a frozen recipe that grew a field would not have been
-// frozen. So the claim is not "the two differ" -- the vectors above say that in
-// bytes -- but that adding the second one moved nothing: an identity with no
-// module path hashes the same nine fields it always did, and every stored
-// outcome, report and expectation minted before the workspace recipe existed
-// still names the same mutant.
 func TestTheFrozenRecipeIsUntouchedByTheWorkspaceOne(t *testing.T) {
 	t.Parallel()
 
@@ -499,11 +438,6 @@ func TestTheFrozenRecipeIsUntouchedByTheWorkspaceOne(t *testing.T) {
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()
 
-			// Stated the long way round, against the field list rather than
-			// against the function: what is frozen is the recipe, and a test
-			// that only called ID() would pass for a build in which the recipe
-			// had been rewritten into something that agreed on these five
-			// inputs and nothing else.
 			id := v.identity()
 			want := hashOf(t,
 				IDDomain,
@@ -523,8 +457,6 @@ func TestTheFrozenRecipeIsUntouchedByTheWorkspaceOne(t *testing.T) {
 	}
 }
 
-// TestTheWorkspaceRecipeIsTheNineFieldsPlusOne pins the second recipe the same
-// way, so that both are described by their bytes rather than by their code.
 func TestTheWorkspaceRecipeIsTheNineFieldsPlusOne(t *testing.T) {
 	t.Parallel()
 
@@ -555,13 +487,6 @@ func TestTheWorkspaceRecipeIsTheNineFieldsPlusOne(t *testing.T) {
 	}
 }
 
-// TestAModulePathThatCannotBeHashedIsRefused keeps the tenth field a field.
-//
-// The encoding is unambiguous whatever the bytes are, so this is not about the
-// hash: it is about a module path that could only have arrived by mistake. A
-// version suffix is the one worth naming -- `example.com/m@v2` is a request
-// nobody made, and minting an identity for it would file a run under a module
-// that does not exist.
 func TestAModulePathThatCannotBeHashedIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -578,9 +503,6 @@ func TestAModulePathThatCannotBeHashedIsRefused(t *testing.T) {
 	}
 }
 
-// hashOf is the identity encoding written out once, so that the two recipe
-// tests above compare bytes with bytes rather than one call of ID() with
-// another.
 func hashOf(t *testing.T, fields ...string) string {
 	t.Helper()
 

@@ -5,10 +5,6 @@ package report
 
 import "testing"
 
-// TestMergedCoverageTakesTheFinestNarrowing: the merged rows carry whatever the
-// finest shard wrote, so the merged block has to be the mode that may state it
-// — test over package over off — and the largest of each count, since the
-// shards profiled the same set.
 func TestMergedCoverageTakesTheFinestNarrowing(t *testing.T) {
 	t.Parallel()
 

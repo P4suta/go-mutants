@@ -16,21 +16,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// cacheFixture is the state and the options one cache-stage test drives.
-//
-// The workspace digest and the catalogue digest are fixed, so two sessions
-// built from one fixture compute the same key and the second really does read
-// what the first wrote. That is the property being tested: the stage is only
-// worth anything if the second run of an unchanged workspace finds the first
-// run's answers.
 type cacheFixture struct {
 	opts    Options
 	out     *RunOutcome
 	catalog string
 }
 
-// newCacheFixture builds a run over the four [ids], with the cache rooted in a
-// temporary directory.
 func newCacheFixture(t *testing.T, root string) cacheFixture {
 	t.Helper()
 	cfg := config.Defaults()
@@ -44,10 +35,6 @@ func newCacheFixture(t *testing.T, root string) cacheFixture {
 			WorkspaceDigest: strings.Repeat("ab", 32),
 			TestCommand:     config.DefaultTestCommand(),
 			Timeout:         10 * time.Second,
-			// A located toolchain, because a real run always has one by the
-			// time the cache stage is reached and its release is in the key.
-			// Without it [cache.Context] refuses to produce a key at all and
-			// every test here would be measuring the fail-open path instead.
 			Toolchain: gocmd.Toolchain{Version: gocmd.Version{
 				Raw:     "go version go1.26.5 " + runtime.GOOS + "/" + runtime.GOARCH,
 				Release: "go1.26.5",
@@ -59,7 +46,6 @@ func newCacheFixture(t *testing.T, root string) cacheFixture {
 	}
 }
 
-// runs turns the fixture ids into the scheduler's input.
 func (f cacheFixture) runs() []execute.MutantRun {
 	out := make([]execute.MutantRun, 0, len(ids))
 	for _, id := range ids {
@@ -68,7 +54,6 @@ func (f cacheFixture) runs() []execute.MutantRun {
 	return out
 }
 
-// newState is a state with the maps the stage writes into.
 func newState() *state {
 	return &state{
 		results: make(map[string]report.MutantResult),
@@ -77,9 +62,6 @@ func newState() *state {
 	}
 }
 
-// measured is what the scheduler would have produced for the fixture: one of
-// each outcome, so that the write-back has both the reusable and the
-// non-reusable kinds to sort out.
 func measured() []execute.MutantResult {
 	return []execute.MutantResult{
 		{ID: ids[0], Final: mutation.OutcomeKilled, Duration: 120 * time.Millisecond,
@@ -92,9 +74,6 @@ func measured() []execute.MutantResult {
 	}
 }
 
-// TestTheSecondRunReadsWhatTheFirstWrote is the whole feature in one test: a
-// cold cache is all misses, the reusable outcomes are stored, and a second run
-// over the same context adopts exactly those and re-measures the rest.
 func TestTheSecondRunReadsWhatTheFirstWrote(t *testing.T) {
 	t.Parallel()
 
@@ -118,8 +97,6 @@ func TestTheSecondRunReadsWhatTheFirstWrote(t *testing.T) {
 	}
 
 	cold.storeOutcomes(f.opts, measured(), coldState)
-	// Two of the four outcomes are reusable; the inconclusive one and the
-	// not-run one are deliberately not.
 	if got, want := coldState.cache.writes, 2; got != want {
 		t.Errorf("the run stored %d outcomes, want %d", got, want)
 	}
@@ -155,9 +132,6 @@ func TestTheSecondRunReadsWhatTheFirstWrote(t *testing.T) {
 	}
 }
 
-// TestACacheHitPublishesBothEvents pins the pairing contract: [CacheHit] for the
-// accounting and [MutantFinished] for the outcome, with no [MutantStarted]
-// between them because nothing started.
 func TestACacheHitPublishesBothEvents(t *testing.T) {
 	t.Parallel()
 
@@ -197,10 +171,6 @@ func TestACacheHitPublishesBothEvents(t *testing.T) {
 	}
 }
 
-// TestAnExpectedMutantIsNeverCached keeps the promise `docs/configuration.md`
-// makes: a mutant in the `[[mutation.expect]]` ledger is measured on every
-// invocation. An expectation is evidence to check, and evidence copied from
-// yesterday's answer has not been checked.
 func TestAnExpectedMutantIsNeverCached(t *testing.T) {
 	t.Parallel()
 
@@ -213,12 +183,9 @@ func TestAnExpectedMutantIsNeverCached(t *testing.T) {
 	firstState := newState()
 	first.cachePhase(f.opts, f.catalog, f.out, f.runs(), firstState)
 	first.storeOutcomes(f.opts, measured(), firstState)
-	// ids[1] survived, which is reusable — and it is on the ledger, so it was
-	// not stored. Only the kill was.
 	if got, want := firstState.cache.writes, 1; got != want {
 		t.Errorf("the run stored %d outcomes, want %d", got, want)
 	}
-	// It was not looked up either, so it is neither a hit nor a miss.
 	if got, want := firstState.cache.misses, len(ids)-1; got != want {
 		t.Errorf("the run recorded %d misses, want %d", got, want)
 	}
@@ -234,8 +201,6 @@ func TestAnExpectedMutantIsNeverCached(t *testing.T) {
 	}
 }
 
-// TestAutoStandsDownForACustomCommand: the run says why, does no lookups, and
-// reports the cache off.
 func TestAutoStandsDownForACustomCommand(t *testing.T) {
 	t.Parallel()
 
@@ -257,16 +222,12 @@ func TestAutoStandsDownForACustomCommand(t *testing.T) {
 	if code := s.warnings[0].Code; code != "GOM7901" {
 		t.Errorf("the warning is %s, want GOM7901", code)
 	}
-	// And nothing is written back either: the write half of the decision is off
-	// with the read half.
 	s.storeOutcomes(f.opts, measured(), st)
 	if st.cache.writes != 0 {
 		t.Errorf("a stood-down cache stored %d outcomes", st.cache.writes)
 	}
 }
 
-// TestCacheOffDoesNothingAndSaysNothing. Turning the cache off is a decision the
-// user made, not a condition to be warned about.
 func TestCacheOffDoesNothingAndSaysNothing(t *testing.T) {
 	t.Parallel()
 
@@ -287,8 +248,6 @@ func TestCacheOffDoesNothingAndSaysNothing(t *testing.T) {
 	}
 }
 
-// TestOnReusesOutcomesForACustomCommand is the other half of the matrix: `on`
-// is how a project promises its own command is reproducible.
 func TestOnReusesOutcomesForACustomCommand(t *testing.T) {
 	t.Parallel()
 
@@ -315,9 +274,6 @@ func TestOnReusesOutcomesForACustomCommand(t *testing.T) {
 	}
 }
 
-// TestAnEditedWorkspaceIsAllMisses is the key doing its job from the engine's
-// side: a workspace digest that has moved means a different context directory,
-// so nothing the previous run proved is reachable.
 func TestAnEditedWorkspaceIsAllMisses(t *testing.T) {
 	t.Parallel()
 
@@ -341,15 +297,10 @@ func TestAnEditedWorkspaceIsAllMisses(t *testing.T) {
 	}
 }
 
-// TestAnUnopenableCacheIsAWarningAndNothingElse is the fail-open contract: the
-// cache is a way of answering the user's question faster, so a run that loses
-// it still answers the question.
 func TestAnUnopenableCacheIsAWarningAndNothingElse(t *testing.T) {
 	t.Parallel()
 
 	f := newCacheFixture(t, t.TempDir())
-	// A digest the store will not name a directory with, which is the cheapest
-	// way to make the open fail without depending on a file system permission.
 	f.out.WorkspaceDigest = "not-a-digest"
 
 	s := &session{}
@@ -367,21 +318,14 @@ func TestAnUnopenableCacheIsAWarningAndNothingElse(t *testing.T) {
 	if message := s.warnings[0].Message; !strings.Contains(message, "measured") {
 		t.Errorf("the warning does not say what the run is doing instead: %q", message)
 	}
-	// A warning is one line, because the plain renderer prefixes it with a code
-	// and the report stores it as one string.
 	if strings.Contains(s.warnings[0].Message, "\n") {
 		t.Errorf("the warning is not one line: %q", s.warnings[0].Message)
 	}
-	// And nothing carries two codes: the embedded cause has already had its own
-	// stripped off.
 	if strings.Count(s.warnings[0].Message, "GOM") > 1 {
 		t.Errorf("the warning repeats a code inside its message: %q", s.warnings[0].Message)
 	}
 }
 
-// TestTheCacheRootFollowsTheHistoryRoot is what keeps every test in this
-// repository out of the developer's own cache directory: a caller that
-// redirected one store and said nothing about the other plainly meant both.
 func TestTheCacheRootFollowsTheHistoryRoot(t *testing.T) {
 	t.Parallel()
 
@@ -405,7 +349,6 @@ func TestTheCacheRootFollowsTheHistoryRoot(t *testing.T) {
 	}
 }
 
-// hasRun reports whether the scheduler was still asked to execute one mutant.
 func hasRun(runs []execute.MutantRun, id string) bool {
 	for _, run := range runs {
 		if run.ID == id {
@@ -415,27 +358,10 @@ func hasRun(runs []execute.MutantRun, id string) bool {
 	return false
 }
 
-// mutationCacheable is the store's rule, restated here so that the event
-// assertion above does not have to import it.
 func mutationCacheable(o mutation.Outcome) bool {
 	return o == mutation.OutcomeKilled || o == mutation.OutcomeSurvived || o == mutation.OutcomeTimedOut
 }
 
-// TestAWarmRunExplainsADivergenceTheWayTheColdRunDid is what the fact on the
-// entry is for.
-//
-// A timeout the clock produced and a timeout a counted loop produced are the
-// same outcome and two different findings: one says a process ran out of
-// patience with a machine, the other says which loop of the tree went further
-// than the original program ever goes and by how much. A warm run started no
-// process for the mutant, so the only place that difference can come from is
-// the entry — and a cache that dropped it would make every second run report
-// the weaker of the two.
-//
-// The bound is the other half. A divergence was never measured against the
-// clock, so it is evidence about every run of this tree; an adopted one must
-// therefore survive a run whose per-mutant budget is nothing like the one it
-// was recorded beside. See [cache.Entry.UsableUnder] and ADR 0013.
 func TestAWarmRunExplainsADivergenceTheWayTheColdRunDid(t *testing.T) {
 	t.Parallel()
 
@@ -450,9 +376,6 @@ func TestAWarmRunExplainsADivergenceTheWayTheColdRunDid(t *testing.T) {
 	seed.cachePhase(f.opts, f.catalog, f.out, f.runs(), seedState)
 	seed.storeOutcomes(f.opts, results, seedState)
 
-	// A budget a hundred times the one the divergence was recorded beside. A
-	// timeout the clock produced would be refused under it; this one is not
-	// about the clock.
 	warmOut := f.out
 	warmOut.Timeout = 100 * f.out.Timeout
 
@@ -476,9 +399,6 @@ func TestAWarmRunExplainsADivergenceTheWayTheColdRunDid(t *testing.T) {
 		t.Error("the warm run lost the fact that a counted loop settled it, so it reports the weaker finding")
 	}
 
-	// The event a renderer draws, which is the other half of "a warm run reads
-	// like a cold one": the fixture's display index is empty, so the events are
-	// told apart by the outcome they carry rather than by an id.
 	timeouts, diverged := 0, 0
 	for event := range events {
 		e, ok := event.(MutantFinished)

@@ -3,20 +3,6 @@
 
 //go:build integration
 
-// The recording of a real run, judged against the run it is a recording of.
-//
-// Everything the trace claims is checkable only against a toolchain: which
-// subprocesses a run starts, in which phase, how many attempts a mutant took,
-// which binary killed it. A unit test can prove the recorder records what it is
-// handed; only a run can prove the engine hands it the run.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/engine/...
-//
-// The comment above is deliberately not a package doc — integration_test.go
-// carries this package's — which is what the blank line below is for.
-
 package engine
 
 import (
@@ -34,12 +20,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// tracedOptions is [options] with a recording attached and three baseline runs.
-//
-// The third baseline run is the only setting here that is not the suite's
-// default, and it earns its two seconds: one observation cannot show that each
-// one is recorded as a stage of its own with its own place in the sequence,
-// which is the whole of what a per-run stage detail is for.
 func tracedOptions(t *testing.T, name string) (Options, *trace.MemorySink) {
 	t.Helper()
 	sink := trace.NewMemorySink(0)
@@ -49,14 +29,10 @@ func tracedOptions(t *testing.T, name string) (Options, *trace.MemorySink) {
 	return opts, sink
 }
 
-// stageKey names one recorded stage the way a reader has to read it: by phase
-// and name together, because `build` happens in the baseline and again in the
-// report, and `discover` is both a phase and a stage inside another one.
 type stageKey struct{ phase, name string }
 
 func (k stageKey) String() string { return k.phase + "/" + k.name }
 
-// execKinds tallies a recording's `exec` events by their label.
 func execKinds(events []trace.Event) map[string]int {
 	kinds := make(map[string]int)
 	for _, e := range events {
@@ -67,7 +43,6 @@ func execKinds(events []trace.Event) map[string]int {
 	return kinds
 }
 
-// eventsOfType returns the events of one type, in order.
 func eventsOfType(events []trace.Event, kind string) []trace.Event {
 	var out []trace.Event
 	for _, e := range events {
@@ -78,15 +53,6 @@ func eventsOfType(events []trace.Event, kind string) []trace.Event {
 	return out
 }
 
-// TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture is the
-// account of one whole run, checked against the run.
-//
-// It is one test rather than ten because the claim is a single one: the
-// recording *is* the run. Splitting it would mean paying for a full pipeline
-// several times over to assert one paragraph of the same stream each time, and
-// the interesting failures are the joins — a mutant execution whose killing
-// binary disagrees with the report's, a phase that was left open, a stage
-// nobody closed.
 func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *testing.T) {
 	t.Parallel()
 
@@ -103,9 +69,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		t.Fatal("the run recorded nothing")
 	}
 
-	// Every line of it is a document of the published contract. This is the
-	// assertion that keeps a field added in a hurry from producing a recording
-	// no consumer can read.
 	for _, event := range events {
 		line, marshalErr := json.Marshal(event)
 		if marshalErr != nil {
@@ -117,9 +80,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		}
 	}
 
-	// The recording opens by saying whose it is, and the run id is the one the
-	// report was filed under: a recording that could not be paired with its
-	// report is a recording of nothing in particular.
 	first := events[0]
 	if first.Type != trace.TypeRunStart || first.Start == nil {
 		t.Fatalf("the first event is %s, want %s", first.Type, trace.TypeRunStart)
@@ -131,8 +91,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		t.Errorf("run-start = %+v, want the tool version, the pid and the root", *first.Start)
 	}
 
-	// The phases, in order, each closed before the next opens. A phase that
-	// stayed open would make every stage after it read as belonging to it.
 	var phases []string
 	open := ""
 	for _, e := range events {
@@ -160,15 +118,10 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 	if !slices.Equal(phases, wantPhases) {
 		t.Errorf("phases = %v, want %v", phases, wantPhases)
 	}
-	// And the outcome carries the same spans, so that a report can state them
-	// without re-reading the stream.
 	if len(outcome.Timing.Phases) != len(wantPhases) {
 		t.Errorf("Timing.Phases = %+v, want one span per phase", outcome.Timing.Phases)
 	}
 
-	// Every stage the engine names, finished. A stage that started and never
-	// finished is a phase whose account has a hole in it exactly where the run
-	// stopped doing what it said it was doing.
 	want := []stageKey{
 		{trace.PhaseDiscover, "toolchain"},
 		{trace.PhaseDiscover, "sweep"},
@@ -222,17 +175,11 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 			t.Errorf("%s started %d times and finished %d", key, started[key], finished[key])
 		}
 	}
-	// The baseline's timed runs are one stage each, so that a suite that got
-	// slower between two observations shows the second one.
 	if got := finished[stageKey{trace.PhaseBaseline, "test"}]; got != opts.Config.Test.BaselineRuns {
 		t.Errorf("the baseline recorded %d test stages, want one per configured run (%d)",
 			got, opts.Config.Test.BaselineRuns)
 	}
 
-	// Every subprocess, labelled. The counts that are a property of this
-	// fixture — one module, one package with tests, one test binary — are
-	// written out; the rest are floors, because how many compiles validation
-	// spends is its own business.
 	kinds := execKinds(events)
 	exact := map[string]int{
 		trace.ExecKindGoVersion:            1,
@@ -265,7 +212,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 			t.Errorf("the %s execution at %d recorded no argv", e.Exec.Kind, e.Seq)
 		}
 	}
-	// The two kinds whose subject is the whole point of having one.
 	for _, e := range eventsOfType(events, trace.TypeExec) {
 		if e.Exec.Kind == trace.ExecKindScopeList && e.Exec.Subject == "" {
 			t.Errorf("the scope listing at %d does not say which pattern it resolved", e.Seq)
@@ -273,17 +219,11 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		if e.Exec.Kind == trace.ExecKindCoverageRun && e.Exec.Subject == "" {
 			t.Errorf("the coverage run at %d does not say which package it was for", e.Seq)
 		}
-		// And the kind this run no longer starts. It stays in the vocabulary --
-		// a published enum is a superset on purpose -- and a recording that
-		// held one would mean a profile had gone back to needing a second
-		// process to read.
 		if e.Exec.Kind == trace.ExecKindCovdataTextfmt {
 			t.Errorf("the run started `go tool covdata textfmt` at %d, which a written profile does not need", e.Seq)
 		}
 	}
 
-	// One attempt per execution, joined to the report by id, and agreeing with
-	// it about which binary caught the mutant.
 	byID := make(map[string]report.Mutant, len(outcome.Report.Mutants))
 	for _, m := range outcome.Report.Mutants {
 		byID[m.ID] = m
@@ -322,9 +262,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		}
 	}
 
-	// One coverage decision per mutant the mapping was asked about, which is
-	// every mutant this run selected: the covered ones and the ones nothing
-	// reaches together.
 	pass, mappedAtAll := coverageMappedOf(published)
 	if !mappedAtAll {
 		t.Fatal("the run did no coverage pass, so there is no mapping to have recorded")
@@ -349,7 +286,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		}
 	}
 
-	// The cache, which is the one event that explains an absence of work.
 	opens, lookups, stores := 0, 0, 0
 	for _, e := range eventsOfType(events, trace.TypeCache) {
 		switch e.Cache.Op {
@@ -372,8 +308,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 			lookups, stores)
 	}
 
-	// The files the run wrote, each named once, each at the path the run
-	// reports.
 	artifacts := map[string]string{}
 	for _, e := range eventsOfType(events, trace.TypeArtifact) {
 		if e.Artifact.Path == "" {
@@ -396,8 +330,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 		}
 	}
 
-	// The last line, and the accounting that tells a complete recording from a
-	// lossy one.
 	last := events[len(events)-1]
 	if last.Type != trace.TypeRunEnd || last.Run == nil {
 		t.Fatalf("the last event is %s, want %s", last.Type, trace.TypeRunEnd)
@@ -411,7 +343,6 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 	if got, want := last.Run.EventsEmitted, int64(len(events)-1); got != want {
 		t.Errorf("run-end reports %d emitted events, want %d — every line but its own", got, want)
 	}
-	// Nothing is recorded after it, and the sequence is the order of the file.
 	for i, e := range events {
 		if e.Seq != int64(i+1) {
 			t.Fatalf("event %d carries seq %d: the recording is not in sequence order", i, e.Seq)
@@ -419,21 +350,11 @@ func TestATracedRunRecordsEveryPhaseStageAndSubprocessOfTheKillableFixture(t *te
 	}
 }
 
-// failingSink is a sink that refuses everything, which is the one failure a
-// diagnostic has to survive without costing the run.
 type failingSink struct{ emits int }
 
 func (s *failingSink) Emit(trace.Event) error { s.emits++; return errors.New("no room on the disk") }
 func (s *failingSink) Close() error           { return nil }
 
-// TestATraceThatCannotBeWrittenChangesNothingAboutTheRun is the invariant a
-// diagnostic lives or dies by.
-//
-// A trace is not evidence. A sink that refuses every event — a full disk, a
-// read-only directory, a broken pipe — costs the events and nothing else: the
-// same mutants, the same verdicts, the same exit status, the same document. A
-// recorder that could change a verdict would make the tool less trustworthy with
-// the diagnostic than without it, which inverts the point of having one.
 func TestATraceThatCannotBeWrittenChangesNothingAboutTheRun(t *testing.T) {
 	t.Parallel()
 
@@ -459,10 +380,6 @@ func TestATraceThatCannotBeWrittenChangesNothingAboutTheRun(t *testing.T) {
 		t.Errorf("the traced run published %v, the untraced one %v", traced.Warnings, quiet.Warnings)
 	}
 
-	// The published documents, normalised for the facts that are about the run
-	// rather than about the code: the run id, the wall clock, the durations and
-	// the paths. Everything else — every mutant id, every outcome, the score,
-	// the digests — has to be identical byte for byte.
 	want := mutantkit.NormalizeRunReport(t, mustMarshalReport(t, quiet.Report))
 	got := mutantkit.NormalizeRunReport(t, mustMarshalReport(t, traced.Report))
 	if string(got) != string(want) {
@@ -470,15 +387,6 @@ func TestATraceThatCannotBeWrittenChangesNothingAboutTheRun(t *testing.T) {
 	}
 }
 
-// TestTraceOptionsTakeNoPartInMutantIdsOrTheCacheKey is the other half of the
-// same invariant, and the one that would fail silently.
-//
-// A trace option that reached [cache.Context] would give every traced run a
-// context of its own and an empty cache directory: correct results, no cache,
-// and no message anywhere saying why the run that was supposed to be fast was
-// not. Two runs over one workspace and one cache — the first untraced, the
-// second traced — settle it: if the second finds every outcome the first stored,
-// the key did not move.
 func TestTraceOptionsTakeNoPartInMutantIdsOrTheCacheKey(t *testing.T) {
 	t.Parallel()
 
@@ -512,8 +420,6 @@ func TestTraceOptionsTakeNoPartInMutantIdsOrTheCacheKey(t *testing.T) {
 			t.Errorf("mutant %s came back %q, want the stored %q", id[:8], mutant.Outcome, outcome)
 		}
 	}
-	// And the recording of the warm run says the same thing from the other
-	// side, which is what makes a hit legible at all.
 	hits := 0
 	for _, e := range eventsOfType(sink.Events(), trace.TypeCache) {
 		if e.Cache.Op == trace.CacheOpLookup && e.Cache.Result == trace.CacheResultHit {
@@ -525,7 +431,6 @@ func TestTraceOptionsTakeNoPartInMutantIdsOrTheCacheKey(t *testing.T) {
 	}
 }
 
-// mutantByID finds one mutant in a report.
 func mutantByID(r *report.Report, id string) (report.Mutant, bool) {
 	for _, m := range r.Mutants {
 		if m.ID == id {
@@ -535,15 +440,6 @@ func mutantByID(r *report.Report, id string) (report.Mutant, bool) {
 	return report.Mutant{}, false
 }
 
-// TestPublishTraceForwardsEveryTraceEventAsTracedInSequenceOrder is how `-vv`
-// gets its lines without a second recording.
-//
-// The verbose renderer draws the trace, and the trace already travels through
-// one channel: the engine's own event stream. Publishing each recorded event as
-// it is recorded means the two orders are one order — a renderer printing them
-// in the order they arrive is printing the recording — and it means a run that
-// is not being asked for them pays nothing, because the tee is only built when
-// somebody asked.
 func TestPublishTraceForwardsEveryTraceEventAsTracedInSequenceOrder(t *testing.T) {
 	t.Parallel()
 
@@ -576,9 +472,6 @@ func TestPublishTraceForwardsEveryTraceEventAsTracedInSequenceOrder(t *testing.T
 			t.Fatalf("Traced[%d] carries seq %d: the stream is not in sequence order", i, published[i].Seq)
 		}
 	}
-	// The last recorded event is the run-end, and it is published before the
-	// terminal engine event: a renderer that stopped at RunCompleted would
-	// otherwise lose the accounting that says whether the recording is whole.
 	names := eventNames(events)
 	if last := names[len(names)-1]; last != "RunCompleted" {
 		t.Fatalf("the last engine event is %s, want RunCompleted", last)
@@ -587,7 +480,6 @@ func TestPublishTraceForwardsEveryTraceEventAsTracedInSequenceOrder(t *testing.T
 		t.Errorf("the last published event is %s, want %s", got, trace.TypeRunEnd)
 	}
 
-	// A run nobody asked to publish keeps the stream it always had.
 	silentOpts, _ := tracedOptions(t, "simple")
 	_, silent, err := collect(t, t.Context(), silentOpts)
 	if err != nil {
@@ -598,14 +490,11 @@ func TestPublishTraceForwardsEveryTraceEventAsTracedInSequenceOrder(t *testing.T
 			t.Fatalf("a run with PublishTrace off published %s", fmt.Sprintf("%T", e))
 		}
 	}
-	// Which is also the only difference between the two streams.
 	if got, want := stripTraced(eventNames(events)), eventNames(silent); !slices.Equal(got, want) {
 		t.Errorf("publishing the trace changed the event stream:\n%v\nwant\n%v", got, want)
 	}
 }
 
-// stripTraced removes the published trace from a list of event names, so that
-// two runs' streams can be compared for everything else.
 func stripTraced(names []string) []string {
 	kept := make([]string, 0, len(names))
 	for _, name := range names {

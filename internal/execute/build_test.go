@@ -20,21 +20,12 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// toolchain is the located Go toolchain the build tests pretend to have. Only
-// the path matters: no process is really started.
 var toolchain = gocmd.Toolchain{GoBin: filepath.Join("tools", "bin", "go")}
 
-// binaryName matches the file name rule: eight hex characters and the `.test`
-// suffix, with an optional collision counter.
 var binaryName = regexp.MustCompile(`^[0-9a-f]{8}(-\d+)?\.test$`)
 
-// listing renders a `go list -json` answer for the given packages. The shape is
-// the go command's own: a stream of pretty-printed objects with no enclosing
-// array, which is what makes a streaming decoder the right reader for it.
 func listing(entries ...string) string { return strings.Join(entries, "\n") + "\n" }
 
-// pkgJSON renders one `go list -json=ImportPath,Dir,TestGoFiles,XTestGoFiles`
-// record.
 func pkgJSON(importPath, dir string, tests, xtests bool) string {
 	var b strings.Builder
 	b.WriteString("{\n\t\"Dir\": \"" + dir + "\",\n\t\"ImportPath\": \"" + importPath + "\"")
@@ -48,13 +39,8 @@ func pkgJSON(importPath, dir string, tests, xtests bool) string {
 	return b.String()
 }
 
-// buildOptions wires a fake into options that describe a plausible run.
 func buildOptions(t *testing.T, f *fake, jobs int) (execute.Options, string) {
 	t.Helper()
-	// The snapshot and the binary directory are separate temporary directories
-	// on purpose: BuildTestBinaries refuses a binary directory inside the
-	// snapshot, and a test that happened to nest them would be testing the
-	// refusal instead of the build.
 	binDir := filepath.Join(t.TempDir(), "bin")
 	opts := execute.Options{
 		Toolchain:    toolchain,
@@ -66,15 +52,8 @@ func buildOptions(t *testing.T, f *fake, jobs int) (execute.Options, string) {
 	return execute.WithRunner(opts, f.run), binDir
 }
 
-// isList reports whether a call is the package listing rather than a compile.
 func isList(c call) bool { return len(c.Argv) > 1 && c.Argv[1] == "list" }
 
-// TestBuildTestBinariesBuildsOnlyPackagesWithTests pins what a run compiles and
-// in what order.
-//
-// The skip is not tidiness. `go test -c` produces no binary for a package with
-// no test files, so building one would fail or leave nothing behind, and a
-// binary containing no tests could only ever report that a mutant survived it.
 func TestBuildTestBinariesBuildsOnlyPackagesWithTests(t *testing.T) {
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if isList(c) {
@@ -118,16 +97,6 @@ func TestBuildTestBinariesBuildsOnlyPackagesWithTests(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesIssuesTheExpectedCommands pins the two toolchain
-// invocations, both of which have to be exactly right for a later phase to mean
-// anything.
-//
-// The field filter on the listing is not cosmetic: internal/runner keeps the
-// *tail* of a capture, so an unfiltered listing of a large module can overrun
-// the capture budget and arrive as a truncation notice followed by half a JSON
-// object. GOWORK=off is borrowed from internal/discover for the neighbouring
-// reason — the package set built here has to be the package set discovery
-// type-checked, and a `go.work` above the snapshot would change it.
 func TestBuildTestBinariesIssuesTheExpectedCommands(t *testing.T) {
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if isList(c) {
@@ -162,10 +131,6 @@ func TestBuildTestBinariesIssuesTheExpectedCommands(t *testing.T) {
 	if got := envValue(list.Env, "GOWORK"); got != "off" {
 		t.Errorf("GOWORK = %q, want %q so a workspace above the snapshot cannot change the package set", got, "off")
 	}
-	// The listing is not a compile and has no vet pass to turn off, so it does
-	// not carry the suppression the build below does. Handing it one anyway
-	// would be harmless and would still be wrong: it would say that `go list`
-	// is one of the commands this rewrite has an opinion about.
 	if got := envValue(list.Env, "GOFLAGS"); strings.Contains(got, gocmd.VetOff) {
 		t.Errorf("the listing carries GOFLAGS %q, want no %s: `go list` runs no vet pass", got, gocmd.VetOff)
 	}
@@ -186,18 +151,6 @@ func TestBuildTestBinariesIssuesTheExpectedCommands(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesListsOnlyTheScopedPackages is what makes a scoped
-// `test.command` worth more than a fast baseline.
-//
-// The patterns reach `go list` verbatim and in order, and nothing else about
-// the invocation moves. That is the whole mechanism: the listing decides which
-// packages exist as far as this phase is concerned, so scoping the listing
-// scopes the binaries, the profiling pass, and every mutant attempt after them.
-//
-// Verbatim matters as much as scoped. The go command's pattern vocabulary is the
-// one the user wrote their test command in, and any normalising on the way
-// through would be go-mutants deciding that a pattern means something slightly
-// different from what `go test` does with it.
 func TestBuildTestBinariesListsOnlyTheScopedPackages(t *testing.T) {
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if isList(c) {
@@ -231,13 +184,6 @@ func TestBuildTestBinariesListsOnlyTheScopedPackages(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesRefusesABlankPattern covers the one scope that would
-// build a different set of binaries from the one it names.
-//
-// `go list ""` resolves against the working directory, which is the snapshot
-// root, so a blank entry would quietly list the root package instead of the
-// scope the caller meant — and a run that measured a different set of binaries
-// than the set it reported is the failure shape scoping must never have.
 func TestBuildTestBinariesRefusesABlankPattern(t *testing.T) {
 	f := &fake{}
 	opts, _ := buildOptions(t, f, 1)
@@ -252,17 +198,6 @@ func TestBuildTestBinariesRefusesABlankPattern(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesTurnsVetOffWithoutLosingInheritedGoflags is the whole
-// reason the suppression is merged rather than set.
-//
-// The tree `go test -c` compiles here is instrumented: every mutant of an
-// expression sits beside the original, so `s == "." && s == ".."` is a shape
-// the snapshot legitimately holds and vet's `bools` analyzer legitimately
-// refuses. Turning vet off is what keeps that from stopping the run — but
-// GOFLAGS is also how a developer, a CI image or a toolchain manager says
-// `-mod=readonly`, and internal/execute inherits that on purpose. Overwriting
-// the variable would compile a different program from the one the project
-// builds, which is a subtler failure than the one being fixed.
 func TestBuildTestBinariesTurnsVetOffWithoutLosingInheritedGoflags(t *testing.T) {
 	t.Setenv("GOFLAGS", "-mod=readonly")
 
@@ -287,17 +222,11 @@ func TestBuildTestBinariesTurnsVetOffWithoutLosingInheritedGoflags(t *testing.T)
 	if got, want := envValue(seen[1].Env, "GOFLAGS"), "-mod=readonly "+gocmd.VetOff; got != want {
 		t.Errorf("compile GOFLAGS = %q, want %q", got, want)
 	}
-	// And the listing keeps exactly what the process had, which is the other
-	// half of the same claim: the suppression is scoped to the one command that
-	// needs it rather than applied to the phase.
 	if got, want := envValue(seen[0].Env, "GOFLAGS"), "-mod=readonly"; got != want {
 		t.Errorf("listing GOFLAGS = %q, want the inherited %q", got, want)
 	}
 }
 
-// TestBuildTestBinariesBuildsInParallelWithinTheJobLimit proves both halves of
-// [execute.Options.Jobs]: the compiles really do overlap, and they never
-// overlap more than the caller allowed.
 func TestBuildTestBinariesBuildsInParallelWithinTheJobLimit(t *testing.T) {
 	const jobs = 2
 
@@ -335,10 +264,6 @@ func TestBuildTestBinariesBuildsInParallelWithinTheJobLimit(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesReportsToolchainFailures covers the three ways the
-// toolchain can refuse, each with its own code so a user can tell a listing
-// that would not run from output that would not parse from a package that would
-// not compile.
 func TestBuildTestBinariesReportsToolchainFailures(t *testing.T) {
 	good := listing(pkgJSON("example.com/m/pkg", "/snap/pkg", true, false))
 	cases := []struct {
@@ -403,7 +328,6 @@ func TestBuildTestBinariesReportsToolchainFailures(t *testing.T) {
 	}
 }
 
-// outputPath returns the `-o` argument of a compile call, or "" if it has none.
 func outputPath(c call) string {
 	for i, arg := range c.Argv {
 		if arg == "-o" && i+1 < len(c.Argv) {
@@ -413,21 +337,6 @@ func outputPath(c call) string {
 	return ""
 }
 
-// TestBuildTestBinariesResolvesARelativeBinaryDirectory pins the resolution the
-// drift gate depends on.
-//
-// The binary directory is consumed against two different working directories:
-// os.MkdirAll creates it relative to the go-mutants process, while `go test -c
-// -o` is issued with the *snapshot* as its working directory. A relative
-// "bin" therefore used to clear the not-inside-the-snapshot check, create
-// <cwd>/bin, and then write the real binaries into <snapshot>/bin — drift
-// indistinguishable from the hazard that check exists to catch — and hand back
-// a relative [execute.TestBinary.BinPath] whose meaning as argv[0] differs
-// between POSIX and Windows.
-//
-// So the claim here is one path resolved once: the `-o` the toolchain is given
-// is absolute, it is the BinPath the caller is handed, and nothing named "bin"
-// appears in the snapshot.
 func TestBuildTestBinariesResolvesARelativeBinaryDirectory(t *testing.T) {
 	work := t.TempDir()
 	t.Chdir(work)
@@ -480,10 +389,6 @@ func TestBuildTestBinariesResolvesARelativeBinaryDirectory(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesRefusesOptionsItCannotBuildFrom covers the fail-closed
-// refusals, including the one that protects the drift gate: a test binary
-// written inside the snapshot is indistinguishable from a test that wrote into
-// the tree every later mutant is measured against.
 func TestBuildTestBinariesRefusesOptionsItCannotBuildFrom(t *testing.T) {
 	snapshot := t.TempDir()
 	cases := []struct {
@@ -521,11 +426,6 @@ func TestBuildTestBinariesRefusesOptionsItCannotBuildFrom(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesAcceptsASnapshotWithNoTestsAtAll documents that an empty
-// result is not an error here. Refusing to *measure* against no binaries is
-// [execute.Schedule]'s job, and it is the right place for it: the caller may
-// legitimately want to know that a tree has no tests before deciding what to
-// say about it.
 func TestBuildTestBinariesAcceptsASnapshotWithNoTestsAtAll(t *testing.T) {
 	f := &fake{respond: func(_ context.Context, c call) runner.Result {
 		if isList(c) {
@@ -547,14 +447,6 @@ func TestBuildTestBinariesAcceptsASnapshotWithNoTestsAtAll(t *testing.T) {
 	}
 }
 
-// TestPlanNamesBinariesDeterministicallyAndResolvesCollisions pins the naming
-// rule.
-//
-// Eight hex characters of a digest is short enough to read and long enough that
-// a collision takes tens of thousands of packages — but "unlikely" is not
-// "impossible", and two packages sharing an output path would overwrite each
-// other's binary mid-build. Repeating an import path stands in for the
-// collision a digest cannot be made to produce on demand.
 func TestPlanNamesBinariesDeterministicallyAndResolvesCollisions(t *testing.T) {
 	paths := []string{"example.com/m/a", "example.com/m/a", "example.com/m/a"}
 	dirs := []string{"/snap/a", "/snap/a", "/snap/a"}
@@ -584,14 +476,6 @@ func TestPlanNamesBinariesDeterministicallyAndResolvesCollisions(t *testing.T) {
 	}
 }
 
-// TestCommandFailureCarriesTheInvocation names the command behind each of the
-// build phase's three toolchain failures.
-//
-// The compile failure is the one that matters most. It is documented as a
-// go-mutants bug in the instrumented rewrite, and a bug report for it needs the
-// exact `go test -c` line and the snapshot it ran in — both of which used to
-// end at this package's boundary, leaving a user with a message about a package
-// and a temporary directory that no longer exists.
 func TestCommandFailureCarriesTheInvocation(t *testing.T) {
 	good := listing(pkgJSON("example.com/m/pkg", "/snap/pkg", true, false))
 	cases := []struct {
@@ -661,14 +545,6 @@ func TestCommandFailureCarriesTheInvocation(t *testing.T) {
 	}
 }
 
-// TestBuildTestBinariesLabelsTheListingAndEachCompile names the two kinds of
-// `go` command this phase issues, and says which package each compile was for.
-//
-// Both are needed to read a recording of a slow run: `go list` is one command
-// whose duration is a fact about the module, and the compiles are n commands
-// whose durations are facts about n packages — and without the subject they are
-// n identical lines differing only in an output path under a temporary
-// directory.
 func TestBuildTestBinariesLabelsTheListingAndEachCompile(t *testing.T) {
 	t.Parallel()
 
@@ -701,9 +577,6 @@ func TestBuildTestBinariesLabelsTheListingAndEachCompile(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("the recording holds %+v, want %+v", got, want)
 	}
-	// The listing names no package because it is the command that decides which
-	// packages there are; a subject there could only repeat the pattern the
-	// argv already carries.
 	for i, c := range f.seen() {
 		if c.Kind != got[i].kind || c.Subject != got[i].subject {
 			t.Errorf("call %d was labelled {%q, %q}, want {%q, %q}",

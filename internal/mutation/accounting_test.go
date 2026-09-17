@@ -1,32 +1,10 @@
 // SPDX-FileCopyrightText: 2026 go-mutants contributors
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// The accounting, as a claim rather than as an arithmetic accident.
-//
-// A run report says every catalogued mutant reached exactly one outcome, and
-// that claim rests on two things being true at once: [Tally.Record] routes
-// every member of the vocabulary, and [Tally.Total] adds up the same members it
-// routes. Both are true, and neither was written down — the first because
-// Record's default returns an error nobody had counted the cases against, and
-// the second because Total is a sum a reader has to check by eye.
-//
-// The cost of leaving them unwritten is not that they break. It is that a
-// seventh outcome would break them in a way that reads as an ordinary failing
-// test somewhere else: a mutant that reached no bucket makes Total smaller than
-// the catalogue, and the report that carries it is wrong about a number rather
-// than loud about a member it did not know.
 package mutation
 
 import "testing"
 
-// TestEveryOutcomeIsRecorded routes every member of the vocabulary and refuses
-// the default.
-//
-// This is the engine's half of the pair goatest keeps on the other side: the
-// runner switches on the same vocabulary and decides what each member means to
-// a verdict, and this one only asks that each member is a member. Adding a
-// seventh outcome fails here first, which is the point — before it is a wrong
-// number in a document, it is a case nobody wrote.
 func TestEveryOutcomeIsRecorded(t *testing.T) {
 	t.Parallel()
 
@@ -46,9 +24,6 @@ func TestEveryOutcomeIsRecorded(t *testing.T) {
 	}
 }
 
-// TestAnOutcomeOutsideTheVocabularyIsRefused is the other half: Record's
-// default has to be reachable, or the test above is asserting that a switch
-// with no default routes everything.
 func TestAnOutcomeOutsideTheVocabularyIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -64,8 +39,6 @@ func TestAnOutcomeOutsideTheVocabularyIsRefused(t *testing.T) {
 	}
 }
 
-// TestTotalIsEveryBucketRecordAdds pins the sum against the buckets, so that a
-// field added to one and not the other is caught where it is introduced.
 func TestTotalIsEveryBucketRecordAdds(t *testing.T) {
 	t.Parallel()
 
@@ -75,9 +48,6 @@ func TestTotalIsEveryBucketRecordAdds(t *testing.T) {
 			t.Fatalf("Record(%v): %v", outcome, err)
 		}
 	}
-	// One of each, plus the second survivor shape: Survived is the one outcome
-	// that lands in two fields depending on the ledger, and Total has to add
-	// both of them.
 	if err := tally.Record(Result{Outcome: OutcomeSurvived, ExpectedSurvivor: true}); err != nil {
 		t.Fatalf("Record(expected survivor): %v", err)
 	}

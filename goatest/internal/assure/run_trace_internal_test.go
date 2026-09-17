@@ -159,19 +159,6 @@ func TestRunCoordinatorHandsTheRecorderToEveryTracedComponent(t *testing.T) {
 	}
 }
 
-// TestRunCoordinatorOverlapsPreparationWithBaselineChecksOnOneWorkspace covers
-// what the second workspace used to buy and how it is bought now.
-//
-// The overlap is the point: `go vet` and `go build` have no reason to wait for a
-// mutation session to be prepared, and a run that made them wait would pay for
-// the preparation twice over on every round. What changed is where they run. A
-// round used to open a second workspace over the same root to get the overlap -
-// a second snapshot, a second discovery pass, a second compile of everything -
-// and go-mutants now runs a command beside a preparation on the workspace that
-// is preparing, waiting only for the instrumentation window.
-//
-// So the assertion is inverted from what it was. Sharing the workspace was the
-// failure; sharing it is the answer.
 func TestRunCoordinatorOverlapsPreparationWithBaselineChecksOnOneWorkspace(t *testing.T) {
 	t.Parallel()
 	harness := newRunCoordinatorHarness(t)

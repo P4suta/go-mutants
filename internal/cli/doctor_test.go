@@ -18,16 +18,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// diagnosis is the fabricated finding set the rendering tests use. It carries
-// one row of each verdict, and names of three different lengths, because the
-// alignment is the thing under test.
-//
-// Every detail is in the shape the check that produces it really produces, and
-// [TestDoctorDetailsCarryNoDiagnosticCode] holds the failing row to exactly
-// that sentence. A fixture written in a shape no check can report would prove
-// the alignment of a table nobody sees and validate a document nobody
-// publishes — which is what this one was until the details stopped carrying
-// their diagnostic codes.
 var diagnosis = []check{
 	{checkToolchain, statusOK, "go1.26.5 at /usr/local/go/bin/go"},
 	{checkGit, statusWarn, "git is not on PATH; only `run --changed` needs it"},
@@ -35,9 +25,6 @@ var diagnosis = []check{
 	{checkPlatform, statusOK, "linux/amd64"},
 }
 
-// TestDoctorTableAlignsEveryDetail is what makes the table a table: whatever a
-// check is called and whatever it found, the details start in one column, so
-// the answers can be read down the page rather than hunted for.
 func TestDoctorTableAlignsEveryDetail(t *testing.T) {
 	text := renderChecks(diagnosis)
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
@@ -69,9 +56,6 @@ func TestDoctorTableAlignsEveryDetail(t *testing.T) {
 	}
 }
 
-// TestDoctorTableShoutsOnlyTheFailures. A warn is a fact about an opt-in
-// feature and a FAIL is the row the exit status is about; a reader skimming the
-// table has to be able to tell them apart at a glance.
 func TestDoctorTableDistinguishesWarnFromFail(t *testing.T) {
 	text := renderChecks(diagnosis)
 	for _, want := range []string{"ok  ", "warn", "FAIL"} {
@@ -87,8 +71,6 @@ func TestDoctorTableDistinguishesWarnFromFail(t *testing.T) {
 	}
 }
 
-// TestDoctorSummaryLeavesOutWhatDidNotHappen keeps the ordinary answer short: a
-// machine with nothing wrong with it should not be told it has zero failures.
 func TestDoctorSummaryLeavesOutWhatDidNotHappen(t *testing.T) {
 	text := renderChecks([]check{
 		{checkToolchain, statusOK, "go1.26.5 at /usr/local/go/bin/go"},
@@ -99,9 +81,6 @@ func TestDoctorSummaryLeavesOutWhatDidNotHappen(t *testing.T) {
 	}
 }
 
-// TestDoctorJSONSatisfiesTheSchema is the promise `--json` makes. The document
-// is validated before it is printed, so this proves both that the schema is
-// registered and that what the command emits satisfies it.
 func TestDoctorJSONSatisfiesTheSchema(t *testing.T) {
 	o := &doctorOptions{json: true}
 	text, err := o.render(diagnosis)
@@ -122,17 +101,11 @@ func TestDoctorJSONSatisfiesTheSchema(t *testing.T) {
 	if len(doc.Checks) != len(diagnosis) {
 		t.Fatalf("the document carries %d checks, and %d were run", len(doc.Checks), len(diagnosis))
 	}
-	// Lowercase in the document whatever the table shouted: the enum is
-	// published, and a consumer branches on it.
 	if doc.Checks[2].Status != statusFail {
 		t.Errorf("the failing check is %q in the document, want %q", doc.Checks[2].Status, statusFail)
 	}
 }
 
-// TestDoctorFailsWhereThereIsNoModule drives the whole command. A directory
-// that is not a module root is the one failure every machine can reproduce, and
-// it proves the three things the exit contract rests on: the table is printed,
-// the failure is coded, and the status is 2.
 func TestDoctorFailsWhereThereIsNoModule(t *testing.T) {
 	isolatedCache(t)
 
@@ -146,8 +119,6 @@ func TestDoctorFailsWhereThereIsNoModule(t *testing.T) {
 	if !strings.Contains(stderr, "error "+string(CodeEnvironmentUnusable)) {
 		t.Errorf("stderr = %q, want the coded failure", stderr)
 	}
-	// The diagnosis is complete even though a check failed: a machine with two
-	// problems must not be told about them one round trip at a time.
 	for _, name := range []string{checkToolchain, checkGit, checkCacheDir, checkPlatform, checkMemory, checkConfiguration} {
 		if !strings.Contains(stdout, name) {
 			t.Errorf("the table stopped before %q:\n%s", name, stdout)
@@ -155,10 +126,6 @@ func TestDoctorFailsWhereThereIsNoModule(t *testing.T) {
 	}
 }
 
-// TestDoctorProbesOnlyItsOwnCacheDirectory. The probe proves the directory is
-// writable by writing in it, so where it writes is a safety property: go-mutants
-// creates and removes a file inside its own directory under the operating
-// system's cache root, and touches nothing else there.
 func TestDoctorProbesOnlyItsOwnCacheDirectory(t *testing.T) {
 	root := isolatedCache(t)
 	base := filepath.Dir(root)
@@ -181,7 +148,6 @@ func TestDoctorProbesOnlyItsOwnCacheDirectory(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf("the probe wrote %d entries into a directory that is not go-mutants': %v", len(entries), entries)
 	}
-	// And it leaves nothing of its own behind either.
 	entries, err = os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("reading the cache root: %v", err)
@@ -193,14 +159,6 @@ func TestDoctorProbesOnlyItsOwnCacheDirectory(t *testing.T) {
 	}
 }
 
-// TestDoctorDetailsCarryNoDiagnosticCode drives the two checks that render a
-// failure into a cell.
-//
-// A code is what `RenderError` writes in front of every line on standard error,
-// where it makes a failure greppable. In a table whose first column is already
-// the verdict it is noise in front of the sentence, and in `doctor --json` it
-// is noise inside a field docs/json-schema.md describes as the reason — a
-// consumer branches on `name` and `status`, and reads `detail`.
 func TestDoctorDetailsCarryNoDiagnosticCode(t *testing.T) {
 	dir := t.TempDir()
 
@@ -211,8 +169,6 @@ func TestDoctorDetailsCarryNoDiagnosticCode(t *testing.T) {
 	if want := "there is no " + moduleFileName + " in " + dir; missing.Detail != want {
 		t.Errorf("detail = %q, want %q", missing.Detail, want)
 	}
-	// And the fixture the rendering tests are written against says what this
-	// path really says, rather than a tidier thing nothing produces.
 	if want := "there is no " + moduleFileName + " in /tmp/scratch"; diagnosis[2].Detail != want {
 		t.Errorf("the fixture's failing row is %q, which is not the shape moduleCheck produces (%q)",
 			diagnosis[2].Detail, want)
@@ -226,8 +182,6 @@ func TestDoctorDetailsCarryNoDiagnosticCode(t *testing.T) {
 	if broken.Status != statusFail {
 		t.Fatalf("an unknown key is not a failing row: %+v", broken)
 	}
-	// The code goes and the position stays: the position is the whole value of
-	// what the configuration layer worked out.
 	if !strings.HasPrefix(broken.Detail, path+":3:") {
 		t.Errorf("detail = %q, want it to open at the file and position of the mistake", broken.Detail)
 	}
@@ -239,18 +193,7 @@ func TestDoctorDetailsCarryNoDiagnosticCode(t *testing.T) {
 	}
 }
 
-// TestDoctorPublishesItsCheckNames pins the strings docs/json-schema.md tells a
-// consumer it may branch on, and the order the table and the document print
-// them in. Renaming one, or adding a check, is a change to what go-mutants
-// publishes; this is what makes it a visible one.
-//
-// The list is read out of the page rather than written here a second time. It
-// used to be written here, which meant the comment above was describing a
-// comparison nobody was making: a check added to the code and to this literal,
-// and to neither the page nor anybody's reading of it, would have passed.
 func TestDoctorPublishesItsCheckNames(t *testing.T) {
-	// Before isolatedCache, which moves this process somewhere the repository
-	// root cannot be found from.
 	want := publishedCheckNames(t)
 
 	isolatedCache(t)
@@ -271,8 +214,6 @@ func TestDoctorPublishesItsCheckNames(t *testing.T) {
 	}
 }
 
-// TestDoctorReadsTheConfigurationAndSaysWhere is the row a user runs `doctor`
-// for after a failed run: which file was read, and what is wrong with it.
 func TestDoctorReadsTheConfigurationAndSaysWhere(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, config.FileName)
@@ -297,14 +238,10 @@ func TestDoctorReadsTheConfigurationAndSaysWhere(t *testing.T) {
 	if broken.Status != statusFail {
 		t.Fatalf("an unknown key is not a failing row: %+v", broken)
 	}
-	// The position is the whole value of the configuration layer's diagnostics,
-	// and a row that dropped it would send somebody reading the file by eye.
 	if !strings.Contains(broken.Detail, ":3:") {
 		t.Errorf("the row does not carry the position of the mistake: %q", broken.Detail)
 	}
 
-	// A pair of values that are each valid and cannot both be right is only
-	// caught by resolving the file, not by parsing it.
 	if err := os.WriteFile(path, []byte("version = 1\n[report]\nhigh = 10\nlow = 90\n"), 0o600); err != nil {
 		t.Fatalf("writing the configuration: %v", err)
 	}
@@ -313,15 +250,6 @@ func TestDoctorReadsTheConfigurationAndSaysWhere(t *testing.T) {
 	}
 }
 
-// TestDoctorSaysWhetherAMemoryBoundIsEnforced pins the check that answers a
-// question nothing answered before a run.
-//
-// A per-mutant memory bound is accepted everywhere and enforced on some
-// platforms: linux samples the process tree, windows adds the kernel's own job
-// limit under the sampler, and darwin does neither. Until now the only way to
-// find out which one you were on was to finish a run and notice that
-// PeakMemory was zero — an answer after the fact, about a bound that was not
-// bounding anything while the run happened.
 func TestDoctorSaysWhetherAMemoryBoundIsEnforced(t *testing.T) {
 	t.Parallel()
 
@@ -350,11 +278,6 @@ func TestDoctorSaysWhetherAMemoryBoundIsEnforced(t *testing.T) {
 	}
 }
 
-// publishedCheckNames is the check names docs/json-schema.md says a consumer
-// may branch on, in the order the page lists them.
-//
-// The anchor is the sentence rather than a line number, because a line number
-// is a pin to where the page was rather than to what it says.
 func publishedCheckNames(t *testing.T) []string {
 	t.Helper()
 

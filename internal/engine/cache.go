@@ -14,22 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The outcome cache stage, which is the last thing to narrow a run and the only
-// one that can answer a question instead of merely skipping it.
-//
-// It sits between coverage narrowing and the scheduler, and the order is load
-// bearing in both directions. Coverage comes first because an uncovered mutant
-// is settled without being executed and must never be cached: the coverage pass
-// fails open, so the same key can describe a run that profiled successfully and
-// one that did not, and a cached "survived (uncovered)" adopted by the second
-// would be a survivor nothing ever ran. The scheduler comes after because a hit
-// is a mutant that must not be started at all — that is the whole saving.
-
-// a cacheState is what the cache did for one run, as the report writes it down.
-//
-// The zero value is a run with the cache off, which is what every path that
-// never reached the stage leaves behind: an early failure, a mode of off, an
-// `auto` that stood down, a directory that could not be opened.
 type cacheState struct {
 	mode   report.CacheMode
 	hits   int
@@ -37,7 +21,6 @@ type cacheState struct {
 	writes int
 }
 
-// Mode renders the mode for the report, defaulting the zero value to off.
 func (c cacheState) Mode() report.CacheMode {
 	if c.mode == "" {
 		return report.CacheOff
@@ -45,16 +28,6 @@ func (c cacheState) Mode() report.CacheMode {
 	return c.mode
 }
 
-// cachePhase partitions the mutants a run was about to execute into the ones it
-// can answer from the cache and the ones it has to measure, and returns the
-// second.
-//
-// Every failure here is a warning and a run that measures everything. That is
-// the same judgement internal/coverage makes and the opposite of the one
-// `--changed` gets: the cache is a way of answering the user's question faster,
-// so a run that loses it still answers the question. Failing a run because a
-// directory in the operating system's cache could not be written would be
-// letting an optimisation break the thing it was optimising.
 func (s *session) cachePhase(
 	opts Options,
 	catalogDigest string,
@@ -82,11 +55,6 @@ func (s *session) cachePhase(
 	}
 	s.cache = store
 	st.cache.mode = report.CacheOn
-	// The directory and the context together are what makes a hit or a miss
-	// checkable afterwards: two runs that disagree about how much they reused
-	// are told apart by whether they were reading the same store under the same
-	// identity. The key itself carries no trace option; see
-	// docs/adr/0001-trace-is-not-evidence.md.
 	s.trace.Cache(trace.CacheRecord{
 		Op:         trace.CacheOpOpen,
 		Result:     trace.CacheResultOpened,
@@ -103,24 +71,10 @@ func (s *session) cachePhase(
 				MutantID: run.ID,
 				Result:   trace.CacheResultExpected,
 			})
-			// Never looked up and never stored: `docs/configuration.md` promises
-			// that a mutant in the `[[mutation.expect]]` ledger is measured on
-			// every invocation, and it is a promise worth keeping. An expectation
-			// is evidence to check, and evidence copied from yesterday's answer
-			// has not been checked — the run that matters is the one after
-			// somebody wrote the test that finally kills it.
-			//
-			// It is counted as neither a hit nor a miss, because the cache was
-			// not asked. See [report.Cache].
 			misses = append(misses, run)
 			continue
 		}
 		entry, found, lookupErr := store.Lookup(run.ID)
-		// One event per lookup, whatever it answered. A corrupt entry is
-		// recorded as itself rather than folded into the miss it becomes,
-		// because only one of the two says something is wrong with the store —
-		// and the console is told about the first one only, so the recording is
-		// where the rest of them are.
 		record := trace.CacheRecord{Op: trace.CacheOpLookup, MutantID: run.ID}
 		switch {
 		case lookupErr != nil:
@@ -146,48 +100,29 @@ func (s *session) cachePhase(
 	return misses
 }
 
-// openCache resolves the cache directory for this run and claims it.
 func (s *session) openCache(opts Options, catalogDigest string, out *RunOutcome) (*cache.Cache, error) {
 	digest, err := cache.ToolDigest()
 	if err != nil {
 		return nil, err
 	}
 	return cache.Open(cache.Options{
-		Root:      cacheRoot(opts),
-		Directory: opts.Config.Cache.Directory,
-		// The bounds this run will apply, which every lookup is judged against.
-		// Neither is in the key; see [cache.Context].
-		Timeout: out.Timeout,
-		// The bound this run *enforces* rather than the one it reports. A
-		// platform that cannot sample a live tree records an explicit bound in
-		// the report and applies none, and an entry written there was measured
-		// unbounded whatever the configuration said — so passing the configured
-		// number would file measurements under a budget nothing held them to.
+		Root:        cacheRoot(opts),
+		Directory:   opts.Config.Cache.Directory,
+		Timeout:     out.Timeout,
 		MemoryLimit: enforcedMemory(out.Memory),
 		Context: cache.Context{
-			ToolVersion: or(opts.ToolVersion, unknownValue),
-			ToolDigest:  digest,
-			// The compiler and standard library the outcomes were measured
-			// against. Nothing else in the key carries it: TestCommand is the
-			// argv as the user wrote it, so the default command hashes the word
-			// `go` and not the toolchain [resolveProgram] substitutes for it.
-			ToolchainVersion: out.Toolchain.Version.Release,
-			WorkspaceDigest:  out.WorkspaceDigest,
-			CatalogDigest:    catalogDigest,
-			TestCommand:      out.TestCommand,
-			// `test.timeout` as configured, not the derived number: a derived
-			// bound is a wall-clock measurement and moves on every run.
+			ToolVersion:       or(opts.ToolVersion, unknownValue),
+			ToolDigest:        digest,
+			ToolchainVersion:  out.Toolchain.Version.Release,
+			WorkspaceDigest:   out.WorkspaceDigest,
+			CatalogDigest:     catalogDigest,
+			TestCommand:       out.TestCommand,
 			ConfiguredTimeout: opts.Config.Test.Timeout,
 			Env:               cache.CurrentEnv(),
 		},
 	})
 }
 
-// memoryExceeded reports whether the memory bound settled this mutant.
-//
-// It is read off the attempts rather than kept beside them, exactly as the peak
-// is: a mutant retried serially has two, and either of them reaching the bound
-// is what the entry has to record.
 func memoryExceeded(result execute.MutantResult) bool {
 	for _, attempt := range result.Attempts {
 		if attempt.MemoryExceeded {
@@ -197,9 +132,6 @@ func memoryExceeded(result execute.MutantResult) bool {
 	return false
 }
 
-// diverged reports whether a counted loop settled this mutant, and is
-// [memoryExceeded]'s question about the other thing that ends a target without
-// a test failing. It is read off the attempts for that function's reason.
 func diverged(result execute.MutantResult) bool {
 	for _, attempt := range result.Attempts {
 		if attempt.Diverged {
@@ -209,11 +141,6 @@ func diverged(result execute.MutantResult) bool {
 	return false
 }
 
-// peakMemory is the highest any attempt at this mutant was observed to hold.
-//
-// It is the maximum over the attempts for the reason [memoryExceeded] folds
-// them: a mutant retried serially has two, and what it cost is the worst moment
-// either of them put the machine through.
 func peakMemory(result execute.MutantResult) int64 {
 	var peak int64
 	for _, attempt := range result.Attempts {
@@ -222,14 +149,6 @@ func peakMemory(result execute.MutantResult) int64 {
 	return peak
 }
 
-// enforcedMemory is the bound the run actually holds its children to, which is
-// not always the bound it reports.
-//
-// A platform that cannot sample a live process tree records an explicit
-// `test.memory` — a user who wrote one should see it in the report rather than
-// wonder where it went — and enforces nothing. The cache is the one consumer
-// that must be told the difference: an entry says what budget the measurement
-// was made under, and a measurement nothing bounded was made under none.
 func enforcedMemory(limit int64) int64 {
 	if !runner.MemoryBoundSupported() {
 		return 0
@@ -237,14 +156,6 @@ func enforcedMemory(limit int64) int64 {
 	return limit
 }
 
-// cacheRoot is the directory the outcome cache lives under.
-//
-// A caller that redirected the run history and said nothing about the cache
-// gets the cache redirected too, which is what [Options.CacheRoot] documents
-// and what every test in this repository relies on: the two stores share a
-// workspace directory in production, so a test that sends one to a temporary
-// directory and leaves the other pointing at the developer's own cache would be
-// writing into it by accident.
 func cacheRoot(opts Options) string {
 	if opts.CacheRoot != "" {
 		return opts.CacheRoot
@@ -252,15 +163,6 @@ func cacheRoot(opts Options) string {
 	return opts.HistoryRoot
 }
 
-// adopt files a cached outcome as this run's answer for one mutant.
-//
-// Two events are published for it and both are needed. [CacheHit] is the
-// accounting: it is what a renderer counts to say how much of the run did not
-// happen. [MutantFinished] is the outcome, and it is published for a mutant
-// that was never started for the same reason [session.recordUncovered]
-// publishes one — a renderer's counts and the report's have to agree, and a
-// mutant that settled without a MutantFinished would be missing from one of
-// them. No [MutantStarted] precedes either: nothing started.
 func (s *session) adopt(id string, entry cache.Entry, st *state) {
 	st.results[id] = report.MutantResult{
 		ID:                   id,
@@ -272,16 +174,9 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 		CoveringTestPackages: st.coverage.covering[id],
 		CoveringTests:        st.coverage.coveringTests[id],
 		Cached:               true,
-		// The two facts an adopted outcome would otherwise lose. A cached
-		// mutant carries no execution rows — this run started no process for it
-		// — so without these the document says a bound settled it nowhere, and
-		// `explain` on a warm run reports a kill it cannot explain.
-		MemoryExceeded: entry.MemoryExceeded,
-		PeakMemory:     entry.PeakMemory,
-		// And the third: which loop settled a timeout is the whole of what a
-		// counted non-return says over a waited-out one, and an adopted outcome
-		// that lost it would read as a mutant somebody's stopwatch gave up on.
-		Diverged: entry.Diverged,
+		MemoryExceeded:       entry.MemoryExceeded,
+		PeakMemory:           entry.PeakMemory,
+		Diverged:             entry.Diverged,
 	}
 	st.cache.hits++
 
@@ -289,18 +184,10 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 	shown.Outcome = entry.Outcome
 	shown.Duration = entry.Duration()
 	shown.Cached = true
-	// Second-hand and marked as such: the three facts are the ones the run that
-	// first measured this mutant recorded, and a renderer that showed them
-	// without the cached marker beside them would be presenting somebody else's
-	// measurement as this run's.
 	shown.KilledBy = entry.KilledBy
 	shown.Attempts = entry.Attempts
 	shown.CoveringTestPackages = st.coverage.covering[id]
 	shown.CoveringTests = st.coverage.coveringTests[id]
-	// Second-hand as well, and the bound with them: a renderer showing the peak
-	// against this run's bound would be comparing one run's measurement with
-	// another run's budget. The entry's own bound is the one it was measured
-	// under.
 	shown.MemoryExceeded = entry.MemoryExceeded
 	shown.PeakMemory = entry.PeakMemory
 	shown.MemoryLimit = entry.MemoryBytes
@@ -309,30 +196,12 @@ func (s *session) adopt(id string, entry cache.Entry, st *state) {
 	s.emit(MutantFinished{Result: shown.clone()})
 }
 
-// storeOutcomes writes back what this run measured.
-//
-// It is called with whatever [execute.Schedule] produced, interruption
-// included, and the filter is [cache.Cacheable] rather than the run's status: a
-// mutant that settled before the signal arrived settled, and its answer is as
-// good as any other. Everything a cancelled run leaves unsettled carries
-// not-run, which is not a reusable outcome, so nothing has to know that the run
-// ended early.
-//
-// A write that fails is warned about once and then given up on. The commonest
-// cause is a full or read-only cache directory, which will fail for every
-// remaining mutant too, and a warning per mutant would bury the run's actual
-// findings under hundreds of copies of one sentence.
 func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st *state) {
 	if s.cache == nil {
 		return
 	}
 	expected := expectedIDs(opts.Config.Mutation.Expect)
 	for _, result := range results {
-		// One event per measured mutant, including the ones nothing is written
-		// for. "This outcome is not one the cache stores" and "this mutant is in
-		// the expectation ledger" are the two reasons a warm run re-measures
-		// something, and a recording that only held the successful writes would
-		// leave a reader to infer them from an absence.
 		record := trace.CacheRecord{
 			Op:       trace.CacheOpStore,
 			MutantID: result.ID,
@@ -349,24 +218,14 @@ func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st
 			continue
 		}
 		err := s.cache.Put(result.ID, cache.Entry{
-			Outcome:    result.Final,
-			DurationMS: result.Duration.Milliseconds(),
-			KilledBy:   result.KilledBy,
-			Attempts:   len(result.Attempts),
-			OutputTail: result.OutputTail,
-			// Whether the memory bound is what settled it, and what it reached.
-			// The entry carries the bound itself — [cache.Cache.Put] stamps the
-			// run's — and these are the halves only the measurement knows: a
-			// kill by the bound is evidence about that bound and any tighter
-			// one and about no larger one (see [cache.Entry.UsableWithin]), and
-			// the peak is what makes a cached kill legible a week later.
+			Outcome:        result.Final,
+			DurationMS:     result.Duration.Milliseconds(),
+			KilledBy:       result.KilledBy,
+			Attempts:       len(result.Attempts),
+			OutputTail:     result.OutputTail,
 			MemoryExceeded: memoryExceeded(result),
 			PeakMemory:     peakMemory(result),
-			// And whether a counted loop is what settled it, which is the one
-			// fact here that makes the entry *more* reusable rather than less:
-			// a divergence was never measured against the clock, so it is
-			// evidence about every run of this tree. See [cache.Entry.UsableUnder].
-			Diverged: diverged(result),
+			Diverged:       diverged(result),
 		})
 		if err != nil {
 			record.Result = trace.CacheResultFailed
@@ -384,19 +243,10 @@ func (s *session) storeOutcomes(opts Options, results []execute.MutantResult, st
 	}
 }
 
-// storeFailed is what [cache.CodeEntryNotWritten] says: that an outcome could
-// not be kept, and that nothing else about the run changes because of it.
 func storeFailed(err error) string {
 	return firstLine(err.Error()) + "; the run is unaffected and the mutant will simply be measured again next time"
 }
 
-// cacheUnavailable publishes the fail-open warning: what went wrong, and what
-// the run is doing about it.
-//
-// The second half is not padding, for the reason [session.unavailable] gives
-// about coverage: a warning that said only "the cache failed" leaves a reader
-// wondering whether the results can be trusted, and the answer is that they can
-// — the run is about to do strictly more work than it would have.
 func (s *session) cacheUnavailable(err error) {
 	code := string(cache.CodeOf(err))
 	if code == "" {
@@ -407,14 +257,6 @@ func (s *session) cacheUnavailable(err error) {
 		"; every mutant will be measured, which is slower and never wrong")
 }
 
-// corrupt publishes the once-per-run warning about entries that are on disk and
-// are not entries.
-//
-// Once, and not once per entry: a cache directory that has been truncated by a
-// full disk or half-restored from a CI archive produces one of these for every
-// mutant in the run, and hundreds of copies of the same sentence would bury the
-// survivors the user is actually looking for. The first one names a file, which
-// is enough to go and look.
 func (s *session) corrupt(err error) {
 	if s.cacheCorruptWarned {
 		return
@@ -424,8 +266,6 @@ func (s *session) corrupt(err error) {
 		"; any other unreadable entry in this cache will be treated the same way and reported only here")
 }
 
-// uncoded strips a leading "GOM####: " from a message that is about to be
-// embedded in another one, so that a warning does not print two codes.
 func uncoded(message string) string {
 	const width = len("GOM0000: ")
 	if len(message) > width && strings.HasPrefix(message, "GOM") && message[width-2] == ':' {
@@ -434,10 +274,6 @@ func uncoded(message string) string {
 	return message
 }
 
-// cacheMode renders the document's cache mode as the event stream's, which is
-// the same enumeration under this package's own name. It is the mirror of
-// [reportCoverageMode], and exists for the same reason: a renderer should not
-// have to import internal/report to read a summary block.
 func cacheMode(mode report.CacheMode) CacheMode {
 	if mode == report.CacheOn {
 		return CacheOn
@@ -445,7 +281,6 @@ func cacheMode(mode report.CacheMode) CacheMode {
 	return CacheOff
 }
 
-// expectedIDs is the set of mutants the `[[mutation.expect]]` ledger names.
 func expectedIDs(ledger []config.Expectation) map[string]bool {
 	expected := make(map[string]bool, len(ledger))
 	for _, row := range ledger {

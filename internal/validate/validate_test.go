@@ -16,10 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/validate"
 )
 
-// TestCodesAreWellFormed keeps the diagnostic codes usable as the stable
-// handles they are advertised to be: unique, sorted, and inside the block this
-// package owns. A duplicated code makes two different failures
-// indistinguishable to anyone searching for one.
 func TestCodesAreWellFormed(t *testing.T) {
 	t.Parallel()
 
@@ -53,13 +49,6 @@ func TestCodesAreWellFormed(t *testing.T) {
 	}
 }
 
-// TestValidateRefusesBadOptions covers every way the phase can be pointed at
-// something it cannot validate.
-//
-// Each of these is caught before a single file is read, which is the point: an
-// options mistake that surfaced from the first build would arrive as a
-// complaint about a program name or a missing directory, describing the symptom
-// and not the mistake.
 func TestValidateRefusesBadOptions(t *testing.T) {
 	t.Parallel()
 
@@ -107,12 +96,6 @@ func TestValidateRefusesBadOptions(t *testing.T) {
 	}
 }
 
-// TestErrorRenders pins how a validation failure reads, because a GOM code is
-// only a stable handle if it is printed the same way every time.
-//
-// The compiler output is no longer part of the text; see
-// [TestErrorStringNoLongerEmbedsTheCompilerOutput] for why it moved out from
-// under the message and who prints it now.
 func TestErrorRenders(t *testing.T) {
 	t.Parallel()
 
@@ -138,8 +121,6 @@ func TestErrorRenders(t *testing.T) {
 	}
 }
 
-// emptyCatalog builds the catalogue of no candidates, which is all the options
-// checks above need: they are refused before anything looks inside it.
 func emptyCatalog(t *testing.T) *mutation.Catalog {
 	t.Helper()
 	catalog, err := mutation.NewBuilder().Build()

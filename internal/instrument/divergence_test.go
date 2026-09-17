@@ -10,8 +10,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 )
 
-// censusOf renders a census the way a counting runtime writes one: this tree's
-// header, then one line per time a site's running maximum rose.
 func censusOf(loops int, lines ...string) string {
 	return "gomutants-loop-census-v1 " + itoa(loops) + "\n" + strings.Join(lines, "")
 }
@@ -27,16 +25,6 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// TestReadLoopCensusTakesTheLargestCountEachSiteReached is what the ceilings
-// are derived from.
-//
-// A site's line is written every time its running maximum rises, by every
-// process that runs a test, so one census holds several counts for one site and
-// several copies of the header. What a reader has to produce is the largest of
-// them, per site, and zero for a site nothing ever entered — which is a real
-// answer and not a missing one: the original program never went round that loop
-// under this suite, so there is no measurement to scale and the floor is what
-// applies.
 func TestReadLoopCensusTakesTheLargestCountEachSiteReached(t *testing.T) {
 	t.Parallel()
 
@@ -57,16 +45,6 @@ func TestReadLoopCensusTakesTheLargestCountEachSiteReached(t *testing.T) {
 	}
 }
 
-// TestReadLoopCensusRejectsAnythingItCannotReadWhole is the fail-closed half,
-// and the direction of the failure is the whole argument.
-//
-// Every ceiling a run enforces comes from this file, and a ceiling that is too
-// low is a mutant reported as never returning that returns perfectly well. A
-// census that has been truncated, mixed with another tree's, or written by a
-// runtime built from a different set of loops is exactly a census whose missing
-// lines are the sites whose ceilings would come out too low — so it yields
-// nothing at all, and the caller's one safe reading is "this run took no census,
-// so every ceiling is the floor".
 func TestReadLoopCensusRejectsAnythingItCannotReadWhole(t *testing.T) {
 	t.Parallel()
 
@@ -123,20 +101,11 @@ func TestReadLoopCensusRejectsAnythingItCannotReadWhole(t *testing.T) {
 		})
 	}
 
-	// And the caller's own bug, which is not a file at all.
 	if _, err := instrument.ReadLoopCensus(strings.NewReader(""), -1); err == nil {
 		t.Error("ReadLoopCensus accepted a tree of fewer than no loops")
 	}
 }
 
-// TestALimitTableIsWrittenTheWayTheRuntimeReadsIt closes the loop between the
-// two ends of a file neither of them can see the other write.
-//
-// The engine writes the table and the generated runtime reads it, in another
-// process, built from another package. What keeps them in step is that the
-// format is stated once — so the test that a table round-trips through this
-// package's own census reader is the closest a unit tier can come to the claim,
-// and the compile tier makes the rest of it.
 func TestALimitTableIsWrittenTheWayTheRuntimeReadsIt(t *testing.T) {
 	t.Parallel()
 

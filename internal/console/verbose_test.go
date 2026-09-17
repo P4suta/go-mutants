@@ -17,28 +17,16 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// The verbose fixture's own constants. They are the recording's, because the
-// two goldens below are one run said twice: the same events at two verbosities.
 const (
 	verbosePackage      = "github.com/example/clamp"
 	verboseOtherPackage = "github.com/example/untested"
 	verboseSlowPackage  = "github.com/example/slow"
 	verboseTraceDir     = "/w/reports/mutation/trace/20260819T101112Z-a1b2"
 
-	// The whole reason coverage was given up, as the recording holds it: more
-	// than one line, which is the difference between what `-v` prints and the
-	// folded single line the warning carries.
 	verboseCoverageDetail = "the coverage profile was empty\n" +
 		"go: no test binaries were built for ./internal/..."
 )
 
-// verboseKilled, verboseTimedOut, verboseSurvivor and verboseUncovered are the
-// package's four mutants with the fields `-v` renders filled in.
-//
-// They are copies of the fixtures the level-zero tests use rather than edits to
-// them: the claim `-v` rests on is that these fields change nothing at level
-// zero, and a fixture shared with the tests that pin level zero would make that
-// claim untestable.
 func verboseKilled() engine.MutantResult {
 	m := killed
 	m.KilledBy = verbosePackage
@@ -78,13 +66,6 @@ func verboseUncovered() engine.MutantResult {
 	return m
 }
 
-// recordedEvents returns one recorded event of every type in the trace
-// contract, plus the `coverage-unavailable` note `-v` expands.
-//
-// It is recorded through the real recorder rather than assembled by hand, on a
-// clock that advances by a fixed step, so that the envelope every line carries
-// — the sequence number, the elapsed milliseconds — is the one a run produces
-// and the goldens below pin a rendering of real events.
 func recordedEvents(t *testing.T) []trace.Event {
 	t.Helper()
 
@@ -196,14 +177,6 @@ func recordedEvents(t *testing.T) []trace.Event {
 	return sink.Events()
 }
 
-// verboseStream is the golden run every test below renders: the level-zero
-// fixture, with the two accounting events a verbose run draws — a phase's
-// duration and the run's own recording — added to it.
-//
-// The recording arrives in one block rather than interleaved with the phases it
-// describes. What is under test is the rendering of each event, and a fixture
-// that also modelled the interleaving would be pinning the engine's ordering in
-// the wrong package.
 func verboseStream(t *testing.T) []engine.Event {
 	t.Helper()
 
@@ -263,7 +236,6 @@ func verboseStream(t *testing.T) []engine.Event {
 	)
 }
 
-// renderAt renders the events at one verbosity, with colour off.
 func renderAt(t *testing.T, verbosity int, events []engine.Event) string {
 	t.Helper()
 	r := NewPlain(nil, "0.1.0-dev", false, false)
@@ -271,14 +243,6 @@ func renderAt(t *testing.T, verbosity int, events []engine.Event) string {
 	return render(t, r, events)
 }
 
-// TestVerbosityZeroIsByteIdenticalToToday is the promise the whole feature
-// rests on: a run that did not ask for more prints exactly what it printed
-// before the flag existed.
-//
-// It is checked from both ends. The accounting events must contribute nothing —
-// so a stream with them renders the same bytes as one without — and the fields
-// `-v` adds to a result must not move the result line, which is asserted
-// against the literal bytes the level-zero tests in this package pin.
 func TestVerbosityZeroIsByteIdenticalToToday(t *testing.T) {
 	full := verboseStream(t)
 	quiet := slices.DeleteFunc(slices.Clone(full), func(e engine.Event) bool {
@@ -295,8 +259,6 @@ func TestVerbosityZeroIsByteIdenticalToToday(t *testing.T) {
 		t.Errorf("the accounting events changed the default output:\n got: %q\nwant: %q", got, want)
 	}
 
-	// The result lines are today's bytes, character for character, for mutants
-	// carrying every field -v prints.
 	for _, want := range []string{
 		"KILLED     1a2b3c4d  clamp.go:12:9  lt-to-le  < -> <=  (181ms)\n",
 		"SURVIVED   9f8e7d6c  untested.go:9:12  neq-to-eq  != -> ==  (176ms)\n    - !=\n    + ==\n",
@@ -313,9 +275,6 @@ func TestVerbosityZeroIsByteIdenticalToToday(t *testing.T) {
 	}
 }
 
-// TestVerboseOnePrintsPhaseDurationsKilledByAndCoveringPackages is what `-v` is
-// for: where the time went, what caught each mutant, and which suites ran the
-// line a survivor sits on.
 func TestVerboseOnePrintsPhaseDurationsKilledByAndCoveringPackages(t *testing.T) {
 	got := renderAt(t, 1, verboseStream(t))
 	testkit.Golden(t, "verbose-one.golden.txt", []byte(got))
@@ -335,15 +294,11 @@ func TestVerboseOnePrintsPhaseDurationsKilledByAndCoveringPackages(t *testing.T)
 			t.Errorf("-v did not print %q:\n%s", want, got)
 		}
 	}
-	// The recording itself stays off a `-v` console: one line per subprocess is
-	// what -vv is for, and a run of any size has thousands of them.
 	if strings.Contains(got, "  exec ") || strings.Contains(got, "  attempt ") {
 		t.Errorf("-v printed the recording, which belongs to -vv:\n%s", got)
 	}
 }
 
-// TestVerboseTwoPrintsOneLineForEveryTracedEvent is the property that makes two
-// runs diffable: the console is the recording, one event to one line.
 func TestVerboseTwoPrintsOneLineForEveryTracedEvent(t *testing.T) {
 	events := verboseStream(t)
 	got := renderAt(t, 2, events)
@@ -357,9 +312,6 @@ func TestVerboseTwoPrintsOneLineForEveryTracedEvent(t *testing.T) {
 	}
 	var printed int
 	for _, line := range strings.Split(got, "\n") {
-		// Two spaces and then something: a survivor's own continuation lines are
-		// indented four, which is what keeps the two blocks apart on the screen
-		// as well as here.
 		if strings.HasPrefix(line, tracePrefix) && !strings.HasPrefix(line, diffIndent) {
 			printed++
 		}
@@ -367,19 +319,11 @@ func TestVerboseTwoPrintsOneLineForEveryTracedEvent(t *testing.T) {
 	if printed != recorded {
 		t.Errorf("-vv printed %d recorded lines for %d recorded events:\n%s", printed, recorded, got)
 	}
-	// More than two is the same as two, so that `-vvv` is a typo with an
-	// obvious meaning rather than a level nobody implemented.
 	if deeper := renderAt(t, 7, events); deeper != got {
 		t.Errorf("verbosity 7 rendered differently from -vv:\n%s", deeper)
 	}
 }
 
-// TestEveryTraceEventTypeHasAVerboseRendering is the ledger that keeps `-vv`
-// total.
-//
-// The list comes from the published schema rather than from a slice in this
-// file, so a type added to the contract without a rendering fails here instead
-// of printing nothing in front of somebody diagnosing a run.
 func TestEveryTraceEventTypeHasAVerboseRendering(t *testing.T) {
 	recorded := recordedEvents(t)
 	for _, eventType := range traceEventTypes(t) {
@@ -400,7 +344,6 @@ func TestEveryTraceEventTypeHasAVerboseRendering(t *testing.T) {
 	}
 }
 
-// traceEventTypes reads the event types out of the published schema.
 func traceEventTypes(t *testing.T) []string {
 	t.Helper()
 	var document struct {
@@ -419,17 +362,12 @@ func traceEventTypes(t *testing.T) []string {
 	return document.Properties.Type.Enum
 }
 
-// TestVerboseLinesCarryNoTimestamps keeps the verbose output diffable.
-//
-// A recording is stamped with the wall clock, and a console that printed the
-// stamps would make every line of two runs differ. What a reader needs from a
-// line is how long the thing took, which is what is printed instead.
 func TestVerboseLinesCarryNoTimestamps(t *testing.T) {
 	got := renderAt(t, 2, verboseStream(t))
 	for _, pattern := range []string{
-		`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`, // RFC 3339
-		`\d{2}:\d{2}:\d{2}`,                   // a bare wall-clock time
-		`\d\.\d{4,}`,                          // an unrounded duration
+		`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}`,
+		`\d{2}:\d{2}:\d{2}`,
+		`\d\.\d{4,}`,
 	} {
 		if match := regexp.MustCompile(pattern).FindString(got); match != "" {
 			t.Errorf("the verbose output carries %q, matching %s:\n%s", match, pattern, got)
@@ -437,15 +375,6 @@ func TestVerboseLinesCarryNoTimestamps(t *testing.T) {
 	}
 }
 
-// TestVerboseLinesSurviveANewlineInsideARecordedField is the one-line contract
-// held against the fields that are not prose.
-//
-// A recorded argument vector, directory or path is whatever the operating
-// system allowed, and a newline is legal in all three. Two physical lines out
-// of one event would break both halves of what the indentation promises: the
-// count of recorded lines would exceed the count of recorded events, and the
-// continuation would carry no prefix, so `grep -v '^  '` would leave a fragment
-// of the recording in the run's own output.
 func TestVerboseLinesSurviveANewlineInsideARecordedField(t *testing.T) {
 	events := []engine.Event{
 		engine.Traced{Event: trace.Event{Seq: 1, Type: trace.TypeExec, Exec: &trace.ExecRecord{
@@ -472,25 +401,14 @@ func TestVerboseLinesSurviveANewlineInsideARecordedField(t *testing.T) {
 			t.Errorf("a recorded line carries no prefix, so it would survive `grep -v '^  '`: %q", line)
 		}
 	}
-	// The bytes are still there, with the newline spent as a space rather than
-	// as a line break.
 	if !strings.Contains(got, "/tmp/a b/clamp.test") {
 		t.Errorf("the argument vector was lost rather than flattened:\n%q", got)
 	}
-	// And a space a shell-quoted argument put there on purpose is untouched, so
-	// the vector still reads as the command it was.
 	if !strings.Contains(got, "'Test Clamp'") {
 		t.Errorf("the quoting of an argument with a space did not survive:\n%q", got)
 	}
 }
 
-// TestVerboseOnePrintsTheWholeReasonUnderItsWarning pins where a warning's
-// detail comes from, which is the point of it being on the event.
-//
-// The one-line message is what a successful run prints at any verbosity; the
-// whole reason is what `-v` adds, and it is carried by the warning itself so
-// that it lands under the line it explains on every run — including one whose
-// recording could not be opened, which publishes no [engine.Traced] at all.
 func TestVerboseOnePrintsTheWholeReasonUnderItsWarning(t *testing.T) {
 	warning := engine.Warning{
 		Code:    "GOM4102",
@@ -505,12 +423,10 @@ func TestVerboseOnePrintsTheWholeReasonUnderItsWarning(t *testing.T) {
 		t.Errorf("the detail is not under its warning:\n got: %q\nwant: %q", got, want)
 	}
 
-	// At the default verbosity the warning is the line it has always been.
 	if zero, want := renderAt(t, 0, []engine.Event{warning}), "warning GOM4102: "+warning.Message+"\n"; zero != want {
 		t.Errorf("a detail changed the default rendering:\n got: %q\nwant: %q", zero, want)
 	}
 
-	// And a warning with nothing more to say prints no dangling continuation.
 	plain := engine.Warning{Code: "GOM4040", Message: "the snapshot directory could not be removed"}
 	for _, verbosity := range []int{0, 1, 2} {
 		got := renderAt(t, verbosity, []engine.Event{plain})
@@ -520,13 +436,6 @@ func TestVerboseOnePrintsTheWholeReasonUnderItsWarning(t *testing.T) {
 	}
 }
 
-// TestAttributionNamesTheSuiteTheOutcomeCameFrom keeps the two suffixes on the
-// outcomes that can honestly carry them.
-//
-// A timed-out mutant was not detected by an assertion: the binary named is the
-// one it hung, which is a different sentence and a different piece of work. And
-// an attempt count is only meaningful for a mutant something was attempted on:
-// an uncovered survivor has none, and a run that never reached one has none.
 func TestAttributionNamesTheSuiteTheOutcomeCameFrom(t *testing.T) {
 	base := verboseKilled()
 	for _, tc := range []struct {
@@ -580,12 +489,6 @@ func TestAttributionNamesTheSuiteTheOutcomeCameFrom(t *testing.T) {
 	}
 }
 
-// TestQuietBeatsVerbosityForTheAccountingLines keeps this type's contract total.
-//
-// internal/cli refuses `-v` with `--quiet`, so no run reaches this; a renderer
-// whose two fields contradicted each other would still be a renderer that
-// printed a phase's duration under a banner --quiet had dropped, and the type
-// should not depend on a rule enforced two packages away.
 func TestQuietBeatsVerbosityForTheAccountingLines(t *testing.T) {
 	r := NewPlain(nil, "0.1.0-dev", false, true)
 	r.Verbosity = VerbosityTrace
@@ -596,7 +499,6 @@ func TestQuietBeatsVerbosityForTheAccountingLines(t *testing.T) {
 			t.Errorf("--quiet printed %q:\n%s", forbidden, got)
 		}
 	}
-	// What --quiet keeps, it keeps: the warning, the paths, and the block.
 	for _, want := range []string{"warning GOM4102:", "report run: ", "run 20260819T101112Z-a1b2  exit 0"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("--quiet lost %q:\n%s", want, got)
@@ -621,8 +523,6 @@ func TestFormatCoarseDuration(t *testing.T) {
 			t.Errorf("FormatCoarseDuration(%v) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
-	// The coarse rounding is coarser than the millisecond one, and both agree
-	// on a duration that needs neither.
 	if FormatCoarseDuration(152*time.Millisecond) == FormatDuration(152*time.Millisecond) {
 		t.Error("152ms rounded to 10ms is 150ms; the two formatters cannot agree on it")
 	}
@@ -652,13 +552,6 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
-// TestTraceLineIsTheSameLineTheConsoleDraws is the whole of what exporting it
-// promises: `go-mutants explain` quotes a recorded command afterwards, and what
-// it quotes is what `-vv` printed while the run was happening.
-//
-// The comparison is against the renderer's own output rather than against a
-// literal, because a literal would pass while the two drifted apart — which is
-// the one failure exporting the function was meant to make impossible.
 func TestTraceLineIsTheSameLineTheConsoleDraws(t *testing.T) {
 	event := trace.Event{
 		Seq: 7, Type: trace.TypeExec, Timestamp: "2026-08-19T10:11:12Z", ElapsedMS: 1200,
@@ -679,9 +572,6 @@ func TestTraceLineIsTheSameLineTheConsoleDraws(t *testing.T) {
 	}
 }
 
-// TestTraceLineNamesAnEventItCannotRead keeps the exported form total: every
-// event costs exactly one line, including one whose envelope was lost, so a
-// caller never has to invent a spelling for a line with no type on it.
 func TestTraceLineNamesAnEventItCannotRead(t *testing.T) {
 	if got := TraceLine(trace.Event{}); got != "event" {
 		t.Errorf("TraceLine of an empty event = %q, want %q", got, "event")
@@ -691,9 +581,6 @@ func TestTraceLineNamesAnEventItCannotRead(t *testing.T) {
 	}
 }
 
-// TestQuoteArgvQuotesOnlyWhatAShellWouldBreak is the property a pasted
-// reproduction rests on: the line is legible where it can be, and correct
-// where it cannot.
 func TestQuoteArgvQuotesOnlyWhatAShellWouldBreak(t *testing.T) {
 	got := QuoteArgv([]string{"/usr/lib/go/bin/go", "test", "-run", "Test A", "./..."})
 	const want = `/usr/lib/go/bin/go test -run 'Test A' ./...`
@@ -702,14 +589,6 @@ func TestQuoteArgvQuotesOnlyWhatAShellWouldBreak(t *testing.T) {
 	}
 }
 
-// TestQuoteArgvRoundTrips is the property that makes a printed command line
-// something a program may read back.
-//
-// `go-mutants explain` prints an argument vector as one POSIX-quoted line, and
-// on a platform whose shell cannot run that line the only way to check the line
-// is to decode it. A decoder that disagreed with the quoter would fail exactly
-// where the quoting matters — a path with a space in it, a Windows separator —
-// so the two are held to each other here rather than to a literal.
 func TestQuoteArgvRoundTrips(t *testing.T) {
 	for _, argv := range [][]string{
 		{"/usr/bin/go", "test", "./..."},
@@ -734,8 +613,6 @@ func TestQuoteArgvRoundTrips(t *testing.T) {
 	}
 }
 
-// TestUnquoteArgvRefusesALineItCannotRead keeps the decoder from inventing an
-// argument vector out of a line nothing quoted.
 func TestUnquoteArgvRefusesALineItCannotRead(t *testing.T) {
 	for _, line := range []string{`'unterminated`, `trailing\`} {
 		if got, err := UnquoteArgv(line); err == nil {
@@ -744,16 +621,6 @@ func TestUnquoteArgvRefusesALineItCannotRead(t *testing.T) {
 	}
 }
 
-// TestAMemoryKillSaysWhatItCostAndWhatItWasAllowed pins the one thing a
-// `killed` line cannot otherwise explain.
-//
-// The outcome vocabulary is frozen, so a mutant stopped by the bound reads
-// exactly like one an assertion caught — the same word, the same suite named —
-// and a reader looking at a test that does not fail on that line would have
-// nowhere to go. Both numbers are printed because either alone is unactionable:
-// one says what the mutant did, and the other says what it was measured
-// against, and only the pair tells a person whether to fix the mutant or the
-// bound.
 func TestAMemoryKillSaysWhatItCostAndWhatItWasAllowed(t *testing.T) {
 	base := verboseKilled()
 	base.MemoryExceeded = true
@@ -767,23 +634,12 @@ func TestAMemoryKillSaysWhatItCostAndWhatItWasAllowed(t *testing.T) {
 		}
 	}
 
-	// And an ordinary kill says nothing about memory, because there is nothing
-	// to explain: the suite failed, which is what the word already means.
 	plain := renderAt(t, 1, []engine.Event{engine.MutantFinished{Result: verboseKilled()}})
 	if strings.Contains(plain, "memory") {
 		t.Errorf("an ordinary kill mentions memory:\n%s", plain)
 	}
 }
 
-// TestTheMemoryBoundIsPrintedOnlyForARunThatAskedForItsOwnAccount pins where
-// the budget's second half goes.
-//
-// Every run has a timeout and prints it on the baseline line; not every run has
-// a memory bound, so a line about it at level zero would be a line about
-// nothing on most runs and a second thing to keep byte-identical on the rest.
-// At `-v` it is part of the account, and the unbounded case is a sentence
-// rather than a zero — "0 B" would read as a bound of nothing rather than as
-// the absence of one.
 func TestTheMemoryBoundIsPrintedOnlyForARunThatAskedForItsOwnAccount(t *testing.T) {
 	derived := engine.MemoryDerived{
 		Limit:  1 << 30,
@@ -801,11 +657,6 @@ func TestTheMemoryBoundIsPrintedOnlyForARunThatAskedForItsOwnAccount(t *testing.
 		}
 	}
 
-	// The two ways a run ends up with no bound read differently, because the
-	// action they suggest is different: one is a platform that will not enforce
-	// what it can measure, and the other is a run that measured nothing.
-	// Neither is a warning any more — see the engine's unenforcedMemoryReason —
-	// so this line is where a user finds out.
 	unenforced := renderAt(t, 1, []engine.Event{
 		engine.MemoryDerived{Source: engine.MemorySourceUnavailable, Peak: 200 << 20},
 	})

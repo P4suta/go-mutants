@@ -14,8 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// decideState is a state carrying display coordinates for the given mutant ids,
-// so a mutant filed as uncovered has somewhere to be recorded.
 func decideState(ids ...string) *state {
 	st := &state{results: map[string]report.MutantResult{}, display: map[string]MutantResult{}}
 	for _, id := range ids {
@@ -24,7 +22,6 @@ func decideState(ids ...string) *state {
 	return st
 }
 
-// reliableSets marks each given selection reliable.
 func reliableSets(sets ...map[string][]string) setVerdicts {
 	v := setVerdicts{reliable: make(map[string]bool)}
 	for _, set := range sets {
@@ -33,9 +30,6 @@ func reliableSets(sets ...map[string][]string) setVerdicts {
 	return v
 }
 
-// TestDecideRunsNarrowsToAReliableSet: a mutant whose covering tests passed
-// their control runs against exactly those tests, and the binary they belong
-// to is what it is measured against.
 func TestDecideRunsNarrowsToAReliableSet(t *testing.T) {
 	t.Parallel()
 
@@ -64,9 +58,6 @@ func TestDecideRunsNarrowsToAReliableSet(t *testing.T) {
 	}
 }
 
-// TestDecideRunsWidensAnUnreliableSet: a mutant whose covering tests fail
-// together loses the narrowing and runs against the whole binaries that reach
-// it, counted as widened.
 func TestDecideRunsWidensAnUnreliableSet(t *testing.T) {
 	t.Parallel()
 
@@ -77,7 +68,6 @@ func TestDecideRunsWidensAnUnreliableSet(t *testing.T) {
 	sel := map[string][]string{"example.com/m/a": {"TestA", "TestB"}}
 	plans := map[string]mutantPlan{"m1": {tests: sel}}
 
-	// No set marked reliable.
 	covered, result := s.decideRuns(binaryIndex(bins), runs, decided, plans, setVerdicts{reliable: map[string]bool{}}, len(bins), 2, decideState("m1"))
 	if len(covered) != 1 {
 		t.Fatalf("covered %d runs, want the widened one", len(covered))
@@ -96,8 +86,6 @@ func TestDecideRunsWidensAnUnreliableSet(t *testing.T) {
 	}
 }
 
-// TestDecideRunsFilesAnUnreachedMutant: a mutant no test and no binary reaches
-// is a survivor the run never executes.
 func TestDecideRunsFilesAnUnreachedMutant(t *testing.T) {
 	t.Parallel()
 
@@ -120,9 +108,6 @@ func TestDecideRunsFilesAnUnreachedMutant(t *testing.T) {
 	}
 }
 
-// TestDecideRunsRunsADirtyBinaryWhole: a mutant reached only through a dirty
-// binary — one with an order-dependent test — runs against the whole binary,
-// with no test selection.
 func TestDecideRunsRunsADirtyBinaryWhole(t *testing.T) {
 	t.Parallel()
 
@@ -147,9 +132,6 @@ func TestDecideRunsRunsADirtyBinaryWhole(t *testing.T) {
 	}
 }
 
-// TestCoveringBinariesUnionsTestsAndDirtyBinaries: the binaries a mutant is
-// measured against are those its narrowed tests belong to and the dirty ones
-// run whole, deduplicated and sorted.
 func TestCoveringBinariesUnionsTestsAndDirtyBinaries(t *testing.T) {
 	t.Parallel()
 
@@ -163,9 +145,6 @@ func TestCoveringBinariesUnionsTestsAndDirtyBinaries(t *testing.T) {
 	}
 }
 
-// TestSetKeyIsIndependentOfOrder: the same set of tests keys the same however
-// the map or the slices were built, which is what makes one control serve
-// every mutant that shares a set.
 func TestSetKeyIsIndependentOfOrder(t *testing.T) {
 	t.Parallel()
 
@@ -179,8 +158,6 @@ func TestSetKeyIsIndependentOfOrder(t *testing.T) {
 	}
 }
 
-// TestSetVerdictsTreatsTheEmptySetAsReliable: a mutant with no narrowed tests
-// has no control to fail, so it is never widened for lack of one.
 func TestSetVerdictsTreatsTheEmptySetAsReliable(t *testing.T) {
 	t.Parallel()
 

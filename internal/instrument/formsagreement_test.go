@@ -14,28 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/instrument"
 )
 
-// Which statements Form S can wrap is one fact held in two places, and until
-// this test there was no compile-time or run-time connection between them.
-// internal/discover decides it, because it is the phase with a type checker and
-// it is what writes the hint; internal/instrument decides it again, because a
-// hint is not something to trust -- a statement this package cannot wrap has to
-// be refused here rather than spliced wrongly.
-//
-// The second check is the point, and it is also the hazard. Widen discovery's
-// list alone and every hint it newly emits is refused downstream as a site
-// conflict, which fails a run rather than losing a mutant; widen the
-// instrumenter's alone and it silently accepts a shape discovery will never
-// send, which is dead code wearing the look of a feature. Neither shows up in
-// any existing test, because the fixtures only carry statements both lists
-// already agree about.
-
-// everyStatementKind is one source line per statement Go has, with the shape
-// that makes it that statement and nothing more.
-//
-// It is written as source rather than as hand-built AST nodes so that the table
-// is checkable by reading it: `go/parser` decides what each line is, and a line
-// that stopped being the statement its name claims would be a parse this test
-// can print rather than a node somebody assembled wrongly.
 var everyStatementKind = map[string]string{
 	"an expression statement":   `f()`,
 	"a return":                  `return`,
@@ -68,12 +46,6 @@ var everyStatementKind = map[string]string{
 	"a bare declaration of two": `var x, y = 1, 2`,
 }
 
-// TestBothPhasesAgreeOnWhatFormSCanWrap is the whole subject of this file.
-//
-// A disagreement in either direction is a bug, and the message says which
-// direction it is, because the two fail completely differently: discovery ahead
-// of the instrumenter fails runs loudly, and the instrumenter ahead of
-// discovery is silent.
 func TestBothPhasesAgreeOnWhatFormSCanWrap(t *testing.T) {
 	t.Parallel()
 
@@ -97,12 +69,6 @@ func TestBothPhasesAgreeOnWhatFormSCanWrap(t *testing.T) {
 	}
 }
 
-// TestBothPhasesAgreeOnWhatFormFCanClose is the same duty for the other list.
-//
-// Form F's list is narrower than Form S's, and the narrowing is what makes a
-// second disagreement possible: a statement both phases agree Form S can wrap
-// is not therefore one both agree Form F can close. The failure modes are the
-// two above, in the same directions and with the same consequences.
 func TestBothPhasesAgreeOnWhatFormFCanClose(t *testing.T) {
 	t.Parallel()
 
@@ -126,14 +92,6 @@ func TestBothPhasesAgreeOnWhatFormFCanClose(t *testing.T) {
 	}
 }
 
-// TestEveryFormFStatementIsAlsoAFormSStatement is the relationship between the
-// two lists, which neither agreement test above can see.
-//
-// Form F is Form S inside a closure, so a statement it may close over is one
-// Form S may wrap -- the closure adds a function boundary and takes nothing
-// away. The converse is false and deliberately so: a `return` inside a closure
-// returns from the closure. A list that grew the other way would be a form
-// claiming to hold a statement the guard inside it cannot.
 func TestEveryFormFStatementIsAlsoAFormSStatement(t *testing.T) {
 	t.Parallel()
 
@@ -150,21 +108,9 @@ func TestEveryFormFStatementIsAlsoAFormSStatement(t *testing.T) {
 	}
 }
 
-// TestTheTableCoversEveryStatementTypeGoHas is the table's own guard.
-//
-// The agreement above is worth exactly as much as the set it is checked over,
-// and a statement type nobody listed is one both lists could be wrong about
-// together. go/ast's statement types are a closed set, so the table can be
-// required to hit all of them -- and when Go adds one, this fails and says so
-// rather than the agreement quietly narrowing.
 func TestTheTableCoversEveryStatementTypeGoHas(t *testing.T) {
 	t.Parallel()
 
-	// Every concrete type implementing ast.Stmt, by the name go/ast gives it.
-	// BadStmt is absent because it is what a *parse error* produces, and no
-	// tree either phase sees holds one: discovery refuses a package that does
-	// not type-check, and the instrumenter parses a snapshot discovery already
-	// read.
 	want := []string{
 		"*ast.AssignStmt", "*ast.BlockStmt", "*ast.BranchStmt", "*ast.CaseClause",
 		"*ast.CommClause", "*ast.DeclStmt", "*ast.DeferStmt", "*ast.EmptyStmt",
@@ -176,9 +122,6 @@ func TestTheTableCoversEveryStatementTypeGoHas(t *testing.T) {
 	for _, source := range everyStatementKind {
 		seen[typeNameOf(parseStatement(t, source))] = true
 	}
-	// A case clause and a comm clause are statements go/ast only ever builds
-	// inside a switch or a select, so the table reaches them through the
-	// switch and select lines rather than as rows of their own.
 	seen["*ast.CaseClause"] = true
 	seen["*ast.CommClause"] = true
 	for _, name := range want {
@@ -193,12 +136,6 @@ func TestTheTableCoversEveryStatementTypeGoHas(t *testing.T) {
 	}
 }
 
-// parseStatement parses one statement by wrapping it in the smallest function
-// that can hold it.
-//
-// The label is declared around the body so that `break L`, `continue L` and
-// `goto L` parse; go/parser does not resolve labels, but a `goto` to a label
-// that is nowhere in the file is a shape worth not writing into a test fixture.
 func parseStatement(t *testing.T, source string) ast.Stmt {
 	t.Helper()
 
@@ -215,12 +152,10 @@ func parseStatement(t *testing.T, source string) ast.Stmt {
 	return loop.Body.List[0]
 }
 
-// typeNameOf is the go/ast type name of a node, as `%T` prints it.
 func typeNameOf(stmt ast.Stmt) string {
 	return fmt.Sprintf("%T", stmt)
 }
 
-// contains reports whether a sorted-or-not list holds a name.
 func contains(list []string, name string) bool {
 	for _, candidate := range list {
 		if candidate == name {

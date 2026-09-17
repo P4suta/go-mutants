@@ -14,14 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/tempowner"
 )
 
-// TestCreateOwnsItsDirectoryWithoutTouchingTheTree pins the layout ownership
-// forced on this package: the copy is a subdirectory of the directory that
-// carries the lock and the marker, and never their sibling.
-//
-// The separation is not tidiness. Two invariants depend on it — [Snapshot.Redigest]
-// applies no exclusions, so a marker beside the sources would be reported as
-// drift on every run, and a snapshot of a snapshot (the probe tree) would copy
-// the marker and hash a manifest that no longer matches the tree it came from.
 func TestCreateOwnsItsDirectoryWithoutTouchingTheTree(t *testing.T) {
 	t.Parallel()
 
@@ -57,8 +49,6 @@ func TestCreateOwnsItsDirectoryWithoutTouchingTheTree(t *testing.T) {
 		_ = lock.Release()
 	}
 
-	// The tree is exactly what was copied: the ownership files are not in the
-	// manifest, and they are not drift either.
 	drifts, err := snap.Redigest()
 	if err != nil {
 		t.Fatalf("Redigest: %v", err)
@@ -68,10 +58,6 @@ func TestCreateOwnsItsDirectoryWithoutTouchingTheTree(t *testing.T) {
 	}
 }
 
-// TestCreateOfASnapshotReproducesItsDigest is the probe tree's precondition,
-// pinned here because it is this package that could break it: internal/session
-// copies a snapshot's tree and refuses to continue unless the copy hashes the
-// same.
 func TestCreateOfASnapshotReproducesItsDigest(t *testing.T) {
 	t.Parallel()
 
@@ -99,10 +85,6 @@ func TestCreateOfASnapshotReproducesItsDigest(t *testing.T) {
 	}
 }
 
-// TestKeepLeavesTheSnapshotOnDiskAndSaysSo covers the deliberate keep: the
-// directory survives, the marker records that this was asked for rather than
-// leaked, and the lock is released so the next sweep can read the marker
-// without waiting on a process that has gone.
 func TestKeepLeavesTheSnapshotOnDiskAndSaysSo(t *testing.T) {
 	t.Parallel()
 
@@ -135,8 +117,6 @@ func TestKeepLeavesTheSnapshotOnDiskAndSaysSo(t *testing.T) {
 		t.Errorf("releasing the test's own lock: %v", err)
 	}
 
-	// A kept snapshot stays kept. Cleanup is deferred all over this codebase,
-	// and a keep that the next deferred call undid would be no keep at all.
 	if err = snap.Cleanup(); err != nil {
 		t.Errorf("Cleanup of a kept snapshot: %v", err)
 	}
@@ -145,12 +125,6 @@ func TestKeepLeavesTheSnapshotOnDiskAndSaysSo(t *testing.T) {
 	}
 }
 
-// TestKeepThatCannotBeRecordedIsNotAKeep is the other half of the marker being
-// the whole point: a keep the marker did not record would be swept by the next
-// run as an orphan, so the snapshot does not pretend to be kept. Keep reports
-// the failure, and Cleanup — deferred all over this codebase — still removes
-// the directory, which is what the next run's sweep would have done anyway,
-// only honestly and now.
 func TestKeepThatCannotBeRecordedIsNotAKeep(t *testing.T) {
 	t.Parallel()
 
@@ -175,8 +149,6 @@ func TestKeepThatCannotBeRecordedIsNotAKeep(t *testing.T) {
 	}
 }
 
-// obstructMarker makes the owner marker of dir unwritable on every platform by
-// putting a directory where the file has to go.
 func obstructMarker(t *testing.T, dir string) {
 	t.Helper()
 	path := tempowner.MarkerPath(dir)

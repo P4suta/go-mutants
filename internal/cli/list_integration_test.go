@@ -3,16 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of `list`. It snapshots a real module, loads it
-// with a real `go` command, and asserts the catalogue that comes out — which is
-// the only way to test this command at all: every interesting thing about it
-// (which expressions the type checker says are the universe's `true`, which
-// bytes a span covers, what a workspace digest is) is exactly what a mock would
-// have to invent.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -35,15 +25,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// fixtureModule is the module path of the corpus module these tests list.
 const fixtureModule = "fixture.example/discovery"
 
-// A listedMutant is one row of the expected catalogue, reduced to what a human
-// would check by opening the file: where it is, which rule proposed it, and
-// what the edit is. The id is deliberately not here — it is a digest of the
-// bytes, so pinning it in a table would make every whitespace change in the
-// fixture a test edit — and determinism of the ids is asserted separately, by
-// running the command twice.
 type listedMutant struct {
 	path        string
 	line        int
@@ -54,19 +37,7 @@ type listedMutant struct {
 	replacement string
 }
 
-// wantMutants is every candidate fixtures/discovery holds, in catalogue order:
-// path, then span, then registry position.
-//
-// The table is exhaustive rather than a sample. A missing candidate and an
-// extra one are the two ways this phase can be wrong, and only an exact
-// comparison catches both — a "contains" assertion would pass a discovery that
-// also mutated the const block next door.
 var wantMutants = []listedMutant{
-	// compare/compare.go is the control group: every rule that fires on an
-	// ordinary comparison and on the statement around it, in ordinary statement
-	// context. The condition-negation and return-replacement rows are here
-	// because the operator catalogue reaches further than the comparison family
-	// alone; the table is the whole of what discovery found, not a sample of it.
 	{"compare/compare.go", 16, 5, "condition-negation", "negate-condition", "a == b", "!(a == b)"},
 	{"compare/compare.go", 16, 7, "comparison", "eq-to-neq", "==", "!="},
 	{"compare/compare.go", 17, 10, "return-replacement", "return-empty-string", "\"eq\"", "\"\""},
@@ -108,9 +79,6 @@ var wantMutants = []listedMutant{
 	{"suppressed/suppressed.go", 59, 33, "return-replacement", "return-empty-string", "Data", "\"\""},
 	{"suppressed/suppressed.go", 66, 5, "condition-negation", "negate-condition", "limit", "!(limit)"},
 	{"suppressed/suppressed.go", 67, 10, "return-replacement", "return-zero-numeric", "a", "0"},
-	// The tagless switch's own labels, which a tag-carrying one would not have:
-	// `a == b` and the `==` of `ok == false` are exactly `bool`, so they are
-	// ordinary boolean contexts rather than suppressed ones.
 	{"suppressed/suppressed.go", 81, 9, "comparison", "eq-to-neq", "==", "!="},
 	{"suppressed/suppressed.go", 82, 6, "condition-negation", "negate-condition", "ok == true", "!(ok == true)"},
 	{"suppressed/suppressed.go", 82, 9, "comparison", "eq-to-neq", "==", "!="},
@@ -119,10 +87,6 @@ var wantMutants = []listedMutant{
 	{"suppressed/suppressed.go", 85, 10, "comparison", "eq-to-neq", "==", "!="},
 	{"suppressed/suppressed.go", 85, 13, "boolean-literal", "false-to-true", "false", "true"},
 	{"suppressed/suppressed.go", 86, 10, "return-replacement", "return-empty-string", "\"not ok\"", "\"\""},
-	// The tagged switch, labels and bodies alike. The labels are expressions of
-	// the tag's type, and the form that returns a type from a closure stands
-	// exactly where one stood; they used to be suppressed before the guard
-	// chooser was ever asked about them.
 	{"suppressed/suppressed.go", 89, 9, "integer-arithmetic", "add-to-sub", "+", "-"},
 	{"suppressed/suppressed.go", 90, 10, "return-replacement", "return-empty-string", "\"one more\"", "\"\""},
 	{"suppressed/suppressed.go", 91, 9, "integer-arithmetic", "mul-to-div", "*", "/"},
@@ -132,9 +96,6 @@ var wantMutants = []listedMutant{
 	{"suppressed/suppressed.go", 97, 11, "return-replacement", "return-empty-string", "\"greater\"", "\"\""},
 	{"suppressed/suppressed.go", 100, 10, "return-replacement", "return-empty-string", "v", "\"\""},
 	{"suppressed/suppressed.go", 102, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
-	// The boolean expression inside a communication clause: the clause is
-	// neither a Form S site nor a Form C one, and the value it sends is an
-	// ordinary expression with an ordinary boolean inside it.
 	{"suppressed/suppressed.go", 114, 16, "comparison", "lt-to-le", "<", "<="},
 	{"suppressed/suppressed.go", 115, 10, "return-replacement", "return-empty-string", "\"sent\"", "\"\""},
 	{"suppressed/suppressed.go", 117, 6, "condition-negation", "negate-condition", "v == true", "!(v == true)"},
@@ -142,55 +103,20 @@ var wantMutants = []listedMutant{
 	{"suppressed/suppressed.go", 117, 11, "boolean-literal", "true-to-false", "true", "false"},
 	{"suppressed/suppressed.go", 118, 11, "return-replacement", "return-empty-string", "\"received\"", "\"\""},
 	{"suppressed/suppressed.go", 121, 9, "return-replacement", "return-empty-string", "\"none\"", "\"\""},
-
-	// A boolean literal used as a map key is value code: the type-argument
-	// suppression must not reach an ordinary index expression — that is the
-	// `m[true]` row above. The body of a generic function is ordinary code too,
-	// however many type parameters and constraints surround it, which is the
-	// generics/generics.go block. The universe `false` in a package that
-	// declares its own `true` is the one shadow/shadow.go boolean row: every
-	// mention of the shadowing name is absent, which is the whole point of that
-	// package. And suppressed/suppressed.go contributes the live side of each
-	// suppressed context — an expression switch's case body, a type switch's,
-	// and a select's — while their labels contribute nothing.
 }
 
-// wantSkips is every reason discovery recorded, in (path, reason) order.
-//
-// The counts are candidates, not sites: four suppressed expressions inside
-// const declarations, five inside type parameter lists and type arguments, and
-// so on. The generated file counts one, because it was never opened.
 var wantSkips = []catalogSkip{
 	{Path: "generated/generated.go", Reason: "generated", Count: 1},
 	{Path: "generics/generics.go", Reason: "type-param", Count: 5},
 	{Path: "suppressed/suppressed.go", Reason: "array-length", Count: 2},
 	{Path: "suppressed/suppressed.go", Reason: "const-decl", Count: 4},
-	// Four rather than five: the function literal in the last initialiser
-	// returns a constant comparison, so one of its two return replacements was
-	// never an edit to decline -- the mutation and the source are one program,
-	// and discovery refuses it before the suppression is recorded.
 	{Path: "suppressed/suppressed.go", Reason: "package-var-init", Count: 4},
 }
 
-// inFixture points the process at a copy of the discovery fixture for the
-// length of one test, with its own temporary directory.
-//
-// A copy rather than the corpus module, though `list` writes nothing into a
-// workspace: the difference between a command that writes and one that does not
-// is a fact about today's implementation, and this helper is what puts a
-// process's working directory inside a checked-in module. Copying costs one
-// directory and takes the question away.
-//
-// The temporary directory is redirected so that "the snapshot was removed" is
-// an assertion rather than a guess: the machine's shared temporary directory
-// has other packages writing into it, and one leak there is indistinguishable
-// from another. It returns the redirected directory.
 func inFixture(t *testing.T) string {
 	t.Helper()
 	root := testkit.Copy(t, "discovery")
 	temp := t.TempDir()
-	// os.TempDir reads TMPDIR on POSIX and TMP then TEMP on Windows, so all
-	// three are set rather than guessing which platform is reading.
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
 	t.Setenv("TEMP", temp)
@@ -198,9 +124,6 @@ func inFixture(t *testing.T) string {
 	return temp
 }
 
-// list runs the command in process and returns its streams. The exit status is
-// checked here, because every test below wants a listing rather than a
-// diagnostic.
 func list(t *testing.T, args ...string) (stdout, stderr string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -212,8 +135,6 @@ func list(t *testing.T, args ...string) (stdout, stderr string) {
 	return out.String(), errOut.String()
 }
 
-// decodeCatalog parses a catalogue document, refusing anything the schema would
-// refuse first.
 func decodeCatalog(t *testing.T, data []byte) catalogDocument {
 	t.Helper()
 	if err := schemas.Validate(schemas.CatalogV1, data); err != nil {
@@ -228,7 +149,6 @@ func decodeCatalog(t *testing.T, data []byte) catalogDocument {
 	return doc
 }
 
-// listed reduces a document's mutants to the table form.
 func listed(doc catalogDocument) []listedMutant {
 	out := make([]listedMutant, 0, len(doc.Mutants))
 	for _, m := range doc.Mutants {
@@ -245,8 +165,6 @@ func listed(doc catalogDocument) []listedMutant {
 	return out
 }
 
-// diffMutants renders two tables side by side, since a slice of structs in a
-// failure message is unreadable otherwise.
 func diffMutants(got, want []listedMutant) string {
 	var b strings.Builder
 	b.WriteString("got:\n")
@@ -272,28 +190,15 @@ func TestListDiscoversExactlyTheFixtureCandidates(t *testing.T) {
 		t.Fatalf("the catalogue is not the expected one:\n%s", diffMutants(got, wantMutants))
 	}
 
-	// Neither the generated file nor the shadowed `true` may contribute
-	// anything at all. Both are already implied by the table above; they are
-	// spelled out because a future edit to the table is far more likely than a
-	// deliberate decision to start mutating generated code.
 	for _, m := range doc.Mutants {
 		if strings.HasPrefix(m.Path, "generated/") {
 			t.Errorf("%s:%d is a candidate in a generated file", m.Path, m.Line)
 		}
-		// The shadowing package's own `true` is an int constant and a local
-		// variable, and the ordinary integer code around both is mutated like
-		// any other. What may never happen is a boolean-literal candidate on
-		// one of those names: the family is about the universe constants, and
-		// only the `false` on line 34 is one.
 		if m.Path == "shadow/shadow.go" && m.Family == "boolean-literal" && m.Line != 34 {
 			t.Errorf("shadow/shadow.go:%d is a boolean-literal candidate; only the universe `false` on line 34 may be one", m.Line)
 		}
 	}
 
-	// Identity is the catalogue's job, and the document is where it becomes
-	// visible: full ids are what a report and an expectation ledger carry, and
-	// the short form has to be a prefix of the full one or `--mutant` would
-	// resolve two different alphabets.
 	seen := make(map[string]bool, len(doc.Mutants))
 	for _, m := range doc.Mutants {
 		if len(m.ID) != 64 || !isLowerHex(m.ID) {
@@ -307,8 +212,6 @@ func TestListDiscoversExactlyTheFixtureCandidates(t *testing.T) {
 		}
 		seen[m.ID] = true
 
-		// The package is the import path a user would type, derived from the
-		// directory rather than restated per row.
 		want := fixtureModule + "/" + path.Dir(m.Path)
 		if m.Package != want {
 			t.Errorf("%s is in package %q, want %q", m.Path, m.Package, want)
@@ -354,8 +257,6 @@ func TestListDescribesTheWorkspaceAndTheSelection(t *testing.T) {
 	if doc.Workspace.Platform.OS != runtime.GOOS || doc.Workspace.Platform.Arch != runtime.GOARCH {
 		t.Errorf("platform = %+v, want %s/%s", doc.Workspace.Platform, runtime.GOOS, runtime.GOARCH)
 	}
-	// The default selection: the balanced profile, no named operators, and the
-	// default include. Empty lists are lists, never null.
 	if doc.Selection.Profile != "balanced" {
 		t.Errorf("profile = %q, want balanced", doc.Selection.Profile)
 	}
@@ -370,10 +271,6 @@ func TestListDescribesTheWorkspaceAndTheSelection(t *testing.T) {
 	}
 }
 
-// TestListJSONIsByteIdenticalBetweenRuns is the determinism contract. It covers
-// the mutant ids as well as the ordering: an id is a digest of the path, the
-// rule, the span, and the bytes, so two runs agreeing byte for byte means the
-// whole recipe — including the snapshot the bytes were read from — is stable.
 func TestListJSONIsByteIdenticalBetweenRuns(t *testing.T) {
 	inFixture(t)
 	first, _ := list(t, "--json")
@@ -386,9 +283,6 @@ func TestListJSONIsByteIdenticalBetweenRuns(t *testing.T) {
 	}
 }
 
-// TestListTextListingMatchesTheDocument proves the two renderings are one
-// selection. Both are composed from the same document, and this is what says so
-// out loud: a line per mutant, in the same order, with the same coordinates.
 func TestListTextListingMatchesTheDocument(t *testing.T) {
 	inFixture(t)
 	jsonOut, _ := list(t, "--json")
@@ -416,9 +310,6 @@ func TestListTextListingMatchesTheDocument(t *testing.T) {
 			strings.Join(lines, "\n"), strings.Join(want, "\n"))
 	}
 
-	// Quiet drops the header and nothing else: the mutants, the counts, and the
-	// skip breakdown are all findings about the code, and the run console draws
-	// the same line — it silences progress and keeps results.
 	quietOut, _ := list(t, "--quiet")
 	quiet := strings.Split(strings.TrimSuffix(quietOut, "\n"), "\n")
 	if !slices.Equal(quiet, want[1:]) {
@@ -426,8 +317,6 @@ func TestListTextListingMatchesTheDocument(t *testing.T) {
 	}
 }
 
-// TestListNarrowsTheSelection covers the three flags that change which mutants
-// are listed, each against the same fixture so that the difference is the flag.
 func TestListNarrowsTheSelection(t *testing.T) {
 	inFixture(t)
 	all, _ := list(t, "--json")
@@ -451,13 +340,6 @@ func TestListNarrowsTheSelection(t *testing.T) {
 	})
 
 	t.Run("a family the fixture has no operators of", func(t *testing.T) {
-		// This used to be the "not discovered yet" case: bitwise was a `strong`
-		// family the phase did not implement, so an empty listing came with a
-		// GOM1006 warning saying why. Every family in the registry is
-		// discovered now, so the empty listing here is a fact about the fixture
-		// — it holds no bitwise operators — and there is nothing to warn about.
-		// Saying so would be worse than silence: it would tell the user their
-		// build cannot find something it can.
 		stdout, stderr := list(t, "--json", "--operator", "bitwise")
 		doc := decodeCatalog(t, []byte(stdout))
 		if len(doc.Mutants) != 0 {
@@ -469,9 +351,6 @@ func TestListNarrowsTheSelection(t *testing.T) {
 	})
 
 	t.Run("two families, one of which the fixture has none of", func(t *testing.T) {
-		// The partial case, which is the one a user actually types. Both halves
-		// are discoverable, so what comes back is every comparison candidate
-		// and no diagnostic at all.
 		stdout, stderr := list(t, "--json", "--operator", "comparison", "--operator", "bitwise")
 		doc := decodeCatalog(t, []byte(stdout))
 		if len(doc.Mutants) == 0 {
@@ -499,8 +378,6 @@ func TestListNarrowsTheSelection(t *testing.T) {
 		if !slices.Contains(doc.Skips, want) {
 			t.Errorf("skips = %+v, want it to record %+v", doc.Skips, want)
 		}
-		// An excluded file is one skip, whatever it holds: it was never opened,
-		// so counting candidates in it would mean guessing.
 		for _, skip := range doc.Skips {
 			if strings.HasPrefix(skip.Path, "suppressed/") && skip.Reason != "excluded" {
 				t.Errorf("excluded file still reports %s x%d, which means it was walked", skip.Reason, skip.Count)
@@ -528,31 +405,12 @@ func TestListNarrowsTheSelection(t *testing.T) {
 		if len(doc.Mutants) != 1 || doc.Mutants[0].ID != target.ID {
 			t.Fatalf("--mutant listed %d mutants, want exactly %s", len(doc.Mutants), target.ID)
 		}
-		// The filter narrows the listing and not the pass: the skips still
-		// describe every file discovery looked at.
 		if !slices.Equal(doc.Skips, full.Skips) {
 			t.Errorf("skips = %+v, want the whole pass's %+v", doc.Skips, full.Skips)
 		}
 	})
 }
 
-// TestListWorkspaceDigestIgnoresTheSelection pins, for `list`, the invariant
-// internal/engine pins for `run`.
-//
-// Both commands copy the workspace with the same two-line block —
-// `snapshot.Create(root, snapshot.Options{ReportDir: ...})` and a deferred
-// cleanup — and today the two agree only because a comment in each says they
-// must. `TestMutationExcludeChangesNeitherTheSnapshotNorItsDigest` holds the
-// engine's copy in place; nothing held this one, so an edit that threaded
-// `Exclude:` into list.go's Options would shrink the tree this command copies,
-// move the workspace digest the ids are minted against, and produce a different
-// id from `run` for the same code — with every existing test still green.
-//
-// The digest is the strongest available spelling of "the same tree was copied":
-// it is taken over the snapshot manifest, so equal digests mean equal file sets
-// and equal bytes. Every flag that selects rather than describes is tried, since
-// a selection setting is exactly the kind of thing that gets routed into the
-// copy by mistake.
 func TestListWorkspaceDigestIgnoresTheSelection(t *testing.T) {
 	inFixture(t)
 	base, _ := list(t, "--json")
@@ -581,12 +439,6 @@ func TestListWorkspaceDigestIgnoresTheSelection(t *testing.T) {
 	}
 }
 
-// scratchModule writes a throwaway module and points the process at it for the
-// length of one test.
-//
-// The fixture module cannot be used for anything involving .go-mutants.toml: a
-// configuration file there would change the resolved configuration of every
-// other test in this file, several of which assert the built-in defaults.
 func scratchModule(t *testing.T, files map[string]string) {
 	t.Helper()
 	root := t.TempDir()
@@ -599,8 +451,6 @@ func scratchModule(t *testing.T, files map[string]string) {
 			t.Fatalf("writing %s: %v", p, err)
 		}
 	}
-	// The snapshot is made under the temporary directory, which must not be the
-	// module being snapshotted.
 	temp := t.TempDir()
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
@@ -608,15 +458,6 @@ func scratchModule(t *testing.T, files map[string]string) {
 	t.Chdir(root)
 }
 
-// TestListReportsAProfileTheConfigurationFileMadeInert covers the one way the
-// documented precedence can invert.
-//
-// `list --help` promises that flags override the file. A profile is a tier and
-// a named operator is looked up in the whole catalogue, so the two do not
-// combine: whenever any operator is named the profile selects nothing. When the
-// operators came from .go-mutants.toml and the profile came from a flag, that
-// means the file overrides the flag — the opposite of what was promised, and
-// previously with nothing on standard error to say so.
 func TestListReportsAProfileTheConfigurationFileMadeInert(t *testing.T) {
 	scratchModule(t, map[string]string{
 		"go.mod":           "module scratch.example/inert\n\ngo 1.24\n",
@@ -642,9 +483,6 @@ func TestListReportsAProfileTheConfigurationFileMadeInert(t *testing.T) {
 		}
 	}
 
-	// The two invocations that must stay silent: the same file with no profile
-	// flag at all — nothing was overridden — and a command line that names the
-	// operators itself, where the user can see both decisions in front of them.
 	if _, quiet := list(t, "--json"); quiet != "" {
 		t.Errorf("stderr = %q on a listing that set no profile, want nothing", quiet)
 	}
@@ -653,23 +491,6 @@ func TestListReportsAProfileTheConfigurationFileMadeInert(t *testing.T) {
 	}
 }
 
-// TestListWarningsComeOutInOneOrder is the diffability contract for standard
-// error.
-//
-// The listing itself is deliberately unpadded and unsorted-by-data so that two
-// runs can be diffed; a diagnostic stream whose lines swap places between runs
-// would undo that.
-//
-// It used to assert two lines in one order — what was asked for, then what
-// could be found of it — and it cannot any more: the second family, GOM1006,
-// became unreachable through a real selection when the last operator family
-// landed in discovery, because every rule the registry names is now discovered.
-// Its wording is kept under test by
-// TestWarnUnimplementedStillSaysWhyAnEmptyListingIsEmpty, which drives the
-// writer directly. What survives here is the half that can still happen, and it
-// is asserted exactly: one line, the profile warning, and nothing else — a
-// second line appearing would mean a registry rule landed ahead of its
-// discovery, which is the situation the order was pinned for.
 func TestListWarningsComeOutInOneOrder(t *testing.T) {
 	scratchModule(t, map[string]string{
 		"go.mod":           "module scratch.example/ordered\n\ngo 1.24\n",
@@ -687,9 +508,6 @@ func TestListWarningsComeOutInOneOrder(t *testing.T) {
 	}
 }
 
-// TestListRemovesItsSnapshot is the read-only promise, checked from the outside:
-// after a listing there is nothing left in the temporary directory the snapshot
-// was created in, and the user's own tree is untouched.
 func TestListRemovesItsSnapshot(t *testing.T) {
 	temp := inFixture(t)
 	before := treeDigest(t, ".")
@@ -711,8 +529,6 @@ func TestListRemovesItsSnapshot(t *testing.T) {
 	}
 }
 
-// treeDigest renders a directory tree as sorted "path size" lines, which is
-// enough to notice a file that was written, added, or removed.
 func treeDigest(t *testing.T, root string) string {
 	t.Helper()
 	var lines []string
@@ -737,11 +553,6 @@ func treeDigest(t *testing.T, root string) string {
 	return strings.Join(lines, "\n")
 }
 
-// TestListMapsCancellationToTheInterruptExitCode covers the signal path. A
-// listing copies a workspace and starts a `go list` under it, so a Ctrl-C has
-// to unwind the pipeline — which is what leaves nothing behind — rather than
-// killing the process where it stands, and the documented answer for a
-// cancelled command is 130 and not "an infrastructure failure".
 func TestListMapsCancellationToTheInterruptExitCode(t *testing.T) {
 	inFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -757,10 +568,6 @@ func TestListMapsCancellationToTheInterruptExitCode(t *testing.T) {
 	}
 }
 
-// TestListCommandLineEndToEnd builds cmd/go-mutants and runs it, which is the
-// only test that covers the wiring as a user meets it: a real process, a real
-// working directory, and a document on standard output with nothing else mixed
-// into it.
 func TestListCommandLineEndToEnd(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -787,10 +594,6 @@ func TestListCommandLineEndToEnd(t *testing.T) {
 
 	run := exec.CommandContext(t.Context(), binary, "list", "--json")
 	run.Dir = fixture
-	// The child inherits this process's environment, which is what puts the
-	// toolchain manager's `go` on its PATH; only the temporary directory and
-	// the colour decision are overridden. os/exec keeps the last of duplicate
-	// keys, so appending is enough.
 	temp := t.TempDir()
 	run.Env = append(os.Environ(), "NO_COLOR=1", "TMPDIR="+temp, "TMP="+temp, "TEMP="+temp)
 
@@ -819,14 +622,6 @@ func TestListCommandLineEndToEnd(t *testing.T) {
 	}
 }
 
-// TestListAtAWorkspaceRootListsEveryModule is the listing half of ADR 0012.
-//
-// A workspace is measured as one run over one catalogue that spans its modules,
-// and a listing is that catalogue before anything is executed -- so the
-// document names the modules rather than a module path, every mutant says which
-// module it belongs to, and the lines a reader sees are workspace-relative,
-// because two modules can each hold an `app.go` and the path alone would not
-// say which.
 func TestListAtAWorkspaceRootListsEveryModule(t *testing.T) {
 	root := testkit.Copy(t, "workspace")
 	t.Chdir(root)
@@ -876,7 +671,6 @@ func TestListAtAWorkspaceRootListsEveryModule(t *testing.T) {
 		}
 	}
 
-	// And the lines a reader sees, which are the ones that have to be openable.
 	out.Reset()
 	if code := ExecuteContext(t.Context(), []string{"list"}, &out, &errOut); code != 0 {
 		t.Fatalf("`go-mutants list` exited %d\nstderr:\n%s", code, errOut.String())

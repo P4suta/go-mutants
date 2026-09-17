@@ -20,38 +20,6 @@ type fileState struct {
 	mode   fs.FileMode
 }
 
-// Changes compares the current snapshot with the state captured after
-// preparation. It waits for in-flight [Session.Exec], [Session.Control] and
-// [Session.Probe] calls so the result cannot observe a target halfway through a
-// write.
-//
-// It waits for those and for nothing else. A [Workspace.Exec] command is held
-// by the *workspace's* lock, which this call does not take, so a command
-// writing into the tree concurrently with a Changes can be observed part-way
-// through its write. A consumer that wants a settled answer sequences its own
-// commands against this call; the engine cannot do it for one, because a
-// workspace command is not the session's to wait for.
-//
-// What it reports is every change in the session's own snapshot, whoever made
-// it: a target under [Session.Exec] or [Session.Control], and equally a
-// [Workspace.Exec] command run beside the session. A [Session.Probe] target is
-// *not* among them, and its absence is not an omission: a probe pass runs in
-// the probe tree, a second snapshot beside this one, so what it writes is not
-// in the tree this call scans and no call reports it.
-//
-// What it compares against is the **frozen snapshot manifest**, captured at the
-// top of the instrumentation window, which is what the test binaries were
-// compiled from: the copies the overlay names were taken there, and the
-// compiler read no other spelling of them. So the window's end is where a write
-// stops failing a preparation and starts being reported here — a command that
-// writes during the binary build, which is the longest phase of a preparation
-// and one a command is allowed to run beside, is reported by this call and
-// refused by nothing. The answer is "what has moved since this session was
-// frozen" and not "who moved it".
-//
-// A write does not invalidate the session — the overlay still names the frozen
-// sources — but it does change the tree every later target runs in, and this is
-// where a caller finds out that it did.
 func (s *Session) Changes() ([]Change, error) {
 	if s == nil {
 		return nil, errors.New("gomutants: changes: nil session")

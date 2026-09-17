@@ -3,19 +3,6 @@
 
 //go:build integration
 
-// Recording what a target touched: `RecordTestLog` on the three requests, and
-// the `TestLogs` the three results carry.
-//
-// The engine hands a target the standard `-test.testlogfile`, reads the file
-// back after the binary exits, and returns what the testing package wrote:
-// which environment variables the target read, which files it opened or
-// stat-ed, and where it changed directory to. Nothing is resolved and nothing
-// is interpreted — a consumer deciding whether a cached result is still valid
-// is the one that knows what the names mean.
-//
-// The tests reuse the shared sessions, because every claim here is about the
-// answers *one* prepared session gives.
-
 package gomutants_test
 
 import (
@@ -30,25 +17,16 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// testLogHeader is the first line the testing package writes into an action
-// log, spelled out here rather than imported: what a consumer reads is a file
-// a Go test binary wrote, and this is the byte sequence cmd/go itself checks
-// for.
 const testLogHeader = "# test log\n"
 
-// testLogFlagPrefix is the flag the engine adds for itself when a request asks
-// for the log, and the one a caller may not supply while it does.
 const testLogFlagPrefix = "-test.testlogfile="
 
-// hasEntry reports whether a recorded log names one operation on one name.
 func hasEntry(log gomutants.TestLog, op gomutants.TestLogOp, name string) bool {
 	return slices.ContainsFunc(log.Entries, func(entry gomutants.TestLogEntry) bool {
 		return entry.Op == op && entry.Name == name
 	})
 }
 
-// requireOneCompleteLog is what a target that ran to the end must produce: one
-// record for the one binary that ran, complete, with nothing to explain away.
 func requireOneCompleteLog(t *testing.T, logs []gomutants.TestLog, pkg string) gomutants.TestLog {
 	t.Helper()
 	if len(logs) != 1 {
@@ -71,7 +49,6 @@ func requireOneCompleteLog(t *testing.T, logs []gomutants.TestLog, pkg string) g
 	return log
 }
 
-// execEventAt is the `exec` event one execution's children were recorded at.
 func execEventAt(t *testing.T, events []trace.Event, seq int64) trace.ExecRecord {
 	t.Helper()
 	for _, event := range events {
@@ -83,9 +60,6 @@ func execEventAt(t *testing.T, events []trace.Event, seq int64) trace.ExecRecord
 	return trace.ExecRecord{}
 }
 
-// firstExecOfAttempt is the `exec` event of the first binary a `mutant-exec`
-// event names, which is how a result reaches the argument vector its child
-// really received.
 func firstExecOfAttempt(t *testing.T, events []trace.Event, attemptSeq int64) trace.ExecRecord {
 	t.Helper()
 	for _, event := range events {
@@ -101,31 +75,12 @@ func firstExecOfAttempt(t *testing.T, events []trace.Event, attemptSeq int64) tr
 	return trace.ExecRecord{}
 }
 
-// withoutTestLogFlag is an argument vector with the engine's own flag taken
-// out, so that two runs of one target can be compared element for element.
 func withoutTestLogFlag(argv []string) []string {
 	return slices.DeleteFunc(slices.Clone(argv), func(argument string) bool {
 		return strings.HasPrefix(argument, testLogFlagPrefix)
 	})
 }
 
-// TestExecRecordsTheTestLog is the feature in one assertion, plus the two
-// claims about the recording that keep it honest.
-//
-// The injected TestSessionEnvironment reads EXPECT_CLEAN, so a log naming it is
-// a fact the target produced from inside the child process rather than
-// something the engine could have written for it. It is read *unset* here — an
-// execution activates a mutant, and that target is red when EXPECT_CLEAN says
-// the environment should be clean — which is the more useful half of the claim
-// anyway: a variable a test consulted and did not find is still an input, and a
-// consumer deciding whether a cached verdict still holds has to be told the
-// same day somebody exports it.
-//
-// The second half runs the very same target with recording off and compares the
-// two `exec` events: the argument vectors must differ by exactly the one flag,
-// and the environment the child could see must not differ at all. The log is
-// named on the command line and never in the environment, which is what lets a
-// consumer join a recording against a run that recorded and one that did not.
 func TestExecRecordsTheTestLog(t *testing.T) {
 	prepared := controlled(t)
 	mutant := survivingMutant(t, prepared)
@@ -177,12 +132,6 @@ func TestExecRecordsTheTestLog(t *testing.T) {
 	}
 }
 
-// TestControlRecordsTheTestLog is the same claim for the original program.
-//
-// A consumer that caches a mutant's verdict caches the control beside it, and
-// the inputs the control read are what tell it whether either is still valid.
-// A control that could not answer that would send the consumer back to the
-// second workspace Session.Control exists to replace.
 func TestControlRecordsTheTestLog(t *testing.T) {
 	prepared := controlled(t)
 
@@ -204,12 +153,6 @@ func TestControlRecordsTheTestLog(t *testing.T) {
 	}
 }
 
-// TestProbeRecordsTheTestLog is the third call, over the probe tree.
-//
-// It is the same target and the same reading, and it is here because the probe
-// tree is a *different* tree: a pass records against binaries built from
-// instrumented sources in a snapshot of their own, so a record naming the
-// mutant tree's directory would be a fact about the wrong program.
 func TestProbeRecordsTheTestLog(t *testing.T) {
 	prepared := probeable(t)
 
@@ -230,22 +173,6 @@ func TestProbeRecordsTheTestLog(t *testing.T) {
 	}
 }
 
-// TestKilledBinaryLeavesAnIncompleteLog is the honest half of the feature, in a
-// real process.
-//
-// The testing package buffers the log and flushes it from the deferred
-// m.after(), so this quiet target — killed a second into a minute's sleep —
-// leaves the file it created and nothing in it, and the record says so with an
-// Err rather than with an empty measurement.
-//
-// What must never happen is Complete on a log nothing finished, and it is the
-// engine and not the bytes that rules that out: the buffer flushes whenever it
-// fills, so a *chatty* killed target leaves a log that ends at a line boundary
-// and holds a prefix of what it touched. A binary the supervisor tore down
-// therefore reports Complete false whatever it wrote, which is
-// TestKilledTargetNeverReportsACompleteLog in internal/execute — where a fake
-// runner can leave exactly the log a mid-run flush leaves. This is the same
-// claim against a process the operating system really killed.
 func TestKilledBinaryLeavesAnIncompleteLog(t *testing.T) {
 	prepared := controlled(t)
 
@@ -276,14 +203,6 @@ func TestKilledBinaryLeavesAnIncompleteLog(t *testing.T) {
 	}
 }
 
-// TestRecordingRefusesACallerSuppliedTestLogFlag is the collision, refused
-// before anything is started.
-//
-// Two -test.testlogfile arguments are not two logs: the standard flag package
-// keeps the last value it sees, so whichever of the caller and the engine came
-// second would silently win and the other would report on a file nobody wrote.
-// The refusal names the flag and the call, so a consumer composing one request
-// for an execution and the control beside it is told which of them said no.
 func TestRecordingRefusesACallerSuppliedTestLogFlag(t *testing.T) {
 	killable := controlled(t)
 	probed := probeable(t)
@@ -325,14 +244,6 @@ func TestRecordingRefusesACallerSuppliedTestLogFlag(t *testing.T) {
 	})
 }
 
-// TestCallerSuppliedTestLogFlagStillPassesThroughWithoutRecording pins the
-// method this feature replaces, because a consumer is entitled to go on using
-// it until it moves.
-//
-// goatest smuggles its own -test.testlogfile through Args and strips it again
-// on both sides of its trace. That is not reserved, it is not rewritten, and it
-// is not duplicated: the flag reaches the binary exactly as it was written, the
-// binary writes the caller's file, and the engine adds nothing beside it.
 func TestCallerSuppliedTestLogFlagStillPassesThroughWithoutRecording(t *testing.T) {
 	prepared := controlled(t)
 	path := filepath.Join(t.TempDir(), "caller.log")
@@ -366,13 +277,6 @@ func TestCallerSuppliedTestLogFlagStillPassesThroughWithoutRecording(t *testing.
 	}
 }
 
-// TestTestLogScratchIsRemoved is the promise every per-call temporary directory
-// carries, applied to the file this feature adds to one.
-//
-// The log is private to the call: it lives in the directory the call already
-// owns, and it goes when that directory goes. A record that outlived its call
-// would be a file nobody removes, one per binary per execution, in a run that
-// executes thousands.
 func TestTestLogScratchIsRemoved(t *testing.T) {
 	prepared := controlled(t)
 	before := perCallScratch(t, prepared.parent)
@@ -393,27 +297,6 @@ func TestTestLogScratchIsRemoved(t *testing.T) {
 	expectScratchAfterCall(t, prepared, before, perCallScratch(t, prepared.parent))
 }
 
-// TestFuzzTargetTestLog is the one target the engine records nothing for, and
-// the reason is in the Go source rather than in a policy.
-//
-// internal/fuzz starts every worker with the coordinator's own arguments —
-// `args := append([]string{"-test.fuzzworker"}, os.Args[1:]...)` — so a worker
-// inherits -test.testlogfile and, having its own first call to M.Run, reaches
-// the os.Create in testing's m.before() and truncates the file the coordinator
-// is writing. Several processes then append to one path at offsets of their
-// own. cmd/go never combines the two either: -test.fuzz is not a cacheable
-// test argument, so it disables the test cache and the flag is not passed.
-//
-// So the engine does not pass it, the child's argument vector says so, and the
-// record carries a reason instead of a measurement — which is the one answer
-// that cannot be mistaken for "this fuzz target touched nothing".
-//
-// The budget is one iteration rather than a duration, which is what
-// `-test.fuzztime=1x` means. Nothing here is about fuzzing: what is under test
-// is the command line a coordinator is started with and the record that comes
-// back, and a target given a wall-clock budget is a target whose cost depends
-// on how loaded the machine is — the one way this assertion could fail for a
-// reason that has nothing to do with it.
 func TestFuzzTargetTestLog(t *testing.T) {
 	prepared := controlled(t)
 

@@ -22,8 +22,6 @@ const (
 	snapshotCopyDeadline  = time.Second
 )
 
-// writeTree creates every file in files under root, making parent directories
-// as needed. Keys are '/'-normalized relative paths.
 func writeTree(t *testing.T, root string, files map[string]string) {
 	t.Helper()
 	for rel, content := range files {
@@ -44,9 +42,6 @@ func mkdirAll(t *testing.T, root, rel string) {
 	}
 }
 
-// create snapshots src and registers cleanup, so a test never leaves a
-// snapshot behind even when it fails. DestParent defaults to a directory the
-// testing package owns, keeping debris out of the real temporary directory.
 func create(t *testing.T, src string, opts Options) *Snapshot {
 	t.Helper()
 	if opts.DestParent == "" {
@@ -114,9 +109,6 @@ func readFile(t *testing.T, abs string) string {
 	return string(b)
 }
 
-// symlinkOrSkip creates a symbolic link, skipping the test when the platform
-// refuses. Unprivileged Windows without Developer Mode cannot create one, and
-// that is a property of the machine rather than a failure of this package.
 func symlinkOrSkip(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.Symlink(target, link); err != nil {
@@ -146,8 +138,6 @@ func TestCreateCopiesBytesExactly(t *testing.T) {
 			t.Errorf("%s copied as %q, want %q", rel, got, want)
 		}
 	}
-	// The CRLF file in particular: a newline translated on the way in would
-	// change the source digest and rename every mutant in the file.
 	if !strings.Contains(readFile(t, filepath.Join(snap.Root, "crlf.go")), "\r\n") {
 		t.Error("CRLF line endings did not survive the copy")
 	}
@@ -161,9 +151,6 @@ func TestCreateCopiesBytesExactly(t *testing.T) {
 func TestCreateManifestIsSortedByPath(t *testing.T) {
 	t.Parallel()
 
-	// "a.go" sorts before "a/b.go" by path ('.' is 0x2E, '/' is 0x2F) but is
-	// visited after it by any walk that recurses into a directory when it
-	// meets it. This is the case that separates sorting from traversal order.
 	src := t.TempDir()
 	writeTree(t, src, map[string]string{
 		"a.go":     "package a\n",
@@ -271,7 +258,6 @@ func TestCreateIsDeterministic(t *testing.T) {
 	}
 	assertManifest(t, a.Manifest, b.Manifest)
 
-	// A one-byte content change moves the digest.
 	changedFiles := maps.Clone(files)
 	changedFiles["a/one.go"] = "package a\n\nfunc One() int { return 2 }\n"
 	changed := t.TempDir()
@@ -280,7 +266,6 @@ func TestCreateIsDeterministic(t *testing.T) {
 		t.Error("changing a file's contents did not change the workspace digest")
 	}
 
-	// So does moving a file, even though the bytes are all still there.
 	movedFiles := maps.Clone(files)
 	delete(movedFiles, "a/one.go")
 	movedFiles["a/uno.go"] = files["a/one.go"]
@@ -324,8 +309,6 @@ func TestCreateExclusions(t *testing.T) {
 	if got := relPaths(snap.Manifest); !slices.Equal(got, want) {
 		t.Errorf("manifest paths = %v, want %v", got, want)
 	}
-	// An excluded directory is not descended into, so it is not created in the
-	// snapshot either.
 	for _, gone := range []string{".git", "vendor", "reports/mutation"} {
 		if _, err := os.Stat(filepath.Join(snap.Root, filepath.FromSlash(gone))); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("excluded %s exists in the snapshot (err=%v)", gone, err)
@@ -343,8 +326,6 @@ func TestCreateExcludesConfiguredReportDir(t *testing.T) {
 		"reports/mutation/report.json": "{}\n",
 	})
 
-	// The configured directory is excluded in addition to the conventional
-	// one, never instead of it.
 	snap := create(t, src, Options{ReportDir: "artifacts"})
 
 	if got := relPaths(snap.Manifest); !slices.Equal(got, []string{"keep.go"}) {
@@ -397,8 +378,6 @@ func TestCreateRejectsSymlinkedDirectory(t *testing.T) {
 	}
 }
 
-// TestCreateSkipsExcludedSymlink proves the exclusion check happens before the
-// rejection check, which is how a user gets past a link they do not need.
 func TestCreateSkipsExcludedSymlink(t *testing.T) {
 	t.Parallel()
 
@@ -412,10 +391,6 @@ func TestCreateSkipsExcludedSymlink(t *testing.T) {
 	}
 }
 
-// TestCreateReportsFirstRejectionByPath pins which of several bad entries is
-// named. Reporting the first in path order rather than in visit order keeps
-// the message stable across filesystems that hand back directory entries in
-// different orders.
 func TestCreateReportsFirstRejectionByPath(t *testing.T) {
 	t.Parallel()
 
@@ -462,17 +437,10 @@ func TestCreateRejectsMissingDestParent(t *testing.T) {
 	assertCode(t, err, CodeDestination)
 }
 
-// TestCreateDeepTree is the end-to-end long path case: on Windows the copied
-// paths run past MAX_PATH, and the run must survive. It does not prove that
-// ExtendedPath is what saved it — the standard library rewrites long absolute
-// paths of its own accord — so the helper's output is pinned separately in
-// longpath_windows_test.go.
 func TestCreateDeepTree(t *testing.T) {
 	t.Parallel()
 
 	src := t.TempDir()
-	// Nest until the absolute path is past MAX_PATH with room to spare,
-	// whatever the temporary directory in front of it costs.
 	segment := strings.Repeat("d", 24)
 	rel := segment
 	for len(src)+len(rel) < 300 {
@@ -503,7 +471,6 @@ func TestCreateEmptyTree(t *testing.T) {
 	if len(snap.Manifest) != 0 {
 		t.Errorf("manifest = %v, want empty", snap.Manifest)
 	}
-	// An empty workspace still has a digest: the domain separator alone.
 	if snap.WorkspaceDigest != goldenEmptyDigest {
 		t.Errorf("WorkspaceDigest = %s, want %s", snap.WorkspaceDigest, goldenEmptyDigest)
 	}
@@ -538,10 +505,6 @@ func assertEmptyDir(t *testing.T, dir string) {
 	}
 }
 
-// TestCreateDoesNotCopyItself pins an ordering guarantee that is invisible in
-// the API: the tree is walked before the destination is created, so a caller
-// that puts the snapshot inside the source root — a plausible way to keep test
-// debris on the same volume — does not snapshot the snapshot.
 func TestCreateDoesNotCopyItself(t *testing.T) {
 	t.Parallel()
 
@@ -558,11 +521,6 @@ func TestCreateDoesNotCopyItself(t *testing.T) {
 	}
 }
 
-// TestCreateWithRelativeDestParent covers the path where the snapshot is
-// perfectly usable and undeletable: a relative DestParent used as it stands —
-// joined with the stable name, or handed to os.MkdirTemp — yields a relative
-// root, and the Cleanup guard refuses anything that is not absolute. Both the
-// success and the abandoned-copy paths have to survive it.
 func TestCreateWithRelativeDestParent(t *testing.T) {
 	t.Parallel()
 
@@ -587,14 +545,8 @@ func TestCreateWithRelativeDestParent(t *testing.T) {
 		t.Errorf("snapshot parent = %s, want %s", got, dest)
 	}
 
-	// Cleanup has to accept it too, which the helper's deferred call asserts.
-	// A relative DestParent that produced a relative Root would fail there and
-	// nowhere else: the snapshot would work perfectly and never go away.
 }
 
-// assertAbandoned is the shared assertion of the two platform-specific tests
-// that make a copy fail after the destination directory already exists. It is
-// the only path where Create has to undo work it has already done.
 func assertAbandoned(t *testing.T, src, dest string) {
 	t.Helper()
 	_, err := Create(src, Options{DestParent: dest})
@@ -602,12 +554,6 @@ func assertAbandoned(t *testing.T, src, dest string) {
 	assertEmptyDir(t, dest)
 }
 
-// TestUnsupportedName is a unit test rather than a tree test because most of
-// these names cannot be created on the platform this suite usually runs on:
-// Windows forbids a backslash in a file name outright, and no filesystem hands
-// back "." or ".." from a directory listing. The branch still has to be right
-// the day a POSIX tree really does contain "a\b.go", where treating it as the
-// path "a/b.go" would give two different files one identity.
 func TestUnsupportedName(t *testing.T) {
 	t.Parallel()
 
@@ -647,8 +593,6 @@ func TestSnapshotRootShape(t *testing.T) {
 	if !strings.HasPrefix(filepath.Base(snap.Dir()), DirPrefix) {
 		t.Errorf("snapshot directory %q does not begin with %q", filepath.Base(snap.Dir()), DirPrefix)
 	}
-	// The copy is a subdirectory of the directory that carries the ownership
-	// files; see TestCreateOwnsItsDirectoryWithoutTouchingTheTree.
 	if got := filepath.Dir(snap.Root); !pathsEqual(got, snap.Dir()) {
 		t.Errorf("the tree lives in %s, want %s", got, snap.Dir())
 	}

@@ -25,20 +25,10 @@ import (
 	"github.com/P4suta/go-mutants/internal/tui"
 )
 
-// runWith executes the `run` command with args and returns the error, without
-// letting it reach the engine.
-//
-// Every check it exercises happens before the working directory is read, which
-// is deliberate: a user who typed two contradictory flags should not wait for a
-// workspace to be copied before being told.
 func runWith(t *testing.T, args ...string) error {
 	t.Helper()
 	cmd := newRunCommand()
 	if args == nil {
-		// Explicitly empty rather than nil: cobra reads the process's own argv
-		// when SetArgs has never been called, and nil is indistinguishable
-		// from that. Under `go test -update` that argv holds a flag no
-		// go-mutants command has.
 		args = []string{}
 	}
 	cmd.SetArgs(args)
@@ -59,10 +49,6 @@ func TestRunRefusesJSONWithQuiet(t *testing.T) {
 }
 
 func TestRunRefusesBothStrictSpellings(t *testing.T) {
-	// cobra enforces this rather than the command body: neither flag is wrong
-	// on its own and each is a complete answer, so silently letting one win
-	// would make the meaning of a command line depend on a rule nobody wrote
-	// down.
 	err := runWith(t, "--strict", "--no-strict")
 	if err == nil {
 		t.Fatal("run --strict --no-strict was accepted")
@@ -80,8 +66,6 @@ func TestRunRefusesAMutantPrefixThatCouldNeverMatch(t *testing.T) {
 			t.Errorf("run --mutant %q = %v, want %s", prefix, err, CodeInvalidMutantPrefix)
 		}
 	}
-	// A well-formed prefix is not refused here: whether it matches one mutant,
-	// none, or several is a question about a catalogue that does not exist yet.
 	if err := checkMutantPrefix("beef"); err != nil {
 		t.Errorf("checkMutantPrefix(\"beef\") = %v, want it accepted", err)
 	}
@@ -90,9 +74,6 @@ func TestRunRefusesAMutantPrefixThatCouldNeverMatch(t *testing.T) {
 	}
 }
 
-// TestRunOverlayCarriesOnlyChangedFlags is the precedence contract: a flag's
-// default is not an opinion, so an untyped flag must lose to the configuration
-// file.
 func TestRunOverlayCarriesOnlyChangedFlags(t *testing.T) {
 	untyped := overlayFrom(t, nil)
 	for name, set := range map[string]bool{
@@ -138,16 +119,12 @@ func TestRunOverlayCarriesOnlyChangedFlags(t *testing.T) {
 	}
 }
 
-// TestNoStrictOverridesTheFile is the half of the strict pair that only matters
-// when a file already said yes.
 func TestNoStrictOverridesTheFile(t *testing.T) {
 	overlay := overlayFrom(t, []string{"--no-strict"})
 	got, ok := overlay.Strict.Get()
 	if !ok || got {
 		t.Fatalf("strict = %v/%t, want an explicit false", got, ok)
 	}
-	// And it really reaches the policy the run gates on, over a file that had
-	// asked for strict.
 	strictFile := config.Overlay{Strict: config.Explicit(true)}
 	cfg := config.MergeOverlays(config.Defaults(), strictFile, overlay)
 	if cfg.Policy.Strict {
@@ -155,9 +132,6 @@ func TestNoStrictOverridesTheFile(t *testing.T) {
 	}
 }
 
-// TestRepeatedPatternFlagsAreNotSplitOnCommas pins the StringArrayVar choice: a
-// glob is one opaque value, and the pattern language has no way to escape a
-// comma.
 func TestRepeatedPatternFlagsAreNotSplitOnCommas(t *testing.T) {
 	overlay := overlayFrom(t, []string{"--include", "a,b/**", "--include", "c/**"})
 	got, ok := overlay.Include.Get()
@@ -170,24 +144,12 @@ func TestRepeatedPatternFlagsAreNotSplitOnCommas(t *testing.T) {
 	}
 }
 
-// The identity the scripted repositories commit under, set through the
-// environment so that go-mutants' own git — which runs with this process's
-// environment — reads exactly what the test wrote.
 const (
 	gitTestAuthor    = "go-mutants tests"
 	gitTestEmail     = "tests@go-mutants.invalid"
 	gitTestTimestamp = "2026-02-18T09:15:00+00:00"
 )
 
-// gitCommand runs one git command in dir, failing the test if it does not
-// succeed.
-//
-// It passes no setting that turns signing off. The repository these tests
-// create has no configuration file to carry signing, so it is off already, and
-// asking git to switch it off is precisely what a signing-policy wrapper — the
-// kind a developer of this repository has installed — refuses; see
-// [testkit.GitInit] for the rule and internal/testkit's gate for what enforces
-// it.
 func gitCommand(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	argv := append([]string{"-C", dir}, args...)
@@ -198,21 +160,9 @@ func gitCommand(t *testing.T, dir string, args ...string) string {
 	if err := command.Run(); err != nil {
 		t.Fatalf("git %s: %v\n%s%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	// Standard output alone, because the caller uses the answer: `git rev-parse
-	// --abbrev-ref HEAD` names a branch, and that name is passed straight back
-	// to `git branch --set-upstream-to=`. Git writes advice to standard error
-	// as a matter of course -- "hint: Using 'master' as the name for the initial
-	// branch" is the one every fresh `init` prints -- and a wrapper on somebody's
-	// PATH may write more, so folding the two streams together turns any of it
-	// into part of the value. The failure message still carries both, because a
-	// failure is when stderr is the interesting half.
 	return strings.TrimSpace(stdout.String())
 }
 
-// neutralGitEnvironment points git at configuration files that do not exist and
-// pins the commit identity, so that a developer's own `~/.gitconfig` cannot
-// change what these tests observe. It is set for the process, because the
-// command under test runs git itself.
 func neutralGitEnvironment(t *testing.T) {
 	t.Helper()
 	absent := t.TempDir()
@@ -226,32 +176,8 @@ func neutralGitEnvironment(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_DATE", gitTestTimestamp)
 }
 
-// TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone is the CLI-level
-// half of the upstream rule, and it exists because the package-level half
-// cannot reach this path.
-//
-// internal/gitdiff's own tests can ask for the upstream by passing an empty
-// ref, which is a value this command never produces: the bare flag carries
-// [gitdiff.UpstreamRef], and a resolver that took that notation for a ref would
-// look up no upstream at all. The branch with none would then fail at the merge
-// base — GOM7713, "the ref may not exist here" — about a ref nobody typed,
-// leaving GOM7712 unreachable from the command line and its remedy unread. So
-// the flag is driven for real, in a repository that really has no upstream,
-// which is the only arrangement that proves the value the flag produces means
-// what its help says.
-//
-// The run stops before a workspace is copied or a toolchain is located, because
-// the diff is resolved first on purpose; this needs git and nothing else.
 func TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone(t *testing.T) {
-	// No t.Parallel and no parallel subtests: t.Chdir refuses to run in one,
-	// and the working directory is where the command finds its workspace.
-	// GitBinary rather than a bare lookup: a developer without git skips, and a
-	// runner without it fails, which is what GO_MUTANTS_TEST_REQUIRE_TOOLS is
-	// for and what a lookup cannot be told.
 	_ = testkit.GitBinary(t)
-	// Both spellings of the same request, driven through one body: the bare
-	// flag, and the notation a user writes out longhand because the help says
-	// the value takes an equals sign.
 	for _, flag := range []string{"--changed", "--changed=" + gitdiff.UpstreamRef} {
 		t.Run(flag, func(t *testing.T) {
 			neutralGitEnvironment(t)
@@ -272,8 +198,6 @@ func TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone(t *testing.T) {
 				t.Errorf("stderr = %q, want %s: the upstream was never looked up",
 					stderr, gitdiff.CodeNoUpstream)
 			}
-			// The remedy is the reason this code exists rather than the merge
-			// base's: it says what to do about a branch that tracks nothing.
 			if !strings.Contains(stderr, "--set-upstream-to") {
 				t.Errorf("stderr = %q, want the remedy for a branch with no upstream", stderr)
 			}
@@ -281,8 +205,6 @@ func TestBareChangedAsksForTheUpstreamAndSaysSoWhenThereIsNone(t *testing.T) {
 	}
 }
 
-// overlayFrom parses args with the real `run` command and returns the layer its
-// flags produce.
 func overlayFrom(t *testing.T, args []string) config.Overlay {
 	t.Helper()
 	cmd := newRunCommand()
@@ -291,8 +213,6 @@ func overlayFrom(t *testing.T, args []string) config.Overlay {
 		fail  error
 	)
 	cmd.RunE = func(c *cobra.Command, _ []string) error {
-		// The flag destinations belong to the command's own runOptions, which
-		// RunE cannot reach, so they are read back out of the flag set.
 		o := &runOptions{}
 		flags := c.Flags()
 		o.include, _ = flags.GetStringArray("include")
@@ -310,10 +230,6 @@ func overlayFrom(t *testing.T, args []string) config.Overlay {
 		return fail
 	}
 	if args == nil {
-		// Explicitly empty rather than nil: cobra reads the process's own argv
-		// when SetArgs has never been called, and nil is indistinguishable
-		// from that. Under `go test -update` that argv holds a flag no
-		// go-mutants command has.
 		args = []string{}
 	}
 	cmd.SetArgs(args)
@@ -325,10 +241,6 @@ func overlayFrom(t *testing.T, args []string) config.Overlay {
 	return layer
 }
 
-// TestPolicyFailureIsSilentAndCarriesItsCode pins the one error the command
-// line decides not to print: the run's own summary already named the survivors
-// and the score, and repeating a shortened version on standard error would
-// dress a correct measurement up as something having gone wrong.
 func TestPolicyFailureIsSilentAndCarriesItsCode(t *testing.T) {
 	if err := policyFailure(mutation.Verdict{Code: mutation.ExitOK}); err != nil {
 		t.Fatalf("a passing verdict produced %v", err)
@@ -352,8 +264,6 @@ func TestPolicyFailureIsSilentAndCarriesItsCode(t *testing.T) {
 		t.Errorf("a policy failure printed %q, want nothing", rendered.String())
 	}
 
-	// An infrastructure failure is not silent: nothing else has told the user
-	// about it.
 	infrastructure := mutation.Decide(mutation.Tally{Errored: 1}, mutation.DefaultPolicy(), mutation.Signals{})
 	loud := policyFailure(infrastructure)
 	if got := ExitCode(loud); got != mutation.ExitInfrastructure {
@@ -361,11 +271,6 @@ func TestPolicyFailureIsSilentAndCarriesItsCode(t *testing.T) {
 	}
 }
 
-// TestADashboardFailureDoesNotDecideTheExitStatus pins the asymmetry between
-// the two renderers. The dashboard is decoration over a run that has already
-// measured everything and already printed its summary, so a terminal it could
-// not drive is news and nothing more; the plain renderer's writes are the
-// output itself, and losing them is a failure of the run.
 func TestADashboardFailureDoesNotDecideTheExitStatus(t *testing.T) {
 	var reported bytes.Buffer
 	dashboard := &tui.Error{
@@ -376,14 +281,11 @@ func TestADashboardFailureDoesNotDecideTheExitStatus(t *testing.T) {
 	if got := reportDashboardFailure(&reported, dashboard); got != nil {
 		t.Errorf("reportDashboardFailure returned %v, want nil so that the run's own verdict decides", got)
 	}
-	// Nothing else would ever tell the user, so it is not simply dropped.
 	for _, want := range []string{"GOM7701", "raw mode refused"} {
 		if !strings.Contains(reported.String(), want) {
 			t.Errorf("the failure was not reported on standard error: %q does not contain %q", reported.String(), want)
 		}
 	}
-	// The exit status a run with a broken dashboard and a failing gate reports
-	// is the gate's, which is the whole point of not returning the first one.
 	verdict := mutation.Decide(
 		mutation.Tally{Killed: 1, UnexpectedSurvivors: 1},
 		mutation.Policy{Strict: true, RequireMutants: true},
@@ -393,8 +295,6 @@ func TestADashboardFailureDoesNotDecideTheExitStatus(t *testing.T) {
 		t.Errorf("ExitCode = %d, want the policy failure's %d", got, mutation.ExitPolicyFailure)
 	}
 
-	// Every other renderer failure is returned untouched and unprinted: it is
-	// reported once, by the caller that returns it.
 	var quiet bytes.Buffer
 	other := errors.New("write /dev/stdout: broken pipe")
 	if got := reportDashboardFailure(&quiet, other); !errors.Is(got, other) {
@@ -408,11 +308,6 @@ func TestADashboardFailureDoesNotDecideTheExitStatus(t *testing.T) {
 	}
 }
 
-// TestALostClosingBlockOutranksALostDashboard is the ordering half of the same
-// decision. Both halves of the rendering can fail at once, and the one that
-// survives has to be the one that cost the user something: a dashboard failure
-// costs a picture over a summary that was still printed, and a replay failure
-// costs the summary itself.
 func TestALostClosingBlockOutranksALostDashboard(t *testing.T) {
 	var reported bytes.Buffer
 	dashboard := &tui.Error{Code: tui.CodeProgram, Message: "the live dashboard stopped before the run did"}
@@ -425,12 +320,10 @@ func TestALostClosingBlockOutranksALostDashboard(t *testing.T) {
 	if got := ExitCode(err); got != mutation.ExitInfrastructure {
 		t.Errorf("ExitCode = %d, want %d: the closing block never reached the user", got, mutation.ExitInfrastructure)
 	}
-	// The dashboard failure is still news, and is still reported.
 	if !strings.Contains(reported.String(), string(tui.CodeProgram)) {
 		t.Errorf("the dashboard failure was dropped rather than reported: %q", reported.String())
 	}
 
-	// A replay that worked leaves nothing behind, whatever the dashboard did.
 	reported.Reset()
 	replayed := 0
 	if err := finishRendering(&reported, dashboard, func() error { replayed++; return nil }); err != nil {
@@ -440,7 +333,6 @@ func TestALostClosingBlockOutranksALostDashboard(t *testing.T) {
 		t.Errorf("the closing block was replayed %d times, want once", replayed)
 	}
 
-	// A plain run has no block to put back and is asked to replay nothing.
 	if err := finishRendering(&reported, nil, nil); err != nil {
 		t.Errorf("finishRendering = %v for a plain run that rendered cleanly, want nil", err)
 	}
@@ -449,9 +341,6 @@ func TestALostClosingBlockOutranksALostDashboard(t *testing.T) {
 	}
 }
 
-// TestInterpretCodesAnUnresolvedMutantAsAUsageError is the boundary between the
-// engine's vocabulary and this package's: the engine reports the fact without a
-// code, and exactly one GOM number reaches the user.
 func TestInterpretCodesAnUnresolvedMutantAsAUsageError(t *testing.T) {
 	selection := &engine.SelectionError{Prefix: "beef", Err: mutation.ErrAmbiguousPrefix}
 	err := interpret(selection, nil)
@@ -467,8 +356,6 @@ func TestInterpretCodesAnUnresolvedMutantAsAUsageError(t *testing.T) {
 		t.Errorf("hint = %q, want it to name the listing that shows the matches", coded.Hint)
 	}
 
-	// One code, once. An error whose message repeated its own cause would be
-	// rendered as "GOM1009: ... : ..." with the same sentence twice.
 	var rendered bytes.Buffer
 	RenderError(&rendered, err)
 	line := strings.SplitN(rendered.String(), "\n", 2)[0]
@@ -480,14 +367,6 @@ func TestInterpretCodesAnUnresolvedMutantAsAUsageError(t *testing.T) {
 	}
 }
 
-// TestReportFlagCarriesTheFormatsTheUserTyped is the `--report` half of the
-// precedence rules: a flag that was not typed carries nothing and loses to the
-// file, and every spelling that was typed carries exactly what it says.
-//
-// `none` is the case worth writing down. It has to arrive as an *explicit*
-// empty list rather than as an absence, because an absence loses to
-// `report.formats` in the file and "write no project reports" would then be
-// impossible to say on a command line.
 func TestReportFlagCarriesTheFormatsTheUserTyped(t *testing.T) {
 	if overlayFrom(t, nil).ReportFormats.IsSet() {
 		t.Error("--report was carried without being typed")
@@ -500,7 +379,6 @@ func TestReportFlagCarriesTheFormatsTheUserTyped(t *testing.T) {
 		{value: "json", want: []config.ReportFormat{config.FormatJSON}},
 		{value: "html", want: []config.ReportFormat{config.FormatHTML}},
 		{value: "json,html", want: []config.ReportFormat{config.FormatJSON, config.FormatHTML}},
-		// Whitespace around a comma is a person typing, not a mistake.
 		{value: " html , json ", want: []config.ReportFormat{config.FormatHTML, config.FormatJSON}},
 	} {
 		overlay := overlayFrom(t, []string{"--report", tc.value})
@@ -515,9 +393,6 @@ func TestReportFlagCarriesTheFormatsTheUserTyped(t *testing.T) {
 	}
 }
 
-// TestReportFlagRefusesAFormatNobodyWrites names the flag the user typed rather
-// than the TOML key they never wrote, which is why the value is parsed in the
-// command line layer at all.
 func TestReportFlagRefusesAFormatNobodyWrites(t *testing.T) {
 	cmd := newRunCommand()
 	o := &runOptions{report: "json,pdf"}
@@ -533,14 +408,6 @@ func TestReportFlagRefusesAFormatNobodyWrites(t *testing.T) {
 	}
 }
 
-// TestEmitGitHubIsGatedOnTheEnvironmentAndOnJSON pins when the two workflow
-// halves are written at all.
-//
-// `GITHUB_STEP_SUMMARY` is set by the runner for every step of every job and by
-// nothing else, so it is a far better signal than `CI` — and it also names the
-// file that has to be written. `--json` suppresses both, because standard
-// output is the document then and a `::warning` line in front of it would break
-// the one promise `--json` makes.
 func TestEmitGitHubIsGatedOnTheEnvironmentAndOnJSON(t *testing.T) {
 	score := 50.0
 	document := &report.Report{
@@ -596,15 +463,7 @@ func TestEmitGitHubIsGatedOnTheEnvironmentAndOnJSON(t *testing.T) {
 	}
 }
 
-// TestEmitGitHubReportsAFailureAndDoesNotReturnIt is the judgement
-// [reportDashboardFailure] makes, applied to the same kind of thing: by the
-// time this runs the mutants have been measured, the report is filed, and the
-// closing block is on the screen. Letting a failure to decorate a job page turn
-// a failed score gate's exit 1 into an exit 2 would tell a CI job that the tool
-// broke when the truth is that the tests missed something.
 func TestEmitGitHubReportsAFailureAndDoesNotReturnIt(t *testing.T) {
-	// A directory where the summary file has to be: the append cannot succeed,
-	// on any platform.
 	dir := filepath.Join(t.TempDir(), "summary.md")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("staging the failure: %v", err)
@@ -624,20 +483,11 @@ func TestEmitGitHubReportsAFailureAndDoesNotReturnIt(t *testing.T) {
 	if !strings.Contains(errOut.String(), string(CodeGitHubSummary)) {
 		t.Errorf("the failure was not reported: %q", errOut.String())
 	}
-	// The annotations still went out: they are the half a reviewer sees.
 	if !strings.Contains(out.String(), "::warning ") {
 		t.Errorf("the annotations were lost with the summary: %q", out.String())
 	}
 }
 
-// TestMemoryFlagIsRefusedWithTheSameSentenceTheFileGets pins that `--memory`
-// goes through internal/config rather than around it.
-//
-// A flag with its own parser is a second vocabulary: `2GB` accepted here and
-// refused in the file, or accepted in both and meaning two different numbers.
-// The refusal names the flag the user typed rather than the TOML key they never
-// wrote, which is the whole reason the parsing happens in the command and not
-// in the overlay machinery.
 func TestMemoryFlagIsRefusedWithTheSameSentenceTheFileGets(t *testing.T) {
 	for _, bad := range []string{"2GB", "plenty", "0"} {
 		cmd := newRunCommand()
@@ -659,9 +509,6 @@ func TestMemoryFlagIsRefusedWithTheSameSentenceTheFileGets(t *testing.T) {
 	}
 }
 
-// TestRunHelpMentionsMemory keeps the bound discoverable. A budget nobody can
-// find is a budget nobody sets, and the one thing a user needs from `--help`
-// here is that the unit is binary and the default is derived.
 func TestRunHelpMentionsMemory(t *testing.T) {
 	code, stdout, stderr := execute(t, "run", "--help")
 	if code != 0 {

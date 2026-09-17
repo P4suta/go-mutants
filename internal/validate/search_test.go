@@ -17,41 +17,21 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// TestSearch drives the whole phase — first build, pristine gate, per-file
-// isolation, the round that follows it — against a compiler that is a table.
-//
-// What the fake supplies is exactly the two operations the search is allowed:
-// write a subset of one file's guards, and build. Everything else it asserts on
-// its own behalf, which is what makes the fake worth having rather than a
-// mirror of the code — a search that instrumented a file it had already decided,
-// or that wrote one file's mutants into another, fails inside the fake rather
-// than by producing a wrong answer somewhere downstream.
 func TestSearch(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		// files maps each catalogued file to how many candidates it holds, and
-		// sizes are given in path order.
-		files []fakeFile
-		// bad are the catalogue indices that do not compile.
-		bad []int
-		// mask reports the failure against a file the catalogue does not know,
-		// which is the compiler declining to point at the guard that broke it.
-		mask bool
-		// brokenAlways fails every build, gate included.
+		name         string
+		files        []fakeFile
+		bad          []int
+		mask         bool
 		brokenAlways bool
-		// brokenFrom fails every build from that build number on.
-		brokenFrom int
+		brokenFrom   int
 
-		// wantRejected are the indices the search must reject.
 		wantRejected []int
-		// wantState is what each file must be left holding.
-		wantState map[string][]int
-		// wantCode is the error the search must end with, if any.
-		wantCode Code
-		// wantBuilds pins the build count where it is the point.
-		wantBuilds int
+		wantState    map[string][]int
+		wantCode     Code
+		wantBuilds   int
 	}{
 		{
 			name:       "nothing is wrong",
@@ -84,9 +64,6 @@ func TestSearch(t *testing.T) {
 			},
 		},
 		{
-			// The file comes out pristine, which is the only state that
-			// compiles: a file with the runtime import and no guard that reads
-			// it would not build.
 			name:         "every candidate in one file is bad",
 			files:        []fakeFile{{"a.go", 3}, {"b.go", 3}},
 			bad:          seq(0, 3),
@@ -94,9 +71,6 @@ func TestSearch(t *testing.T) {
 			wantState:    map[string][]int{"a.go": nil, "b.go": seq(3, 6)},
 		},
 		{
-			// The compiler names a file this run does not catalogue, so there
-			// is nothing to blame and everything undecided has to be searched.
-			// Slower, same answer — which is the trade this phase always makes.
 			name:         "a failure the compiler does not attribute",
 			files:        []fakeFile{{"a.go", 5}, {"b.go", 5}},
 			bad:          []int{7},
@@ -108,8 +82,6 @@ func TestSearch(t *testing.T) {
 			},
 		},
 		{
-			// The gate build fails with every guard removed, so nothing this
-			// phase could reject would fix it.
 			name:         "a tree that was broken before go-mutants touched it",
 			files:        []fakeFile{{"a.go", 4}},
 			brokenAlways: true,
@@ -118,11 +90,6 @@ func TestSearch(t *testing.T) {
 			wantBuilds:   2,
 		},
 		{
-			// Every file has been isolated, each accepted subset compiled on
-			// its own, and the tree still does not build. Here it is a compiler
-			// that changed its mind; in a real run it is candidates in separate
-			// files interacting. Either way the accepted set cannot be trusted
-			// and the phase says so instead of returning it.
 			name:         "a failure that survives isolating every file",
 			files:        []fakeFile{{"a.go", 2}},
 			bad:          []int{1},
@@ -154,10 +121,6 @@ func TestSearch(t *testing.T) {
 			}
 			rejected, err := v.search(t.Context())
 
-			// Every build the phase spent is one line of its account of
-			// itself. The count is asserted for every case here rather than
-			// in one test of its own, because a build that goes unrecorded is
-			// invisible in exactly the run somebody is trying to explain.
 			if got := len(opsOf(sink, trace.ValidateOpBuild)); got != tree.builds {
 				t.Errorf("the recording holds %d build events, want the %d builds the search spent",
 					got, tree.builds)
@@ -175,8 +138,6 @@ func TestSearch(t *testing.T) {
 			if c.wantBuilds > 0 && tree.builds != c.wantBuilds {
 				t.Errorf("the search spent %d builds, want %d", tree.builds, c.wantBuilds)
 			}
-			// Whatever the search left behind has to be a tree that compiles,
-			// unless it said out loud that it could not produce one.
 			if c.wantCode == "" {
 				if v, err := tree.build(context.Background()); err != nil || v.failed {
 					t.Errorf("the search returned with a tree that does not build: %+v %v", v, err)
@@ -186,13 +147,6 @@ func TestSearch(t *testing.T) {
 	}
 }
 
-// TestSearchAcceptsEverythingInOneBuild states the fast path on its own, in the
-// terms the design promises it in.
-//
-// One build for a whole catalogue is the entire justification for instrumenting
-// every mutant at once, and it is invisible in an assertion about accepted sets:
-// a phase that rebuilt once per file would return exactly the same answer. The
-// count is the assertion.
 func TestSearchAcceptsEverythingInOneBuild(t *testing.T) {
 	t.Parallel()
 
@@ -214,14 +168,6 @@ func TestSearchAcceptsEverythingInOneBuild(t *testing.T) {
 	}
 }
 
-// TestSearchRecordsEveryBuildIsolationAndRejection is what a reader of a
-// validation that dropped a mutant has to be able to reconstruct.
-//
-// A rejection is an ordinary outcome of the design and the run carries on past
-// it, so the only place the reasoning survives is the recording: which builds
-// were spent, which file was searched and what it offered, which candidate was
-// condemned and what the compiler said about it. Without it a user sees one
-// mutant fewer in a report and has nothing to ask about it.
 func TestSearchRecordsEveryBuildIsolationAndRejection(t *testing.T) {
 	t.Parallel()
 
@@ -253,8 +199,6 @@ func TestSearchRecordsEveryBuildIsolationAndRejection(t *testing.T) {
 		if record.Build != i+1 {
 			t.Errorf("build event %d is numbered %d, want %d", i, record.Build, i+1)
 		}
-		// The compile the step ran, so a step and the command underneath it
-		// are one thing in the stream.
 		if want := tree.execSeq(i + 1); record.ExecSeq != want {
 			t.Errorf("build %d points at exec %d, want %d", record.Build, record.ExecSeq, want)
 		}
@@ -267,9 +211,6 @@ func TestSearchRecordsEveryBuildIsolationAndRejection(t *testing.T) {
 		t.Errorf("the recording holds %+v for the gate, want exactly one that passed", gates)
 	}
 
-	// Which isolation spent which build. The three builds about the tree as a
-	// whole — the first, the gate, and the one that closes the round — name no
-	// file, and everything between them was spent asking one file a question.
 	if len(builds) < 4 {
 		t.Fatalf("the search spent %d builds, want the whole-tree ones and the isolation's", len(builds))
 	}
@@ -303,8 +244,6 @@ func TestSearchRecordsEveryBuildIsolationAndRejection(t *testing.T) {
 	if rejects[0].Path != "a.go" {
 		t.Errorf("the rejection is about %q, want %q", rejects[0].Path, "a.go")
 	}
-	// The first line of the build that condemned it, and no more: by the time
-	// the phase ends the tree compiles and that message exists nowhere else.
 	if got := rejects[0].Diagnostic; !strings.Contains(got, "cannot use guard") || strings.Contains(got, "\n") {
 		t.Errorf("the rejection quotes %q, want the first line of the condemning build", got)
 	}
@@ -318,14 +257,6 @@ func TestSearchRecordsEveryBuildIsolationAndRejection(t *testing.T) {
 	}
 }
 
-// TestSearchRecordsTheGateWhenTheTreeIsBrokenWithoutMutants records the one
-// failure this phase refuses to blame on a candidate.
-//
-// A tree that does not build with every guard removed was broken before
-// go-mutants touched it, and the gate is what establishes that. It is the
-// difference between "your code does not compile" and "go-mutants rejected
-// eleven mutants", and a recording that did not hold it would leave a reader
-// with an error message and no evidence for it.
 func TestSearchRecordsTheGateWhenTheTreeIsBrokenWithoutMutants(t *testing.T) {
 	t.Parallel()
 
@@ -353,10 +284,6 @@ func TestSearchRecordsTheGateWhenTheTreeIsBrokenWithoutMutants(t *testing.T) {
 		t.Errorf("the gate reads %+v, want the failure that stopped the phase", gates[0])
 	}
 
-	// The gate build names nobody. It is a build of the tree with every guard
-	// removed, so the files the compiler pointed at are not a list of where to
-	// search — there is nothing to search, which is the whole finding — and a
-	// `blamed` there would read as candidates about to be condemned.
 	builds := opsOf(sink, trace.ValidateOpBuild)
 	if len(builds) != 2 {
 		t.Fatalf("the recording holds %d build events, want the first and the gate", len(builds))
@@ -374,7 +301,6 @@ func TestSearchRecordsTheGateWhenTheTreeIsBrokenWithoutMutants(t *testing.T) {
 	}
 }
 
-// recording opens a recorder over an unbounded ring and returns both.
 func recording(t *testing.T) (*trace.Recorder, *trace.MemorySink) {
 	t.Helper()
 	sink := trace.NewMemorySink(0)
@@ -390,7 +316,6 @@ func recording(t *testing.T) (*trace.Recorder, *trace.MemorySink) {
 	return recorder, sink
 }
 
-// opsOf returns the validation steps of one kind the sink kept, in order.
 func opsOf(sink *trace.MemorySink, op string) []trace.ValidateRecord {
 	var found []trace.ValidateRecord
 	for _, event := range sink.Events() {
@@ -401,18 +326,11 @@ func opsOf(sink *trace.MemorySink, op string) []trace.ValidateRecord {
 	return found
 }
 
-// A fakeFile is one catalogued file and how many candidates it holds.
 type fakeFile struct {
 	path string
 	size int
 }
 
-// A fakeTree is a snapshot and a compiler, both made of a table.
-//
-// It owns the state the real phase keeps on disk — which subset of each file's
-// candidates is currently written — so that a test can assert on the tree the
-// search left behind, which is half of what this phase produces and the half
-// nothing downstream would notice going wrong.
 type fakeTree struct {
 	t      *testing.T
 	paths  []string
@@ -428,8 +346,6 @@ type fakeTree struct {
 	applies int
 }
 
-// newFakeTree lays out one catalogue over several files, numbering the mutants
-// densely across the whole of it exactly as [mutation.Catalog] does.
 func newFakeTree(t *testing.T, files []fakeFile) *fakeTree {
 	t.Helper()
 
@@ -449,16 +365,12 @@ func newFakeTree(t *testing.T, files []fakeFile) *fakeTree {
 		}
 		tree.paths = append(tree.paths, f.path)
 		tree.byPath[f.path] = mutants
-		// The search's own precondition: the phase reaches it with every file
-		// instrumented whole, because that is what the first build measured.
 		tree.state[f.path] = mutants
 	}
 	slices.Sort(tree.paths)
 	return tree
 }
 
-// apply writes one file's guards, and refuses what the real instrumenter would
-// refuse.
 func (f *fakeTree) apply(path string, subset []mutation.Mutant) error {
 	f.t.Helper()
 	f.applies++
@@ -475,12 +387,8 @@ func (f *fakeTree) apply(path string, subset []mutation.Mutant) error {
 	return nil
 }
 
-// execSeq is the sequence the nth build of this tree pretends its compile was
-// recorded at. It is deliberately not the build number: a step that copied the
-// wrong one of the two would still line up if they were equal.
 func (f *fakeTree) execSeq(build int) int64 { return int64(100 + build) }
 
-// build reports whether the tree as currently written compiles.
 func (f *fakeTree) build(context.Context) (verdict, error) {
 	f.builds++
 	seq := f.execSeq(f.builds)
@@ -518,7 +426,6 @@ func (f *fakeTree) build(context.Context) (verdict, error) {
 	return verdict{failed: true, output: b.String(), execSeq: seq}, nil
 }
 
-// positions renders what the tree holds as catalogue indices per file.
 func (f *fakeTree) positions() map[string][]int {
 	out := make(map[string][]int, len(f.state))
 	for path, subset := range f.state {
@@ -527,8 +434,6 @@ func (f *fakeTree) positions() map[string][]int {
 	return out
 }
 
-// indexSet turns a list of catalogue positions into the lookup the fake
-// compiler consults.
 func indexSet(positions []int) map[uint32]bool {
 	out := make(map[uint32]bool, len(positions))
 	for _, p := range positions {

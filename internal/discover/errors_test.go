@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// TestCodeStringIsTheCodeItself pins Code.String: it renders the code verbatim,
-// not the empty string, so a diagnostic printed through it names its GOM code.
 func TestCodeStringIsTheCodeItself(t *testing.T) {
 	t.Parallel()
 
@@ -18,10 +16,6 @@ func TestCodeStringIsTheCodeItself(t *testing.T) {
 	}
 }
 
-// TestErrorRendersCodeMessageAndCause pins Error.Error: it prints the code and
-// the message always, and appends the cause exactly when there is one. The
-// no-cause case pins the `e.Err != nil` guard against dropping the cause, and
-// the cause case pins it against appending a colon to nothing.
 func TestErrorRendersCodeMessageAndCause(t *testing.T) {
 	t.Parallel()
 

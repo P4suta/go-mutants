@@ -226,7 +226,6 @@ func cloneProbeRequest(request gomutants.ProbeRequest) gomutants.ProbeRequest {
 	return request
 }
 
-// ControlRule is one scripted answer to a control of the original program.
 type ControlRule struct {
 	mutex   *sync.Mutex
 	pkg     string
@@ -234,17 +233,6 @@ type ControlRule struct {
 	handler func(gomutants.ControlRequest) (gomutants.ControlResult, error)
 }
 
-// OnControl scripts what the original program does for one package and set of
-// arguments.
-//
-// A control is scripted the way a mutant execution and a probe are, and for the
-// same reason: a test about what a runner concludes should be able to say what
-// the engine answered, without building a repository and compiling it. The
-// unmatched case is deliberately the same as Exec's - an error naming what was
-// asked for - rather than Probe's, which invents an unavailable outcome. A
-// control nobody scripted is a test that forgot to say whether the user's suite
-// passes, and inventing an answer for it would decide the very thing the test is
-// about.
 func (session *ScriptedSession) OnControl(pkg string, args ...string) *ControlRule {
 	rule := &ControlRule{
 		mutex: &session.mutex,
@@ -260,7 +248,6 @@ func (session *ScriptedSession) OnControl(pkg string, args ...string) *ControlRu
 	return rule
 }
 
-// Return answers this control with a fixed result.
 func (rule *ControlRule) Return(result gomutants.ControlResult) *ControlRule {
 	scripted := cloneControlResult(result)
 	return rule.Do(func(gomutants.ControlRequest) (gomutants.ControlResult, error) {
@@ -268,15 +255,12 @@ func (rule *ControlRule) Return(result gomutants.ControlResult) *ControlRule {
 	})
 }
 
-// Fail answers this control with an error, which is the engine failing to
-// measure rather than the program failing its tests.
 func (rule *ControlRule) Fail(err error) *ControlRule {
 	return rule.Do(func(gomutants.ControlRequest) (gomutants.ControlResult, error) {
 		return gomutants.ControlResult{}, err
 	})
 }
 
-// Do answers this control with a handler.
 func (rule *ControlRule) Do(handler func(gomutants.ControlRequest) (gomutants.ControlResult, error)) *ControlRule {
 	rule.mutex.Lock()
 	defer rule.mutex.Unlock()
@@ -284,7 +268,6 @@ func (rule *ControlRule) Do(handler func(gomutants.ControlRequest) (gomutants.Co
 	return rule
 }
 
-// Control runs the scripted original program.
 func (session *ScriptedSession) Control(_ context.Context, request gomutants.ControlRequest) (gomutants.ControlResult, error) {
 	handler := session.routeControl(request)
 	if handler == nil {
@@ -295,11 +278,6 @@ func (session *ScriptedSession) Control(_ context.Context, request gomutants.Con
 	return handler(request)
 }
 
-// ControlRequests is every control this session was asked for, in order.
-//
-// It is what a test asserts on to show that a control was taken once per
-// distinct request rather than once per mutant, which is the whole of the memo's
-// contract.
 func (session *ScriptedSession) ControlRequests() []gomutants.ControlRequest {
 	session.mutex.Lock()
 	defer session.mutex.Unlock()
@@ -310,7 +288,6 @@ func (session *ScriptedSession) ControlRequests() []gomutants.ControlRequest {
 	return requests
 }
 
-// routeControl records the request and finds the rule that answers it.
 func (session *ScriptedSession) routeControl(request gomutants.ControlRequest) func(gomutants.ControlRequest) (gomutants.ControlResult, error) {
 	session.mutex.Lock()
 	defer session.mutex.Unlock()

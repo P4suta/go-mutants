@@ -14,9 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// ids are four well-formed mutant ids for the selection tests. They are real
-// hex of the right length because [mutation.ShardIndex] hashes them and
-// [report.Shard.Owns] is asked about them.
 var ids = []string{
 	strings.Repeat("a", 64),
 	strings.Repeat("b", 64),
@@ -37,8 +34,6 @@ func TestSelectionModeNamesTheOuterNarrowing(t *testing.T) {
 		{"a diff", Options{Changed: true}, report.ModeChanged},
 		{"a shard", Options{Shard: report.Shard{Index: 1, Total: 2}}, report.ModeShard},
 		{
-			// The shard is the outer partition, and the ref is not lost: it is
-			// recorded in selection.changed_ref whatever the mode says.
 			"a shard of a diff",
 			Options{Changed: true, Shard: report.Shard{Index: 1, Total: 2}},
 			report.ModeShard,
@@ -70,9 +65,6 @@ func TestShardOfStampsTheAssignment(t *testing.T) {
 	}
 }
 
-// TestOnChangedLinesKeepsWhatTheDiffTouched covers the three answers the filter
-// can give: on a changed line, off one, and a mutant whose span reaches a
-// changed line from an unchanged one.
 func TestOnChangedLinesKeepsWhatTheDiffTouched(t *testing.T) {
 	t.Parallel()
 
@@ -81,7 +73,6 @@ func TestOnChangedLinesKeepsWhatTheDiffTouched(t *testing.T) {
 			ids[0]: {Path: "a.go", Line: 10, Original: "=="},
 			ids[1]: {Path: "a.go", Line: 40, Original: "=="},
 			ids[2]: {Path: "b.go", Line: 3, Original: "=="},
-			// A condition spanning lines 8 to 10, edited on its last line.
 			ids[3]: {Path: "a.go", Line: 8, Original: "x &&\n\ty &&\n\tz"},
 		},
 		changed: &gitdiff.Changed{
@@ -95,11 +86,6 @@ func TestOnChangedLinesKeepsWhatTheDiffTouched(t *testing.T) {
 	}
 }
 
-// TestOnChangedLinesKeepsAMutantWithNoCoordinates pins the fail-open rule.
-//
-// A catalogued mutant with no coordinates is documented as impossible, and the
-// cost of being wrong about it decides which way to fail: dropping it would
-// silently take a mutant out of the run, and keeping it costs one execution.
 func TestOnChangedLinesKeepsAMutantWithNoCoordinates(t *testing.T) {
 	t.Parallel()
 
@@ -112,9 +98,6 @@ func TestOnChangedLinesKeepsAMutantWithNoCoordinates(t *testing.T) {
 	}
 }
 
-// TestShardsPartitionTheAcceptedSet proves the filter is a partition through
-// the engine's own use of it: every accepted mutant is selected by exactly one
-// shard, and every shard's selection is a subset of the whole.
 func TestShardsPartitionTheAcceptedSet(t *testing.T) {
 	t.Parallel()
 
@@ -135,21 +118,12 @@ func TestShardsPartitionTheAcceptedSet(t *testing.T) {
 	}
 }
 
-// TestNotRunReasonsAreShardFirst pins the precedence.
-//
-// In a sharded run every mutant another shard owns is that shard's to report,
-// whatever else would also have excluded it here — that is the row `report
-// merge` replaces. A mutant this shard owns and did not run is out of this
-// run's selection, and no other shard will say otherwise.
 func TestNotRunReasonsAreShardFirst(t *testing.T) {
 	t.Parallel()
 
 	shard := report.Shard{Index: 1, Total: 2, Assignment: mutation.ShardAssignment}
 	st := &state{shard: &shard, notRun: map[string]report.NotRunReason{}}
 
-	// Nothing was executed, so every accepted mutant gets a reason: the ones
-	// this shard owns because the diff did not reach them, and the rest because
-	// they belong to the other shard.
 	recordNotRun(ids, nil, st)
 	for _, id := range ids {
 		want := report.NotRunOtherShard
@@ -162,9 +136,6 @@ func TestNotRunReasonsAreShardFirst(t *testing.T) {
 	}
 }
 
-// TestSelectedMutantsHaveNoReason proves a mutant the run set out to execute is
-// not recorded as narrowed away, so that an interruption is what a missing
-// result means.
 func TestSelectedMutantsHaveNoReason(t *testing.T) {
 	t.Parallel()
 
@@ -187,9 +158,6 @@ func TestSelectedMutantsHaveNoReason(t *testing.T) {
 	}
 }
 
-// TestNarrowSelectionPublishesWhatItDecided proves the event carries both
-// narrowings when both applied, so that a reader is never told half the reason
-// a run is smaller than they expected.
 func TestNarrowSelectionPublishesWhatItDecided(t *testing.T) {
 	t.Parallel()
 
@@ -229,8 +197,6 @@ func TestNarrowSelectionPublishesWhatItDecided(t *testing.T) {
 	}
 }
 
-// TestNarrowSelectionSaysNothingWhenItNarrowedNothing proves a whole run
-// publishes no selection line at all: there is nothing to explain.
 func TestNarrowSelectionSaysNothingWhenItNarrowedNothing(t *testing.T) {
 	t.Parallel()
 
@@ -248,9 +214,6 @@ func TestNarrowSelectionSaysNothingWhenItNarrowedNothing(t *testing.T) {
 	}
 }
 
-// TestChangedLinesAreNotResolvedWithoutTheFlag proves a run that did not ask
-// for a diff never goes looking for a repository — which is what lets
-// go-mutants work in a directory that is not one.
 func TestChangedLinesAreNotResolvedWithoutTheFlag(t *testing.T) {
 	t.Parallel()
 
@@ -264,24 +227,6 @@ func TestChangedLinesAreNotResolvedWithoutTheFlag(t *testing.T) {
 	}
 }
 
-// TestAChangedTestFileIsNotSilentlyNarrowedAway is the third outcome of a
-// narrowing, and the reason it has to exist is that the other two are both
-// wrong here.
-//
-// `--changed` keeps the mutants the diff touched, and a `_test.go` file holds
-// none: internal/discover never mutates one. So a diff that edited only tests
-// touches no mutant, the selection comes back empty, and the run publishes a
-// score over nothing as though it had looked — which is the same fiction
-// [scopedBinaries] refuses at the pattern, arriving by a different road.
-//
-// Keeping every mutant instead is the other wrong answer: almost every real
-// commit edits a test beside the code it tests, so that rule would turn the
-// flag off for the runs it was built for.
-//
-// What a test edit changes is which mutants the suite kills, and nothing at
-// this point in the run knows which those are — the coverage mapping that could
-// say is built from the selection this function produces. So the run says the
-// narrowing could not see them rather than answering as if it had.
 func TestAChangedTestFileIsNotSilentlyNarrowedAway(t *testing.T) {
 	t.Parallel()
 
@@ -319,14 +264,6 @@ func TestAChangedTestFileIsNotSilentlyNarrowedAway(t *testing.T) {
 	}
 }
 
-// TestADiffOfCodeAloneSaysNothingAboutTests is the counterpart that proves the
-// warning above is a warning and not a banner.
-//
-// A gate only ever observed firing is a gate whose silence nobody has checked:
-// one that fired on every `--changed` run would pass the test above and say
-// nothing true. So a diff that edited no test file has to narrow without a
-// word, and it is the test file in the diff — never the size of the selection —
-// that decides which happens.
 func TestADiffOfCodeAloneSaysNothingAboutTests(t *testing.T) {
 	t.Parallel()
 
@@ -354,14 +291,6 @@ func TestADiffOfCodeAloneSaysNothingAboutTests(t *testing.T) {
 	}
 }
 
-// TestAChangedTestIsUnaccountedForEvenWhenMutantsWereKept pins the condition
-// the warning is really about.
-//
-// The tempting rule is "warn when the selection came back empty", and it is
-// wrong in the direction that costs a finding: a commit that edits `a.go` and
-// `b_test.go` keeps the mutants on the lines of `a.go` — a selection nobody
-// would call suspicious — while the edit to `b_test.go` can have changed the
-// verdict of a mutant in `b.go` that this run does not execute at all.
 func TestAChangedTestIsUnaccountedForEvenWhenMutantsWereKept(t *testing.T) {
 	t.Parallel()
 

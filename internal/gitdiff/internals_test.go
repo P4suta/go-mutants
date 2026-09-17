@@ -21,33 +21,12 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit"
 )
 
-// The tests in this file drive the half of this package a repository cannot
-// reach: which diagnostic a user sees when one git command answers and the next
-// one does not.
-//
-// gitdiff_test.go drives a real git, because everything about *reading* git is
-// what git actually prints and a stand-in would be a second implementation of
-// the thing under test. That argument does not reach here. "`git ls-files`
-// exited non-zero while the diff succeeded", "the merge base came back empty",
-// "the diff parsed and the file it named cannot be read" are facts about
-// go-mutants' own code, and no repository state produces them on demand -- so
-// they are scripted through the seam [git.run] exists for, which is the trade
-// internal/gocmd made when it left the toolchain allowlist.
-
-// A step is one scripted answer: the token that names the command, and what git
-// would have said to it.
-//
-// A token rather than the whole vector, because the diff carries eleven flags
-// and a test that wrote them out would be asserting the flag list twice -- once
-// here and once in gitdiff_test.go, where a real git is the thing that proves
-// they are right.
 type step struct {
 	needle string
 	out    string
 	err    error
 }
 
-// A script answers git commands from a table and remembers what it was asked.
 type script struct {
 	steps []step
 	calls []string
@@ -61,21 +40,14 @@ func (s *script) run(_ context.Context, args ...string) (string, error) {
 			return st.out, st.err
 		}
 	}
-	// A command no step matched is a test that has stopped describing what it
-	// drives. It is reported rather than answered with a silent success, which
-	// is the one behaviour a stand-in must never have.
 	return "", fmt.Errorf("the script has no answer for `git %s`", line)
 }
 
-// scripted builds a git whose commands come from the steps.
 func scripted(dir string, steps ...step) (git, *script) {
 	s := &script{steps: steps}
 	return git{dir: dir, run: s.run}, s
 }
 
-// unavailable is the failure [git.command] reports when git did not run at all:
-// no binary, no permission, an interrupted context. It is the one code that
-// travels unchanged through every caller in this package.
 func unavailable() error {
 	return &Error{
 		Code:    CodeGitUnavailable,
@@ -84,7 +56,6 @@ func unavailable() error {
 	}
 }
 
-// refused is the failure [git.command] reports when git ran and said no.
 func refused(output string) error {
 	return &Error{
 		Code:    CodeDiffFailed,
@@ -93,16 +64,6 @@ func refused(output string) error {
 	}
 }
 
-// TestGitUnavailableTravelsThroughEveryStepUnchanged is the rule the four
-// command wrappers repeat and the reason they repeat it.
-//
-// Each of them turns a refusal into a code about its own question -- not a
-// repository, no upstream, no merge base, the diff failed, the untracked files
-// could not be listed. None of those is true when git never ran: telling
-// somebody their branch has no upstream because git is not installed sends them
-// to look at their branch. So [CodeGitUnavailable] is passed through as it
-// arrived, by every step, and that is asserted here in one place because it is
-// one rule.
 func TestGitUnavailableTravelsThroughEveryStepUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -133,8 +94,6 @@ func TestGitUnavailableTravelsThroughEveryStepUnchanged(t *testing.T) {
 			if code := CodeOf(err); code != CodeGitUnavailable {
 				t.Fatalf("code = %q, want %q (%v)", code, CodeGitUnavailable, err)
 			}
-			// Unchanged means the error itself, not a new one wearing the same
-			// code: the message is the one the runner wrote.
 			if !strings.Contains(err.Error(), "could not be run") {
 				t.Errorf("the failure was rewritten on the way up: %v", err)
 			}
@@ -142,14 +101,6 @@ func TestGitUnavailableTravelsThroughEveryStepUnchanged(t *testing.T) {
 	}
 }
 
-// TestThePrefixIsTheProofThereIsARepository covers the step whose failure is
-// not about itself.
-//
-// `rev-parse --show-prefix` is asked for the workspace's path inside the
-// repository, and the answer is used for that -- but a git that refuses it is
-// answering a different question: there is no working tree here. That is the
-// message, because "rev-parse exited 128" is not something a user can act on
-// and "run go-mutants inside the repository" is.
 func TestThePrefixIsTheProofThereIsARepository(t *testing.T) {
 	t.Parallel()
 
@@ -169,8 +120,6 @@ func TestThePrefixIsTheProofThereIsARepository(t *testing.T) {
 	t.Run("a failure that is not this package's is still not a repository", func(t *testing.T) {
 		t.Parallel()
 
-		// The pass-through is for one code and not for "any error with a code
-		// in it", so a failure carrying none at all takes the ordinary path.
 		g, _ := scripted(t.TempDir(), step{needle: "--show-prefix", err: errors.New("something else entirely")})
 		_, err := g.prefix(t.Context())
 		if code := CodeOf(err); code != CodeNotARepository {
@@ -192,15 +141,6 @@ func TestThePrefixIsTheProofThereIsARepository(t *testing.T) {
 	})
 }
 
-// TestResolveRefRecordsTheNameRatherThanTheNotation is the whole of what this
-// step decides.
-//
-// A named ref is passed through unchecked, because whether it exists is what
-// the merge base is about to find out. Silence, and the one notation the bare
-// flag carries, are resolved to the branch's own name -- so the report records
-// `origin/main` rather than `@{upstream}`, and two shards diffing different
-// upstreams do not both write the same string and pass a congruence check they
-// should fail.
 func TestResolveRefRecordsTheNameRatherThanTheNotation(t *testing.T) {
 	t.Parallel()
 
@@ -220,10 +160,6 @@ func TestResolveRefRecordsTheNameRatherThanTheNotation(t *testing.T) {
 	t.Run("another upstream notation is a ref like any other", func(t *testing.T) {
 		t.Parallel()
 
-		// `@{u}` and `main@{upstream}` resolve and are recorded as written.
-		// This is about the value the bare flag produces, not about revision
-		// syntax, and a resolver that started interpreting git's grammar would
-		// be a second and worse implementation of it.
 		g, s := scripted(t.TempDir())
 		got, err := g.resolveRef(t.Context(), "@{u}")
 		if err != nil || got != "@{u}" {
@@ -269,9 +205,6 @@ func TestResolveRefRecordsTheNameRatherThanTheNotation(t *testing.T) {
 	t.Run("an answer with nothing in it is a branch with no upstream", func(t *testing.T) {
 		t.Parallel()
 
-		// git exiting zero and printing nothing is not an upstream named "".
-		// A run that took it for one would put an empty ref in the report and
-		// ask the merge base about it.
 		g, _ := scripted(t.TempDir(), step{needle: "@{upstream}", out: "\n"})
 		_, err := g.resolveRef(t.Context(), "")
 		if code := CodeOf(err); code != CodeNoUpstream {
@@ -280,13 +213,6 @@ func TestResolveRefRecordsTheNameRatherThanTheNotation(t *testing.T) {
 	})
 }
 
-// TestTheMergeBaseAsksWhetherThereAreAnyCommits is the extra question this step
-// asks on its failure path, and the reason it asks it.
-//
-// "there is no merge base" has two very different causes and only one of them
-// is about the ref. A repository with no commits cannot answer any comparison,
-// and telling somebody their ref is unknown when the truth is that they have
-// not committed anything sends them looking in the wrong place.
 func TestTheMergeBaseAsksWhetherThereAreAnyCommits(t *testing.T) {
 	t.Parallel()
 
@@ -349,8 +275,6 @@ func TestTheMergeBaseAsksWhetherThereAreAnyCommits(t *testing.T) {
 	})
 }
 
-// TestTheDiffNamesTheBaseItFailedAgainst covers the step between the merge base
-// and the parser.
 func TestTheDiffNamesTheBaseItFailedAgainst(t *testing.T) {
 	t.Parallel()
 
@@ -381,14 +305,6 @@ func TestTheDiffNamesTheBaseItFailedAgainst(t *testing.T) {
 	})
 }
 
-// TestTheUntrackedListingIsSeparatedByNulAndNothingElse pins both halves of
-// what `ls-files -z` returns.
-//
-// `-z` takes quoting out of the question entirely, which is why a path with a
-// quotation mark in it needs no decoding here -- and it also means the output
-// ends with a separator, so the split always produces one empty element that is
-// not a file. A list carrying it would ask the filesystem about a path that is
-// the workspace root.
 func TestTheUntrackedListingIsSeparatedByNulAndNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -429,14 +345,6 @@ func TestTheUntrackedListingIsSeparatedByNulAndNothingElse(t *testing.T) {
 	})
 }
 
-// TestUntrackedFilesAreFoldedInAsWholeFiles covers the step `git diff` cannot
-// see at all, and the three things it passes over.
-//
-// A file with no index entry has nothing to be diffed against, so it produces
-// no hunks however new it is. Every line of it is new, which is not an
-// approximation -- it is the answer `git diff` gives the moment the file is
-// added. What is left out is what is not this workspace's, what has no lines,
-// and what is not there any more.
 func TestUntrackedFilesAreFoldedInAsWholeFiles(t *testing.T) {
 	t.Parallel()
 
@@ -454,12 +362,7 @@ func TestUntrackedFilesAreFoldedInAsWholeFiles(t *testing.T) {
 		t.Fatalf("addUntracked: %v", err)
 	}
 	want := map[string][]Range{
-		// The existing range and the whole file are merged rather than
-		// appended: a file that is both edited and untracked is one set of
-		// lines, and the stored list has to be canonical.
-		"three.go": {{First: 1, Last: 3}},
-		// A file with no newline at its end still has a last line, which is
-		// git's own rule for the same text.
+		"three.go":        {{First: 1, Last: 3}},
 		"unterminated.go": {{First: 1, Last: 1}},
 	}
 	if !sameFiles(files, want) {
@@ -467,14 +370,6 @@ func TestUntrackedFilesAreFoldedInAsWholeFiles(t *testing.T) {
 	}
 }
 
-// TestUntrackedFoldingStopsAtTheFirstThingItCannotAnswer is the fail-closed
-// half of the step above.
-//
-// A `--changed` run that quietly left a file out of the selection would report
-// a score for work it never measured, which is the failure this whole feature
-// fails closed everywhere else to avoid. So both ways this step can fail -- the
-// listing, and one of the files it named -- are errors rather than a smaller
-// set.
 func TestUntrackedFoldingStopsAtTheFirstThingItCannotAnswer(t *testing.T) {
 	t.Parallel()
 
@@ -512,15 +407,6 @@ func TestUntrackedFoldingStopsAtTheFirstThingItCannotAnswer(t *testing.T) {
 	})
 }
 
-// TestResolveCarriesUpWhicheverStepFailed is the sequence stated as the thing
-// it guarantees: every step's failure has its own code, so a user never has to
-// guess which one went wrong.
-//
-// The three below are the ones a repository cannot produce. A diff that fails
-// after its own merge base resolved, a diff git wrote that this parser cannot
-// read, and an untracked file that vanished between the listing and the read
-// are all states no `git init` reaches -- and each is a different code with a
-// different thing to do about it.
 func TestResolveCarriesUpWhicheverStepFailed(t *testing.T) {
 	t.Parallel()
 
@@ -588,22 +474,12 @@ func TestResolveCarriesUpWhicheverStepFailed(t *testing.T) {
 		if want := (map[string][]Range{"x.go": {{First: 1, Last: 2}}}); !sameFiles(got.Files, want) {
 			t.Errorf("Files = %v, want %v", got.Files, want)
 		}
-		// Four commands and no more: a named ref is not looked up, and the
-		// HEAD check only happens when the merge base fails.
 		if len(s.calls) != 4 {
 			t.Errorf("asked git %v, want the four steps", s.calls)
 		}
 	})
 }
 
-// TestLineCountAnswersForWhatCannotBeCounted covers the file states between
-// "git named it" and "it has lines".
-//
-// A file that vanished between the listing and the read is gone rather than
-// unreadable: there is nothing left in it to mutate, and failing the run over
-// it would fail a run because somebody's editor wrote a swap file. A file that
-// is there and cannot be read is the other answer, because a selection missing
-// a file it could not read is a score for work nobody measured.
 func TestLineCountAnswersForWhatCannotBeCounted(t *testing.T) {
 	t.Parallel()
 
@@ -641,8 +517,6 @@ func TestLineCountAnswersForWhatCannotBeCounted(t *testing.T) {
 	}
 }
 
-// TestLineCountReportsAFileItCannotOpenOrStat is the other answer, and the two
-// ways the operating system gives it.
 func TestLineCountReportsAFileItCannotOpenOrStat(t *testing.T) {
 	t.Parallel()
 
@@ -663,9 +537,6 @@ func TestLineCountReportsAFileItCannotOpenOrStat(t *testing.T) {
 		if !strings.Contains(err.Error(), `"secret.go"`) {
 			t.Errorf("the failure does not name the file: %v", err)
 		}
-		// The operating system's own refusal, not something this package
-		// invented on the way: a caller that read "invalid argument" here
-		// would go looking for a bug rather than for a file mode.
 		if !errors.Is(err, fs.ErrPermission) {
 			t.Errorf("the failure does not carry the refusal the open reported: %v", err)
 		}
@@ -674,9 +545,6 @@ func TestLineCountReportsAFileItCannotOpenOrStat(t *testing.T) {
 	t.Run("a file that cannot be stat-ed", func(t *testing.T) {
 		t.Parallel()
 
-		// A directory that lists its names and refuses to stat them, which is
-		// read without execute. The Lstat happens before the open, so this is
-		// the earlier of the two refusals.
 		root := t.TempDir()
 		inner := filepath.Join(root, "inner")
 		if err := os.Mkdir(inner, 0o700); err != nil {
@@ -694,9 +562,6 @@ func TestLineCountReportsAFileItCannotOpenOrStat(t *testing.T) {
 	t.Run("a read that stops half way", func(t *testing.T) {
 		t.Parallel()
 
-		// The one failure a file on disk will not produce on demand, and the
-		// one that matters most: a partial count is a file whose new lines
-		// this run would under-select without ever saying so.
 		want := errors.New("the disk went away")
 		got, err := countLines("half.go", failingReader{err: want})
 		if !errors.Is(err, want) {
@@ -711,8 +576,6 @@ func TestLineCountReportsAFileItCannotOpenOrStat(t *testing.T) {
 	})
 }
 
-// TestTheLineCounterCountsTheLastLineOnlyWhenNobodyTerminatedIt is the counting
-// rule on its own, which is where all the arithmetic is.
 func TestTheLineCounterCountsTheLastLineOnlyWhenNobodyTerminatedIt(t *testing.T) {
 	t.Parallel()
 
@@ -728,8 +591,6 @@ func TestTheLineCounterCountsTheLastLineOnlyWhenNobodyTerminatedIt(t *testing.T)
 		{name: "a lone newline", chunks: []string{"\n"}, want: 1},
 		{name: "three terminated lines", chunks: []string{"a\nb\nc\n"}, want: 3},
 		{name: "three lines, the last unterminated", chunks: []string{"a\nb\nc"}, want: 3},
-		// The split is where a hand-rolled loop goes wrong: the last byte of
-		// the *last* chunk decides, not the last byte of each.
 		{name: "a line split across two writes", chunks: []string{"a\nb", "c\n"}, want: 2},
 		{name: "a newline alone in the second write", chunks: []string{"a\nb", "\n"}, want: 2},
 		{name: "an empty write after a terminated one", chunks: []string{"a\n", ""}, want: 1},
@@ -752,11 +613,6 @@ func TestTheLineCounterCountsTheLastLineOnlyWhenNobodyTerminatedIt(t *testing.T)
 	}
 }
 
-// TestTrimOutputKeepsTheEndOfWhatGitSaid pins the two decisions in it: which
-// end is worth keeping, and what an empty one is.
-//
-// git is terse, so twenty lines is generous rather than a real limit -- and it
-// is the *last* twenty, because a command that failed says why on its way out.
 func TestTrimOutputKeepsTheEndOfWhatGitSaid(t *testing.T) {
 	t.Parallel()
 
@@ -808,9 +664,6 @@ func TestTrimOutputKeepsTheEndOfWhatGitSaid(t *testing.T) {
 	})
 }
 
-// TestShortHashLeavesAloneWhatIsNotAHash is the boundary a message is built
-// against: a commit is abbreviated, and anything shorter than the abbreviation
-// is printed as it stands rather than sliced past its end.
 func TestShortHashLeavesAloneWhatIsNotAHash(t *testing.T) {
 	t.Parallel()
 
@@ -827,8 +680,6 @@ func TestShortHashLeavesAloneWhatIsNotAHash(t *testing.T) {
 	}
 }
 
-// TestOrFallsBackOnlyForAnEmptyValue pins the one-line rule the program name
-// and nothing else goes through.
 func TestOrFallsBackOnlyForAnEmptyValue(t *testing.T) {
 	t.Parallel()
 
@@ -844,7 +695,6 @@ func TestOrFallsBackOnlyForAnEmptyValue(t *testing.T) {
 	}
 }
 
-// write puts one file where a test wants it.
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -852,12 +702,6 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// unopenableFile makes one file refuse to be opened, and skips the test where
-// it cannot.
-//
-// Root ignores the mode and Windows does not express this permission at all, so
-// both are skipped rather than asserted against: a test that passed because
-// nothing was enforced would be a test that proved nothing.
 func unopenableFile(t *testing.T, path string) {
 	t.Helper()
 
@@ -877,9 +721,6 @@ func unopenableFile(t *testing.T, path string) {
 	}
 }
 
-// unsearchableDir makes a directory list its names and refuse to stat any of
-// them, and skips the test where it cannot. It is [unopenableFile]'s argument
-// for the other permission bit.
 func unsearchableDir(t *testing.T, dir string) {
 	t.Helper()
 
@@ -902,30 +743,12 @@ func unsearchableDir(t *testing.T, dir string) {
 	}
 }
 
-// A failingReader is a reader that only fails, for the read that stops half
-// way.
 type failingReader struct{ err error }
 
 func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
 
 var _ io.Reader = failingReader{}
 
-// TestAGitCommandSeesTheEnvironmentItWasGivenAndNoOther is the one claim
-// Options.Env makes, asserted at the only place it can be.
-//
-// The environment is not a convenience. These tests pin GIT_CONFIG_GLOBAL and
-// GIT_CONFIG_SYSTEM at files that do not exist, so that a developer's own
-// `~/.gitconfig` -- a signing key, a commit template, a `diff.noprefix` --
-// cannot change what go-mutants observes. A runner that quietly handed the
-// process's own environment to the child instead would undo all of that, and
-// every one of those settings is one a repository's owner is entitled to have.
-//
-// It is stated through git's own answer rather than by reading back a slice,
-// because what matters is what the child saw. GIT_CONFIG_COUNT is git's
-// documented way of passing configuration through the environment, and no
-// ordinary process environment carries it -- which is what makes "the variables
-// I handed in" and "the variables this process happens to have" two different
-// answers to one question.
 func TestAGitCommandSeesTheEnvironmentItWasGivenAndNoOther(t *testing.T) {
 	t.Parallel()
 
@@ -948,8 +771,6 @@ func TestAGitCommandSeesTheEnvironmentItWasGivenAndNoOther(t *testing.T) {
 		t.Errorf("git read %q, want the value handed to it", strings.TrimSpace(out))
 	}
 
-	// And nothing is invented for a caller that gave none: the process's own
-	// environment is what a child inherits, and it does not carry that key.
 	if _, err = g.command(t.Context(), "config", "--get", "gomutants.marker"); err == nil {
 		t.Error("`git config` found a key nobody set")
 	}

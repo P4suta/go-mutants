@@ -18,20 +18,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/tempowner"
 )
 
-// This file is the failure half of the package: what a snapshot does when the
-// filesystem says no.
-//
-// Most of it is staged for real, because a staged failure is the same failure a
-// user will have -- a source root that cannot be listed, a destination parent
-// that refuses writes, a file that cannot be read, a destination that already
-// exists, a directory where a file has to go. The rest goes through the seams
-// in seams.go, and a test that replaces one is not [testing.T.Parallel]: the
-// variable is shared by every test in this binary.
-
-// swapSeam replaces one seam for the length of a test and puts it back.
-//
-// The pointer is taken rather than the value assigned, so the call site names
-// the seam once and the restore cannot name a different one.
 func swapSeam[T any](t *testing.T, seam *T, with T) {
 	t.Helper()
 	was := *seam
@@ -39,17 +25,8 @@ func swapSeam[T any](t *testing.T, seam *T, with T) {
 	t.Cleanup(func() { *seam = was })
 }
 
-// errRefused is what a seam returns when a test wants the call to fail, and it is
-// distinct from every operating-system error so that a test can tell the
-// failure it staged from one it did not.
 var errRefused = errors.New("the filesystem refused")
 
-// unreadableDir makes a directory errRefused to be listed, and skips the test where
-// it cannot.
-//
-// Root ignores the mode and Windows does not express this permission at all, so
-// both are skipped rather than asserted against: a test that passed because
-// nothing was enforced would be a test that proved nothing.
 func unreadableDir(t *testing.T, dir string) {
 	t.Helper()
 	chmodOrSkip(t, dir, 0o000, 0o700, func() error {
@@ -58,7 +35,6 @@ func unreadableDir(t *testing.T, dir string) {
 	})
 }
 
-// unwritableDir makes a directory errRefused new entries.
 func unwritableDir(t *testing.T, dir string) {
 	t.Helper()
 	chmodOrSkip(t, dir, 0o500, 0o700, func() error {
@@ -71,8 +47,6 @@ func unwritableDir(t *testing.T, dir string) {
 	})
 }
 
-// unsearchableDir makes a directory list its names and errRefused to stat any of
-// them, which is read without execute.
 func unsearchableDir(t *testing.T, dir string) {
 	t.Helper()
 	chmodOrSkip(t, dir, 0o600, 0o700, func() error {
@@ -88,7 +62,6 @@ func unsearchableDir(t *testing.T, dir string) {
 	})
 }
 
-// unreadableFile makes a file errRefused to be opened.
 func unreadableFile(t *testing.T, path string) {
 	t.Helper()
 	chmodOrSkip(t, path, 0o200, 0o600, func() error {
@@ -100,8 +73,6 @@ func unreadableFile(t *testing.T, path string) {
 	})
 }
 
-// chmodOrSkip sets a mode, proves the mode is enforced, and restores it
-// afterwards -- or skips where a platform or a user is not stopped by it.
 func chmodOrSkip(t *testing.T, path string, mode, restore fs.FileMode, probe func() error) {
 	t.Helper()
 
@@ -120,8 +91,6 @@ func chmodOrSkip(t *testing.T, path string, mode, restore fs.FileMode, probe fun
 	}
 }
 
-// TestCreateRefusesWhatItCannotResolveOrRead covers the failures before a byte
-// is copied, which are the ones a user can act on.
 func TestCreateRefusesWhatItCannotResolveOrRead(t *testing.T) {
 	t.Parallel()
 
@@ -149,9 +118,6 @@ func TestCreateRefusesWhatItCannotResolveOrRead(t *testing.T) {
 		if !errors.Is(err, fs.ErrPermission) {
 			t.Errorf("the failure does not carry the refusal the listing reported: %v", err)
 		}
-		// The Path field rather than the rendered line: the operating system's
-		// own message names the absolute path anyway, so a test that searched
-		// the text would pass on an Error carrying no path at all.
 		if got := pathOfError(t, err); got != "keep" {
 			t.Errorf("the failure's path is %q, want the directory it could not list", got)
 		}
@@ -160,9 +126,6 @@ func TestCreateRefusesWhatItCannotResolveOrRead(t *testing.T) {
 	t.Run("an entry inside the tree that cannot be stat-ed", func(t *testing.T) {
 		t.Parallel()
 
-		// Read without execute: the walk lists the names and the Lstat it does
-		// on each of them is refused. The path in the failure is the entry's
-		// and not the directory's, which is the only useful fact in it.
 		root := t.TempDir()
 		writeTree(t, root, map[string]string{"keep/a.go": "package a\n"})
 		unsearchableDir(t, filepath.Join(root, "keep"))
@@ -187,21 +150,10 @@ func TestCreateRefusesWhatItCannotResolveOrRead(t *testing.T) {
 		if !strings.Contains(err.Error(), "a.go") {
 			t.Errorf("the failure does not name the file: %v", err)
 		}
-		// And the half-built snapshot went with it: a directory holding a copy
-		// of somebody's module and no owner is the orphan the sweep exists to
-		// collect.
 		assertEmptyDir(t, dest)
 	})
 }
 
-// TestCreateCleansUpAfterASyscallItCannotBeMadeToFail is the other half, and it
-// is the half the seams exist for.
-//
-// Each of these runs inside a directory Create made and locked moments before,
-// so no filesystem a test can build makes them fail. What Create does about
-// them is nonetheless the difference between a failed snapshot that leaves
-// nothing behind and a half-built tree with a lock nobody will ever release --
-// and the second is the shape internal/tempowner's sweep exists to collect.
 func TestCreateCleansUpAfterASyscallItCannotBeMadeToFail(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -228,9 +180,6 @@ func TestCreateCleansUpAfterASyscallItCannotBeMadeToFail(t *testing.T) {
 	}, {
 		name: "a directory's times cannot be set",
 		seam: func(t *testing.T) {
-			// Only the directories: the same call stamps a copied file, and a
-			// seam that refused both would fail the copy before the stamping
-			// this case is about is ever reached.
 			swapSeam(t, &setFileTimes, func(path string, a, b time.Time) error {
 				if info, err := os.Stat(path); err == nil && info.IsDir() {
 					return errRefused
@@ -256,14 +205,6 @@ func TestCreateCleansUpAfterASyscallItCannotBeMadeToFail(t *testing.T) {
 	}
 }
 
-// TestCreateLeavesADirectoryItCouldNotClaim is the one failure after which
-// Create does not clean up.
-//
-// A claim that lost is a directory that belongs to whoever holds the lock --
-// with a stable name that really can be another run of the same root -- and
-// removing it would remove a live snapshot. So the failure is reported and the
-// directory is left exactly as it was found, which is the opposite of every
-// other failure in Create.
 func TestCreateLeavesADirectoryItCouldNotClaim(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"a.go": "package a\n"})
@@ -288,9 +229,6 @@ func TestCreateLeavesADirectoryItCouldNotClaim(t *testing.T) {
 	}
 }
 
-// TestAPathThatCannotBeResolvedIsRefusedAtBothEnds covers the one call that
-// fails when the process has lost its working directory, at the two places this
-// package makes it.
 func TestAPathThatCannotBeResolvedIsRefusedAtBothEnds(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"a.go": "package a\n"})
@@ -305,9 +243,6 @@ func TestAPathThatCannotBeResolvedIsRefusedAtBothEnds(t *testing.T) {
 	})
 
 	t.Run("the destination parent", func(t *testing.T) {
-		// The source root resolves and the parent does not, which is the
-		// second call and a different code: one is about what the caller asked
-		// to copy and the other about where it asked for it to go.
 		calls := 0
 		swapSeam(t, &absPath, func(path string) (string, error) {
 			calls++
@@ -324,8 +259,6 @@ func TestAPathThatCannotBeResolvedIsRefusedAtBothEnds(t *testing.T) {
 	})
 }
 
-// TestTheDestinationParentIsWhereCreateFailsFirst covers the two refusals a
-// destination parent can produce, both staged for real.
 func TestTheDestinationParentIsWhereCreateFailsFirst(t *testing.T) {
 	t.Parallel()
 
@@ -344,9 +277,6 @@ func TestTheDestinationParentIsWhereCreateFailsFirst(t *testing.T) {
 	t.Run("a parent that refuses the fallback too", func(t *testing.T) {
 		t.Parallel()
 
-		// The stable name is taken by a directory the sweep spares -- an
-		// unowned one too young to judge -- so the fallback runs, and the
-		// parent refuses that as well.
 		parent := t.TempDir()
 		src := t.TempDir()
 		taken := filepath.Join(parent, StableName(absolutePath(t, src)))
@@ -363,8 +293,6 @@ func TestTheDestinationParentIsWhereCreateFailsFirst(t *testing.T) {
 	})
 }
 
-// TestClaimDestinationDecidesWhatHappensToTheDirectory pins the difference
-// between a claim that lost and a claim that failed.
 func TestClaimDestinationDecidesWhatHappensToTheDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -388,12 +316,6 @@ func TestClaimDestinationDecidesWhatHappensToTheDirectory(t *testing.T) {
 	})
 }
 
-// TestCopyFileReportsEveryWayOneFileCanFail is the copy stated as its failures.
-//
-// A copy that reported success for a file it did not write would put a digest
-// in the manifest for bytes nobody has, and every mutant in that file would be
-// measured against a snapshot that lies about itself. So each of these is an
-// error rather than a footnote.
 func TestCopyFileReportsEveryWayOneFileCanFail(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "a.go")
@@ -410,18 +332,12 @@ func TestCopyFileReportsEveryWayOneFileCanFail(t *testing.T) {
 		}
 		unreadableFile(t, secret)
 		_, _, err := copyFile(secret, filepath.Join(t.TempDir(), "out.go"), 0o600, when)
-		// The refusal the open reported, not a later one: reading on past it
-		// would reach io.Copy with no handle and answer "invalid argument",
-		// which sends a user looking for a bug rather than for a file mode.
 		if !errors.Is(err, fs.ErrPermission) {
 			t.Errorf("copyFile = %v, want the refusal the open reported", err)
 		}
 	})
 
 	t.Run("a destination that already exists", func(t *testing.T) {
-		// O_EXCL on purpose: a destination that is already there means the
-		// walk produced the same path twice, which is a bug worth surfacing
-		// rather than a file to overwrite.
 		dst := filepath.Join(t.TempDir(), "out.go")
 		if _, _, err := copyFile(src, dst, 0o600, when); err != nil {
 			t.Fatalf("the first copy: %v", err)
@@ -432,8 +348,6 @@ func TestCopyFileReportsEveryWayOneFileCanFail(t *testing.T) {
 	})
 
 	t.Run("a source whose bytes cannot be read", func(t *testing.T) {
-		// A directory opens and refuses to be read, which is the one shape a
-		// test can stage for a read that fails after the open succeeded.
 		if _, _, err := copyFile(root, filepath.Join(t.TempDir(), "out.go"), 0o600, when); err == nil {
 			t.Error("copyFile read bytes out of a directory")
 		}
@@ -495,8 +409,6 @@ func TestCopyFileReportsEveryWayOneFileCanFail(t *testing.T) {
 	})
 }
 
-// TestHashFileIsTheReadOnlyHalfOfACopy covers [hashFile]'s two failures and its
-// answer, which [Snapshot.Redigest] reads a whole tree through.
 func TestHashFileIsTheReadOnlyHalfOfACopy(t *testing.T) {
 	t.Parallel()
 
@@ -529,15 +441,6 @@ func TestHashFileIsTheReadOnlyHalfOfACopy(t *testing.T) {
 	}
 }
 
-// TestEveryDirectoryIsStampedDeepestFirst pins the order and the coverage of
-// the directory stamp, which exists so the go command sees a tree that looks
-// its age.
-//
-// Deepest first, because writing into a directory updates it: stamping a parent
-// before its child would be undone by the child. And *every* directory, the
-// first in sorted order included -- a loop that stopped one short would leave
-// one directory looking new, which is one package the toolchain re-indexes on
-// every run.
 func TestEveryDirectoryIsStampedDeepestFirst(t *testing.T) {
 	t.Parallel()
 
@@ -565,9 +468,6 @@ func TestEveryDirectoryIsStampedDeepestFirst(t *testing.T) {
 	}
 }
 
-// TestStampingSaysWhichDirectoryItCouldNotStamp separates the two answers the
-// stamp can give, because the root is not one of the walked directories and has
-// no relative path of its own.
 func TestStampingSaysWhichDirectoryItCouldNotStamp(t *testing.T) {
 	root := t.TempDir()
 	dirs := []record{{rel: "aaa", modTime: time.Now()}, {rel: "zzz", modTime: time.Now()}}
@@ -578,7 +478,6 @@ func TestStampingSaysWhichDirectoryItCouldNotStamp(t *testing.T) {
 		if !errors.Is(err, errRefused) {
 			t.Fatalf("stampDirectoryTimes = %v, want the staged failure", err)
 		}
-		// Deepest first, so the last in sorted order is the first stamped.
 		if failed != "zzz" {
 			t.Errorf("the failure names %q, want the directory it was stamping", failed)
 		}
@@ -609,13 +508,6 @@ func TestStampingSaysWhichDirectoryItCouldNotStamp(t *testing.T) {
 	})
 }
 
-// TestTheCopyAlwaysHasAWorkerAndNeverMoreThanItNeeds pins the two bounds on the
-// worker count.
-//
-// A count of zero would be a copy that never happens, and a count past the
-// number of files would be goroutines with nothing to do. Both are decided from
-// numbers rather than from a clock, which is why this is a unit test of the
-// arithmetic rather than an observation of a run.
 func TestTheCopyAlwaysHasAWorkerAndNeverMoreThanItNeeds(t *testing.T) {
 	t.Parallel()
 
@@ -627,21 +519,11 @@ func TestTheCopyAlwaysHasAWorkerAndNeverMoreThanItNeeds(t *testing.T) {
 	if got := snapshotCopyJobs(1); got != 1 {
 		t.Errorf("snapshotCopyJobs(1) = %d, want one worker for one file", got)
 	}
-	// A tree with nothing in it still asks for a worker rather than none: the
-	// count is a bound and the empty case is handled by the copy itself.
 	if got := snapshotCopyJobs(0); got != 1 {
 		t.Errorf("snapshotCopyJobs(0) = %d, want one", got)
 	}
 }
 
-// TestCleanupReportsALockItCouldNotRelease is the one failure Cleanup reports
-// before it removes anything.
-//
-// The lock is released before the first removal attempt, not after the last
-// one, because on Windows an open handle inside a directory is exactly what
-// makes RemoveAll fail. A release that failed and was ignored would send the
-// removal into a retry ladder it loses to itself, and the message a user got
-// would be about the directory rather than about the lock.
 func TestCleanupReportsALockItCouldNotRelease(t *testing.T) {
 	t.Parallel()
 
@@ -667,7 +549,6 @@ func TestCleanupReportsALockItCouldNotRelease(t *testing.T) {
 	}
 }
 
-// TestAnErrorRendersWhatItHasAndNothingItDoesNot pins the one line a user reads.
 func TestAnErrorRendersWhatItHasAndNothingItDoesNot(t *testing.T) {
 	t.Parallel()
 
@@ -698,13 +579,6 @@ func TestAnErrorRendersWhatItHasAndNothingItDoesNot(t *testing.T) {
 	}
 }
 
-// TestPathsEqualRefusesAnEmptySpellingOnEitherSide is the guard that keeps the
-// cleanup rule from comparing two nothings and finding them equal.
-//
-// filepath.Clean answers "." for the empty path, so a comparison without the
-// guard would call an empty parent equal to a parent spelled ".", and the
-// cleanup guard's whole job is to errRefused a path that is not a snapshot
-// directory.
 func TestPathsEqualRefusesAnEmptySpellingOnEitherSide(t *testing.T) {
 	t.Parallel()
 
@@ -725,12 +599,6 @@ func TestPathsEqualRefusesAnEmptySpellingOnEitherSide(t *testing.T) {
 	}
 }
 
-// TestRedigestReportsAFileItCannotRead is the walk's other failure, and the one
-// the drift gate depends on.
-//
-// A file in the snapshot that cannot be hashed is not "no drift": a run that
-// reported a clean tree because it could not read part of it would let an
-// instrumented tree drift under a suite and say nothing.
 func TestRedigestReportsAFileItCannotRead(t *testing.T) {
 	t.Parallel()
 
@@ -745,19 +613,10 @@ func TestRedigestReportsAFileItCannotRead(t *testing.T) {
 		t.Errorf("the failure does not name the file: %v", err)
 	}
 
-	// And Restore carries it up rather than restoring half a tree: the report
-	// is what it acts on, and a report it could not finish is not one.
 	_, err = snap.Restore()
 	assertCode(t, err, CodeWalk)
 }
 
-// TestDriftsAreReportedInPathOrderWhateverOrderTheyWereFoundIn pins the
-// ordering, which is what makes two runs over one tree comparable.
-//
-// The added and changed files come from the walk, in path order; the removed
-// ones come from the manifest afterwards. So a removed file whose name sorts
-// first is found last, and a report that printed them in discovery order would
-// put it at the end.
 func TestDriftsAreReportedInPathOrderWhateverOrderTheyWereFoundIn(t *testing.T) {
 	t.Parallel()
 
@@ -765,8 +624,6 @@ func TestDriftsAreReportedInPathOrderWhateverOrderTheyWereFoundIn(t *testing.T) 
 	writeTree(t, root, map[string]string{"aaa.go": "package a\n", "mmm.go": "package m\n"})
 	snap := create(t, root, Options{DestParent: t.TempDir()})
 
-	// Remove the one that sorts first and add one that sorts last, so the walk
-	// finds the addition before the manifest names the removal.
 	if err := os.Remove(filepath.Join(snap.Root, "aaa.go")); err != nil {
 		t.Fatalf("removing a file: %v", err)
 	}
@@ -784,15 +641,9 @@ func TestDriftsAreReportedInPathOrderWhateverOrderTheyWereFoundIn(t *testing.T) 
 	}
 }
 
-// TestRestoreOneSaysWhichStepOfThePutBackFailed separates the three failures of
-// restoring one file, because each sends a reader somewhere different: the
-// snapshot's own directory, the tree it was made of, and the copy itself.
 func TestRestoreOneSaysWhichStepOfThePutBackFailed(t *testing.T) {
 	t.Parallel()
 
-	// A snapshot assembled by hand rather than created, because what is under
-	// test is one step of the put-back and the interesting states are ones
-	// Create would never leave behind.
 	stage := func(t *testing.T) *Snapshot {
 		t.Helper()
 		base := t.TempDir()
@@ -829,8 +680,6 @@ func TestRestoreOneSaysWhichStepOfThePutBackFailed(t *testing.T) {
 	t.Run("the directory holding it cannot be created", func(t *testing.T) {
 		t.Parallel()
 
-		// The file is gone, so the removal is a no-op; what is missing is the
-		// directory under it, and the directory above that refuses new ones.
 		s := stage(t)
 		if err := os.WriteFile(filepath.Join(s.SourceRoot, "pkg", "sub", "a.go"), nil, 0o600); err == nil {
 			t.Fatal("the source subdirectory was not supposed to exist yet")
@@ -853,8 +702,6 @@ func TestRestoreOneSaysWhichStepOfThePutBackFailed(t *testing.T) {
 	t.Run("the file cannot be copied back", func(t *testing.T) {
 		t.Parallel()
 
-		// Nothing to remove and nothing to create: the directory is there and
-		// refuses the new file.
 		s := stage(t)
 		unwritableDir(t, filepath.Join(s.Root, "pkg"))
 
@@ -880,12 +727,6 @@ func TestRestoreOneSaysWhichStepOfThePutBackFailed(t *testing.T) {
 	})
 }
 
-// TestTheRejectionReportedIsTheFirstInPathOrder pins which refusal a user is
-// told about when a tree holds several.
-//
-// The first in path order rather than the first in visit order, so that
-// somebody who fixes it and runs again is told about the next one in an order
-// that does not depend on how the filesystem happened to lay the directory out.
 func TestTheRejectionReportedIsTheFirstInPathOrder(t *testing.T) {
 	t.Parallel()
 
@@ -903,14 +744,11 @@ func TestTheRejectionReportedIsTheFirstInPathOrder(t *testing.T) {
 		t.Errorf("rejection() names %q, want the first in path order", first.Path)
 	}
 
-	// And a clean tree has nothing to report, which is what makes the answer
-	// above an error rather than a value with a flag beside it.
 	if got := (&walker{}).rejection(); got != nil {
 		t.Errorf("rejection() of a clean walk = %v, want nil", got)
 	}
 }
 
-// pathOfError is the Path of the [Error] err carries.
 func pathOfError(t *testing.T, err error) string {
 	t.Helper()
 	var coded *Error
@@ -920,14 +758,6 @@ func pathOfError(t *testing.T, err error) string {
 	return coded.Path
 }
 
-// TestAReportDirectoryThatIsNotOneIsRefusedBeforeAnythingIsCopied covers the
-// option that becomes an exclusion pattern.
-//
-// It is normalised with the same canonicalisation mutant identities go through,
-// so a directory spelled with backslashes on Windows excludes the same tree it
-// would on POSIX -- and one that is absolute or escapes the source root is
-// refused here rather than silently excluding nothing, which is the failure a
-// user would otherwise find in a score.
 func TestAReportDirectoryThatIsNotOneIsRefusedBeforeAnythingIsCopied(t *testing.T) {
 	t.Parallel()
 
@@ -948,19 +778,12 @@ func TestAReportDirectoryThatIsNotOneIsRefusedBeforeAnythingIsCopied(t *testing.
 			if got := pathOfError(t, err); got != test.reportDir {
 				t.Errorf("the failure's path is %q, want the value the caller gave", got)
 			}
-			// The canonicaliser's own sentinel, which is what separates this
-			// refusal from the one below it: a reader told "not a usable
-			// pattern" would go looking at glob syntax for a path that never
-			// reached the compiler.
 			if !errors.Is(err, test.want) {
 				t.Errorf("the failure = %v, want %v underneath it", err, test.want)
 			}
 		})
 	}
 
-	// And the two that are accepted: the built-in name, which adds no pattern
-	// of its own because one is already there, and a configured one, which
-	// does.
 	base, err := exclusions(Options{})
 	if err != nil {
 		t.Fatalf("exclusions of no options: %v", err)
@@ -981,12 +804,6 @@ func TestAReportDirectoryThatIsNotOneIsRefusedBeforeAnythingIsCopied(t *testing.
 	}
 }
 
-// TestDestinationReportsNoStableNameWhenItFails states the second return value
-// of a failed destination, which a caller reads to say why a run compiled
-// everything from scratch.
-//
-// A failure is not a stable directory. Reporting one would tell a caller the
-// build-cache path was taken when no directory was made at all.
 func TestDestinationReportsNoStableNameWhenItFails(t *testing.T) {
 	swapSeam(t, &absPath, func(string) (string, error) { return "", errRefused })
 

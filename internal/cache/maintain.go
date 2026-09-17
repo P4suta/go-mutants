@@ -15,106 +15,29 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// The maintenance side of the store: what `cache status`, `cache gc` and
-// `cache clean` are.
-//
-// All three walk one directory — `<root>/workspaces` — and all three obey the
-// same three rules, which are the whole safety argument for a tool that deletes
-// files in a directory it shares with every other program on the machine. They
-// are internal/report's rules as well: the run history walks the very same
-// directories, and two walks that disagreed about which of them is a workspace
-// would make `cache status` and `report list` describe different stores.
-//
-//   - Nothing is touched without an ownership marker naming a workspace. A
-//     directory with no marker, or with one this build did not write, is
-//     skipped and counted; see [report.ReadMarker].
-//   - A workspace directory has to be named after the digest its own marker
-//     states — `report.WorkspaceKey(digest)`, and nothing else — or it too is
-//     skipped and counted. A directory somebody copied carries the original's
-//     marker under a name this build would never have chosen — a CI cache
-//     restored to a different key, a `cp -r` backup — and looking inside it
-//     would add its entries to the totals of the workspace named in that
-//     marker, and then remove them as that workspace's. Neither is a lie a
-//     count or a sweep can be corrected for afterwards: the entries would be
-//     gone, filed under a key that was never theirs. internal/report's
-//     [report.History.List] refuses the same directory, against the sharper
-//     failure the history store has; see the note at the top of its
-//     enumerate.go.
-//   - Nothing outside `<root>/workspaces/<key>/outcomes` is touched at all.
-//     The run history's `runs/` and `latest.json` sit in the same directory and
-//     are none of this file's business, and every path is built from the root
-//     and a directory entry's own base name, so there is no way for one to be
-//     assembled that climbs out. Nothing is deleted on the strength of how a
-//     path is spelled, either: a directory somebody replaced with a link is
-//     inside the cache to read and elsewhere to delete, so containment is
-//     proved against what the filesystem resolves. See [within].
-//
-// `cache gc` deletes by modification time and never by content: the age of an
-// entry is a fact on the filesystem, and deciding by content would mean parsing
-// every document in a directory of thousands before removing any of them.
-//
-// The age is the age since the entry was *written*, and not since it was last
-// useful. Reading an entry touches nothing — [Cache.Lookup] only reads the file,
-// and a hit is never written back — so an entry's modification time is fixed at
-// the moment it was stored, and one read by every CI run for thirty-one days is
-// removed exactly like one nothing has ever asked for. That is a deliberately
-// blunt rule: the alternative is a write on every hit, which would turn the
-// cheapest operation this package has into an fsync and would make two
-// concurrent runs contend over files neither is changing.
-
-// DefaultGCDays is how old an entry has to be before `cache gc` removes it.
-//
-// Thirty days is a month since it was written — see the note above; nothing
-// here counts reads. An entry is only ever read by a run whose tool version,
-// toolchain, code, catalogue, command, timeout and environment all still match
-// the ones that wrote it, so anything a month old has almost certainly outlived
-// the context that could read it, whether or not that context was still asking
-// for it yesterday.
 const DefaultGCDays = 30
 
-// A Workspace is one workspace directory, and what the outcome cache holds in
-// it.
 type Workspace struct {
-	// Key is the directory's name: the truncated workspace key.
-	Key string
-	// Dir is the absolute path of the workspace directory.
-	Dir string
-	// Digest is the full workspace digest the marker names.
-	Digest string
-	// Contexts is how many key contexts have entries filed under them.
+	Key      string
+	Dir      string
+	Digest   string
 	Contexts int
-	// Entries is how many stored outcomes there are.
-	Entries int
-	// Bytes is what they take up on disk, as the file sizes report it.
-	Bytes int64
-	// Newest is the modification time of the most recently written entry, and
-	// the zero time when there are none.
-	Newest time.Time
+	Entries  int
+	Bytes    int64
+	Newest   time.Time
 }
 
-// A Skipped is one directory the walk refused to look inside, and why.
-//
-// It is reported rather than swallowed. A cache that quietly ignored half of
-// what it found would make "0 entries" and "5 directories I would not touch"
-// the same output, and only one of them means the cache is empty.
 type Skipped struct {
-	// Name is the directory's name under `workspaces/`.
-	Name string
-	// Reason is one line saying why it was left alone.
+	Name   string
 	Reason string
 }
 
-// A Survey is what `cache status` found.
 type Survey struct {
-	// Root is the cache root that was walked.
-	Root string
-	// Workspaces are the owned workspace directories, ordered by key.
+	Root       string
 	Workspaces []Workspace
-	// Skipped are the directories under `workspaces/` that are not go-mutants'.
-	Skipped []Skipped
+	Skipped    []Skipped
 }
 
-// Entries is how many stored outcomes the whole cache holds.
 func (s Survey) Entries() int {
 	total := 0
 	for _, workspace := range s.Workspaces {
@@ -123,7 +46,6 @@ func (s Survey) Entries() int {
 	return total
 }
 
-// Bytes is what the whole cache takes up.
 func (s Survey) Bytes() int64 {
 	var total int64
 	for _, workspace := range s.Workspaces {
@@ -132,24 +54,15 @@ func (s Survey) Bytes() int64 {
 	return total
 }
 
-// A Sweep is what a deletion removed.
 type Sweep struct {
-	// Root is the cache root that was walked.
-	Root string
-	// Workspaces is how many workspace directories were touched.
+	Root       string
 	Workspaces int
-	// Entries is how many stored outcomes were removed.
-	Entries int
-	// Contexts is how many now-empty context directories were removed with
-	// them.
-	Contexts int
-	// Bytes is what the removed entries took up.
-	Bytes int64
-	// Skipped are the directories the walk would not touch.
-	Skipped []Skipped
+	Entries    int
+	Contexts   int
+	Bytes      int64
+	Skipped    []Skipped
 }
 
-// Status surveys the cache without changing anything.
 func Status(root string) (Survey, error) {
 	survey := Survey{Root: root, Workspaces: []Workspace{}, Skipped: []Skipped{}}
 	owned, skipped, err := walk(root)
@@ -167,19 +80,6 @@ func Status(root string) (Survey, error) {
 	return survey, nil
 }
 
-// GC removes every entry last modified before cutoff, and every context
-// directory that is left with nothing in it.
-//
-// The cutoff is passed in rather than computed from a day count here, so that
-// the clock is the caller's and a test can state a moment instead of waiting
-// for one.
-//
-// A deletion that fails stops the sweep and is reported, with everything
-// removed up to that point in the returned [Sweep]. That is the opposite of
-// this package's behaviour inside a run — where the cache never fails anything
-// — and deliberately so: deleting is the whole of what `cache gc` was asked to
-// do, so a `gc` that could not delete has not done its job and must not exit 0
-// saying it did.
 func GC(root string, cutoff time.Time) (Sweep, error) {
 	sweep := Sweep{Root: root, Skipped: []Skipped{}}
 	owned, skipped, err := walk(root)
@@ -199,11 +99,6 @@ func GC(root string, cutoff time.Time) (Sweep, error) {
 	return sweep, nil
 }
 
-// Clean removes every stored outcome, leaving the run history alone.
-//
-// It removes the `outcomes/` directory of each owned workspace and nothing
-// else: the runs a workspace has filed are a record of what happened and are
-// `report clean`'s to remove, not this command's.
 func Clean(root string) (Sweep, error) {
 	sweep := Sweep{Root: root, Skipped: []Skipped{}}
 	owned, skipped, err := walk(root)
@@ -231,18 +126,6 @@ func Clean(root string) (Sweep, error) {
 	return sweep, nil
 }
 
-// walk lists the workspace directories under a cache root, separating the ones
-// go-mutants owns from the ones it will not touch.
-//
-// A directory whose name is not the key its own marker's digest names is
-// skipped and counted, alongside the ones that carry no marker at all. It is
-// the one skip that is not about ownership — the marker may be perfectly
-// genuine — and it is what keeps a survey and a sweep talking about the
-// workspace the directory really is; see the second rule above.
-//
-// A root that does not exist is an empty cache rather than a failure: nothing
-// has been cached on this machine yet, which is a perfectly good answer to
-// `cache status` and to `cache gc` alike.
 func walk(root string) ([]Workspace, []Skipped, error) {
 	if root == "" {
 		return nil, nil, &Error{
@@ -279,11 +162,6 @@ func walk(root string) ([]Workspace, []Skipped, error) {
 			skipped = append(skipped, Skipped{Name: entry.Name(), Reason: reasonOf(err)})
 			continue
 		}
-		// A marker is a claim about one directory, and the directory it claims is
-		// the one this build would have named for that workspace. Anything else is
-		// a copy of a workspace rather than a workspace, and surveying or sweeping
-		// it would count and then delete one workspace's stored outcomes under a
-		// key that is not its own. See the second rule above.
 		if key := report.WorkspaceKey(digest); entry.Name() != key {
 			skipped = append(skipped, Skipped{
 				Name: entry.Name(),
@@ -294,19 +172,9 @@ func walk(root string) ([]Workspace, []Skipped, error) {
 		}
 		owned = append(owned, Workspace{Key: entry.Name(), Dir: dir, Digest: digest})
 	}
-	// Both lists come out ordered by the directory name, which is a hash and
-	// therefore arbitrary — but arbitrary and stable, so two runs of `cache
-	// status` over an unchanged cache produce the same output and can be
-	// diffed. The order is os.ReadDir's, which is documented to sort by
-	// filename, and each row's name *is* the entry's: sorting them again here
-	// would be a second statement of one guarantee, and one no cache could
-	// ever be arranged to tell from the first.
 	return owned, skipped, nil
 }
 
-// reasonOf renders a refusal for a [Skipped] row, dropping the code that
-// prefixes it: the row is already a list of things not touched, and repeating
-// GOM5133 on every line of it would be noise.
 func reasonOf(err error) string {
 	message := err.Error()
 	if _, rest, found := strings.Cut(message, ": "); found && strings.HasPrefix(message, "GOM") {
@@ -315,7 +183,6 @@ func reasonOf(err error) string {
 	return message
 }
 
-// measure counts what one workspace holds, without changing anything.
 func measure(workspace Workspace) (Workspace, error) {
 	contexts, err := contextDirs(workspace)
 	if err != nil {
@@ -332,9 +199,6 @@ func measure(workspace Workspace) (Workspace, error) {
 		for _, file := range files {
 			info, err := file.Info()
 			if err != nil {
-				// The file went away between the listing and the stat, which is
-				// another process's `gc` or somebody's cache cleaner. It is not
-				// there to count.
 				if errors.Is(err, fs.ErrNotExist) {
 					continue
 				}
@@ -354,8 +218,6 @@ func measure(workspace Workspace) (Workspace, error) {
 	return workspace, nil
 }
 
-// collect removes one workspace's expired entries and reports whether it
-// removed anything.
 func collect(workspace Workspace, cutoff time.Time, sweep *Sweep) (bool, error) {
 	contexts, err := contextDirs(workspace)
 	if err != nil {
@@ -380,9 +242,6 @@ func collect(workspace Workspace, cutoff time.Time, sweep *Sweep) (bool, error) 
 					Err:     err,
 				}
 			}
-			// Strictly before, so that `--days 0` with a cutoff of now removes
-			// what is already there and not what a concurrent run is writing
-			// this instant.
 			if !info.ModTime().Before(cutoff) {
 				kept++
 				continue
@@ -394,9 +253,6 @@ func collect(workspace Workspace, cutoff time.Time, sweep *Sweep) (bool, error) 
 			sweep.Entries++
 			sweep.Bytes += info.Size()
 		}
-		// Pruned only when the directory has nothing left at all — not merely no
-		// entries — so that a temporary file a concurrent run is in the middle of
-		// writing is never deleted out from under it.
 		if kept == 0 {
 			empty, err := isEmpty(context)
 			if err != nil {
@@ -414,7 +270,6 @@ func collect(workspace Workspace, cutoff time.Time, sweep *Sweep) (bool, error) 
 	return touched, nil
 }
 
-// contextDirs lists one workspace's context directories.
 func contextDirs(workspace Workspace) ([]string, error) {
 	outcomes := filepath.Join(workspace.Dir, OutcomesDirName)
 	entries, err := os.ReadDir(outcomes)
@@ -438,11 +293,6 @@ func contextDirs(workspace Workspace) ([]string, error) {
 	return dirs, nil
 }
 
-// entryFiles lists the stored outcomes in one context directory.
-//
-// Only files ending in the entry suffix are returned, so that a temporary file
-// from an interrupted write is neither counted as a stored outcome nor removed
-// as one.
 func entryFiles(context string) ([]fs.DirEntry, error) {
 	entries, err := os.ReadDir(context)
 	switch {
@@ -464,7 +314,6 @@ func entryFiles(context string) ([]fs.DirEntry, error) {
 	return files, nil
 }
 
-// isEmpty reports whether a directory holds nothing at all.
 func isEmpty(dir string) (bool, error) {
 	entries, err := readDir(dir)
 	switch {
@@ -480,14 +329,6 @@ func isEmpty(dir string) (bool, error) {
 	return len(entries) == 0, nil
 }
 
-// remove deletes one path, having proved it is inside the cache root.
-//
-// The containment check is not there because a caller might get it wrong today:
-// every path handed to it is built from the root and directory entries' own
-// base names. It is there because this is the one function in go-mutants that
-// deletes files somebody else's tools also keep things in, and a check that
-// makes an escape unrepresentable is worth more than an argument that it cannot
-// happen.
 func remove(path, root string) error {
 	inside, err := within(path, root)
 	if err != nil {
@@ -509,33 +350,6 @@ func remove(path, root string) error {
 	return nil
 }
 
-// within reports whether path is strictly inside root, comparing the two as the
-// filesystem resolves them rather than as they are spelled.
-//
-// The resolution is the point. A comparison of the two strings answers a
-// question about two strings, and [os.RemoveAll] asks the filesystem: an
-// `outcomes/` replaced by a link to somewhere else is lexically inside the
-// cache and physically wherever it points, so deleting a context directory
-// through it would take the target's with it. Nothing go-mutants writes creates
-// such a link, which is exactly why this is worth checking — the cache root is
-// a directory in the operating system's cache that anything on the machine can
-// write to.
-//
-// The last element is deliberately left unresolved. RemoveAll unlinks a
-// symbolic link rather than following it, so a linked leaf deletes the link and
-// nothing else; it is the directories leading to it that are a way out, because
-// walking them is what follows them. Resolving the parent alone also keeps a
-// path that is not there from becoming a failure, which is what a sweep racing
-// another process's needs.
-//
-// A path that cannot be resolved at all is refused rather than assumed
-// innocent, and the refusal keeps this package's [CodeNotRemoved]: not knowing
-// where a deletion would land is the one answer that must not end in a
-// deletion.
-//
-// internal/report's `within` is this function with the history store's root and
-// error code. The two are deliberate twins — see the note on [remove] — and a
-// change to either belongs in the other.
 func within(path, root string) (bool, error) {
 	resolvedPath, err := resolveParent(path)
 	if err != nil {
@@ -562,8 +376,6 @@ func within(path, root string) (bool, error) {
 		!filepath.IsAbs(relative), nil
 }
 
-// resolveParent resolves the directories leading to path, and leaves path's own
-// last element alone. See [within] for why the leaf is left as it is.
 func resolveParent(path string) (string, error) {
 	absolute, err := absPath(path)
 	if err != nil {
@@ -576,17 +388,6 @@ func resolveParent(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
-// resolvePath resolves every symbolic link in a path, tolerating a path that is
-// not all there.
-//
-// [filepath.EvalSymlinks] needs the whole path to exist, and the paths this is
-// asked about need not: an entry another process's sweep removed a moment ago,
-// a context directory that was pruned between the listing and the deletion. So
-// a missing name is resolved as far as the filesystem goes and the rest is
-// appended verbatim, which is the same answer the full resolution would give
-// once those names existed — and it is an answer about where a deletion *would*
-// land, which is what the caller is deciding. Any other failure is returned,
-// and refuses the deletion.
 func resolvePath(path string) (string, error) {
 	resolved, err := evalSymlinks(path)
 	switch {
@@ -597,8 +398,6 @@ func resolvePath(path string) (string, error) {
 	}
 	parent := filepath.Dir(path)
 	if parent == path {
-		// The volume root itself, which is where walking up stops. There is
-		// nothing above it to resolve against and its own name is the answer.
 		return path, nil
 	}
 	resolvedParent, err := resolvePath(parent)
@@ -608,11 +407,6 @@ func resolvePath(path string) (string, error) {
 	return filepath.Join(resolvedParent, filepath.Base(path)), nil
 }
 
-// trimExtendedPrefix drops the `\\?\` Windows uses to spell a path that escapes
-// the traditional length limit, so that a resolved path and a resolved root are
-// compared in one spelling whichever of the two the operating system chose to
-// hand back. Nothing outside Windows can be affected: a resolved path on any
-// other platform begins with a separator that is not a backslash.
 func trimExtendedPrefix(path string) string {
 	if rest, found := strings.CutPrefix(path, `\\?\UNC\`); found {
 		return `\\` + rest

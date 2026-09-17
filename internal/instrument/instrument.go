@@ -17,165 +17,37 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// A Mode selects which of the two trees [Instrument] produces.
-//
-// The two are different snapshots of the same module and never the same one.
-// Each carries a generated runtime package of its own, under the same directory
-// name, chosen by the same collision rule — which is safe precisely because
-// they never share a tree, and is what lets everything above them read one
-// [Result] without asking which mode produced it.
 type Mode int
 
 const (
-	// ModeMutant is the tree every guard and the activation runtime belong to,
-	// and the zero value because it is what instrumentation has meant since
-	// there was only one kind: one build carrying every catalogued mutant, one
-	// of them live per test process.
 	ModeMutant Mode = iota
-	// ModeProbe is the tree a probe pass runs, in which no mutant is ever
-	// active. The original semantics run, and each site reports — without side
-	// effects — whether the mutated value would have differed from the one the
-	// original produced. That is how a run learns a test cannot have observed a
-	// mutant without ever executing the two against each other.
-	//
-	// One probe form is written: the return-value mutants, whose statement
-	// becomes a block that evaluates each operand once, compares the mutated
-	// result against the constant, and returns what it evaluated. The mutant
-	// returns that constant *instead of evaluating* its operand, so the form
-	// speaks for it only where internal/discover proved that evaluating the
-	// operand is nothing but computing a value: every operand of the statement
-	// effect-free, the probed one unable to panic, and its result neither
-	// floating-point nor complex. Every other family is left unprobed — its
-	// mutants are catalogued and mutated as ever, and a run simply learns
-	// nothing about which tests could observe them, so it runs them all. See
-	// internal/instrument's probe.go for the form and why it is exact.
 	ModeProbe
 )
 
-// Options configures [Instrument]. The zero value is not usable: every field
-// but [Options.Mode] is required, because none of the others has a default that
-// could not be somebody's working tree.
 type Options struct {
-	// SnapshotRoot is the directory holding the copy of the module to rewrite.
-	// It is the snapshot and never the user's own tree: instrumentation edits
-	// files in place.
 	SnapshotRoot string
 
-	// ModulePath is the import path of the main module at the snapshot root. It
-	// is what the generated runtime package's import path is built from, and it
-	// is passed in rather than read back out of go.mod because the caller
-	// already learned it while discovering.
 	ModulePath string
 
-	// Catalog is the mutant set to instrument. Its dense indices are the
-	// indices the generated activation array is sized by and the guards read,
-	// so the catalogue instrumented here and the catalogue the runner activates
-	// against must be the same one.
 	Catalog *mutation.Catalog
 
-	// Hints are the rewrite sites discovery chose, one per catalogued mutant.
-	// A mutant with no hint is refused rather than guessed at; see [Hints] for
-	// why the choice is not this package's to make.
 	Hints Hints
 
-	// Module is the module whose files this pass rewrites, and is empty for a
-	// catalogue that names no module -- which is every run that is not a
-	// workspace run.
-	//
-	// A workspace is instrumented one module at a time because a module's files
-	// can only import a runtime its own module declares: a generated package
-	// under `first/` is not on `second/`'s import path without a `require`, and
-	// editing a go.mod inside the snapshot is editing the tree under test. So
-	// each module gets a pass, a runtime, and a rewrite of its own files.
-	//
-	// What each module's runtime gets is the *whole* catalogue, not this
-	// module's share of it, and that is not an accident of passing
-	// [Options.Catalog] through unchanged. A mutant of one module can be
-	// activated while another module's tests are running -- that is
-	// cross-module coverage, and it is why a workspace is one run rather than
-	// N. A runtime knowing only its own module's indices would meet an id it
-	// had never heard of and exit as if the snapshot were stale, turning every
-	// cross-module mutant into an infrastructure error.
 	Module string
 
-	// Mode selects which tree this pass produces. The zero value is
-	// [ModeMutant], so a caller written before the probe tree existed keeps
-	// producing exactly what it always did.
 	Mode Mode
 }
 
-// Result reports what one instrumentation pass did.
 type Result struct {
-	// RuntimeDir is the generated package's directory, relative to the snapshot
-	// root and spelled with forward slashes.
-	RuntimeDir string
-	// RuntimeImport is that package's import path.
-	RuntimeImport string
-	// ModulePath is the module this pass rewrote, as [Options.ModulePath] gave
-	// it. It is carried back because the loop census and the limit table are
-	// per-tree files that several modules of one workspace would otherwise
-	// write over each other: see [LoopFileSuffix].
-	ModulePath string
-	// FilesInstrumented lists the module-relative paths that were rewritten, in
-	// catalogue order.
+	RuntimeDir        string
+	RuntimeImport     string
+	ModulePath        string
 	FilesInstrumented []string
-	// GuardsByFile counts the rewrite sites written into each of those files. A
-	// site is one rewritten span: several mutants of one expression share a
-	// single guard, and several mutants of one `return` share a single probe, so
-	// this is never simply the number of mutants in the file.
-	//
-	// Both trees are counted the same way and the drift gate reads them the same
-	// way, which is what lets everything above this package hold one [Result]
-	// without asking which mode produced it.
-	GuardsByFile map[string]int
-	// LoopBase is the first loop-site index each file the pass considered was
-	// given, whether or not that file ended up carrying a guard. A file
-	// re-instrumented on its own — which is what the compile bisection does to
-	// every file it rejects a candidate in — has to be handed its own base, or
-	// its counters would answer to another file's ceilings.
-	LoopBase map[string]uint32
-	// Loops is how many `for` statements of those files carry a counter, which
-	// is the width of the generated package's ceiling table and the number of
-	// sites a census and a limit table are read against. It is zero for a probe
-	// tree, which runs the original program and has nothing to diverge from.
-	Loops int
+	GuardsByFile      map[string]int
+	LoopBase          map[string]uint32
+	Loops             int
 }
 
-// Instrument rewrites a snapshot so that every catalogued mutant is present in
-// it at once, dormant behind a guard.
-//
-// The rewrite is in place. That is what the snapshot is for: it is a disposable
-// copy, and rewriting it lets one build serve every mutant, with activation
-// costing an environment variable per test process instead of a rebuild.
-//
-// Everything below describes the mutant tree, which is what [Options.Mode]'s
-// zero value asks for. [ModeProbe] produces the other tree instead — a
-// different snapshot, with a runtime of its own and no mutant ever active in
-// it — and what that mode does and does not do yet is documented there.
-//
-// Files are edited only where the catalogue points, guards preserve the line
-// number of every original byte, and each file that gains a guard also gains
-// the import of the generated runtime package. Everything else in the tree —
-// files with no candidates, comments, formatting, line endings — is left byte
-// for byte as it was.
-//
-// The output is a function of the input alone: instrumenting the same snapshot
-// with the same catalogue twice produces the same bytes, down to the choice of
-// alias and the order of alternatives inside a guard. It is not idempotent, and
-// is not meant to be: instrumenting an already-instrumented tree finds bytes
-// the catalogue no longer describes and fails rather than nesting guards inside
-// guards.
-//
-// # What this phase does not do
-//
-// Nothing here checks that the rewritten tree compiles. A guard is a byte
-// rewrite around bytes discovery said were mutable, and a mutated copy can
-// still be a program the compiler refuses — `x * 0` swapped into `x / 0` is a
-// constant division by zero, and an untyped constant can be swapped into one
-// that no longer fits its context. Those are left to the compile validation and
-// bisection that follow, which reject the individual candidate with the
-// compiler's own words. See the package documentation for why that belongs to
-// that phase and not to this one.
 func Instrument(opts Options) (Result, error) {
 	if err := opts.validate(); err != nil {
 		return Result{}, err
@@ -195,14 +67,7 @@ func Instrument(opts Options) (Result, error) {
 		LoopBase:      make(map[string]uint32),
 	}
 
-	// One cache for the whole pass: the runtime import alias each file gets has
-	// to dodge every name its package already binds, and reading a directory
-	// once per package rather than once per file is the difference between a
-	// directory read and a quadratic one.
 	names := newPackageNames()
-	// The loop sites of every file, numbered across the tree rather than within
-	// a file: the ceilings are one array in one generated package, so a site's
-	// index has to be a fact about the tree. See [ADR 0013].
 	var loops []loopSite
 	for _, group := range groupByPath(opts.Catalog, opts.Module) {
 		guards, counted, err := instrumentFile(
@@ -221,10 +86,6 @@ func Instrument(opts Options) (Result, error) {
 	}
 	result.Loops = len(loops)
 
-	// The runtime package is written last so that a failure part way through
-	// leaves a snapshot that is obviously half-rewritten rather than one that
-	// looks instrumented and is not. Its directory name was settled first,
-	// because every file that was rewritten imports it by that name.
 	if err := writeTreeRuntime(
 		opts.SnapshotRoot, dir, opts.ModulePath, opts.Catalog, opts.Mode, loops); err != nil {
 		return Result{}, err
@@ -232,11 +93,6 @@ func Instrument(opts Options) (Result, error) {
 	return result, nil
 }
 
-// writeTreeRuntime generates the runtime the mode's tree calls.
-//
-// The directory and the import path are settled identically for both, because
-// they are never in one snapshot; which package goes into that directory is the
-// only thing the two trees disagree about here.
 func writeTreeRuntime(
 	root, dir, modulePath string, catalog *mutation.Catalog, mode Mode, loops []loopSite,
 ) error {
@@ -246,7 +102,6 @@ func writeTreeRuntime(
 	return writeRuntime(root, dir, modulePath, catalog, loops)
 }
 
-// validate checks the options and the catalogue's paths.
 func (o Options) validate() error {
 	if strings.TrimSpace(o.SnapshotRoot) == "" {
 		return &Error{Code: CodeOptions, Message: "no snapshot root was given"}
@@ -271,11 +126,6 @@ func (o Options) validate() error {
 	if o.Catalog == nil {
 		return &Error{Code: CodeOptions, Message: "no catalogue was given"}
 	}
-	// The catalogue and the module have to be the same kind of thing, and a
-	// disagreement is refused rather than resolved. Either way round it would
-	// select no mutant at all, rewrite no file, and hand back a Result saying
-	// so in a field nobody reads as an error -- and the tree that came out of
-	// it compiles, passes validation, and reports every mutant as a survivor.
 	if first, ok := o.Catalog.At(0); ok {
 		switch {
 		case first.ModulePath != "" && o.Module == "":
@@ -292,10 +142,6 @@ func (o Options) validate() error {
 			}
 		}
 	}
-	// A mode this package does not know is refused rather than treated as the
-	// zero value: silently instrumenting a mutant tree for a caller that asked
-	// for something else would hand back a [Result] describing a tree nobody
-	// wanted, and every later phase would believe it.
 	if o.Mode != ModeMutant && o.Mode != ModeProbe {
 		return &Error{
 			Code:    CodeOptions,
@@ -314,16 +160,6 @@ func (o Options) validate() error {
 	return nil
 }
 
-// insideSnapshot reports whether a catalogue path names a file the snapshot
-// root contains.
-//
-// A catalogued path is already normalized and already proved not to escape the
-// module root — [mutation.Identity] refuses to hash anything else — so this is
-// the second lock on the same door, and it is here because this is the package
-// that writes. A path that climbed out of the snapshot would have the
-// instrumenter rewriting somebody's real source instead of the copy, which is
-// the one thing the snapshot exists to prevent, and it would do so with an edit
-// that looks entirely routine in a log.
 func insideSnapshot(p string) bool {
 	if p == "" || strings.ContainsRune(p, '\\') || strings.ContainsRune(p, 0) {
 		return false
@@ -335,31 +171,11 @@ func insideSnapshot(p string) bool {
 	return clean != ".." && !strings.HasPrefix(clean, "../") && clean != "."
 }
 
-// A fileGroup is one file's share of the catalogue, in catalogue order.
 type fileGroup struct {
 	path    string
 	mutants []mutation.Mutant
 }
 
-// groupByPath splits the catalogue into per-file groups, one group per path and
-// catalogue order inside each.
-//
-// The catalogue already sorts by path, so its mutants arrive grouped and this
-// could have been a single contiguity-based pass. It is not, deliberately: that
-// pass would produce two groups for one file the moment anything upstream
-// ordered the catalogue differently, and the second group would re-read a file
-// this pass had already rewritten. The failure would surface as a splice
-// mismatch naming bytes rather than the ordering that caused it. Grouping
-// through a map costs one allocation per file and cannot express that state at
-// all.
-//
-// Paths are sorted so the result stays a pure function of the catalogue, which
-// is also what makes [Result.FilesInstrumented] deterministic.
-// The module is what selects the mutants: every one of them when it is empty,
-// and one module's share when it is not. A path is only a file's name within
-// the module it belongs to, so grouping a workspace catalogue by path alone
-// would put two modules' `app.go` into one group and rewrite one of them with
-// the other's spans.
 func groupByPath(catalog *mutation.Catalog, module string) []fileGroup {
 	mutants := catalog.Mutants()
 	byPath := make(map[string][]mutation.Mutant, len(mutants))
@@ -382,9 +198,6 @@ func groupByPath(catalog *mutation.Catalog, module string) []fileGroup {
 	return groups
 }
 
-// instrumentFile rewrites one snapshot file at its own path and reports how
-// many guards it received. The rewrite goes through [replaceFile] rather than
-// straight onto the file, for the reason set out there.
 func instrumentFile(
 	root, srcPath string,
 	mutants []mutation.Mutant,
@@ -412,9 +225,6 @@ func instrumentFile(
 		}
 	}
 
-	// The package block this file's alias has to dodge lives in the directory
-	// beside it, and which package that is only becomes known once the file has
-	// parsed — hence a lookup the rewrite calls rather than a set it is handed.
 	dir := filepath.Dir(file)
 	reserved := func(pkg string) (map[string]bool, error) { return names.namesIn(dir, pkg) }
 
@@ -435,35 +245,13 @@ func instrumentFile(
 	return guards, loops, nil
 }
 
-// replaceFile writes out over file, as a temporary file in the same directory
-// followed by a rename over the target.
-//
-// The obvious os.WriteFile is not usable here, and the reason is a precondition
-// internal/snapshot states out loud on behalf of this package. A snapshot copy
-// preserves the source file's permission bits on POSIX, so a repository holding
-// a read-only .go file — a Perforce workspace marks unopened files read-only,
-// generators emit 0444, `chmod -w` is a convention in some trees — lands that
-// file read-only in the snapshot. An in-place write to it fails EACCES for
-// anybody but root, aborting a whole run over a file mode that was never about
-// us. A rename needs write permission on the containing directory and none at
-// all on the file being replaced, which is why snapshot's dirPerm forces every
-// copied directory writable.
-//
-// The original mode is carried over to the replacement, so instrumenting a
-// snapshot does not quietly relax what its files allow.
 func replaceFile(file string, out []byte, perm fs.FileMode) error {
 	dir := filepath.Dir(file)
-	// The name begins with a dot so the go tool ignores it, and ends in ".tmp"
-	// rather than ".go" so nothing tries to compile it, in the window before
-	// the rename and in the unlikely one where a crash leaves it behind.
 	tmp, err := os.CreateTemp(dir, ".gomutants-*.tmp")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
-	// A no-op once the rename has moved the file out from under the name, and
-	// the one thing that keeps a failed write from leaving litter in a tree the
-	// next phase is about to build.
 	defer func() { _ = os.Remove(name) }()
 
 	if _, err := tmp.Write(out); err != nil {
@@ -475,11 +263,6 @@ func replaceFile(file string, out []byte, perm fs.FileMode) error {
 	}
 
 	if err := os.Rename(name, file); err != nil {
-		// Windows refuses to replace a file carrying the read-only attribute,
-		// whatever the directory permits. The snapshot is a disposable copy
-		// this process made, so the attribute is cleared and the rename tried
-		// once more; the first failure is still what gets reported if that does
-		// not help, because it is the one that describes the problem.
 		if chmodErr := os.Chmod(file, 0o600); chmodErr != nil {
 			return err
 		}
@@ -488,31 +271,11 @@ func replaceFile(file string, out []byte, perm fs.FileMode) error {
 		}
 	}
 
-	// Through the path rather than the descriptor, so the bits land on whatever
-	// now carries the name, and after the rename so that a mode with no write
-	// bit cannot get in the way of it. os.Chmod is not filtered through the
-	// umask the way a creation mode is, so this is exact.
 	return os.Chmod(file, perm)
 }
 
-// A reservedNames reports the identifiers already bound in the package block of
-// the package a file declares, so that the runtime import alias can avoid all
-// of them. It is a lookup rather than a set because the package a file belongs
-// to is only known once the file has been parsed, and a nil one — no directory
-// to consult — means nothing outside the file is reserved.
 type reservedNames func(pkg string) (map[string]bool, error)
 
-// instrumentSource is the whole rewrite of one file, in memory: find the sites,
-// compose the guards, inject the import, and prove the result before it is
-// allowed anywhere near the disk.
-//
-// The guards and the import are applied in a single [Apply] pass over the
-// pristine bytes. Every span involved was minted against those same bytes, so
-// one pass keeps them all in one coordinate system, and it is [Apply] itself
-// that then proves the edits do not overlap — the import section and a
-// bool-valued expression cannot be the same bytes, and if they ever were, the
-// splicer says so instead of writing a file that depends on which edit landed
-// first.
 func instrumentSource(
 	srcPath string,
 	src []byte,
@@ -537,28 +300,14 @@ func instrumentSource(
 			return nil, 0, nil, err
 		}
 	}
-	// The names a rewrite may not bind, gathered once: the import alias and,
-	// in a probe tree, the temporaries are all chosen against this one set.
 	taken := takenNames(file, bound)
 	alias := aliasIn(taken)
 
-	// The counters are found before anything is decided about the guards, and
-	// only for the tree mutants run in: a probe tree runs the original program,
-	// which has nothing to diverge from. Finding them first is what makes a
-	// site's index a function of the file set alone — a file whose every
-	// candidate was rejected keeps the indices it was given, so the numbering
-	// does not move under the bisection that rejects them.
 	var loops []loopSite
 	if mode == ModeMutant {
 		loops = loopSites(file, tok, srcPath)
 	}
 
-	// The loop insertions are built before the sites so that the sites can take
-	// the ones that fall inside them. A loop inside a rewrite site -- which is
-	// what `return each(func() error { for ... } })` is -- has to be written
-	// into that site's own text, because the site replaces the bytes the
-	// insertion would otherwise land in, and two splices over the same bytes is
-	// GOM7312 and a file that does not instrument at all.
 	loopEdits := loopSplices(loops, alias, base)
 	splices, guards, completions, err := composeSites(
 		newSiteIndex(tok, file, src), srcPath, src, mutants, hints, alias, taken, mode, loopEdits)
@@ -568,7 +317,6 @@ func instrumentSource(
 	if guards == 0 {
 		return src, 0, loops, nil
 	}
-	// Whatever the sites did not take is a loop in plain file text.
 	splices = append(splices, loopsOutsideSites(loopEdits, splices)...)
 	imports, err := importSplices(file, tok, srcPath, alias, importPath, completions)
 	if err != nil {
@@ -585,18 +333,9 @@ func instrumentSource(
 	}
 	out, _, err := Apply(src, splices)
 	if err != nil {
-		// Named, because Apply counts splices and knows nothing about files:
-		// its diagnostics say "splice 71 at [4942,4942)" and a reader with one
-		// of those has no way back to a line of Go. The check two lines above
-		// already quotes the path for the same reason.
 		return nil, 0, nil, fmt.Errorf("instrumenting %s: %w", strconv.Quote(srcPath), err)
 	}
 
-	// Two postconditions, both cheap and both guarding an invariant that
-	// nothing downstream re-checks. The line count is what the coverage mapping
-	// and every reported coordinate rest on; parsing is what stands between a
-	// guard-rendering bug and a snapshot that fails to build with a syntax
-	// error nobody can attribute.
 	if err := checkLineCount(srcPath, src, out); err != nil {
 		return nil, 0, nil, err
 	}
@@ -606,13 +345,6 @@ func instrumentSource(
 	return out, guards, loops, nil
 }
 
-// composeSites turns one file's mutants into the splices its tree's rewrite
-// needs, and reports how many sites it wrote.
-//
-// The two trees part company here and nowhere else in this file. Everything
-// around it — the parse, the names, the import injection, the two
-// postconditions, the write — is the same work whichever tree is being built,
-// because all of it is about the file rather than about the form.
 func composeSites(
 	index *siteIndex,
 	srcPath string,
@@ -650,10 +382,6 @@ func composeSites(
 	return splices, guards, completions, err
 }
 
-// checkLineCount is the file-level half of the line-preservation invariant:
-// whatever the splices did, the instrumented file holds exactly as many line
-// breaks as the file it was built from, so line N of one is line N of the
-// other.
 func checkLineCount(srcPath string, src, out []byte) error {
 	got, want := CountLines(out), CountLines(src)
 	if got == want {
@@ -666,13 +394,6 @@ func checkLineCount(srcPath string, src, out []byte) error {
 	}
 }
 
-// loopsOutsideSites is the loop insertions no rewrite site claimed: the ones
-// whose insertion point is not inside any of the file-level splices the sites
-// produced.
-//
-// A point exactly at a site's start writes in front of it and stays here; one
-// strictly inside is in bytes that site replaced, and [guardRenderer.loopsWithin]
-// has already put it where it belongs.
 func loopsOutsideSites(loops, sites []Splice) []Splice {
 	if len(loops) == 0 {
 		return nil

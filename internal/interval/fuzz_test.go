@@ -10,17 +10,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// FuzzBuild asserts the two properties the splicer depends on, over spans
-// nobody would write down.
-//
-// The forest decides which rewrite sites nest inside which, and the splicer
-// applies them innermost-first through an offset map. Two things have to hold
-// whatever the spans are, and neither is a property a table of hand-written
-// cases can cover: **every item is accounted for exactly once** -- placed in
-// the forest or reported as a conflict, never both and never neither -- and
-// **a child's span is contained in its parent's**. An item lost between the two
-// is a mutant that is never written; a child that is not inside its parent is a
-// splice applied at an offset the map cannot translate.
 func FuzzBuild(f *testing.F) {
 	f.Add([]byte{0, 10, 2, 8, 4, 6})
 	f.Add([]byte{0, 4, 4, 8})
@@ -67,11 +56,6 @@ func FuzzBuild(f *testing.F) {
 	})
 }
 
-// itemsFrom reads a byte slice as a list of spans, two bytes each.
-//
-// Bytes rather than a slice of structs because the fuzzer explores a []byte far
-// better than it explores a shape it has to construct -- and because a span
-// whose end is before its start is exactly the input this is here to survive.
 func itemsFrom(encoded []byte) []interval.Item[int] {
 	items := make([]interval.Item[int], 0, len(encoded)/2)
 	for i := 0; i+1 < len(encoded); i += 2 {
@@ -83,7 +67,6 @@ func itemsFrom(encoded []byte) []interval.Item[int] {
 	return items
 }
 
-// contains reports whether outer holds inner, which is what nesting means here.
 func contains(outer, inner mutation.Span) bool {
 	return outer.StartByte <= inner.StartByte && inner.EndByte <= outer.EndByte
 }

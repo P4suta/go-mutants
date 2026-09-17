@@ -13,16 +13,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// TestACatalogueIsAFunctionOfItsCandidates is the property every stored thing
-// rests on.
-//
-// `Catalog.Digest` keys the outcome cache and joins a shard's report to the run
-// it is part of, and `report merge` refuses documents whose catalogues differ.
-// All of that assumes one thing: **the same candidates always produce the same
-// catalogue.** A builder that folded a map into its digest, or that let an
-// allocation address reach an id, would break every one of those and would do
-// it intermittently -- which is the shape of bug a table of hand-written cases
-// is worst at finding.
 func TestACatalogueIsAFunctionOfItsCandidates(t *testing.T) {
 	t.Parallel()
 
@@ -49,14 +39,6 @@ func TestACatalogueIsAFunctionOfItsCandidates(t *testing.T) {
 	})
 }
 
-// TestTheOrderCandidatesArriveInDoesNotChangeTheCatalogue is the same property
-// from the other side.
-//
-// Discovery walks files in whatever order the loader returns them, and a
-// catalogue that depended on that order would change its digest -- and so
-// invalidate every cached outcome -- whenever the toolchain changed how it
-// enumerates a package. The catalogue sorts, and this is the statement that it
-// sorts *completely*: two shuffles of one set are one catalogue.
 func TestTheOrderCandidatesArriveInDoesNotChangeTheCatalogue(t *testing.T) {
 	t.Parallel()
 
@@ -71,18 +53,6 @@ func TestTheOrderCandidatesArriveInDoesNotChangeTheCatalogue(t *testing.T) {
 	})
 }
 
-// TestEveryMutantIsInExactlyOneShard is the partition property `--shard` is
-// only sound because of.
-//
-// A sharded run is judged by `report merge`, which refuses a set of documents
-// that is not every shard exactly once and then recomputes the score from the
-// merged rows. That is only a run's score if the shards *partition* the
-// catalogue: a mutant in two shards would be measured twice and counted twice,
-// and one in none would be missing from a document that claims to describe the
-// whole run.
-//
-// The existing tests say an index is in range and stable. This says the indices
-// cover the catalogue, once each.
 func TestEveryMutantIsInExactlyOneShard(t *testing.T) {
 	t.Parallel()
 
@@ -110,13 +80,6 @@ func TestEveryMutantIsInExactlyOneShard(t *testing.T) {
 	})
 }
 
-// drawCandidates draws a set of candidates that differ in the fields an
-// identity is built from.
-//
-// The paths and spans are drawn narrowly on purpose: a wide draw produces
-// candidates that never collide, and the interesting inputs are the ones that
-// nearly do -- two rules at one span, one rule at two spans, the same span in
-// two files.
 func drawCandidates(rt *rapid.T) []mutation.Candidate {
 	rules := mutation.CanonicalRegistry().Rules()
 	count := rapid.IntRange(1, 12).Draw(rt, "candidates")
@@ -137,8 +100,6 @@ func drawCandidates(rt *rapid.T) []mutation.Candidate {
 			Replacement:  rapid.SampledFrom([]string{"x", "yy", ""}).Draw(rt, "replacement"),
 			SourceDigest: mutation.DigestString(path),
 		}
-		// A builder refuses a duplicate, which is its own tested behaviour and
-		// not this property's subject.
 		key := candidate.Path + "\x00" + candidate.Rule.Name + "\x00" +
 			string(rune(candidate.Span.StartByte)) + string(rune(candidate.Span.EndByte))
 		if seen[key] {
@@ -151,14 +112,9 @@ func drawCandidates(rt *rapid.T) []mutation.Candidate {
 	return candidates
 }
 
-// buildCatalogue builds one, failing the property when the builder refuses.
 func buildCatalogue(rt *rapid.T, candidates []mutation.Candidate) *mutation.Catalog {
 	builder := mutation.NewBuilder()
 	if err := builder.AddAll(candidates); err != nil {
-		// Fatal rather than skipped, and checked: the draw above is built to
-		// produce sets a builder accepts, and a skip here would let a future
-		// change that started refusing them turn every property in this file
-		// into one that passes without running.
 		rt.Fatalf("the builder refused a drawn candidate set: %v", err)
 	}
 	catalogue, err := builder.Build()

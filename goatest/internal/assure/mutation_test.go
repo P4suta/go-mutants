@@ -58,9 +58,6 @@ func (session *parallelSession) Probe(context.Context, gomutants.ProbeRequest) (
 	return gomutants.ProbeResult{Outcome: gomutants.ProbeUnavailable}, nil
 }
 
-// Control reports a clean original of a measurable duration, because these
-// tests are about what a mutant does and a control that reported nothing
-// would make every one of them inconclusive for another reason.
 func (session *parallelSession) Control(context.Context, gomutants.ControlRequest) (gomutants.ControlResult, error) {
 	return gomutants.ControlResult{Duration: time.Millisecond}, nil
 }

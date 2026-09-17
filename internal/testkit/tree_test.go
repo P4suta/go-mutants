@@ -14,22 +14,6 @@ import (
 	"time"
 )
 
-// TestCopyAgesEveryFileByAtLeastAnHour pins the least obvious rule in this
-// package.
-//
-// cmd/go only puts a package directory's index into the build cache when every
-// file in it is at least two seconds old, so a tree that was written a moment
-// ago is not the tree a user has: the first `go list` over it indexes nothing,
-// the second one might, and a test that counts index entries or cache misses
-// passes or fails depending on how long the copy took. Every constructor here
-// therefore hands back a tree that is an hour old, which is on the far side of
-// every cutoff in the go command and of the one-second timestamp granularity
-// some filesystems still have.
-//
-// Directories are checked too, and they are the reason [AgeTree] walks
-// deepest-first: writing a file updates the modification time of the directory
-// holding it, so a walk that aged the parent before its children would undo its
-// own work.
 func TestCopyAgesEveryFileByAtLeastAnHour(t *testing.T) {
 	t.Parallel()
 
@@ -49,10 +33,6 @@ func TestCopyAgesEveryFileByAtLeastAnHour(t *testing.T) {
 	}
 }
 
-// TestCopyLeavesTheCorpusWhereItIs proves the copy is a copy: the fixtures are
-// checked in, `git status --porcelain fixtures/` is a CI gate, and a helper that
-// handed a test the corpus itself would let one run's report, snapshot or
-// scratch directory land in the repository.
 func TestCopyLeavesTheCorpusWhereItIs(t *testing.T) {
 	t.Parallel()
 
@@ -69,9 +49,6 @@ func TestCopyLeavesTheCorpusWhereItIs(t *testing.T) {
 	}
 }
 
-// TestCopyTreePreservesContentsAndCreatesParents states the two things every
-// caller assumes: the bytes arrive unchanged, and the destination's parents are
-// created rather than reported as missing.
 func TestCopyTreePreservesContentsAndCreatesParents(t *testing.T) {
 	t.Parallel()
 
@@ -96,10 +73,6 @@ func TestCopyTreePreservesContentsAndCreatesParents(t *testing.T) {
 	}
 }
 
-// TestCopyTreePreservesTheExecutableBit matters for the corpus modules that
-// carry a script and for anything a test builds and then runs: a copy that
-// dropped the bit would fail with a permission error rather than with whatever
-// the test was about.
 func TestCopyTreePreservesTheExecutableBit(t *testing.T) {
 	t.Parallel()
 
@@ -125,16 +98,6 @@ func TestCopyTreePreservesTheExecutableBit(t *testing.T) {
 	}
 }
 
-// TestAgeTreeRefusesToFollowALinkOutOfTheTree is the reason the walk checks the
-// type of every entry rather than only asking whether it is a directory.
-//
-// os.Chtimes follows symlinks, so a tree with a link in it — which is a tree a
-// user can hand go-mutants, and a shape internal/snapshot refuses for the same
-// reason — would have had its ages written through the link onto whatever it
-// points at. The target here is a file outside the tree, which is the case that
-// matters: a helper that reached out of the directory it was given would be
-// modifying the developer's own files from a test that claimed to be working in
-// a temporary copy.
 func TestAgeTreeRefusesToFollowALinkOutOfTheTree(t *testing.T) {
 	t.Parallel()
 
@@ -157,13 +120,6 @@ func TestAgeTreeRefusesToFollowALinkOutOfTheTree(t *testing.T) {
 	}
 }
 
-// TestCopyTreeMakesEveryCopiedFileWritable is about Windows cleanup.
-//
-// A read-only file copied read-only cannot be removed on Windows, so t.TempDir's
-// cleanup fails on a tree that held one — and a fixture may well hold one, since
-// a mode is part of what a copy preserves. The write bit is added to the copy and
-// nothing else is: the executable bit still travels, and the original is
-// untouched.
 func TestCopyTreeMakesEveryCopiedFileWritable(t *testing.T) {
 	t.Parallel()
 
@@ -187,7 +143,6 @@ func TestCopyTreeMakesEveryCopiedFileWritable(t *testing.T) {
 	}
 }
 
-// modTime reads one path's modification time.
 func modTime(t testing.TB, path string) time.Time {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -197,7 +152,6 @@ func modTime(t testing.TB, path string) time.Time {
 	return info.ModTime()
 }
 
-// modeOf reads one path's mode.
 func modeOf(t testing.TB, path string) fs.FileMode {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -207,15 +161,6 @@ func modeOf(t testing.TB, path string) fs.FileMode {
 	return info.Mode()
 }
 
-// TestWriteSourcePrefixesTheSPDXHeader keeps the licensing gate green for the
-// files that only ever exist inside a t.TempDir.
-//
-// `gofmt -l .` and the REUSE check walk the filesystem rather than the module
-// graph, and a synthesized module written into a temporary directory is not
-// walked by either — but the same helper writes the fixture files that *are*
-// checked in, and a header a test has to remember is a header a test forgets.
-// So the helper writes it, and the body it is given is a body rather than a
-// file.
 func TestWriteSourcePrefixesTheSPDXHeader(t *testing.T) {
 	t.Parallel()
 
@@ -231,8 +176,6 @@ func TestWriteSourcePrefixesTheSPDXHeader(t *testing.T) {
 	}
 }
 
-// TestWriteFileCreatesTheDirectoriesAboveIt removes the three-line MkdirAll
-// preamble every one of these helpers had a copy of.
 func TestWriteFileCreatesTheDirectoriesAboveIt(t *testing.T) {
 	t.Parallel()
 
@@ -243,12 +186,6 @@ func TestWriteFileCreatesTheDirectoriesAboveIt(t *testing.T) {
 	}
 }
 
-// TestSamePathAgreesWithTheFilesystemRatherThanWithTheString is why no
-// assertion in this repository compares two paths with ==.
-//
-// macOS resolves /var to /private/var, so t.TempDir returns one spelling and a
-// child process that resolved its own working directory reports the other. Both
-// name the same directory, and a string comparison calls them different.
 func TestSamePathAgreesWithTheFilesystemRatherThanWithTheString(t *testing.T) {
 	t.Parallel()
 
@@ -272,9 +209,6 @@ func TestSamePathAgreesWithTheFilesystemRatherThanWithTheString(t *testing.T) {
 	}
 }
 
-// TestAgeTreeAgesADirectoryAfterTheFilesInIt states the ordering rule directly,
-// so a rewrite of the walk that lost it fails here rather than in whichever
-// suite next counts build-cache misses.
 func TestAgeTreeAgesADirectoryAfterTheFilesInIt(t *testing.T) {
 	t.Parallel()
 
@@ -294,7 +228,6 @@ func TestAgeTreeAgesADirectoryAfterTheFilesInIt(t *testing.T) {
 	}
 }
 
-// walkTree visits every path under root, root included.
 func walkTree(t testing.TB, root string, visit func(path string, info fs.FileInfo)) {
 	t.Helper()
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {

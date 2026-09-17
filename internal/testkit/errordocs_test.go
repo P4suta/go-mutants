@@ -12,35 +12,18 @@ import (
 	"testing"
 )
 
-// errorsDoc is the page this file holds to the source.
 const errorsDoc = "docs/errors.md"
 
-// codePattern is what a diagnostic code looks like. It is built rather than
-// written so that this rule file does not match itself when the scan reads it.
 var codePattern = regexp.MustCompile(`^GOM` + `[0-9]{4}$`)
 
-// codeInProse finds a code anywhere in a line of a document.
 var codeInProse = regexp.MustCompile(`GOM` + `[0-9]{4}`)
 
-// retiredHeading opens the section listing codes that were spent and will never
-// be spent again.
 const retiredHeading = "## Retired codes"
 
-// allocationHeading opens the section that says what a leading digit means and
-// which package owns each block.
 const allocationHeading = "## How the numbers are allocated"
 
-// codeFileName is where a package declares its codes.
-//
-// Every one of the sixteen packages that has codes follows it, and the scan
-// depends on that: reading every non-test .go file in the module to find the
-// seventeen that hold them would cost a hundred times as much for the same
-// answer.
-// TestEveryDiagnosticCodeIsDeclaredInAnErrorsFile is what keeps the shortcut
-// honest, by reading everything once and refusing a code found elsewhere.
 const codeFileName = "errors.go"
 
-// declaredCode is one code as the source declares it.
 type declaredCode struct {
 	Code    string
 	Name    string
@@ -48,7 +31,6 @@ type declaredCode struct {
 	Package string
 }
 
-// TestErrorDocNamesEveryDiagnosticCode is the forward half of the ledger.
 func TestErrorDocNamesEveryDiagnosticCode(t *testing.T) {
 	t.Parallel()
 
@@ -68,12 +50,6 @@ func TestErrorDocNamesEveryDiagnosticCode(t *testing.T) {
 	}
 }
 
-// TestEveryCodeTheErrorDocNamesIsOneABuildCanReport is the reverse half.
-//
-// A one-way check misses the direction that actually rots: a code removed from
-// the source leaves its paragraph behind, and a reader searching for what they
-// saw in an old report lands on a sentence about something this build cannot
-// produce. A retired code is the deliberate case and has its own section.
 func TestEveryCodeTheErrorDocNamesIsOneABuildCanReport(t *testing.T) {
 	t.Parallel()
 
@@ -94,12 +70,6 @@ func TestEveryCodeTheErrorDocNamesIsOneABuildCanReport(t *testing.T) {
 	}
 }
 
-// TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo pins the shape of a row.
-//
-// The remedy column is prose rather than a field on the code, so nothing can
-// check that a particular remedy is right. What can be checked is that there is
-// one: a row whose remedy cell is empty is a row that stopped at naming the
-// failure, and naming it is what the code already did.
 func TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo(t *testing.T) {
 	t.Parallel()
 
@@ -118,8 +88,6 @@ func TestEveryDiagnosticCodeRowSaysWhatItMeansAndWhatToDo(t *testing.T) {
 	}
 }
 
-// TestNoDiagnosticCodeFallsInAnUnallocatedClass turns the digit table from
-// decoration into a fact, in both directions.
 func TestNoDiagnosticCodeFallsInAnUnallocatedClass(t *testing.T) {
 	t.Parallel()
 
@@ -145,17 +113,6 @@ func TestNoDiagnosticCodeFallsInAnUnallocatedClass(t *testing.T) {
 	}
 }
 
-// TestTheErrorDocBlockTableNamesEveryPackageThatOwnsCodes keeps the block table
-// equal to the blocks the source actually claims.
-//
-// A block is written as a pattern -- GOM41xx, GOM720x -- rather than at a fixed
-// width, because ownership is not at a fixed width. internal/runner and
-// internal/gocmd share the seventy-twos and internal/tui and internal/gitdiff
-// share the seventy-sevens, so a table that could only say GOM72xx would have
-// to name one of two owners and be wrong about the other. The rule is that
-// every code matches exactly one row and that row names its package: a code
-// matching none is unowned, one matching two is a table that overlaps itself,
-// and a row matching nothing is a block this build no longer holds.
 func TestTheErrorDocBlockTableNamesEveryPackageThatOwnsCodes(t *testing.T) {
 	t.Parallel()
 
@@ -196,8 +153,6 @@ func TestTheErrorDocBlockTableNamesEveryPackageThatOwnsCodes(t *testing.T) {
 	}
 }
 
-// blockCovers reports whether a block pattern such as `GOM720x` covers a code,
-// with `x` standing for any digit.
 func blockCovers(block, code string) bool {
 	if len(block) != len(code) {
 		return false
@@ -210,14 +165,6 @@ func blockCovers(block, code string) bool {
 	return true
 }
 
-// TestDiagnosticCodesAreUniqueAcrossPackages is the check no package could make
-// for itself.
-//
-// Each of the sixteen packages tests that its own block is complete and
-// well-formed, and none of them can see another's. Two packages reaching for
-// the same number is therefore the one malformation that would have been caught
-// by nobody, and it is the malformation that costs a user most: one identifier,
-// two conditions, and a search that answers the wrong question.
 func TestDiagnosticCodesAreUniqueAcrossPackages(t *testing.T) {
 	t.Parallel()
 
@@ -232,7 +179,6 @@ func TestDiagnosticCodesAreUniqueAcrossPackages(t *testing.T) {
 	}
 }
 
-// TestNoRetiredCodeIsDeclaredAnywhere keeps a spent number spent.
 func TestNoRetiredCodeIsDeclaredAnywhere(t *testing.T) {
 	t.Parallel()
 
@@ -251,13 +197,6 @@ func TestNoRetiredCodeIsDeclaredAnywhere(t *testing.T) {
 	}
 }
 
-// TestEveryDiagnosticCodeIsDeclaredInAnErrorsFile keeps the fast scan honest.
-//
-// declaredCodes reads only files named errors.go, which is the convention every
-// package with codes follows and which makes the scan sixteen files rather than
-// two hundred and fifty. A code declared anywhere else would be invisible to
-// every ledger above, so the shortcut needs a check of its own -- and this is
-// the one test that pays the full price, once.
 func TestEveryDiagnosticCodeIsDeclaredInAnErrorsFile(t *testing.T) {
 	t.Parallel()
 
@@ -281,12 +220,6 @@ func TestEveryDiagnosticCodeIsDeclaredInAnErrorsFile(t *testing.T) {
 	}
 }
 
-// citingPages are the pages that name a diagnostic code in their prose.
-//
-// A citation is a promise that the code exists, and a page that keeps citing a
-// renamed one sends a reader to search for something this build cannot print.
-// The list is explicit rather than a glob so that adding a page is a decision:
-// a new page that cites a code should be added here in the same change.
 var citingPages = []string{
 	"README.md",
 	"docs/architecture.md",
@@ -297,8 +230,6 @@ var citingPages = []string{
 	"docs/trace-v1.md",
 }
 
-// TestEveryCodeTheOtherPagesCiteIsOneTheErrorDocExplains keeps a citation from
-// outliving what it cites.
 func TestEveryCodeTheOtherPagesCiteIsOneTheErrorDocExplains(t *testing.T) {
 	t.Parallel()
 
@@ -323,7 +254,6 @@ func TestEveryCodeTheOtherPagesCiteIsOneTheErrorDocExplains(t *testing.T) {
 	}
 }
 
-// declaredCodes is every diagnostic code this build can print, in code order.
 func declaredCodes(t *testing.T, root string) []declaredCode {
 	t.Helper()
 
@@ -353,7 +283,6 @@ func declaredCodes(t *testing.T, root string) []declaredCode {
 	return found
 }
 
-// walkGoSources visits every non-test Go source file of this module.
 func walkGoSources(t *testing.T, root string, visit func(path string)) {
 	t.Helper()
 
@@ -380,7 +309,6 @@ func walkGoSources(t *testing.T, root string, visit func(path string)) {
 	}
 }
 
-// documentedCodes is every code the page's tables name, with its row.
 func documentedCodes(t *testing.T, root string) map[string][]string {
 	t.Helper()
 
@@ -396,7 +324,6 @@ func documentedCodes(t *testing.T, root string) map[string][]string {
 	return rows
 }
 
-// retiredCodes is every code the retired section names.
 func retiredCodes(t *testing.T, root string) map[string]bool {
 	t.Helper()
 
@@ -410,10 +337,6 @@ func retiredCodes(t *testing.T, root string) map[string]bool {
 	return out
 }
 
-// allocatedDigits is the leading digits the allocation table gives a meaning.
-//
-// A row naming several digits -- the unallocated one -- is read as none of
-// them: saying a digit is unallocated is the opposite of allocating it.
 func allocatedDigits(t *testing.T, root string) map[string]bool {
 	t.Helper()
 
@@ -427,12 +350,6 @@ func allocatedDigits(t *testing.T, root string) map[string]bool {
 	return out
 }
 
-// documentedBlocks is the block-to-package table, as `GOM41xx` ->
-// `internal/discover`.
-//
-// A block ends in at least one `x` and may end in more than one, because
-// ownership is not at a fixed width: `GOM720x` is internal/runner's and
-// `GOM721x` is internal/gocmd's.
 func documentedBlocks(t *testing.T, root string) map[string]string {
 	t.Helper()
 
@@ -447,8 +364,6 @@ func documentedBlocks(t *testing.T, root string) map[string]string {
 	return out
 }
 
-// tableRows is every pipe-table row of the page whose enclosing `## ` heading
-// the predicate accepts, as its trimmed cells.
 func tableRows(t *testing.T, root string, want func(heading string) bool) [][]string {
 	t.Helper()
 
@@ -476,12 +391,6 @@ func tableRows(t *testing.T, root string, want func(heading string) bool) [][]st
 	return rows
 }
 
-// splitCells divides one table row into its cells, honouring the `\|` a cell
-// uses to hold a pipe of its own.
-//
-// A naive split on every pipe reads `go test -run 'A\|B'` as two cells, and a
-// row-shape check over it reports a malformation in the document that is
-// actually one in the reader.
 func splitCells(row string) []string {
 	var cells []string
 	var current strings.Builder
@@ -501,8 +410,6 @@ func splitCells(row string) []string {
 	return cells
 }
 
-// codesInProse is every diagnostic code another page mentions, which is what
-// keeps a citation from outliving the code it cites.
 func codesInProse(t *testing.T, root, page string) []string {
 	t.Helper()
 

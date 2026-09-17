@@ -15,7 +15,6 @@ import (
 	"github.com/P4suta/go-mutants/goatest/internal/filemode"
 )
 
-// scriptedDiff answers the one git call changedLineRanges makes.
 func scriptedDiff(t *testing.T, output string, err error) {
 	t.Helper()
 	previous := gitNamesOutput
@@ -50,11 +49,6 @@ func TestChangedLineRangesReadsTheNewSideOfEveryHunk(t *testing.T) {
 	}
 }
 
-// TestChangedLineRangesIgnoresAHunkThatOnlyDeletes covers the shape a deletion
-// makes: `+13,0`, which names a line that does not exist on the new side.
-//
-// A range of zero lines would select nothing, and a range whose last line is
-// before its first is refused by the engine, so neither may reach it.
 func TestChangedLineRangesIgnoresAHunkThatOnlyDeletes(t *testing.T) {
 	root := t.TempDir()
 	writeTrackedFixture(t, root, "value.go")
@@ -68,8 +62,6 @@ func TestChangedLineRangesIgnoresAHunkThatOnlyDeletes(t *testing.T) {
 	}
 }
 
-// TestChangedLineRangesFailsClosed is the whole safety argument. Narrowing on a
-// diff that was not understood skips mutants in changed code.
 func TestChangedLineRangesFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	writeTrackedFixture(t, root, "value.go")
@@ -92,11 +84,6 @@ func TestChangedLineRangesFailsClosed(t *testing.T) {
 	}
 }
 
-// TestMutationSelectionRefusesToNarrowWhenATestChanged pins the widening
-// docs/limitations.md describes.
-//
-// A changed test can change the fate of any mutant in its package, so the lines
-// it touched say nothing about which mutants it now reaches.
 func TestMutationSelectionRefusesToNarrowWhenATestChanged(t *testing.T) {
 	t.Parallel()
 	ranges := map[string][]gomutants.LineRange{"value.go": {{First: 1, Last: 2}}}
@@ -112,8 +99,6 @@ func TestMutationSelectionRefusesToNarrowWhenATestChanged(t *testing.T) {
 	}
 }
 
-// TestMutationSelectionNarrowsNothingWithoutRanges covers the two other
-// refusals: a broad scope, and a diff that could not be read.
 func TestMutationSelectionNarrowsNothingWithoutRanges(t *testing.T) {
 	t.Parallel()
 	if narrowed := mutationSelection(impactSelection{broad: true}); narrowed != nil {

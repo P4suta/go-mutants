@@ -9,24 +9,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// What a rule nobody selected proposes, which is nothing.
-//
-// Every emitter in the walk begins by asking the matcher set for its rule and
-// carrying on only if it is there. That is not a formality: `--operator` and a
-// profile are how a user narrows a run, and a rule that proposed a candidate
-// after being deselected would put a mutant in the catalogue under a rule the
-// report says was not measured -- or, worse, under the zero rule, which has no
-// name at all and no version for an identity to be minted from.
-//
-// The invariant is stated over the whole registry rather than over the rules
-// somebody remembered to list, so a rule added without its guard is a failure
-// here rather than a surprise in a narrowed run.
-
-// selectionCorpus exercises as many families as one file can: comparisons,
-// connectives, arithmetic of both kinds, bitwise operators, a shift, a
-// negation, boolean literals, conditions, a loop, returns of every result
-// class, assignments, an increment, a call statement, a labelled branch, and an
-// `err != nil` branch.
 const selectionCorpus = `package pkg
 
 import "errors"
@@ -75,13 +57,9 @@ func fails() error { return sentinel }
 func truthy(ok bool) bool { return ok }
 `
 
-// TestARuleNobodySelectedProposesNothing is the invariant, one subtest per rule
-// in the canonical registry.
 func TestARuleNobodySelectedProposesNothing(t *testing.T) {
 	t.Parallel()
 
-	// The control: with everything selected the corpus really does produce
-	// candidates, so a subtest below that found none found none for a reason.
 	everything := scanSource(t, selectionCorpus)
 	if len(everything.candidates) == 0 {
 		t.Fatal("the corpus produces no candidates at all")
@@ -106,9 +84,6 @@ func TestARuleNobodySelectedProposesNothing(t *testing.T) {
 					t.Fatalf("%s proposed %s after being deselected", rule.Name, c.Span)
 				}
 			}
-			// And deselecting one rule takes exactly that rule's candidates
-			// away: an emitter that answered for the wrong rule would show up
-			// as a second family going quiet.
 			left := make(map[string]int)
 			for _, c := range got.candidates {
 				left[c.Rule.Name]++
@@ -126,14 +101,6 @@ func TestARuleNobodySelectedProposesNothing(t *testing.T) {
 	}
 }
 
-// TestAnErrorBranchIsOnlyTheOneThatFires is [fileScan.nilErrorBranch]'s
-// operator gate, which the family's whole point turns on.
-//
-// The rule makes an `if err != nil` branch stop firing. `err == nil` is the
-// other branch, and settling it would move the failure rather than remove it --
-// which the comparison family already covers with `eq-to-neq`. So the rule is
-// asked of `!=` alone, and a candidate on `==` would be a second rule with one
-// rule's name.
 func TestAnErrorBranchIsOnlyTheOneThatFires(t *testing.T) {
 	t.Parallel()
 
@@ -165,17 +132,12 @@ func TestAnErrorBranchIsOnlyTheOneThatFires(t *testing.T) {
 			src:  "package pkg\n\nfunc probe(xs []int) int {\n\tif xs != nil {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
 		},
 		{
-			// A concrete type that implements error is what the branch is
-			// about as much as the interface is: `if myErr != nil` is the same
-			// shape and the same convention.
 			name: "a concrete error implementor",
 			src: "package pkg\n\ntype myErr struct{}\n\nfunc (*myErr) Error() string { return \"\" }\n\n" +
 				"func probe(e *myErr) int {\n\tif e != nil {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
 			want: 1,
 		},
 		{
-			// A package that declares its own `nil` has an ordinary name here,
-			// and an ordinary comparison is not this branch.
 			name: "a nil the package declared",
 			src:  "package pkg\n\nvar nil = 0\n\nfunc probe(n int) int {\n\tif n != nil {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
 		},

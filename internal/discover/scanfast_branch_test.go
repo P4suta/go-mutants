@@ -5,10 +5,6 @@ package discover
 
 import "testing"
 
-// ifCond scans a function whose body is `if <cond> { return 1 }` over the given
-// preamble, so a test can pin whether the branch-proof phase attaches a proof
-// to an edit inside that condition. The condition body is on its own lines so
-// its brace span is stable.
 func ifCond(t *testing.T, preamble, cond string) scanned {
 	t.Helper()
 	return scanSource(t, "package pkg\n"+preamble+`
@@ -21,10 +17,6 @@ func F(a, b int, x []int, err error) int {
 `)
 }
 
-// TestOnlyDecreasingEditsCarryABranchProof pins decreasingRules: an edit that
-// narrows a condition (le-to-lt, ge-to-gt, or-to-and, nil-error-branch) carries
-// a proof, and an edit that widens it (lt-to-le, gt-to-ge, and-to-or) does not.
-// Adding or removing a row from decreasingRules flips exactly one case.
 func TestOnlyDecreasingEditsCarryABranchProof(t *testing.T) {
 	t.Parallel()
 
@@ -55,10 +47,6 @@ func TestOnlyDecreasingEditsCarryABranchProof(t *testing.T) {
 	}
 }
 
-// TestABranchProofNeedsAnInertConditionAndABody pins the three refusals in
-// branchProof past the decreasing test: the whole condition must be inert, the
-// gated body must hold a statement, and the edit must sit in an `if` or `for`
-// condition rather than anywhere else a decreasing edit can appear.
 func TestABranchProofNeedsAnInertConditionAndABody(t *testing.T) {
 	t.Parallel()
 
@@ -124,10 +112,6 @@ func TestABranchProofNeedsAnInertConditionAndABody(t *testing.T) {
 	}
 }
 
-// TestInertSelectorTellsAQualifierFromADereference pins inertSelector: a
-// package-qualified constant reads a name and is inert, a field read of a value
-// struct is inert, and a field read through a pointer may panic on nil and is
-// not — so a decreasing edit beside each is proved only for the first two.
 func TestInertSelectorTellsAQualifierFromADereference(t *testing.T) {
 	t.Parallel()
 
@@ -163,12 +147,6 @@ func TestInertSelectorTellsAQualifierFromADereference(t *testing.T) {
 	}
 }
 
-// TestInertBinaryAdmitsOnlyProvablySafeOperators pins inertBinary and the
-// analyses it defers to: a division or shift is inert only when its divisor or
-// count is a constant the compiler has folded, and an equality is inert only
-// when neither operand can reach a dynamic type. Each row is a condition around
-// a decreasing edit, so the branch proof is present exactly when the whole
-// condition is inert.
 func TestInertBinaryAdmitsOnlyProvablySafeOperators(t *testing.T) {
 	t.Parallel()
 
@@ -209,12 +187,6 @@ func TestInertBinaryAdmitsOnlyProvablySafeOperators(t *testing.T) {
 	}
 }
 
-// TestAnEqualityIsInertOnlyWhenItCannotPanic pins safelyComparable and
-// comparableWithoutPanic through the branch proof: an integer equality reads no
-// dynamic type and is inert, but an equality between interface values compiles
-// and may panic on an incomparable dynamic type and is not — so an or-to-and
-// edit whose condition holds one is proved and the other is not. A conversion
-// beside the equality stays inert, which exercises inertConversion.
 func TestAnEqualityIsInertOnlyWhenItCannotPanic(t *testing.T) {
 	t.Parallel()
 

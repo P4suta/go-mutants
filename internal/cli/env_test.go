@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// environment builds the lookup [withEnvironmentFlags] takes, out of the
-// variables a test wants set. A name that is not in the map is unset, which is
-// the case that has to be told apart from one set to the empty string.
 func environment(values map[string]string) func(string) (string, bool) {
 	return func(name string) (string, bool) {
 		value, ok := values[name]
@@ -18,16 +15,6 @@ func environment(values map[string]string) func(string) (string, bool) {
 	}
 }
 
-// TestTraceEnvironmentBecomesTheFlagOnlyForRunAndNeverAfterTheSeparator pins
-// the two boundaries the variable has to respect.
-//
-// `run` is the only command that opens a recording, so it is the only command
-// the variable may add a flag to: `--trace` on `list` is an unknown flag, and a
-// user who exported the variable once would otherwise find every other command
-// refusing to work. And everything after `--` is the test command's own argv,
-// which go-mutants passes through verbatim — inserting a flag into somebody
-// else's command line would be the one thing the separator promises never
-// happens.
 func TestTraceEnvironmentBecomesTheFlagOnlyForRunAndNeverAfterTheSeparator(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -128,12 +115,6 @@ func TestTraceEnvironmentBecomesTheFlagOnlyForRunAndNeverAfterTheSeparator(t *te
 	}
 }
 
-// TestAnExplicitTraceFlagWinsOverTheEnvironment keeps the command line the
-// last word.
-//
-// A job may export the variable for every step it cannot add a flag to, and a
-// nested invocation inside one has to be able to say something else — including
-// a different directory — without unsetting a variable it does not own.
 func TestAnExplicitTraceFlagWinsOverTheEnvironment(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -154,12 +135,6 @@ func TestAnExplicitTraceFlagWinsOverTheEnvironment(t *testing.T) {
 	}
 }
 
-// TestTraceEnvironmentZeroFalseAndEmptyAskForNothing covers the spellings that
-// mean "no".
-//
-// The empty string is the one worth writing down: `GO_MUTANTS_TRACE=` in a CI
-// configuration is how a job switches an inherited request off, and reading it
-// as a directory name would make every run trace into the workspace root.
 func TestTraceEnvironmentZeroFalseAndEmptyAskForNothing(t *testing.T) {
 	args := []string{"run", "--no-tui"}
 	for _, value := range []string{"", "0", "false"} {

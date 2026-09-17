@@ -16,15 +16,6 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// testCoveragePhase is [session.coveragePhase] for `test.narrowing = "test"`:
-// it profiles every test on its own and runs each mutant against only the
-// tests that reach it, rather than against every binary that does.
-//
-// It fails open exactly as the binary-level pass does. A profiling run that
-// could not happen, a profile that will not render, or a mapping that lines up
-// with nothing is a warning and a run with coverage off, never a failed run:
-// coverage-guided selection is an optimisation, and a run without it reaches
-// the same verdicts more slowly.
 func (s *session) testCoveragePhase(
 	ctx context.Context,
 	opts execute.Options,
@@ -59,17 +50,6 @@ func (s *session) testCoveragePhase(
 	return covered, result, nil
 }
 
-// narrowToTests turns the per-test profiles into the runs to execute.
-//
-// It splits the test binaries into two kinds. A binary all of whose tests pass
-// on their own is *clean*: its mutants are narrowed to the tests that reach
-// them, and each such set is checked with a control — the same tests, no
-// mutant — before it is trusted, so that a set which passes test by test but
-// fails together does not turn into a false kill. A binary any of whose tests
-// fails on its own is *dirty*: its tests cannot be isolated soundly, so its
-// mutants run against the whole binary, exactly as the package-level pass runs
-// them. That is the safe reading, and it is the difference between narrowing a
-// run and misreporting one.
 func (s *session) narrowToTests(
 	ctx context.Context,
 	opts execute.Options,
@@ -82,8 +62,6 @@ func (s *session) narrowToTests(
 ) ([]execute.MutantRun, coverageResult, error) {
 	index := binaryIndex(bins)
 
-	// A binary is dirty if any of its tests did not pass alone. Those tests
-	// are named in one warning and left out of the narrowing.
 	dirty := make(map[string]bool)
 	profiled := make(map[string]bool)
 	var orderDependent []string
@@ -94,12 +72,6 @@ func (s *session) narrowToTests(
 			orderDependent = append(orderDependent, data.ImportPath+" "+data.Name)
 		}
 	}
-	// A binary whose whole is profiled rather than narrowed to its tests: one
-	// with a test that fails alone, and one with no runnable tests at all,
-	// which CollectTestCoverage returns nothing for. The second contributes no
-	// coverage either way, but profiling its whole keeps the test-narrowed
-	// profile set the same as the package-level pass's rather than missing a
-	// binary the mapping was entitled to see.
 	whole := make(map[string]bool)
 	for _, bin := range bins {
 		if dirty[bin.ImportPath] || !profiled[bin.ImportPath] {
@@ -118,7 +90,6 @@ func (s *session) narrowToTests(
 		return nil, coverageResult{}, err
 	}
 
-	// The tests of clean binaries, each profiled on its own.
 	testProfiles := make(map[coverage.TestKey]coverage.Profile)
 	for _, data := range collected {
 		if !data.Passed || whole[data.ImportPath] {
@@ -131,9 +102,6 @@ func (s *session) narrowToTests(
 		testProfiles[coverage.TestKey{ImportPath: data.ImportPath, Name: data.Name}] = profile
 	}
 
-	// The whole-binary profile of each dirty binary, so a mutant reached only
-	// by an order-dependent test is still executed rather than reported
-	// uncovered.
 	binProfiles, err := s.wholeBinaryProfiles(ctx, opts, scratch, profileDir, bins, whole)
 	if err != nil {
 		return nil, coverageResult{}, err
@@ -161,9 +129,6 @@ func (s *session) narrowToTests(
 		}
 	}
 
-	// One plan per mutant, and a control for every distinct set of tests a plan
-	// narrows to, built before any mutant runs so a set that fails together is
-	// known before its verdicts are.
 	plans := narrowingPlans(runs, testMapped, binMapped)
 	verifier := newSetVerifier()
 	for _, run := range runs {
@@ -182,14 +147,11 @@ func (s *session) narrowToTests(
 	return covered, result, nil
 }
 
-// A mutantPlan is where the two mappings placed one mutant: the tests of clean
-// binaries that reach it, and the dirty binaries that reach it and run whole.
 type mutantPlan struct {
 	tests    map[string][]string
 	binaries []string
 }
 
-// narrowingPlans places every mutant the mappings were asked about.
 func narrowingPlans(runs []execute.MutantRun, testMapped coverage.TestResult, binMapped coverage.Result) map[string]mutantPlan {
 	plans := make(map[string]mutantPlan, len(runs))
 	for _, run := range runs {
@@ -206,13 +168,6 @@ func narrowingPlans(runs []execute.MutantRun, testMapped coverage.TestResult, bi
 	return plans
 }
 
-// decideRuns turns the plans and the control verdicts into the runs to execute.
-//
-// It is pure and split out for that reason: everything above it profiles, maps
-// and checks against a toolchain, and everything in here is the rule that
-// decides, for one mutant, which tests it runs against — narrowed when the set
-// is reliable, widened to the whole covering binaries when it is not, and filed
-// as an uncovered survivor when nothing reaches it.
 func (s *session) decideRuns(
 	index map[string]int,
 	runs []execute.MutantRun,
@@ -241,17 +196,11 @@ func (s *session) decideRuns(
 	widened := 0
 	for _, run := range runs {
 		p := plans[run.ID]
-		// A set the control could not trust is dropped, and the mutant runs
-		// against the whole binaries that reach it instead — the same reading
-		// the package-level pass gives.
 		usable := p.tests
 		if len(p.tests) > 0 && !reliable.ok(p.tests) {
 			usable = nil
 			widened++
 		}
-		// The binaries are the same whether the mutant is narrowed or widened:
-		// widening drops the test selection, not the binaries the tests
-		// belonged to. Only Tests tells the two apart.
 		binaries := coveringBinaries(p.tests, p.binaries)
 		if asked[run.ID] {
 			s.recordTestCoverage(placed[run.ID], binaries, usable)
@@ -284,8 +233,6 @@ func (s *session) decideRuns(
 	return covered, result
 }
 
-// coveringBinaries is the set of import paths a mutant is measured against: the
-// binaries the narrowed tests belong to, plus the dirty binaries run whole.
 func coveringBinaries(tests map[string][]string, dirty []string) []string {
 	seen := make(map[string]bool, len(tests)+len(dirty))
 	var paths []string
@@ -305,10 +252,6 @@ func coveringBinaries(tests map[string][]string, dirty []string) []string {
 	return paths
 }
 
-// recordTestCoverage writes one coverage-map event for a mutant the mapping was
-// asked about, naming the binaries it is measured against and the tests it was
-// narrowed to — the decision as it stands after any widening, not the mapping
-// before it.
 func (s *session) recordTestCoverage(m coverage.Mutant, binaries []string, tests map[string][]string) {
 	s.trace.Coverage(trace.CoverageRecord{
 		MutantID:      m.ID,
@@ -321,7 +264,6 @@ func (s *session) recordTestCoverage(m coverage.Mutant, binaries []string, tests
 	})
 }
 
-// makeProfileDir creates the directory the rendered profiles are written into.
 func (s *session) makeProfileDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return &Error{
@@ -333,8 +275,6 @@ func (s *session) makeProfileDir(dir string) error {
 	return nil
 }
 
-// testLabels flattens a selection into sorted `<import path> <name>` labels, as
-// a recording carries them.
 func testLabels(tests map[string][]string) []string {
 	if len(tests) == 0 {
 		return nil
@@ -349,10 +289,6 @@ func testLabels(tests map[string][]string) []string {
 	return labels
 }
 
-// wholeBinaryProfiles renders the whole-binary profile of every binary that is
-// not narrowed to its tests: one with an order-dependent test, so that a mutant
-// reached only by that test is executed rather than reported uncovered, and one
-// with no runnable tests, so the profile set matches the package-level pass's.
 func (s *session) wholeBinaryProfiles(
 	ctx context.Context,
 	opts execute.Options,
@@ -386,8 +322,6 @@ func (s *session) wholeBinaryProfiles(
 	return profiles, nil
 }
 
-// warnTests publishes one warning naming a list of tests, and records the same
-// list as a note, so a recording carries what the console said.
 func (s *session) warnTests(code coverage.Code, note, message string, tests []string) {
 	s.warnDetail(string(code), message+": "+strings.Join(tests, ", "), strings.Join(tests, "\n"))
 	s.trace.Note(note, "", strings.Join(tests, "\n"))

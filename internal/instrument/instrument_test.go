@@ -20,53 +20,24 @@ import (
 )
 
 const (
-	// testModule is the module path the fixtures are instrumented against. It
-	// decides the generated runtime's import path and so appears in every
-	// golden file.
 	testModule = "example.com/mini"
-	// sampleFile is the module-relative path every fixture is written to.
 	sampleFile = "sample.go"
 )
 
-// TestInstrumentGolden pins the instrumented bytes of every shape the three
-// rewrite forms have to handle.
-//
-// Byte-exact fixtures are the right assertion here rather than a structural
-// one. The output has to compile, preserve lines, and preserve every byte it
-// did not deliberately change, and a test that re-derived what it expected
-// would re-derive the same mistake; a fixture a human read once and a diff on
-// every later change is what actually catches a guard that grew a newline or
-// an import that moved.
 func TestInstrumentGolden(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		// candidates overrides the fixture's catalogue. Nil means every
-		// comparison and boolean literal in the file, which is what discovery
-		// would produce.
+		name       string
 		candidates func(t *testing.T, src []byte) []mutation.Candidate
-		// hints are the answers the fixture's guard hints need beyond its own
-		// syntax: what a short declaration declares, and which of its
-		// bool-valued expressions are of a named boolean type. See
-		// [hintOptions].
-		hints hintOptions
-		// sibling names the file the fixture's ".sibling" half is written to,
-		// for a fixture whose point is what the rest of its package holds.
-		// Empty means the fixture is one file on its own.
-		sibling string
-		// guards is the expected number of rewrite sites, which is not the
-		// number of mutants.
-		guards int
-		// extra asserts whatever else this fixture exists to prove.
-		extra func(t *testing.T, in, out []byte)
+		hints      hintOptions
+		sibling    string
+		guards     int
+		extra      func(t *testing.T, in, out []byte)
 	}{{
 		name:   "comparison",
 		guards: 1,
 		extra: func(t *testing.T, _, out []byte) {
-			// The parenthesized import list keeps its shape: the new import is
-			// inserted just inside the "(", so "fmt" and "strings" stay on the
-			// lines and in the order the author wrote them.
 			assertContains(t, out, `import (__gm "example.com/mini/gomutants_rt";`)
 			assertContains(t, out, "\n\t\"fmt\"\n\t\"strings\"\n)")
 		},
@@ -74,7 +45,6 @@ func TestInstrumentGolden(t *testing.T) {
 		name:   "boolliteral",
 		guards: 2,
 		extra: func(t *testing.T, _, out []byte) {
-			// A single unparenthesized import is parenthesized in place.
 			assertContains(t, out, `import ("strings"; __gm "example.com/mini/gomutants_rt")`)
 		},
 	}, {
@@ -82,10 +52,7 @@ func TestInstrumentGolden(t *testing.T) {
 		candidates: everyAlternative,
 		guards:     1,
 		extra: func(t *testing.T, _, out []byte) {
-			// A file with no imports gets one on its package clause.
 			assertContains(t, out, `package sample; import __gm "example.com/mini/gomutants_rt"`)
-			// Five mutants, one guard: the alternatives chain rather than
-			// nesting five rewrites of the same bytes.
 			for i := range 5 {
 				assertContains(t, out, fmt.Sprintf("__gm.M[%d] && (", i))
 			}
@@ -94,9 +61,6 @@ func TestInstrumentGolden(t *testing.T) {
 		name:   "nested",
 		guards: 6,
 		extra: func(t *testing.T, _, out []byte) {
-			// The enclosing site's mutated copies are rendered from the
-			// pristine source, so they carry no inner guard; the branch that
-			// keeps the original does carry them.
 			assertContains(t, out, "&& ((a>b)!=(c>d))")
 			assertContains(t, out, "&& (((__gm.M[")
 		},
@@ -104,14 +68,7 @@ func TestInstrumentGolden(t *testing.T) {
 		name:   "multiline",
 		guards: 2,
 		extra: func(t *testing.T, in, out []byte) {
-			// A guard is written onto the first and last line of its site and
-			// nowhere else, so every line strictly inside a multi-line site —
-			// and every line outside one — survives byte for byte. The touched
-			// lines are the package clause, which took the import, and the
-			// first and last line of each of the two sites.
 			assertLinesUntouched(t, in, out, 5, 10, 12, 18, 19)
-			// The flattened copy cannot keep a line comment; the branch holding
-			// the original keeps it exactly where it was.
 			assertContains(t, out, "(x<limit)")
 			assertContains(t, out, "(x <= // the limit is inclusive")
 		},
@@ -126,8 +83,6 @@ func TestInstrumentGolden(t *testing.T) {
 		name:   "aliascollision",
 		guards: 2,
 		extra: func(t *testing.T, _, out []byte) {
-			// __gm is declared at file scope and __gm1 inside a function, so
-			// the alias bumps past both.
 			assertContains(t, out, `import __gm2 "example.com/mini/gomutants_rt"`)
 			assertContains(t, out, "__gm2.M[0]")
 			if bytes.Contains(out, []byte("__gm.M[")) || bytes.Contains(out, []byte("__gm1.M[")) {
@@ -139,26 +94,10 @@ func TestInstrumentGolden(t *testing.T) {
 		candidates: statementEdits,
 		guards:     4,
 		extra: func(t *testing.T, in, out []byte) {
-			// One return, two mutants, one guard: the families differ and the
-			// statement does not, which is all a chain of alternatives is
-			// about.
 			assertContains(t, out, "if __gm.M[0] { return 0,err } else if __gm.M[1] { return count,nil } else { return count, err }")
-			// The deletion renders as the empty branch, which is what "this
-			// statement does not run" has to mean, and it chains with the
-			// operator swap on the same statement whatever family either is.
 			assertContains(t, out, "if __gm.M[4] { } else if __gm.M[5] { *counter= *counter-2 } else { *counter = *counter + 2 }")
-			// A `defer` is wrapped whole. The guard's block does not change
-			// when it fires, because `defer` is scoped to the function.
 			assertContains(t, out, "if __gm.M[3] { defer done(*counter-1) } else { defer done(*counter + 1) }")
-			// The three-line assignment keeps its two interior lines byte for
-			// byte: the guard writes on the statement's first and last line and
-			// the flattened copy it carries holds no line break at all. Line 31
-			// (0-based 30) is the middle of the site and is untouched.
 			assertContains(t, out, "{ total=total-step*2-1 } else { total = total +\n")
-			// And line 29 is the `for` this fixture's guarded statement is
-			// inside: a counted loop declares its two locals in front of the
-			// loop and tests them at the top of the body, both on the loop's
-			// own line. See ADR 0013.
 			assertContains(t, out, "__gm_n0, __gm_k0 := uint64(0), __gm.Limit[0]; for _, step := range steps {")
 			assertLinesUntouched(t, in, out, 6, 16, 28, 29, 31, 44, 45)
 		},
@@ -168,30 +107,15 @@ func TestInstrumentGolden(t *testing.T) {
 		hints:      hintOptions{declared: declaredTypes()},
 		guards:     7,
 		extra: func(t *testing.T, _, out []byte) {
-			// Both names are hoisted out in front of the guard, in source
-			// order, and the `:=` inside it is downgraded to an assignment: the
-			// right-hand side is the user's own bytes either way.
 			assertContains(t, out, "var lo int; var hi int; if __gm.M[")
 			assertContains(t, out, "else { lo, hi = n/2, n-n/2 }")
-			// A `var` with an explicit type loses the keyword and the type,
-			// which the guard writes back in front of itself from the hint.
 			assertContains(t, out, "var scaled int; if __gm.M[")
 			assertContains(t, out, "else {  scaled  = v * 3 }")
-			// The blank identifier is not a name to declare and is not one to
-			// drop either: the assignment keeps the left-hand side as written.
 			assertContains(t, out, "var head int; if __gm.M[")
 			assertContains(t, out, "else { head, _ = values[0], len(values)-1 }")
-			// The parenthesized block keeps every line it had: the keyword and
-			// the parentheses are cut out where they stand, which leaves the
-			// specs as assignments on their own lines, and the flattened copies
-			// carry the semicolons those line breaks stood for.
 			assertContains(t, out, "var low int; var high int; if __gm.M[")
 			assertContains(t, out, "{ low=values[0]+1;high=values[len(values)-1]+1 }")
 			assertContains(t, out, "else {  \n\t\tlow  = values[0] - 1\n\t\thigh = values[len(values)-1] + 1\n\t }")
-			// An expression site inside a declaration site: the original branch
-			// carries the guard the nested site produced, and the declaration's
-			// own mutated copy is rendered from the pristine bytes and carries
-			// none.
 			assertContains(t, out, "{ weight=cost(a>b)-1 } else { weight = cost((__gm.M[")
 		},
 	}, {
@@ -199,12 +123,8 @@ func TestInstrumentGolden(t *testing.T) {
 		candidates: mixedFormEdits,
 		guards:     4,
 		extra: func(t *testing.T, _, out []byte) {
-			// Side by side: an expression guard in the condition, a statement
-			// guard in the body it decides.
 			assertContains(t, out, "if (__gm.M[0] && (v>=limit) || !(__gm.M[0]) && (v > limit)) {")
 			assertContains(t, out, "if __gm.M[1] { v=limit+1 } else { v = limit - 1 }")
-			// Nested: the statement guard's original branch carries the
-			// expression guard, and its own mutated copy carries none.
 			assertContains(t, out, "if __gm.M[3] { return a>b,a+b } else { return (__gm.M[2] && (a>=b) || !(__gm.M[2]) && (a > b)), a - b }")
 		},
 	}, {
@@ -213,10 +133,6 @@ func TestInstrumentGolden(t *testing.T) {
 		hints:      hintOptions{namedBool: namedBoolExprs()},
 		guards:     2,
 		extra: func(t *testing.T, _, out []byte) {
-			// Form S, not Form C: a selector would evaluate to `bool`, which is
-			// not assignable to Flag. Both guards are chains of returns, so
-			// each is a terminating statement and each function still ends in
-			// one.
 			assertContains(t, out, "if __gm.M[0] { return x>=y } else { return x > y }")
 			assertContains(t, out, "if __gm.M[1] { return false } else { return true }")
 			if bytes.Contains(out, []byte("&& (")) {
@@ -228,11 +144,6 @@ func TestInstrumentGolden(t *testing.T) {
 		sibling: "sibling.go",
 		guards:  1,
 		extra: func(t *testing.T, _, out []byte) {
-			// Nothing in this file binds __gm or __gm1. The sibling binds both
-			// in the package block, where a file-scoped import alias of the
-			// same name is a redeclaration rather than a shadow — "__gm already
-			// declared through import of package …" — so the alias has to bump
-			// past names this file cannot see.
 			assertContains(t, out, `import __gm2 "example.com/mini/gomutants_rt"`)
 			assertContains(t, out, "__gm2.M[0]")
 			if bytes.Contains(out, []byte("__gm.M[")) || bytes.Contains(out, []byte("__gm1.M[")) {
@@ -281,15 +192,6 @@ func TestInstrumentGolden(t *testing.T) {
 	}
 }
 
-// TestInstrumentPreservesCRLFOutsideTheGuards instruments a file with Windows
-// line endings.
-//
-// The fixture is synthesised here rather than committed, because the repository
-// checks out byte-exact and forbids a committed CRLF file — see .gitattributes,
-// where the reason is the same one this test is about. Converting both the
-// input and the expected output is exact: every line break in the instrumented
-// file comes from bytes the guard copied verbatim, so a CRLF input produces the
-// CRLF form of the same golden and nothing else moves.
 func TestInstrumentPreservesCRLFOutsideTheGuards(t *testing.T) {
 	t.Parallel()
 
@@ -297,10 +199,6 @@ func TestInstrumentPreservesCRLFOutsideTheGuards(t *testing.T) {
 		name       string
 		candidates func(*testing.T, []byte) []mutation.Candidate
 	}{
-		// Both fixtures whose sites span lines, one per form that can hold a
-		// line break in the branch that keeps the original: the expression
-		// guard's multi-line condition and the statement guard's multi-line
-		// assignment.
 		{name: "multiline"},
 		{name: "statement", candidates: statementEdits},
 	} {
@@ -328,22 +226,6 @@ func TestInstrumentPreservesCRLFOutsideTheGuards(t *testing.T) {
 	}
 }
 
-// TestInstrumentPreservesCRLF is the claim above stated over every input this
-// package has, and stated as an equality rather than as a count.
-//
-// [TestInstrumentPreservesCRLFOutsideTheGuards] converts two fixtures and
-// compares each against its own converted golden, which is exact and is also
-// two fixtures. What a byte rewriter promises is stronger and is the same
-// sentence for every file it is given: the instrumented CRLF file is the
-// instrumented LF file with every line break converted, and nothing else moved.
-// So both are instrumented here and the two outputs are compared directly —
-// which needs no golden of its own, and therefore covers the fixtures nobody
-// wrote a CRLF golden for.
-//
-// It is the unit-level half of the corpus's CRLF module: `internal/engine`'s
-// TestCRLFSourcesAreInstrumentedByteForByteAndKilled runs a whole CRLF workspace
-// through a real toolchain and requires the same kills as its LF twin, and this
-// says which bytes that rests on.
 func TestInstrumentPreservesCRLF(t *testing.T) {
 	t.Parallel()
 
@@ -360,19 +242,9 @@ func TestInstrumentPreservesCRLF(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			// Every fixture is catalogued the same way — every comparison and
-			// every boolean literal — rather than through the per-fixture edit
-			// tables the golden test uses. What is being compared is one file
-			// against the same file in other line endings, so any catalogue
-			// that is derived from the bytes in front of it is a fair one, and
-			// the shared derivation is what lets this cover every input rather
-			// than the four with a table.
 			lf := testkit.ReadFile(t, input)
 			crlf := toCRLF(lf)
 
-			// The candidates are derived from each version's own bytes: a span
-			// is a byte offset, and a carriage return before every line break
-			// moves every offset after the first one.
 			out := instrumentOne(t, sampleFile, lf)
 			converted := instrumentOne(t, sampleFile, crlf)
 
@@ -387,7 +259,6 @@ func TestInstrumentPreservesCRLF(t *testing.T) {
 	}
 }
 
-// instrumentOne instruments one file on its own and returns the bytes written.
 func instrumentOne(t *testing.T, name string, source []byte) []byte {
 	t.Helper()
 	root := t.TempDir()
@@ -396,9 +267,6 @@ func instrumentOne(t *testing.T, name string, source []byte) []byte {
 	return testkit.ReadFile(t, filepath.Join(root, name))
 }
 
-// TestInstrumentLeavesUncatalogedFilesAlone proves the instrumenter edits
-// where the catalogue points and nowhere else. A file full of comparisons that
-// no mutant names must come back byte-identical, down to its line endings.
 func TestInstrumentLeavesUncatalogedFilesAlone(t *testing.T) {
 	t.Parallel()
 
@@ -423,22 +291,6 @@ func TestInstrumentLeavesUncatalogedFilesAlone(t *testing.T) {
 	}
 }
 
-// TestInstrumentReplacesAReadOnlyFile instruments a snapshot file that cannot
-// be written to, which is a shape real snapshots produce.
-//
-// internal/snapshot copies POSIX permission bits verbatim, so a repository
-// holding a read-only .go file — Perforce marks unopened files read-only, some
-// generators emit 0444, `chmod -w` is a convention in some trees — hands the
-// instrumenter one too, and its own documentation says that is safe "only
-// because every rewrite in go-mutants is a write to a temporary file followed
-// by an atomic rename". This is the test that makes the sentence true: a rename
-// needs write permission on the directory and none on the file being replaced,
-// where an in-place write would fail EACCES for anybody but root and abort a
-// whole run before a single mutant was built.
-//
-// The assertions are the same everywhere, but only POSIX enforces the mode.
-// Where it is advisory the test still passes and simply proves less, which is
-// the honest form: insisting otherwise would be testing the filesystem.
 func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 	t.Parallel()
 
@@ -450,8 +302,6 @@ func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 	if err := os.Chmod(target, 0o444); err != nil {
 		t.Skipf("this filesystem does not take a read-only mode: %v", err)
 	}
-	// Registered after the temporary directory's own cleanup and so run before
-	// it: a read-only file left behind can defeat the removal on Windows.
 	t.Cleanup(func() { _ = os.Chmod(target, 0o600) })
 
 	result := instrumentSnapshot(t, root, catalogOf(t, candidatesFor(t, nil, in)))
@@ -459,16 +309,11 @@ func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 		t.Errorf("GuardsByFile[%s] = %d, want 1", sampleFile, got)
 	}
 
-	// The same bytes a writable file produces: the mode decides how the write
-	// happens and nothing else about it.
 	out := testkit.ReadFile(t, target)
 	if want := testkit.ReadFile(t, filepath.Join("testdata", "comparison.golden")); !bytes.Equal(out, want) {
 		t.Errorf("a read-only file instrumented to different bytes than a writable one\n--- got ---\n%s\n--- want ---\n%s", out, want)
 	}
 
-	// The replacement carries the mode of the file it replaced. The snapshot is
-	// disposable, but relaxing what its files allow is still a change nobody
-	// asked for, and one that would hide the next regression of this kind.
 	info, err := os.Stat(target)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
@@ -477,8 +322,6 @@ func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 		t.Errorf("the instrumented file has mode %v, want the read-only mode it was given", info.Mode().Perm())
 	}
 
-	// The temporary file the rewrite went through is gone: the next phase
-	// digests this tree and builds it, and neither wants to meet it.
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatalf("reading the snapshot root: %v", err)
@@ -490,14 +333,6 @@ func TestInstrumentReplacesAReadOnlyFile(t *testing.T) {
 	}
 }
 
-// TestInstrumentIsDeterministic instruments two fresh copies of one snapshot
-// and compares every byte of both.
-//
-// Two copies rather than two passes: instrumentation is deterministic, not
-// idempotent, and re-running it over its own output would find bytes the
-// catalogue no longer describes. Determinism is what shard merging and the
-// outcome cache rest on — the same catalogue must produce the same tree on
-// every machine that instruments it.
 func TestInstrumentIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -506,10 +341,6 @@ func TestInstrumentIsDeterministic(t *testing.T) {
 		candidates func(*testing.T, []byte) []mutation.Candidate
 		hints      hintOptions
 	}{
-		// One fixture per shape whose rendering has an order in it that could
-		// have come out of a map: nested expression sites, a chain of
-		// alternatives from two families, and the declarations a Form D guard
-		// hoists out in front of itself.
 		{name: "nested"},
 		{name: "statement", candidates: statementEdits},
 		{name: "declaration", candidates: declarationEdits, hints: hintOptions{declared: declaredTypes()}},
@@ -547,8 +378,6 @@ func TestInstrumentIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestInstrumentReportsWhatItDid pins the contract of [instrument.Result] on a
-// catalogue spanning two files.
 func TestInstrumentReportsWhatItDid(t *testing.T) {
 	t.Parallel()
 
@@ -573,8 +402,6 @@ func TestInstrumentReportsWhatItDid(t *testing.T) {
 	if got, want := result.RuntimeImport, testModule+"/gomutants_rt"; got != want {
 		t.Errorf("RuntimeImport = %q, want %q", got, want)
 	}
-	// Catalogue order, which is path order: "pkg/second.go" sorts before
-	// "sample.go".
 	if got, want := result.FilesInstrumented, []string{second, sampleFile}; !equalStrings(got, want) {
 		t.Errorf("FilesInstrumented = %v, want %v", got, want)
 	}
@@ -583,8 +410,6 @@ func TestInstrumentReportsWhatItDid(t *testing.T) {
 	}
 }
 
-// candidatesFor resolves a fixture's catalogue, defaulting to every comparison
-// and boolean literal in the file.
 func candidatesFor(t *testing.T, override func(*testing.T, []byte) []mutation.Candidate, src []byte) []mutation.Candidate {
 	t.Helper()
 	if override != nil {
@@ -593,10 +418,6 @@ func candidatesFor(t *testing.T, override func(*testing.T, []byte) []mutation.Ca
 	return candidatesIn(t, src)
 }
 
-// comparisonRules pairs each comparison operator with the rule that rewrites
-// it, exactly as internal/discover does. It is spelled out again here so that
-// the fixtures' catalogues are the test's own statement of what discovery
-// produces rather than a call into the code under test's neighbour.
 var comparisonRules = map[token.Token]struct{ rule, replacement string }{
 	token.EQL: {"eq-to-neq", "!="},
 	token.NEQ: {"neq-to-eq", "=="},
@@ -606,14 +427,11 @@ var comparisonRules = map[token.Token]struct{ rule, replacement string }{
 	token.GEQ: {"ge-to-gt", ">"},
 }
 
-// booleanRules is the boolean-literal family, keyed by the literal.
 var booleanRules = map[string]struct{ rule, replacement string }{
 	"true":  {"true-to-false", "false"},
 	"false": {"false-to-true", "true"},
 }
 
-// candidatesIn produces the candidates discovery would find in src: every
-// comparison operator and every boolean literal.
 func candidatesIn(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 
@@ -652,16 +470,6 @@ func candidatesIn(t *testing.T, src []byte) []mutation.Candidate {
 	return out
 }
 
-// everyAlternative points every comparison rule that can produce a distinct
-// edit at the fixture's single operator, so that one rewrite site carries a
-// whole chain of alternatives.
-//
-// Five, not six: the operator in the fixture is "<", and le-to-lt would write
-// "<" over "<", which the catalogue rejects as a no-op rather than catalogue an
-// edit that changes nothing. The rules are otherwise applied to an operator
-// they were not written for, which the instrumenter neither knows nor needs to:
-// a rewrite site is decided by the operator family and the syntax, and what a
-// rule is named is the catalogue's business.
 func everyAlternative(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 
@@ -687,7 +495,6 @@ func everyAlternative(t *testing.T, src []byte) []mutation.Candidate {
 	return out
 }
 
-// lookupRule resolves a rule name against the canonical registry.
 func lookupRule(t *testing.T, name string) mutation.Rule {
 	t.Helper()
 	rule, ok := mutation.CanonicalRegistry().Lookup(name)
@@ -697,7 +504,6 @@ func lookupRule(t *testing.T, name string) mutation.Rule {
 	return rule
 }
 
-// catalogOf builds a catalogue from candidates.
 func catalogOf(t *testing.T, candidates []mutation.Candidate) *mutation.Catalog {
 	t.Helper()
 	builder := mutation.NewBuilder()
@@ -711,16 +517,11 @@ func catalogOf(t *testing.T, candidates []mutation.Candidate) *mutation.Catalog 
 	return catalog
 }
 
-// instrumentSnapshot runs the instrumenter over a snapshot and fails the test
-// if it refuses. The guard hints are derived from the snapshot itself; see
-// hints_test.go for what that derivation is and is not.
 func instrumentSnapshot(t *testing.T, root string, catalog *mutation.Catalog) instrument.Result {
 	t.Helper()
 	return instrumentSnapshotWith(t, root, catalog, hintOptions{})
 }
 
-// instrumentSnapshotWith is [instrumentSnapshot] for a fixture that has to
-// state something about its own types.
 func instrumentSnapshotWith(
 	t *testing.T,
 	root string,
@@ -731,8 +532,6 @@ func instrumentSnapshotWith(
 	return instrumentSnapshotHinted(t, root, catalog, hintsFor(t, root, catalog, opts))
 }
 
-// instrumentSnapshotHinted is [instrumentSnapshot] for a caller that assembled
-// the hints itself, which a tree of several fixtures has to.
 func instrumentSnapshotHinted(
 	t *testing.T,
 	root string,
@@ -752,9 +551,6 @@ func instrumentSnapshotHinted(
 	return result
 }
 
-// declaredTypes is what the declaration fixture's short declarations declare.
-// It is stated once here because both the golden test and the compile test have
-// to hand it to the hint derivation.
 func declaredTypes() map[string]string {
 	return map[string]string{
 		"lo": "int", "hi": "int", "scaled": "int", "step": "int", "head": "int",
@@ -762,17 +558,8 @@ func declaredTypes() map[string]string {
 	}
 }
 
-// namedBoolExprs is the same for the named boolean fixture: the expressions
-// whose type is [Flag] rather than the universe bool.
 func namedBoolExprs() []string { return []string{"x > y", "true"} }
 
-// The edit tables of the fixtures whose catalogues are not "every comparison
-// and boolean literal". Each states the rule, the bytes it replaces, and what
-// it writes, exactly as internal/discover would have proposed them.
-
-// statementEdits catalogues the statement fixture: a return carrying two
-// families at once, an operator inside a multi-line assignment, one inside a
-// deferred call, and a statement that is both swapped and deleted.
 func statementEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -785,8 +572,6 @@ func statementEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// declarationEdits catalogues the declaration fixture: two names, one name, an
-// explicit type, and a blank identifier.
 func declarationEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -802,8 +587,6 @@ func declarationEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// mixedFormEdits catalogues the fixture where the forms meet: a comparison and
-// a statement side by side, and a comparison inside a statement.
 func mixedFormEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -814,8 +597,6 @@ func mixedFormEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// namedBoolEdits catalogues the named boolean fixture: the comparison and the
-// literal that a selector cannot produce the type of.
 func namedBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
 	t.Helper()
 	return editsIn(t, src,
@@ -824,8 +605,6 @@ func namedBoolEdits(t *testing.T, src []byte) []mutation.Candidate {
 	)
 }
 
-// assertWellFormed runs the invariants every instrumented file must hold,
-// whatever the fixture.
 func assertWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catalog) {
 	t.Helper()
 
@@ -835,8 +614,6 @@ func assertWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catalog) {
 	if got, want := instrument.CountLines(out), instrument.CountLines(in); got != want {
 		t.Errorf("the instrumented file holds %d line breaks, the original holds %d", got, want)
 	}
-	// The package's own predicate, applied to the file-sized edit the whole
-	// rewrite amounts to.
 	whole := []instrument.Splice{{
 		Span:        mutation.Span{StartByte: 0, EndByte: uint32(len(in))},
 		Original:    in,
@@ -846,21 +623,12 @@ func assertWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catalog) {
 		t.Error("the rewrite is not line-preserving")
 	}
 
-	// Every mutant's own bytes are still on the line they were written on, and
-	// its activation flag is somewhere in the file. Together these say the
-	// guard went where the mutant is rather than merely somewhere.
 	inLines, outLines := lines(in), lines(out)
 	for _, m := range catalog.Mutants() {
 		line := instrument.CountLines(in[:m.Span.StartByte])
 		if line >= len(outLines) {
 			t.Fatalf("mutant %s starts past the end of the file", m.DisplayID)
 		}
-		// The first line of the mutant's own bytes, because a mutant's span is
-		// not always one line: `return-err-to-nil` over a returned call takes
-		// the whole expression, function literal and all. Asking a single line
-		// to hold every byte of a multi-line original is a question with no
-		// true answer, and until a fixture had one this read as though it were
-		// checking the whole thing.
 		head := m.Original
 		if cut := strings.IndexByte(head, '\n'); cut >= 0 {
 			head = head[:cut]
@@ -875,13 +643,6 @@ func assertWellFormed(t *testing.T, in, out []byte, catalog *mutation.Catalog) {
 	}
 }
 
-// assertLinesUntouched checks that every line except the named ones came
-// through the rewrite byte for byte.
-//
-// It is the sharp form of line preservation: equal line counts say the file
-// still has the same number of lines, while this says line N of the output is
-// line N of the input wherever nothing was inserted, which is what a coverage
-// record, a panic trace, and a reported mutant coordinate all depend on.
 func assertLinesUntouched(t *testing.T, in, out []byte, touched ...int) {
 	t.Helper()
 
@@ -906,8 +667,6 @@ func assertLinesUntouched(t *testing.T, in, out []byte, touched ...int) {
 	}
 }
 
-// assertContains fails the test when out is missing a fragment the fixture is
-// about, quoting the whole file: a golden diff is unreadable without it.
 func assertContains(t *testing.T, out []byte, want string) {
 	t.Helper()
 	if !bytes.Contains(out, []byte(want)) {
@@ -915,18 +674,14 @@ func assertContains(t *testing.T, out []byte, want string) {
 	}
 }
 
-// lines splits a buffer into lines, keeping neither the "\n" nor a trailing
-// empty line.
 func lines(b []byte) []string {
 	return strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n"), "\n")
 }
 
-// toCRLF rewrites LF line endings as CRLF.
 func toCRLF(b []byte) []byte {
 	return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
 }
 
-// equalStrings compares two string slices element by element.
 func equalStrings(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -939,7 +694,6 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
-// equalCounts compares two path-to-count maps.
 func equalCounts(got, want map[string]int) bool {
 	if len(got) != len(want) {
 		return false

@@ -28,27 +28,11 @@ import (
 	"github.com/P4suta/go-mutants/internal/snapshot"
 )
 
-// The identity of the document `list --json` writes.
-//
-// Both constants are spelled out here rather than imported from
-// internal/schemas, which is where `report validate` reaches for the validator.
-// Naming a document type is not the same act as checking one, and this command
-// only writes: the integration tests assert that a document carrying these
-// values is the document internal/schemas validates, so the two cannot drift
-// apart without a test failing.
 const (
 	catalogDocumentType  = "go-mutants/catalog"
 	catalogSchemaVersion = 1
 )
 
-// listIDWidth is how many hex characters of a mutant's display id the text
-// listing prints.
-//
-// It is shorter than the display id itself, which is the id the JSON document
-// and `--mutant` speak in. Eight characters is what fits a scanning eye and
-// what the run console prints for the same mutant, and it is long enough to
-// retype into `--mutant`, which resolves against the whole catalogue rather
-// than against what happened to be listed.
 const listIDWidth = 8
 
 const listLong = `List the mutants a run would execute, without executing them.
@@ -79,9 +63,6 @@ into a validator. --explain is the opposite half and the two are refused
 together: it expands the skip breakdown underneath the listing, saying what each
 reason means and which files it accounted for.`
 
-// listOptions holds the flag destinations for one `list` invocation. It is a
-// struct rather than closure variables so that the command can be built more
-// than once in one process, which is what the tests do.
 type listOptions struct {
 	include   []string
 	exclude   []string
@@ -94,23 +75,16 @@ type listOptions struct {
 	noColor   bool
 }
 
-// newListCommand builds the `list` command.
 func newListCommand() *cobra.Command {
 	o := &listOptions{}
 	cmd := &cobra.Command{
 		Use:   "list [flags]",
 		Short: "List the mutants a run would execute, without executing them",
 		Long:  listLong,
-		// Positional arguments are accepted here and rejected in execute, so
-		// that the rejection can name the flags that narrow a listing instead
-		// of cobra reporting "accepts 0 arg(s), received 3".
-		Args: cobra.ArbitraryArgs,
-		RunE: o.execute,
+		Args:  cobra.ArbitraryArgs,
+		RunE:  o.execute,
 	}
 	flags := cmd.Flags()
-	// StringArrayVar, never StringSliceVar: a pattern is a single opaque value.
-	// Splitting on commas would make `--include "a,b/**"` mean something the
-	// user did not write, and the glob language has no way to escape a comma.
 	flags.StringArrayVar(&o.include, "include", nil,
 		"`GLOB` a file must match to be mutated; repeat for more (default: mutation.include, or **/*.go)")
 	flags.StringArrayVar(&o.exclude, "exclude", nil,
@@ -132,7 +106,6 @@ func newListCommand() *cobra.Command {
 	return cmd
 }
 
-// execute is the `list` command's body.
 func (o *listOptions) execute(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		return usagef("list takes no positional arguments; narrow a listing with --include, --operator, or --mutant (got %q)", args[0])
@@ -169,26 +142,13 @@ func (o *listOptions) execute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Reported before anything is discovered, and therefore ahead of every other
-	// warning: this one is about what was asked for, and the rest are about what
-	// was found. A fixed order is what lets two listings be diffed.
 	flags := cmd.Flags()
 	warnInertProfile(cmd.ErrOrStderr(), flags.Changed("profile"), flags.Changed("operator"),
 		cfg.Mutation.Profile.String(), cfg.Mutation.Operators)
 
-	// Ctrl-C has to reach the pipeline rather than the process. A listing copies
-	// a whole workspace and starts a `go list` under it, and the snapshot is
-	// only removed by the deferred cleanup inside discoverCatalog — a default
-	// signal disposition would kill this process with that directory still on
-	// disk, which is exactly the promise `run` makes and this command must keep
-	// too.
 	ctx, watch, stop := watchSignals(cmd.Context())
 	defer stop()
 
-	// Diagnostics go to standard error on every path, not only under --json.
-	// A warning that lands in the middle of a listing is a warning that ends up
-	// inside somebody's `grep`, and a listing that is clean on one run and has
-	// an extra line on the next is not a listing anybody can diff.
 	found, err := discoverCatalog(ctx, root, cfg, cmd.ErrOrStderr())
 	if err != nil {
 		return interpret(err, watch.Signal())
@@ -202,25 +162,9 @@ func (o *listOptions) execute(cmd *cobra.Command, args []string) error {
 	if o.json {
 		return writeCatalogJSON(out, doc)
 	}
-	// The sites travel beside the document rather than in it: the catalogue is
-	// a published schema carrying the aggregate, and `--explain` is the human
-	// half, which is the half with room for a row per suppressed site.
 	return o.writeListing(out, doc, found.skipSites())
 }
 
-// listOverlay turns the flags the user actually typed into a configuration
-// layer.
-//
-// Only changed flags are carried, exactly as in `run`: a flag's default is not
-// an opinion, so `--profile` left alone must lose to `mutation.profile` in the
-// file, and pflag's Changed is the only thing that knows the difference.
-//
-// The profile is the one flag parsed here rather than in the configuration
-// layer, because the overlay carries a tier and the command line carries a
-// name. Everything else — every glob, every operator name — is validated by
-// internal/config against the same rules the file is held to, so a bad value
-// is reported as the flag the user typed and not as the TOML key they never
-// wrote.
 func listOverlay(cmd *cobra.Command, o *listOptions) (config.Overlay, error) {
 	flags := cmd.Flags()
 	overlay := config.Overlay{
@@ -238,13 +182,6 @@ func listOverlay(cmd *cobra.Command, o *listOptions) (config.Overlay, error) {
 	return overlay, nil
 }
 
-// listPrefix checks a `--mutant` value.
-//
-// The shape is checked and the meaning is not: this is a filter, so a prefix
-// that matches nothing is an empty listing rather than an error, and a prefix
-// that matches several mutants lists all of them. What is refused is a value
-// that could never match anything — the wrong alphabet, or a prefix so short
-// that it would name half the catalogue by accident.
 func listPrefix(value string) (string, error) {
 	if value == "" {
 		return "", nil
@@ -260,7 +197,6 @@ func listPrefix(value string) (string, error) {
 	return value, nil
 }
 
-// isLowerHex reports whether every byte of s is a lowercase hex digit.
 func isLowerHex(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -271,45 +207,16 @@ func isLowerHex(s string) bool {
 	return true
 }
 
-// A discovered is one discovery pass: what was found, and what it was found
-// against.
 type discovered struct {
-	// modules are the modules listed, in order. A tree of one module is one
-	// entry rooted at ".", so nothing below has to ask which kind it is.
-	modules []discover.WorkspaceModule
-	// results are their discoveries, in the same order: candidates and skips
-	// alike.
-	results []discover.Result
-	// workspace is whether the tree is a `go.work`, which is not the same as
-	// holding more than one module: a workspace may `use` exactly one, and its
-	// mutants still carry a module path.
-	workspace bool
-	// catalog is the identified, deduplicated set built from result.
-	catalog *mutation.Catalog
-	// toolchain is the Go toolchain the loader ran with.
-	toolchain gocmd.Toolchain
-	// workspaceDigest is the snapshot manifest's digest. The snapshot itself is
-	// gone by the time this is read; the digest is what names the bytes the ids
-	// were minted from.
+	modules         []discover.WorkspaceModule
+	results         []discover.Result
+	workspace       bool
+	catalog         *mutation.Catalog
+	toolchain       gocmd.Toolchain
 	workspaceDigest string
 }
 
-// discoverCatalog snapshots the workspace and discovers every candidate in it.
-//
-// The snapshot is created and removed here rather than by the caller, so that
-// the deferred cleanup cannot be forgotten and so that nothing downstream can
-// hold a path into a directory that is about to disappear. Everything the
-// listing needs is read out before the cleanup runs.
 func discoverCatalog(ctx context.Context, root string, cfg config.Config, stderr io.Writer) (discovered, error) {
-	// Whether this tree is a workspace is settled before the copy, for the
-	// reason [discover.DetectWorkspace] gives and with one addition that
-	// belongs to this command. A workspace that cannot be measured is refused
-	// either way, but discovery would refuse it a moment later with the path in
-	// the message being the *snapshot's* — a `go-mutants-snap-…` directory in
-	// the temporary area that the deferred cleanup below has removed by the
-	// time anybody reads about it, so the one actionable thing the message
-	// carries would name nothing. Asked here, it names the `go.work` in the
-	// user's own tree.
 	workspace, err := discover.DetectWorkspace(root)
 	if err != nil {
 		return discovered{}, err
@@ -333,29 +240,12 @@ func discoverCatalog(ctx context.Context, root string, cfg config.Config, stderr
 		return discovered{}, err
 	}
 
-	// `.git`, the caches, and the report directory are what a snapshot never
-	// contains, and internal/snapshot decides that on its own. The mutation
-	// include and exclude patterns are deliberately not passed here: they select
-	// which files are worth mutating, while the snapshot is the whole workspace
-	// as the compiler sees it, and a file that is not copied is a file that
-	// cannot be loaded or type-checked. internal/engine's pipeline carries the
-	// long form of this argument, and the two must not diverge — a `list` that
-	// copied a different tree from `run` would mint different ids for the same
-	// code, because the workspace digest is taken over the manifest.
-	//
-	// Neither side rests on this prose. TestListWorkspaceDigestIgnoresTheSelection
-	// holds this copy in place and
-	// TestMutationExcludeChangesNeitherTheSnapshotNorItsDigest holds the engine's,
-	// so threading a selection setting into either Options moves a digest a test
-	// is watching.
 	snap, err := snapshot.Create(root, snapshot.Options{ReportDir: cfg.Report.Directory})
 	if err != nil {
 		return discovered{}, err
 	}
 	defer func() {
 		if removeErr := snap.Cleanup(); removeErr != nil {
-			// The same condition internal/engine reports under the same code: a
-			// snapshot that survived is one fact, not two, however it was made.
 			_, _ = fmt.Fprintf(stderr, "warning %s: the snapshot directory could not be removed: %v\n",
 				engine.CodeSnapshotNotRemoved, removeErr)
 		}
@@ -399,47 +289,14 @@ func discoverCatalog(ctx context.Context, root string, cfg config.Config, stderr
 	return found, nil
 }
 
-// selectRules resolves the configured selection into the rules discovery runs.
-//
-// The resolution itself is [engine.SelectRules], and it lives there rather than
-// here for one reason: `run` has to select exactly what `list` selected. A
-// listing that showed a mutant a run would not execute — or the other way round
-// — would make the ids it prints unusable with `--mutant`, which is most of
-// what a listing is for. This is the local spelling, and the tests that pin the
-// tier and family semantics drive it.
 func selectRules(cfg config.Config) ([]mutation.Rule, error) {
 	return engine.SelectRules(cfg)
 }
 
-// operatorRules resolves one `--operator` name to the rules it stands for: a
-// family name stands for the whole family, a rule name for itself.
-//
-// It is [engine.OperatorRules] for the same reason, and it is reached through
-// here so that the warning below asks the catalogue exactly the question the
-// selection asked it. Answering "what did *this* name select" twice, in two
-// places, is how a warning ends up describing a selection nobody made.
 func operatorRules(registry *mutation.Registry, name string) ([]mutation.Rule, bool) {
 	return engine.OperatorRules(registry, name)
 }
 
-// warnUnimplemented reports a selection this pre-release build cannot discover.
-//
-// Discovery ignores rules it has not implemented yet, which is what lets a whole
-// profile be handed to it. That silence is right for a profile and wrong for a
-// selection the user typed: `--operator bitwise` would print an empty listing
-// and let them conclude their code has no bitwise operators in it.
-//
-// So a named selection is judged one name at a time. Warning only when the whole
-// selection is unimplemented would leave `--operator comparison --operator
-// bitwise` silent — the bitwise half dropped without a word, and the listing
-// underneath it exactly the wrong conclusion. Each name gets at most one line,
-// in the order it was written, so the diagnostic is as diffable as the listing.
-//
-// The profile path keeps the aggregate form: a tier is not a list of names the
-// user chose between, so naming its unimplemented members would be a wall of
-// text about a decision they did not make. No tier reaches it today — every one
-// of them includes the families this phase implements — and it is kept because
-// "the listing is empty and here is why" must not depend on that staying true.
 func warnUnimplemented(stderr io.Writer, cfg config.Config, rules []mutation.Rule) {
 	if len(cfg.Mutation.Operators) == 0 {
 		if len(implementedRules(rules)) == 0 {
@@ -455,8 +312,6 @@ func warnUnimplemented(stderr io.Writer, cfg config.Config, rules []mutation.Rul
 			continue
 		}
 		warned[name] = true
-		// An unknown name is not this warning's business: selectRules refuses it
-		// first, and it is resolved here only to ask what it selects.
 		named, ok := operatorRules(registry, name)
 		if !ok || len(implementedRules(named)) != 0 {
 			continue
@@ -466,24 +321,6 @@ func warnUnimplemented(stderr io.Writer, cfg config.Config, rules []mutation.Rul
 	}
 }
 
-// warnInertProfile reports a `--profile` that decided nothing.
-//
-// A named operator is looked up in the whole catalogue and a profile is a tier,
-// so the two do not combine: whenever any operator is named, the profile selects
-// nothing at all. That is the documented rule and it is fine when both were
-// typed on one command line — the user can see both. It is not fine when the
-// operators came from the configuration file and the profile came from a flag,
-// because the help text promises that flags override the file and here the file
-// wins, silently, over something typed for this invocation.
-//
-// That is the one case reported, and the predicate says so exactly: the profile
-// flag was typed, the operator flag was not, and operators are in effect anyway
-// — which they can only be because the file set them, since the built-in
-// defaults name none.
-//
-// It is a warning and not an error. The listing is a real listing of the
-// operators the file asked for, and refusing to produce it would make a
-// `.go-mutants.toml` in the working directory break a command that used to work.
 func warnInertProfile(stderr io.Writer, profileTyped, operatorTyped bool, profile string, operators []string) {
 	if !profileTyped || operatorTyped || len(operators) == 0 {
 		return
@@ -492,8 +329,6 @@ func warnInertProfile(stderr io.Writer, profileTyped, operatorTyped bool, profil
 		CodeInertProfile, profile, config.FileName, strings.Join(operators, ", "))
 }
 
-// implementedRules returns the subset of rules the discovery phase can find
-// today.
 func implementedRules(rules []mutation.Rule) []mutation.Rule {
 	supported := discover.SupportedRules()
 	out := make([]mutation.Rule, 0, len(rules))
@@ -505,8 +340,6 @@ func implementedRules(rules []mutation.Rule) []mutation.Rule {
 	return out
 }
 
-// implementedFamilies names the families discovery implements, for the warning
-// that says a selection found none of them.
 func implementedFamilies() string {
 	var families []string
 	for _, rule := range discover.SupportedRules() {
@@ -518,12 +351,6 @@ func implementedFamilies() string {
 	return strings.Join(families, ", ")
 }
 
-// A catalogDocument is the catalog-v1 document, and the single source both
-// renderings read.
-//
-// The text listing is composed from this and not from the catalogue directly,
-// so that `list` and `list --json` can never disagree about which mutants were
-// selected or what they are called.
 type catalogDocument struct {
 	DocumentType  string           `json:"document_type"`
 	SchemaVersion int              `json:"schema_version"`
@@ -534,12 +361,6 @@ type catalogDocument struct {
 	Skips         []catalogSkip    `json:"skips"`
 }
 
-// catalogWorkspace names the tree the ids were minted from.
-//
-// One of ModulePath and Modules is set and never both. A tree of one module has
-// a module path; a `go.work` has a list of them and no single answer, which is
-// the same reason a workspace run publishes a workspace report rather than a
-// run report. See ADR 0012.
 type catalogWorkspace struct {
 	ModulePath      string          `json:"module_path,omitempty"`
 	Modules         []catalogModule `json:"modules,omitempty"`
@@ -548,22 +369,16 @@ type catalogWorkspace struct {
 	Platform        catalogPlatform `json:"platform"`
 }
 
-// A catalogModule is one module of a workspace: where it is, and what it is
-// called.
 type catalogModule struct {
 	Dir        string `json:"dir"`
 	ModulePath string `json:"module_path"`
 }
 
-// catalogPlatform is the host this listing was produced on. It is the running
-// process's own GOOS and GOARCH: build constraints decide which files a package
-// even has, so a catalogue is a statement about one platform.
 type catalogPlatform struct {
 	OS   string `json:"os"`
 	Arch string `json:"arch"`
 }
 
-// catalogSelection is what was asked for, as the user asked for it.
 type catalogSelection struct {
 	Profile   string   `json:"profile"`
 	Operators []string `json:"operators"`
@@ -571,39 +386,25 @@ type catalogSelection struct {
 	Exclude   []string `json:"exclude"`
 }
 
-// A catalogMutant is one listed mutant.
 type catalogMutant struct {
-	ID        string `json:"id"`
-	DisplayID string `json:"display_id"`
-	Path      string `json:"path"`
-	// ModulePath is the module Path is relative to, and is absent outside a
-	// workspace, where the one in the workspace block is the answer for every
-	// mutant. Two modules of one workspace can each hold an `app.go`, and the
-	// path alone would not say which.
-	ModulePath  string `json:"module_path,omitempty"`
-	Package     string `json:"package"`
-	Family      string `json:"family"`
-	Rule        string `json:"rule"`
-	RuleVersion int    `json:"rule_version"`
-	Line        int    `json:"line"`
-	Column      int    `json:"column"`
-	StartByte   uint32 `json:"start_byte"`
-	EndByte     uint32 `json:"end_byte"`
-	Original    string `json:"original"`
-	Replacement string `json:"replacement"`
-	// Branch is discovery's proof that this edit can only narrow the condition
-	// of an `if` or a `for`, and is omitted entirely when there is none. See
-	// [discover.BranchProof] for what the span promises.
-	Branch *catalogBranch `json:"branch,omitempty"`
-	// Termination is what discovery could prove about whether this mutant's
-	// loop still stops, and is omitted entirely when it could prove nothing.
-	// It never changes a verdict: a mutant proved unbounded is measured like
-	// any other, and this says what its timeout will mean rather than whether
-	// to have one. See [discover.TerminationProof].
+	ID          string              `json:"id"`
+	DisplayID   string              `json:"display_id"`
+	Path        string              `json:"path"`
+	ModulePath  string              `json:"module_path,omitempty"`
+	Package     string              `json:"package"`
+	Family      string              `json:"family"`
+	Rule        string              `json:"rule"`
+	RuleVersion int                 `json:"rule_version"`
+	Line        int                 `json:"line"`
+	Column      int                 `json:"column"`
+	StartByte   uint32              `json:"start_byte"`
+	EndByte     uint32              `json:"end_byte"`
+	Original    string              `json:"original"`
+	Replacement string              `json:"replacement"`
+	Branch      *catalogBranch      `json:"branch,omitempty"`
 	Termination *catalogTermination `json:"termination,omitempty"`
 }
 
-// A catalogTermination is what discovery proved about one mutant's loop.
 type catalogTermination struct {
 	Verdict    string `json:"verdict"`
 	Reason     string `json:"reason"`
@@ -611,8 +412,6 @@ type catalogTermination struct {
 	LoopColumn int    `json:"loop_column"`
 }
 
-// catalogTerminationOf converts discovery's proof into the document's. Nil
-// stays nil, which is what keeps the property absent rather than null.
 func catalogTerminationOf(proof *discover.TerminationProof) *catalogTermination {
 	if proof == nil {
 		return nil
@@ -625,8 +424,6 @@ func catalogTerminationOf(proof *discover.TerminationProof) *catalogTermination 
 	}
 }
 
-// A catalogBranch is the body span a proved mutant's condition gates, in the
-// coordinates `go test -coverprofile` reports statement blocks in.
 type catalogBranch struct {
 	Direction       string `json:"direction"`
 	BodyStartLine   int    `json:"body_start_line"`
@@ -635,8 +432,6 @@ type catalogBranch struct {
 	BodyEndColumn   int    `json:"body_end_column"`
 }
 
-// catalogBranchOf converts discovery's proof into the document's. Nil stays
-// nil, which is what keeps the property absent rather than null.
 func catalogBranchOf(proof *discover.BranchProof) *catalogBranch {
 	if proof == nil {
 		return nil
@@ -650,28 +445,19 @@ func catalogBranchOf(proof *discover.BranchProof) *catalogBranch {
 	}
 }
 
-// A catalogSkip is one recorded reason, aggregated per file by discovery.
 type catalogSkip struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
 	Count  int    `json:"count"`
 }
 
-// locationKey identifies a candidate by everything the catalogue keeps, which
-// is what lets a catalogued mutant be joined back to the coordinates discovery
-// found it at.
 type locationKey struct {
-	// module is the module the path is relative to, and is empty outside a
-	// workspace. Two modules of one workspace can each hold an `app.go`, and a
-	// key without it would join one module's mutant to the other's coordinates.
 	module string
 	path   string
 	span   mutation.Span
 	rule   string
 }
 
-// document builds the catalog-v1 document, keeping only the mutants whose id
-// starts with prefix. An empty prefix keeps everything.
 func (d discovered) document(cfg config.Config, prefix string) (catalogDocument, error) {
 	candidates := d.candidates()
 	located := make(map[locationKey]discover.Located, len(candidates))
@@ -689,8 +475,6 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 
 	mutants := make([]catalogMutant, 0, d.catalog.Len())
 	for _, m := range d.catalog.Mutants() {
-		// The display id is a prefix of the full id, so one comparison answers
-		// both spellings the flag accepts.
 		if prefix != "" && !strings.HasPrefix(m.ID, prefix) {
 			continue
 		}
@@ -701,9 +485,6 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 			rule:   m.Rule.Name,
 		}]
 		if !ok {
-			// Unreachable: every catalogued mutant is one of the candidates the
-			// same pass produced. Reported rather than papered over with a zero
-			// line number, which would be a coordinate pointing at nothing.
 			return catalogDocument{}, &Error{
 				Code: CodeCatalogMismatch,
 				Message: fmt.Sprintf("internal error: mutant %s (%s at %s %s) is not one of the candidates discovery reported",
@@ -757,13 +538,6 @@ func (d discovered) document(cfg config.Config, prefix string) (catalogDocument,
 	}, nil
 }
 
-// goVersion picks what the workspace block reports as the Go version.
-//
-// The module's own `go` directive is the answer whenever there is one: it is
-// what decides the language semantics the sources are read with. A module old
-// enough to declare none falls back to the toolchain that loaded it, which is
-// the next most honest statement available, and "unknown" is the answer when
-// even that is missing rather than an empty string that would read as a fact.
 func goVersion(module, toolchain string) string {
 	switch {
 	case module != "":
@@ -775,11 +549,6 @@ func goVersion(module, toolchain string) string {
 	}
 }
 
-// stringList returns a non-nil copy of a list.
-//
-// Every array in the document is a list that may legitimately be empty, and an
-// empty list is `[]`, never `null`: nil and empty mean the same thing in a
-// resolved configuration, and a consumer should not have to know that.
 func stringList(values []string) []string {
 	if len(values) == 0 {
 		return []string{}
@@ -787,13 +556,6 @@ func stringList(values []string) []string {
 	return slices.Clone(values)
 }
 
-// writeCatalogJSON writes the document and nothing else.
-//
-// HTML escaping is off because there is no HTML here: with it on, every `<` in
-// a comparison operator would be written as `<`, which is the same string
-// to a parser and unreadable to everybody else. Two spaces of indentation and
-// the encoder's trailing newline make the output diffable, and the field order
-// is the struct's, so two runs over one workspace produce identical bytes.
 func writeCatalogJSON(w io.Writer, doc catalogDocument) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
@@ -801,13 +563,6 @@ func writeCatalogJSON(w io.Writer, doc catalogDocument) error {
 	return encoder.Encode(doc)
 }
 
-// writeListing writes the text listing, and the skip detail underneath it when
-// `--explain` asked for one.
-//
-// The detail is written after the listing has been flushed rather than into the
-// same buffer, so that a listing somebody is reading is on the screen before
-// the explanation of what it left out — and so that a failure to write the
-// explanation cannot lose the listing.
 func (o *listOptions) writeListing(w io.Writer, doc catalogDocument, sites []discover.SkipSite) error {
 	color := console.ColorEnabled(w, o.noColor)
 	r := &listRenderer{
@@ -825,37 +580,22 @@ func (o *listOptions) writeListing(w io.Writer, doc catalogDocument, sites []dis
 	return explainListing(w, color, doc.Skips, sites)
 }
 
-// The listing styles. As in internal/console these are the eight ANSI colours
-// rather than a palette of their own, so that the output is legible whatever
-// the terminal behind it looks like.
 var (
 	styleListHeader = lipgloss.NewStyle().Bold(true)
 	styleListRule   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	styleListDetail = lipgloss.NewStyle().Faint(true)
 )
 
-// A listRenderer writes one line per mutant, and the counts and the skip
-// breakdown underneath.
-//
-// Nothing here is padded to a width computed from the data. A column that grows
-// because one path in the listing is long is a column that shifts every other
-// line the day that file is renamed, and this output is meant to be diffed
-// between two runs and grepped in a terminal.
 type listRenderer struct {
 	out   *bufio.Writer
 	color bool
 	quiet bool
 }
 
-// render writes the whole listing.
 func (r *listRenderer) render(doc catalogDocument) {
 	if !r.quiet {
 		r.printf("%s\n", r.paint(styleListHeader, "go-mutants "+doc.ToolVersion+" (list)"))
 	}
-	// Where each module of a workspace sits, so that what a reader sees is a
-	// path they can open. The document's paths stay relative to the module they
-	// belong to -- that is what the identity is keyed on -- and `app.go` on its
-	// own is a sentence about two files when two modules hold one.
 	dirs := make(map[string]string, len(doc.Workspace.Modules))
 	for _, module := range doc.Workspace.Modules {
 		dirs[module.ModulePath] = module.Dir
@@ -869,17 +609,11 @@ func (r *listRenderer) render(doc catalogDocument) {
 		r.printf("%s\n", r.mutantLine(m, where))
 	}
 	r.printf("mutants %d  files %d  skips %d\n", len(doc.Mutants), len(files), skipTotal(doc.Skips))
-	// The skip breakdown survives --quiet, and so do the counts. Quiet drops
-	// what a run is doing and keeps what it found, exactly as the run console
-	// does: a suppressed candidate is a finding about the code, not progress.
 	for _, reason := range skipsByReason(doc.Skips) {
 		r.printf("%s\n", r.paint(styleListDetail, fmt.Sprintf("skip %s %d", reason.reason, reason.count)))
 	}
 }
 
-// mutantLine renders one mutant as
-// "ID8  path:line:col  family/rule  original -> replacement", where the path is
-// the one a reader can open -- see [engine.WorkspaceLocation].
 func (r *listRenderer) mutantLine(m catalogMutant, where string) string {
 	return shortID(m.DisplayID) + "  " +
 		where + ":" + strconv.Itoa(m.Line) + ":" + strconv.Itoa(m.Column) + "  " +
@@ -887,19 +621,10 @@ func (r *listRenderer) mutantLine(m catalogMutant, where string) string {
 		console.FormatText(m.Original) + " -> " + console.FormatText(m.Replacement)
 }
 
-// printf appends to the buffer. The write error is deliberately dropped: a
-// bufio.Writer remembers the first failure and returns it from Flush, which is
-// the one place this renderer reports one.
 func (r *listRenderer) printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(r.out, format, args...)
 }
 
-// paint applies a style, or does not.
-//
-// The guard is at the string level rather than inside a configured lipgloss
-// renderer, exactly as in internal/console: with colour off no styling code
-// runs at all, so the bytes cannot depend on what lipgloss decided about the
-// terminal it thinks it is attached to.
 func (r *listRenderer) paint(style lipgloss.Style, s string) string {
 	if !r.color {
 		return s
@@ -907,8 +632,6 @@ func (r *listRenderer) paint(style lipgloss.Style, s string) string {
 	return style.Render(s)
 }
 
-// shortID truncates a display id to the listing width, and leaves anything
-// shorter alone rather than slicing past its end.
 func shortID(displayID string) string {
 	if len(displayID) <= listIDWidth {
 		return displayID
@@ -916,20 +639,11 @@ func shortID(displayID string) string {
 	return displayID[:listIDWidth]
 }
 
-// A reasonCount is one skip reason and how many candidates it accounted for
-// across every file.
 type reasonCount struct {
 	reason string
 	count  int
 }
 
-// skipsByReason aggregates the per-file skips into per-reason totals, sorted by
-// reason.
-//
-// Per-file rows are what the document carries, because that is where a user
-// goes to look; per-reason totals are what a listing shows, because a file at a
-// time turns "this tree has four constant expressions in it" into forty lines
-// nobody reads.
 func skipsByReason(skips []catalogSkip) []reasonCount {
 	totals := make(map[string]int, len(skips))
 	for _, skip := range skips {
@@ -943,7 +657,6 @@ func skipsByReason(skips []catalogSkip) []reasonCount {
 	return out
 }
 
-// skipTotal is how many candidates were suppressed in all.
 func skipTotal(skips []catalogSkip) int {
 	total := 0
 	for _, skip := range skips {
@@ -952,7 +665,6 @@ func skipTotal(skips []catalogSkip) int {
 	return total
 }
 
-// candidates is every module's candidates, in module order.
 func (d discovered) candidates() []discover.Located {
 	if len(d.results) == 1 {
 		return d.results[0].Candidates
@@ -964,7 +676,6 @@ func (d discovered) candidates() []discover.Located {
 	return all
 }
 
-// skips is every module's skips, in module order.
 func (d discovered) skips() []discover.Skip {
 	if len(d.results) == 1 {
 		return d.results[0].Skips
@@ -976,7 +687,6 @@ func (d discovered) skips() []discover.Skip {
 	return all
 }
 
-// skipSites is every module's suppressed sites, in module order.
 func (d discovered) skipSites() []discover.SkipSite {
 	if len(d.results) == 1 {
 		return d.results[0].SkipSites
@@ -988,8 +698,6 @@ func (d discovered) skipSites() []discover.SkipSite {
 	return all
 }
 
-// modulePath is the module path of a tree of one module, and empty for a
-// workspace -- which has no single answer, and says so with its module list.
 func (d discovered) modulePath() string {
 	if d.workspace || len(d.modules) != 1 {
 		return ""
@@ -997,8 +705,6 @@ func (d discovered) modulePath() string {
 	return d.modules[0].Path
 }
 
-// catalogModules is a workspace's modules as the document names them, and
-// nothing at all for a tree of one module.
 func (d discovered) catalogModules() []catalogModule {
 	if !d.workspace {
 		return nil
@@ -1010,9 +716,6 @@ func (d discovered) catalogModules() []catalogModule {
 	return modules
 }
 
-// goVersion is the `go` directive the tree declares, which for a workspace is
-// the first module's: the workspace builds with one toolchain, and what this
-// feeds is the document's account of which one.
 func (d discovered) goVersion() string {
 	if len(d.results) == 0 {
 		return ""

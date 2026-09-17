@@ -18,22 +18,14 @@ import (
 	"github.com/P4suta/go-mutants/internal/glob"
 )
 
-// mklinkJunction creates a directory junction, skipping the test when the
-// machine cannot. A junction needs no privilege, unlike a symbolic link, which
-// is exactly why it is the reparse point a real user is likely to have.
 func mklinkJunction(t *testing.T, link, target string) {
 	t.Helper()
-	// mklink is a cmd builtin rather than an executable.
 	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
 	if err != nil {
 		t.Skipf("cannot create a junction with mklink /J on this machine (%v): %s", err, out)
 	}
 }
 
-// TestCreateRejectsJunction is the test the reparse point detector exists for.
-// A junction is the Windows way to have one directory appear inside another,
-// and following it would let a snapshot copy an unbounded amount of the disk —
-// or itself, since a junction can point at an ancestor.
 func TestCreateRejectsJunction(t *testing.T) {
 	t.Parallel()
 
@@ -45,8 +37,6 @@ func TestCreateRejectsJunction(t *testing.T) {
 	link := filepath.Join(src, "pkg", "linked")
 	mklinkJunction(t, link, outside)
 
-	// Record what the toolchain thinks a junction is, so a future change in
-	// that mapping shows up in the failure output rather than as a mystery.
 	if fi, err := os.Lstat(link); err == nil {
 		t.Logf("os.Lstat reports mode %v (type %v) for the junction", fi.Mode(), fi.Mode().Type())
 		if !isReparsePoint(fi) {
@@ -61,9 +51,6 @@ func TestCreateRejectsJunction(t *testing.T) {
 	}
 }
 
-// TestCreateSkipsExcludedJunction proves a user can get past a junction the
-// same way they get past a symbolic link: by excluding it, which is checked
-// before the entry is stat'ed at all.
 func TestCreateSkipsExcludedJunction(t *testing.T) {
 	t.Parallel()
 
@@ -78,10 +65,6 @@ func TestCreateSkipsExcludedJunction(t *testing.T) {
 	}
 }
 
-// TestCleanupSurvivesAFileLock is the real Windows condition the retry ladder
-// exists for, without any timing: a handle opened with no sharing makes the
-// file undeletable, so Cleanup must give up with a diagnostic rather than hang
-// — and must succeed once the handle is closed.
 func TestCleanupSurvivesAFileLock(t *testing.T) {
 	t.Parallel()
 
@@ -99,7 +82,6 @@ func TestCleanupSurvivesAFileLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UTF16PtrFromString: %v", err)
 	}
-	// Share mode 0: no other handle may be opened, not even to delete.
 	handle, err := syscall.CreateFile(name, syscall.GENERIC_READ, 0, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
 	if err != nil {
 		t.Skipf("cannot open %s exclusively on this machine (%v)", locked, err)
@@ -130,17 +112,10 @@ func TestCleanupSurvivesAFileLock(t *testing.T) {
 	}
 }
 
-// TestCreateAbandonsAPartialCopy exercises the one path where Create has to
-// remove work it has already done: a source file that cannot be read after the
-// destination directory exists. A file another process holds open with no
-// sharing is the realistic version on Windows — a running test binary, an
-// editor, a scanner.
 func TestCreateAbandonsAPartialCopy(t *testing.T) {
 	t.Parallel()
 
 	src := t.TempDir()
-	// "a.go" is copied first and "z.go" is the one that fails, so the copy is
-	// genuinely partial when it is abandoned.
 	writeTree(t, src, map[string]string{"a.go": "package a\n", "z.go": "package z\n"})
 
 	name, err := syscall.UTF16PtrFromString(filepath.Join(src, "z.go"))
@@ -156,9 +131,6 @@ func TestCreateAbandonsAPartialCopy(t *testing.T) {
 	assertAbandoned(t, src, t.TempDir())
 }
 
-// TestCleanupClearsReadOnlyFiles covers the one removal failure that waiting
-// could never fix. A test fixture marked read-only would otherwise pin the
-// snapshot directory in place forever.
 func TestCleanupClearsReadOnlyFiles(t *testing.T) {
 	t.Parallel()
 

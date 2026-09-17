@@ -17,17 +17,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/testkit/mutantkit"
 )
 
-// mergedRunID is the id the merged document is given. It is a constant so that
-// the comparison below has exactly one field to ignore.
 const mergedRunID = "20260218T092000Z-77aa"
 
-// shardOptions turns the whole-run fixture into one shard of a split run.
-//
-// Everything a shard does not own becomes not-run with `other-shard`, which is
-// exactly what internal/engine's selection stage produces; everything it does
-// own keeps the outcome the whole-run fixture gave it. That is what makes the
-// round trip below meaningful: the merged document has to reassemble the
-// fixture out of pieces that were split by the real assignment function.
 func shardOptions(t *testing.T, index, total int) report.Options {
 	t.Helper()
 	opts := fixtureOptions(t)
@@ -35,12 +26,6 @@ func shardOptions(t *testing.T, index, total int) report.Options {
 	opts.Mode = report.ModeShard
 	opts.Shard = &report.Shard{Index: index, Total: total}
 
-	// The cache counters are recomputed for the share this shard owns, and that
-	// is what makes summing them across the set the whole run's numbers again: a
-	// shard looks up only its own mutants, so every hit, miss and write belongs
-	// to exactly one shard. Handing every shard the whole run's counters would
-	// make the merged document claim the work was done N times over — which is
-	// exactly what this fixture used to do, and what the merge property caught.
 	selected, misses, writes := 0, 0, 0
 	for i, result := range opts.Results {
 		if mutation.ShardIndex(result.ID, total) == index {
@@ -67,7 +52,6 @@ func shardOptions(t *testing.T, index, total int) report.Options {
 	return opts
 }
 
-// shards builds a complete set of shard reports.
 func shards(t *testing.T, total int) []*report.Report {
 	t.Helper()
 	out := make([]*report.Report, 0, total)
@@ -81,7 +65,6 @@ func shards(t *testing.T, total int) []*report.Report {
 	return out
 }
 
-// mergeShards merges a set and fails the test if it will not merge.
 func mergeShards(t *testing.T, set []*report.Report) *report.Report {
 	t.Helper()
 	merged, err := report.MergeShards(report.MergeOptions{RunID: mergedRunID, Shards: set})
@@ -91,20 +74,6 @@ func mergeShards(t *testing.T, set []*report.Report) *report.Report {
 	return merged
 }
 
-// TestMergedShardsAreTheWholeRun is the property `--shard` exists to have.
-//
-// Splitting a run into shards and merging them back has to produce the document
-// the unsharded run would have written — not merely the same score, but the same
-// document: the same rows in the same order with the same outcomes, the same
-// expectations ledger judged the same way, the same counts. Anything less makes
-// a sharded CI job a different measurement from a local one, and then the two
-// cannot be compared and nobody can tell which to believe.
-//
-// Exactly two fields are exempt, and each is a fact about the merge rather than
-// about the run: the run id, which is the merged document's own identity, and
-// `merge`, which is what marks it as merged at all. Everything else — including
-// `selection.mode`, which is `shard` in the pieces and has to come back to `all`
-// in the whole — is compared field for field.
 func TestMergedShardsAreTheWholeRun(t *testing.T) {
 	t.Parallel()
 
@@ -134,18 +103,6 @@ func TestMergedShardsAreTheWholeRun(t *testing.T) {
 	}
 }
 
-// TestMergingChangedShardsKeepsTheDiff is the composition case: `--shard` over a
-// `--changed` run.
-//
-// The two narrowings compose, so the shards report `mode: "shard"` with a
-// `changed_ref` alongside it, and merging has to keep the honest half. A merged
-// document that said `all` would claim to have measured a catalogue that it
-// deliberately did not: the not-run rows the diff excluded are still in it.
-//
-// It is also the one place the merged mode is *derived* rather than checked.
-// [MergeShards] assembles the document directly rather than through [Build], so
-// the "a changed run must name its ref" rule never runs on it, and this is what
-// holds the two together instead.
 func TestMergingChangedShardsKeepsTheDiff(t *testing.T) {
 	t.Parallel()
 
@@ -183,9 +140,6 @@ func TestMergingChangedShardsKeepsTheDiff(t *testing.T) {
 	}
 }
 
-// TestEveryMutantIsMeasuredExactlyOnce proves the split itself is a partition,
-// through the documents rather than through the assignment function: every row
-// of the whole run is claimed by one shard and disclaimed by all the others.
 func TestEveryMutantIsMeasuredExactlyOnce(t *testing.T) {
 	t.Parallel()
 
@@ -210,19 +164,11 @@ func TestEveryMutantIsMeasuredExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestMergeRefuses is the congruence table: one case per way a set of documents
-// can fail to describe one run, and the code each is refused with.
-//
-// Every one of them is a refusal rather than a repair. A merged document is
-// what a CI job publishes and what a score gate reads, so the failure mode this
-// table guards against is not a crash — it is a plausible-looking document with
-// numbers describing a run that never happened.
 func TestMergeRefuses(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		// build produces the set to merge, starting from a valid pair.
+		name  string
 		build func(t *testing.T, set []*report.Report) []*report.Report
 		code  report.Code
 		says  string
@@ -396,8 +342,6 @@ func TestMergeRefuses(t *testing.T) {
 	}
 }
 
-// disclaim breaks one shard's rows in one of the two possible directions:
-// claiming a mutant it does not own, or disowning one it does.
 func disclaim(t *testing.T, shard *report.Report, own bool) {
 	t.Helper()
 	other := string(report.NotRunOtherShard)
@@ -418,9 +362,6 @@ func disclaim(t *testing.T, shard *report.Report, own bool) {
 	t.Fatalf("shard %d of %d has no mutant to break", shard.Shard.Index, shard.Shard.Total)
 }
 
-// TestMergeTakesTheWorstStatus proves a merge cannot flatter a run that did not
-// finish: a completed shard beside a failed one is a failed run, because the
-// failed shard's mutants were never measured.
 func TestMergeTakesTheWorstStatus(t *testing.T) {
 	t.Parallel()
 
@@ -441,9 +382,6 @@ func TestMergeTakesTheWorstStatus(t *testing.T) {
 	}
 }
 
-// TestMergeIsTheEnvelopeOfTheShardClocks proves the merged duration describes
-// the run rather than the sum of the machines: shards run at the same time, so
-// adding their durations would report a wall-clock time nobody waited.
 func TestMergeIsTheEnvelopeOfTheShardClocks(t *testing.T) {
 	t.Parallel()
 
@@ -462,9 +400,6 @@ func TestMergeIsTheEnvelopeOfTheShardClocks(t *testing.T) {
 	}
 }
 
-// TestMergedWarningsAreDeduplicated proves the merged document keeps every
-// distinct warning once, in shard order, rather than one copy per shard of the
-// sentence they all said.
 func TestMergedWarningsAreDeduplicated(t *testing.T) {
 	t.Parallel()
 
@@ -481,8 +416,6 @@ func TestMergedWarningsAreDeduplicated(t *testing.T) {
 	}
 }
 
-// TestParseRoundTripsADocument proves a report survives being written and read
-// back, which is what `report merge` does to every file it is given.
 func TestParseRoundTripsADocument(t *testing.T) {
 	t.Parallel()
 
@@ -496,8 +429,6 @@ func TestParseRoundTripsADocument(t *testing.T) {
 	}
 }
 
-// TestParseRefuses covers the files somebody will point `report merge` at by
-// mistake.
 func TestParseRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -541,8 +472,6 @@ func TestParseRefuses(t *testing.T) {
 	}
 }
 
-// TestParseShard covers the `--shard` specification, which is the one piece of
-// this feature a user types by hand.
 func TestParseShard(t *testing.T) {
 	t.Parallel()
 
@@ -574,14 +503,6 @@ func TestParseShard(t *testing.T) {
 		{"", "two numbers separated by a slash"},
 		{"3", "two numbers separated by a slash"},
 		{"a/b", "whole numbers"},
-		// One bad part and one good one, in both positions. `a/b` alone cannot
-		// tell the two conversions apart -- every reading of the guard reports
-		// the same refusal when both fail -- so a guard that consulted only one
-		// of them, or that demanded both fail, would pass on `a/b` and then
-		// hand a user of `a/4` a complaint about the shard *number* instead of
-		// about the letter they typed. `strconv.Atoi` returns 0 beside its
-		// error, which is what makes the wrong answer plausible rather than
-		// obviously broken: 0 fails the range check further down.
 		{"a/4", "whole numbers"},
 		{"1/x", "whole numbers"},
 		{"1/0", "cannot be split into 0 shards"},
@@ -604,8 +525,6 @@ func TestParseShard(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesAnImpossibleShard proves a document cannot state a shard it
-// could not have been.
 func TestBuildRefusesAnImpossibleShard(t *testing.T) {
 	t.Parallel()
 
@@ -640,9 +559,6 @@ func TestBuildRefusesAnImpossibleShard(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesAShardWithoutTheMode holds the two halves of a sharded
-// document together: a `shard` block and a selection mode that does not say
-// `shard` would be two contradictory statements about one run.
 func TestBuildRefusesAShardWithoutTheMode(t *testing.T) {
 	t.Parallel()
 
@@ -657,8 +573,6 @@ func TestBuildRefusesAShardWithoutTheMode(t *testing.T) {
 	}
 }
 
-// TestBuildRefusesAChangedRunWithNoRef holds the other half of the same rule:
-// a run that narrowed itself to a diff has to say which diff.
 func TestBuildRefusesAChangedRunWithNoRef(t *testing.T) {
 	t.Parallel()
 
@@ -673,8 +587,6 @@ func TestBuildRefusesAChangedRunWithNoRef(t *testing.T) {
 	}
 }
 
-// TestChangedRefIsRecorded proves the ref reaches the document, and that a run
-// which did not narrow by a diff writes null rather than an empty string.
 func TestChangedRefIsRecorded(t *testing.T) {
 	t.Parallel()
 
@@ -696,8 +608,6 @@ func TestChangedRefIsRecorded(t *testing.T) {
 	}
 }
 
-// TestNotRunReasonIsBiconditional proves both halves of the pairing: a mutant
-// that was not run says why, and a mutant that was does not.
 func TestNotRunReasonIsBiconditional(t *testing.T) {
 	t.Parallel()
 

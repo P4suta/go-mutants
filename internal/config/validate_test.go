@@ -19,9 +19,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/mutation"
 )
 
-// A flag overlay is checked with the same rules as a file, but a message that
-// told someone to fix `execution.jobs` when they typed `--jobs` would send
-// them to edit a file they never touched.
 func TestOverlayValidateNamesFlags(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -39,8 +36,6 @@ func TestOverlayValidateNamesFlags(t *testing.T) {
 		{"operator", Overlay{Operators: Explicit([]string{"nonsense"})}, CodeUnknownOperator, "--operator"},
 		{"report format", Overlay{ReportFormats: Explicit([]ReportFormat{"xml"})}, CodeUnknownReportFormat, "--report"},
 		{"test command", Overlay{TestCommand: Explicit([]string{})}, CodeEmptyTestCommand, "-- <test argv>"},
-		// A setting with no flag falls back to its TOML key, which is the
-		// truthful answer: there is nowhere else to change it.
 		{"baseline runs", Overlay{BaselineRuns: Explicit(0)}, CodeBaselineRunsOutOfRange, "test.baseline_runs"},
 		{"narrowing", Overlay{Narrowing: Explicit(Narrowing("binary"))}, CodeUnknownNarrowing, "test.narrowing"},
 		{"probing", Overlay{Probing: Explicit(Probing("maybe"))}, CodeUnknownProbing, "test.probing"},
@@ -101,12 +96,6 @@ func TestOverlayValidateAcceptsTheEdges(t *testing.T) {
 	}
 }
 
-// A code tells a reader where to look a rule up; the sentence is what they act
-// on, and it is the whole product of a diagnostic. Every list this package
-// renders into one — the tiers, the cache modes, the report formats — and
-// every value it quotes back is asserted here in full, because a message with
-// an empty list in the middle of it still carries the right code, still names
-// the right key, and still tells the reader nothing.
 func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -115,9 +104,6 @@ func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
 		want    string
 	}{
 		{
-			// The name is rendered through Tier.String, so a tier that is not
-			// one of the three is quoted as what it is rather than as a
-			// number, and the three are listed for the reader to choose from.
 			name:    "an unknown profile lists the tiers",
 			overlay: Overlay{Profile: Explicit(mutation.Tier(9))},
 			code:    CodeUnknownProfile,
@@ -155,8 +141,6 @@ func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
 				"give a relative path that stays inside the tree it is resolved against",
 		},
 		{
-			// The same sentence, because it is the same rule: a directory
-			// resolves under the tree it is given, whichever tree that is.
 			name:    "an escaping report directory ends with the same rule",
 			overlay: Overlay{ReportDirectory: Explicit("../out")},
 			code:    CodeInvalidReportDirectory,
@@ -164,8 +148,6 @@ func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
 				"give a relative path that stays inside the tree it is resolved against",
 		},
 		{
-			// Rendered the way the exit policy renders a floor, so the number
-			// in the configuration error is the number in the failure message.
 			name:    "a score floor is printed the way the exit policy prints it",
 			overlay: Overlay{MinimumScore: Explicit(101.0)},
 			code:    CodeMinimumScoreOutOfRange,
@@ -188,11 +170,6 @@ func TestDiagnosticsSpellOutTheVocabularyTheyOffer(t *testing.T) {
 	}
 }
 
-// The operator diagnostic is the one list this package does not own: the
-// families and the rule names come out of the frozen v1 catalogue, and the
-// counts move with it. So it is asserted against the catalogue rather than
-// against a transcription of it — every family by name, and both counts —
-// which is what makes "expected one of the 13 families ()" a failure.
 func TestUnknownOperatorNamesEveryFamilyInTheCatalogue(t *testing.T) {
 	err := (Overlay{Operators: Explicit([]string{"telepathy"})}).Validate()
 	if err == nil {
@@ -224,10 +201,6 @@ func TestUnknownOperatorNamesEveryFamilyInTheCatalogue(t *testing.T) {
 	}
 }
 
-// A glob that does not compile is reported with the matcher's own complaint
-// and its own column, unwrapped. The wrapper repeats the pattern and words the
-// column differently, and this package has already quoted the pattern once —
-// so what the reader would get instead is the same string twice in one line.
 func TestInvalidPatternQuotesTheMatcherWithoutItsWrapper(t *testing.T) {
 	err := (Overlay{Include: Explicit([]string{"a//b"})}).Validate()
 	if err == nil {
@@ -242,8 +215,6 @@ func TestInvalidPatternQuotesTheMatcherWithoutItsWrapper(t *testing.T) {
 		t.Errorf("message = %q, want %q", got.Message, want)
 	}
 
-	// The cause is still reachable underneath, which is what lets a caller ask
-	// which pattern failed without reading the sentence.
 	var syntax *glob.SyntaxError
 	if !errors.As(err, &syntax) {
 		t.Fatalf("errors.As did not reach the *glob.SyntaxError: %v", err)
@@ -253,8 +224,6 @@ func TestInvalidPatternQuotesTheMatcherWithoutItsWrapper(t *testing.T) {
 	}
 }
 
-// NaN is not a percentage. It is worth a row because it is the one value that
-// slips through a naive `v > 100` check.
 func TestMinimumScoreRejectsNaN(t *testing.T) {
 	err := (Overlay{MinimumScore: Explicit(math.NaN())}).Validate()
 	if err == nil {
@@ -265,16 +234,11 @@ func TestMinimumScoreRejectsNaN(t *testing.T) {
 	}
 }
 
-// Cross-field rules cannot be checked in either layer, because the two halves
-// can arrive from different ones. This is the whole reason Validate runs after
-// the merge as well as inside it.
 func TestThresholdsAreCheckedAfterMerging(t *testing.T) {
 	file, err := Parse(FileName, []byte("version = 1\n[report]\nlow = 70\n"))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	// The file's low is fine on its own, and so is the flag's high; only the
-	// merged pair is wrong.
 	resolved := Merge(Defaults(), file, Overlay{ReportHigh: Explicit(50)})
 	got := only(t, resolved.Validate())
 	if got.Code != CodeThresholdsInverted {
@@ -287,19 +251,12 @@ func TestThresholdsAreCheckedAfterMerging(t *testing.T) {
 		t.Errorf("message %q does not name both thresholds", got.Message)
 	}
 
-	// Equal thresholds are legal: they colour everything below the line red
-	// and everything on it green, which is a coherent thing to ask for.
 	equal := Merge(Defaults(), FileConfig{}, Overlay{ReportHigh: Explicit(60), ReportLow: Explicit(60)})
 	if err := equal.Validate(); err != nil {
 		t.Errorf("equal thresholds were rejected: %v", err)
 	}
 }
 
-// A layer can be right on its own and still contradict a default, and saying
-// so is the point of checking after the merge. `high = 0` is a legal threshold
-// in isolation; against the shipped `low = 60` it describes a range that runs
-// backwards, and the message names both halves so the half nobody wrote is
-// visible too.
 func TestAThresholdCanContradictADefault(t *testing.T) {
 	file, err := Parse(FileName, []byte("version = 1\n[report]\nhigh = 0\n"))
 	if err != nil {
@@ -314,8 +271,6 @@ func TestAThresholdCanContradictADefault(t *testing.T) {
 			t.Errorf("%q does not mention %q", got.Error(), want)
 		}
 	}
-	// Setting the other half too resolves it, which is the fix the message
-	// points at.
 	both, err := Parse(FileName, []byte("version = 1\n[report]\nhigh = 0\nlow = 0\n"))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -325,8 +280,6 @@ func TestAThresholdCanContradictADefault(t *testing.T) {
 	}
 }
 
-// An out-of-range threshold gets the one error that explains it, not a second,
-// derived complaint about an ordering that was never the real problem.
 func TestInvertedThresholdsAreNotReportedTwice(t *testing.T) {
 	resolved := Merge(Defaults(), FileConfig{}, Overlay{ReportHigh: Explicit(-5)})
 	got := codesOf(problems(t, resolved.Validate()))
@@ -335,8 +288,6 @@ func TestInvertedThresholdsAreNotReportedTwice(t *testing.T) {
 	}
 }
 
-// Config.Validate is the gate, so it has to re-check the per-value rules and
-// not merely the cross-field one: a Config can be built by hand.
 func TestConfigValidateChecksValues(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -383,8 +334,6 @@ func TestConfigValidateChecksValues(t *testing.T) {
 			if got.Key != test.key {
 				t.Errorf("key = %q, want %q", got.Key, test.key)
 			}
-			// A merged value no longer has one place in a file to point at,
-			// and claiming one would be a lie.
 			if got.File != "" || got.Position.Known() {
 				t.Errorf("a merged error claimed a file position: %s", got)
 			}
@@ -392,8 +341,6 @@ func TestConfigValidateChecksValues(t *testing.T) {
 	}
 }
 
-// The settings whose zero value means "unset" must not be validated as if
-// somebody had asked for a zero.
 func TestZeroMeansUnsetForDerivedSettings(t *testing.T) {
 	resolved := Defaults()
 	resolved.Test.Timeout = 0
@@ -425,15 +372,12 @@ func TestLoad(t *testing.T) {
 		t.Errorf("baseline_runs = %d, want the default", resolved.Test.BaselineRuns)
 	}
 
-	// A bad flag is refused before the file's own problems are considered, so
-	// the message is about what the user just typed.
 	if _, flagErr := Load(path, Overlay{Jobs: Explicit(0)}); flagErr == nil {
 		t.Errorf("Load accepted --jobs 0")
 	} else if got := only(t, flagErr); got.Key != "--jobs" {
 		t.Errorf("key = %q, want --jobs", got.Key)
 	}
 
-	// Load of a path nobody configured is the defaults, not a failure.
 	resolved, err = Load(filepath.Join(dir, "absent.toml"), Overlay{})
 	if err != nil {
 		t.Fatalf("Load of an absent file: %v", err)
@@ -443,15 +387,9 @@ func TestLoad(t *testing.T) {
 	}
 }
 
-// Load is a sequence, and each step of it can fail. The two that no other test
-// reaches are the ends of it: a file the reader refuses, and a configuration
-// that is only wrong once the layers are merged. Neither may be merged over
-// the defaults and handed back as a Config: a caller that ignored the error
-// would then be running the defaults while believing it read a file.
 func TestLoadStopsAtEveryStepThatFails(t *testing.T) {
 	dir := t.TempDir()
 
-	// The file's own problems, which LoadFile reports and Load forwards.
 	unknown := filepath.Join(dir, "unknown.toml")
 	if err := os.WriteFile(unknown, []byte("version = 1\nflavour = \"vanilla\"\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -467,9 +405,6 @@ func TestLoadStopsAtEveryStepThatFails(t *testing.T) {
 		t.Errorf("a failed Load handed back a configuration (-want +got):\n%s", diff)
 	}
 
-	// A cross-field rule, which neither layer can judge on its own: 90 is a
-	// legal low threshold and 80 is the default high, so the file is fine and
-	// the pair is not.
 	inverted := filepath.Join(dir, "inverted.toml")
 	if writeErr := os.WriteFile(inverted, []byte("version = 1\n[report]\nlow = 90\n"), 0o600); writeErr != nil {
 		t.Fatalf("write: %v", writeErr)
@@ -529,8 +464,6 @@ func TestParseHelpers(t *testing.T) {
 	if diff := cmp.Diff([]ReportFormat{FormatJSON, FormatHTML}, formats); diff != "" {
 		t.Errorf("(-want +got):\n%s", diff)
 	}
-	// "none" has to produce an empty-but-present slice: an absence would let
-	// the default reports come back.
 	none, err := ParseReportFormats("none")
 	if err != nil {
 		t.Fatalf("ParseReportFormats(none): %v", err)
@@ -547,8 +480,6 @@ func TestParseHelpers(t *testing.T) {
 	}
 }
 
-// Both spellings of an operator resolve, and the error for neither names the
-// families so the reader can pick one.
 func TestOperatorsAcceptFamiliesAndRules(t *testing.T) {
 	registry := mutation.CanonicalRegistry()
 	names := []string{}
@@ -569,7 +500,6 @@ func TestOperatorsAcceptFamiliesAndRules(t *testing.T) {
 	}
 }
 
-// The expectations ledger takes full ids only, whatever `--mutant` accepts.
 func TestExpectationIDsAreFullIDs(t *testing.T) {
 	for _, id := range []string{
 		strings.Repeat("a", mutation.DisplayIDLength),
@@ -592,8 +522,6 @@ func TestExpectationIDsAreFullIDs(t *testing.T) {
 	}
 }
 
-// errors.As has to reach a *config.Error through everything this package
-// returns, because the CLI maps a code to an exit status.
 func TestEveryErrorCarriesACode(t *testing.T) {
 	err := (Overlay{Jobs: Explicit(0), ReportHigh: Explicit(200)}).Validate()
 	for _, problem := range problems(t, err) {

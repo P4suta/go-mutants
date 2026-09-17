@@ -94,9 +94,6 @@ func TestBareChangedFlagAndCancellationArePreserved(t *testing.T) {
 	cancelled := &service{report: report.Report{Schema: report.SchemaV1, Verdict: report.VerdictError}, err: context.Canceled}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	// The cause is kept beside the word. A run stopped part way through is the
-	// hardest kind to understand afterwards, and "interrupted" on its own says
-	// only that somebody pressed a key.
 	if exit := cli.Run(t.Context(), []string{"verify"}, &stdout, &stderr, cancelled); exit != cli.ExitInterrupted ||
 		stderr.String() != "goatest: interrupted: context canceled\n" || stdout.Len() != 0 {
 		t.Fatalf("cancellation = exit %d stdout %q stderr %q", exit, stdout.String(), stderr.String())

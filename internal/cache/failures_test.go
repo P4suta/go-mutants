@@ -16,17 +16,8 @@ import (
 	"github.com/P4suta/go-mutants/internal/report"
 )
 
-// The failure half of the store and of its three maintenance commands.
-//
-// A cache never fails a run -- every failure here is the caller's to fail open
-// on -- but "fails open" is a claim about which diagnostic a caller is handed,
-// and a cache that answered the wrong one would send somebody to look at their
-// disk for a mistake in their configuration. So each of these says which.
-
-// errStaged is what a seam returns when a test wants the call to fail.
 var errStaged = errors.New("the operating system refused")
 
-// swapSeam replaces one seam for the length of a test and puts it back.
 func swapSeam[T any](t *testing.T, seam *T, with T) {
 	t.Helper()
 	was := *seam
@@ -34,7 +25,6 @@ func swapSeam[T any](t *testing.T, seam *T, with T) {
 	t.Cleanup(func() { *seam = was })
 }
 
-// validContext is a context that will produce a key.
 func validContext() Context {
 	return Context{
 		ToolVersion:      "0.1.0-dev",
@@ -46,7 +36,6 @@ func validContext() Context {
 	}
 }
 
-// assertCode fails unless err carries the code.
 func assertCode(t *testing.T, err error, want Code) {
 	t.Helper()
 	var coded *Error
@@ -58,15 +47,7 @@ func assertCode(t *testing.T, err error, want Code) {
 	}
 }
 
-// TestRootNeedsSomewhereToKeepOutcomes covers the one thing a cache root cannot
-// be derived without.
-//
-// It is not a failure a user can be blamed for and it is not one they can be
-// left guessing about either: a machine with no cache directory has nowhere to
-// keep outcomes at all, which is a different problem from a directory that
-// could not be written.
 func TestRootNeedsSomewhereToKeepOutcomes(t *testing.T) {
-	// Not parallel: the environment is the process's.
 	t.Setenv("HOME", "")
 	t.Setenv("XDG_CACHE_HOME", "")
 
@@ -80,9 +61,6 @@ func TestRootNeedsSomewhereToKeepOutcomes(t *testing.T) {
 		t.Errorf("the failure does not say what is missing: %v", err)
 	}
 
-	// And Open carries it up rather than rewriting it: the caller has to be
-	// able to tell "there is no cache directory on this machine" from "the
-	// cache directory could not be claimed".
 	_, err = Open(Options{Context: validContext()})
 	assertCode(t, err, CodeUnavailable)
 	if !strings.Contains(err.Error(), "nowhere to keep outcomes") {
@@ -90,12 +68,6 @@ func TestRootNeedsSomewhereToKeepOutcomes(t *testing.T) {
 	}
 }
 
-// TestOpenRefusesAContextThatCouldNotIdentifyARun is the failure that is a
-// caller bug rather than a user's problem.
-//
-// It costs a run its cache and nothing else, which is why it is reported with
-// the context's own code rather than with the store's: a key that would not
-// identify this run is not a cache that is unavailable.
 func TestOpenRefusesAContextThatCouldNotIdentifyARun(t *testing.T) {
 	t.Parallel()
 
@@ -109,15 +81,9 @@ func TestOpenRefusesAContextThatCouldNotIdentifyARun(t *testing.T) {
 	}
 }
 
-// TestOpenReportsADirectoryItCannotCreate is the last thing Open does, and the
-// one a read-only cache root produces.
 func TestOpenReportsADirectoryItCannotCreate(t *testing.T) {
 	t.Parallel()
 
-	// The workspace directory is claimed first, so it is staged with a marker
-	// of its own and then made read-only: the claim reads the marker it
-	// already agrees with, and the outcomes directory underneath it is what
-	// cannot be made.
 	root := t.TempDir()
 	ctx := validContext()
 	workspace := filepath.Join(root, report.WorkspacesDirName, report.WorkspaceKey(ctx.WorkspaceDigest))
@@ -136,13 +102,6 @@ func TestOpenReportsADirectoryItCannotCreate(t *testing.T) {
 	}
 }
 
-// TestToolDigestNamesThisBuildOrSaysWhyItCannot covers the digest that stops a
-// rebuilt go-mutants from adopting its predecessor's answers.
-//
-// Both halves are seams, because a process that cannot locate or read its own
-// binary is not a filesystem a test may build -- and what happens when it
-// cannot is the difference between a run with no cache and a run caching under
-// a key that names nothing.
 func TestToolDigestNamesThisBuildOrSaysWhyItCannot(t *testing.T) {
 	t.Run("the executable that cannot be located", func(t *testing.T) {
 		swapSeam(t, &executablePath, func() (string, error) { return "", errStaged })
@@ -178,13 +137,6 @@ func TestToolDigestNamesThisBuildOrSaysWhyItCannot(t *testing.T) {
 	})
 }
 
-// TestLookupTellsAMissApartFromAnEntryItCouldNotRead is the three states the
-// contract promises.
-//
-// A caller that treated every error as fatal would have misread it -- but a
-// cache directory somebody's antivirus is quietly corrupting must not present
-// as a permanently cold one either, which is why the second state exists at
-// all.
 func TestLookupTellsAMissApartFromAnEntryItCouldNotRead(t *testing.T) {
 	t.Parallel()
 
@@ -225,13 +177,6 @@ func TestLookupTellsAMissApartFromAnEntryItCouldNotRead(t *testing.T) {
 	})
 }
 
-// TestPutReportsEveryWayAnEntryCanFailToBeWritten covers the write that must be
-// whole or absent.
-//
-// A correctly named file holding half a JSON document is the failure that would
-// turn one interrupted run into a permanently poisoned cache, so the write goes
-// through a temporary file and a rename -- and each step of that says which one
-// it was.
 func TestPutReportsEveryWayAnEntryCanFailToBeWritten(t *testing.T) {
 	id := strings.Repeat("a1", 32)
 	entry := func() Entry {
@@ -261,10 +206,6 @@ func TestPutReportsEveryWayAnEntryCanFailToBeWritten(t *testing.T) {
 	})
 
 	t.Run("a rename that cannot land", func(t *testing.T) {
-		// A directory where the entry has to go. The temporary file is made
-		// beside it and the rename onto it is refused, retried, and refused
-		// again -- which is the one failing path that is real rather than
-		// staged.
 		store := openOne(t)
 		if err := os.Mkdir(filepath.Join(store.Dir(), id+entrySuffix), 0o700); err != nil {
 			t.Fatalf("staging the obstruction: %v", err)
@@ -274,8 +215,6 @@ func TestPutReportsEveryWayAnEntryCanFailToBeWritten(t *testing.T) {
 		if !strings.Contains(err.Error(), "moved into place") {
 			t.Errorf("the failure names the wrong step: %v", err)
 		}
-		// And the temporary file went with it, rather than being left for the
-		// next sweep to wonder about.
 		left, readErr := os.ReadDir(store.Dir())
 		if readErr != nil {
 			t.Fatalf("listing the directory: %v", readErr)
@@ -311,9 +250,6 @@ func TestPutReportsEveryWayAnEntryCanFailToBeWritten(t *testing.T) {
 			test.seam(t)
 			err := store.Put(id, entry())
 			assertCode(t, err, CodeEntryNotWritten)
-			// The failure that happened, not the one that happened next: a
-			// close error reported in place of a write error would tell a
-			// reader the bytes reached the disk.
 			if !errors.Is(err, errStaged) {
 				t.Errorf("Put = %v, want the staged failure", err)
 			}
@@ -324,8 +260,6 @@ func TestPutReportsEveryWayAnEntryCanFailToBeWritten(t *testing.T) {
 	}
 }
 
-// TestPutRefusesAnEntryThatCouldNotHaveBeenMeasured is the shape check on the
-// way out rather than on the way in.
 func TestPutRefusesAnEntryThatCouldNotHaveBeenMeasured(t *testing.T) {
 	t.Parallel()
 
@@ -341,18 +275,6 @@ func TestPutRefusesAnEntryThatCouldNotHaveBeenMeasured(t *testing.T) {
 	}
 }
 
-// TestPutRefusesADivergenceBesideAnOutcomeALoopCannotProduce is the twin of the
-// memory rule, and it is a refusal at the point of writing for the same reason.
-//
-// A counted loop past its ceiling ends the process, so the only outcome it can
-// produce is the one a mutant that does not return gets. An entry saying a loop
-// settled a kill or a survival describes a measurement that both ended itself
-// and finished, and the contradiction is exactly the kind a consumer reads
-// straight past: `explain` on a warm run would report which loop ran away from
-// a mutant the suite caught with an assertion.
-//
-// The round trip is asserted beside it, because a field that is refused when
-// wrong and dropped when right is a field nothing carries.
 func TestPutRefusesADivergenceBesideAnOutcomeALoopCannotProduce(t *testing.T) {
 	t.Parallel()
 
@@ -387,8 +309,6 @@ func TestPutRefusesADivergenceBesideAnOutcomeALoopCannotProduce(t *testing.T) {
 	}
 }
 
-// TestACacheKnowsWhereItIs pins the three accessors a caller reads a handle
-// with, because each of them names a directory somebody will be told about.
 func TestACacheKnowsWhereItIs(t *testing.T) {
 	t.Parallel()
 
@@ -416,9 +336,6 @@ func TestACacheKnowsWhereItIs(t *testing.T) {
 	}
 }
 
-// staged builds a cache root holding one owned workspace with one stored
-// outcome, and returns the root, the workspace directory and the context
-// directory the entry is in.
 func staged(t *testing.T) (root, workspace, context string) {
 	t.Helper()
 
@@ -437,12 +354,6 @@ func staged(t *testing.T) (root, workspace, context string) {
 	return root, workspace, context
 }
 
-// TestTheThreeCommandsStopAtADirectoryTheyCannotRead is the rule all three
-// share, asserted once per directory they walk.
-//
-// A survey that silently left out what it could not list would report a cache
-// smaller than it is, and a sweep built on that report would leave the rest
-// behind while saying it had finished. Both are worse than a failure.
 func TestTheThreeCommandsStopAtADirectoryTheyCannotRead(t *testing.T) {
 	t.Parallel()
 
@@ -490,12 +401,6 @@ func TestTheThreeCommandsStopAtADirectoryTheyCannotRead(t *testing.T) {
 	}
 }
 
-// TestAStatusOfNothingIsAnEmptyListAndNotAMissingOne pins the shape of a survey
-// nobody has cached anything for.
-//
-// The difference is what a `--json` reader sees: `[]` is "this machine has
-// cached nothing", and `null` is a field the writer forgot. A tool reading the
-// second has to guess.
 func TestAStatusOfNothingIsAnEmptyListAndNotAMissingOne(t *testing.T) {
 	t.Parallel()
 
@@ -517,8 +422,6 @@ func TestAStatusOfNothingIsAnEmptyListAndNotAMissingOne(t *testing.T) {
 		t.Errorf("the survey encodes a null: %s", encoded)
 	}
 
-	// A root that is not there at all is the same answer, and a root that is
-	// no root at all is a failure rather than an empty one.
 	if _, err = GC(filepath.Join(t.TempDir(), "never-used"), time.Now()); err != nil {
 		t.Errorf("GC of a never-used root: %v", err)
 	}
@@ -526,12 +429,6 @@ func TestAStatusOfNothingIsAnEmptyListAndNotAMissingOne(t *testing.T) {
 	assertCode(t, err, CodeScanFailed)
 }
 
-// TestASurveyCountsAContextOnlyWhenSomethingIsInIt is the boundary of the
-// context tally.
-//
-// An empty context directory is a directory a sweep pruned or a run made and
-// never filled. Counting it would report a cache holding contexts with nothing
-// in them, which is a number nobody can act on.
 func TestASurveyCountsAContextOnlyWhenSomethingIsInIt(t *testing.T) {
 	t.Parallel()
 
@@ -556,18 +453,11 @@ func TestASurveyCountsAContextOnlyWhenSomethingIsInIt(t *testing.T) {
 	}
 }
 
-// TestASweepReportsWhichWorkspacesItTouched pins the flag a sweep counts
-// workspaces by.
-//
-// A workspace nothing was removed from is not one the sweep touched, and
-// counting it would tell somebody their cache had been swept when it had not.
 func TestASweepReportsWhichWorkspacesItTouched(t *testing.T) {
 	t.Parallel()
 
 	root, _, _ := staged(t)
 
-	// Nothing is old enough, so nothing is removed and no workspace is
-	// counted.
 	sweep, err := GC(root, time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
@@ -576,7 +466,6 @@ func TestASweepReportsWhichWorkspacesItTouched(t *testing.T) {
 		t.Errorf("a sweep that removed nothing reported %+v", sweep)
 	}
 
-	// Everything is, so the one workspace is counted once.
 	sweep, err = GC(root, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
@@ -592,12 +481,6 @@ func TestASweepReportsWhichWorkspacesItTouched(t *testing.T) {
 	}
 }
 
-// TestSkippedAndOwnedDirectoriesAreBothReportedInNameOrder pins the ordering of
-// both lists a survey carries.
-//
-// The names are hashes and therefore arbitrary -- but arbitrary and stable, so
-// two runs of `cache status` over an unchanged cache produce the same output
-// and can be diffed. A list in filesystem order cannot be.
 func TestSkippedAndOwnedDirectoriesAreBothReportedInNameOrder(t *testing.T) {
 	t.Parallel()
 
@@ -634,7 +517,6 @@ func TestSkippedAndOwnedDirectoriesAreBothReportedInNameOrder(t *testing.T) {
 	}
 }
 
-// sortedBy reports whether n values are in ascending order.
 func sortedBy(n int, at func(int) string) bool {
 	for i := 1; i < n; i++ {
 		if at(i-1) > at(i) {
@@ -644,13 +526,6 @@ func sortedBy(n int, at func(int) string) bool {
 	return true
 }
 
-// TestEnabledIsEitherDirection pins the one line a caller branches on.
-//
-// Resolve only ever produces decisions whose two halves agree -- reading
-// somebody else's answers and writing your own are the same promise about the
-// same command -- but Enabled is exported and answers about the value it is
-// given, and a caller assembling a half-enabled decision is asking whether the
-// cache does anything at all, not whether it does everything.
 func TestEnabledIsEitherDirection(t *testing.T) {
 	t.Parallel()
 
@@ -670,8 +545,6 @@ func TestEnabledIsEitherDirection(t *testing.T) {
 	}
 }
 
-// TestCurrentEnvReadsThisProcess is the one caller of EnvFrom that does not
-// state its own environment.
 func TestCurrentEnvReadsThisProcess(t *testing.T) {
 	t.Parallel()
 
@@ -689,7 +562,6 @@ func TestCurrentEnvReadsThisProcess(t *testing.T) {
 	}
 }
 
-// TestContextKeyRefusesWhatTheKeyRefuses is the truncation's own failure path.
 func TestContextKeyRefusesWhatTheKeyRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -701,9 +573,6 @@ func TestContextKeyRefusesWhatTheKeyRefuses(t *testing.T) {
 		t.Errorf("ContextKey = %q beside an error, want nothing", got)
 	}
 
-	// And the shape of the answer when there is one: the context key is the
-	// key's own prefix, which is what files one run's entries beside each
-	// other.
 	full, err := validContext().Key()
 	if err != nil {
 		t.Fatalf("Key: %v", err)
@@ -717,8 +586,6 @@ func TestContextKeyRefusesWhatTheKeyRefuses(t *testing.T) {
 	}
 }
 
-// TestLookupSaysWhichWayAnEntryWasUnusable separates the two corruptions, which
-// send a reader to two different places.
 func TestLookupSaysWhichWayAnEntryWasUnusable(t *testing.T) {
 	t.Parallel()
 
@@ -783,12 +650,6 @@ func TestLookupSaysWhichWayAnEntryWasUnusable(t *testing.T) {
 	})
 }
 
-// TestASweepThatFailedTouchedNothingItDidNotTouch pins the flag that decides
-// how many workspaces a sweep reports.
-//
-// A workspace a sweep could not read is not one it swept. Counting it would
-// tell somebody their cache had been collected when it had not, which is the
-// one number a `gc` that exits non-zero still prints.
 func TestASweepThatFailedTouchedNothingItDidNotTouch(t *testing.T) {
 	t.Parallel()
 
@@ -836,16 +697,11 @@ func TestASweepThatFailedTouchedNothingItDidNotTouch(t *testing.T) {
 	}
 }
 
-// TestASweepThatCannotPruneAnEmptyContextSaysSo is the last thing collect does
-// with a context directory, and the one failure that happens after everything
-// in it is gone.
 func TestASweepThatCannotPruneAnEmptyContextSaysSo(t *testing.T) {
 	t.Parallel()
 
 	root, workspace, _ := staged(t)
 	outcomes := filepath.Join(workspace, OutcomesDirName)
-	// A context with nothing in it, named so that it sorts first and is
-	// therefore the one reached before anything has been removed.
 	empty := filepath.Join(outcomes, "0000000000000000")
 	if err := os.Mkdir(empty, 0o700); err != nil {
 		t.Fatalf("staging an empty context: %v", err)
@@ -859,19 +715,9 @@ func TestASweepThatCannotPruneAnEmptyContextSaysSo(t *testing.T) {
 	}
 }
 
-// TestASweepSurvivesADirectoryThatStopsBeingReadable is the race the emptiness
-// check exists inside.
-//
-// The listing that decides whether a context is prunable is a second listing of
-// a directory this function has already read, so the only way it fails is that
-// another process changed the directory between the two -- and what this does
-// then is stop and say so rather than prune a directory it can no longer see
-// into.
 func TestASweepSurvivesADirectoryThatStopsBeingReadable(t *testing.T) {
 	root, _, context := staged(t)
 
-	// The seam stands in for the emptiness check alone, which is the second
-	// listing of a directory entryFiles has already read with os.ReadDir.
 	swapSeam(t, &readDir, func(dir string) ([]os.DirEntry, error) {
 		if dir == context {
 			return nil, errStaged
@@ -884,28 +730,17 @@ func TestASweepSurvivesADirectoryThatStopsBeingReadable(t *testing.T) {
 	if !errors.Is(err, errStaged) {
 		t.Errorf("the failure does not carry the one that was staged: %v", err)
 	}
-	// The entries were removed before the listing failed, so that much is
-	// reported: a sweep says what it did before it stopped.
 	if sweep.Entries != 1 {
 		t.Errorf("Entries = %d, want the one it removed before it stopped", sweep.Entries)
 	}
 	if sweep.Contexts != 0 {
 		t.Errorf("Contexts = %d, want none: the prune never happened", sweep.Contexts)
 	}
-	// The workspace is counted because something in it was removed. A sweep
-	// that reported none would say it had touched nothing while an entry it
-	// had deleted was already gone.
 	if sweep.Workspaces != 1 {
 		t.Errorf("Workspaces = %d, want the one it had started on", sweep.Workspaces)
 	}
 }
 
-// TestIsEmptyIsAboutEverythingAndNotOnlyAboutEntries is the reason a context is
-// pruned on a second listing rather than on the count of entries it removed.
-//
-// A temporary file another run is in the middle of writing is not an entry and
-// is not nothing either, and a directory pruned out from under it would take
-// that run's outcome with it.
 func TestIsEmptyIsAboutEverythingAndNotOnlyAboutEntries(t *testing.T) {
 	t.Parallel()
 
@@ -922,9 +757,6 @@ func TestIsEmptyIsAboutEverythingAndNotOnlyAboutEntries(t *testing.T) {
 		t.Errorf("isEmpty of a directory holding a temporary file = %v, %v, want false", empty, err)
 	}
 
-	// A directory that is not there is not an empty one: there is nothing to
-	// prune, and reporting it as prunable would ask for a removal of a name
-	// that no longer exists.
 	if empty, err = isEmpty(filepath.Join(dir, "gone")); err != nil || empty {
 		t.Errorf("isEmpty of a missing directory = %v, %v, want false and no failure", empty, err)
 	}
@@ -935,23 +767,12 @@ func TestIsEmptyIsAboutEverythingAndNotOnlyAboutEntries(t *testing.T) {
 		t.Error("isEmpty answered for a directory it cannot list")
 	}
 	assertCode(t, err, CodeScanFailed)
-	// And the answer beside the failure is "not empty", which is the one that
-	// cannot end in a prune.
 	if empty {
 		t.Error("a directory isEmpty could not list was reported as empty")
 	}
 }
 
-// TestWithinRefusesAPathItCannotResolve is the answer that must not end in a
-// deletion.
-//
-// Not knowing where a deletion would land is not the same as knowing it is
-// outside, and it is certainly not the same as knowing it is inside -- so both
-// resolutions refuse rather than guess, and the refusal keeps this package's
-// own code.
 func TestWithinRefusesAPathItCannotResolve(t *testing.T) {
-	// Not parallel, and neither are the cases below it: one of them replaces a
-	// seam, which is a package-level variable every test in this binary shares.
 	t.Run("the path", func(t *testing.T) {
 		root := t.TempDir()
 		blocked := filepath.Join(root, "blocked")
@@ -969,10 +790,6 @@ func TestWithinRefusesAPathItCannotResolve(t *testing.T) {
 			t.Error("a path nobody could resolve was reported as inside the cache")
 		}
 
-		// And remove carries it up rather than deleting on the strength of a
-		// path it could not resolve. The two refusals share a code and say
-		// different things: one is "this is outside the cache" and the other
-		// is "nobody knows where this is".
 		err = remove(filepath.Join(blocked, "inner", "x"), root)
 		assertCode(t, err, CodeNotRemoved)
 		if !strings.Contains(err.Error(), "could not be resolved") {
@@ -986,8 +803,6 @@ func TestWithinRefusesAPathItCannotResolve(t *testing.T) {
 		if err := os.Mkdir(root, 0o700); err != nil {
 			t.Fatalf("staging: %v", err)
 		}
-		// A path well outside the cache, so that it resolves; the root does
-		// not, because reaching it means searching a directory that refuses.
 		path := filepath.Join(t.TempDir(), "x")
 		unsearchableDir(t, base)
 
@@ -1011,8 +826,6 @@ func TestWithinRefusesAPathItCannotResolve(t *testing.T) {
 	})
 }
 
-// TestRemoveReportsADeletionTheFilesystemRefused is the last step, and the one
-// that makes `cache gc` exit non-zero rather than claim it had finished.
 func TestRemoveReportsADeletionTheFilesystemRefused(t *testing.T) {
 	t.Parallel()
 
@@ -1037,8 +850,6 @@ func TestRemoveReportsADeletionTheFilesystemRefused(t *testing.T) {
 	}
 }
 
-// TestCleanCarriesUpADeletionItCouldNotMake is the same rule for the command
-// that removes a whole outcomes directory rather than one entry.
 func TestCleanCarriesUpADeletionItCouldNotMake(t *testing.T) {
 	t.Parallel()
 
@@ -1052,9 +863,6 @@ func TestCleanCarriesUpADeletionItCouldNotMake(t *testing.T) {
 	}
 }
 
-// TestAWorkspaceWhoseMarkerCannotBeReadIsSkippedWithTheReason is the third way
-// a directory is passed over, beside no marker at all and a marker naming
-// somebody else.
 func TestAWorkspaceWhoseMarkerCannotBeReadIsSkippedWithTheReason(t *testing.T) {
 	t.Parallel()
 
@@ -1077,24 +885,15 @@ func TestAWorkspaceWhoseMarkerCannotBeReadIsSkippedWithTheReason(t *testing.T) {
 	if len(survey.Skipped) != 1 {
 		t.Fatalf("Status skipped %d directories, want one", len(survey.Skipped))
 	}
-	// The reason a user reads, without the diagnostic code that prefixed it:
-	// the row is already a list of things not touched.
 	reason := survey.Skipped[0].Reason
 	if reason == "" || strings.HasPrefix(reason, "GOM") {
 		t.Errorf("the skipped row reads %q, want a sentence without its code", reason)
 	}
-	// And it says the marker is not one this build wrote, rather than that it
-	// names another workspace: a directory whose marker cannot be read is not
-	// a copy of somebody else's, and telling a user it is would send them
-	// looking for an original that does not exist.
 	if !strings.Contains(reason, "is not one this build") {
 		t.Errorf("the skipped row reads %q, want the refusal the marker produced", reason)
 	}
 }
 
-// twoContexts stages one owned workspace holding two context directories, each
-// with one stored outcome in it, and returns the root, the outcomes directory
-// and the two contexts in the order a sweep reaches them.
 func twoContexts(t *testing.T) (root, outcomes, first, second string) {
 	t.Helper()
 
@@ -1119,14 +918,6 @@ func twoContexts(t *testing.T) (root, outcomes, first, second string) {
 	return root, outcomes, first, second
 }
 
-// TestASweepReportsTheWorkspaceItHadAlreadyStartedOn is the other half of the
-// touched flag: a sweep that removed something and then failed has still swept
-// that workspace.
-//
-// Reporting none would say the cache was untouched while an entry it deleted
-// was already gone, which is the one thing a `gc` that exits non-zero must not
-// claim. The failures below are each staged in the *second* context directory,
-// so that the first has been collected before any of them happens.
 func TestASweepReportsTheWorkspaceItHadAlreadyStartedOn(t *testing.T) {
 	t.Parallel()
 
@@ -1147,8 +938,6 @@ func TestASweepReportsTheWorkspaceItHadAlreadyStartedOn(t *testing.T) {
 		blind: func(t *testing.T, _, second string) { unwritableDir(t, second) },
 		code:  CodeNotRemoved,
 	}, {
-		// The outcomes directory refuses the prune of the context it has just
-		// emptied, which is the last thing collect does with one.
 		name:  "an emptied context it cannot prune",
 		blind: func(t *testing.T, outcomes, _ string) { unwritableDir(t, outcomes) },
 		code:  CodeNotRemoved,
@@ -1171,16 +960,6 @@ func TestASweepReportsTheWorkspaceItHadAlreadyStartedOn(t *testing.T) {
 	}
 }
 
-// TestResolvePathWalksUpUntilSomethingResolves states the two ends of the walk,
-// both of which need a resolver that answers what a filesystem will not.
-//
-// The recursion stops at the volume root, whose own name is the answer because
-// there is nothing above it to resolve against -- a state no POSIX filesystem
-// reaches, since its one volume root is always there. And a step of the walk
-// that fails for a reason other than "not there" stops the whole resolution,
-// because a path nobody can resolve is one nobody knows the location of, and
-// not knowing where a deletion would land is the one answer that must not end
-// in a deletion.
 func TestResolvePathWalksUpUntilSomethingResolves(t *testing.T) {
 	t.Run("a volume root that is not there", func(t *testing.T) {
 		missing := &os.PathError{Op: "lstat", Path: "x", Err: os.ErrNotExist}
@@ -1197,9 +976,6 @@ func TestResolvePathWalksUpUntilSomethingResolves(t *testing.T) {
 	})
 
 	t.Run("a step of the walk that refuses", func(t *testing.T) {
-		// The leaf is not there, and walking up to its parent is refused. The
-		// first answer would have the resolution keep climbing and the second
-		// stops it, which is the difference between a location and a guess.
 		refused := errors.New("the directory may not be searched")
 		missing := &os.PathError{Op: "lstat", Path: "x", Err: os.ErrNotExist}
 		leaf := filepath.Join(string(filepath.Separator), "blocked", "gone")
@@ -1220,14 +996,6 @@ func TestResolvePathWalksUpUntilSomethingResolves(t *testing.T) {
 	})
 }
 
-// TestASweepThatCannotSeeIntoAnEmptyContextTouchedNothing is the touched flag
-// on the one path that reaches the emptiness check without removing anything.
-//
-// A context directory with nothing in it is a directory a sweep pruned or a run
-// made and never filled, and the sweep looks at it again before pruning it. If
-// that second look fails, nothing has been removed and no workspace has been
-// touched -- and saying otherwise would report a sweep of a cache that is
-// exactly as it was.
 func TestASweepThatCannotSeeIntoAnEmptyContextTouchedNothing(t *testing.T) {
 	root := t.TempDir()
 	ctx := validContext()

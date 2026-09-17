@@ -180,12 +180,6 @@ func TestABundleThatCannotBeWrittenWarnsAndLeavesTheRunAlone(t *testing.T) {
 	}
 }
 
-// TestARunThatFinishedLeavesNoBundle used to cover an interrupted run too, on
-// the reading that a run which was stopped had not failed. It had not, and it
-// had not finished either, and grouping it with a run that reached a verdict
-// meant the one outcome with nothing else to show for it was also the one that
-// wrote nothing down. A stopped run now leaves a bundle; that is asserted in
-// interrupted_test.go, along with the fact that it holds how far the run got.
 func TestARunThatFinishedLeavesNoBundle(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

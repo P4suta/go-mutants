@@ -3,14 +3,6 @@
 
 //go:build integration
 
-// The toolchain-backed half of `--explain`. It needs a real discovery pass for
-// the same reason the listing tests do: which sites were suppressed and why is
-// exactly what a mock would have to invent, and the whole point of the flag is
-// that it reports what really happened.
-//
-// Run it with `mise run test-integration`, or:
-//
-//	go test -tags integration ./internal/cli/...
 package cli
 
 import (
@@ -22,20 +14,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/testsupport"
 )
 
-// inRejectableFixture is [inFixture] against fixtures/rejectable, which is the
-// corpus module whose whole purpose is holding mutants the compiler refuses.
-//
-// It is the fixture `run --explain` needs: the section under test is the
-// rejections, and a module with none would let every assertion here pass
-// against an empty block.
-//
-// A copy, and not the corpus module itself. `run --explain` is a run: it writes
-// `reports/mutation/` into the directory it is started in, and this helper's
-// whole job is to start it inside a fixture. Pointing it at the checked-in
-// module left a `fixtures/rejectable/reports/` behind on every machine that ran
-// the suite — hidden from `git status` by the .gitignore entry that exists so a
-// manual run cannot be committed, and found by the corpus gate the engine's
-// suite grew.
 func inRejectableFixture(t *testing.T) string {
 	t.Helper()
 	root := testkit.Copy(t, "rejectable")
@@ -43,31 +21,17 @@ func inRejectableFixture(t *testing.T) string {
 	t.Setenv("TMPDIR", temp)
 	t.Setenv("TMP", temp)
 	t.Setenv("TEMP", temp)
-	// The run files a report, and the default history store is the developer's
-	// own cache directory. [testsupport.CacheDir] redirects os.UserCacheDir
-	// wherever it reads from, which is a different variable on each platform.
 	testsupport.CacheDir(t)
 	t.Chdir(root)
 	return temp
 }
 
-// TestListExplainExpandsEverySkipReason checks the detail section against the
-// discovery fixture, which carries one of nearly every suppression.
-//
-// The assertions are substrings rather than a golden file, deliberately. What
-// is being pinned is that each reason appears, that its own sentence appears
-// with it, and that the files it accounted for are named underneath — not the
-// exact spacing, which would make every wording improvement a golden rewrite
-// without making the output any more correct.
 func TestListExplainExpandsEverySkipReason(t *testing.T) {
 	inFixture(t)
 
 	plain, _ := list(t, "--no-color")
 	explained, _ := list(t, "--no-color", "--explain")
 
-	// The listing is unchanged: --explain adds a section, it does not rewrite
-	// what was there. A user who has both outputs in a terminal should be able
-	// to diff them and see only the addition.
 	if !strings.HasPrefix(explained, plain) {
 		t.Fatalf("--explain changed the listing itself\n--- without ---\n%s\n--- with ---\n%s", plain, explained)
 	}
@@ -77,7 +41,6 @@ func TestListExplainExpandsEverySkipReason(t *testing.T) {
 		t.Errorf("the detail section has no heading:\n%s", detail)
 	}
 	for _, want := range []string{
-		// The reason, its explanation, and one of the files it came from.
 		"const-decl",
 		"a constant has to stay constant",
 		"suppressed/suppressed.go",
@@ -93,15 +56,11 @@ func TestListExplainExpandsEverySkipReason(t *testing.T) {
 			t.Errorf("the detail section does not mention %q:\n%s", want, detail)
 		}
 	}
-	// The count travels with the reason, which is where a reader meets it
-	// before the rows underneath say which places it accounted for.
 	if !strings.Contains(detail, "const-decl 4 sites") {
 		t.Errorf("the detail section carries no per-reason count:\n%s", detail)
 	}
 }
 
-// TestListExplainIsDeterministic proves the section is diffable between runs,
-// which is what makes it worth putting in a pull request comment.
 func TestListExplainIsDeterministic(t *testing.T) {
 	inFixture(t)
 
@@ -112,8 +71,6 @@ func TestListExplainIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestListExplainSurvivesQuiet proves the two flags compose: `--quiet` drops the
-// header and keeps the findings, and the explanation is a finding.
 func TestListExplainSurvivesQuiet(t *testing.T) {
 	inFixture(t)
 
@@ -123,13 +80,6 @@ func TestListExplainSurvivesQuiet(t *testing.T) {
 	}
 }
 
-// TestRunExplainQuotesTheCompiler is `run --explain` end to end against the
-// fixture whose whole purpose is a mutant that will not compile.
-//
-// The compiler's own words are what the section exists for: "it did not compile"
-// is already visible in the counts, and which type mismatch on which line is the
-// part that says whether the rejection is a limit of the guard forms or a mutant
-// that could never have meant anything.
 func TestRunExplainQuotesTheCompiler(t *testing.T) {
 	inRejectableFixture(t)
 
@@ -145,13 +95,9 @@ func TestRunExplainQuotesTheCompiler(t *testing.T) {
 			t.Errorf("the explanation has no rejection section (%q missing):\n%s", want, text)
 		}
 	}
-	// A compiler diagnostic names a position and says something about types.
-	// Both halves are the fixture's own, so this asserts the text was carried
-	// through rather than summarised away.
 	if !strings.Contains(text, ".go:") {
 		t.Errorf("no diagnostic was quoted:\n%s", text)
 	}
-	// The explanation comes after the summary, not instead of it.
 	summary := strings.Index(text, "score")
 	explanation := strings.Index(text, "rejected mutants")
 	if summary < 0 || explanation < 0 || explanation < summary {
@@ -160,9 +106,6 @@ func TestRunExplainQuotesTheCompiler(t *testing.T) {
 	}
 }
 
-// TestRunWithoutExplainSaysNothingExtra is the other half: the section is
-// printed only when it was asked for, so the default output of a run is
-// unchanged by this phase.
 func TestRunWithoutExplainSaysNothingExtra(t *testing.T) {
 	inRejectableFixture(t)
 
@@ -176,14 +119,6 @@ func TestRunWithoutExplainSaysNothingExtra(t *testing.T) {
 	}
 }
 
-// TestListExplainPrintsSkipCoordinates is the question the aggregate could not
-// answer: which of the sites in this file was suppressed.
-//
-// "four const-decl sites in suppressed.go" is a number a reader has to go
-// looking for; four `path:line:col` rows are four places they can jump to. The
-// comparison is exact, because the shape is what is being pinned — one row per
-// suppressed candidate, in source order, and a bare path for a file discovery
-// never opened.
 func TestListExplainPrintsSkipCoordinates(t *testing.T) {
 	inFixture(t)
 

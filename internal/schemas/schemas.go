@@ -17,75 +17,22 @@ import (
 	"github.com/P4suta/go-mutants/schema"
 )
 
-// The document types this package validates. They are the values of the
-// `document_type` field, and a consumer branches on them before decoding
-// anything else.
 const (
-	// CatalogV1 is the `list --json` catalogue: mutants and static skips, with
-	// no outcomes and no run.
 	CatalogV1 = "go-mutants/catalog"
 
-	// RunReportV1 is the lossless record of one run: the catalogue again, plus
-	// what happened to every mutant, what the run was measured against, and what
-	// the policy made of it.
 	RunReportV1 = "go-mutants/run-report"
 
-	// DoctorV1 is `doctor --json`: one row per environment check. It describes
-	// the machine rather than any code, which is why it shares nothing with the
-	// two documents above — no run id, no workspace, no mutants.
 	DoctorV1 = "go-mutants/doctor"
 
-	// TraceEventV1 is one line of a run trace: the diagnostic account of what
-	// a run did. It is the one document type here that is not a whole file —
-	// a recording is JSON Lines, and each line is one instance — and the one
-	// that is never evidence. See docs/trace-v1.md.
 	TraceEventV1 = "go-mutants/trace-event"
 
-	// ExplainV1 is `explain --json`: the account of one mutant, or of one
-	// place in the source, joined from a run report and the recording beside
-	// it. It is the one document type here that is *derived* rather than
-	// recorded, and the only one that names its sources, because a consumer
-	// that wants the lossless claim should be reading the report instead. What
-	// it holds that neither source does is the join: the command to paste, the
-	// command to rebuild with, one mutant's share of each stage, the tail of
-	// what its last pass printed, and the judgements about whether either can
-	// be trusted.
 	ExplainV1 = "go-mutants/explain"
 
-	// DiagnosticsV1 is the manifest of a failed run's diagnostics bundle: what
-	// the directory holds and which failure it explains. The bundle is text a
-	// person reads; this is the one file in it a program reads, so that a CI
-	// job which uploads the directory can say what it uploaded. It is an index
-	// rather than an account — the account is the recording beside it.
 	DiagnosticsV1 = "go-mutants/diagnostics"
 
-	// WorkspaceReportV1 is what a run over a `go.work` publishes instead of a
-	// run report: the run's own counts, and every module's run report embedded
-	// inside it. It exists because `workspace.module_path` is required of a run
-	// report and a workspace has no single answer for it, and the modules'
-	// documents are embedded rather than filed beside it because a history
-	// store names a run's document by its run id. See ADR 0012.
 	WorkspaceReportV1 = "go-mutants/workspace-report"
 )
 
-// registry maps a document type onto the schema file in [schema.FS] that
-// defines it.
-//
-// This is the whole extension point. Adding a schema — doctor-v1 arrived this
-// way, and diagnostics-v1 after it — is one file in schema/ and one line here;
-// nothing else in this package knows how many schemas there are or what they
-// contain.
-//
-// The vendored Stryker schema is deliberately not here. It is somebody else's
-// contract, validated where the projection is built
-// (internal/report/strykerschema.go) against a pinned copy that carries its own
-// $id, so that a change in another repository cannot silently change what this
-// one claims to produce.
-//
-// It is a document *type* that costs one line. A second *version* of a type
-// would cost more: registry is keyed on the type alone, so a run-report v2
-// would have to re-key it on (type, version) and teach Validate to read
-// schema_version out of the instance first.
 var registry = map[string]string{
 	CatalogV1:     "catalog-v1.schema.json",
 	DiagnosticsV1: "diagnostics-v1.schema.json",
@@ -97,25 +44,14 @@ var registry = map[string]string{
 	WorkspaceReportV1: "workspace-report-v1.schema.json",
 }
 
-// baseURL is the identity a schema gets when its file declares no "$id".
-//
-// The host is deliberately unresolvable. These identifiers are names, not
-// addresses: nothing ever dereferences one, and a name that cannot be fetched
-// even by accident is a name that can never turn a validation into a network
-// request. A vendored third-party schema keeps its own "$id" instead, which is
-// why this is a fallback rather than a rule.
 const baseURL = "https://go-mutants.invalid/schema/"
 
-// compiled holds the compiled schemas by document type, or compileErr holds
-// the reason there are none. Exactly one of them is set once compileOnce has
-// run.
 var (
 	compileOnce sync.Once
 	compiled    map[string]*jsonschema.Schema
 	compileErr  error
 )
 
-// DocumentTypes returns every document type this build can validate, sorted.
 func DocumentTypes() []string {
 	types := make([]string, 0, len(registry))
 	for documentType := range registry {
@@ -125,12 +61,6 @@ func DocumentTypes() []string {
 	return types
 }
 
-// Validate reports whether doc satisfies the schema for documentType.
-//
-// It returns nil when the document is valid, and otherwise an [*Error] whose
-// [Code] says what kind of failure it was and whose [Error.Pointer] locates the
-// first violation. An unknown documentType is a failure, never a silent pass;
-// see the package documentation.
 func Validate(documentType string, doc []byte) error {
 	sch, err := schemaFor(documentType)
 	if err != nil {
@@ -151,8 +81,6 @@ func Validate(documentType string, doc []byte) error {
 	return nil
 }
 
-// schemaFor returns the compiled schema for a document type, compiling every
-// registered schema on the first call.
 func schemaFor(documentType string) (*jsonschema.Schema, error) {
 	if _, known := registry[documentType]; !known {
 		return nil, &Error{
@@ -168,9 +96,6 @@ func schemaFor(documentType string) (*jsonschema.Schema, error) {
 	}
 	sch, ok := compiled[documentType]
 	if !ok {
-		// Unreachable while compileAll compiles every registered type, which
-		// the package tests assert. Reported rather than dereferenced, because
-		// a nil schema would panic inside the validator with no clue as to why.
 		return nil, &Error{
 			Code:         CodeSchemaUnusable,
 			DocumentType: documentType,
@@ -180,19 +105,8 @@ func schemaFor(documentType string) (*jsonschema.Schema, error) {
 	return sch, nil
 }
 
-// compileAll reads and compiles every registered schema, setting either
-// compiled or compileErr. It runs at most once per process.
-//
-// Every schema is registered with the compiler before any of them is compiled,
-// so that a $ref from one document type to another resolves against the
-// embedded copy instead of being looked up. No URL loader is installed, so
-// there is nothing to look it up with.
 func compileAll() {
 	c := jsonschema.NewCompiler()
-	// Every schema in this repository declares "$schema", so the default only
-	// matters for a vendored schema that does not. 2020-12 is the dialect the
-	// project writes in, and guessing an older draft for a schema that omits
-	// the keyword would silently change what "additionalProperties" means.
 	c.DefaultDraft(jsonschema.Draft2020)
 
 	urls := make(map[string]string, len(registry))
@@ -228,8 +142,6 @@ func compileAll() {
 	compiled = out
 }
 
-// registeredFiles returns the distinct schema files the registry names, sorted
-// so that compilation order does not depend on map iteration.
 func registeredFiles() []string {
 	files := make([]string, 0, len(registry))
 	for _, file := range registry {
@@ -241,8 +153,6 @@ func registeredFiles() []string {
 	return files
 }
 
-// resourceURL is the identity a schema is registered and compiled under: its
-// own "$id" when it declares one, and otherwise a name derived from the file.
 func resourceURL(file string, doc any) string {
 	if obj, ok := doc.(map[string]any); ok {
 		if id, ok := obj["$id"].(string); ok && id != "" {
@@ -252,7 +162,6 @@ func resourceURL(file string, doc any) string {
 	return baseURL + file
 }
 
-// unusable builds the error for an embedded schema that cannot be used.
 func unusable(file, problem string, cause error) error {
 	return &Error{
 		Code:    CodeSchemaUnusable,
@@ -261,13 +170,9 @@ func unusable(file, problem string, cause error) error {
 	}
 }
 
-// invalidDocument turns the validator's error tree into a single located
-// failure.
 func invalidDocument(documentType string, cause error) error {
 	var failure *jsonschema.ValidationError
 	if !errors.As(cause, &failure) {
-		// The validator only ever returns *ValidationError, but an error is a
-		// poor place to assume anything: report it whole rather than lose it.
 		return &Error{
 			Code:         CodeInvalidDocument,
 			DocumentType: documentType,
@@ -286,26 +191,12 @@ func invalidDocument(documentType string, cause error) error {
 	}
 }
 
-// A violation is one leaf of the validator's error tree, reduced to the three
-// strings that identify it.
 type violation struct {
-	// pointer locates the offending value in the instance.
 	pointer string
-	// keyword locates the schema keyword that rejected it, as a JSON pointer
-	// fragment such as "/required". It is a tiebreak, not output.
 	keyword string
-	// detail is the validator's own one-line complaint, with its "at '...':"
-	// prefix removed because the pointer is reported separately.
-	detail string
+	detail  string
 }
 
-// firstViolation picks the violation to report.
-//
-// "First" is a choice this package makes, not one the validator offers. Its
-// error tree branches in map iteration order, so the leaves arrive shuffled;
-// sorting them by (pointer, keyword, detail) imposes a total order on a set
-// that is itself deterministic, which makes the reported location a function of
-// the document alone.
 func firstViolation(failure *jsonschema.ValidationError) violation {
 	var leaves []violation
 	collectViolations(failure, &leaves)
@@ -324,9 +215,6 @@ func firstViolation(failure *jsonschema.ValidationError) violation {
 	return leaves[0]
 }
 
-// collectViolations appends every leaf of the error tree to out. Interior
-// nodes are the structural keywords — $ref, properties, items — that merely
-// say where the failure happened; the leaves are the failures.
 func collectViolations(failure *jsonschema.ValidationError, out *[]violation) {
 	if len(failure.Causes) == 0 {
 		*out = append(*out, describe(failure))
@@ -337,15 +225,6 @@ func collectViolations(failure *jsonschema.ValidationError, out *[]violation) {
 	}
 }
 
-// describe reduces one node of the error tree to a [violation].
-//
-// A missing or unexpected property is located at the property itself rather
-// than at the object that lacks or carries it. The validator reports both
-// against the parent, which is correct but useless: the answer to "what is
-// wrong with this catalogue" should be "/mutants/0/line", not "/mutants/0".
-// Where several properties are missing or unexpected at once, the
-// lexicographically first is named, so that the answer does not depend on the
-// order a map happened to be iterated in.
 func describe(failure *jsonschema.ValidationError) violation {
 	pointer := jsonPointer(failure.InstanceLocation)
 	v := violation{pointer: pointer, detail: detailOf(failure, pointer)}
@@ -366,7 +245,6 @@ func describe(failure *jsonschema.ValidationError) violation {
 	return v
 }
 
-// firstName returns the lexicographically first of a set of property names.
 func firstName(names []string) (string, bool) {
 	if len(names) == 0 {
 		return "", false
@@ -376,20 +254,10 @@ func firstName(names []string) (string, bool) {
 	return sorted[0], true
 }
 
-// detailOf returns the validator's complaint without the location it prints in
-// front of it, since the location is reported as a pointer instead.
-//
-// The prefix is reconstructed rather than searched for: an instance location
-// can contain any character a JSON property name can, quote marks and colons
-// included, so scanning for the separator would truncate the wrong message on
-// exactly the documents that are hardest to debug. A prefix that does not match
-// — because the validator changed how it prints — leaves the text untouched.
 func detailOf(failure *jsonschema.ValidationError, pointer string) string {
 	return strings.TrimPrefix(failure.Error(), "at "+quoteLocation(pointer)+": ")
 }
 
-// jsonPointer renders RFC 6901 tokens as a pointer. The empty token list is
-// the empty pointer, which names the whole document.
 func jsonPointer(tokens []string) string {
 	var b strings.Builder
 	for _, token := range tokens {
@@ -399,15 +267,11 @@ func jsonPointer(tokens []string) string {
 	return b.String()
 }
 
-// escapeToken applies the RFC 6901 escapes, in the order the RFC requires:
-// '~' first, so that a '/' escaped to "~1" is not escaped again.
 func escapeToken(token string) string {
 	token = strings.ReplaceAll(token, "~", "~0")
 	return strings.ReplaceAll(token, "/", "~1")
 }
 
-// quoteLocation reproduces how the validator quotes an instance location, so
-// that [detailOf] can strip exactly the prefix the validator wrote.
 func quoteLocation(s string) string {
 	q := fmt.Sprintf("%q", s)
 	q = strings.ReplaceAll(q, `\"`, `"`)
@@ -415,9 +279,6 @@ func quoteLocation(s string) string {
 	return "'" + q[1:len(q)-1] + "'"
 }
 
-// displayPointer renders a pointer for a human. The empty pointer is a real
-// location — the document itself — and printing nothing for it would produce
-// an error message with a hole in it.
 func displayPointer(pointer string) string {
 	if pointer == "" {
 		return "the document root"

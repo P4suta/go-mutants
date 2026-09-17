@@ -11,10 +11,6 @@ import (
 	"testing"
 )
 
-// obstructRemoval takes the write permission off parent, so that nothing can
-// unlink an entry of it: the sweep empties the orphan and then cannot remove
-// the directory itself. Root is not bound by a mode, so the test is skipped
-// for root rather than made to pass by accident.
 func obstructRemoval(t *testing.T, parent, _ string) {
 	t.Helper()
 	if syscall.Geteuid() == 0 {

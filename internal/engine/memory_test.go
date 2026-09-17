@@ -11,16 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/runner"
 )
 
-// TestMemoryBoundIsDerivedFromTheBaselinePeak is the memory half of the pair
-// [TestDeriveTimeout] pins for the clock, and it is written as one table for
-// the same reason: the rule is four sentences, and four sentences spread over
-// four tests are four places for one of them to be forgotten.
-//
-// The fourth case is the one this feature exists to make impossible. A peak of
-// zero means the platform could not measure one, and the answer there is no
-// bound at all — never the floor. A floor applied to a measurement nobody made
-// is a number go-mutants invented, and it would kill a legitimate suite on the
-// one platform where nothing could have warned it.
 func TestMemoryBoundIsDerivedFromTheBaselinePeak(t *testing.T) {
 	t.Parallel()
 
@@ -92,13 +82,6 @@ func TestMemoryBoundIsDerivedFromTheBaselinePeak(t *testing.T) {
 	}
 }
 
-// TestAPlatformThatCannotEnforceABoundIsUnbounded pins the other way a bound
-// goes missing, which is not the same as an unmeasured peak.
-//
-// macOS reports what a process cost once it is gone and cannot watch one while
-// it runs, so a bound derived there would be a promise nothing keeps. The
-// derivation asks the runner rather than assuming, and a run on such a platform
-// carries no bound and says so once.
 func TestAPlatformThatCannotEnforceABoundIsUnbounded(t *testing.T) {
 	t.Parallel()
 
@@ -117,17 +100,6 @@ func TestAPlatformThatCannotEnforceABoundIsUnbounded(t *testing.T) {
 	}
 }
 
-// TestAnExplicitBoundIsRecordedEvenWhereItCannotBeEnforced pins the difference
-// between a bound that is absent and a bound that is merely not held.
-//
-// The two used to be the same answer, and it made the run lie to the user in
-// the one place it was trying to be honest: the warning on macOS invites them
-// to set `test.memory` "if you want the bound recorded", and then the bound was
-// dropped and nothing recorded it. A number the user wrote down belongs in the
-// report whether or not this machine can hold anybody to it — that is what a
-// record of a run is for — and what must not survive is a *derived* bound,
-// which is go-mutants' own arithmetic and would read as a promise the run never
-// made.
 func TestAnExplicitBoundIsRecordedEvenWhereItCannotBeEnforced(t *testing.T) {
 	t.Parallel()
 
@@ -156,20 +128,6 @@ func TestAnExplicitBoundIsRecordedEvenWhereItCannotBeEnforced(t *testing.T) {
 	}
 }
 
-// TestOnlyAnExplicitBoundNobodyWillHoldIsWorthAWarning is the rule GOM4047
-// exists under, and the second half of it is what the first version got wrong.
-//
-// A warning is a thing a user can act on. An explicit `test.memory` this
-// machine will not enforce is exactly that: they wrote a number, they believe
-// it is holding, and it is not — one line, once, and they can decide whether
-// they mind. A *derived* bound that cannot be enforced is not: nothing was
-// asked for, nothing is different from every run before the bound existed, and
-// go-mutants would be warning every clean macOS run about its own arithmetic
-// forever. That is how a warning stops being read.
-//
-// So the derived case is silent and says what happened where a fact belongs:
-// [MemorySourceUnavailable] in the event and in the report, and one word on the
-// `-v` line.
 func TestOnlyAnExplicitBoundNobodyWillHoldIsWorthAWarning(t *testing.T) {
 	t.Parallel()
 
@@ -207,14 +165,9 @@ func TestOnlyAnExplicitBoundNobodyWillHoldIsWorthAWarning(t *testing.T) {
 	}
 }
 
-// TestMemoryDerivedIsASealedEvent is a compile-time assertion: it travels on the
-// engine's stream, so it has to be part of the sealed interface a renderer
-// switches over.
 func TestMemoryDerivedIsASealedEvent(t *testing.T) {
 	t.Parallel()
 
-	// The declaration is the assertion: the interface's marker method is
-	// unexported, so a type that forgot it would not compile here.
 	var derived Event = MemoryDerived{
 		Limit:  1 << 30,
 		Source: MemorySourceDerived,
@@ -226,15 +179,6 @@ func TestMemoryDerivedIsASealedEvent(t *testing.T) {
 	}
 }
 
-// TestTheMemoryBoundTakesNoPartInTheCacheKey is the invariant that would fail
-// silently.
-//
-// A bound is a budget on evidence and not evidence: the same mutant, measured
-// against the same tests in the same tree, is the same mutant whether the run
-// that measured it was allowed two gigabytes or eight. A bound that reached
-// [cache.Context] would give every run whose machine measured a slightly
-// different baseline peak a cache of its own — correct results, no reuse, and
-// nothing anywhere saying why.
 func TestTheMemoryBoundTakesNoPartInTheCacheKey(t *testing.T) {
 	t.Parallel()
 
@@ -248,9 +192,6 @@ func TestTheMemoryBoundTakesNoPartInTheCacheKey(t *testing.T) {
 		t.Fatal("the first run stored nothing, so the second has nothing to find")
 	}
 
-	// The second run is the first with a bound: configured, derived, and
-	// applied. Every one of those is a place a memory number could leak into
-	// the key.
 	bounded := f
 	bounded.opts.Config.Test.Memory = 2 << 30
 	bounded.out.Memory = 8 << 30

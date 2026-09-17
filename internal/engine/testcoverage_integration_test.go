@@ -15,12 +15,8 @@ import (
 	"github.com/P4suta/go-mutants/trace"
 )
 
-// narrowModule is a module with two binaries a default (test-narrowed) run has
-// to treat differently, so one run exercises both halves of the narrowing.
 const narrowModule = "fixture.example/narrow"
 
-// cleanSource's one test passes on its own, so its binary is clean and its
-// mutant is narrowed to the single test that reaches it.
 const cleanSource = `package clean
 
 // Positive is reached by TestPositive alone.
@@ -40,9 +36,6 @@ func TestPositive(t *testing.T) {
 }
 `
 
-// dirtySource's mutant is reached only by a test that fails on its own, so its
-// binary cannot be narrowed and the mutant is measured against the whole
-// binary and killed there rather than reported uncovered.
 const dirtySource = `package dirty
 
 // Guarded is reached only by TestSecond, which fails when run alone.
@@ -71,17 +64,6 @@ func TestSecond(t *testing.T) {
 }
 `
 
-// TestTestNarrowingRunsOneTestAndWidensAnOrderDependentOne is the whole of
-// test-level narrowing against a real toolchain, in one run.
-//
-//   - The run's coverage mode is test, and it profiled the tests it could.
-//   - The clean binary's mutant is narrowed to TestPositive: the only test that
-//     reaches it, named on the mutant and on its one execution.
-//   - The dirty binary's TestSecond fails on its own, so it is named in an
-//     order-dependent warning and its binary is not narrowed; its mutant is
-//     measured against the whole binary and killed there, carrying the binary
-//     but no covering test.
-//   - Nothing is reported uncovered: every mutant a test reaches was run.
 func TestTestNarrowingRunsOneTestAndWidensAnOrderDependentOne(t *testing.T) {
 	t.Parallel()
 
@@ -112,7 +94,6 @@ func TestTestNarrowingRunsOneTestAndWidensAnOrderDependentOne(t *testing.T) {
 		t.Errorf("coverage.mutants_uncovered = %v, want 0: every mutant a test reaches was run", block.MutantsUncovered)
 	}
 
-	// The order-dependent test is named in a GOM7603 warning.
 	warning := warningWithCode(outcome.Report, string(coverage.CodeOrderDependentTests))
 	if warning == nil {
 		t.Fatalf("no %s warning was published: %+v", coverage.CodeOrderDependentTests, outcome.Report.Warnings)
@@ -126,7 +107,6 @@ func TestTestNarrowingRunsOneTestAndWidensAnOrderDependentOne(t *testing.T) {
 	positive := onlyMutant(t, outcome.Report, cleanPkg, "gt-to-ge")
 	guarded := onlyMutant(t, outcome.Report, dirtyPkg, "gt-to-ge")
 
-	// The clean binary's mutant was narrowed to the one test that reaches it.
 	if positive.Outcome != report.OutcomeKilled {
 		t.Errorf("the clean mutant is %s, want killed", positive.Outcome)
 	}
@@ -137,8 +117,6 @@ func TestTestNarrowingRunsOneTestAndWidensAnOrderDependentOne(t *testing.T) {
 		t.Errorf("the clean mutant's execution was not narrowed to TestPositive: %+v", positive.Executions)
 	}
 
-	// The dirty binary's mutant was widened to the whole binary and killed
-	// there: it carries the binary but names no covering test.
 	if guarded.Outcome != report.OutcomeKilled {
 		t.Errorf("the dirty mutant is %s, want killed against the whole binary", guarded.Outcome)
 	}
@@ -155,7 +133,6 @@ func TestTestNarrowingRunsOneTestAndWidensAnOrderDependentOne(t *testing.T) {
 	}
 }
 
-// warningWithCode returns the first warning carrying code, or nil.
 func warningWithCode(r *report.Report, code string) *report.Warning {
 	for i := range r.Warnings {
 		if r.Warnings[i].Code == code {
@@ -165,8 +142,6 @@ func warningWithCode(r *report.Report, code string) *report.Warning {
 	return nil
 }
 
-// onlyMutant returns the one report mutant of the given package and rule,
-// failing if the fixture does not hold exactly one.
 func onlyMutant(t *testing.T, r *report.Report, pkg, rule string) report.Mutant {
 	t.Helper()
 	var found []report.Mutant
@@ -205,11 +180,6 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
-// sharedModule is a mutant that survives the only test that covers its line but
-// is killed, through a package variable, by a test that does not — the exact
-// case RunOne's whole-binary confirmation exists for. Both tests pass on their
-// own, so the binary is clean and the mutant is narrowed; the kill appears only
-// when the whole binary runs.
 const sharedModule = "fixture.example/shared"
 
 const sharedSource = `package shared
@@ -251,12 +221,6 @@ func TestModeIsOne(t *testing.T) {
 }
 `
 
-// TestANarrowedSurvivorIsKilledByTheWholeBinary is the whole-binary
-// confirmation end to end: the `>` in Enable is covered only by TestEnable,
-// which passes with the mutant active, so the narrowed run survives it; the
-// whole binary kills it through TestModeIsOne, which reads the shared variable
-// TestEnable left at 2 under the mutant. Without the confirmation this mutant
-// would be a false survivor; with it the verdict matches a package-level run.
 func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
 	t.Parallel()
 
@@ -265,9 +229,6 @@ func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
 		Source("shared_test.go", sharedSuite).
 		Root()
 	opts := optionsAt(t, root)
-	// A readable sink, so the two runs behind the confirmation can be checked:
-	// the narrowed run and the whole-binary run are both recorded, even though
-	// the report keeps only the authoritative one.
 	sink := trace.NewMemorySink(0)
 	opts.TraceSink = sink
 
@@ -286,8 +247,6 @@ func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
 	if mutant.Outcome != report.OutcomeKilled {
 		t.Fatalf("the shared-state mutant is %s, want killed by the whole-binary confirmation", mutant.Outcome)
 	}
-	// The confirmation runs the whole binary, so the reported execution names
-	// no tests even though coverage found one test reaching the line.
 	for _, execution := range mutant.Executions {
 		if len(execution.Tests) != 0 {
 			t.Errorf("the confirmed kill's execution was narrowed to %v, want the whole binary", execution.Tests)
@@ -297,10 +256,6 @@ func TestANarrowedSurvivorIsKilledByTheWholeBinary(t *testing.T) {
 		t.Errorf("covering tests = %v, want %v: coverage still knows the one test that reaches the line", mutant.CoveringTests, want)
 	}
 
-	// The trace records both runs behind the one reported attempt: the narrowed
-	// run, whose argv selects TestEnable, and the whole-binary confirmation,
-	// whose argv selects nothing. The report keeps only the second; the trace
-	// is where the fast-path survival that preceded the kill is visible.
 	var narrowed, whole int
 	for _, e := range sink.Events() {
 		if e.Type != trace.TypeExec || e.Exec == nil || e.Exec.Kind != trace.ExecKindMutantRun || e.Exec.Subject != mutant.ID {

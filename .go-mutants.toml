@@ -1,375 +1,11 @@
 # SPDX-FileCopyrightText: 2026 go-mutants contributors
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# go-mutants dogfooding itself. This is the configuration `mise run dogfood`
-# uses, locally and in CI, and it is also the worked example of the whole v1
-# configuration surface. Every key below is decoded strictly: an unknown key is
-# an error carrying the line and column where it was found, never a silently
-# ignored typo.
-#
-# Two constraints shape the scope, because this gate runs on every push:
-#
-#   fast          the job has to finish in minutes, not tens of minutes.
-#   deterministic the same tree has to produce the same score twice, or the
-#                 minimum_score floor below is a coin flip rather than a gate.
-#
-# The scope is ten whole packages, where it used to be two files, and two
-# things bought that. A scoped test command now scopes the test binaries as
-# well, so a mutant is measured against the suites that cover it rather than
-# against every suite in the module -- that reason is written down under [test].
-# And each package's own suites kill the survivors that kept it out, which is
-# how every one of them arrived and the only way the next one will: that story
-# is in CHANGELOG.md, which [mutation] points at rather than retelling.
-#
-# Three of the eleven joined for free, which is the one way a floor is allowed to
-# widen without a test being written first: they were measured before the line
-# was added and every mutant in them was already dead, so this file grew three
-# include lines and three test patterns and not one expectation. That is the
-# rule below working rather than an exception to it.
-#
-# What "deterministic" claims was worth being exact about, because the ninth
-# package briefly made one part of it false and then paid for the fix. Two of
-# internal/config's mutants do not spin when they fail to return: they allocate.
-# Until a mutant was bounded in memory the way it has always been bounded in
-# time, their verdict was a race -- killed when the allocator reached them
-# first, timed out when the clock did -- and one of them did not fail a CI run
-# so much as end it, with the runner receiving a shutdown signal.
-#
-# That is what `test.memory` and the derived max(1GiB, largest baseline peak x 4)
-# exist for, and with the bound in place the split is a fact again rather than a
-# race: 4318 killed, three caught by a counted loop, seventy-five declared, 100.00%,
-# identical on every run measured under [policy]. The mutants that allocate are
-# stopped in about a second and a half each, and the ledger below did not grow a
-# row for them, because a mutant the bound stops is killed rather than excused:
-# the original program was measured under the budget the bound came from, so a
-# tree needing four times what the whole suite needed has been changed
-# observably.
-#
-# The tenth package is the first one here that starts processes, and it is worth
-# saying what that did and did not cost. internal/gocmd's suite scripts a `go`
-# rather than reaching for one, so it stays deterministic -- but the baseline it
-# is part of got slower, and the per-mutant timeout is derived from that
-# baseline, so the three mutants that never return each pay for it twice. That
-# is the whole of what the widening cost in wall clock, and the paired
-# measurements under [policy] show it as a fact rather than as an estimate. What
-# it did not cost is a fourth such mutant: internal/gocmd had one, and it was
-# turned into a kill rather than accepted. See CHANGELOG.md.
 
 version = 1
 
 [mutation]
-# Tiers are monotonically inclusive: balanced ⊂ strong ⊂ all.
 profile = "balanced"
-# Ten whole packages. The first three are the pure core: the mutation model
-# everything downstream is built on -- catalogue, mutant identity, rule set,
-# scoring, shard assignment and exit policy -- the glob engine those identities
-# depend on, and the five-way span relation the interval forest is built on.
-# Three more are the small deciders that sit on top of it and are trusted the
-# same way: which argument names a test-binary flag, which rules a profile or an
-# --operator name selects, and which change to an instrumented snapshot the
-# instrumentation did not make. Two are the readers a run's own verdicts pass
-# through: the coverage reader and mapping that decide which suites a mutant is
-# measured against, and the JSON schema validation every published document
-# goes through. The ninth is this file's own reader -- decoding, validation,
-# precedence, and the position walk that puts a caret under the value a
-# diagnostic is about -- which makes the worked example below one of the
-# documents the scope is measured on.
-#
-# The tenth is the toolchain wrapper, and it is the first one here that is not
-# a decision over values handed in. internal/gocmd finds `go`, probes it,
-# parses what it printed, shapes the environment a child is handed, and hands
-# back an argument vector -- so a mutant in it can change which binary a run
-# uses, how long it waits for one that never answers, whether a `-mod=readonly`
-# somebody set survives, or whether a failure arrives with the bytes that
-# explain it. Its unit tier is process-level for exactly that reason and stays
-# toolchain-free anyway: internal/testkit/mutantkit's scripted `go` answers from
-# a table, so a probe that hangs, one that exits non-zero, one that cannot be
-# started at all and one that answers garbage are all real processes and none of
-# them is the machine's toolchain. The one thing that has to meet a real `go` --
-# that the parser agrees with what a released toolchain prints -- carries
-# `//go:build integration` and is outside this scope, which is correct: it is a
-# claim about Go rather than about go-mutants.
-#
-# The other nine are pure arithmetic, pure text matching, a pure filter over a
-# digest table, or a pure decision over values handed in, and none of them reads
-# a clock or a network. internal/config reads a file, and only through
-# os.ReadFile in LoadFile: everything a mutant can reach below that takes bytes
-# and returns an answer.
-#
-# The eleventh is the one that breaks that sentence, and it is the largest.
-# internal/report is what a run writes down: the RunReport v1 document every
-# other output is derived from, the history store kept under the operating
-# system's cache directory, the projection into the published
-# mutation-testing-report format, the self-contained page rendered from it, and
-# the merge that puts a split run back together. It is the first package in this
-# scope that writes files -- two into the user's own tree and a history into a
-# directory it shares with every other program on the machine -- so a survivor
-# in it can be a failure the operating system will not produce on demand rather
-# than a value nobody asserted. The tests stage the failures it will produce and
-# the source grew two seams for the three it will not; the note above the
-# internal/report rows below says which is which.
-#
-# The numbers this gate is sized against, from the run that produced them:
-#
-#   internal/report/*.go         1365 mutants
-#   internal/config/*.go          505
-#   internal/mutation/*.go        477
-#   internal/cache/*.go           427
-#   internal/validate/*.go        370
-#   internal/snapshot/*.go        329
-#   internal/gitdiff/*.go         257
-#   internal/coverage/*.go        164
-#   internal/tempowner/*.go       121
-#   internal/gocmd/*.go           112
-#   internal/schemas/*.go          89
-#   internal/glob/*.go             71
-#   internal/interval/*.go         50
-#   internal/drift/*.go            21
-#   internal/operatorselect/*.go   16
-#   internal/testlog/*.go          15
-#   internal/testflag/*.go          7
-#
-# catalogues 4396 mutants and detects 4321 of them -- 4318 killed and three
-# caught by a counted loop -- leaving the seventy-five rows declared below and a
-# score of 100.00%, in the wall clock recorded under [policy].
-#
-# Two things the table does not say, and both are worth saying here rather than
-# being inferred from a number.
-#
-# Windows is not in it and cannot be. internal/tempowner/lock_windows.go is not
-# built on the platforms this gate runs on, so discovery never opens it and not
-# one of its lines is in the 121 above. A gate that said nothing about what it
-# does not cover would be a number wearing a gate's clothes.
-#
-# And 257 of these mutants need `git` on PATH. internal/gitdiff's suite drives a
-# real git, because everything about reading git is what git actually prints,
-# and without one those tests skip -- so on a machine with no git this gate
-# reports two hundred and fifty-seven survivors rather than naming the missing
-# tool. GO_MUTANTS_TEST_REQUIRE_TOOLS is what turns such a skip into a failure,
-# and it cannot reach here: internal/execute strips every GO_MUTANTS_ variable
-# from every child a run starts, which is the rule that keeps a developer's
-# exported GO_MUTANTS_ACTIVE from running a mutant as the baseline. So the
-# symptom is written down instead: survivors concentrated in one package, all of
-# them in internal/gitdiff, means git rather than a regression. The count has grown eight
-# times without the score moving, and every time for the same reason: code the
-# gate already covered started producing mutants it had not produced before.
-# Once it has fallen, for the opposite and better reason:
-#
-#   4014 to 4383   internal/validate joined the gate (2026-09-15): 369 new
-#                  mutants and four declared rows. It was the widening this
-#                  file's own prose kept for last, because the phase spawns
-#                  processes -- and the seams it already had are why it cost
-#                  four rows and no timeouts: the compiler and the rewriter are
-#                  fields, so "the machine stopped being able to build" is a
-#                  table rather than a state a test has to produce. Thirteen
-#                  never-returning mutants came off with it, by bounding the
-#                  search's loop at one pass per catalogued file instead of
-#                  resting its exit on a lemma about another function.
-#
-#   3592 to 4014   internal/cache joined the gate (2026-09-15): 422 new
-#                  mutants and eight declared rows. It is the package that
-#                  deletes files in a directory it shares with every other
-#                  program on the machine, and most of its mutants sit on a
-#                  failure path: a cache root that cannot be listed, a workspace
-#                  carrying somebody else's marker, an entry that cannot be
-#                  read, a rename that cannot land. Six operating-system calls
-#                  it cannot be made to fail are named in
-#                  internal/cache/seams.go. Three comparisons came out rather
-#                  than being declared -- a truncation boundary that cuts the
-#                  same string either way, a clamp written as a guard, and a
-#                  pair of sorts restating an ordering os.ReadDir already
-#                  guarantees -- and one double computation of the cache key
-#                  with it.
-#
-#   3263 to 3592   internal/snapshot joined the gate (2026-09-15): 329 new
-#                  mutants and two declared rows, both of them one branch that
-#                  no configured value reaches. Most of this package is
-#                  filesystem failure paths, and most of those are staged for
-#                  real -- a source root that cannot be listed, an entry that
-#                  cannot be stat-ed, a destination parent that refuses writes,
-#                  a destination that already exists. The eight that cannot be
-#                  staged are named in internal/snapshot/seams.go, which is the
-#                  whole list of operating-system calls this package cannot be
-#                  made to fail. Four mutants that never returned went with the
-#                  widening rather than into it: the walk's two path helpers had
-#                  a guard each whose other reading walked the root again at
-#                  every depth.
-#
-#   3006 to 3263   internal/gitdiff joined the gate (2026-09-15): 257 new
-#                  mutants, every one of them killed, and not one declared row.
-#                  It was the widening this file's own prose called the hard
-#                  one, and most of the work was in two places rather than in
-#                  the count: the failures a repository cannot be put into now
-#                  go through a seam on the command runner, and four boundary
-#                  comparisons that had two spellings and one answer were
-#                  rewritten as the one answer.
-#
-#   2885 to 3006   internal/tempowner joined the gate (2026-09-14): 121 new
-#                  mutants, every one of them killed, and not one declared row.
-#                  The widening cost five tests -- the flock wrapper's three
-#                  answers, an unlock the kernel refuses, a clock RFC 3339
-#                  cannot write down, a lock the sweep cannot give back, and a
-#                  file inside a listable directory that cannot be stat-ed --
-#                  and one shape change: the two errnos that mean "somebody
-#                  else holds it" are two cases of one switch rather than the
-#                  two halves of an `||`, because where they are equal the `||`
-#                  and an `&&` are the same expression.
-#
-#   2888 to 2885   refusing an edit whose replacement is the constant the source
-#                  already holds (2026-09-14): three fewer mutants, and three
-#                  fewer rows in the ledger below. `return Disjoint`, `return
-#                  OutcomeNotRun` and `return mutation.OutcomeNotRun` were each
-#                  the head of an iota block returned where the rule proposes
-#                  `0`; go/types folds both readings to the same constant, so
-#                  there were never two programs there. Nothing that was killed
-#                  stopped being killed: the detected count is the same 2822 it
-#                  was, and only the denominator lost the three mutants that
-#                  could never have been in it.
-#
-#   2736 to 2873   measuring a `go.work` as one run over every module it joins
-#                  (2026-09-14): 137 new mutants, most of them the workspace
-#                  report and the parts of internal/report, internal/coverage
-#                  and internal/schemas that learned which module a path is
-#                  relative to. Two of them are declared and the rest are killed
-#                  by the tests written with them. The declared rows are two
-#                  lines of one unreachable branch, which is one place rather
-#                  than three because both constructors of a workspace report
-#                  return through it.
-#
-#   2722 to 2736   the module coordinate a workspace mutant is catalogued under
-#                  (2026-09-14): fourteen new mutants in internal/mutation --
-#                  the module in the digest, original-text and deduplication
-#                  keys, in the canonical order, and the refusal of a catalogue
-#                  that mixes the two recipes -- of which five survived until
-#                  the tests that kill them were written. Six rows naming a
-#                  mutant of catalog.go were reissued, because the digest of the
-#                  file changed and no existing identity did.
-#   2497 to 2549   the test-level narrowing feature added its own code to the
-#                  gated packages (2026-09-08).
-#   2549 to 2677   discovery reached the case labels of a tagless switch, which
-#                  it had been suppressing before it ever consulted the guard
-#                  chooser -- 128 mutants in code nobody added, spread across
-#                  every package here, of which six survived until the tests
-#                  that kill them were written (2026-09-14).
-#   2716 to 2722   the second identity domain, for a mutant measured as part of
-#                  a multi-module workspace (2026-09-14): six new mutants in
-#                  internal/mutation, all killed by the tests written with it.
-#                  The nine-field recipe is unchanged, so not one existing
-#                  identity moved -- what moved is the digest of the file the
-#                  recipe lives in, which is why the five rows naming a mutant
-#                  of it were reissued.
-#   2689 to 2716   `test.probing` and the report field it settles mutants into
-#                  (2026-09-14): twenty-seven new mutants across
-#                  internal/config and internal/report, seventeen of which
-#                  survived until the tests that kill them were written. The
-#                  probe layer's own code is in internal/probe and
-#                  internal/engine, neither of which the gate covers yet.
-#   2684 to 2689   `execution.isolate` and the code that reads it (2026-09-14):
-#                  five new mutants in internal/config, all killed by the
-#                  tests written with the feature. A widening the gate pays
-#                  for on its own.
-#   2677 to 2684   two new guard forms reached seven sites that had been
-#                  recorded refusals: a `:=` in a `for` initialiser, in six
-#                  places, and one that redeclares. Every one of the seven was
-#                  killed by tests that already existed, which is what a refusal
-#                  being lifted usually looks like -- the code was covered, only
-#                  the mutant was missing. This scope now records no
-#                  `unnameable-decl-type` skip at all.
-#
-# The declared rows went from sixty-five to sixty-three on 2026-09-14: seven
-# internal/schemas rows were reissued under new identities when that file gained
-# a schema registration, and two rows at the store's path resolution turned out
-# to describe macOS rather than the code. They went back to sixty-five the same
-# day, and for the reason the paragraph above gives rather than against it: a
-# workspace report is assembled by two constructors that return through one
-# line, and the total that line derives has already been counted once by every
-# module's own document -- so the two rows are one unreachable branch, declared
-# in one place rather than at each of them.
-#
-# internal/report is nearly as large as the other ten together, and that is
-# what a lossless document costs: every field of it is checked on the way in,
-# every refusal is a sentence somebody reads, and two more documents are derived
-# from it. internal/config is the second largest and did not get there by being
-# included either: it grew `test.memory` and the byte-size vocabulary that reads
-# it, which is 36 more mutants and the direct consequence of the paragraph
-# below. A scope that catches what it costs is a scope that then has to be
-# measured again, which is what happened here, twice.
-#
-# The three that never return are worth naming, because there used to be six and
-# because what they cost has changed by three orders of magnitude.
-#
-# They are settled by counting rather than by waiting now. Every loop of the
-# instrumented tree carries a counter, the ceiling is what the original program
-# did in that tree under this suite as the instrumented baseline measured it,
-# and a loop that passes its own ends the process naming itself and both counts.
-# Measured here: 17ms, 28ms and 228ms, against a derived budget of 53s that each
-# of them used to pay twice. The verdict is the one it always was; what changed
-# is that it is a fact about the program rather than an observation about the
-# machine, and that the report says which loop. See ADR 0013.
-#
-# Two spin: negating ParseTextfmt's scanner loop turns an empty document into an
-# endless one, and negating the loop that neutralises a double hyphen inside the
-# HTML report's attribution comment never stops replacing what it has just
-# written. The third allocates: lineStarts with its stride turned into a
-# subtraction stops making progress through the file and appends to a slice
-# instead, and where the memory bound can be enforced it is stopped at about 1.1
-# GiB in a second and a half -- once, with no second attempt, because a memory
-# kill is a kill rather than a verdict to confirm. Where the bound cannot be
-# enforced, which is macOS, the counter is what ends it, in the same
-# milliseconds as the other two.
-#
-# The three that stopped being among them are the reason this paragraph was
-# rewritten, and they were not fixed: they were measured differently. A mutant
-# run stops at the first test that fails, because one failure is its whole
-# answer, and each of these three fails a test before it reaches the input that
-# hangs it. Negating lineStarts' own exit condition returns after the first
-# newline, which every test with a newline in it catches in milliseconds; only a
-# document with no newline at all reaches the endless append, and the binary is
-# gone before that test starts. The verdict is a kill instead of a timeout,
-# which is the more precise of the two and is scored the same -- and it is three
-# mutants no longer paying two full budgets each. See CHANGELOG.md.
-#
-# "Where the bound can be enforced" is load-bearing and used not to be written
-# down. The bound is derived rather than configured here, and a *derived* bound
-# this platform cannot hold anybody to is dropped and reported as
-# `memory_source: unavailable` -- deliberately without a warning, because a line
-# on every clean run of an unsupported platform is how a warning stops being
-# read (internal/engine's unenforcedMemoryReason argues it in full). macOS is
-# such a platform: it can say what a process cost once it is gone and cannot
-# watch one while it runs. So on a macOS developer's machine these two are not
-# stopped at 1.1 GiB at all. Measured here on 2026-09-14, they reached resident
-# peaks of 19.1 GiB and 10.5 GiB before the 20-second timeout ended them, and
-# the report records those peaks on the mutants. That is not a regression and
-# nothing about the verdict changes -- a timeout is detected exactly as a memory
-# kill is -- but a note claiming the bound stops them is a note that is true on
-# the runner and false on half the machines that read it.
-#
-# Five is also what internal/gocmd did not make six, and that is the one part of
-# this list that a test moved. Negating `timeout <= 0` in LocateContext replaces
-# a probe's configured deadline with the thirty-second default, and the suite's
-# hanging-probe case scripted a `go` that slept for two minutes -- so the mutant
-# waited, and only the per-mutant timeout could end it, twice. The sleep bought
-# nothing the test's own assertion did not already buy: it fails a probe that is
-# still running at five times its deadline, so anything past that is unreachable
-# by the claim. Shortened to three seconds -- fifteen times the deadline, three
-# times the bound, and well under the default -- the mutant comes back with a
-# parse error instead of a deadline and dies in about three seconds. A mutant
-# that never returns is sometimes a fact about the code and sometimes a fact
-# about a constant in a test, and the two are worth telling apart before the
-# gate pays for one twice on every run.
-#
-# internal/mutation was a single file here — shard.go — until its own suites
-# grew the tests that kill what the whole-package scope found; CHANGELOG.md
-# tells that story under "The dogfood gate covers every pure-core package", the
-# two readers under "The dogfood gate reads its own coverage and validates its
-# own documents", this file's own reader under "The dogfood gate reads its own
-# configuration", and the toolchain wrapper under "The dogfood gate covers the
-# toolchain wrapper".
-#
-# What outlives the story is the rule it produced. Widen this list by writing
-# the tests that kill the survivors first, and only then the line: excluding the
-# files that survive is choosing the scope to fit the score, and declaring the
-# survivors away is a skip list wearing a ledger's clothes.
 include = [
   "internal/mutation/*.go",
   "internal/glob/*.go",
@@ -390,68 +26,7 @@ include = [
   "internal/validate/*.go",
 ]
 exclude = ["**/*_test.go", "**/testdata/**", "fixtures/**", "vendor-assets/**"]
-# `operators` is intentionally omitted: the profile decides the families, which
-# keeps this file honest when a new family lands. Uncomment to narrow.
-# operators = ["comparison", "error-swallowing"]
 
-# The declared equivalent mutants. An expectation is evidence to check, not a
-# skip list: the row is judged on every run, survival fulfills it, a kill is
-# exit 2, and an ID that no longer exists in the catalog is stale and also
-# exit 2. Forty-two of the sixty-three rows are judged by a test binary that
-# ran; the other twenty-one are settled by coverage without a process being
-# started, and the notes there say why that is the same verdict rather than a
-# weaker one.
-#
-# Every row was found by running this gate against this repository, and is
-# declared rather than tested away or quietly excluded, which is the difference
-# between a mutation score and a number.
-#
-# Three rows that used to stand at the head of this ledger are gone for the
-# better reason. `return Disjoint`, `return OutcomeNotRun` and `return
-# mutation.OutcomeNotRun` were each the first name of an iota block returned
-# where `return-zero-numeric` proposes `0` -- one constant, two spellings, one
-# program -- and discovery now refuses an edit whose replacement is the value
-# the source already holds, whether the bytes say so or only go/types does. A
-# ledger row retired by a refusal is worth three rows arguing the same sentence,
-# and the argument is in docs/operators.md under "The refusals that are not
-# skips" where a reader looking for it will be.
-
-# The fifteen rows that follow are in internal/mutation: the survivors there
-# that no honest test can reach. Every survivor a test could pin has a test
-# instead, in that package's own suites, which is why this list is fifteen rows
-# rather than the forty-one the whole-package scope reported. Each row says
-# which of four things it is rather than repeating the word "equivalent" fifteen
-# times, because a ledger that argues the same sentence over and over is the
-# skip list this file refuses to keep.
-#
-# Every one of these ids names a mutant the include list above covers, so all
-# fifteen are catalogued and judged on every run of this gate rather than taken
-# on trust: survival is what fulfills a row, a kill is exit 2, and an id the
-# catalogue no longer holds is stale and exit 2 as well. Ten of them survive a
-# test binary that ran. The other five are reported `survived (uncovered)`
-# without a process being started, because no binary in this scope reaches the
-# line at all -- which is coverage saying, from a cheaper direction, exactly
-# what those five reasons argue: an unreachable branch and four error paths
-# behind a math.MaxUint32 guard are not lines a suite reaches.
-
-# Equivalent by construction: a comparison the surrounding branch has already
-# decided, or a named constant that is its type's zero value.
-
-# The seventy-five rows below were re-issued when this repository became a
-# workspace, and only their ids moved.
-#
-# A mutant's identity is minted in a domain, and a workspace is a different one:
-# the same comparison on the same line of the same file is a different id once
-# the tree holds a go.work, which is ADR 0012's "two products, two ledgers" seen
-# from the inside. Every row's reason is untouched, because a reason is about
-# the code and not about the run that measured it.
-#
-# The mapping was taken rather than guessed. main's catalogue was regenerated,
-# every old id resolved there to (path, line, column, rule, original), and each
-# of those coordinates found exactly one survivor in the workspace run --
-# seventy-five for seventy-five, with none left over on either side. A row that
-# failed to map would be a row whose survivor is gone, which is a deletion
-# somebody makes on purpose rather than a rename to apply.
 
 [[mutation.expect]]
 id = "955ef7519b8fd9e564bf20a0e8c11f7b899298708405716e59b20b7fd50c680f"
@@ -473,26 +48,16 @@ reason = "Equivalent: `>= 2` and `> 2` differ only for two-byte paths; a letter 
 id = "35ce0eb062fee7958fdaa4bcb7260df0ba8a8d343da3ec1a6950418f8e5ff778"
 reason = "Equivalent: the comparison sits inside `if x.position != y.position`, where the two registry positions are already known to differ, so `<` and `<=` are the same test."
 
-# Equivalent for every value the type will admit: the mutation changes an
-# answer only for an input another check in the same package calls incoherent.
 
 [[mutation.expect]]
 id = "bf3c329fd370fabe17a97258e57d7b44e5f90618221ed4e6e801d328f49b5b63"
 reason = "Equivalent for every coherent tally: `p.MinimumScore > 0` and `>= 0` select different runs only when the floor is exactly zero and the score is negative, and a negative percentage needs a negative Detected count, which Score.Validate reports as incoherent."
 
-# A guard on a state this package's own API cannot produce. Not defensive
-# programming to be deleted: Build is the last place a candidate can be
-# rejected before an ID is minted, and the check is what makes the pipeline
-# order in Build's comment true rather than merely intended.
 
 [[mutation.expect]]
 id = "b4dcab268c877bd71d01b2be2d2cc005e6868eec52e27d23a68c87d0ea369739"
 reason = "Unreachable: Build only ever sees candidates Add accepted, and Add calls Registry.Verify, which refuses exactly the names Registry.Position cannot find -- both read one immutable map -- so nothing a caller can build reaches this return."
 
-# Guards on the 32-bit length prefix of the identity encoding and on the uint32
-# runtime index. Reaching either needs an input of about 2^32 bytes or 2^32
-# candidates, so the test that would kill these is a test that allocates four
-# gigabytes; the guards stay because the encoding they protect is frozen.
 
 [[mutation.expect]]
 id = "8f73cb5106525601c9898a33c0a33bd0aaf67690f5e37a3b95a5ca50a46b16ab"
@@ -526,57 +91,11 @@ reason = "Unkillable: `>` and `>=` disagree only on a string of exactly math.Max
 id = "92e9574107376c1afa97d9ff5df887c728bab442f93e44bdfc67d72bea7b4491"
 reason = "Unkillable: this return is reached only for a string longer than math.MaxUint32 bytes, so killing it means allocating more than four gigabytes in a unit test."
 
-# internal/coverage brought two rows with it and has none. The twenty-six
-# survivors of the first run over that package were killed by nine named tests
-# and ten new cases in its own suites -- four of the tests in a new white-box
-# file, because the three invariants they pin are true of the index, of merge
-# and of relativeTo and change no answer Map gives, so a test written through
-# Map could not reach them. See CHANGELOG.md.
-#
-# The two that were left were one comparator's secondary key, mutated two ways,
-# and they are gone the way this file prefers: the code that manufactured them
-# is. The key ordered only intervals that already share a start line, and merge
-# folds any run of those into one interval reaching the furthest of their ends
-# whatever order the sort leaves them in -- so no permutation of a tie changed
-# the merged list, and nothing downstream reads the order itself. The order is
-# still total; it is spelled with cmp.Compare instead of with the difference of
-# two line numbers, and a comparison written as a comparison has no arithmetic
-# in it for a rule to rewrite. Two proofs in this file became one sentence in
-# that one.
-
-# internal/testlog brought one row, and it is a guard that does one job with
-# the `break` under it. The parse loop ends at the first line the binary did not
-# terminate, and an empty body is that case too -- a cut that finds no separator
-# reports none -- so `> 0` and `>= 0` differ only in an extra pass that breaks
-# immediately. The guard stays rather than the loop becoming `for {}`, and that
-# is a measured trade rather than a preference: without it two of this package's
-# mutants never return, and the gate pays a per-mutant timeout twice for each of
-# them, where today none of them does.
 
 [[mutation.expect]]
 id = "c62feb25adb23b4853bae49beff0089f2c8c22abf5df8efe102b46d24bd431fa"
 reason = "Equivalent: the loop ends at the first unterminated line, and an empty body is that case -- bytes.Cut finds no separator and reports none -- so the extra pass `>=` admits breaks before it reads anything. The condition is kept over `for {}` because dropping it makes two mutants of this package never return."
 
-# internal/validate brought four rows, in three claims, and the shape of the
-# package is why there are so few for so much failure handling: the phase drives
-# its compiler and its rewriter through two seams, so "the machine stopped being
-# able to build" is a table rather than a state a test has to produce.
-#
-# Two of the four are one comparison each that has a second reading no input can
-# separate: a path pair where exactly one side carries a drive letter differs at
-# the colon, which has no case; and a blame over an empty pending set answers an
-# empty list whichever way the guard in front of it is read -- that guard is
-# there to skip parsing a whole build's output on a trial build, which is a cost
-# and not an answer.
-#
-# The other two are the backstop past the search's bound, and they are the price
-# of a change worth naming. The loop used to be `for {}`, and its exit rested on
-# a lemma about another function; every edit to a condition inside it produced a
-# phase that never returned, and this gate paid a per-mutant timeout twice for
-# thirteen of them. Bounded at one pass per catalogued file, those thirteen come
-# back as wrong answers a test can state, and what is left is a return past the
-# bound that nothing can reach. Two rows for thirteen never-returning mutants is
-# the trade, and it is counted rather than felt.
 
 [[mutation.expect]]
 id = "a7e26cc710d6d039d7a07f34372091e88609a3048b28989f1984e562e49132c4"
@@ -594,27 +113,6 @@ reason = "Unreachable: the loop is bounded at one pass per catalogued file and e
 id = "470a4164cf833f4ac1857da0d7507a33fda8102d2281aa212767a98fda5d1913"
 reason = "Unreachable: the other half of the same backstop, which exists so that a search wrong about its own bound fails closed rather than falling out of the loop."
 
-# internal/cache brought eight rows, in four claims.
-#
-# Two are the 32-bit length prefix of the hashing encoding, which is the same
-# claim the internal/mutation rows above make: a field longer than
-# math.MaxUint32 bytes is four gigabytes of cache context.
-#
-# Two are one branch that a filesystem cannot reach at all, and two more are one
-# branch a POSIX filesystem cannot: an Entry is strings, integers and booleans
-# and encoding/json has no failure for any of them, and filepath.Rel refuses a
-# pair of paths only when they carry different volume names, which is Windows.
-# The Windows pair is the counterpart of the note above the scope table: this
-# gate measures what this platform builds, and it says which lines that leaves
-# out rather than letting a number imply it covers them.
-#
-# The last two are guards this file keeps even though something else already
-# answers for them -- a listing shadowed by the identical listing a few lines
-# on, and a case the default below it decides the same way. Both are kept
-# because a reader needs the rule stated where it applies, and both are declared
-# rather than removed for the reason the internal/testlog row is: the trade is
-# counted, and here the count is two ledger rows against two rules a reader
-# would otherwise have to derive.
 
 [[mutation.expect]]
 id = "178b97acbd70a6e3d8d66a4203907e5e6c453942fd9724969e9508224bdb9cde"
@@ -648,22 +146,6 @@ reason = "Unreachable where this gate runs: filepath.Rel refuses a pair only whe
 id = "cc90d65f7ef4b7eade866a06159727d6c18cbcc33b1c03d625611be0865f9e1c"
 reason = "Unreachable where this gate runs: the same branch as the row above, and the answer it gives -- not inside -- for a pair of paths POSIX cannot produce."
 
-# internal/snapshot brought two rows, and they are one branch: the glob the
-# report directory is compiled into cannot fail to compile.
-#
-# The value reaching glob.Compile is the output of path.Clean over a path
-# mutation.NormalizePath has already refused as empty, absolute, volume-named or
-# escaping -- and empty, a leading '/', a trailing '/' and an empty element
-# between two '/' are exactly the four shapes glob.Compile refuses. There is no
-# ReportDir a caller can configure that reaches this error, so no honest test
-# reaches it either.
-#
-# It is kept rather than written as glob.MustCompile, and that is the whole of
-# the argument for the rows. The guarantee is a promise between two packages
-# rather than an invariant inside one: a future glob that refused a fifth shape
-# would turn a user's configured report directory into a panic in the middle of
-# their run, where today it is a diagnostic with a code. Two packages agreeing
-# today is not a reason to make one of them unable to disagree tomorrow.
 
 [[mutation.expect]]
 id = "2c78e03a0b19dc9c4f3d9eb22bb93db43537fdbfdb131caa5bc0463ba7ec1514"
@@ -673,27 +155,6 @@ reason = "Unreachable: the pattern compiled here is path.Clean's output over a p
 id = "6a4676e98aaa8526c1284169f03fb9f2107c75459398ac05554b4a8ad9be9e4d"
 reason = "Unreachable: the other half of the same branch -- the diagnostic returned for a glob.Compile failure that no configured report directory can produce."
 
-# internal/schemas, whose 89 mutants brought seven rows, and all seven are one
-# claim: an embedded schema that cannot be used. `schema.FS` is an embed.FS
-# fixed at build time, so what it holds is a fact about the binary rather than
-# about anything a caller does -- there is no input, no flag and no file on disk
-# that can make ReadFile fail, make the bytes stop being JSON, make AddResource
-# refuse the "$id", or make Compile reject the schema.
-#
-# That is not taken on trust either. TestEveryRegisteredSchemaCompiles is the
-# negation of all seven, asserted on every run of the suite: for every
-# registered document type it reads the file out of the embedded FS and then
-# validates `{}` against it, requiring the failure to be GOM5003 rather than
-# GOM5004 -- which is only true if the file read, parsed, registered, compiled,
-# and was found in the compiled map. So the day one of these branches becomes
-# reachable is a day that test is already red, and these rows go stale with it.
-#
-# The guards stay because they are what makes a broken schema take down one
-# report format instead of the whole run, which is stated in CodeSchemaUnusable's
-# own documentation. Every other survivor this package first reported is dead:
-# seven named tests kill fourteen of them, including the second and third sort
-# keys of firstViolation, which needed a trace event carrying somebody else's
-# payload to produce two violations at one location.
 
 [[mutation.expect]]
 id = "295ac61dc1070bb46e7ab92c1e86bd2ee36fca2f62fc6c9eb38ed4321f8abdb6"
@@ -723,40 +184,6 @@ reason = "Unreachable: AddResource fails on a resource identity it cannot parse,
 id = "93496397d7258d8d0a08b1cf9aa3052f278d227f69742ad593c9288bf4fb2271"
 reason = "Unreachable: every registered schema compiles, which is exactly what TestEveryRegisteredSchemaCompiles asserts by requiring an invalid document to come back GOM5003 rather than GOM5004."
 
-# internal/config, whose 461 mutants brought four rows, and all four are one
-# function: toInt, which narrows a decoded TOML integer by saturating rather
-# than truncating, so that `jobs = 4294967297` stays absurd on a 32-bit build
-# instead of arriving as 1.
-#
-# The four are two pairs, and each pair is a different claim about the same two
-# lines. The comparisons are equivalent on every platform, 32-bit included:
-# `>` and `>=` disagree only at exactly int64(maxInt), where the guard returns
-# maxInt and falling through returns int(v) -- and those are the same number,
-# which is what makes the boundary the one place the mutation cannot show. The
-# two returns behind them are the saturation itself, and on a 64-bit build
-# int64(maxInt) is math.MaxInt64, so no int64 is greater than it and no int64
-# is less than int64(minInt): both branches are dead code in this binary and
-# both are reported `survived (uncovered)` without a process being started.
-#
-# They stay because 32-bit is where they are not dead, and because every other
-# survivor this package has ever reported is dead rather than declared:
-# forty-two of the forty-six the first run over it found, and then all seven
-# that arrived with `test.memory`'s own size vocabulary -- a renderer whose
-# unit boundaries nothing had ever asserted, and the refusal of a size too
-# large for an int64. Both sets are named in CHANGELOG.md under "The dogfood
-# gate reads its own configuration".
-#
-# The one thing this ledger cannot say about these four is "unkillable
-# everywhere", so it does not say it. A `GOARCH=386` run of this package's
-# suite would kill the two returns; this gate does not do that, and pretending
-# otherwise would be the kind of shrug the rows above refuse.
-#
-# Their ids moved once, and how is worth a line for whoever meets a stale row
-# next. Nothing about toInt changed; `test.memory` added lines above it in
-# load.go, the four spans moved down eleven lines, and a mutant identity is
-# built from where the code is. A stale row is exit 2 and says which id it
-# could not find, which is the ledger working: the fix was to re-read the ids
-# out of the run, never to relax the check that noticed.
 
 [[mutation.expect]]
 id = "72a676ff09f4a94e5850bc2855a77eed08498a3a9951bf6aafba3d34f8eae199"
@@ -774,45 +201,10 @@ reason = "Equivalent on every platform: the same argument as the `>` row above, 
 id = "1304b960e5bd3013784f5fe65e01eb37216b0a393b03bdec3e91452239452879"
 reason = "Unreachable on a 64-bit build: minInt is -maxInt - 1, so int64(minInt) is math.MinInt64 and no int64 is less than it -- the mirror of the maxInt row above, and reachable on the same 32-bit GOARCH."
 
-# internal/gocmd, whose 106 mutants brought exactly one row, and it is a
-# narrowing that cannot fail. LocateContext asks whether the error parseVersion
-# returned is one of this package's own, and forwards it unchanged if it is not.
-# parseVersion has four failure returns and every one of them is `&Error{Code:
-# CodeVersionUnparsable, ...}`, so the narrowing always matches and the line
-# below it is never reached.
-#
-# It is the same kind of row as internal/mutation's Build guard: a branch this
-# package's own code cannot produce, kept because deleting it is what would make
-# it dangerous. Narrowing an error and dropping what did not match is how a
-# future failure mode gets swallowed silently, and the whole point of the two
-# codes this package distinguishes is that they are not interchangeable.
-#
-# Every other survivor this package first reported is dead -- eleven of the
-# twelve, killed by seven named tests and a seam that turns one platform's
-# spelling rule into a value handed in. CHANGELOG.md names them under "The
-# dogfood gate covers the toolchain wrapper".
 
 [[mutation.expect]]
 id = "46ef76f3f811345c6c702668727f2cedc4c61b27e6fa2bf22bc62a3cf6bcafb3"
 reason = "Unreachable: parseVersion has four failure returns and every one of them is a *Error carrying CodeVersionUnparsable, so errors.As above always matches and this forwarding return is reached only by an error kind parseVersion does not produce."
-# The thirty-four rows that follow are internal/report's, and the group is the
-# largest in this ledger for a reason worth stating rather than apologising for:
-# this is the first package in the scope that writes files. The nine before it
-# take values and return answers, so a survivor there is a value nobody
-# asserted; here a survivor can also be a failure the operating system will not
-# produce on demand. Those were not declared. The ones it will produce -- a
-# directory where a file has to go, a path under a file, a link to itself, a
-# store named by a relative path, a directory that refuses writes -- are staged
-# for real in storefailure_test.go and storewalk_test.go, and the three it will
-# not -- a write, a flush and a close that fail on a file it has just created --
-# go through two seams named for them in the source. What is left is these,
-# thirty-four out of 1095, in five kinds.
-#
-# The first kind is the one this file has kept rows for from the beginning: an
-# expression the rewrite leaves computing the same answer. A capacity hint that
-# nothing can observe, a clamp that assigns what is already there, a comparison
-# at a boundary where both spellings agree, a named constant that is its own
-# type's zero value, and a field or an order no caller can read.
 
 [[mutation.expect]]
 id = "fd35bbae14be8dba2102f162903a0fa5a584eb2053e6912dfe699fe7b932d82a"
@@ -866,9 +258,6 @@ reason = "Equivalent: the `existed` flag is read only by the rollback that puts 
 id = "2eae8639701f83ff91784fa2b1ebdedf86cd7740e63f5e659be7a7a75706f2b5"
 reason = "Equivalent: both callers impose a total order of their own on what this returns -- readWorkspace sorts the runs by NewestFirst and the damaged rows by path, and RemoveRuns only counts them and their bytes -- so the order the files come back in is not observable."
 
-# The second kind is an error the caller has already ruled out, and all seven
-# are the same argument at three depths: an outcome outside the six is refused
-# on the way in, so nothing downstream of that refusal can meet one.
 
 [[mutation.expect]]
 id = "f7f2f309e71e2e75ca768e62892ff91ec8da0f25d51e3c6c3e87d54a2197a877"
@@ -898,12 +287,6 @@ reason = "Unreachable: the same failure as the row above, on the line that would
 id = "3f796fb632e674c7310a4d6cc295e5bd577c4e7ee5d1aec5030a526b901432cc"
 reason = "Unreachable: the counts disagree only when a row was not consumed by the catalogue walk, and a row is consumed exactly when its id is catalogued -- so the loop above always finds the row this line exists to report the absence of."
 
-# A total that has already been counted once. BuildWorkspace builds every
-# module's report before it adds them up, and a report that built is one whose
-# every outcome a tally counted -- so the aggregate cannot meet an outcome the
-# module's own document did not. The same check on WorkspaceReport.Tally is
-# reachable and is tested, because a caller may hand that one a document it did
-# not build.
 
 [[mutation.expect]]
 id = "a4cb8ec614f9f03fbba05e82032b94b78bedba750da641ef8ad546b52bce183b"
@@ -913,12 +296,6 @@ reason = "Unreachable: every module's report has been built or merged by the tim
 id = "10a21695dcf7b185c5de1f3d8c5c9acdbbdb8edb74aec727750664822db3ad1b"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
-# The third kind is a value encoding/json has no way to refuse. It refuses a
-# cycle, a channel or function field, and a non-finite float; a Projection is
-# strings, ints, and a map of them, so no value of the type can make Encode
-# fail. The run report is not in this group and has no row: `score_percent` is a
-# *float64, a NaN is a document the encoder does refuse, and Marshal's failure
-# is tested with one.
 
 [[mutation.expect]]
 id = "93e0d4258830b5b7507f36a5d38b06e1e8d110710014ef8826edef672017c2ea"
@@ -936,11 +313,6 @@ reason = "Unkillable: the same encoding, reached through WriteArtifacts -- the d
 id = "8a62628e06decefaa8b489e7167f586359387785bbc39bcc776837dbbd59c025"
 reason = "Unkillable: the same failure as the row above, on the line that would forward it."
 
-# The fourth kind is the vendored schema. The compilation itself is a seam and
-# is tested through it -- a schema that is not JSON and one that does not
-# compile both abort the write -- and these two are what is left underneath
-# that: a registration that cannot fail, and a fallback the renderer above it
-# makes unreachable.
 
 [[mutation.expect]]
 id = "7d8a53f6e9079d87975e64b2161da7327ea2c74747055dab137bd95c1150d5db"
@@ -950,24 +322,6 @@ reason = "Unreachable: jsonschema/v6's AddResource stores the document and defer
 id = "d31d673eaf91673796968ae1a4492d157375e203e27e786a34327ba77831b781"
 reason = "Unreachable: pointerOf answers `the document root` for an empty instance location and a pointer beginning with a slash otherwise, so every leaf the walk reaches sets best to something -- and the walk always reaches at least the error it was given."
 
-# The fifth kind is the path resolution the store's containment check is built
-# on, and the rows are grouped because the argument is one argument. within is
-# only ever asked about a store root and a workspace directory whose marker has
-# just been read, so filepath.EvalSymlinks is asked about names the operating
-# system has just resolved; a test can reach the failures through the exported
-# seam and does, in storewalk_test.go, but these two shapes it cannot.
-#
-# There were three shapes, and the third is worth recording rather than quietly
-# deleting. Two rows here used to declare the walk's `parent == path` guard
-# equivalent. They were wrong, and the way they were wrong is the interesting
-# part: the guard is only equivalent on a machine where nothing in the path
-# resolves to anywhere else, and the test that covers it was resolving a
-# temporary directory the operating system had chosen. macOS puts /var behind a
-# link to /private/var and Linux does not, so the same two mutants died on one
-# platform and lived on the other, and the ledger recorded the half it had last
-# measured. storewalk_test.go now makes its own symlink, which gives every
-# platform something to resolve, and both mutants die everywhere. A row that
-# describes a platform is a row that is wrong somewhere else.
 
 [[mutation.expect]]
 id = "5614b7ba3e9f4ddddfd7fa4a27ea762743d27e9db32efa0d9f2558ced6413003"
@@ -990,60 +344,6 @@ id = "03040a2de8a23b4cfb720924dbe074447aa9ce6ee9d7cf07ffbeb81bc05a681b"
 reason = "Unreachable: the same failure as the row above, on the line that would forward it."
 
 [test]
-# An argv vector, never a shell string. Scoped to the seventeen packages the mutated
-# files live in, which is what the baseline proves before any mutant runs. The
-# list has to track `include` above line for line: a package whose files are
-# mutated but whose suite is not named here has no binary covering it, so every
-# mutant in it is reported `survived (uncovered)` and the gate measures the
-# scope's silence rather than its tests.
-#
-# This line is the whole reason the scope above could grow at all. go-mutants
-# reads a `test.command` that is `go test` followed only by package patterns as
-# a *scope*: it builds a test binary for those packages and for no others, and
-# every mutant is measured against that set.
-# Before, `internal/execute` listed `./...` whatever the command said, so naming
-# a command here bought a fast baseline and then ran the whole module's binaries
-# against every mutant -- in import-path order, until one failed, with
-# internal/discover's toolchain-driving suite sitting sixth. That was the
-# measured minute per mutant this file used to be sized against.
-#
-# Being read also turns coverage-guided selection on, where it used to be
-# reserved for the built-in `go test ./...`. A mutant no binary in this scope
-# reaches is reported as `survived (uncovered)` without a process being started
-# for it, which is the honest reading of a scope that leaves the line out.
-#
-# One optimisation is still given up here, and the run says so rather than
-# degrading quietly:
-#
-#   GOM7901  the outcome cache reuses nothing, because cache.mode "auto" only
-#            trusts the built-in command. That rule is about whether go-mutants
-#            can reason about a command's reproducibility rather than about
-#            whether it can read its scope, and the two have not been aligned
-#            yet. Setting mode = "on" would promise reproducibility and get the
-#            cache; this gate does not need it.
-#
-# GOM7601 is no longer among them, which is the change worth recording: this
-# command is one go-mutants understands, so coverage guidance is on.
-#
-# Nothing here has to say anything about vet, and that is also a change worth
-# recording. The instrumented snapshot is generated code in which every mutant
-# of an expression is spliced in beside the original, so `x == "." && x == ".."`
-# is a normal shape there -- and `go test` runs vet's `bools` analyzer by
-# default and rejects it, which used to stop a run at GOM4013 (the snapshot
-# fails its own tests unmutated) or GOM7505 (a test binary would not build).
-# `mise run dogfood` worked around it by exporting GOFLAGS=-vet=off over the
-# whole run. The engine now handles it: it merges `-vet=off` into GOFLAGS for
-# the two commands issued against the instrumented tree -- the instrumented
-# baseline and the per-package `go test -c` -- and for nothing else, so the
-# pristine baseline below still runs `command` with vet at its default and a
-# genuine `bools` finding in this repository's source still fails the run.
-#
-# `mise run dogfood` does still export RAPID_SEED=1, and running go-mutants
-# against this file by hand without it is running a slightly different gate.
-# internal/interval's suite is a pgregory.net/rapid property suite, rapid draws
-# a fresh random seed per process unless one is pinned, and an unpinned seed
-# makes the score -- and so the minimum_score floor below -- vary between runs
-# of an unchanged tree.
 command = [
   "go",
   "test",
@@ -1065,309 +365,21 @@ command = [
   "./internal/cache/...",
   "./internal/validate/...",
 ]
-# Deliberately omitted, where this file used to pin 180s. The old number was
-# derived from a fact that scoping has deleted: the timeout had to clear
-# internal/discover's binary, which drives the real Go toolchain for about a
-# minute and which every mutant used to run. That binary is not built any more.
-# What is left is max(10s, slowest baseline × 5) over a scoped baseline that
-# measures in seconds, bounding test binaries that measure in fractions of one,
-# and a derived bound moves with the machine instead of being a number somebody
-# has to remember to re-measure.
-#
-# `memory` is omitted for the same reason, and it matters more here than the
-# timeout does, because this scope is what made the setting exist. Four of
-# internal/config's mutants allocate while failing to return, and one of them
-# took a GitHub runner down before there was a bound to stop it. A derived
-# max(1GiB, largest baseline peak x 4) is what this file wants, because the peak
-# it is derived from is this repository's own suite rather than a number
-# somebody guessed; what it resolves to on this scope is recorded under [policy].
 baseline_runs = 3
 
 [execution]
-# Pinned so that a developer's run and a GitHub-hosted CI run are the same run,
-# and so the wall clock quoted under [policy] means something on both. It is no
-# longer pinned for correctness: the old reason was that every mutant ran the
-# whole module's binaries, several of which drive the real Go toolchain, so the
-# default of min(NumCPU, 8) meant eight concurrent toolchains and completed no
-# mutants in ten minutes. With the scope above a mutant runs one or two fast
-# unit-test binaries, and the default would simply be quicker on a large
-# machine. Four is what a GitHub-hosted runner resolves to.
 jobs = 4
 
 [cache]
-# auto reuses proven outcomes keyed by tool version, executable digest,
-# workspace digest, catalog digest, command, the timeout as configured, and
-# GOFLAGS/GOOS/GOARCH -- and reuses nothing at all when test.command is not the
-# built-in `go test ./...`, because go-mutants cannot reason about a command it
-# did not write. That is this file's own situation; see GOM7901 above. Left at
-# auto rather than "on" because promising that a command is reproducible is a
-# promise, and this gate does not need it.
 mode = "auto"
-# directory = "team-cache"
 
 [policy]
-# strict stays false in the file on purpose: the gate belongs to the caller.
-# `mise run dogfood` and the CI job that runs it pass --strict, so a developer
-# who wants to look at a survivor rather than be failed by it just runs
-# `go-mutants run`. That is not the same as a run that cannot fail: the floor
-# below is compared on every run, --strict or not, and the note there says
-# where each of the two gates actually bites.
 strict = false
-# Measured, not wished for. The scope catalogues 4396 mutants. Four thousand
-# three hundred and twenty-one are detected -- 4318 killed and three caught by
-# a counted loop -- and the other seventy-five are the rows declared above,
-# which leave the denominator rather than counting against it, so the measured
-# score is 100.00%, with all seventy-five expectations fulfilled and none stale.
-# Twenty-seven of those seventy-five are uncovered: the profiling pass reaches
-# 4369 of the 4396, and every one it does not is a row above that says why.
-# Every one of those numbers
-# was the same on four of the five runs that measured the seventy-seven-row
-# ancestor of this scope, the killed/timeout split included; the fifth, taken
-# while the machine picked up other work, reported two of the kills as
-# `inconclusive`, and what that means is written under the pairs below.
-#
-# The bound itself is derived and worth quoting, because it is the one number
-# here that is a fact about this repository's own suite rather than about the
-# catalogue -- `go-mutants run -v` prints it:
-#
-#   memory: baseline peak 171.4 MiB, bound 1.0 GiB (derived)
-#
-# 171.4 MiB x 4 is 686 MiB, so the 1 GiB floor is still what applies and the
-# bound is about six times what the unmutated suite needs. The peak moved with
-# the eleventh package -- internal/report's suite writes and reads whole
-# documents -- and again with the thirteenth, and the bound did not either
-# time, because the floor was always the larger of the two.
-# Nothing legitimate is close to it; the two mutants it stops reach 1.1 GiB in
-# about a second and a half, which is the difference between a bound that
-# catches runaways and one that fails honest tests.
-#
-# The peak is the one figure here that is not the same twice, and it is quoted
-# as one reading rather than as a constant: three -v runs of the ten-package
-# scope read 141.5, 141.9 and 147.4 MiB, where the nine-package scope beside
-# them read 125.2 MiB, the twelve-package scope read 157.5 MiB, the
-# thirteen-package one 174.2 MiB, the fourteen-package one 168.5 MiB, the
-# fifteen-package one 168.7 MiB, the sixteen-package one 169.1 MiB and this one
-# 171.4 MiB -- five scopes that grew and a peak that did not, which is what
-# "one reading" means. Adding a suite that starts processes is what moved it. It moves the
-# bound not at all -- four times any of those is still under the 1 GiB floor --
-# which is exactly what a floor is for, and why the tally stayed identical while
-# the number the bound is derived from did not.
-#
-# What each widening cost is a paired measurement rather than a remembered one
-# -- the run before it and the run after it, at --jobs 4:
-#
-#   3 -> 6 packages, back to back on one idle machine
-#     warm test-owned build cache   566 mutants in 8.8-9.0s, 600 in 9.9-10.5s
-#     cold test-owned build cache   38s either way
-#   6 -> 8 packages, on a machine with other work on it
-#     warm test-owned build cache   835 mutants in 24-30s over three runs
-#     cold test-owned build cache   1m36s and 2m14s
-#   8 -> 9 packages, minutes apart on one machine
-#     warm test-owned build cache   835 mutants in 24-28s over two runs,
-#                                   1260 in 78-79s over three
-#     cold test-owned build cache   52s and 1m52s
-#   before -> after the memory bound, on the same machine
-#     warm test-owned build cache   1260 mutants in 78-79s over three runs,
-#                                   1296 in 52-58s over seven
-#     cold test-owned build cache   1m52s and 1m48s
-#   9 -> 10 packages, interleaved on one shared machine
-#     warm test-owned build cache   1296 mutants in 1m07s, 1m29s and 1m33s,
-#                                   1402 in 1m28s, 1m33s and 1m38s
-#     cold test-owned build cache   2m05s and 3m45s
-#   10 -> 11 packages, on one shared machine that was quiet for some of it
-#     warm test-owned build cache   2497 mutants in 6m13s and 6m30s with the
-#                                   derived timeout at its 10s floor, 8m42s
-#                                   and 9m02s when other work moved it
-#     cold test-owned build cache   9m31s with the timeout at 38.7s, before the
-#                                   engine sized it on the runs after the
-#                                   first; about 4m45s on GitHub's ubuntu
-#                                   runner after, with the timeout at 10s
-#
-# The third pair is the one that needed explaining, because 425 more mutants did
-# not cost fifty seconds; four more mutants that never return did. A timeout is
-# not believed the first time -- the mutant is measured again before the verdict
-# is recorded -- so each of those cost two ten-second waits, and the run went
-# from one such mutant to five: from 20 seconds of worker time spent waiting to
-# 100, on a run whose other 1255 mutants are measured in milliseconds.
-#
-# The fourth pair is that sentence being acted on. Bounding a mutant's memory
-# the way its time is bounded takes the two that allocate out of the waiting
-# entirely: they are killed at about 1.1 GiB after a second and a half instead
-# of spending two ten-second timeouts each, so the waiting drops from 100
-# seconds of worker time to 60 and the wall clock from 78-79s to 52-58s. The
-# catalogue grew by 36 in the same step -- `test.memory` and the size vocabulary
-# that reads it are themselves mutated now -- so this is 36 more mutants and 25
-# fewer seconds, which is the only kind of trade this file is glad to record.
-# Cold moved by four seconds, because a cold run is dominated by compiling and
-# the waiting was never the whole of it.
-#
-# Two later warm runs of that scope measured 70s and 78s, and they are named
-# here rather than quietly widening the range: the machine had picked up other
-# work by then. That is the caveat the second pair above carries, and the
-# reason this file keeps saying only the ratios travel -- a range means
-# something only while it describes one machine doing one thing. The tally was
-# identical on both, which is the number this gate is actually judged on.
-#
-# The fifth pair is the noisiest of the five and is written out anyway, because
-# a measurement taken on a shared machine is still a measurement and a
-# remembered number from a different one is not a comparison. Both halves were
-# measured minutes apart, interleaved, on the machine that widened the scope;
-# neither half is comparable with the rows above it, which is why the
-# nine-package figures there (52-58s warm, 1m48s cold) and here (1m07-1m33s
-# warm, 2m05s cold) are the same scope and different machines.
-#
-# Warm, the two halves overlap, and the back-to-back pair is the one to read:
-# 1m32.8s for 1296 mutants, then 1m28.3s for 1402. The derived timeout was at
-# its 10s floor on both sides, so the three mutants that never return cost the
-# same 60 seconds of worker time in each, and 106 more mutants cost about what
-# 106 fast mutants cost.
-#
-# Cold is where the widening is visible, and the cause is the derived timeout
-# rather than the catalogue. Cold, the first of the three baseline runs is the
-# one doing the compiling, so max(10s, slowest baseline x 5) is set by a build
-# and not by a test: the tenth package took that run from 4.0s to 5.5s, and the
-# timeout from 20.1s to 27.7s with it. Three mutants wait that out twice each,
-# which is 45 more seconds of worker time and a longer serial tail at the end,
-# when they are all that is left to finish. That is most of 2m05s -> 3m45s, and
-# it is a cost that shrinks on a machine whose cold compile is faster rather
-# than a cost that is 106 mutants.
-#
-# Two further warm runs of the ten-package scope measured 2m39.6s and 2m47.5s,
-# and they are named for the same reason the 70s and 78s above are: the machine
-# had picked up other work, the derived timeout read 18.1s and 20.3s instead of
-# the floor, and the three that wait paid the difference twice each. The tally
-# was identical on both, which is the number this gate is actually judged on.
-#
-# The first pair is clean, the second is not, and saying so is still the point.
-# Thirty-four more mutants cost about a second warm and nothing at all cold,
-# because a cold run is dominated by compiling the module and its test binaries
-# and internal/testflag, internal/operatorselect and internal/drift are 125
-# lines between them. The second pair was measured against a loaded machine,
-# where the same tree's cold run varied by 38 seconds between two attempts,
-# which is why the eight-package cold figure is written as "1m36s and 2m14s"
-# there and as a clean 52s in the pair above: the two were measured on different
-# machines, months of commits apart, and only the pair is a comparison. Cold is
-# what CI measures: the dogfood job points GO_MUTANTS_TEST_GOCACHE at the
-# runner's temporary directory and never restores it from an actions cache.
-#
-# Load is also why the timeout named under [mutation] is not a fixed cost. It is
-# max(10s, slowest baseline x 5), which is the 10s floor on the machine that
-# measured the first four pairs above, was 29.7s on the loaded one, and read
-# 10s, 18.1s, 20.3s and 27.7s across the seven runs of the scope this file now
-# describes -- and the three mutants that spin spend two of them each whatever
-# else the run has to do. That is the single largest variable in this gate's
-# wall clock and it belongs to the machine rather than to the catalogue. The
-# memory bound is derived from the same baseline and is not load-bearing in the
-# same way: max(1GiB, largest peak x 4) is the 1 GiB floor here and would stay
-# the floor until this repository's suite needed 256 MiB.
-#
-# Only the ratio travels; the absolute numbers are the machine. The scope
-# before this one -- eight packages, 835 mutants -- was recorded here as
-# 24-30s warm, where the scope before that -- three packages, 566 mutants --
-# was 1m10s-1m30s on the machine that measured it, the one before that -- one
-# file and two packages, 121 mutants -- took 48-50 seconds, and the one before
-# that -- two files, sixteen mutants -- took 7m08s. What does not vary with the
-# machine is the tally: 1296 catalogued, 1266 detected, 1263 of them killed and
-# three timed out, 30 expected, nine of those never executed at all, on every
-# one of the eleven runs that measured that scope. The killed/timeout split is
-# part of that tally again rather than an exception to it; the note at the top
-# of this file says what it took.
-#
-# The sixth pair is the eleventh package, and it is the first one the wall
-# clock could not be read off the catalogue. Warm, on the 10s floor, the scope
-# takes 6m13s and 6m30s: 2497 mutants at four workers, most of them measured in
-# under a second, and internal/report's suite -- about half a second a run,
-# where the nine-package command was a fifth of that -- is what makes the
-# thousand of them that live in it cost what they cost. The two runs beside
-# those, 8m42s and 9m02s, are the same tree and the same tally on the same
-# machine, and the difference is the other work the machine had picked up:
-# one of them derived a 23.6s timeout from a baseline that read 4.7s under
-# load, and the four mutants that never return paid that twice each, which is
-# three minutes of a nine-minute run spent waiting for a budget the machine
-# rather than the suite had set. The other kept the floor and lost its time
-# in the runs themselves, and reported two of its 2428 kills as
-# `inconclusive`: killed once, timed out on the confirming run, the way a
-# suite that is fast in a quiet second and stalls in a loud one looks from
-# outside. The tally is the number this gate is judged on, and it was
-# identical everywhere but that column.
-#
-# Cold, the scope takes 9m31s, and more than half of that is one number. The
-# first of the three baseline runs is the one that compiles, and cold it
-# measured 7.7s where the runs after it measured 2s; max(10s, slowest x 5)
-# sized the timeout on the compiling run at 38.7s, and the four mutants that
-# never return paid it twice each -- five minutes of worker time waiting for a
-# budget no mutant run ever needed, since their binaries are built once
-# beforehand. That is the mechanism the fifth pair named at 2m05s -> 3m45s,
-# now large enough to be most of the run, and it is answered where it lives
-# rather than here: the engine sizes the budget on the runs after the first.
-# The first cold run on that engine was CI's own -- GitHub's ubuntu runner,
-# this scope, `slowest 138ms` after the compiling first run and the timeout at
-# its 10s floor -- and took about 4m45s of a 5m22s job. The 9m31s above is the
-# figure the change was made to remove, and it is kept as that.
-#
-# Whether this scope wants an explicit `test.timeout` was the open question the
-# first two runs left, and the measurement answers it for now: on the floor
-# the tally is exact, and the two inconclusive kills appeared only under
-# outside load that also moved the derived timeout. A number written into
-# this file to paper over a loaded machine is the kind of number this file
-# exists not to keep, so the floor stays derived.
-#
-# The floor has moved twice, and the arithmetic is why both times. It is worth being exact about which gate the remaining
-# slack belongs to, because the two are independent and only one of them guards
-# CI:
-#
-#   --strict              mutation.Decide fails on UnexpectedSurvivors > 0, so
-#                         the first unexpected survivor is exit 1 for the
-#                         dogfood task and for CI. There is no headroom on that
-#                         gate at all, and none is wanted.
-#   minimum_score = 99.75 compared against the measured score whether or not
-#                         --strict was passed. Four thousand three hundred and
-#                         twenty-one scored mutants are worth 0.023 points each,
-#                         so 4311/4321 = 99.77% clears 99.75 and
-#                         4310/4321 = 99.74% does not: an ungated
-#                         `go-mutants run` reports up to ten survivors and
-#                         exits 0, and fails at eleven.
-#
-# Ninety-six is what stood here while 120 mutants were scored, where it bought
-# four survivors of slack. At 544 the same number would buy twenty-one, which is
-# a materially weaker backstop wearing a number that had not changed, so it went
-# up rather than staying put. Ninety-nine then stayed put through five
-# widenings, and that was arithmetic rather than inertia: one percent of 549 is
-# 5.49, of 583 is 5.83, of 809 is 8.09 and of 1266 is 12.66, so the slack this
-# floor bought went five, five, eight, twelve while the catalogue grew tenfold
-# -- always short of the twenty-one that moved the number the last time.
-#
-# One percent of 2484 is 24.84, which is not short of it. Twenty-four survivors
-# is more slack than the twenty-one that was judged too much at 544, so the same
-# rule that kept the number at 99 through five widenings is the rule that moved
-# it then, and it moved to the value that left the backstop where it had
-# actually been: 99.5 bought twelve survivors, where 99 bought thirteen before
-# that widening. Ninety-nine and a half then stayed put through five more, and
-# that was the same arithmetic reaching the same answer: half a percent of 2822
-# was 14.11, of 2943 is 14.71, of 3200 is 16.00, of 3527 is 17.64 and of 3941 is
-# 19.71, so the slack went twelve, fourteen, fourteen, sixteen, seventeen,
-# nineteen while the scope grew by a third.
-#
-# Half a percent of 4321 is 21.61, and twenty-one is the number that was judged
-# too much at 544 -- so the same rule moves it a second time, to 99.75, which
-# leaves the backstop at ten survivors where 99.5 had left it at twelve when it
-# was set. The floor is a fixed number of survivors rather than a fixed
-# percentage of a growing catalogue, which is what "raise it when the scope
-# grows enough to make that count material" meant, and this is the second time
-# that sentence has been cashed in rather than repeated.
-#
-# A fraction is new here and is the only spelling available: the next integer up
-# is 100, which is `--strict` under another name, and this floor is deliberately
-# the looser of the two gates. It is the backstop for a run that did not ask to
-# be gated, never the thing keeping CI honest, and a green CI run is never green
-# because of it. Raise it again when the scope grows enough to make that count
-# material; do not lower it to accommodate a survivor that a test could kill.
 minimum_score = 99.75
 require_mutants = true
 
 [report]
 directory = "reports/mutation"
 formats = ["json", "html"]
-# HTML colouring thresholds only; they are independent of [policy].
 high = 80
 low = 60

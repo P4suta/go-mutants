@@ -11,13 +11,6 @@ import (
 	"github.com/P4suta/go-mutants/internal/gocmd"
 )
 
-// TestParseVersion is the table the `go version` contract is pinned by.
-//
-// The accepted rows are shapes real toolchains print, including the ones that
-// grew extra fields in the middle; the rejected rows are what a PATH entry
-// that is not the Go toolchain prints. Between them they say what the parser
-// promises: strict at the two ends of the line, indifferent to everything
-// between them.
 func TestParseVersion(t *testing.T) {
 	t.Parallel()
 
@@ -109,9 +102,6 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
-// TestParseVersionRejects covers the outputs that must not become a version.
-// Inventing one would put a number into a report that claims to describe the
-// toolchain the run actually used.
 func TestParseVersionRejects(t *testing.T) {
 	t.Parallel()
 
@@ -129,9 +119,6 @@ func TestParseVersionRejects(t *testing.T) {
 		{name: "an empty target half", output: "go version go1.26.5 linux/\n"},
 		{name: "an empty target half at the front", output: "go version go1.26.5 /amd64\n"},
 		{name: "a devel build with nothing after it", output: "go version devel linux/amd64\n"},
-		// A target is two names from two closed lists and neither holds a
-		// slash, so a third field is not a target with an unusual arch in it --
-		// it is a line no toolchain printed.
 		{name: "a target of three parts", output: "go version go1.26.5 a/b/c\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -148,15 +135,6 @@ func TestParseVersionRejects(t *testing.T) {
 	}
 }
 
-// TestParseVersionReadsTheShortestDevelLine is the boundary the devel guard
-// sits on, and the table above cannot stand on it.
-//
-// "devel" alone names every unreleased build there has ever been, so the parser
-// requires a pseudo-version after it — which it spells as "there are at least
-// five fields". Five is the shortest line that has one: `go`, `version`,
-// `devel`, the pseudo-version, and the target. Every devel row in the table
-// carries a build date as well and so has eight or more, which is why a guard
-// that rejected the minimum too would pass all of them.
 func TestParseVersionReadsTheShortestDevelLine(t *testing.T) {
 	t.Parallel()
 
@@ -177,23 +155,10 @@ func TestParseVersionReadsTheShortestDevelLine(t *testing.T) {
 	}
 }
 
-// TestParseVersionQuotesWhatWasPrintedAndBoundsIt pins the rendering the
-// message is built from, which is what makes a rejected line diagnosable: the
-// reader has to see the bytes that were rejected, and has to see all of them
-// unless there are too many.
-//
-// The limit is restated here rather than read out of the package, because a
-// test that took the constant from the code could not tell a changed limit from
-// a changed rule — and the rule is what the two cases below are about. It is
-// the boundary that needs saying out loud: a line of exactly the limit fits, so
-// cutting it would relay 200 bytes and an ellipsis where 200 bytes were asked
-// for, and no length assertion would notice.
 func TestParseVersionQuotesWhatWasPrintedAndBoundsIt(t *testing.T) {
 	t.Parallel()
 
-	// The length quote() cuts above, as version.go spells it.
 	const limit = 200
-	// The marker quote() leaves in place of what it dropped.
 	const cut = "…"
 
 	t.Run("a short line is relayed whole and escaped", func(t *testing.T) {
@@ -240,8 +205,6 @@ func TestParseVersionQuotesWhatWasPrintedAndBoundsIt(t *testing.T) {
 	})
 }
 
-// TestParseVersionErrorIsBounded keeps a chatty impostor from turning an error
-// message into a wall of its output.
 func TestParseVersionErrorIsBounded(t *testing.T) {
 	t.Parallel()
 
