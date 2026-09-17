@@ -700,12 +700,19 @@ jobs:
         run: |
           set -euo pipefail
           passed='.value.result == "success" or .value.result == "skipped"'
-          report='to_entries | .[] | "\(.key): \(.value.result)"'
+          # One entry, rendered. It is a line and not a whole pipeline because
+          # it is used on both an object and an already-filtered list: the
+          # first version began with to_entries and was applied to the output
+          # of map(select(...)), which is entries already -- so jq indexed the
+          # array and every failure this job exists to name printed as
+          # `0: null`. The one line a reader needs was the one line that broke.
+          line='"\(.key): \(.value.result)"'
+          entries="to_entries | .[] | $line"
           failed=$(printf '%s' "$RESULTS" |
-            jq -r "to_entries | map(select($passed | not)) | $report")
+            jq -r "to_entries | map(select($passed | not)) | .[] | $line")
           if [ -n "$failed" ]; then
             echo "::error::gates that did not pass:"
             printf '%s\n' "$failed"
             exit 1
           fi
-          printf '%s' "$RESULTS" | jq -r "$report"
+          printf '%s' "$RESULTS" | jq -r "$entries"
